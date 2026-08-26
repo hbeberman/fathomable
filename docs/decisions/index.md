@@ -14,3 +14,4 @@ supersede rather than edit history.
 - [0008 Configuration format](0008-configuration-format.md)
 - [0009 CLI and diagnostics](0009-cli-and-diagnostics.md)
 - [0010 Viewer UX conventions](0010-viewer-ux.md)
+- [0011 Theme schema](0011-theme-schema.md)

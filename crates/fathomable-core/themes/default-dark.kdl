@@ -1,0 +1,48 @@
+// @okf-doc: /decisions/0011-theme-schema.md
+// Fathomable built-in dark theme (ADR 0011). The background is left unset so
+// transparent terminals show through. Copy this file to
+// $XDG_CONFIG_HOME/fathomable/themes/<name>.kdl to make your own; a copy
+// may `inherits "default-dark"` and set only the keys it changes.
+
+palette {
+    fg       "#d0d0d0"
+    dim      "#8a8a8a"
+    trim     "#606060"
+    surface  "#303030"
+    select   "#264f78"
+    blue     "#7aa6da"
+    green    "#b9ca4a"
+    yellow   "#ffda03"
+    red      "#d54e53"
+    purple   "#c397d8"
+    teal     "#8abeb7"
+    orange   "#e78c45"
+}
+
+code {
+    syntect "base16-ocean.dark"
+}
+
+colors {
+    "ui.text"              fg="fg"
+    "ui.linenr"            fg="trim"
+    "ui.cursorline"        bg="surface"
+    "ui.selection"         bg="select"
+    "ui.search.match"      fg="black" bg="yellow"
+    "ui.statusline"        bg="surface"
+    "ui.statusline.normal" fg="black" bg="blue" mods="bold"
+    "ui.statusline.select" fg="black" bg="purple" mods="bold"
+    "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
+    "ui.statusline.info"   fg="dim"
+
+    "diff.plus"            fg="green"
+    "diff.delta"           fg="orange"
+    "diff.minus"           fg="red"
+
+    "markup.heading"       fg="purple" mods="bold"
+    "markup.raw.inline"    fg="orange"
+    "markup.raw.block"     fg="teal"
+    "markup.link"          fg="blue" mods="underline"
+    "markup.list"          fg="dim"
+    "markup.quote"         fg="green" mods="italic"
+}

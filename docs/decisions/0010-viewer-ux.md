@@ -135,6 +135,5 @@ viewer, the layout engine, and later themes agree.
 - Line numbers require the layout to know the source line of a byte offset;
   `fathomable-core` keeps a line index for the document.
 - `regex` joins the dependency set; the 0001 table is amended.
-- Themes need the keys named above; they are listed here rather than in 0004
-  so a theme author has one place to look until a theme reference document
-  exists.
+- Themes need the keys named above; the full vocabulary and file format are
+  in [0011](0011-theme-schema.md).

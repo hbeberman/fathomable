@@ -1,0 +1,47 @@
+// @okf-doc: /decisions/0011-theme-schema.md
+// Fathomable built-in light theme (ADR 0011). Sets an explicit background so
+// it reads correctly on a dark terminal.
+
+palette {
+    fg       "#1f1f1f"
+    dim      "#6a6a6a"
+    trim     "#a0a0a0"
+    paper    "#fafafa"
+    surface  "#e8e8e8"
+    select   "#cfe3ff"
+    blue     "#1f5fbf"
+    green    "#3f7d20"
+    yellow   "#ffd633"
+    red      "#c0392b"
+    purple   "#7d3c98"
+    teal     "#1f7a7a"
+    orange   "#b35a00"
+}
+
+code {
+    syntect "base16-ocean.light"
+}
+
+colors {
+    "ui.text"              fg="fg" bg="paper"
+    "ui.linenr"            fg="trim"
+    "ui.cursorline"        bg="surface"
+    "ui.selection"         bg="select"
+    "ui.search.match"      fg="black" bg="yellow"
+    "ui.statusline"        bg="surface"
+    "ui.statusline.normal" fg="white" bg="blue" mods="bold"
+    "ui.statusline.select" fg="white" bg="purple" mods="bold"
+    "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
+    "ui.statusline.info"   fg="dim"
+
+    "diff.plus"            fg="green"
+    "diff.delta"           fg="orange"
+    "diff.minus"           fg="red"
+
+    "markup.heading"       fg="purple" mods="bold"
+    "markup.raw.inline"    fg="orange"
+    "markup.raw.block"     fg="teal"
+    "markup.link"          fg="blue" mods="underline"
+    "markup.list"          fg="dim"
+    "markup.quote"         fg="green" mods="italic"
+}

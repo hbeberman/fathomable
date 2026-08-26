@@ -10,14 +10,14 @@ use ratatui::widgets::Paragraph;
 
 use super::view::{Mode, View};
 
-/// Colours for the viewer chrome and Markdown faces.
+/// Ratatui styles for the viewer chrome and Markdown faces.
 ///
-/// The key names follow ADR 0010 so a KDL theme can populate this later; the
-/// values are the built-in default until the theme format exists.
+/// Built from a resolved [`fathomable_core::theme::Theme`] (ADR 0011) so the
+/// draw code never touches theme keys directly.
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub text: Style,
-    pub heading: Style,
+    pub heading: [Style; 6],
     pub code: Style,
     pub code_block: Style,
     pub link: Style,
@@ -28,43 +28,87 @@ pub struct Theme {
     pub selection: Style,
     pub search_match: Style,
     pub statusline: Style,
+    pub info: Style,
     pub mode_normal: Style,
     pub mode_select: Style,
     pub mode_input: Style,
 }
 
-impl Default for Theme {
-    fn default() -> Self {
+impl Theme {
+    /// Convert a resolved core theme into ratatui styles.
+    pub fn from_core(theme: &fathomable_core::theme::Theme) -> Self {
+        use fathomable_core::theme::Key;
+        let style = |key: Key| convert_style(theme.style(key));
         Self {
-            text: Style::default(),
-            heading: Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-            code: Style::default().fg(Color::Yellow),
-            code_block: Style::default().fg(Color::Yellow),
-            link: Style::default()
-                .fg(Color::Blue)
-                .add_modifier(Modifier::UNDERLINED),
-            marker: Style::default().fg(Color::DarkGray),
-            quote: Style::default().fg(Color::Green),
-            line_number: Style::default().fg(Color::DarkGray),
-            cursorline: Style::default().bg(Color::Indexed(236)),
-            selection: Style::default().bg(Color::Indexed(24)),
-            search_match: Style::default().fg(Color::Black).bg(Color::Yellow),
-            statusline: Style::default().bg(Color::Indexed(236)),
-            mode_normal: Style::default()
-                .fg(Color::Black)
-                .bg(Color::Blue)
-                .add_modifier(Modifier::BOLD),
-            mode_select: Style::default()
-                .fg(Color::Black)
-                .bg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-            mode_input: Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
+            text: style(Key::UiText),
+            heading: std::array::from_fn(|i| {
+                style(Key::MarkupHeadingLevel(u8::try_from(i + 1).unwrap_or(1)))
+            }),
+            code: style(Key::MarkupRawInline),
+            code_block: style(Key::MarkupRawBlock),
+            link: style(Key::MarkupLink),
+            marker: style(Key::MarkupList),
+            quote: style(Key::MarkupQuote),
+            line_number: style(Key::UiLinenr),
+            cursorline: style(Key::UiCursorline),
+            selection: style(Key::UiSelection),
+            search_match: style(Key::UiSearchMatch),
+            statusline: style(Key::UiStatusline),
+            info: style(Key::UiStatuslineInfo),
+            mode_normal: style(Key::UiStatuslineNormal),
+            mode_select: style(Key::UiStatuslineSelect),
+            mode_input: style(Key::UiStatuslineInput),
         }
+    }
+}
+
+fn convert_style(style: fathomable_core::theme::Style) -> Style {
+    let mut out = Style::default();
+    if let Some(fg) = style.fg() {
+        out = out.fg(convert_color(fg));
+    }
+    if let Some(bg) = style.bg() {
+        out = out.bg(convert_color(bg));
+    }
+    let mods = style.modifiers();
+    let flags = [
+        (mods.bold, Modifier::BOLD),
+        (mods.dim, Modifier::DIM),
+        (mods.italic, Modifier::ITALIC),
+        (mods.underline, Modifier::UNDERLINED),
+        (mods.reversed, Modifier::REVERSED),
+        (mods.strikethrough, Modifier::CROSSED_OUT),
+    ];
+    for (on, modifier) in flags {
+        if on {
+            out = out.add_modifier(modifier);
+        }
+    }
+    out
+}
+
+fn convert_color(color: fathomable_core::theme::Color) -> Color {
+    use fathomable_core::theme::{AnsiColor, Color as Core};
+    match color {
+        Core::Rgb(r, g, b) => Color::Rgb(r, g, b),
+        Core::Ansi(ansi) => match ansi {
+            AnsiColor::Black => Color::Black,
+            AnsiColor::Red => Color::Red,
+            AnsiColor::Green => Color::Green,
+            AnsiColor::Yellow => Color::Yellow,
+            AnsiColor::Blue => Color::Blue,
+            AnsiColor::Magenta => Color::Magenta,
+            AnsiColor::Cyan => Color::Cyan,
+            AnsiColor::White => Color::White,
+            AnsiColor::BrightBlack => Color::DarkGray,
+            AnsiColor::BrightRed => Color::LightRed,
+            AnsiColor::BrightGreen => Color::LightGreen,
+            AnsiColor::BrightYellow => Color::LightYellow,
+            AnsiColor::BrightBlue => Color::LightBlue,
+            AnsiColor::BrightMagenta => Color::LightMagenta,
+            AnsiColor::BrightCyan => Color::LightCyan,
+            AnsiColor::BrightWhite => Color::Gray,
+        },
     }
 }
 
@@ -127,7 +171,7 @@ pub fn draw(frame: &mut Frame<'_>, view: &View, theme: &Theme, status: &StatusIn
 fn face_style(theme: &Theme, face: &Face_) -> Style {
     let base = match &face.face {
         Face::Text => theme.text,
-        Face::Heading(_) => theme.heading,
+        Face::Heading(level) => theme.heading[usize::from(level.clamp(&1, &6) - 1)],
         Face::Code => theme.code,
         Face::CodeBlock => theme.code_block,
         Face::Link(_) => theme.link,
@@ -214,7 +258,7 @@ fn status_line<'a>(
         };
         let mut spans = vec![Span::raw(prompt), Span::raw(view.input())];
         if let Some(message) = view.message() {
-            spans.push(Span::styled(format!("  {message}"), theme.marker));
+            spans.push(Span::styled(format!("  {message}"), theme.info));
         }
         return Paragraph::new(Line::from(spans)).style(theme.statusline);
     }
@@ -238,13 +282,13 @@ fn status_line<'a>(
         Span::raw(format!(" {path}")),
     ];
     if view.changed() {
-        left.push(Span::styled(" [+]", theme.code));
+        left.push(Span::styled(" [+]", theme.info));
     }
     if let Some(pending) = view.pending() {
-        left.push(Span::styled(format!("  {pending}"), theme.marker));
+        left.push(Span::styled(format!("  {pending}"), theme.info));
     }
     if let Some(message) = view.message() {
-        left.push(Span::styled(format!("  {message}"), theme.quote));
+        left.push(Span::styled(format!("  {message}"), theme.info));
     }
     let used: usize = left
         .iter()

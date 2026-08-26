@@ -31,7 +31,12 @@ rejected for good (record rejections in the [charter](charter.md)).
   tree is designed for it.
 - **HTTP transport for the MCP server.** Origin:
   [0003](decisions/0003-sessions-and-mcp.md).
-- **16-color theme fallback.** Origin: 0004; true-color first.
+- **16-color theme fallback.** Origin: 0004; true-color first. ANSI colour
+  names already work in themes ([0011](decisions/0011-theme-schema.md)).
+- **Automatic light/dark theme choice** from the terminal background
+  (OSC 11). Origin: 0011; `default-dark` unless configured.
+- **Loading `.tmTheme` files** for code blocks. Origin: 0011; syntect's
+  bundled themes only.
 - **Diff-view animation** to show an agent's edits as they land. Origin:
   initial planning.
 - **macOS / Windows support.** Origin: charter; Linux only for now.
@@ -55,28 +60,22 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
-- **TODO: theme files and `--theme`.** [0004](decisions/0004-markdown-rendering.md)
-  and [0008](decisions/0008-configuration-format.md) say themes are KDL under
-  `$XDG_CONFIG_HOME/fathomable/themes/`, but no schema is decided. The viewer
-  ships one built-in palette (`viewer/ui.rs`, `Theme`) keyed by the names in
-  [0010](decisions/0010-viewer-ux.md); `--theme` warns and is ignored. Needs
-  a decision record for the KDL theme schema before light/dark files can
-  ship. Origin: milestone-1 viewer.
 - **TODO: OSC 8 hyperlinks for links.** 0004 wants clickable links;
   `ratatui` 0.30 has no hyperlink support in its buffer, so the viewer only
   colours `Face::Link` spans. Needs either a ratatui feature or raw escape
   output around the backend. Origin: milestone-1 viewer.
 - **TODO: `syntect` highlighting for code blocks.** Layout emits
-  `Face::CodeBlock` spans without a language; 0004's syntect highlighting
-  waits on the theme format. Origin: milestone-1 layout engine.
+  `Face::CodeBlock` spans without a language; the theme names the syntect
+  theme via `code.syntect` ([0011](decisions/0011-theme-schema.md)) but
+  nothing reads it yet. Origin: milestone-1 layout engine.
 - **TODO: session id for log file names.** Logs are written to
   `$XDG_STATE_HOME/fathomable/log/<id>.log` where `<id>` is currently a
   process-local `<unix-seconds>-<pid>` placeholder. Replace it with the
   session id [0003](decisions/0003-sessions-and-mcp.md) defines once session
   records exist, so log, record, and socket share one name. Origin:
   milestone-1 scaffolding.
-- **TODO: `--doctor` remaining checks.** 0009 also lists config parse, git,
-  and live sessions; those wait on the config, git, and session subsystems.
+- **TODO: `--doctor` remaining checks.** 0009 also lists git and live
+  sessions; those wait on the git and session subsystems.
   Origin: milestone-1 scaffolding.
 
 ## Open investigations

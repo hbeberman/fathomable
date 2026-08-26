@@ -2,6 +2,7 @@
 type: Decision
 title: Configuration format
 description: KDL configuration in the XDG config directory.
+resource: crates/fathomable-core/src/config.rs
 tags:
   - decision
   - configuration

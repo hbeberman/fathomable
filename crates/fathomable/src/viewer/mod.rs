@@ -29,12 +29,16 @@ use view::{Effect, View};
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(40);
 
 /// Run the viewer on `path` until the user quits.
-pub fn run(path: &Path, session_id: &str) -> anyhow::Result<()> {
+pub fn run(
+    path: &Path,
+    session_id: &str,
+    theme: &fathomable_core::theme::Theme,
+) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start async runtime")?;
-    runtime.block_on(run_async(path, session_id))
+    runtime.block_on(run_async(path, session_id, theme))
 }
 
 /// Restores the terminal on drop so a panic or error never leaves raw mode on.
@@ -56,7 +60,11 @@ impl Drop for TerminalGuard {
     }
 }
 
-async fn run_async(path: &Path, session_id: &str) -> anyhow::Result<()> {
+async fn run_async(
+    path: &Path,
+    session_id: &str,
+    theme: &fathomable_core::theme::Theme,
+) -> anyhow::Result<()> {
     let mut document = Document::load(path)?;
     let display_path = path.display().to_string();
 
@@ -96,7 +104,7 @@ async fn run_async(path: &Path, session_id: &str) -> anyhow::Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
-    let theme = ui::Theme::default();
+    let theme = ui::Theme::from_core(theme);
     let status = ui::StatusInfo {
         path: &display_path,
         session: session_id,

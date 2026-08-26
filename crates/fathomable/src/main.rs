@@ -11,6 +11,8 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use fathomable_core::XdgDirs;
+use fathomable_core::config::Config;
+use fathomable_core::theme::{DEFAULT_THEME, Theme};
 
 /// Read-only terminal workspace viewer and annotation side-car.
 #[derive(Debug, Parser)]
@@ -77,15 +79,16 @@ fn main() -> ExitCode {
     if !cli.mcp && !cli.sessions && !cli.dump_state && !cli.replay_log && !cli.config_show {
         let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
         if path.is_file() {
-            if let Some(theme) = &cli.theme {
-                // TODO(parked): theme files wait on the KDL theme schema.
-                tracing::warn!(
-                    theme,
-                    "--theme is not implemented; using the built-in theme"
-                );
-                eprintln!("fathomable: --theme is not implemented yet; using the built-in theme");
-            }
-            return match viewer::run(&path, session.id()) {
+            let theme = match load_theme(&cli, &dirs) {
+                Ok(theme) => theme,
+                Err(error) => {
+                    tracing::error!(error = %error, "cannot load theme");
+                    eprintln!("fathomable: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            tracing::info!(theme = theme.name(), "theme loaded");
+            return match viewer::run(&path, session.id(), &theme) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
                     tracing::error!(error = format!("{error:#}"), "viewer failed");
@@ -114,4 +117,15 @@ fn main() -> ExitCode {
         "fathomable: {unimplemented} is not implemented yet; only --doctor works in this build"
     );
     ExitCode::FAILURE
+}
+
+/// Pick the theme: `--theme`, then `config.kdl`, then the built-in default.
+fn load_theme(cli: &Cli, dirs: &XdgDirs) -> anyhow::Result<Theme> {
+    let config = Config::load(dirs, cli.config.as_deref())?;
+    let name = cli
+        .theme
+        .as_deref()
+        .or_else(|| config.theme())
+        .unwrap_or(DEFAULT_THEME);
+    Ok(Theme::load(name, dirs)?)
 }

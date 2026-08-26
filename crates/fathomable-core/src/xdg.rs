@@ -50,6 +50,12 @@ impl XdgDirs {
         self.config_home.join(APP_DIR)
     }
 
+    /// `$XDG_CONFIG_HOME/fathomable/themes`, where user theme files live.
+    #[must_use]
+    pub fn themes_dir(&self) -> PathBuf {
+        self.config_dir().join("themes")
+    }
+
     /// `$XDG_STATE_HOME/fathomable`.
     #[must_use]
     pub fn state_dir(&self) -> PathBuf {

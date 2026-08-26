@@ -84,6 +84,9 @@ web-lock:
 install-commit-hooks:
     make install-commit-hooks
 
+install:
+    make install
+
 build-deps:
     make build-deps
 

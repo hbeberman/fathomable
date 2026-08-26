@@ -12,7 +12,7 @@ export PERF_SECONDS
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
 	docs-check boundaries public-api audit deny features udeps mutants mutants-file \
 	perf install-commit-hooks build-deps clean web-install web-dev web-check \
-	web-build web-lock web-toolchain
+	web-build web-lock web-toolchain install
 
 help:
 	@printf '%s\n' \
@@ -43,6 +43,7 @@ help:
 		'web-build         Build with Vite/Rolldown (when configured)' \
 		'web-lock          Reject npm lock drift (when configured)' \
 		'install-commit-hooks Install or refresh the local commit hook' \
+		'install           Install fathomable into ~/.cargo/bin' \
 		'build-deps        Install optional Cargo tooling' \
 		'clean             Remove build artifacts'
 
@@ -139,6 +140,9 @@ web-lock:
 
 install-commit-hooks:
 	scripts/install-commit-hooks.sh
+
+install:
+	cargo install --path crates/fathomable --locked
 
 build-deps:
 	scripts/setup-build-deps.sh

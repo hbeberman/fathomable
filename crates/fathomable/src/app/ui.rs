@@ -202,8 +202,24 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
         }
-        Some(Popup::Compose(compose)) => draw_compose(frame, app, theme, text_area, compose),
-        Some(Popup::Thread(panel)) => draw_thread(frame, app, theme, text_area, panel),
+        Some(Popup::Compose(compose)) => {
+            let box_rows = compose_rows(compose, text_area);
+            if let Some(panel) = compose.panel() {
+                // The thread stays readable above the box while replying.
+                let above = Rect {
+                    height: text_area.height.saturating_sub(u16_of(box_rows)),
+                    ..text_area
+                };
+                let rows = usize::from(above.height / 2).clamp(4, usize::from(above.height.max(1)));
+                draw_thread(frame, app, theme, above, panel, rows);
+            }
+            draw_compose(frame, app, theme, text_area, compose, box_rows);
+        }
+        Some(Popup::Thread(panel)) => {
+            let rows =
+                usize::from(text_area.height / 3).clamp(6, usize::from(text_area.height.max(1)));
+            draw_thread(frame, app, theme, text_area, panel, rows);
+        }
         None => {
             if view.pending() == Some('g') {
                 let entries = vec![
@@ -643,8 +659,22 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }
 
+/// Rows the comment box takes: its text plus a title, capped.
+fn compose_rows(compose: &Compose, pane: Rect) -> usize {
+    (compose.text().split('\n').count() + 1)
+        .min(COMPOSE_MAX_ROWS)
+        .min(usize::from(pane.height))
+}
+
 /// The comment box: grows up from the status line (ADR 0005, 0013).
-fn draw_compose(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, compose: &Compose) {
+fn draw_compose(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    pane: Rect,
+    compose: &Compose,
+    rows: usize,
+) {
     let title = match compose.target() {
         ComposeTarget::New(range) => format!(" comment on L{range}"),
         ComposeTarget::Reply(id) => {
@@ -656,12 +686,13 @@ fn draw_compose(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, com
             format!(" reply{range}")
         }
     };
-    let hint = "  Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel";
+    let hint = if compose.panel().is_some() {
+        "  Enter newline · Ctrl/Alt-Enter submit · Up/Down scroll thread · Esc"
+    } else {
+        "  Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel"
+    };
     let width = usize::from(pane.width);
     let text: Vec<&str> = compose.text().split('\n').collect();
-    let rows = (text.len() + 1)
-        .min(COMPOSE_MAX_ROWS)
-        .min(usize::from(pane.height));
     if rows < 2 {
         return;
     }
@@ -688,13 +719,22 @@ fn draw_compose(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, com
 }
 
 /// The thread panel: header, quoted snippet, comment, replies.
-fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, panel: &ThreadPanel) {
+fn draw_thread(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    pane: Rect,
+    panel: &ThreadPanel,
+    rows: usize,
+) {
     let Some(thread) = app.thread(panel.id()) else {
         return;
     };
+    if rows == 0 || pane.height == 0 {
+        return;
+    }
     let width = usize::from(pane.width);
     let inner = width.saturating_sub(2);
-    let rows = usize::from(pane.height / 3).clamp(6, usize::from(pane.height.max(1)));
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = panel.position();
     let status = match (mark.map(super::threads::Mark::kind), thread.status()) {

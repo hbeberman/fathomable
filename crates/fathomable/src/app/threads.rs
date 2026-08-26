@@ -75,11 +75,19 @@ pub enum ComposeTarget {
 pub struct Compose {
     target: ComposeTarget,
     text: String,
+    /// The thread panel a reply was started from; it stays on screen
+    /// above the box and comes back on cancel.
+    panel: Option<ThreadPanel>,
 }
 
 impl Compose {
     pub fn target(&self) -> &ComposeTarget {
         &self.target
+    }
+
+    /// The thread being replied to, still readable while typing.
+    pub fn panel(&self) -> Option<&ThreadPanel> {
+        self.panel.as_ref()
     }
 
     pub fn text(&self) -> &str {
@@ -246,13 +254,14 @@ impl App {
             self.notice("nothing to annotate here");
             return;
         };
-        self.open_compose(ComposeTarget::New(range));
+        self.open_compose(ComposeTarget::New(range), None);
     }
 
-    fn open_compose(&mut self, target: ComposeTarget) {
+    fn open_compose(&mut self, target: ComposeTarget, panel: Option<ThreadPanel>) {
         self.popup = Some(Popup::Compose(Compose {
             target,
             text: String::new(),
+            panel,
         }));
     }
 
@@ -280,10 +289,17 @@ impl App {
         }
     }
 
-    /// Esc: drop the comment box, keeping the selection.
+    /// Up / Down while replying: scroll the thread shown above the box.
+    pub fn compose_scroll(&mut self, delta: isize) {
+        if let Some(panel) = self.compose_mut().and_then(|c| c.panel.as_mut()) {
+            panel.scroll = panel.scroll.saturating_add_signed(delta);
+        }
+    }
+
+    /// Esc: drop the comment box; a reply returns to its thread panel.
     pub fn compose_cancel(&mut self) {
-        if matches!(self.popup, Some(Popup::Compose(_))) {
-            self.popup = None;
+        if let Some(Popup::Compose(compose)) = self.popup.take() {
+            self.popup = compose.panel.map(Popup::Thread);
             self.notice("comment cancelled");
         }
     }
@@ -390,8 +406,9 @@ impl App {
 
     /// `r`: reply to the shown thread through the comment box.
     pub fn thread_reply(&mut self) {
-        if let Some(id) = self.panel_mut().map(|panel| panel.id().clone()) {
-            self.open_compose(ComposeTarget::Reply(id));
+        if let Some(Popup::Thread(panel)) = self.popup.take() {
+            let id = panel.id().clone();
+            self.open_compose(ComposeTarget::Reply(id), Some(panel));
         }
     }
 
@@ -612,6 +629,17 @@ mod tests {
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if c.target() == &ComposeTarget::Reply(id.clone()))
         );
+        assert!(
+            matches!(app.popup(), Some(Popup::Compose(c)) if c.panel().is_some()),
+            "the thread stays readable while replying"
+        );
+        app.compose_scroll(2);
+        app.compose_cancel();
+        assert!(
+            matches!(app.popup(), Some(Popup::Thread(p)) if p.scroll() == 2),
+            "Esc returns to the panel"
+        );
+        app.thread_reply();
         type_in(&mut app, "second thoughts");
         app.compose_submit();
         assert!(

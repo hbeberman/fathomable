@@ -115,6 +115,9 @@ were captured in a question round on 2026-08-26.
   `proposes resolving` tag when set. `j`/`k` scroll, `n`/`p` switch
   between threads on the row, `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
+- While replying the panel stays on screen above the box (taking up to
+  half the pane) so the thread can be read; Up/Down scroll it, and Esc
+  returns to the panel rather than closing everything.
 - `]a` and `[a` jump to the next and previous thread in the file, wrapping
   with a notice. `Space A` opens the picker over the file's threads
   (`L3-5  open  first line of the comment`); choosing one jumps there and

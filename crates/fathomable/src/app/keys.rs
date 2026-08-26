@@ -87,6 +87,8 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
                 KeyCode::Enter if submit => app.compose_submit(),
                 KeyCode::Enter => app.compose_newline(),
                 KeyCode::Backspace => app.compose_backspace(),
+                KeyCode::Down => app.compose_scroll(1),
+                KeyCode::Up => app.compose_scroll(-1),
                 KeyCode::Char(ch) if !ctrl => app.compose_char(ch),
                 _ => {}
             }

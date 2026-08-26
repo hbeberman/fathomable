@@ -7,6 +7,7 @@
 //! This crate never depends on `ratatui`, `crossterm`, or `rmcp`.
 
 mod document;
+pub mod layout;
 
 pub use document::{Document, LoadError};
 mod xdg;

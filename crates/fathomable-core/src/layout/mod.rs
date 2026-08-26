@@ -1,0 +1,636 @@
+// @okf-doc: /decisions/0004-markdown-rendering.md
+//! Markdown layout: rendered lines with styled spans and source ranges.
+//!
+//! [`Layout::render`] lays a Markdown document out for a pane of a given
+//! width; [`Layout::source`] lays the raw text out instead. Both produce
+//! [`Line`]s of [`Span`]s, where every span that came from the source
+//! remembers the byte range it was produced from, so a frontend can map a
+//! cell back to the source for line numbers, selection, and annotations.
+//!
+//! Layout is pure data in, data out: it is deterministic for a given text and
+//! width and touches no terminal.
+//!
+//! # Examples
+//!
+//! ```
+//! use fathomable_core::layout::{Face, Layout};
+//!
+//! let layout = Layout::render("# Title\n\nHello *world*.\n", 40);
+//! let lines = layout.lines();
+//! assert_eq!(lines[0].text(), "Title");
+//! assert_eq!(lines[0].spans()[0].style().face, Face::Heading(1));
+//! assert_eq!(lines[0].source_line(), Some(1));
+//! ```
+
+mod blocks;
+mod text;
+mod wrap;
+
+use std::ops::Range;
+
+use blocks::{Align, Block, Inline, Item, Table};
+pub use text::{LineIndex, display_width};
+use wrap::{Chunk, wrap, wrap_hard};
+
+/// What a span is, for theming.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Face {
+    /// Body text.
+    #[default]
+    Text,
+    /// Heading text of the given level, 1 through 6.
+    Heading(u8),
+    /// Inline code.
+    Code,
+    /// A line of a fenced or indented code block.
+    CodeBlock,
+    /// Link text (or image alt text) pointing at the URL.
+    Link(String),
+    /// Layout chrome: list bullets, table borders, quote bars, rules, task boxes.
+    Marker,
+    /// Quoted body text.
+    Quote,
+}
+
+/// Visual attributes of a span.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Style {
+    /// What the span is.
+    pub face: Face,
+    /// Italic emphasis.
+    pub emphasis: bool,
+    /// Bold emphasis.
+    pub strong: bool,
+    /// Struck-through text.
+    pub strikethrough: bool,
+}
+
+impl Style {
+    fn marker() -> Self {
+        Self {
+            face: Face::Marker,
+            ..Self::default()
+        }
+    }
+}
+
+/// A run of text with one style on one rendered line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Span {
+    text: String,
+    style: Style,
+    source: Option<Range<usize>>,
+}
+
+impl Span {
+    /// The rendered text.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// The style to draw the text in.
+    #[must_use]
+    pub fn style(&self) -> &Style {
+        &self.style
+    }
+
+    /// The source byte range this text came from; `None` for synthesised chrome.
+    #[must_use]
+    pub fn source(&self) -> Option<Range<usize>> {
+        self.source.clone()
+    }
+
+    /// Terminal width of the text.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        display_width(&self.text)
+    }
+
+    /// The source byte offset of the grapheme at display column `col`.
+    ///
+    /// Columns beyond the text map to the end of the range. When the source
+    /// and the text do not line up byte-for-byte (escapes, entities), every
+    /// column maps to the start of the range.
+    #[must_use]
+    pub fn source_at(&self, col: usize) -> Option<usize> {
+        let source = self.source.clone()?;
+        if source.len() != self.text.len() {
+            return Some(source.start);
+        }
+        let mut cells = 0;
+        for (offset, grapheme) in text::graphemes(&self.text) {
+            let width = display_width(grapheme);
+            if cells + width > col {
+                return Some(source.start + offset);
+            }
+            cells += width;
+        }
+        Some(source.end)
+    }
+}
+
+/// One rendered line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    spans: Vec<Span>,
+    source: Option<Range<usize>>,
+    number: Option<usize>,
+}
+
+impl Line {
+    fn from_spans(spans: Vec<Span>) -> Self {
+        let source = span_range(&spans);
+        Self {
+            spans,
+            source,
+            number: None,
+        }
+    }
+
+    fn blank() -> Self {
+        Self::from_spans(Vec::new())
+    }
+
+    fn prefixed(mut self, prefix: &str) -> Self {
+        if !prefix.is_empty() {
+            self.spans.insert(
+                0,
+                Span {
+                    text: prefix.to_owned(),
+                    style: Style::marker(),
+                    source: None,
+                },
+            );
+        }
+        self
+    }
+
+    /// The styled spans, left to right.
+    #[must_use]
+    pub fn spans(&self) -> &[Span] {
+        &self.spans
+    }
+
+    /// The whole source byte range this line was produced from.
+    #[must_use]
+    pub fn source(&self) -> Option<Range<usize>> {
+        self.source.clone()
+    }
+
+    /// The 1-based source line to show in the gutter.
+    ///
+    /// `None` for wrapped continuations and synthesised lines, per ADR 0010.
+    #[must_use]
+    pub fn source_line(&self) -> Option<usize> {
+        self.number
+    }
+
+    /// The plain text of the line.
+    #[must_use]
+    pub fn text(&self) -> String {
+        self.spans.iter().map(|span| span.text.as_str()).collect()
+    }
+
+    /// Terminal width of the line.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.spans.iter().map(Span::width).sum()
+    }
+
+    /// The source byte offset under display column `col`, if any.
+    ///
+    /// Falls back to the nearest span with a source range so that clicking on
+    /// chrome still lands somewhere sensible.
+    #[must_use]
+    pub fn source_at(&self, col: usize) -> Option<usize> {
+        let mut cells = 0;
+        for span in &self.spans {
+            let width = span.width();
+            if col < cells + width
+                && let Some(offset) = span.source_at(col - cells)
+            {
+                return Some(offset);
+            }
+            cells += width;
+        }
+        self.source.as_ref().map(|range| range.end)
+    }
+}
+
+fn span_range(spans: &[Span]) -> Option<Range<usize>> {
+    let mut range: Option<Range<usize>> = None;
+    for source in spans.iter().filter_map(|span| span.source.clone()) {
+        range = Some(match range {
+            Some(existing) => existing.start.min(source.start)..existing.end.max(source.end),
+            None => source,
+        });
+    }
+    range
+}
+
+/// A document laid out for one pane width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Layout {
+    lines: Vec<Line>,
+    width: usize,
+    index: LineIndex,
+}
+
+impl Layout {
+    /// Lay `text` out as rendered Markdown wrapped to `width` cells.
+    #[must_use]
+    pub fn render(text: &str, width: usize) -> Self {
+        let index = LineIndex::new(text);
+        let mut renderer = Renderer {
+            text,
+            width: width.max(1),
+            lines: Vec::new(),
+        };
+        renderer.blocks(&blocks::parse(text), "", "");
+        while renderer.lines.last().is_some_and(is_blank) {
+            renderer.lines.pop();
+        }
+        Self::finish(renderer.lines, width, index)
+    }
+
+    /// Lay `text` out verbatim, one source line per rendered line before wrapping.
+    #[must_use]
+    pub fn source(text: &str, width: usize) -> Self {
+        let index = LineIndex::new(text);
+        let mut lines = Vec::new();
+        for line in 1..=index.line_count() {
+            let Some(range) = index.range_of(line) else {
+                continue;
+            };
+            let chunk = Chunk::new(&text[range.clone()], Style::default(), Some(range));
+            lines.extend(wrap_hard(&chunk, width));
+        }
+        Self::finish(lines, width, index)
+    }
+
+    fn finish(mut lines: Vec<Line>, width: usize, index: LineIndex) -> Self {
+        let mut previous = None;
+        for line in &mut lines {
+            let number = line.source.as_ref().map(|range| index.line_of(range.start));
+            line.number = number.filter(|&n| Some(n) != previous);
+            if number.is_some() {
+                previous = number;
+            }
+        }
+        Self {
+            lines,
+            width,
+            index,
+        }
+    }
+
+    /// The rendered lines, top to bottom.
+    #[must_use]
+    pub fn lines(&self) -> &[Line] {
+        &self.lines
+    }
+
+    /// The width the layout was produced for.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// The source line index of the laid-out text.
+    #[must_use]
+    pub fn index(&self) -> &LineIndex {
+        &self.index
+    }
+
+    /// The rendered line containing source byte `offset`, or the nearest one.
+    ///
+    /// Used to re-anchor the cursor after a reload. Returns `None` only when
+    /// no line carries a source range.
+    #[must_use]
+    pub fn line_at_offset(&self, offset: usize) -> Option<usize> {
+        let mut best: Option<(usize, usize)> = None;
+        for (row, line) in self.lines.iter().enumerate() {
+            let Some(range) = &line.source else {
+                continue;
+            };
+            if range.contains(&offset) || (range.start == range.end && range.start == offset) {
+                return Some(row);
+            }
+            let distance = if offset < range.start {
+                range.start - offset
+            } else {
+                offset - range.end + 1
+            };
+            if best.is_none_or(|(_, d)| distance < d) {
+                best = Some((row, distance));
+            }
+        }
+        best.map(|(row, _)| row)
+    }
+}
+
+fn is_blank(line: &Line) -> bool {
+    line.spans.iter().all(|span| span.text.trim().is_empty()) && line.source.is_none()
+}
+
+struct Renderer<'a> {
+    text: &'a str,
+    width: usize,
+    lines: Vec<Line>,
+}
+
+impl Renderer<'_> {
+    /// Emit `blocks`, prefixing the first line with `first` and the rest with `rest`.
+    fn blocks(&mut self, blocks: &[Block], first: &str, rest: &str) {
+        let mut prefix = first;
+        for (i, block) in blocks.iter().enumerate() {
+            // Tight list text runs straight into its nested list.
+            if i > 0 && !matches!(blocks[i - 1], Block::Tight(_)) {
+                self.push(Line::blank().prefixed(rest));
+            }
+            self.block(block, prefix, rest);
+            prefix = rest;
+        }
+    }
+
+    fn push(&mut self, line: Line) {
+        self.lines.push(line);
+    }
+
+    fn avail(&self, prefix: &str) -> usize {
+        self.width.saturating_sub(display_width(prefix)).max(1)
+    }
+
+    fn block(&mut self, block: &Block, first: &str, rest: &str) {
+        match block {
+            Block::Paragraph(inlines) | Block::Tight(inlines) => {
+                self.paragraph(inlines, &Style::default(), first, rest);
+            }
+            Block::Heading(level, inlines) => {
+                let style = Style {
+                    face: Face::Heading(*level),
+                    ..Style::default()
+                };
+                self.paragraph(inlines, &style, first, rest);
+            }
+            Block::Code { text, source } | Block::Html { text, source } => {
+                self.code(text, source.clone(), first, rest);
+            }
+            Block::List { start, items } => self.list(*start, items, first, rest),
+            Block::Quote(blocks) => {
+                let first = format!("{first}│ ");
+                let rest = format!("{rest}│ ");
+                self.blocks(blocks, &first, &rest);
+            }
+            Block::Table(table) => self.table(table, first, rest),
+            Block::Rule(range) => {
+                let rule = "─".repeat(self.avail(first));
+                let mut line = Line::from_spans(vec![Span {
+                    text: rule,
+                    style: Style::marker(),
+                    source: Some(range.clone()),
+                }]);
+                line.source = Some(range.clone());
+                self.push(line.prefixed(first));
+            }
+            Block::Footnote { label, blocks } => {
+                let marker = format!("[^{label}]: ");
+                let first = format!("{first}{marker}");
+                let rest = format!("{rest}{}", " ".repeat(display_width(&marker)));
+                self.blocks(blocks, &first, &rest);
+            }
+        }
+    }
+
+    fn paragraph(&mut self, inlines: &[Inline], base: &Style, first: &str, rest: &str) {
+        let chunks = chunks(inlines, base);
+        let lines = wrap(&chunks, self.avail(first));
+        self.emit(lines, first, rest);
+    }
+
+    fn emit(&mut self, lines: Vec<Line>, first: &str, rest: &str) {
+        let mut prefix = first;
+        for line in lines {
+            self.push(line.prefixed(prefix));
+            prefix = rest;
+        }
+    }
+
+    /// Code lines are never wrapped; the frontend truncates or scrolls them.
+    fn code(&mut self, text: &str, source: Range<usize>, first: &str, rest: &str) {
+        let style = Style {
+            face: Face::CodeBlock,
+            ..Style::default()
+        };
+        // Locate each rendered line inside the block's source so selection
+        // maps to the exact bytes even when the fence is indented.
+        let block = self.text.get(source.clone()).unwrap_or("");
+        let mut cursor = 0;
+        let mut prefix = first;
+        for line in text.lines() {
+            let found = block.get(cursor..).and_then(|rest| rest.find(line));
+            let range = found.map(|pos| {
+                let start = source.start + cursor + pos;
+                cursor = (cursor + pos + line.len() + 1).min(block.len());
+                start..start + line.len()
+            });
+            let spans = if line.is_empty() {
+                Vec::new()
+            } else {
+                vec![Span {
+                    text: line.to_owned(),
+                    style: style.clone(),
+                    source: range.clone(),
+                }]
+            };
+            let mut rendered = Line::from_spans(spans);
+            if rendered.source.is_none() {
+                rendered.source = range.or_else(|| Some(source.clone()));
+            }
+            self.push(rendered.prefixed(prefix));
+            prefix = rest;
+        }
+    }
+
+    fn list(&mut self, start: Option<u64>, items: &[Item], first: &str, rest: &str) {
+        let mut number = start;
+        let loose = items
+            .iter()
+            .any(|item| matches!(item.blocks.first(), Some(Block::Paragraph(_))));
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 && loose {
+                self.push(Line::blank().prefixed(rest));
+            }
+            let marker = match number {
+                Some(n) => {
+                    number = Some(n + 1);
+                    format!("{n}. ")
+                }
+                None => "• ".to_owned(),
+            };
+            let task = item
+                .task
+                .map(|done| format!("{} ", blocks::task_marker(done)));
+            let head = format!("{marker}{}", task.as_deref().unwrap_or(""));
+            let item_first = format!("{}{head}", if i == 0 { first } else { rest });
+            let item_rest = format!("{rest}{}", " ".repeat(display_width(&head)));
+            if item.blocks.is_empty() {
+                self.push(Line::blank().prefixed(&item_first));
+            } else {
+                self.blocks(&item.blocks, &item_first, &item_rest);
+            }
+        }
+    }
+
+    fn table(&mut self, table: &Table, first: &str, rest: &str) {
+        let columns = table
+            .head
+            .len()
+            .max(table.rows.iter().map(Vec::len).max().unwrap_or(0));
+        if columns == 0 {
+            return;
+        }
+        let rows: Vec<&Vec<Vec<Inline>>> = std::iter::once(&table.head)
+            .chain(table.rows.iter())
+            .collect();
+        let empty = Vec::new();
+        let cell = |row: &'_ Vec<Vec<Inline>>, col: usize| -> Vec<Inline> {
+            row.get(col).unwrap_or(&empty).clone()
+        };
+        // Natural width of each column: the widest unwrapped cell.
+        let mut widths: Vec<usize> = (0..columns)
+            .map(|col| {
+                rows.iter()
+                    .map(|row| chunks_width(&chunks(&cell(row, col), &Style::default())))
+                    .max()
+                    .unwrap_or(0)
+                    .max(1)
+            })
+            .collect();
+        // Borders: one separator per column plus one, and one cell of padding
+        // each side of every column.
+        let chrome = columns * 3 + 1;
+        let avail = self.avail(first).saturating_sub(chrome).max(columns);
+        shrink(&mut widths, avail);
+
+        let border = |left: &str, mid: &str, right: &str| -> Line {
+            let body: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+            Line::from_spans(vec![Span {
+                text: format!("{left}{}{right}", body.join(mid)),
+                style: Style::marker(),
+                source: None,
+            }])
+        };
+        let mut out = vec![border("┌", "┬", "┐")];
+        for (r, row) in rows.iter().enumerate() {
+            let cells: Vec<Vec<Line>> = (0..columns)
+                .map(|col| {
+                    let style = if r == 0 {
+                        Style {
+                            strong: true,
+                            ..Style::default()
+                        }
+                    } else {
+                        Style::default()
+                    };
+                    wrap(&chunks(&cell(row, col), &style), widths[col])
+                })
+                .collect();
+            let height = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            for line_no in 0..height {
+                let mut spans = vec![Span {
+                    text: "│ ".to_owned(),
+                    style: Style::marker(),
+                    source: None,
+                }];
+                for (col, lines) in cells.iter().enumerate() {
+                    let line = lines.get(line_no);
+                    let used = line.map_or(0, Line::width);
+                    let pad = widths[col].saturating_sub(used);
+                    let (left, right) = match table.align.get(col) {
+                        Some(Align::Right) => (pad, 0),
+                        Some(Align::Center) => (pad / 2, pad - pad / 2),
+                        _ => (0, pad),
+                    };
+                    let push_pad = |n: usize, spans: &mut Vec<Span>| {
+                        if n > 0 {
+                            spans.push(Span {
+                                text: " ".repeat(n),
+                                style: Style::default(),
+                                source: None,
+                            });
+                        }
+                    };
+                    push_pad(left, &mut spans);
+                    if let Some(line) = line {
+                        spans.extend(line.spans.iter().cloned());
+                    }
+                    push_pad(right, &mut spans);
+                    spans.push(Span {
+                        text: " │ ".to_owned(),
+                        style: Style::marker(),
+                        source: None,
+                    });
+                }
+                if let Some(last) = spans.last_mut() {
+                    " │".clone_into(&mut last.text);
+                }
+                out.push(Line::from_spans(spans));
+            }
+            if r == 0 {
+                out.push(border("├", "┼", "┤"));
+            }
+        }
+        out.push(border("└", "┴", "┘"));
+        self.emit(out, first, rest);
+    }
+}
+
+/// Shrink the widest columns until they fit `avail`, never below three cells.
+fn shrink(widths: &mut [usize], avail: usize) {
+    const MIN: usize = 3;
+    while widths.iter().sum::<usize>() > avail {
+        let Some((idx, _)) = widths
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| **w > MIN)
+            .max_by_key(|(_, w)| **w)
+        else {
+            break;
+        };
+        widths[idx] -= 1;
+    }
+}
+
+fn chunks(inlines: &[Inline], base: &Style) -> Vec<Chunk> {
+    inlines
+        .iter()
+        .map(|inline| match inline {
+            Inline::Text {
+                text,
+                style,
+                source,
+            } => {
+                let mut style = style.clone();
+                if style.face == Face::Text {
+                    style.face = base.face.clone();
+                }
+                style.strong |= base.strong;
+                style.emphasis |= base.emphasis;
+                Chunk::new(text.clone(), style, Some(source.clone()))
+            }
+            Inline::HardBreak => Chunk {
+                hard_break: true,
+                ..Chunk::new("", Style::default(), None)
+            },
+        })
+        .collect()
+}
+
+fn chunks_width(chunks: &[Chunk]) -> usize {
+    chunks
+        .iter()
+        .map(|chunk| display_width(chunk.text.trim_end()))
+        .sum()
+}

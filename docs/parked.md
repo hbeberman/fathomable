@@ -52,6 +52,12 @@ rejected for good (record rejections in the [charter](charter.md)).
   dependency with no consumer, and bypassing hooks is not allowed. Add each
   one in the commit that first uses it. Origin: milestone-1 scaffolding
   handoff (2026-08-26).
+- **TODO: horizontal scroll for code blocks.** The layout leaves code lines
+  unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
+  truncates them at the pane edge. Origin: milestone-1 layout engine.
+- **TODO: `syntect` highlighting for code blocks.** Layout emits
+  `Face::CodeBlock` spans without a language; 0004's syntect highlighting
+  waits on the theme format. Origin: milestone-1 layout engine.
 - **TODO: session id for log file names.** Logs are written to
   `$XDG_STATE_HOME/fathomable/log/<id>.log` where `<id>` is currently a
   process-local `<unix-seconds>-<pid>` placeholder. Replace it with the

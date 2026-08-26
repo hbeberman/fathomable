@@ -14,5 +14,8 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+pulldown-cmark = { version = "0.13", default-features = false }
 thiserror = "2.0.20"
 tracing = "0.1.44"
+unicode-segmentation = "1"
+unicode-width = "0.2"

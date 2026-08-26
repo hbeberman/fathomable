@@ -2,6 +2,11 @@
 type: Decision
 title: Markdown rendering and source mapping
 description: Own the Markdown layout engine on top of pulldown-cmark so rendered lines map back to source ranges.
+resource: crates/fathomable-core/src/layout/mod.rs
+related_resources:
+  - crates/fathomable-core/src/layout/blocks.rs
+  - crates/fathomable-core/src/layout/wrap.rs
+  - crates/fathomable-core/src/layout/text.rs
 tags:
   - decision
   - rendering
@@ -31,8 +36,8 @@ projects outside the dependency policy.
   Fathomable with a key.
 - A source-view toggle shows the raw Markdown with the same annotation
   positions.
-- Text wraps to pane width; code may switch to no-wrap with horizontal scroll.
-  Vertical motion is by visual line.
+- Text wraps to pane width; code blocks never wrap (the frontend truncates,
+  horizontal scroll is parked). Vertical motion is by visual line.
 - Themes: true-color, using syntect themes for code and a Fathomable KDL
   theme for chrome and Markdown. Ship a default light and a default dark
   theme; the dark theme leaves the background unset so transparent terminals

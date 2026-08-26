@@ -9,5 +9,7 @@ okf_version: "0.2"
 
 Start here before changing documented behavior or adding project documentation.
 
+- [Fathomable charter](charter.md)
+- [Design decisions](decisions/index.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

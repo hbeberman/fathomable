@@ -10,8 +10,8 @@ edition = "2024"
 authors = ["Project contributors"]
 license = "MIT"
 readme = "README.md"
-description = "Workspace Viewer"
-keywords = ["rust", "correctness"]
+description = "Read-only terminal workspace viewer and annotation side-car for agent-driven work"
+keywords = ["tui", "markdown", "mcp", "review"]
 categories = ["development-tools"]
 publish = false
 

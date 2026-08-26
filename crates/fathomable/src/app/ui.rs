@@ -9,6 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
 use fathomable_core::annotations::Status;
+use fathomable_core::diff::LineStatus;
 
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
@@ -54,6 +55,9 @@ pub struct Theme {
     pub annotation_auto: Style,
     pub annotation_detached: Style,
     pub annotation_line: Style,
+    pub diff_plus: Style,
+    pub diff_delta: Style,
+    pub diff_minus: Style,
 }
 
 impl Theme {
@@ -92,6 +96,9 @@ impl Theme {
             annotation_auto: style(Key::AnnotationResolvedAuto),
             annotation_detached: style(Key::AnnotationDetached),
             annotation_line: style(Key::AnnotationLine),
+            diff_plus: style(Key::DiffPlus),
+            diff_delta: style(Key::DiffDelta),
+            diff_minus: style(Key::DiffMinus),
         }
     }
 }
@@ -225,6 +232,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                 let entries = vec![
                     ("g".to_owned(), "go to top".to_owned()),
                     ("s".to_owned(), "toggle source view".to_owned()),
+                    ("d".to_owned(), "toggle diff view".to_owned()),
                 ];
                 draw_menu(frame, theme, text_area, &entries);
             }
@@ -359,6 +367,9 @@ fn face_style(theme: &Theme, face: &Face_) -> Style {
         Face::Link(_) => theme.link,
         Face::Marker => theme.marker,
         Face::Quote => theme.quote,
+        Face::DiffAdded => theme.diff_plus,
+        Face::DiffRemoved => theme.diff_minus,
+        Face::DiffHeader => theme.diff_delta,
     };
     let mut style = base;
     if face.emphasis {
@@ -371,6 +382,14 @@ fn face_style(theme: &Theme, face: &Face_) -> Style {
         style = style.add_modifier(Modifier::CROSSED_OUT);
     }
     style
+}
+
+fn status_style(theme: &Theme, status: LineStatus) -> Style {
+    match status {
+        LineStatus::Added => theme.diff_plus,
+        LineStatus::Modified => theme.diff_delta,
+        LineStatus::Removed => theme.diff_minus,
+    }
 }
 
 fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
@@ -402,14 +421,22 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         let number = line
             .source_line()
             .map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"));
-        // Number, space, diff bar (empty until ADR 0006 lands), note cell.
+        // Number, space, diff bar (ADR 0006), note cell (ADR 0013).
+        let bar = view
+            .source_line_of_row(row)
+            .and_then(|line| view.line_status(line))
+            .map_or_else(
+                || Span::styled(" ", row_style),
+                |status| Span::styled("▎", status_style(theme, status).patch(row_style)),
+            );
         let note = mark.map_or_else(
             || Span::styled(" ", row_style),
             |kind| Span::styled("▎", mark_style(theme, kind).patch(row_style)),
         );
         let mut spans = vec![
             Span::styled(number, theme.line_number.patch(row_style)),
-            Span::styled("  ", theme.marker.patch(row_style)),
+            Span::styled(" ", theme.marker.patch(row_style)),
+            bar,
             note,
         ];
         let matches: Vec<_> = view.matches().iter().filter(|m| m.row == row).collect();
@@ -466,6 +493,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         "TREE".to_owned()
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
+    } else if view.diff_view() && mode == Mode::Normal {
+        "DIFF".to_owned()
     } else {
         mode.to_string()
     };
@@ -478,8 +507,12 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         0 => String::new(),
         n => format!("follow {n}  "),
     };
+    let changes = match view.diff_counts() {
+        None | Some((0, 0)) => String::new(),
+        Some((added, removed)) => format!("+{added} -{removed}  "),
+    };
     let right = format!(
-        " {line}:{col}  {}%  {threads}{followed}{} ",
+        " {line}:{col}  {}%  {changes}{threads}{followed}{} ",
         view.percent(),
         app.session()
     );

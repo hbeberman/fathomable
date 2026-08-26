@@ -74,6 +74,7 @@ pub struct Workspace {
 }
 
 struct Ignore {
+    repo: gix::Repository,
     stack: gix::worktree::Stack,
 }
 
@@ -147,6 +148,61 @@ impl Workspace {
     #[must_use]
     pub fn is_git(&self) -> bool {
         self.ignore.is_some()
+    }
+
+    /// The text of root-relative `relative` as committed at `HEAD`, the
+    /// diff base for the gutter and the diff view (ADR 0006).
+    ///
+    /// Returns `None` outside git, and `Some("")` for a file `HEAD` does
+    /// not have (unborn branch, untracked, or newly added), so every line
+    /// of it counts as added.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD` or the blob cannot be read,
+    /// or the blob is not UTF-8 text.
+    pub fn head_text(&self, relative: &Path) -> Result<Option<String>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(None);
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        let unborn = git
+            .repo
+            .head()
+            .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
+            .is_unborn();
+        if unborn {
+            tracing::debug!("HEAD is unborn; diff base is empty");
+            return Ok(Some(String::new()));
+        }
+        let tree = git
+            .repo
+            .head_tree()
+            .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+        let Some(entry) = tree.lookup_entry_by_path(relative).map_err(|error| {
+            fail(format!(
+                "cannot look up {} in HEAD: {error}",
+                relative.display()
+            ))
+        })?
+        else {
+            tracing::debug!(path = %relative.display(), "not in HEAD; diff base is empty");
+            return Ok(Some(String::new()));
+        };
+        if !entry.mode().is_blob() {
+            return Err(fail(
+                "HEAD has a directory or submodule at this path".to_owned(),
+            ));
+        }
+        let object = entry
+            .object()
+            .map_err(|error| fail(format!("cannot read blob from HEAD: {error}")))?;
+        String::from_utf8(object.detach().data)
+            .map(Some)
+            .map_err(|error| fail(format!("HEAD blob is not UTF-8 text: {error}")))
     }
 
     /// `path` relative to the root, or as given when it lies outside.
@@ -271,7 +327,10 @@ impl Ignore {
             .excludes(&index, None, Source::WorktreeThenIdMappingIfNotSkipped)
             .map_err(|error| format!("cannot read git ignore rules: {error}"))?
             .detach();
-        Ok(Self { stack })
+        Ok(Self {
+            repo: repo.clone(),
+            stack,
+        })
     }
 
     fn is_ignored(&mut self, relative: &Path, kind: EntryKind) -> bool {

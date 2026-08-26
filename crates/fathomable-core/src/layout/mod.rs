@@ -28,9 +28,14 @@ mod wrap;
 
 use std::ops::Range;
 
+use crate::diff::DiffKind;
+
 use blocks::{Align, Block, Inline, Item, Table};
 pub use text::{LineIndex, display_width};
 use wrap::{Chunk, wrap, wrap_hard};
+
+/// Unchanged lines shown around each hunk in the diff view, as `git diff`.
+const DIFF_CONTEXT: usize = 3;
 
 /// What a span is, for theming.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -50,6 +55,12 @@ pub enum Face {
     Marker,
     /// Quoted body text.
     Quote,
+    /// A line added against the diff base (ADR 0006).
+    DiffAdded,
+    /// A line removed against the diff base.
+    DiffRemoved,
+    /// A unified-diff hunk header.
+    DiffHeader,
 }
 
 /// Visual attributes of a span.
@@ -287,6 +298,60 @@ impl Layout {
             };
             let chunk = Chunk::new(&text[range.clone()], Style::default(), Some(range));
             lines.extend(wrap_hard(&chunk, width));
+        }
+        Self::finish(lines, width, index)
+    }
+
+    /// Lay out a unified diff of `old` against `new`, hard-wrapped to
+    /// `width` (ADR 0006).
+    ///
+    /// Context and added lines carry the source range of the line in
+    /// `new`, so the gutter numbers, the cursor, and annotation marks keep
+    /// working; removed lines and hunk headers have no source. When the
+    /// texts are identical the layout is one sourceless notice line.
+    #[must_use]
+    pub fn diff(old: &str, new: &str, width: usize) -> Self {
+        let index = LineIndex::new(new);
+        let diff = crate::diff::Diff::new(old, new);
+        let mut lines = Vec::new();
+        if diff.is_empty() {
+            let chunk = Chunk::new("no changes against the diff base", Style::marker(), None);
+            lines.extend(wrap_hard(&chunk, width));
+            return Self::finish(lines, width, index);
+        }
+        for entry in diff.unified(old, new, DIFF_CONTEXT) {
+            let (face, sign) = match entry.kind() {
+                DiffKind::Header => (Face::DiffHeader, ""),
+                DiffKind::Context => (Face::Text, " "),
+                DiffKind::Added => (Face::DiffAdded, "+"),
+                DiffKind::Removed => (Face::DiffRemoved, "-"),
+            };
+            let style = Style {
+                face,
+                ..Style::default()
+            };
+            let source = entry.new_line().and_then(|line| index.range_of(line));
+            // The sign is chrome, but it wears the line's face so the eye
+            // reads the whole row as one change; continuation rows of a
+            // wrapped line are indented under it.
+            let chunk = Chunk::new(entry.text(), style.clone(), source);
+            let mut wrapped = wrap_hard(&chunk, width.saturating_sub(sign.len()).max(1));
+            for (row, line) in wrapped.iter_mut().enumerate().filter(|_| !sign.is_empty()) {
+                let text = if row == 0 {
+                    sign.to_owned()
+                } else {
+                    " ".repeat(sign.len())
+                };
+                line.spans.insert(
+                    0,
+                    Span {
+                        text,
+                        style: style.clone(),
+                        source: None,
+                    },
+                );
+            }
+            lines.extend(wrapped);
         }
         Self::finish(lines, width, index)
     }

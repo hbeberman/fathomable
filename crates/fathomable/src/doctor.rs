@@ -10,6 +10,7 @@ use fathomable_core::XdgDirs;
 use fathomable_core::config::Config;
 use fathomable_core::session::Record;
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
+use fathomable_core::workspace::Workspace;
 
 /// Print diagnostics. Exit status is failure when any check fails.
 pub fn run(dirs: &XdgDirs) -> ExitCode {
@@ -63,6 +64,33 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
         Err(error) => {
             ok = false;
             println!("  FAIL  {error}");
+        }
+    }
+
+    match std::env::current_dir()
+        .map_err(|error| error.to_string())
+        .and_then(|cwd| Workspace::discover(&cwd).map_err(|error| error.to_string()))
+    {
+        Ok(workspace) if workspace.is_git() => {
+            // Any path will do: the probe reads HEAD, not the file.
+            match workspace.head_text(Path::new(".fathomable-doctor-probe")) {
+                Ok(_) => println!(
+                    "  ok    git work tree at {} (HEAD readable)",
+                    workspace.root().display()
+                ),
+                Err(error) => {
+                    ok = false;
+                    println!("  FAIL  git: {error}");
+                }
+            }
+        }
+        Ok(workspace) => println!(
+            "  ok    {} is not a git work tree; no diff gutter",
+            workspace.root().display()
+        ),
+        Err(error) => {
+            ok = false;
+            println!("  FAIL  workspace: {error}");
         }
     }
 

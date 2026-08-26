@@ -169,7 +169,7 @@ pub const SPACE_MENU: [(char, &str); 8] = [
 ];
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 28] = [
+pub const HELP: [(&str, &str); 30] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -185,6 +185,8 @@ pub const HELP: [(&str, &str); 28] = [
     ("thread r x n p j k", "reply, resolve, switch, scroll"),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
     ("gs", "toggle source view"),
+    ("gd / :diff", "toggle diff view against HEAD"),
+    ("]c / [c", "next / previous change"),
     ("[o / ]o", "previous / next opened file"),
     (":N", "go to source line N"),
     (":noh", "clear search highlight"),
@@ -494,6 +496,7 @@ impl App {
     fn show(&mut self, index: usize) {
         self.current = Some(index);
         self.focus = Focus::View;
+        self.refresh_base(index);
         self.refresh_marks(index);
         self.relayout();
         tracing::info!(path = %self.current_path().display(), "showing document");
@@ -534,10 +537,29 @@ impl App {
             Ok(true) => {
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
                 doc.view.reload(doc.document.text().to_owned());
+                self.refresh_base(index);
                 self.refresh_marks(index);
             }
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, "reload failed; keeping previous text"),
+        }
+    }
+
+    /// Re-read the `HEAD` text of the document at `index` as its diff base
+    /// (ADR 0006). A read failure is reported once and leaves no base.
+    fn refresh_base(&mut self, index: usize) {
+        let Some(doc) = self.docs.get(index) else {
+            return;
+        };
+        let base = match self.workspace.head_text(&doc.relative) {
+            Ok(base) => base,
+            Err(error) => {
+                self.notice(format!("no diff base: {error}"));
+                None
+            }
+        };
+        if let Some(doc) = self.docs.get_mut(index) {
+            doc.view.set_base(base);
         }
     }
 

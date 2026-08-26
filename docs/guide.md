@@ -52,6 +52,7 @@ shows the full list inside the app.
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
+| `gd` / `:diff`, `]c` `[c` | toggle unified diff against `HEAD`; next / previous change |
 | `V` or mouse drag, then `y` / `c` | select lines, then copy or comment |
 | `Space a`, `Space A`, `]a` `[a` | thread at cursor, pick a thread, next/previous thread |
 | thread panel `r` `x` `n` `p` `j` `k` | reply, resolve or reopen, switch, scroll |
@@ -74,7 +75,16 @@ outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
 
-## 5. Configuration and themes
+## 5. Changes against git
+
+Inside a git work tree the gutter bar shows what differs from `HEAD`: green
+for added lines, orange for changed ones, red on the line after a removal.
+`]c` and `[c` walk the changes, `gd` swaps the pane for a unified diff of
+the file (`gd` again returns), and the status line counts `+added -removed`
+lines. The base is re-read when you open, switch to, or the agent rewrites
+a file, so a fresh commit shows at the next change.
+
+## 6. Configuration and themes
 
 Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 (`~/.config/fathomable/config.kdl`):
@@ -90,7 +100,7 @@ run; `--config PATH` points at another config file. The theme file shape
 and the key vocabulary are in
 [0011](decisions/0011-theme-schema.md).
 
-## 6. Connect an agent
+## 7. Connect an agent
 
 Every running Fathomable is a *session*: it writes a record under
 `$XDG_STATE_HOME/fathomable/sessions/` and listens on a Unix socket in
@@ -119,7 +129,7 @@ in the same repository, and the tools are:
 Every tool accepts an optional `session` id. Details and the wire protocol
 are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
 
-## 7. When something is off
+## 8. When something is off
 
 ```sh
 fathomable --doctor        # terminal, directories, config, log locations

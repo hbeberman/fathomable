@@ -49,6 +49,20 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
   whether to warn or rate-limit. Origin: 0005.
 
+## Milestone 5 follow-ups
+
+- **"Last seen" diff base.** [0006](decisions/0006-git-access.md) names a
+  second base, the content snapshotted when the user last viewed the file;
+  milestone 5 shipped HEAD only. Needs the recency heuristic and snapshot
+  bounds below. Origin: milestone-5 scope decision (2026-08-26).
+- **Side-by-side diff view.** 0006 allows it; only unified shipped.
+- **Jumping between changed files** (`]f`-style) needs a workspace status
+  pass over the tree, and the sidebar could colour changed entries with the
+  same keys. Origin: 0006.
+- **Refreshing the diff base on commit.** The base is re-read on open,
+  switch, and reload; a commit while viewing shows until then. A watch on
+  `.git/HEAD` and the index would make it immediate. Origin: 0006.
+
 ## Milestone 1 scaffolding follow-ups
 
 - **TODO: remaining approved dependencies.** `syntect` (core) is approved by
@@ -70,8 +84,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   `Face::CodeBlock` spans without a language; the theme names the syntect
   theme via `code.syntect` ([0011](decisions/0011-theme-schema.md)) but
   nothing reads it yet. Origin: milestone-1 layout engine.
-- **TODO: `--doctor` remaining checks.** 0009 also lists git; that waits
-  on the git subsystem. Origin: milestone-1 scaffolding.
 - **TODO: automatic tree refresh.** The sidebar re-reads directories only
   on `R` or expand; a recursive workspace watch was skipped for inotify
   budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).

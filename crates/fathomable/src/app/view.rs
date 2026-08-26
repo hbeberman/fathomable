@@ -7,6 +7,7 @@
 use std::fmt;
 
 use fathomable_core::annotations::LineRange;
+use fathomable_core::diff::{Diff, LineStatus};
 use fathomable_core::layout::{Layout, LineIndex, display_width};
 use regex::Regex;
 
@@ -31,6 +32,18 @@ impl fmt::Display for Mode {
             Self::Search { .. } => "SRCH",
         })
     }
+}
+
+/// Which layout of the document the pane shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Display {
+    /// Rendered Markdown.
+    #[default]
+    Rendered,
+    /// The raw source (`gs`, ADR 0010).
+    Source,
+    /// A unified diff against the base (`gd`, ADR 0006).
+    Diff,
 }
 
 /// A position in rendered coordinates.
@@ -96,7 +109,11 @@ pub struct View {
     layout: Layout,
     width: usize,
     height: usize,
-    show_source: bool,
+    display: Display,
+    /// The diff base: the file as committed at `HEAD` (ADR 0006), `None`
+    /// outside git.
+    base: Option<String>,
+    diff: Option<Diff>,
     cursor: Cursor,
     want_col: usize,
     scroll: usize,
@@ -120,7 +137,9 @@ impl View {
             layout,
             width,
             height: height.max(1),
-            show_source: false,
+            display: Display::Rendered,
+            base: None,
+            diff: None,
             cursor: Cursor::default(),
             want_col: 0,
             scroll: 0,
@@ -181,7 +200,21 @@ impl View {
     }
 
     pub fn source_view(&self) -> bool {
-        self.show_source
+        self.display == Display::Source
+    }
+
+    pub fn diff_view(&self) -> bool {
+        self.display == Display::Diff
+    }
+
+    /// The gutter status of 1-based source line `line` against the base.
+    pub fn line_status(&self, line: usize) -> Option<LineStatus> {
+        self.diff.as_ref()?.status(line)
+    }
+
+    /// `(added, removed)` lines against the base, `None` outside git.
+    pub fn diff_counts(&self) -> Option<(usize, usize)> {
+        self.diff.as_ref().map(Diff::counts)
     }
 
     /// Progress through the document as a percentage of rendered lines.
@@ -216,13 +249,87 @@ impl View {
     pub fn reload(&mut self, text: String) {
         self.text = text;
         self.changed = true;
+        self.rediff();
         self.relayout();
+    }
+
+    /// Set the diff base, or clear it outside git; the gutter and the
+    /// diff view follow.
+    pub fn set_base(&mut self, base: Option<String>) {
+        if base == self.base {
+            return;
+        }
+        self.base = base;
+        self.rediff();
+        if self.display == Display::Diff {
+            self.relayout();
+        }
+    }
+
+    fn rediff(&mut self) {
+        self.diff = self.base.as_deref().map(|base| Diff::new(base, &self.text));
+        if let Some(diff) = &self.diff {
+            tracing::debug!(hunks = diff.hunks().len(), "diff against base");
+        }
     }
 
     /// Switch between rendered Markdown and the raw source.
     pub fn toggle_source_view(&mut self) {
-        self.show_source = !self.show_source;
+        self.display = match self.display {
+            Display::Source => Display::Rendered,
+            _ => Display::Source,
+        };
         self.relayout();
+    }
+
+    /// Switch between rendered Markdown and the unified diff against the
+    /// base (`gd`, `:diff`).
+    pub fn toggle_diff_view(&mut self) {
+        if self.base.is_none() {
+            self.message = Some("no diff base: not in a git repository".to_owned());
+            return;
+        }
+        self.display = match self.display {
+            Display::Diff => Display::Rendered,
+            _ => Display::Diff,
+        };
+        self.relayout();
+    }
+
+    /// `]c`: the cursor to the next change, wrapping to the first.
+    pub fn next_hunk(&mut self) {
+        self.jump_hunk(true);
+    }
+
+    /// `[c`: the cursor to the previous change, wrapping to the last.
+    pub fn prev_hunk(&mut self) {
+        self.jump_hunk(false);
+    }
+
+    fn jump_hunk(&mut self, forward: bool) {
+        let Some(diff) = &self.diff else {
+            self.message = Some("no diff base: not in a git repository".to_owned());
+            return;
+        };
+        let line = self.cursor_source_line().unwrap_or(0);
+        let found = if forward {
+            diff.next_hunk(line)
+        } else {
+            diff.prev_hunk(line)
+        };
+        let Some((hunk, wrapped)) = found else {
+            self.message = Some("no changes against HEAD".to_owned());
+            return;
+        };
+        let target = hunk.target_line(diff.new_lines());
+        if wrapped {
+            self.message = Some(if forward {
+                "wrapped to first change".to_owned()
+            } else {
+                "wrapped to last change".to_owned()
+            });
+        }
+        self.goto_source_line(target);
     }
 
     fn relayout(&mut self) {
@@ -230,10 +337,10 @@ impl View {
         // above the cursor does not drag it onto unrelated text (ADR 0010).
         let (line, column) = self.source_position();
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
-        self.layout = if self.show_source {
-            Layout::source(&self.text, self.width)
-        } else {
-            Layout::render(&self.text, self.width)
+        self.layout = match (self.display, self.base.as_deref()) {
+            (Display::Source, _) => Layout::source(&self.text, self.width),
+            (Display::Diff, Some(base)) => Layout::diff(base, &self.text, self.width),
+            (Display::Rendered | Display::Diff, _) => Layout::render(&self.text, self.width),
         };
         let index = self.layout.index();
         let line = line.min(index.line_count());
@@ -625,6 +732,10 @@ impl View {
                 self.toggle_source_view();
                 Effect::None
             }
+            "diff" => {
+                self.toggle_diff_view();
+                Effect::None
+            }
             "" => Effect::None,
             number if number.chars().all(|c| c.is_ascii_digit()) => {
                 if let Ok(line) = number.parse::<usize>() {
@@ -941,6 +1052,67 @@ mod tests {
         assert!(v.matches().is_empty());
         v.escape();
         assert_eq!(v.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn diff_base_drives_gutter_status_hunk_jumps_and_the_diff_view() {
+        use fathomable_core::diff::LineStatus;
+
+        let mut v = view();
+        assert_eq!(v.diff_counts(), None);
+        assert_eq!(v.line_status(1), None);
+        v.next_hunk();
+        assert_eq!(v.message(), Some("no diff base: not in a git repository"));
+        v.toggle_diff_view();
+        assert!(!v.diff_view(), "no base, no diff view");
+
+        // The committed text lacked "- two" and had a different last line.
+        v.set_base(Some(
+            "# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned(),
+        ));
+        assert_eq!(v.line_status(6), Some(LineStatus::Added));
+        assert_eq!(v.line_status(9), Some(LineStatus::Modified));
+        assert_eq!(v.line_status(1), None);
+        assert_eq!(v.diff_counts(), Some((2, 1)));
+
+        v.next_hunk();
+        assert_eq!(v.source_position().0, 6);
+        v.next_hunk();
+        assert_eq!(v.source_position().0, 9);
+        v.next_hunk();
+        assert_eq!(v.source_position().0, 6);
+        assert_eq!(v.message(), Some("wrapped to first change"));
+        v.prev_hunk();
+        assert_eq!(v.source_position().0, 9);
+        assert_eq!(v.message(), Some("wrapped to last change"));
+
+        v.toggle_diff_view();
+        assert!(v.diff_view());
+        assert_eq!(v.source_position().0, 9, "toggle keeps the source line");
+        let texts: Vec<String> = v
+            .layout()
+            .lines()
+            .iter()
+            .map(fathomable_core::layout::Line::text)
+            .collect();
+        assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "-last word here"), "{texts:?}");
+        v.start_command();
+        for ch in "diff".chars() {
+            v.input_char(ch);
+        }
+        v.confirm();
+        assert!(!v.diff_view());
+
+        // A reload against the same base re-diffs; an identical text is clean.
+        v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
+        assert_eq!(v.diff_counts(), Some((0, 0)));
+        v.toggle_diff_view();
+        assert_eq!(v.layout().lines().len(), 1);
+        v.set_base(None);
+        assert_eq!(v.diff_counts(), None);
+        assert!(v.diff_view(), "display sticks; layout falls back");
+        assert!(v.layout().lines().len() > 1);
     }
 
     #[test]

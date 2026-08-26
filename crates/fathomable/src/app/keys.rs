@@ -32,6 +32,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             (']', KeyCode::Char('o')) => app.history_forward(),
             ('[', KeyCode::Char('a')) => app.prev_annotation(),
             (']', KeyCode::Char('a')) => app.next_annotation(),
+            ('[', KeyCode::Char('c')) => app.view_mut().prev_hunk(),
+            (']', KeyCode::Char('c')) => app.view_mut().next_hunk(),
             _ => {}
         }
         return Effect::None;
@@ -178,6 +180,7 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
             match key.code {
                 KeyCode::Char('g') => view.goto_top(),
                 KeyCode::Char('s') => view.toggle_source_view(),
+                KeyCode::Char('d') => view.toggle_diff_view(),
                 _ => {}
             }
         }

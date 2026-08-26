@@ -180,6 +180,11 @@ pub enum Key {
     DiffPlus,
     DiffDelta,
     DiffMinus,
+    AnnotationOpen,
+    AnnotationResolved,
+    AnnotationResolvedAuto,
+    AnnotationDetached,
+    AnnotationLine,
     MarkupHeading,
     /// One heading level, 1 through 6; falls back to [`Key::MarkupHeading`].
     MarkupHeadingLevel(u8),
@@ -191,7 +196,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 26] = [
+    const NAMED: [(&'static str, Self); 31] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -212,6 +217,11 @@ impl Key {
         ("diff.plus", Self::DiffPlus),
         ("diff.delta", Self::DiffDelta),
         ("diff.minus", Self::DiffMinus),
+        ("annotation.open", Self::AnnotationOpen),
+        ("annotation.resolved", Self::AnnotationResolved),
+        ("annotation.resolved.auto", Self::AnnotationResolvedAuto),
+        ("annotation.detached", Self::AnnotationDetached),
+        ("annotation.line", Self::AnnotationLine),
         ("markup.heading", Self::MarkupHeading),
         ("markup.raw.inline", Self::MarkupRawInline),
         ("markup.raw.block", Self::MarkupRawBlock),

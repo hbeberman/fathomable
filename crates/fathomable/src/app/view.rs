@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use fathomable_core::annotations::LineRange;
 use fathomable_core::layout::{Layout, LineIndex, display_width};
 use regex::Regex;
 
@@ -398,11 +399,54 @@ impl View {
         self.mode = Mode::Select;
     }
 
-    /// Finish a mouse selection: copy it (ADR 0010) and return to normal mode.
-    pub fn release(&mut self) -> Effect {
-        let effect = self.copy_selection();
-        self.mode = Mode::Normal;
-        effect
+    /// Finish a mouse selection: it stays highlighted in select mode so
+    /// `y` can copy it or `c` can annotate it (ADR 0013 amends 0010).
+    pub fn release(&mut self) {
+        if self.selection.is_some() {
+            self.mode = Mode::Select;
+        }
+    }
+
+    /// Drop the selection and return to normal mode.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+        if self.mode == Mode::Select {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// The 1-based source line rendered row `row` came from, if any.
+    pub fn source_line_of_row(&self, row: usize) -> Option<usize> {
+        let line = self.layout.lines().get(row)?;
+        let range = line.source()?;
+        Some(self.layout.index().line_of(range.start))
+    }
+
+    /// The source line under the cursor, or the nearest one above it.
+    pub fn cursor_source_line(&self) -> Option<usize> {
+        (0..=self.cursor.row)
+            .rev()
+            .find_map(|row| self.source_line_of_row(row))
+    }
+
+    /// Every source line rendered row `row` came from (a wrapped paragraph
+    /// is one row for several lines).
+    pub fn source_lines_of_row(&self, row: usize) -> Option<LineRange> {
+        let line = self.layout.lines().get(row)?;
+        let range = line.source()?;
+        let index = self.layout.index();
+        let last = index.line_of(range.end.max(range.start + 1) - 1);
+        Some(LineRange::new(index.line_of(range.start), last))
+    }
+
+    /// The source lines the selection covers, whichever way it was made.
+    pub fn selected_lines(&self) -> Option<LineRange> {
+        let (start, end) = self.selection?.ordered();
+        let first = (start.row..=end.row).find_map(|row| self.source_lines_of_row(row))?;
+        let last = (start.row..=end.row)
+            .rev()
+            .find_map(|row| self.source_lines_of_row(row))?;
+        Some(LineRange::new(first.start(), last.end()))
     }
 
     /// Start a keyboard line selection (`V`).
@@ -700,6 +744,8 @@ fn ceil_char(text: &str, mut offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_core::annotations::LineRange;
+
     use super::{Cursor, Effect, Mode, View};
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
@@ -782,17 +828,40 @@ mod tests {
     }
 
     #[test]
-    fn mouse_drag_copies_source_slice_on_release() {
+    fn mouse_drag_stays_selected_until_yanked() {
         let mut v = view();
         // Click on "beta" (row 2, col 6) then drag to the end of "one".
         v.click(2, 6);
         v.drag(4, 4);
-        assert_eq!(v.mode(), Mode::Select);
-        assert_eq!(v.release(), Effect::Copy("beta\n\n- one".to_owned()));
+        v.release();
+        assert_eq!(v.mode(), Mode::Select, "release does not copy (ADR 0013)");
+        assert_eq!(v.selected_lines(), Some(LineRange::new(3, 5)));
+        assert_eq!(v.yank(), Effect::Copy("beta\n\n- one".to_owned()));
+        assert_eq!(v.mode(), Mode::Normal);
         // Dragging inside emphasis maps back to the raw markup.
         v.click(8, 5);
         v.drag(8, 8);
-        assert_eq!(v.release(), Effect::Copy("word".to_owned()));
+        v.release();
+        assert_eq!(v.yank(), Effect::Copy("word".to_owned()));
+    }
+
+    #[test]
+    fn source_lines_are_found_from_rendered_rows() {
+        let mut v = view();
+        assert_eq!(v.source_line_of_row(0), Some(1));
+        assert_eq!(v.cursor_source_line(), Some(1));
+        v.move_down(1);
+        assert_eq!(
+            v.cursor_source_line(),
+            Some(1),
+            "blank row falls back upward"
+        );
+        v.select_lines();
+        v.move_down(3);
+        assert_eq!(v.selected_lines(), Some(LineRange::new(3, 5)));
+        v.clear_selection();
+        assert_eq!(v.mode(), Mode::Normal);
+        assert!(v.selection().is_none());
     }
 
     #[test]

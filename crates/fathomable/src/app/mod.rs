@@ -8,6 +8,7 @@
 mod clipboard;
 mod keys;
 mod socket;
+mod threads;
 mod ui;
 mod view;
 
@@ -17,11 +18,15 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use fathomable_core::Document;
+use fathomable_core::annotations::{Store, ThreadId};
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::session::Record;
 use fathomable_core::theme::Theme;
@@ -32,6 +37,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 
+pub use threads::{Compose, Mark, ThreadPanel};
 use view::{Effect, View};
 
 /// How long to wait after a change notification before re-reading, so an
@@ -48,6 +54,7 @@ const SIDEBAR_SCROLLOFF: usize = 2;
 const WELCOME: &str = "# Fathomable\n\nNo file is open.\n\n\
 - `Space f` opens the file picker\n\
 - `Space e` opens the tree\n\
+- `V` or a mouse drag selects lines; `y` copies, `c` comments\n\
 - `Space ?` lists every key\n\
 - `:q` quits\n";
 
@@ -67,6 +74,8 @@ pub enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
+    /// Threads on the current document (ADR 0013).
+    Threads,
 }
 
 /// The open picker popup.
@@ -77,6 +86,8 @@ pub struct PickerState {
     input: String,
     matches: Vec<Match>,
     selected: usize,
+    /// Thread behind each item, for [`PickerKind::Threads`].
+    ids: Vec<ThreadId>,
 }
 
 impl PickerState {
@@ -89,7 +100,13 @@ impl PickerState {
             input: String::new(),
             matches,
             selected: 0,
+            ids: Vec::new(),
         }
+    }
+
+    fn with_ids(mut self, ids: Vec<ThreadId>) -> Self {
+        self.ids = ids;
+        self
     }
 
     pub fn kind(&self) -> PickerKind {
@@ -130,30 +147,42 @@ pub enum Popup {
     Space,
     /// Every key binding.
     Help,
-    /// A file or recent-document picker.
+    /// A file, recent-document, or thread picker.
     Picker(PickerState),
+    /// The comment box (ADR 0013).
+    Compose(Compose),
+    /// A thread being read.
+    Thread(ThreadPanel),
 }
 
 /// One space-menu entry: key, label.
-pub const SPACE_MENU: [(char, &str); 6] = [
+pub const SPACE_MENU: [(char, &str); 8] = [
     ('e', "toggle tree focus"),
     ('E', "hide tree"),
     ('f', "open file"),
     ('F', "open file (incl. ignored)"),
     ('o', "recent files"),
+    ('a', "thread at cursor"),
+    ('A', "threads in file"),
     ('?', "all keys"),
 ];
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 22] = [
+pub const HELP: [(&str, &str); 28] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
     ("Ctrl-d / Ctrl-u", "half page down / up"),
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
-    ("V", "select lines, y copies"),
-    ("mouse drag", "select and copy"),
+    ("V / mouse drag", "select lines / cells"),
+    ("y (selected)", "copy source to clipboard"),
+    ("c (selected)", "comment on the selection"),
+    ("Space a", "read thread at cursor"),
+    ("Space A", "pick a thread in this file"),
+    ("]a / [a", "next / previous thread"),
+    ("thread r x n p j k", "reply, resolve, switch, scroll"),
+    ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
     ("gs", "toggle source view"),
     ("[o / ]o", "previous / next opened file"),
     (":N", "go to source line N"),
@@ -175,6 +204,7 @@ struct Doc {
     document: Document,
     relative: PathBuf,
     view: View,
+    marks: Vec<Mark>,
 }
 
 /// All application state.
@@ -198,11 +228,19 @@ pub struct App {
     width: usize,
     height: usize,
     session: String,
+    store: Option<Store>,
 }
 
 impl App {
-    /// Start with no document open, for a terminal of `width` by `height`.
-    pub fn new(workspace: Workspace, width: usize, height: usize, session: String) -> Self {
+    /// Start with no document open, for a terminal of `width` by `height`;
+    /// `store` is `None` when the thread file could not be opened.
+    pub fn new(
+        workspace: Workspace,
+        width: usize,
+        height: usize,
+        session: String,
+        store: Option<Store>,
+    ) -> Self {
         let mut app = Self {
             workspace,
             docs: Vec::new(),
@@ -222,6 +260,7 @@ impl App {
             width,
             height,
             session,
+            store,
         };
         app.relayout();
         app
@@ -344,6 +383,7 @@ impl App {
                         document,
                         relative: relative.clone(),
                         view,
+                        marks: Vec::new(),
                     });
                     self.docs.len() - 1
                 }
@@ -362,6 +402,7 @@ impl App {
     fn show(&mut self, index: usize) {
         self.current = Some(index);
         self.focus = Focus::View;
+        self.refresh_marks(index);
         self.relayout();
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
@@ -389,17 +430,19 @@ impl App {
     /// Re-read a document whose file changed on disk; `absolute` is the
     /// watcher's path.
     pub fn reload(&mut self, absolute: &Path) {
-        let Some(doc) = self
+        let Some(index) = self
             .docs
-            .iter_mut()
-            .find(|doc| doc.document.path() == absolute)
+            .iter()
+            .position(|doc| doc.document.path() == absolute)
         else {
             return;
         };
+        let doc = &mut self.docs[index];
         match doc.document.reload() {
             Ok(true) => {
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
                 doc.view.reload(doc.document.text().to_owned());
+                self.refresh_marks(index);
             }
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, "reload failed; keeping previous text"),
@@ -571,6 +614,8 @@ impl App {
             'f' => self.open_picker(PickerKind::Files),
             'F' => self.open_picker(PickerKind::AllFiles),
             'o' => self.open_picker(PickerKind::Recent),
+            'a' => self.open_thread_at_cursor(),
+            'A' => self.open_thread_picker(),
             '?' => self.open_help(),
             _ => {}
         }
@@ -589,6 +634,10 @@ impl App {
                     }
                 }
                 seen
+            }
+            PickerKind::Threads => {
+                self.open_thread_picker();
+                return;
             }
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
@@ -636,17 +685,20 @@ impl App {
         }
     }
 
-    /// Enter in the picker: open the selection.
+    /// Enter in the picker: open the file, or show the thread.
     pub fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
-            picker
-                .matches
-                .get(picker.selected)
-                .map(|m| picker.item(m).to_owned())
+            let m = picker.matches.get(picker.selected)?;
+            let id = picker.ids.get(m.index()).cloned();
+            Some((picker.kind, picker.item(m).to_owned(), id))
         });
         self.popup = None;
-        if let Some(path) = choice {
-            self.open(Path::new(&path));
+        match choice {
+            Some((PickerKind::Threads, _, Some(id))) => self.show_thread(id),
+            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path, _)) => {
+                self.open(Path::new(&path));
+            }
+            _ => {}
         }
     }
 }
@@ -658,10 +710,12 @@ pub struct Options<'a> {
     pub open: Option<PathBuf>,
     pub record: &'a Record,
     pub theme: &'a Theme,
+    /// The workspace's thread store, or `None` when it could not be opened.
+    pub store: Option<Store>,
 }
 
 /// Run the app until the user quits.
-pub fn run(workspace: Workspace, options: &Options<'_>) -> anyhow::Result<()> {
+pub fn run(workspace: Workspace, options: Options<'_>) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -670,19 +724,36 @@ pub fn run(workspace: Workspace, options: &Options<'_>) -> anyhow::Result<()> {
 }
 
 /// Restores the terminal on drop so a panic or error never leaves raw mode on.
-struct TerminalGuard;
+struct TerminalGuard {
+    /// Whether keyboard enhancement flags were pushed and must be popped.
+    enhanced: bool,
+}
 
 impl TerminalGuard {
     fn enter() -> anyhow::Result<Self> {
         enable_raw_mode().context("cannot enable raw mode")?;
         crossterm::execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)
             .context("cannot enter alternate screen")?;
-        Ok(Self)
+        // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
+        // the comment box (ADR 0013); terminals without it still get Alt-Enter.
+        let enhanced = matches!(
+            crossterm::terminal::supports_keyboard_enhancement(),
+            Ok(true)
+        ) && crossterm::execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )
+        .is_ok();
+        tracing::info!(enhanced, "keyboard enhancement");
+        Ok(Self { enhanced })
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        if self.enhanced {
+            let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        }
         let _ = crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         let _ = disable_raw_mode();
     }
@@ -771,12 +842,14 @@ fn serve_socket(record: &Record) -> Option<socket::Serving> {
     }
 }
 
-async fn run_async(workspace: Workspace, options: &Options<'_>) -> anyhow::Result<()> {
-    let mut input_rx = spawn_input()?;
+async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result<()> {
     let (mut doc_watcher, mut reload_rx) = DocWatcher::new()?;
     let _socket = serve_socket(options.record);
 
+    // The guard queries the terminal, so it must run before the input
+    // thread starts consuming responses.
     let _guard = TerminalGuard::enter()?;
+    let mut input_rx = spawn_input()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
     let theme = ui::Theme::from_core(options.theme);
@@ -786,6 +859,7 @@ async fn run_async(workspace: Workspace, options: &Options<'_>) -> anyhow::Resul
         usize::from(size.width),
         usize::from(size.height),
         options.record.id().to_string(),
+        options.store,
     );
     if let Some(path) = &options.open {
         app.open(path);
@@ -875,7 +949,7 @@ mod tests {
 
     fn app(dir: &TempDir) -> Result<App, WorkspaceError> {
         let workspace = Workspace::discover(&dir.0)?;
-        Ok(App::new(workspace, 100, 30, "test".to_owned()))
+        Ok(App::new(workspace, 100, 30, "test".to_owned(), None))
     }
 
     fn picker_items(app: &App) -> Vec<String> {

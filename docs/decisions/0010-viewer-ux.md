@@ -43,7 +43,8 @@ viewer, the layout engine, and later themes agree.
 ### Gutter
 
 - Left of the text, always reserved, never shifting content:
-  `[line number][diff bar] text`.
+  `[line number][diff bar] text`. [0013](0013-annotation-storage-and-ux.md)
+  (2026-08-26) adds a fourth cell for annotations after the diff bar.
 - The line number is the **absolute source line** of the first source byte the
   rendered line came from. Wrapped continuation lines and synthesised lines
   show a blank number. Width is the digit count of the largest source line
@@ -73,8 +74,11 @@ viewer, the layout engine, and later themes agree.
 
 - Mouse drag selects like a terminal: the anchor is the press position, the
   head follows the pointer, both in rendered row-and-column coordinates.
-  Releasing the button **copies immediately**, no `y` needed. The selection
-  stays highlighted until the next click, Esc, or a motion.
+  Releasing the button originally **copied immediately**; since
+  [0013](0013-annotation-storage-and-ux.md) (2026-08-26) release leaves the
+  selection in `SEL` mode and `y` copies, so a drag can also start a
+  comment with `c`. The selection stays highlighted until the next click,
+  Esc, or a motion.
 - What is copied is the **source Markdown** for the selected range: the
   rendered cells map back through their source ranges and the slice of the
   source text from the first selected byte to the last is placed on the

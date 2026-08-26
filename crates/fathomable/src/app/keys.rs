@@ -30,6 +30,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
         match (pending, key.code) {
             ('[', KeyCode::Char('o')) => app.history_back(),
             (']', KeyCode::Char('o')) => app.history_forward(),
+            ('[', KeyCode::Char('a')) => app.prev_annotation(),
+            (']', KeyCode::Char('a')) => app.next_annotation(),
             _ => {}
         }
         return Effect::None;
@@ -60,6 +62,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
                 app.set_pending(Some(']'));
                 Effect::None
             }
+            KeyCode::Char('c') if mode == Mode::Select => {
+                app.start_comment();
+                Effect::None
+            }
             _ => normal(app.view_mut(), key, ctrl),
         },
     }
@@ -72,6 +78,29 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
             _ => app.close_popup(),
         },
         Some(Popup::Help) => app.close_popup(),
+        Some(Popup::Compose(_)) => {
+            let submit = key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+            match key.code {
+                KeyCode::Esc => app.compose_cancel(),
+                KeyCode::Enter if submit => app.compose_submit(),
+                KeyCode::Enter => app.compose_newline(),
+                KeyCode::Backspace => app.compose_backspace(),
+                KeyCode::Char(ch) if !ctrl => app.compose_char(ch),
+                _ => {}
+            }
+        }
+        Some(Popup::Thread(_)) => match key.code {
+            KeyCode::Esc => app.close_popup(),
+            KeyCode::Char('j') | KeyCode::Down => app.thread_scroll(1),
+            KeyCode::Char('k') | KeyCode::Up => app.thread_scroll(-1),
+            KeyCode::Char('n') => app.thread_step(1),
+            KeyCode::Char('p') => app.thread_step(-1),
+            KeyCode::Char('r') => app.thread_reply(),
+            KeyCode::Char('x') => app.thread_toggle_resolved(),
+            _ => {}
+        },
         Some(Popup::Picker(_)) => match (key.code, ctrl) {
             (KeyCode::Esc, _) => app.close_popup(),
             (KeyCode::Enter, _) => app.picker_confirm(),
@@ -211,9 +240,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
         MouseEventKind::ScrollUp => view.scroll_by(-WHEEL_LINES),
         MouseEventKind::Down(MouseButton::Left) if row < rows => view.click(row, col),
         MouseEventKind::Drag(MouseButton::Left) => view.drag(row.min(rows.saturating_sub(1)), col),
-        MouseEventKind::Up(MouseButton::Left) if view.selection().is_some() => {
-            return view.release();
-        }
+        MouseEventKind::Up(MouseButton::Left) => view.release(),
         _ => {}
     }
     Effect::None

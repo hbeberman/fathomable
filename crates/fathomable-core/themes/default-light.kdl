@@ -46,6 +46,12 @@ colors {
     "diff.delta"           fg="orange"
     "diff.minus"           fg="red"
 
+    "annotation.open"          fg="yellow"
+    "annotation.resolved"      fg="green"
+    "annotation.resolved.auto" fg="orange"
+    "annotation.detached"      fg="red"
+    "annotation.line"          bg="#fff6d6"
+
     "markup.heading"       fg="purple" mods="bold"
     "markup.raw.inline"    fg="orange"
     "markup.raw.block"     fg="teal"

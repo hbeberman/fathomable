@@ -16,3 +16,4 @@ supersede rather than edit history.
 - [0010 Viewer UX conventions](0010-viewer-ux.md)
 - [0011 Theme schema](0011-theme-schema.md)
 - [0012 Workspace mode](0012-workspace-mode.md)
+- [0013 Annotation storage and UX](0013-annotation-storage-and-ux.md)

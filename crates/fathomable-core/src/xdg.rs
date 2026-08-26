@@ -3,7 +3,7 @@
 //! library only (ADR 0001 and 0008).
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The application subdirectory under each XDG base directory.
 pub const APP_DIR: &str = "fathomable";
@@ -72,6 +72,21 @@ impl XdgDirs {
     #[must_use]
     pub fn sessions_dir(&self) -> PathBuf {
         self.state_dir().join("sessions")
+    }
+
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>`, the per-workspace
+    /// state directory (ADR 0005); `hash` is the short SHA-256 of `root`.
+    #[must_use]
+    pub fn workspace_dir(&self, root: &Path) -> PathBuf {
+        let hash = crate::annotations::short_hash(root.as_os_str().as_encoded_bytes());
+        self.state_dir().join("workspaces").join(hash)
+    }
+
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`.
+    #[must_use]
+    pub fn threads_file(&self, root: &Path) -> PathBuf {
+        self.workspace_dir(root)
+            .join(crate::annotations::THREADS_FILE)
     }
 
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.

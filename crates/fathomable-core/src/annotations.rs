@@ -1,0 +1,917 @@
+// @okf-doc: /decisions/0013-annotation-storage-and-ux.md
+//! Annotation threads, content anchors, and the append-only JSONL store.
+//!
+//! A [`Thread`] is one user comment on a [`LineRange`] of a workspace file
+//! plus its replies (ADR 0005). Threads are keyed to content, not position:
+//! an [`Anchor`] records a short hash of every annotated line and of the
+//! lines immediately above and below, and [`Thread::locate`] finds the range
+//! again after the file changes. When the lines are gone the thread is
+//! [`Placement::Detached`] at its last known range rather than lost.
+//!
+//! Every change is one JSON line appended to `threads.jsonl` under the
+//! workspace's state directory (ADR 0013); [`Store::open`] folds the file
+//! back into threads. Timestamps are supplied by the caller so the module
+//! stays pure and testable.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use fathomable_core::annotations::{Draft, LineRange, Store};
+//!
+//! let mut store = Store::open("/tmp/threads.jsonl")?;
+//! let text = "# Title\n\nalpha\nbeta\n";
+//! let draft = Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename these");
+//! let id = store.annotate(draft, text, 1_700_000_000)?;
+//! assert_eq!(store.thread(&id).map(|t| t.snippet()), Some("alpha\nbeta"));
+//! # Ok::<(), fathomable_core::annotations::StoreError>(())
+//! ```
+
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+/// The record format version written in every event line.
+pub const FORMAT_VERSION: u32 = 1;
+
+/// File name of the thread store inside a workspace state directory.
+pub const THREADS_FILE: &str = "threads.jsonl";
+
+/// Hex characters kept from a SHA-256 digest; 64 bits is plenty to tell
+/// lines of one file apart and keeps the JSONL readable.
+const HASH_CHARS: usize = 16;
+
+/// Short content hash of one line, ignoring trailing whitespace.
+#[must_use]
+pub fn line_hash(line: &str) -> String {
+    short_hash(line.trim_end().as_bytes())
+}
+
+/// Sixteen hex characters of the SHA-256 of `bytes`.
+#[must_use]
+pub fn short_hash(bytes: &[u8]) -> String {
+    use fmt::Write as _;
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(HASH_CHARS);
+    for byte in digest.iter().take(HASH_CHARS / 2) {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// An inclusive range of 1-based source lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct LineRange {
+    start: usize,
+    end: usize,
+}
+
+impl LineRange {
+    /// A range from `a` to `b` inclusive, in either order; 0 is clamped to 1.
+    #[must_use]
+    pub fn new(a: usize, b: usize) -> Self {
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        Self {
+            start: start.max(1),
+            end: end.max(1),
+        }
+    }
+
+    /// First line, 1-based.
+    #[must_use]
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Last line, 1-based and inclusive.
+    #[must_use]
+    pub fn end(&self) -> usize {
+        self.end
+    }
+
+    /// Number of lines covered.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.end - self.start + 1
+    }
+
+    /// Always `false`: a range covers at least one line.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Whether `line` lies inside the range.
+    #[must_use]
+    pub fn contains(&self, line: usize) -> bool {
+        (self.start..=self.end).contains(&line)
+    }
+}
+
+impl fmt::Display for LineRange {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.start == self.end {
+            write!(f, "{}", self.start)
+        } else {
+            write!(f, "{}-{}", self.start, self.end)
+        }
+    }
+}
+
+/// Content hashes that re-locate an annotated range after edits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Anchor {
+    lines: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    before: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    after: Option<String>,
+}
+
+impl Anchor {
+    /// Hash `range` of `text` plus one line of context on each side.
+    ///
+    /// Returns `None` when the range runs past the end of the text.
+    #[must_use]
+    pub fn capture(text: &str, range: LineRange) -> Option<Self> {
+        let lines: Vec<&str> = text.lines().collect();
+        if range.end > lines.len() {
+            return None;
+        }
+        let hashes = lines[range.start - 1..range.end]
+            .iter()
+            .map(|line| line_hash(line))
+            .collect();
+        Some(Self {
+            lines: hashes,
+            before: (range.start > 1).then(|| line_hash(lines[range.start - 2])),
+            after: lines.get(range.end).map(|line| line_hash(line)),
+        })
+    }
+
+    /// Find the range in `text` whose lines hash like this anchor.
+    ///
+    /// When several windows match, the one whose surrounding lines also
+    /// match wins; ties go to the window closest to `hint`. `None` means the
+    /// exact lines no longer exist.
+    #[must_use]
+    pub fn locate(&self, text: &str, hint: LineRange) -> Option<LineRange> {
+        let n = self.lines.len();
+        if n == 0 {
+            return None;
+        }
+        let hashes: Vec<String> = text.lines().map(line_hash).collect();
+        if hashes.len() < n {
+            return None;
+        }
+        let mut best: Option<(usize, usize, usize)> = None;
+        for (start, window) in hashes.windows(n).enumerate() {
+            if window != self.lines.as_slice() {
+                continue;
+            }
+            let before_ok = match &self.before {
+                Some(hash) => start > 0 && hashes[start - 1] == *hash,
+                None => start == 0,
+            };
+            let after_ok = match &self.after {
+                Some(hash) => hashes.get(start + n) == Some(hash),
+                None => start + n == hashes.len(),
+            };
+            let context = usize::from(before_ok) + usize::from(after_ok);
+            let distance = (start + 1).abs_diff(hint.start);
+            let candidate = (context, distance, start);
+            let better = best.is_none_or(|(c, d, _)| context > c || (context == c && distance < d));
+            if better {
+                best = Some(candidate);
+            }
+        }
+        best.map(|(_, _, start)| LineRange::new(start + 1, start + n))
+    }
+}
+
+/// Where a thread sits in the current text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// The annotated lines were found here.
+    Anchored(LineRange),
+    /// The lines are gone; this is the last known range.
+    Detached(LineRange),
+}
+
+impl Placement {
+    /// The range to draw at, anchored or not.
+    #[must_use]
+    pub fn range(&self) -> LineRange {
+        match self {
+            Self::Anchored(range) | Self::Detached(range) => *range,
+        }
+    }
+
+    /// Whether the annotated lines no longer exist.
+    #[must_use]
+    pub fn is_detached(&self) -> bool {
+        matches!(self, Self::Detached(_))
+    }
+}
+
+/// Identifier of a thread, unique within one store.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ThreadId(String);
+
+impl ThreadId {
+    /// The id as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ThreadId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Who wrote a reply or resolved a thread.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum Author {
+    /// The person at the keyboard.
+    User,
+    /// An agent, by the name it supplied.
+    Agent(String),
+}
+
+impl Author {
+    /// Whether this is the user rather than an agent.
+    #[must_use]
+    pub fn is_user(&self) -> bool {
+        matches!(self, Self::User)
+    }
+}
+
+impl fmt::Display for Author {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User => f.write_str("user"),
+            Self::Agent(name) => f.write_str(name),
+        }
+    }
+}
+
+impl From<String> for Author {
+    fn from(name: String) -> Self {
+        if name == "user" {
+            Self::User
+        } else {
+            Self::Agent(name)
+        }
+    }
+}
+
+impl From<Author> for String {
+    fn from(author: Author) -> Self {
+        author.to_string()
+    }
+}
+
+/// One reply in a thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Reply {
+    author: Author,
+    created: u64,
+    body: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    proposed_resolved: bool,
+}
+
+impl Reply {
+    /// A reply by `author` at `created` (Unix seconds).
+    #[must_use]
+    pub fn new(author: Author, created: u64, body: impl Into<String>) -> Self {
+        Self {
+            author,
+            created,
+            body: body.into(),
+            proposed_resolved: false,
+        }
+    }
+
+    /// Mark the reply as proposing that the thread be resolved.
+    #[must_use]
+    pub fn proposing_resolution(mut self) -> Self {
+        self.proposed_resolved = true;
+        self
+    }
+
+    /// Who wrote it.
+    #[must_use]
+    pub fn author(&self) -> &Author {
+        &self.author
+    }
+
+    /// When it was written, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// The reply text.
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Whether the author proposed resolving the thread.
+    #[must_use]
+    pub fn proposes_resolution(&self) -> bool {
+        self.proposed_resolved
+    }
+}
+
+/// Whether a thread is open or how it was closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Status {
+    /// Awaiting action.
+    Open,
+    /// Resolved by the user.
+    Resolved,
+    /// Force-resolved by an agent (ADR 0005 `auto_resolved`).
+    AutoResolved,
+}
+
+/// An annotation with its replies and status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    id: ThreadId,
+    path: PathBuf,
+    range: LineRange,
+    snippet: String,
+    anchor: Anchor,
+    created: u64,
+    comment: String,
+    replies: Vec<Reply>,
+    status: Status,
+}
+
+impl Thread {
+    /// The thread id.
+    #[must_use]
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
+    /// Workspace-relative path of the annotated file.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The range as it was when the annotation was made.
+    #[must_use]
+    pub fn range(&self) -> LineRange {
+        self.range
+    }
+
+    /// The annotated source lines, without the trailing newline.
+    #[must_use]
+    pub fn snippet(&self) -> &str {
+        &self.snippet
+    }
+
+    /// The content anchor.
+    #[must_use]
+    pub fn anchor(&self) -> &Anchor {
+        &self.anchor
+    }
+
+    /// When the annotation was made, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// The user's comment.
+    #[must_use]
+    pub fn comment(&self) -> &str {
+        &self.comment
+    }
+
+    /// Replies in the order they were made.
+    #[must_use]
+    pub fn replies(&self) -> &[Reply] {
+        &self.replies
+    }
+
+    /// Open, resolved, or auto-resolved.
+    #[must_use]
+    pub fn status(&self) -> Status {
+        self.status
+    }
+
+    /// Where the thread sits in `text` now.
+    #[must_use]
+    pub fn locate(&self, text: &str) -> Placement {
+        match self.anchor.locate(text, self.range) {
+            Some(range) => Placement::Anchored(range),
+            None => Placement::Detached(self.range),
+        }
+    }
+}
+
+/// What the user supplies to start a thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Draft {
+    path: PathBuf,
+    range: LineRange,
+    comment: String,
+}
+
+impl Draft {
+    /// A comment on `range` of the workspace-relative `path`.
+    #[must_use]
+    pub fn new(path: &Path, range: LineRange, comment: impl Into<String>) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            range,
+            comment: comment.into(),
+        }
+    }
+}
+
+/// One line of the JSONL file.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+enum Event {
+    Annotate {
+        v: u32,
+        id: ThreadId,
+        path: PathBuf,
+        range: LineRange,
+        snippet: String,
+        anchor: Anchor,
+        created: u64,
+        comment: String,
+    },
+    Reply {
+        v: u32,
+        thread: ThreadId,
+        #[serde(flatten)]
+        reply: Reply,
+    },
+    Resolve {
+        v: u32,
+        thread: ThreadId,
+        by: Author,
+        created: u64,
+    },
+    Reopen {
+        v: u32,
+        thread: ThreadId,
+        created: u64,
+    },
+}
+
+/// The threads of one workspace, backed by an append-only JSONL file.
+#[derive(Debug)]
+pub struct Store {
+    path: PathBuf,
+    threads: Vec<Thread>,
+}
+
+impl Store {
+    /// Load the store at `path`, or start empty when the file is missing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the file cannot be read, a line is not a
+    /// known event, or an event refers to a thread the file never created.
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
+        let path = path.into();
+        let mut store = Self {
+            path,
+            threads: Vec::new(),
+        };
+        let text = match fs::read_to_string(&store.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(store),
+            Err(error) => return Err(StoreError::io(&store.path, error)),
+        };
+        for (index, line) in text.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: Event = serde_json::from_str(line)
+                .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
+            store
+                .apply(event)
+                .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
+        }
+        tracing::debug!(path = %store.path.display(), threads = store.threads.len(), "loaded threads");
+        Ok(store)
+    }
+
+    /// Where the JSONL file lives.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Every thread, oldest first.
+    #[must_use]
+    pub fn threads(&self) -> &[Thread] {
+        &self.threads
+    }
+
+    /// Threads on the workspace-relative `path`, oldest first.
+    pub fn for_path<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Thread> + 'a {
+        self.threads
+            .iter()
+            .filter(move |thread| thread.path == path)
+    }
+
+    /// The thread with `id`, if any.
+    #[must_use]
+    pub fn thread(&self, id: &ThreadId) -> Option<&Thread> {
+        self.threads.iter().find(|thread| thread.id == *id)
+    }
+
+    /// Start a thread from `draft` over the file's current `text` at `now`
+    /// (Unix seconds); the snippet and anchor are captured from `text`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the range runs past the end of `text` or
+    /// the file cannot be appended to.
+    pub fn annotate(&mut self, draft: Draft, text: &str, now: u64) -> Result<ThreadId, StoreError> {
+        let anchor = Anchor::capture(text, draft.range).ok_or(StoreError {
+            kind: ErrorKind::BadRange(draft.range),
+        })?;
+        let snippet = text
+            .lines()
+            .skip(draft.range.start - 1)
+            .take(draft.range.len())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let id = ThreadId(format!(
+            "{now}-{}-{}",
+            std::process::id(),
+            self.threads.len() + 1
+        ));
+        self.commit(Event::Annotate {
+            v: FORMAT_VERSION,
+            id: id.clone(),
+            path: draft.path,
+            range: draft.range,
+            snippet,
+            anchor,
+            created: now,
+            comment: draft.comment,
+        })?;
+        Ok(id)
+    }
+
+    /// Append `reply` to the thread `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn reply(&mut self, id: &ThreadId, reply: Reply) -> Result<(), StoreError> {
+        self.commit(Event::Reply {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            reply,
+        })
+    }
+
+    /// Resolve the thread `id`; an agent author marks it auto-resolved.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn resolve(&mut self, id: &ThreadId, by: Author, now: u64) -> Result<(), StoreError> {
+        self.commit(Event::Resolve {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            by,
+            created: now,
+        })
+    }
+
+    /// Reopen the thread `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn reopen(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
+        self.commit(Event::Reopen {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            created: now,
+        })
+    }
+
+    /// Apply an event in memory, then append it; the file is only written
+    /// when the event is valid.
+    fn commit(&mut self, event: Event) -> Result<(), StoreError> {
+        let line = serde_json::to_string(&event).map_err(|error| StoreError {
+            kind: ErrorKind::Parse(0, error.to_string()),
+        })?;
+        self.apply(event)?;
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|error| StoreError::io(&self.path, error))?;
+        writeln!(file, "{line}").map_err(|error| StoreError::io(&self.path, error))
+    }
+
+    fn apply(&mut self, event: Event) -> Result<(), StoreError> {
+        match event {
+            Event::Annotate {
+                id,
+                path,
+                range,
+                snippet,
+                anchor,
+                created,
+                comment,
+                ..
+            } => {
+                self.threads.push(Thread {
+                    id,
+                    path,
+                    range,
+                    snippet,
+                    anchor,
+                    created,
+                    comment,
+                    replies: Vec::new(),
+                    status: Status::Open,
+                });
+            }
+            Event::Reply { thread, reply, .. } => self.thread_mut(&thread)?.replies.push(reply),
+            Event::Resolve { thread, by, .. } => {
+                self.thread_mut(&thread)?.status = if by.is_user() {
+                    Status::Resolved
+                } else {
+                    Status::AutoResolved
+                };
+            }
+            Event::Reopen { thread, .. } => self.thread_mut(&thread)?.status = Status::Open,
+        }
+        Ok(())
+    }
+
+    fn thread_mut(&mut self, id: &ThreadId) -> Result<&mut Thread, StoreError> {
+        self.threads
+            .iter_mut()
+            .find(|thread| thread.id == *id)
+            .ok_or_else(|| StoreError {
+                kind: ErrorKind::UnknownThread(id.clone()),
+            })
+    }
+}
+
+#[derive(Debug)]
+enum ErrorKind {
+    Io(PathBuf, io::Error),
+    Parse(usize, String),
+    UnknownThread(ThreadId),
+    BadRange(LineRange),
+}
+
+/// Why the store could not be read or written.
+#[derive(Debug)]
+pub struct StoreError {
+    kind: ErrorKind,
+}
+
+impl StoreError {
+    fn io(path: &Path, error: io::Error) -> Self {
+        Self {
+            kind: ErrorKind::Io(path.to_path_buf(), error),
+        }
+    }
+
+    fn parse(line: usize, message: String) -> Self {
+        Self {
+            kind: ErrorKind::Parse(line, message),
+        }
+    }
+
+    /// Whether the cause was an I/O failure.
+    #[must_use]
+    pub fn is_io(&self) -> bool {
+        matches!(self.kind, ErrorKind::Io(..))
+    }
+
+    /// Whether the cause was a malformed line; carries its 1-based number.
+    #[must_use]
+    pub fn parse_line(&self) -> Option<usize> {
+        match self.kind {
+            ErrorKind::Parse(line, _) => Some(line),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for StoreError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.kind {
+            ErrorKind::Io(path, error) => write!(f, "{}: {error}", path.display()),
+            ErrorKind::Parse(line, message) => write!(f, "threads.jsonl line {line}: {message}"),
+            ErrorKind::UnknownThread(id) => write!(f, "unknown thread {id}"),
+            ErrorKind::BadRange(range) => write!(f, "lines {range} are past the end of the file"),
+        }
+    }
+}
+
+impl std::error::Error for StoreError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            ErrorKind::Io(_, error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        Anchor, Author, Draft, LineRange, Placement, Reply, Status, Store, StoreError, line_hash,
+    };
+
+    const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
+
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "fathomable-annotations-{name}-{}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            Self(dir.join("nested").join("threads.jsonl"))
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            if let Some(dir) = self.0.parent().and_then(Path::parent) {
+                let _ = fs::remove_dir_all(dir);
+            }
+        }
+    }
+
+    #[test]
+    fn line_hash_ignores_trailing_whitespace_only() {
+        assert_eq!(line_hash("alpha"), line_hash("alpha  \t"));
+        assert_ne!(line_hash("alpha"), line_hash(" alpha"));
+        assert_eq!(line_hash("x").len(), 16);
+    }
+
+    #[test]
+    fn line_range_orders_and_displays() {
+        let range = LineRange::new(5, 3);
+        assert_eq!((range.start(), range.end(), range.len()), (3, 5, 3));
+        assert!(range.contains(4) && !range.contains(6));
+        assert_eq!(range.to_string(), "3-5");
+        assert_eq!(LineRange::new(0, 0).to_string(), "1");
+    }
+
+    #[test]
+    fn anchor_follows_moved_lines_and_detaches_when_gone() -> Result<(), String> {
+        let range = LineRange::new(3, 4);
+        let anchor = Anchor::capture(TEXT, range).ok_or("capture")?;
+        assert_eq!(anchor.locate(TEXT, range), Some(range));
+        let moved = "# Title\n\nintro\nmore intro\n\nalpha\nbeta\ngamma\n";
+        assert_eq!(anchor.locate(moved, range), Some(LineRange::new(6, 7)));
+        let edited = "# Title\n\nalpha\nBETA\ngamma\n";
+        assert_eq!(anchor.locate(edited, range), None);
+        assert_eq!(Anchor::capture(TEXT, LineRange::new(7, 9)), None);
+        Ok(())
+    }
+
+    #[test]
+    fn anchor_prefers_matching_context_then_nearest() -> Result<(), String> {
+        // Two identical "item" lines; context picks the one after "two".
+        let text = "one\nitem\ntwo\nitem\nthree\n";
+        let anchor = Anchor::capture(text, LineRange::new(4, 4)).ok_or("capture")?;
+        let shifted = "zero\none\nitem\ntwo\nitem\nthree\n";
+        assert_eq!(
+            anchor.locate(shifted, LineRange::new(4, 4)),
+            Some(LineRange::new(5, 5))
+        );
+        // No context matches anywhere: nearest to the hint wins.
+        let stripped = "item\nx\nitem\ny\nitem\n";
+        assert_eq!(
+            anchor.locate(stripped, LineRange::new(4, 4)),
+            Some(LineRange::new(3, 3))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
+        let file = TempFile::new("roundtrip");
+        let mut store = Store::open(&file.0)?;
+        let draft = Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename");
+        let id = store.annotate(draft, TEXT, 100)?;
+        store.reply(
+            &id,
+            Reply::new(Author::Agent("claude".to_owned()), 101, "done").proposing_resolution(),
+        )?;
+        let other = store.annotate(
+            Draft::new(Path::new("docs/guide.md"), LineRange::new(1, 1), "hmm"),
+            TEXT,
+            102,
+        )?;
+        store.resolve(&other, Author::Agent("bot".to_owned()), 103)?;
+        store.resolve(&id, Author::User, 104)?;
+        store.reopen(&id, 105)?;
+
+        let again = Store::open(&file.0)?;
+        assert_eq!(again.threads(), store.threads());
+        let thread = again
+            .thread(&id)
+            .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
+        assert_eq!(thread.snippet(), "alpha\nbeta");
+        assert_eq!(thread.comment(), "rename");
+        assert_eq!(thread.status(), Status::Open);
+        assert_eq!(thread.replies().len(), 1);
+        assert!(thread.replies()[0].proposes_resolution());
+        assert_eq!(thread.replies()[0].author().to_string(), "claude");
+        assert_eq!(
+            again.thread(&other).map(super::Thread::status),
+            Some(Status::AutoResolved)
+        );
+        assert_eq!(again.for_path(Path::new("README.md")).count(), 1);
+
+        let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+        assert_eq!(raw.lines().count(), 6);
+        assert!(raw.lines().all(|line| line.contains("\"v\":1")));
+        assert!(raw.contains("\"author\":\"claude\""));
+        Ok(())
+    }
+
+    #[test]
+    fn store_rejects_bad_ranges_unknown_threads_and_bad_lines() -> Result<(), StoreError> {
+        let file = TempFile::new("errors");
+        let mut store = Store::open(&file.0)?;
+        let draft = Draft::new(Path::new("a.md"), LineRange::new(9, 9), "x");
+        let range_error = store.annotate(draft, TEXT, 1).err();
+        assert!(range_error.is_some_and(|e| e.to_string().contains('9')));
+        let ghost = super::ThreadId("nope".to_owned());
+        let ghost_error = store.reopen(&ghost, 1).err();
+        assert!(ghost_error.is_some_and(|e| e.to_string().contains("nope")));
+        assert!(!file.0.exists(), "invalid events are never written");
+
+        if let Some(parent) = file.0.parent() {
+            fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
+        }
+        fs::write(&file.0, "{\"event\":\"dance\"}\n").map_err(|e| StoreError::io(&file.0, e))?;
+        let Err(error) = Store::open(&file.0) else {
+            return Err(StoreError::parse(0, "accepted garbage".into()));
+        };
+        assert_eq!(error.parse_line(), Some(1));
+        assert!(!error.is_io());
+        Ok(())
+    }
+
+    #[test]
+    fn thread_locate_reports_placement() -> Result<(), StoreError> {
+        let file = TempFile::new("placement");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(5, 5), "gamma?"),
+            TEXT,
+            1,
+        )?;
+        let thread = store.thread(&id).cloned();
+        let thread = thread.ok_or_else(|| StoreError::parse(0, "lost".into()))?;
+        assert_eq!(
+            thread.locate(TEXT),
+            Placement::Anchored(LineRange::new(5, 5))
+        );
+        let placement = thread.locate("nothing here\n");
+        assert!(placement.is_detached());
+        assert_eq!(placement.range(), LineRange::new(5, 5));
+        Ok(())
+    }
+}

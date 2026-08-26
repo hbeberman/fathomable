@@ -49,14 +49,15 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 1 scaffolding follow-ups
 
-- **TODO: remaining approved dependencies.** `syntect`, `sha2` (core) and
-  `rmcp` (binary) are approved by
+- **TODO: remaining approved dependencies.** `syntect` (core) and `rmcp`
+  (binary) are approved by
   [0001](decisions/0001-dependency-policy.md) but not yet added: the
   `unused-dependencies` gate (`cargo udeps`) rejects a dependency with no
   consumer, and bypassing hooks is not allowed. Add each one in the commit
   that first uses it. Origin: milestone-1 scaffolding handoff (2026-08-26);
   list trimmed after milestone 2 added `gix`, `serde`, `serde_json`,
-  `nucleo-matcher`, `notify`, `tokio`, and `ratatui`.
+  `nucleo-matcher`, `notify`, `tokio`, and `ratatui`, and milestone 3
+  added `sha2`.
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
@@ -73,8 +74,15 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: automatic tree refresh.** The sidebar re-reads directories only
   on `R` or expand; a recursive workspace watch was skipped for inotify
   budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).
-- **TODO: `--dump-state` and `--replay-log`.** Wait on annotations and a
-  log reader; `--sessions` and `--config-show` work. Origin: 0012.
+- **TODO: `--dump-state` and `--replay-log`.** Wait on a log reader;
+  `--sessions` and `--config-show` work. Origin: 0012.
+- **TODO: annotations path override.** Threads live only under XDG state
+  ([0013](decisions/0013-annotation-storage-and-ux.md)); a `config.kdl`
+  node pointing at an in-workspace file would let a repo share threads.
+  Origin: 0013 question round.
+- **TODO: comment box editing keys.** The box only appends and
+  backspaces; no cursor movement inside the text, no paste handling.
+  Origin: 0013.
 - **TODO: remove the session record on SIGTERM/SIGHUP.** Only a clean quit
   removes the record and socket; a killed session leaves both until the
   next start sweeps dead pids. A signal handler needs `tokio`'s `signal`

@@ -41,6 +41,9 @@ across many agent sessions, in files any agent can read.
   Fathomable.
 - Agents read threads via the MCP `annotations_list` tool and reply via
   `thread_reply`; there is no push. The user tells the agent when to check.
+- The file format, the anchor algorithm, the comment-box keys, and the
+  viewer side (gutter mark, thread panel, `c`, `Space a`) are fixed in
+  [0013](0013-annotation-storage-and-ux.md) (2026-08-26).
 
 ## Consequences
 

@@ -47,7 +47,7 @@ Approved core set:
 | `anyhow`, `thiserror` | dtolnay | errors |
 | `tracing`, `tracing-subscriber` | Tokio org | diagnostics |
 | `unicode-width`, `unicode-segmentation` | unicode-rs org | text layout |
-| `sha2` | RustCrypto org | content hashes for anchors |
+| `sha2` | RustCrypto org | content hashes for anchors ([0013](0013-annotation-storage-and-ux.md), added 2026-08-26) |
 | `regex` | rust-lang org (BurntSushi) | `/` and `?` search patterns ([0010](0010-viewer-ux.md)) |
 | `nucleo-matcher` | helix-editor org | fuzzy file picker matching ([0012](0012-workspace-mode.md), added 2026-08-26) |
 

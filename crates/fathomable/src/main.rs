@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use fathomable_core::XdgDirs;
+use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
 use fathomable_core::session::{Id, Record};
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
@@ -123,12 +124,23 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     record.write(dirs)?;
     tracing::info!(id = %record.id(), root = %record.root().display(), "session recorded");
 
+    let store = match Store::open(dirs.threads_file(workspace.root())) {
+        Ok(store) => {
+            tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
+            Some(store)
+        }
+        Err(error) => {
+            tracing::error!(%error, "cannot open the thread store; annotations disabled");
+            None
+        }
+    };
     let result = app::run(
         workspace,
-        &app::Options {
+        app::Options {
             open,
             record: &record,
             theme: &theme,
+            store,
         },
     );
     if let Err(error) = record.remove(dirs) {

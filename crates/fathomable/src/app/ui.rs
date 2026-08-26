@@ -8,8 +8,17 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph};
 
+use fathomable_core::annotations::Status;
+
+use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
 use super::{App, Focus, HELP, PickerState, Popup, SPACE_MENU};
+
+/// Most rows the comment box grows to before it scrolls.
+const COMPOSE_MAX_ROWS: usize = 8;
+
+/// Snippet lines quoted at the top of the thread panel.
+const SNIPPET_ROWS: usize = 3;
 
 /// Ratatui styles for the chrome and Markdown faces.
 ///
@@ -40,6 +49,11 @@ pub struct Theme {
     pub popup_key: Style,
     pub picker_match: Style,
     pub picker_selected: Style,
+    pub annotation_open: Style,
+    pub annotation_resolved: Style,
+    pub annotation_auto: Style,
+    pub annotation_detached: Style,
+    pub annotation_line: Style,
 }
 
 impl Theme {
@@ -73,6 +87,11 @@ impl Theme {
             popup_key: style(Key::UiPopupKey),
             picker_match: style(Key::UiPickerMatch),
             picker_selected: style(Key::UiPickerSelected),
+            annotation_open: style(Key::AnnotationOpen),
+            annotation_resolved: style(Key::AnnotationResolved),
+            annotation_auto: style(Key::AnnotationResolvedAuto),
+            annotation_detached: style(Key::AnnotationDetached),
+            annotation_line: style(Key::AnnotationLine),
         }
     }
 }
@@ -127,10 +146,11 @@ fn convert_color(color: fathomable_core::theme::Color) -> Color {
     }
 }
 
-/// Width of the gutter: line numbers, a space, and the diff bar cell.
+/// Width of the gutter: line numbers, a space, the diff bar cell, and the
+/// annotation cell (ADR 0013).
 pub fn gutter_width(view: &View) -> usize {
     let digits = view.index().line_count().max(1).to_string().len();
-    digits + 2
+    digits + 3
 }
 
 fn u16_of(value: usize) -> u16 {
@@ -168,7 +188,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         );
     }
     frame.render_widget(
-        Paragraph::new(text_lines(view, theme, gutter, rows)).style(theme.text),
+        Paragraph::new(text_lines(app, theme, gutter, rows)).style(theme.text),
         text_area,
     );
     frame.render_widget(
@@ -182,6 +202,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
         }
+        Some(Popup::Compose(compose)) => draw_compose(frame, app, theme, text_area, compose),
+        Some(Popup::Thread(panel)) => draw_thread(frame, app, theme, text_area, panel),
         None => {
             if view.pending() == Some('g') {
                 let entries = vec![
@@ -335,26 +357,44 @@ fn face_style(theme: &Theme, face: &Face_) -> Style {
     style
 }
 
-fn text_lines<'a>(view: &'a View, theme: &Theme, gutter: usize, rows: usize) -> Vec<Line<'a>> {
-    let digits = gutter - 2;
+fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
+    match kind {
+        MarkKind::Open => theme.annotation_open,
+        MarkKind::Resolved => theme.annotation_resolved,
+        MarkKind::AutoResolved => theme.annotation_auto,
+        MarkKind::Detached => theme.annotation_detached,
+    }
+}
+
+fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Vec<Line<'a>> {
+    let view = app.view();
+    let digits = gutter - 3;
     let cursor = view.cursor();
     let selection = view.selection();
     let lines = view.layout().lines();
     let mut out = Vec::with_capacity(rows);
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
         let is_cursor = row == cursor.row;
-        let row_style = if is_cursor {
-            theme.cursorline
-        } else {
-            Style::default()
-        };
+        let mark = view.source_lines_of_row(row).and_then(|n| app.mark_in(n));
+        let mut row_style = Style::default();
+        if mark.is_some() {
+            row_style = row_style.patch(theme.annotation_line);
+        }
+        if is_cursor {
+            row_style = row_style.patch(theme.cursorline);
+        }
         let number = line
             .source_line()
             .map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"));
-        // Number, space, diff bar (empty until ADR 0006 lands).
+        // Number, space, diff bar (empty until ADR 0006 lands), note cell.
+        let note = mark.map_or_else(
+            || Span::styled(" ", row_style),
+            |kind| Span::styled("▎", mark_style(theme, kind).patch(row_style)),
+        );
         let mut spans = vec![
             Span::styled(number, theme.line_number.patch(row_style)),
             Span::styled("  ", theme.marker.patch(row_style)),
+            note,
         ];
         let matches: Vec<_> = view.matches().iter().filter(|m| m.row == row).collect();
         let mut col = 0;
@@ -414,7 +454,15 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         mode.to_string()
     };
     let (line, col) = view.source_position();
-    let right = format!(" {line}:{col}  {}%  {} ", view.percent(), app.session());
+    let threads = match app.thread_counts() {
+        (_, 0) => String::new(),
+        (open, total) => format!("{open}/{total} threads  "),
+    };
+    let right = format!(
+        " {line}:{col}  {}%  {threads}{} ",
+        view.percent(),
+        app.session()
+    );
     // Keep the right-hand block visible by trimming the path from the left.
     let fixed = display_width(&label) + 3 + display_width(&right) + 8;
     let path = app.current_path().to_string_lossy();
@@ -540,6 +588,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Files => "files",
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
+        super::PickerKind::Threads => "threads",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
@@ -594,6 +643,214 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }
 
+/// The comment box: grows up from the status line (ADR 0005, 0013).
+fn draw_compose(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, compose: &Compose) {
+    let title = match compose.target() {
+        ComposeTarget::New(range) => format!(" comment on L{range}"),
+        ComposeTarget::Reply(id) => {
+            let range = app
+                .marks()
+                .iter()
+                .find(|m| m.id() == id)
+                .map_or_else(String::new, |m| format!(" on L{}", m.range()));
+            format!(" reply{range}")
+        }
+    };
+    let hint = "  Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel";
+    let width = usize::from(pane.width);
+    let text: Vec<&str> = compose.text().split('\n').collect();
+    let rows = (text.len() + 1)
+        .min(COMPOSE_MAX_ROWS)
+        .min(usize::from(pane.height));
+    if rows < 2 {
+        return;
+    }
+    let body_rows = rows - 1;
+    let first = text.len().saturating_sub(body_rows);
+    let mut lines = vec![Line::from(vec![
+        Span::styled(title, theme.popup_key),
+        Span::styled(fit(hint, width), theme.info),
+    ])];
+    for line in &text[first..] {
+        lines.push(Line::from(Span::raw(fit(&format!(" {line}"), width))));
+    }
+    let area = Rect {
+        x: pane.x,
+        y: pane.y + pane.height - u16_of(rows),
+        width: pane.width,
+        height: u16_of(rows),
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
+    let last = text.last().copied().unwrap_or_default();
+    let col = (1 + display_width(last)).min(width.saturating_sub(1));
+    frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(rows - 1)));
+}
+
+/// The thread panel: header, quoted snippet, comment, replies.
+fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect, panel: &ThreadPanel) {
+    let Some(thread) = app.thread(panel.id()) else {
+        return;
+    };
+    let width = usize::from(pane.width);
+    let inner = width.saturating_sub(2);
+    let rows = usize::from(pane.height / 3).clamp(6, usize::from(pane.height.max(1)));
+    let mark = app.marks().iter().find(|m| m.id() == thread.id());
+    let (index, total) = panel.position();
+    let status = match (mark.map(super::threads::Mark::kind), thread.status()) {
+        (Some(MarkKind::Detached), _) => "detached",
+        (_, Status::Open) => "open",
+        (_, Status::Resolved) => "resolved",
+        (_, Status::AutoResolved) => "auto-resolved",
+    };
+    let range = mark.map_or_else(|| thread.range().to_string(), |m| m.range().to_string());
+    let which = if total > 1 {
+        format!("thread {index}/{total}")
+    } else {
+        "thread".to_owned()
+    };
+    let hint = "  r reply · x resolve/reopen · n/p switch · j/k scroll · Esc";
+    let mut lines = vec![Line::from(vec![
+        Span::styled(format!(" {which}  L{range}  {status}"), theme.popup_key),
+        Span::styled(hint, theme.info),
+    ])];
+    let mut body: Vec<Line<'_>> = Vec::new();
+    let snippet: Vec<&str> = thread.snippet().lines().collect();
+    for line in snippet.iter().take(SNIPPET_ROWS) {
+        body.push(Line::from(Span::styled(
+            fit(&format!(" │ {line}"), width),
+            theme.info,
+        )));
+    }
+    if snippet.len() > SNIPPET_ROWS {
+        body.push(Line::from(Span::styled(" │ …", theme.info)));
+    }
+    body.push(Line::from(""));
+    body.extend(message_lines(
+        theme,
+        "user",
+        thread.created(),
+        thread.comment(),
+        "",
+        inner,
+    ));
+    for reply in thread.replies() {
+        body.push(Line::from(""));
+        let tag = if reply.proposes_resolution() {
+            "  proposes resolving"
+        } else {
+            ""
+        };
+        body.extend(message_lines(
+            theme,
+            &reply.author().to_string(),
+            reply.created(),
+            reply.body(),
+            tag,
+            inner,
+        ));
+    }
+    let body_rows = rows - 1;
+    let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
+    lines.extend(body.into_iter().skip(scroll).take(body_rows));
+    let area = Rect {
+        x: pane.x,
+        y: pane.y + pane.height - u16_of(rows),
+        width: pane.width,
+        height: u16_of(rows),
+    };
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
+}
+
+/// `author  time[tag]` then the wrapped body, indented one cell.
+fn message_lines<'a>(
+    theme: &Theme,
+    author: &str,
+    created: u64,
+    body: &str,
+    tag: &str,
+    width: usize,
+) -> Vec<Line<'a>> {
+    let mut out = vec![Line::from(vec![
+        Span::styled(format!(" {author}"), theme.popup_key),
+        Span::styled(format!("  {}{tag}", format_time(created)), theme.info),
+    ])];
+    for paragraph in body.lines() {
+        for line in wrap(paragraph, width.saturating_sub(1).max(1)) {
+            out.push(Line::from(Span::raw(format!(" {line}"))));
+        }
+    }
+    out
+}
+
+/// Greedy word wrap to `width` cells; words longer than a line are split.
+fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut lines = vec![String::new()];
+    for word in text.split_whitespace() {
+        let mut word = word.to_owned();
+        loop {
+            let current = lines
+                .last_mut()
+                .unwrap_or_else(|| unreachable!("always one line"));
+            let sep = usize::from(!current.is_empty());
+            if display_width(current) + sep + display_width(&word) <= width {
+                if sep == 1 {
+                    current.push(' ');
+                }
+                current.push_str(&word);
+                break;
+            }
+            if current.is_empty() {
+                // Split a word that cannot fit on an empty line.
+                let mut taken = String::new();
+                let mut rest = String::new();
+                for ch in word.chars() {
+                    if rest.is_empty()
+                        && display_width(&taken) + display_width(&ch.to_string()) <= width
+                    {
+                        taken.push(ch);
+                    } else {
+                        rest.push(ch);
+                    }
+                }
+                if taken.is_empty() {
+                    taken = rest.chars().take(1).collect();
+                    rest = rest.chars().skip(1).collect();
+                }
+                current.push_str(&taken);
+                if rest.is_empty() {
+                    break;
+                }
+                word = rest;
+            }
+            lines.push(String::new());
+        }
+    }
+    lines
+}
+
+/// `YYYY-MM-DD HH:MM` in UTC from Unix seconds (Howard Hinnant's civil-date
+/// algorithm; no calendar crate needed for a timestamp label).
+fn format_time(secs: u64) -> String {
+    let days = i64::try_from(secs / 86_400).unwrap_or(0);
+    let rem = secs % 86_400;
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}",
+        rem / 3600,
+        (rem % 3600) / 60
+    )
+}
+
 fn centred(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(area.width);
     let height = height.min(area.height);
@@ -602,5 +859,24 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
         y: area.y + (area.height - height) / 3,
         width,
         height,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_time, wrap};
+
+    #[test]
+    fn wraps_words_and_splits_long_ones() {
+        assert_eq!(wrap("the quick brown fox", 9), ["the quick", "brown fox"]);
+        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(wrap("", 4), [""]);
+    }
+
+    #[test]
+    fn formats_unix_seconds_as_utc() {
+        assert_eq!(format_time(0), "1970-01-01 00:00");
+        assert_eq!(format_time(1_700_000_000), "2023-11-14 22:13");
+        assert_eq!(format_time(951_782_400), "2000-02-29 00:00");
     }
 }

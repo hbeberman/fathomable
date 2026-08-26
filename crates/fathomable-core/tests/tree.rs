@@ -1,0 +1,193 @@
+//! Behaviour of the workspace listing and sidebar tree (ADR 0012).
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use fathomable_core::tree::{Activation, Row, Tree};
+use fathomable_core::workspace::{EntryKind, Filter, Workspace};
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> std::io::Result<Self> {
+        let dir =
+            std::env::temp_dir().join(format!("fathomable-tree-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src/nested"))?;
+        fs::create_dir_all(dir.join(".git"))?;
+        fs::create_dir_all(dir.join(".hidden"))?;
+        fs::write(dir.join("README.md"), "# Readme\n")?;
+        fs::write(dir.join("b.txt"), "")?;
+        fs::write(dir.join("A.txt"), "")?;
+        fs::write(dir.join("src/main.rs"), "")?;
+        fs::write(dir.join("src/nested/deep.rs"), "")?;
+        Ok(Self(dir))
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn names(tree: &Tree) -> Vec<String> {
+    tree.rows()
+        .iter()
+        .map(|row| format!("{}{}", "  ".repeat(row.depth()), row.name()))
+        .collect()
+}
+
+#[test]
+fn plain_directory_lists_dirs_first_and_hides_git() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("plain")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    assert!(!workspace.is_git());
+    let entries: Vec<_> = workspace
+        .list_dir("")?
+        .into_iter()
+        .map(|e| e.name().to_owned())
+        .collect();
+    assert_eq!(entries, [".hidden", "src", "A.txt", "b.txt", "README.md"]);
+    assert_eq!(
+        workspace.walk_files(Filter::Visible),
+        [
+            "A.txt",
+            "b.txt",
+            "README.md",
+            "src/main.rs",
+            "src/nested/deep.rs"
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("nav")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    assert_eq!(
+        names(&tree),
+        [".hidden", "src", "A.txt", "b.txt", "README.md"]
+    );
+
+    tree.move_down(1);
+    assert_eq!(tree.activate(&mut workspace)?, Some(Activation::Toggled));
+    assert_eq!(names(&tree)[1..4], ["src", "  nested", "  main.rs"]);
+    tree.expand(&mut workspace)?;
+    assert_eq!(tree.current().map(Row::name), Some("nested"));
+    tree.expand(&mut workspace)?;
+    tree.expand(&mut workspace)?;
+    assert_eq!(
+        tree.activate(&mut workspace)?,
+        Some(Activation::Open(PathBuf::from("src/nested/deep.rs")))
+    );
+
+    tree.collapse();
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src/nested")));
+    tree.collapse();
+    assert!(!tree.current().is_some_and(Row::expanded));
+    tree.collapse();
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src")));
+    tree.goto_bottom();
+    assert_eq!(tree.current().map(Row::name), Some("README.md"));
+    tree.goto_top();
+    assert_eq!(tree.cursor(), 0);
+    Ok(())
+}
+
+#[test]
+fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("reveal")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    assert!(tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?);
+    assert_eq!(tree.current().map(Row::name), Some("deep.rs"));
+    assert!(!tree.reveal(&mut workspace, Path::new("src/gone.rs"))?);
+
+    fs::write(dir.0.join("src/nested/new.rs"), "")?;
+    tree.refresh(&mut workspace)?;
+    assert!(names(&tree).contains(&"    new.rs".to_owned()));
+    assert_eq!(
+        tree.current().map(Row::name),
+        Some("deep.rs"),
+        "cursor survives refresh"
+    );
+    Ok(())
+}
+
+/// A minimal repository gix can discover: HEAD, config, and empty
+/// object and ref stores, so the test never depends on host git.
+fn init_git(dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir.join(".git/objects"))?;
+    fs::create_dir_all(dir.join(".git/refs/heads"))?;
+    fs::write(dir.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+    fs::write(
+        dir.join(".git/config"),
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = false\n",
+    )
+}
+
+#[test]
+fn git_workspace_roots_at_the_repository_and_ignores_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("git")?;
+    init_git(&dir.0)?;
+    fs::write(dir.0.join(".gitignore"), "target/\n*.log\n!keep.log\n")?;
+    fs::create_dir_all(dir.0.join("target/debug"))?;
+    fs::write(dir.0.join("src/nested/.gitignore"), "deep.rs\n")?;
+    fs::write(dir.0.join("src/app.log"), "")?;
+    fs::write(dir.0.join("src/keep.log"), "")?;
+
+    let mut workspace = Workspace::discover(dir.0.join("src/nested"))?;
+    assert!(workspace.is_git());
+    assert_eq!(workspace.root(), dir.0.canonicalize()?);
+    assert_eq!(
+        workspace.relative(&dir.0.join("src/main.rs")),
+        Path::new("src/main.rs")
+    );
+    assert!(workspace.is_ignored(Path::new("target"), EntryKind::Dir));
+    assert!(workspace.is_ignored(Path::new("src/app.log"), EntryKind::File));
+    assert!(!workspace.is_ignored(Path::new("src/keep.log"), EntryKind::File));
+    assert!(workspace.is_ignored(Path::new("src/nested/deep.rs"), EntryKind::File));
+
+    let top: Vec<_> = workspace
+        .list_dir("")?
+        .into_iter()
+        .map(|e| e.name().to_owned())
+        .collect();
+    assert_eq!(
+        top,
+        [
+            ".hidden",
+            "src",
+            ".gitignore",
+            "A.txt",
+            "b.txt",
+            "README.md"
+        ]
+    );
+    assert_eq!(
+        workspace.walk_files(Filter::Visible),
+        [
+            ".gitignore",
+            "A.txt",
+            "b.txt",
+            "README.md",
+            "src/keep.log",
+            "src/main.rs",
+            "src/nested/.gitignore"
+        ]
+    );
+    let all = workspace.walk_files(Filter::All);
+    assert!(all.iter().any(|p| p == "src/app.log"));
+    assert!(all.iter().any(|p| p == "src/nested/deep.rs"));
+    assert!(!all.iter().any(|p| p.starts_with(".git/")));
+
+    let mut tree = Tree::new(&mut workspace)?;
+    assert!(!names(&tree).iter().any(|n| n == "target"));
+    tree.set_filter(&mut workspace, Filter::All)?;
+    assert!(names(&tree).iter().any(|n| n == "target"));
+    Ok(())
+}

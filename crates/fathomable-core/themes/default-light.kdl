@@ -34,6 +34,14 @@ colors {
     "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
     "ui.statusline.info"   fg="dim"
 
+    "ui.sidebar"           fg="fg" bg="paper"
+    "ui.sidebar.selected"  bg="surface" mods="bold"
+    "ui.sidebar.dir"       fg="blue"
+    "ui.popup"             fg="fg" bg="surface"
+    "ui.popup.key"         fg="orange" mods="bold"
+    "ui.picker.match"      fg="orange" mods="bold"
+    "ui.picker.selected"   bg="select"
+
     "diff.plus"            fg="green"
     "diff.delta"           fg="orange"
     "diff.minus"           fg="red"

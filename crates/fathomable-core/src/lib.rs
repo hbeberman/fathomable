@@ -9,7 +9,11 @@
 pub mod config;
 mod document;
 pub mod layout;
+pub mod picker;
+pub mod session;
 pub mod theme;
+pub mod tree;
+pub mod workspace;
 
 pub use document::{Document, LoadError};
 mod xdg;

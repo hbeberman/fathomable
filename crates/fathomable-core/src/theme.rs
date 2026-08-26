@@ -170,6 +170,13 @@ pub enum Key {
     UiStatuslineSelect,
     UiStatuslineInput,
     UiStatuslineInfo,
+    UiSidebar,
+    UiSidebarSelected,
+    UiSidebarDir,
+    UiPopup,
+    UiPopupKey,
+    UiPickerMatch,
+    UiPickerSelected,
     DiffPlus,
     DiffDelta,
     DiffMinus,
@@ -184,7 +191,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 19] = [
+    const NAMED: [(&'static str, Self); 26] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -195,6 +202,13 @@ impl Key {
         ("ui.statusline.select", Self::UiStatuslineSelect),
         ("ui.statusline.input", Self::UiStatuslineInput),
         ("ui.statusline.info", Self::UiStatuslineInfo),
+        ("ui.sidebar", Self::UiSidebar),
+        ("ui.sidebar.selected", Self::UiSidebarSelected),
+        ("ui.sidebar.dir", Self::UiSidebarDir),
+        ("ui.popup", Self::UiPopup),
+        ("ui.popup.key", Self::UiPopupKey),
+        ("ui.picker.match", Self::UiPickerMatch),
+        ("ui.picker.selected", Self::UiPickerSelected),
         ("diff.plus", Self::DiffPlus),
         ("diff.delta", Self::DiffDelta),
         ("diff.minus", Self::DiffMinus),

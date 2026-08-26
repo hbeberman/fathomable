@@ -15,3 +15,4 @@ supersede rather than edit history.
 - [0009 CLI and diagnostics](0009-cli-and-diagnostics.md)
 - [0010 Viewer UX conventions](0010-viewer-ux.md)
 - [0011 Theme schema](0011-theme-schema.md)
+- [0012 Workspace mode](0012-workspace-mode.md)

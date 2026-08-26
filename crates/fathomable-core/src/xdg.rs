@@ -68,6 +68,12 @@ impl XdgDirs {
         self.state_dir().join("log")
     }
 
+    /// `$XDG_STATE_HOME/fathomable/sessions`, where session records live.
+    #[must_use]
+    pub fn sessions_dir(&self) -> PathBuf {
+        self.state_dir().join("sessions")
+    }
+
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.
     #[must_use]
     pub fn runtime_dir(&self) -> Option<PathBuf> {

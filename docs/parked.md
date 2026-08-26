@@ -49,14 +49,14 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 1 scaffolding follow-ups
 
-- **TODO: remaining approved dependencies.** `pulldown-cmark`,
-  `unicode-width`, `unicode-segmentation`, `serde`, `serde_json` (core) and
-  `ratatui`, `tokio`, `notify` (binary) are approved by
-  [0001](decisions/0001-dependency-policy.md) but were not added during
-  scaffolding: the `unused-dependencies` gate (`cargo udeps`) rejects a
-  dependency with no consumer, and bypassing hooks is not allowed. Add each
-  one in the commit that first uses it. Origin: milestone-1 scaffolding
-  handoff (2026-08-26).
+- **TODO: remaining approved dependencies.** `syntect`, `sha2` (core) and
+  `rmcp` (binary) are approved by
+  [0001](decisions/0001-dependency-policy.md) but not yet added: the
+  `unused-dependencies` gate (`cargo udeps`) rejects a dependency with no
+  consumer, and bypassing hooks is not allowed. Add each one in the commit
+  that first uses it. Origin: milestone-1 scaffolding handoff (2026-08-26);
+  list trimmed after milestone 2 added `gix`, `serde`, `serde_json`,
+  `nucleo-matcher`, `notify`, `tokio`, and `ratatui`.
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
@@ -68,15 +68,17 @@ rejected for good (record rejections in the [charter](charter.md)).
   `Face::CodeBlock` spans without a language; the theme names the syntect
   theme via `code.syntect` ([0011](decisions/0011-theme-schema.md)) but
   nothing reads it yet. Origin: milestone-1 layout engine.
-- **TODO: session id for log file names.** Logs are written to
-  `$XDG_STATE_HOME/fathomable/log/<id>.log` where `<id>` is currently a
-  process-local `<unix-seconds>-<pid>` placeholder. Replace it with the
-  session id [0003](decisions/0003-sessions-and-mcp.md) defines once session
-  records exist, so log, record, and socket share one name. Origin:
-  milestone-1 scaffolding.
-- **TODO: `--doctor` remaining checks.** 0009 also lists git and live
-  sessions; those wait on the git and session subsystems.
-  Origin: milestone-1 scaffolding.
+- **TODO: `--doctor` remaining checks.** 0009 also lists git; that waits
+  on the git subsystem. Origin: milestone-1 scaffolding.
+- **TODO: automatic tree refresh.** The sidebar re-reads directories only
+  on `R` or expand; a recursive workspace watch was skipped for inotify
+  budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).
+- **TODO: `--dump-state` and `--replay-log`.** Wait on annotations and a
+  log reader; `--sessions` and `--config-show` work. Origin: 0012.
+- **TODO: remove the session record on SIGTERM/SIGHUP.** Only a clean quit
+  removes the record and socket; a killed session leaves both until the
+  next start sweeps dead pids. A signal handler needs `tokio`'s `signal`
+  feature. Origin: 0012 smoke test.
 
 ## Open investigations
 
@@ -93,9 +95,10 @@ rejected for good (record rejections in the [charter](charter.md)).
   than deleted, how should the anchor move? Candidates: neighbor-context
   hashes, nearest-heading fallback, diff-based mapping via `gix`. Origin:
   [0005](decisions/0005-annotations.md).
-- **MCP to session binding details.** Exact socket protocol, versioning,
-  auth on the Unix socket, and how an agent learns a session exists. Origin:
-  0003; needs a dedicated session.
+- **MCP to session binding details.** Protocol v0 ([0012](decisions/0012-workspace-mode.md))
+  only answers `ping` and `session_info`; the real operations, auth on the
+  Unix socket, and how an agent learns a session exists are still open.
+  Origin: 0003; needs a dedicated session.
 - **Annotation consumption flow.** Whether the agent polls only on request or
   Fathomable offers a "since last read" cursor per agent. Origin: 0005.
 - **Lazy follow heuristics.** How long after the agent touches a file the

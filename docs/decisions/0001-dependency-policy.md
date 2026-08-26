@@ -49,6 +49,7 @@ Approved core set:
 | `unicode-width`, `unicode-segmentation` | unicode-rs org | text layout |
 | `sha2` | RustCrypto org | content hashes for anchors |
 | `regex` | rust-lang org (BurntSushi) | `/` and `?` search patterns ([0010](0010-viewer-ux.md)) |
+| `nucleo-matcher` | helix-editor org | fuzzy file picker matching ([0012](0012-workspace-mode.md), added 2026-08-26) |
 
 Rules:
 

@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use fathomable_core::XdgDirs;
 use fathomable_core::config::Config;
+use fathomable_core::session::Record;
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
 
 /// Print diagnostics. Exit status is failure when any check fails.
@@ -21,6 +22,7 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
     println!("  state    {}", dirs.state_dir().display());
     println!("  log      {}", dirs.log_dir().display());
     println!("  themes   {}", dirs.themes_dir().display());
+    println!("  sessions {}", dirs.sessions_dir().display());
     match dirs.runtime_dir() {
         Some(runtime) => println!("  runtime  {}", runtime.display()),
         None => {
@@ -63,6 +65,15 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
             println!("  FAIL  {error}");
         }
     }
+
+    let records = Record::list(dirs);
+    let live = records.iter().filter(|record| record.is_alive()).count();
+    println!(
+        "  ok    {live} live session{} ({} record{} on disk)",
+        if live == 1 { "" } else { "s" },
+        records.len(),
+        if records.len() == 1 { "" } else { "s" }
+    );
 
     if ok {
         ExitCode::SUCCESS

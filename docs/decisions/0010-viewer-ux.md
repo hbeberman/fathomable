@@ -2,11 +2,9 @@
 type: Decision
 title: Viewer UX conventions
 description: Cursor, gutter, status line, selection-to-clipboard, search, and reload behaviour of the rendered view, modelled on Neovim and Helix.
-resource: crates/fathomable/src/viewer/mod.rs
+resource: crates/fathomable/src/app/view.rs
 related_resources:
-  - crates/fathomable/src/viewer/view.rs
-  - crates/fathomable/src/viewer/ui.rs
-  - crates/fathomable/src/viewer/clipboard.rs
+  - crates/fathomable/src/app/clipboard.rs
 tags:
   - decision
   - input

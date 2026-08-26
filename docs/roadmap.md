@@ -20,7 +20,8 @@ Milestones are ordered; each is usable on its own. Details live in the
    themes.
 2. **Workspace mode.** Toggleable tree sidebar plus a fuzzy file picker,
    `fathomable [DIR]`, session records and socket
-   ([0003](decisions/0003-sessions-and-mcp.md)).
+   ([0003](decisions/0003-sessions-and-mcp.md),
+   [0012](decisions/0012-workspace-mode.md)).
 3. **Annotations.** Mouse drag and visual selection, comment box, JSONL
    threads, anchors ([0005](decisions/0005-annotations.md)).
 4. **MCP server.** `fathomable --mcp` with session tools, `open`, `follow`,

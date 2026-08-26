@@ -2,9 +2,9 @@
 #![forbid(unsafe_code)]
 //! Fathomable binary: terminal UI, MCP server, and admin flags (ADR 0009).
 
+mod app;
 mod doctor;
 mod logging;
-mod viewer;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -12,7 +12,9 @@ use std::process::ExitCode;
 use clap::Parser;
 use fathomable_core::XdgDirs;
 use fathomable_core::config::Config;
+use fathomable_core::session::{Id, Record};
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
+use fathomable_core::workspace::Workspace;
 
 /// Read-only terminal workspace viewer and annotation side-car.
 #[derive(Debug, Parser)]
@@ -65,58 +67,120 @@ fn main() -> ExitCode {
     if cli.doctor {
         return doctor::run(&dirs);
     }
+    if cli.sessions {
+        return list_sessions(&dirs);
+    }
+    if cli.config_show {
+        return config_show(&cli, &dirs);
+    }
 
-    let session = logging::Session::new();
-    let _guard = match logging::init(&dirs, &session) {
+    let id = Id::mint();
+    let _guard = match logging::init(&dirs, &id) {
         Ok(guard) => guard,
         Err(error) => {
             eprintln!("fathomable: {error:#}");
             return ExitCode::FAILURE;
         }
     };
-    tracing::info!(session = %session.id(), "starting");
+    tracing::info!(session = %id, "starting");
 
-    if !cli.mcp && !cli.sessions && !cli.dump_state && !cli.replay_log && !cli.config_show {
-        let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
-        if path.is_file() {
-            let theme = match load_theme(&cli, &dirs) {
-                Ok(theme) => theme,
-                Err(error) => {
-                    tracing::error!(error = %error, "cannot load theme");
-                    eprintln!("fathomable: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            tracing::info!(theme = theme.name(), "theme loaded");
-            return match viewer::run(&path, session.id(), &theme) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(error) => {
-                    tracing::error!(error = format!("{error:#}"), "viewer failed");
-                    eprintln!("fathomable: {error:#}");
-                    ExitCode::FAILURE
-                }
-            };
-        }
+    if cli.mcp || cli.dump_state || cli.replay_log {
+        let unimplemented = if cli.mcp {
+            "--mcp"
+        } else if cli.dump_state {
+            "--dump-state"
+        } else {
+            "--replay-log"
+        };
+        tracing::warn!(feature = unimplemented, "not implemented");
+        eprintln!("fathomable: {unimplemented} is not implemented yet");
+        return ExitCode::FAILURE;
     }
 
-    let unimplemented = if cli.mcp {
-        "--mcp"
-    } else if cli.sessions {
-        "--sessions"
-    } else if cli.dump_state {
-        "--dump-state"
-    } else if cli.replay_log {
-        "--replay-log"
-    } else if cli.config_show {
-        "--config-show"
-    } else {
-        "workspace mode (fathomable [DIR])"
-    };
-    tracing::warn!(feature = unimplemented, "not implemented");
-    eprintln!(
-        "fathomable: {unimplemented} is not implemented yet; only --doctor works in this build"
+    match run_tui(&cli, &dirs, id) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            tracing::error!(error = format!("{error:#}"), "failed");
+            eprintln!("fathomable: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
+    let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let theme = load_theme(cli, dirs)?;
+    tracing::info!(theme = theme.name(), "theme loaded");
+    let workspace = Workspace::discover(&path)?;
+    let open = path.is_file().then(|| workspace.relative(&path));
+
+    let removed = Record::sweep_dead(dirs);
+    if removed > 0 {
+        tracing::info!(removed, "swept dead session records");
+    }
+    let socket = dirs.runtime_dir().map(|dir| dir.join(format!("{id}.sock")));
+    let record = Record::new(id, workspace.root().to_path_buf(), socket);
+    record.write(dirs)?;
+    tracing::info!(id = %record.id(), root = %record.root().display(), "session recorded");
+
+    let result = app::run(
+        workspace,
+        &app::Options {
+            open,
+            record: &record,
+            theme: &theme,
+        },
     );
-    ExitCode::FAILURE
+    if let Err(error) = record.remove(dirs) {
+        tracing::warn!(%error, "cannot remove session record");
+    }
+    result
+}
+
+/// `--sessions`: one line per record, marking dead ones.
+fn list_sessions(dirs: &XdgDirs) -> ExitCode {
+    let records = Record::list(dirs);
+    if records.is_empty() {
+        println!("no sessions");
+        return ExitCode::SUCCESS;
+    }
+    for record in records {
+        println!(
+            "{}\t{}\t{}\t{}",
+            record.id(),
+            if record.is_alive() { "live" } else { "dead" },
+            record.root().display(),
+            record
+                .socket()
+                .map_or_else(|| "(no socket)".to_owned(), |p| p.display().to_string()),
+        );
+    }
+    ExitCode::SUCCESS
+}
+
+/// `--config-show`: the effective settings.
+fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
+    let config = match Config::load(dirs, cli.config.as_deref()) {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("fathomable: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let theme = cli
+        .theme
+        .as_deref()
+        .or_else(|| config.theme())
+        .unwrap_or(DEFAULT_THEME);
+    println!(
+        "config {}",
+        cli.config
+            .clone()
+            .unwrap_or_else(|| dirs.config_dir().join("config.kdl"))
+            .display()
+    );
+    println!("theme \"{theme}\"");
+    ExitCode::SUCCESS
 }
 
 /// Pick the theme: `--theme`, then `config.kdl`, then the built-in default.

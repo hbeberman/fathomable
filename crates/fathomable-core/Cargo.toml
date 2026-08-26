@@ -14,8 +14,12 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+gix = { version = "0.87", default-features = false, features = ["excludes", "sha1"] }
 kdl = { version = "6", default-features = false, features = ["span"] }
+nucleo-matcher = "0.3"
 pulldown-cmark = { version = "0.13", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 thiserror = "2.0.20"
 tracing = "0.1.44"
 unicode-segmentation = "1"

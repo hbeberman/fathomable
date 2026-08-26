@@ -989,7 +989,19 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
             .context("draw failed")?;
         let effect = tokio::select! {
             event = input_rx.recv() => match event {
-                Some(Ok(event)) => handle_event(&mut app, &event),
+                Some(Ok(event)) => {
+                    let mut effect = handle_event(&mut app, &event);
+                    // Coalesce a burst (wheel flick, key repeat) into one
+                    // frame: draining here keeps the redraw from lagging
+                    // behind the queue and jumping several notches at once.
+                    while matches!(effect, Effect::None)
+                        && let Ok(next) = input_rx.try_recv()
+                    {
+                        let next = next.context("reading terminal input")?;
+                        effect = handle_event(&mut app, &next);
+                    }
+                    effect
+                }
                 Some(Err(error)) => return Err(error).context("reading terminal input"),
                 None => Effect::Quit,
             },

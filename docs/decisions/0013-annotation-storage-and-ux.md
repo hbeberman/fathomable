@@ -92,7 +92,8 @@ were captured in a question round on 2026-08-26.
 
 ### Rendering
 
-- The gutter gains a fourth cell: `[line number][space][diff bar][note]`.
+- The gutter gains a fourth cell: `[line number][space][diff bar][note]`
+  (moved to the far left by [0006](0006-git-access.md), 2026-08-26).
   The note cell shows `▎` coloured by thread state; the diff bar keeps its
   own cell so git and annotation information never hide each other. A
   thread's rows also get the `annotation.line` background.

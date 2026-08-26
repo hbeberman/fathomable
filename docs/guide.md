@@ -77,8 +77,11 @@ outside the repository at
 
 ## 5. Changes against git
 
-Inside a git work tree the gutter bar shows what differs from `HEAD`: green
-for added lines, orange for changed ones, red on the line after a removal.
+Inside a git work tree the bar between the line numbers and the text shows
+what differs from `HEAD`: a green bar for added lines, orange for changed
+ones, and a thin red rule along the top of the line that follows a removal
+(the removed text itself is only shown in the diff view). Annotation marks
+sit at the far left of the gutter.
 `]c` and `[c` walk the changes, `gd` swaps the pane for a unified diff of
 the file (`gd` again returns), and the status line counts `+added -removed`
 lines. The base is re-read when you open, switch to, or the agent rewrites

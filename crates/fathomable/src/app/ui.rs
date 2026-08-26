@@ -153,8 +153,8 @@ fn convert_color(color: fathomable_core::theme::Color) -> Color {
     }
 }
 
-/// Width of the gutter: line numbers, a space, the diff bar cell, and the
-/// annotation cell (ADR 0013).
+/// Width of the gutter: the annotation cell, line numbers, a space, and
+/// the diff bar cell (ADR 0006 order).
 pub fn gutter_width(view: &View) -> usize {
     let digits = view.index().line_count().max(1).to_string().len();
     digits + 3
@@ -421,23 +421,31 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         let number = line
             .source_line()
             .map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"));
-        // Number, space, diff bar (ADR 0006), note cell (ADR 0013).
+        // Note cell (ADR 0013), number, space, diff bar (ADR 0006). A
+        // removal has no line of its own, so it draws as a thin rule along
+        // the top of the cell of the line below it.
         let bar = view
             .source_line_of_row(row)
             .and_then(|line| view.line_status(line))
             .map_or_else(
                 || Span::styled(" ", row_style),
-                |status| Span::styled("▎", status_style(theme, status).patch(row_style)),
+                |status| {
+                    let glyph = match status {
+                        LineStatus::Added | LineStatus::Modified => "▎",
+                        LineStatus::Removed => "▔",
+                    };
+                    Span::styled(glyph, status_style(theme, status).patch(row_style))
+                },
             );
         let note = mark.map_or_else(
             || Span::styled(" ", row_style),
             |kind| Span::styled("▎", mark_style(theme, kind).patch(row_style)),
         );
         let mut spans = vec![
+            note,
             Span::styled(number, theme.line_number.patch(row_style)),
             Span::styled(" ", theme.marker.patch(row_style)),
             bar,
-            note,
         ];
         let matches: Vec<_> = view.matches().iter().filter(|m| m.row == row).collect();
         let mut col = 0;

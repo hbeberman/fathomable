@@ -44,7 +44,9 @@ viewer, the layout engine, and later themes agree.
 
 - Left of the text, always reserved, never shifting content:
   `[line number][diff bar] text`. [0013](0013-annotation-storage-and-ux.md)
-  (2026-08-26) adds a fourth cell for annotations after the diff bar.
+  (2026-08-26) adds a fourth cell for annotations after the diff bar;
+  [0006](0006-git-access.md) (2026-08-26) then moves it to the far left:
+  `[note][line number][space][diff bar] text`.
 - The line number is the **absolute source line** of the first source byte the
   rendered line came from. Wrapped continuation lines and synthesised lines
   show a blank number. Width is the digit count of the largest source line
@@ -52,7 +54,8 @@ viewer, the layout engine, and later themes agree.
   option, not v1.
 - The diff bar is a one-cell column immediately right of the numbers, showing
   `▎` coloured by theme keys `diff.plus`, `diff.delta`, `diff.minus`
-  (Helix's layout). Removed hunks mark the line after the removal. In
+  (Helix's layout). Removed hunks mark the line after the removal with a
+  thin rule `▔` along the top of its cell (0006). In
   milestone 1 the bar is present but empty; [0006](0006-git-access.md) fills
   it. No sign icons; colour carries the information, and the theme keys
   exist so colour-blind users can pick their own palette.

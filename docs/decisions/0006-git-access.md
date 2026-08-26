@@ -51,11 +51,15 @@ open recency and snapshot-bound questions in [parked ideas](../parked.md).
   UTF-8 texts, and a line diff is a hundred lines to own. Hunks keep 0-based
   old and new ranges; a pure removal has an empty new range whose start is
   the line it sits before.
-- **Gutter.** The diff bar cell from [0010](0010-viewer-ux.md) shows `▎` in
-  `diff.plus` for added lines, `diff.delta` for lines that replace old ones,
-  and `diff.minus` on the line after a removal (the last line when the
-  removal was at the end). Wrapped continuation rows repeat their line's
-  colour.
+- **Gutter.** The order becomes `[note][line number][space][diff bar]`, so
+  the diff bar sits against the text and the annotation cell is at the far
+  left (amending [0010](0010-viewer-ux.md) and
+  [0013](0013-annotation-storage-and-ux.md)). The bar shows `▎` in
+  `diff.plus` for added lines and `diff.delta` for lines that replace old
+  ones. A removal has no line of its own, so it draws as a thin rule `▔` in
+  `diff.minus` along the top of the cell of the line after it (the last
+  line when the removal was at the end); the removed content is only shown
+  in the diff view. Wrapped continuation rows repeat their line's colour.
 - **Diff view.** `gd` (or `:diff`) toggles a unified diff of the current
   file against the base in place of the rendered view, three lines of
   context per hunk, hunks under one header when their context touches.

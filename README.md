@@ -1,6 +1,7 @@
 # fathomable
 
-Rust Workspace Viewer
+Rust Workspace Viewer: a read-only terminal viewer and annotation side-car
+for agent-driven work. New here? Read the [setup guide](docs/guide.md).
 
 ## Local workflow
 

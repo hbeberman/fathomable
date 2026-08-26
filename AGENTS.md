@@ -36,6 +36,8 @@ user, system, or repo policy.
 - Read `docs/index.md` and the nearest related concept before changing
   documented behavior. Keep transient plans and handoffs in `.tmp/`.
 - Keep concept `resource` ownership and source `@okf-doc` backlinks in sync.
+- `docs/guide.md` is the human onboarding guide: update it in the same
+  change as any flag, key, file path, config node, or MCP tool it names.
 - Run `just okf` and `just links` after documentation or documented-resource
   changes. Both checks are enforced by the canonical commit gate.
 

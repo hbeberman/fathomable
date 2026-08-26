@@ -13,6 +13,7 @@ tag_definitions:
   documentation: Project documentation structure, ownership, and validation.
   git: Version-control integration and diffing.
   input: Keyboard grammar and mouse handling.
+  onboarding: Human-facing setup and usage walkthroughs.
   rendering: Markdown and code layout and highlighting.
   sessions: Running-instance discovery and the MCP endpoint.
 ---

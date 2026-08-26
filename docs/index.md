@@ -10,6 +10,7 @@ okf_version: "0.2"
 Start here before changing documented behavior or adding project documentation.
 
 - [Fathomable charter](charter.md)
+- [Setup guide](guide.md)
 - [Roadmap](roadmap.md)
 - [Design decisions](decisions/index.md)
 - [Parked ideas and open investigations](parked.md)

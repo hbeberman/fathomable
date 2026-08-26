@@ -257,6 +257,7 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
                     if stack.len() > 1 {
                         stack.pop();
                     }
+                    continue;
                 }
                 Event::End(_) => break,
                 Event::Start(tag) if is_block(tag) => break,

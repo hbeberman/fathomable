@@ -263,3 +263,10 @@ fn yaml_front_matter_renders_as_a_code_block() {
     assert_eq!(layout.lines()[0].spans()[0].style().face, Face::CodeBlock);
     assert_eq!(numbers(&layout), [Some(2), None, Some(5)]);
 }
+
+#[test]
+fn list_items_ending_with_links_stay_separate() {
+    let src = "- [one](https://a)\n- [two](https://b) (note)\n- [three](https://c)\n";
+    let layout = Layout::render(src, 40);
+    assert_eq!(texts(&layout), ["• one", "• two (note)", "• three"]);
+}

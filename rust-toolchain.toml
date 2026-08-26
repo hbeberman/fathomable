@@ -1,0 +1,5 @@
+# @okf-doc: /decisions/0001-dependency-policy.md
+# Pinned per docs/decisions/0001-dependency-policy.md; bump deliberately.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]

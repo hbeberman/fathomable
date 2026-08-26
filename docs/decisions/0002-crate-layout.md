@@ -29,10 +29,11 @@ Two workspace crates:
   syntax highlighting, annotations and anchors, sessions, git diffing,
   configuration. Depends on no terminal crate. Its public API is the boundary
   the `public-api` gate tracks.
-- `fathomable`: the binary. Subcommands `fathomable [PATH]` (the TUI) and
-  `fathomable mcp` (stdio MCP server). Owns `ratatui`, `crossterm`, and the
-  event loop; the MCP subcommand links `rmcp` and talks to a running TUI
-  session over a Unix socket.
+- `fathomable`: the binary. `fathomable [PATH]` runs the TUI and
+  `fathomable --mcp` the stdio MCP server (the flag form is fixed by
+  [0009](0009-cli-and-diagnostics.md); amended 2026-08-26 from an earlier
+  `mcp` subcommand). Owns `ratatui`, `crossterm`, and the event loop; the MCP
+  mode links `rmcp` and talks to a running TUI session over a Unix socket.
 
 The `boundaries` gate forbids `fathomable-core` from depending on `ratatui`,
 `crossterm`, or `rmcp`.

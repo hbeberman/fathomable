@@ -25,6 +25,8 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Helix-style selection-first key grammar** as a config switch. Origin:
   [0007](decisions/0007-key-grammar-and-mouse.md).
 - **Keymap remapping** through KDL config. Origin: 0007.
+- **Relative line numbers** (`rnu`) as a config option. Origin:
+  [0010](decisions/0010-viewer-ux.md); absolute source lines in v1.
 - **Multiple panes inside Fathomable.** Origin: initial planning; the layout
   tree is designed for it.
 - **HTTP transport for the MCP server.** Origin:
@@ -50,11 +52,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   dependency with no consumer, and bypassing hooks is not allowed. Add each
   one in the commit that first uses it. Origin: milestone-1 scaffolding
   handoff (2026-08-26).
-- **TODO: `--mcp` flag versus `mcp` subcommand.**
-  [0002](decisions/0002-crate-layout.md) describes `fathomable mcp`;
-  [0009](decisions/0009-cli-and-diagnostics.md) and the CLI implement
-  `fathomable --mcp`. Amend 0002 to match, or supersede. Origin: milestone-1
-  scaffolding.
 - **TODO: session id for log file names.** Logs are written to
   `$XDG_STATE_HOME/fathomable/log/<id>.log` where `<id>` is currently a
   process-local `<unix-seconds>-<pid>` placeholder. Replace it with the

@@ -27,6 +27,10 @@ the mouse.
 - A which-key style hint bar shows pending key sequences.
 - Keymap is fixed in v1; remapping through KDL config comes later.
 - Helix selection-first grammar is deferred and would be a config switch.
+- Cursor model, gutter, status line, clipboard, search, and Esc/quit details
+  are fixed in [0010](0010-viewer-ux.md) (2026-08-26): a real row/column
+  cursor, mouse release copies the source Markdown via OSC 52, `/` is regex,
+  only `:q`/`Ctrl-c` quit.
 - Layout: a toggleable tree sidebar on the left plus a fuzzy file picker
   popup; one bottom line shared by status, `:` and `/` input, and key hints.
 - Follow mode: when an agent marks a file via `follow` or edits one, the

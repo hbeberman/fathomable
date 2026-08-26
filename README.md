@@ -11,8 +11,9 @@ just install-commit-hooks     # refreshes the local commit hook
 # Run project gates and heavyweight diagnostics.
 make gates                    # canonical local gate
 make mutants                  # heavyweight mutation testing
-PERF_SECONDS=15 PERF_BIN=<binary-name> make perf
-scripts/perf-record.sh 15 --bin <binary-name> -- <binary-args>
+just perf path/to/file.md     # profile interactively until fathomable exits
+PERF_PATH=path/to/file.md make perf
+scripts/perf-record.sh --bin fathomable -- path/to/file.md
 ```
 
 `Makefile` is the command source of truth; `justfile` is a thin compatibility
@@ -41,4 +42,4 @@ The canonical gate enforces both OKF structure and maintained local links.
 - feature powerset: `cargo hack check --feature-powerset --no-dev-deps`
 - unused dependencies: `cargo +nightly udeps --all-targets --all-features`
 - mutation testing: `cargo mutants --workspace --all-features`
-- perf tracing: `PERF_SECONDS=15 PERF_BIN=<binary-name> make perf` after adding a binary target; call `scripts/perf-record.sh` directly for binary arguments
+- perf tracing: `just perf [path]` profiles the release binary until it exits; artifacts and text reports are written under `target/perf/`. Pass a file or a workspace directory.

@@ -2,12 +2,12 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .DEFAULT_GOAL := help
 
-PERF_SECONDS ?= 15
 PERF_BIN ?=
+PERF_PATH ?= .
 
 export FILE
 export PERF_BIN
-export PERF_SECONDS
+export PERF_PATH
 
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
 	docs-check boundaries public-api audit deny features udeps mutants mutants-file \
@@ -35,7 +35,7 @@ help:
 		'udeps             Check unused dependencies' \
 		'mutants           Run mutation testing' \
 		'mutants-file      Mutate FILE=<path>' \
-		'perf              Profile with PERF_SECONDS and optional PERF_BIN' \
+		'perf              Profile fathomable [PERF_PATH] until it exits' \
 		'web-install       Install locked web dependencies (when configured)' \
 		'web-dev           Start Vite (when configured)' \
 		'web-toolchain     Verify supported Node and npm versions' \
@@ -105,8 +105,9 @@ mutants-file:
 	cargo mutants --file "$${FILE}" --all-features
 
 perf:
-	@args=("$${PERF_SECONDS}"); \
+	@args=(); \
 	if [[ -n "$${PERF_BIN}" ]]; then args+=(--bin "$${PERF_BIN}"); fi; \
+	args+=(-- "$${PERF_PATH}"); \
 	scripts/perf-record.sh "$${args[@]}"
 
 web-install:

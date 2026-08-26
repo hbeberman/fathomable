@@ -60,8 +60,8 @@ mutants:
 mutants-file:
     make mutants-file
 
-perf:
-    make perf
+perf path=".":
+    make perf PERF_PATH="{{path}}"
 
 web-install:
     make web-install

@@ -40,6 +40,31 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
   whether to warn or rate-limit. Origin: 0005.
 
+## Milestone 1 scaffolding follow-ups
+
+- **TODO: remaining approved dependencies.** `pulldown-cmark`,
+  `unicode-width`, `unicode-segmentation`, `serde`, `serde_json` (core) and
+  `ratatui`, `tokio`, `notify` (binary) are approved by
+  [0001](decisions/0001-dependency-policy.md) but were not added during
+  scaffolding: the `unused-dependencies` gate (`cargo udeps`) rejects a
+  dependency with no consumer, and bypassing hooks is not allowed. Add each
+  one in the commit that first uses it. Origin: milestone-1 scaffolding
+  handoff (2026-08-26).
+- **TODO: `--mcp` flag versus `mcp` subcommand.**
+  [0002](decisions/0002-crate-layout.md) describes `fathomable mcp`;
+  [0009](decisions/0009-cli-and-diagnostics.md) and the CLI implement
+  `fathomable --mcp`. Amend 0002 to match, or supersede. Origin: milestone-1
+  scaffolding.
+- **TODO: session id for log file names.** Logs are written to
+  `$XDG_STATE_HOME/fathomable/log/<id>.log` where `<id>` is currently a
+  process-local `<unix-seconds>-<pid>` placeholder. Replace it with the
+  session id [0003](decisions/0003-sessions-and-mcp.md) defines once session
+  records exist, so log, record, and socket share one name. Origin:
+  milestone-1 scaffolding.
+- **TODO: `--doctor` remaining checks.** 0009 also lists config parse, git,
+  and live sessions; those wait on the config, git, and session subsystems.
+  Origin: milestone-1 scaffolding.
+
 ## Open investigations
 
 - **Agent identity and impersonation.** What is deterministic from the MCP

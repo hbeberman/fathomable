@@ -5,7 +5,6 @@ description: The tree sidebar, the space menu, the fuzzy file picker, open-file 
 resource: crates/fathomable/src/app/mod.rs
 related_resources:
   - crates/fathomable/src/app/ui.rs
-  - crates/fathomable/src/app/socket.rs
   - crates/fathomable-core/src/workspace.rs
   - crates/fathomable-core/src/tree.rs
   - crates/fathomable-core/src/picker.rs

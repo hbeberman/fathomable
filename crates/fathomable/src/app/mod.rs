@@ -13,7 +13,7 @@ mod ui;
 mod view;
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -28,13 +28,14 @@ use crossterm::terminal::{
 use fathomable_core::Document;
 use fathomable_core::annotations::{Store, ThreadId};
 use fathomable_core::picker::{Match, Picker};
-use fathomable_core::session::Record;
+use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::theme::Theme;
 use fathomable_core::tree::{Activation, Tree};
 use fathomable_core::workspace::{Filter, Workspace};
 use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 pub use threads::{Compose, Mark, ThreadPanel};
@@ -229,6 +230,8 @@ pub struct App {
     height: usize,
     session: String,
     store: Option<Store>,
+    /// Files an agent said it is working on (ADR 0014 `follow`).
+    followed: Vec<PathBuf>,
 }
 
 impl App {
@@ -261,6 +264,7 @@ impl App {
             height,
             session,
             store,
+            followed: Vec::new(),
         };
         app.relayout();
         app
@@ -272,6 +276,11 @@ impl App {
 
     pub fn session(&self) -> &str {
         &self.session
+    }
+
+    /// Files an agent is following, in the order it gave them.
+    pub fn followed(&self) -> &[PathBuf] {
+        &self.followed
     }
 
     pub fn focus(&self) -> Focus {
@@ -397,6 +406,89 @@ impl App {
         self.history.push(index);
         self.history_pos = self.history.len();
         self.show(index);
+    }
+
+    /// Answer a socket request that needs app state (ADR 0014).
+    pub fn handle_request(&mut self, request: Request) -> Response {
+        match request {
+            Request::Ping => Response::Pong,
+            Request::SessionInfo => {
+                Response::Error("session_info is answered by the socket".to_owned())
+            }
+            Request::Open {
+                path,
+                line,
+                end_line,
+            } => self.open_for_agent(&path, line, end_line),
+            Request::Follow { paths } => {
+                tracing::info!(count = paths.len(), "agent follow list replaced");
+                self.followed = paths;
+                Response::Done
+            }
+            Request::AnnotationsList { since, path } => match &self.store {
+                Some(store) => Response::Threads(
+                    store
+                        .threads()
+                        .iter()
+                        .filter(|t| since.is_none_or(|s| t.updated() >= s))
+                        .filter(|t| path.as_deref().is_none_or(|p| t.path() == p))
+                        .cloned()
+                        .collect(),
+                ),
+                None => Response::Error("annotations unavailable; see the log".to_owned()),
+            },
+            Request::ThreadReply {
+                thread,
+                author,
+                body,
+                resolve,
+            } => match self.agent_reply(&thread, author, body, resolve) {
+                Ok(()) => Response::Done,
+                Err(error) => Response::Error(error),
+            },
+        }
+    }
+
+    /// `open` from an agent: the path must stay inside the workspace.
+    fn open_for_agent(
+        &mut self,
+        path: &Path,
+        line: Option<usize>,
+        end_line: Option<usize>,
+    ) -> Response {
+        let inside = path.is_relative()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+        if !inside {
+            return Response::Error(format!(
+                "{} is not a workspace-relative path",
+                path.display()
+            ));
+        }
+        if !self.workspace.root().join(path).is_file() {
+            return Response::Error(format!("{} is not a file in the workspace", path.display()));
+        }
+        self.close_popup();
+        self.focus = Focus::View;
+        self.open(path);
+        if self.current_path() != path {
+            return Response::Error(
+                self.message
+                    .clone()
+                    .unwrap_or_else(|| format!("cannot open {}", path.display())),
+            );
+        }
+        if let Some(line) = line {
+            let view = self.view_mut();
+            view.escape();
+            view.goto_source_line(line);
+            if let Some(end) = end_line.filter(|end| *end > line) {
+                view.select_lines();
+                view.goto_source_line(end);
+            }
+        }
+        Response::Done
     }
 
     fn show(&mut self, index: usize) {
@@ -828,13 +920,13 @@ impl DocWatcher {
     }
 }
 
-fn serve_socket(record: &Record) -> Option<socket::Serving> {
+fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<socket::Serving> {
     let Some(path) = record.socket() else {
         tracing::warn!("XDG_RUNTIME_DIR unset; no session socket");
         return None;
     };
     match socket::Listener::bind(path) {
-        Ok(listener) => Some(listener.serve(record.clone())),
+        Ok(listener) => Some(listener.serve(record.clone(), app)),
         Err(error) => {
             tracing::warn!(%error, path = %path.display(), "cannot listen on session socket");
             None
@@ -844,7 +936,10 @@ fn serve_socket(record: &Record) -> Option<socket::Serving> {
 
 async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result<()> {
     let (mut doc_watcher, mut reload_rx) = DocWatcher::new()?;
-    let _socket = serve_socket(options.record);
+    let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
+    let _socket = serve_socket(options.record, request_tx);
+    let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
+    let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
 
     // The guard queries the terminal, so it must run before the input
     // thread starts consuming responses.
@@ -888,6 +983,21 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
                     }
                 }
                 Effect::None
+            }
+            envelope = request_rx.recv() => {
+                if let Some(socket::Envelope { request, reply }) = envelope {
+                    let response = app.handle_request(request);
+                    let _ = reply.send(response);
+                }
+                Effect::None
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("SIGTERM; quitting");
+                Effect::Quit
+            }
+            _ = sighup.recv() => {
+                tracing::info!("SIGHUP; quitting");
+                Effect::Quit
             }
         };
         match effect {

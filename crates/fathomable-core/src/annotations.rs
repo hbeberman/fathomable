@@ -238,16 +238,35 @@ impl fmt::Display for ThreadId {
 }
 
 /// Who wrote a reply or resolved a thread.
+///
+/// An agent carries the name it goes by plus, when the reply arrived over
+/// MCP, the client implementation the host reported (ADR 0014). On the wire
+/// an author is a plain string unless it has a client, in which case it is
+/// `{"name":..,"client":..}`; older files therefore still load.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(from = "String", into = "String")]
+#[serde(from = "AuthorWire", into = "AuthorWire")]
 pub enum Author {
     /// The person at the keyboard.
     User,
-    /// An agent, by the name it supplied.
-    Agent(String),
+    /// An agent.
+    Agent {
+        /// The persona it declared, or the client name when it declared none.
+        name: String,
+        /// The MCP client that carried the reply, when known.
+        client: Option<String>,
+    },
 }
 
 impl Author {
+    /// An agent known only by `name`.
+    #[must_use]
+    pub fn agent(name: impl Into<String>) -> Self {
+        Self::Agent {
+            name: name.into(),
+            client: None,
+        }
+    }
+
     /// Whether this is the user rather than an agent.
     #[must_use]
     pub fn is_user(&self) -> bool {
@@ -256,27 +275,47 @@ impl Author {
 }
 
 impl fmt::Display for Author {
+    /// `user`, the agent name, or `name (client)` when the two differ.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::User => f.write_str("user"),
-            Self::Agent(name) => f.write_str(name),
+            Self::Agent {
+                name,
+                client: Some(client),
+            } if client != name => write!(f, "{name} ({client})"),
+            Self::Agent { name, .. } => f.write_str(name),
         }
     }
 }
 
-impl From<String> for Author {
-    fn from(name: String) -> Self {
-        if name == "user" {
-            Self::User
-        } else {
-            Self::Agent(name)
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum AuthorWire {
+    Name(String),
+    Full {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
+    },
+}
+
+impl From<AuthorWire> for Author {
+    fn from(wire: AuthorWire) -> Self {
+        match wire {
+            AuthorWire::Name(name) if name == "user" => Self::User,
+            AuthorWire::Name(name) => Self::agent(name),
+            AuthorWire::Full { name, client } => Self::Agent { name, client },
         }
     }
 }
 
-impl From<Author> for String {
+impl From<Author> for AuthorWire {
     fn from(author: Author) -> Self {
-        author.to_string()
+        match author {
+            Author::User => Self::Name("user".to_owned()),
+            Author::Agent { name, client: None } => Self::Name(name),
+            Author::Agent { name, client } => Self::Full { name, client },
+        }
     }
 }
 
@@ -335,7 +374,8 @@ impl Reply {
 }
 
 /// Whether a thread is open or how it was closed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Status {
     /// Awaiting action.
     Open,
@@ -346,7 +386,10 @@ pub enum Status {
 }
 
 /// An annotation with its replies and status.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serializes as a plain object so it can travel over the session socket
+/// (ADR 0014); the JSONL file stores events, not threads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     id: ThreadId,
     path: PathBuf,
@@ -354,6 +397,7 @@ pub struct Thread {
     snippet: String,
     anchor: Anchor,
     created: u64,
+    updated: u64,
     comment: String,
     replies: Vec<Reply>,
     status: Status,
@@ -394,6 +438,13 @@ impl Thread {
     #[must_use]
     pub fn created(&self) -> u64 {
         self.created
+    }
+
+    /// When the thread last changed (reply, resolve, reopen), in Unix
+    /// seconds; equals [`created`](Self::created) until then.
+    #[must_use]
+    pub fn updated(&self) -> u64 {
+        self.updated
     }
 
     /// The user's comment.
@@ -656,20 +707,38 @@ impl Store {
                     snippet,
                     anchor,
                     created,
+                    updated: created,
                     comment,
                     replies: Vec::new(),
                     status: Status::Open,
                 });
             }
-            Event::Reply { thread, reply, .. } => self.thread_mut(&thread)?.replies.push(reply),
-            Event::Resolve { thread, by, .. } => {
-                self.thread_mut(&thread)?.status = if by.is_user() {
+            Event::Reply { thread, reply, .. } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(reply.created);
+                thread.replies.push(reply);
+            }
+            Event::Resolve {
+                thread,
+                by,
+                created,
+                ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(created);
+                thread.status = if by.is_user() {
                     Status::Resolved
                 } else {
                     Status::AutoResolved
                 };
             }
-            Event::Reopen { thread, .. } => self.thread_mut(&thread)?.status = Status::Open,
+            Event::Reopen {
+                thread, created, ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(created);
+                thread.status = Status::Open;
+            }
         }
         Ok(())
     }
@@ -828,6 +897,27 @@ mod tests {
     }
 
     #[test]
+    fn authors_serialize_as_strings_unless_they_carry_a_client() -> Result<(), serde_json::Error> {
+        let plain = Author::agent("claude");
+        assert_eq!(serde_json::to_string(&plain)?, r#""claude""#);
+        assert_eq!(serde_json::from_str::<Author>(r#""user""#)?, Author::User);
+        let full = Author::Agent {
+            name: "reviewer".to_owned(),
+            client: Some("claude-code".to_owned()),
+        };
+        let json = serde_json::to_string(&full)?;
+        assert_eq!(json, r#"{"name":"reviewer","client":"claude-code"}"#);
+        assert_eq!(serde_json::from_str::<Author>(&json)?, full);
+        assert_eq!(full.to_string(), "reviewer (claude-code)");
+        let same = Author::Agent {
+            name: "claude-code".to_owned(),
+            client: Some("claude-code".to_owned()),
+        };
+        assert_eq!(same.to_string(), "claude-code");
+        Ok(())
+    }
+
+    #[test]
     fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
         let file = TempFile::new("roundtrip");
         let mut store = Store::open(&file.0)?;
@@ -835,14 +925,14 @@ mod tests {
         let id = store.annotate(draft, TEXT, 100)?;
         store.reply(
             &id,
-            Reply::new(Author::Agent("claude".to_owned()), 101, "done").proposing_resolution(),
+            Reply::new(Author::agent("claude"), 101, "done").proposing_resolution(),
         )?;
         let other = store.annotate(
             Draft::new(Path::new("docs/guide.md"), LineRange::new(1, 1), "hmm"),
             TEXT,
             102,
         )?;
-        store.resolve(&other, Author::Agent("bot".to_owned()), 103)?;
+        store.resolve(&other, Author::agent("bot"), 103)?;
         store.resolve(&id, Author::User, 104)?;
         store.reopen(&id, 105)?;
 
@@ -857,10 +947,12 @@ mod tests {
         assert_eq!(thread.replies().len(), 1);
         assert!(thread.replies()[0].proposes_resolution());
         assert_eq!(thread.replies()[0].author().to_string(), "claude");
+        assert_eq!(thread.updated(), 105);
         assert_eq!(
             again.thread(&other).map(super::Thread::status),
             Some(Status::AutoResolved)
         );
+        assert_eq!(again.thread(&other).map(super::Thread::updated), Some(103));
         assert_eq!(again.for_path(Path::new("README.md")).count(), 1);
 
         let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;

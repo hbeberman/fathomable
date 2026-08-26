@@ -2,6 +2,9 @@
 type: Decision
 title: MCP server and socket protocol v1
 description: The stdio MCP server built on rmcp 3 against the 2026-07-28 spec, the v1 session socket operations it forwards, per-request agent identity, and session binding.
+resource: crates/fathomable/src/mcp.rs
+related_resources:
+  - crates/fathomable/src/app/socket.rs
 tags:
   - decision
   - sessions

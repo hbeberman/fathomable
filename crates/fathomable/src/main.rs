@@ -5,6 +5,7 @@
 mod app;
 mod doctor;
 mod logging;
+mod mcp;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -85,10 +86,18 @@ fn main() -> ExitCode {
     };
     tracing::info!(session = %id, "starting");
 
-    if cli.mcp || cli.dump_state || cli.replay_log {
-        let unimplemented = if cli.mcp {
-            "--mcp"
-        } else if cli.dump_state {
+    if cli.mcp {
+        return match mcp::run(&dirs) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                tracing::error!(error = format!("{error:#}"), "mcp failed");
+                eprintln!("fathomable: {error:#}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if cli.dump_state || cli.replay_log {
+        let unimplemented = if cli.dump_state {
             "--dump-state"
         } else {
             "--replay-log"

@@ -1,20 +1,22 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! Session records and the provisional v0 socket protocol.
+//! Session records and the v1 socket protocol.
 //!
 //! A session is one running TUI bound to one workspace root (ADR 0003). It
 //! writes a [`Record`] under `$XDG_STATE_HOME/fathomable/sessions/<id>/` and
 //! listens on `$XDG_RUNTIME_DIR/fathomable/<id>.sock`. The socket speaks
-//! line-delimited JSON; protocol version 0 (ADR 0012) knows only `ping` and
-//! `session_info`, and every request carries `"v"` so later versions can
-//! refuse old clients with a clear error. The binary owns the socket; this
-//! module owns the wire types and [`answer`], which is pure.
+//! line-delimited JSON: one [`Request`] per line, answered by one
+//! [`Response`] per line. Every request carries `"v"`; version 1 (ADR 0014)
+//! adds `open`, `follow`, `annotations_list`, and `thread_reply` to the v0
+//! `ping` and `session_info` (ADR 0012), which are still accepted with
+//! `"v":0`. The binary owns the socket and the state behind every operation;
+//! this module owns the wire types.
 //!
 //! # Examples
 //!
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":0,"op":"ping"}"#.parse()?;
+//! let request: Request = r#"{"v":1,"op":"ping"}"#.parse()?;
 //! assert_eq!(request, Request::Ping);
 //! assert_eq!(Response::Pong.to_line(), r#"{"ok":true,"pong":true}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -30,9 +32,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::XdgDirs;
+use crate::annotations::{Author, Thread, ThreadId};
 
 /// The protocol version this crate speaks.
-pub const PROTOCOL_VERSION: u32 = 0;
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// The oldest protocol version still accepted, for `ping` and `session_info`.
+const OLDEST_VERSION: u32 = 0;
 
 /// File name of the record inside a session directory.
 pub const RECORD_FILE: &str = "session.json";
@@ -233,33 +239,75 @@ impl Record {
 }
 
 /// A request over the session socket.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Paths are workspace-relative. `since` is in Unix seconds and matches
+/// threads whose [`Thread::updated`] is at or after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
     /// Liveness check.
     Ping,
     /// Ask for the session record.
     SessionInfo,
+    /// Show a file, optionally scrolled to a source line range.
+    Open {
+        /// Workspace-relative path.
+        path: PathBuf,
+        /// First source line to show, 1-based.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        line: Option<usize>,
+        /// Last line of the range, when a range should be selected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        end_line: Option<usize>,
+    },
+    /// Record the files an agent is working on; replaces the previous list.
+    Follow {
+        /// Workspace-relative paths; empty clears the list.
+        paths: Vec<PathBuf>,
+    },
+    /// Threads, optionally changed since a time or limited to one file.
+    AnnotationsList {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        path: Option<PathBuf>,
+    },
+    /// Append a reply to a thread, optionally resolving it.
+    ThreadReply {
+        thread: ThreadId,
+        author: Author,
+        body: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        resolve: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
 struct RequestWire {
     v: u32,
-    op: String,
+    #[serde(flatten)]
+    request: Request,
+}
+
+#[derive(Deserialize)]
+struct VersionOnly {
+    v: u32,
 }
 
 impl Request {
     /// The request as one JSON line without the newline.
     #[must_use]
     pub fn to_line(&self) -> String {
-        let op = match self {
-            Self::Ping => "ping",
-            Self::SessionInfo => "session_info",
-        };
         serde_json::to_string(&RequestWire {
             v: PROTOCOL_VERSION,
-            op: op.to_owned(),
+            request: self.clone(),
         })
         .unwrap_or_default()
+    }
+
+    /// Whether a client speaking `v` may send this request.
+    fn allowed_in(&self, v: u32) -> bool {
+        v == PROTOCOL_VERSION || matches!(self, Self::Ping | Self::SessionInfo)
     }
 }
 
@@ -267,18 +315,21 @@ impl FromStr for Request {
     type Err = ProtocolError;
 
     fn from_str(line: &str) -> Result<Self, Self::Err> {
-        let wire: RequestWire = serde_json::from_str(line)
+        let VersionOnly { v } = serde_json::from_str(line)
             .map_err(|error| ProtocolError(format!("malformed request: {error}")))?;
-        if wire.v != PROTOCOL_VERSION {
+        if !(OLDEST_VERSION..=PROTOCOL_VERSION).contains(&v) {
             return Err(ProtocolError(format!(
-                "unsupported protocol version {} (this session speaks {PROTOCOL_VERSION})",
-                wire.v
+                "unsupported protocol version {v} (this session speaks {PROTOCOL_VERSION})"
             )));
         }
-        match wire.op.as_str() {
-            "ping" => Ok(Self::Ping),
-            "session_info" => Ok(Self::SessionInfo),
-            other => Err(ProtocolError(format!("unknown operation `{other}`"))),
+        let wire: RequestWire = serde_json::from_str(line)
+            .map_err(|error| ProtocolError(format!("malformed request: {error}")))?;
+        if wire.request.allowed_in(v) {
+            Ok(wire.request)
+        } else {
+            Err(ProtocolError(format!(
+                "operation needs protocol version {PROTOCOL_VERSION} (request says {v})"
+            )))
         }
     }
 }
@@ -290,6 +341,11 @@ pub enum Response {
     Pong,
     /// Answer to [`Request::SessionInfo`].
     Session(Record),
+    /// Answer to [`Request::Open`], [`Request::Follow`], and
+    /// [`Request::ThreadReply`]: the operation took effect.
+    Done,
+    /// Answer to [`Request::AnnotationsList`].
+    Threads(Vec<Thread>),
     /// The request was refused; the text says why.
     Error(String),
 }
@@ -302,6 +358,8 @@ struct ResponseWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<Record>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    threads: Option<Vec<Thread>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
@@ -309,26 +367,23 @@ impl Response {
     /// The response as one JSON line without the newline.
     #[must_use]
     pub fn to_line(&self) -> String {
-        let wire = match self {
-            Self::Pong => ResponseWire {
-                ok: true,
-                pong: Some(true),
-                session: None,
-                error: None,
-            },
-            Self::Session(record) => ResponseWire {
-                ok: true,
-                pong: None,
-                session: Some(record.clone()),
-                error: None,
-            },
-            Self::Error(message) => ResponseWire {
-                ok: false,
-                pong: None,
-                session: None,
-                error: Some(message.clone()),
-            },
+        let mut wire = ResponseWire {
+            ok: true,
+            pong: None,
+            session: None,
+            threads: None,
+            error: None,
         };
+        match self {
+            Self::Pong => wire.pong = Some(true),
+            Self::Session(record) => wire.session = Some(record.clone()),
+            Self::Done => {}
+            Self::Threads(threads) => wire.threads = Some(threads.clone()),
+            Self::Error(message) => {
+                wire.ok = false;
+                wire.error = Some(message.clone());
+            }
+        }
         serde_json::to_string(&wire).unwrap_or_default()
     }
 }
@@ -339,32 +394,23 @@ impl FromStr for Response {
     fn from_str(line: &str) -> Result<Self, Self::Err> {
         let wire: ResponseWire = serde_json::from_str(line)
             .map_err(|error| ProtocolError(format!("malformed response: {error}")))?;
-        match wire {
+        Ok(match wire {
             ResponseWire {
                 ok: false, error, ..
-            } => Ok(Self::Error(
-                error.unwrap_or_else(|| "unspecified error".to_owned()),
-            )),
+            } => Self::Error(error.unwrap_or_else(|| "unspecified error".to_owned())),
             ResponseWire {
                 session: Some(record),
                 ..
-            } => Ok(Self::Session(record)),
+            } => Self::Session(record),
+            ResponseWire {
+                threads: Some(threads),
+                ..
+            } => Self::Threads(threads),
             ResponseWire {
                 pong: Some(true), ..
-            } => Ok(Self::Pong),
-            _ => Err(ProtocolError("response carries no payload".to_owned())),
-        }
-    }
-}
-
-/// Answer one request line on behalf of `record`. Never fails: a bad line
-/// becomes [`Response::Error`].
-#[must_use]
-pub fn answer(line: &str, record: &Record) -> Response {
-    match line.parse::<Request>() {
-        Ok(Request::Ping) => Response::Pong,
-        Ok(Request::SessionInfo) => Response::Session(record.clone()),
-        Err(error) => Response::Error(error.to_string()),
+            } => Self::Pong,
+            _ => Self::Done,
+        })
     }
 }
 
@@ -384,7 +430,8 @@ impl std::error::Error for ProtocolError {}
 mod tests {
     use std::path::PathBuf;
 
-    use super::{Id, ProtocolError, Record, Request, Response, answer};
+    use super::{Id, ProtocolError, Record, Request, Response};
+    use crate::annotations::Author;
 
     fn record() -> Record {
         Record::new(
@@ -406,30 +453,80 @@ mod tests {
     }
 
     #[test]
-    fn requests_round_trip_and_reject_other_versions() -> Result<(), ProtocolError> {
-        for request in [Request::Ping, Request::SessionInfo] {
-            assert_eq!(request.to_line().parse::<Request>()?, request);
+    fn requests_round_trip() -> Result<(), ProtocolError> {
+        let requests = [
+            Request::Ping,
+            Request::SessionInfo,
+            Request::Open {
+                path: PathBuf::from("README.md"),
+                line: Some(3),
+                end_line: None,
+            },
+            Request::Follow {
+                paths: vec![PathBuf::from("a.md"), PathBuf::from("b/c.md")],
+            },
+            Request::AnnotationsList {
+                since: Some(7),
+                path: None,
+            },
+            Request::ThreadReply {
+                thread: serde_json::from_str(r#""1-2-3""#)
+                    .map_err(|e| ProtocolError(e.to_string()))?,
+                author: Author::Agent {
+                    name: "reviewer".to_owned(),
+                    client: Some("claude-code".to_owned()),
+                },
+                body: "done".to_owned(),
+                resolve: true,
+            },
+        ];
+        for request in requests {
+            let line = request.to_line();
+            assert!(line.starts_with(r#"{"v":1,"op":""#), "{line}");
+            assert_eq!(line.parse::<Request>()?, request);
         }
-        let error = r#"{"v":1,"op":"ping"}"#.parse::<Request>().err();
-        assert!(error.is_some_and(|e| e.to_string().contains("version 1")));
-        assert_eq!(r#"{"v":0,"op":"open"}"#.parse::<Request>().ok(), None);
-        assert_eq!("not json".parse::<Request>().ok(), None);
+        assert_eq!(Request::Ping.to_line(), r#"{"v":1,"op":"ping"}"#);
         Ok(())
     }
 
     #[test]
-    fn answer_covers_every_case() -> Result<(), ProtocolError> {
-        let record = record();
-        assert_eq!(answer(r#"{"v":0,"op":"ping"}"#, &record), Response::Pong);
-        let info = answer(r#"{"v":0,"op":"session_info"}"#, &record);
-        assert_eq!(info, Response::Session(record.clone()));
-        assert_eq!(info.to_line().parse::<Response>()?, info);
-        let error = answer("{}", &record);
-        assert!(matches!(&error, Response::Error(_)));
-        assert!(error.to_line().starts_with(r#"{"ok":false"#));
-        assert_eq!(error.to_line().parse::<Response>()?, error);
+    fn version_gating_keeps_v0_liveness_only() {
         assert_eq!(
-            record.socket(),
+            r#"{"v":0,"op":"ping"}"#.parse::<Request>().ok(),
+            Some(Request::Ping)
+        );
+        assert_eq!(
+            r#"{"v":0,"op":"session_info"}"#.parse::<Request>().ok(),
+            Some(Request::SessionInfo)
+        );
+        let too_old = r#"{"v":0,"op":"follow","paths":[]}"#.parse::<Request>().err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 1")));
+        let too_new = r#"{"v":2,"op":"ping"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("version 2")));
+        assert_eq!(r#"{"v":1,"op":"dance"}"#.parse::<Request>().ok(), None);
+        assert_eq!("not json".parse::<Request>().ok(), None);
+    }
+
+    #[test]
+    fn responses_round_trip() -> Result<(), ProtocolError> {
+        let responses = [
+            Response::Pong,
+            Response::Session(record()),
+            Response::Done,
+            Response::Threads(Vec::new()),
+            Response::Error("nope".to_owned()),
+        ];
+        for response in responses {
+            assert_eq!(response.to_line().parse::<Response>()?, response);
+        }
+        assert!(
+            Response::Error("x".to_owned())
+                .to_line()
+                .starts_with(r#"{"ok":false"#)
+        );
+        assert_eq!(Response::Done.to_line(), r#"{"ok":true}"#);
+        assert_eq!(
+            record().socket(),
             Some(std::path::Path::new("/run/fathomable/1700000000-42.sock"))
         );
         Ok(())

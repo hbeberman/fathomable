@@ -474,8 +474,12 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         (_, 0) => String::new(),
         (open, total) => format!("{open}/{total} threads  "),
     };
+    let followed = match app.followed().len() {
+        0 => String::new(),
+        n => format!("follow {n}  "),
+    };
     let right = format!(
-        " {line}:{col}  {}%  {threads}{} ",
+        " {line}:{col}  {}%  {threads}{followed}{} ",
         view.percent(),
         app.session()
     );

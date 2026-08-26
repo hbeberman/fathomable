@@ -355,6 +355,43 @@ impl App {
         }
     }
 
+    /// A reply arriving over the socket (ADR 0014), optionally resolving the
+    /// thread; the open panel is refreshed when it shows that thread.
+    pub(super) fn agent_reply(
+        &mut self,
+        id: &ThreadId,
+        author: Author,
+        body: String,
+        resolve: bool,
+    ) -> Result<(), String> {
+        let store = self
+            .store
+            .as_mut()
+            .ok_or("annotations unavailable; see the log")?;
+        if store.thread(id).is_none() {
+            return Err(format!("unknown thread {id}"));
+        }
+        let when = now();
+        let reply = Reply::new(author.clone(), when, body);
+        let reply = if resolve {
+            reply.proposing_resolution()
+        } else {
+            reply
+        };
+        store.reply(id, reply).map_err(|e| e.to_string())?;
+        if resolve {
+            store.resolve(id, author, when).map_err(|e| e.to_string())?;
+        }
+        tracing::info!(%id, resolve, "agent reply added");
+        for index in 0..self.docs.len() {
+            self.refresh_marks(index);
+        }
+        if matches!(&self.popup, Some(Popup::Thread(panel)) if panel.id() == id) {
+            self.open_thread(id.clone());
+        }
+        Ok(())
+    }
+
     // ----- thread panel -----
 
     /// `Space a`: show the thread(s) under the cursor.
@@ -523,6 +560,9 @@ mod tests {
 
     use fathomable_core::annotations::{LineRange, Status, Store, Thread};
     use fathomable_core::workspace::Workspace;
+
+    use fathomable_core::annotations::Author;
+    use fathomable_core::session::{Request, Response};
 
     use super::{ComposeTarget, MarkKind};
     use crate::app::{App, Popup};
@@ -702,6 +742,100 @@ mod tests {
         app.start_comment();
         app.compose_submit();
         assert_eq!(app.message(), Some("empty comment discarded"));
+        Ok(())
+    }
+
+    #[test]
+    fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
+        let dir = TempDir::new("socket")?;
+        fs::write(dir.0.join("ws/other.md"), "# Other\n\nline\n")?;
+        let mut app = dir.app()?;
+        app.view_mut().move_down(2);
+        app.view_mut().select_lines();
+        app.start_comment();
+        type_in(&mut app, "please check");
+        app.compose_submit();
+        let id = app.marks()[0].id().clone();
+
+        // Paths must stay inside the workspace.
+        for bad in ["../ws/README.md", "/etc/passwd", "missing.md"] {
+            let reply = app.handle_request(Request::Open {
+                path: PathBuf::from(bad),
+                line: None,
+                end_line: None,
+            });
+            assert!(matches!(reply, Response::Error(_)), "{bad}: {reply:?}");
+        }
+        let reply = app.handle_request(Request::Open {
+            path: PathBuf::from("other.md"),
+            line: Some(3),
+            end_line: Some(3),
+        });
+        assert_eq!(reply, Response::Done);
+        assert_eq!(app.current_path(), Path::new("other.md"));
+        assert_eq!(app.view().cursor_source_line(), Some(3));
+
+        assert_eq!(
+            app.handle_request(Request::Follow {
+                paths: vec![PathBuf::from("other.md")]
+            }),
+            Response::Done
+        );
+        assert_eq!(app.followed(), [PathBuf::from("other.md")]);
+
+        let Response::Threads(all) = app.handle_request(Request::AnnotationsList {
+            since: None,
+            path: None,
+        }) else {
+            anyhow::bail!("no thread list");
+        };
+        assert_eq!(all.len(), 1);
+        let Response::Threads(none) = app.handle_request(Request::AnnotationsList {
+            since: Some(all[0].updated() + 1),
+            path: None,
+        }) else {
+            anyhow::bail!("no thread list");
+        };
+        assert!(none.is_empty());
+        let Response::Threads(elsewhere) = app.handle_request(Request::AnnotationsList {
+            since: None,
+            path: Some(PathBuf::from("other.md")),
+        }) else {
+            anyhow::bail!("no thread list");
+        };
+        assert!(elsewhere.is_empty());
+
+        let author = Author::Agent {
+            name: "reviewer".to_owned(),
+            client: Some("claude-code".to_owned()),
+        };
+        let reply = app.handle_request(Request::ThreadReply {
+            thread: id.clone(),
+            author: author.clone(),
+            body: "fixed".to_owned(),
+            resolve: true,
+        });
+        assert_eq!(reply, Response::Done);
+        let thread = app
+            .thread(&id)
+            .ok_or_else(|| anyhow::anyhow!("thread lost"))?;
+        assert_eq!(thread.status(), Status::AutoResolved);
+        assert_eq!(thread.replies()[0].author(), &author);
+        assert!(thread.replies()[0].proposes_resolution());
+        assert_eq!(
+            thread.replies()[0].author().to_string(),
+            "reviewer (claude-code)"
+        );
+        app.open(Path::new("README.md"));
+        assert_eq!(app.thread_counts(), (0, 1));
+
+        let reply = app.handle_request(Request::ThreadReply {
+            thread: serde_json::from_str(r#""9-9-9""#)?,
+            author,
+            body: "?".to_owned(),
+            resolve: false,
+        });
+        assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
         Ok(())
     }
 }

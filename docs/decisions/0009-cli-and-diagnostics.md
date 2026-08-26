@@ -2,6 +2,11 @@
 type: Decision
 title: CLI and diagnostics
 description: Command-line shape, admin flags, and logging so agents can debug Fathomable from its own output.
+resource: crates/fathomable/src/main.rs
+related_resources:
+  - crates/fathomable/src/doctor.rs
+  - crates/fathomable/src/logging.rs
+  - crates/fathomable-core/src/xdg.rs
 tags:
   - decision
   - diagnostics

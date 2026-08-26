@@ -9,3 +9,6 @@
 mod document;
 
 pub use document::{Document, LoadError};
+mod xdg;
+
+pub use xdg::{APP_DIR, XdgDirs};

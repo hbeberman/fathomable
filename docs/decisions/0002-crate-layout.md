@@ -4,7 +4,7 @@ title: Crate layout
 description: Split Fathomable into a terminal-free core crate and a single binary crate.
 resource: crates/fathomable-core/src/lib.rs
 related_resources:
-  - crates/fathomable/src/main.rs
+  - crates/fathomable-core/src/document.rs
   - scripts/check-boundaries.sh
 tags:
   - decision

@@ -27,6 +27,11 @@ the mouse.
 - A which-key style hint bar shows pending key sequences.
 - Keymap is fixed in v1; remapping through KDL config comes later.
 - Helix selection-first grammar is deferred and would be a config switch.
+- Layout: a toggleable tree sidebar on the left plus a fuzzy file picker
+  popup; one bottom line shared by status, `:` and `/` input, and key hints.
+- Follow mode: when an agent marks a file via `follow` or edits one, the
+  bottom line shows a hint and a key jumps there. Auto-jump is a config
+  option, off by default.
 - One pane in v1. The layout tree is written so panes can be split later.
 
 ## Consequences

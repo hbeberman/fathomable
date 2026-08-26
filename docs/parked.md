@@ -34,7 +34,22 @@ rejected for good (record rejections in the [charter](charter.md)).
   initial planning.
 - **macOS / Windows support.** Origin: charter; Linux only for now.
 
+- **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
+  open the user's editor, read the result back as replies. Origin: comment
+  box discussion, [0005](decisions/0005-annotations.md).
+- **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
+  whether to warn or rate-limit. Origin: 0005.
+
 ## Open investigations
+
+- **Agent identity and impersonation.** What is deterministic from the MCP
+  `initialize` handshake (client name, version, process ancestry) versus a
+  self-declared persona; how replies show provenance when several agent
+  types collaborate on one workspace. Origin:
+  [0003](decisions/0003-sessions-and-mcp.md).
+- **"Last seen" recency heuristic.** When a view counts as read, with
+  hysteresis so brief glances and rapid agent edits do not churn snapshots.
+  Origin: [0006](decisions/0006-git-access.md).
 
 - **Re-anchoring modified lines.** When an annotated line is edited rather
   than deleted, how should the anchor move? Candidates: neighbor-context

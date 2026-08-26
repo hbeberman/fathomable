@@ -33,8 +33,11 @@ projects outside the dependency policy.
   positions.
 - Text wraps to pane width; code may switch to no-wrap with horizontal scroll.
   Vertical motion is by visual line.
-- Themes: true-color by default, using syntect themes for code and a
-  Fathomable KDL theme for chrome and Markdown; a 16-color fallback follows.
+- Themes: true-color, using syntect themes for code and a Fathomable KDL
+  theme for chrome and Markdown. Ship a default light and a default dark
+  theme; the dark theme leaves the background unset so transparent terminals
+  show through. A 16-color fallback follows. `--theme NAME` picks a theme per
+  run.
 - Mermaid stays a code block. Images render as alt text; Sixel/Kitty graphics
   are deferred.
 

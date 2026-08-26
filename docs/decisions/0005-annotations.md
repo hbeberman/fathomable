@@ -23,8 +23,10 @@ across many agent sessions, in files any agent can read.
   captured snippet, an anchor, a creation timestamp, and the user's comment.
   There is no kind/type field.
 - A thread is an annotation plus an ordered list of replies, each with author
-  (`user` or an agent-supplied name), timestamp, and body. Threads can be
-  resolved.
+  (`user` or an agent-supplied name), timestamp, and body.
+- Resolution: an agent reply may carry `proposed_resolved`; only the user
+  resolves. As an escape hatch an agent may force-resolve, and the thread is
+  then marked `auto_resolved` and shown distinctly in the TUI.
 - Anchors are content hashes (`sha2`) of each annotated line plus a small
   context of neighboring lines. On refresh the anchor is re-located by hash;
   when the exact lines are gone the annotation is shown as detached at its
@@ -34,7 +36,9 @@ across many agent sessions, in files any agent can read.
   `$XDG_STATE_HOME/fathomable/workspaces/<workspace-hash>/threads.jsonl`, keyed
   by workspace root path. The workspace tree is never written to.
 - Selection for annotation is by mouse drag or Vim visual mode; the comment
-  is entered in a small input box, the only text entry in Fathomable.
+  is entered in a multi-line box at the bottom of the screen: Enter adds a
+  line, Ctrl-Enter submits, Esc cancels. This is the only text entry in
+  Fathomable.
 - Agents read threads via the MCP `annotations_list` tool and reply via
   `thread_reply`; there is no push. The user tells the agent when to check.
 

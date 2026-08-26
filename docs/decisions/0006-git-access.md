@@ -22,7 +22,9 @@ diffs. Shelling out to host git is rejected; `git2` builds libgit2 C code.
   and diffing, behind an internal `Vcs` trait in `fathomable-core`.
 - Two diff bases are supported: **HEAD** (working tree vs last commit) and
   **last seen** (working tree vs the content Fathomable snapshotted when the
-  user last viewed the file). Snapshots live in the session state directory.
+  user last viewed the file). When a view counts as "seen" is a recency
+  heuristic with hysteresis, still open (see [parked ideas](../parked.md)).
+  Snapshots live in the session state directory.
 - The gutter strip colors added, modified, and removed lines like Zellij and
   editors do; diff views render side-by-side or unified in the same layout
   engine.

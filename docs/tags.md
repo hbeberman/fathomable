@@ -9,6 +9,7 @@ tag_definitions:
   configuration: User configuration files and formats.
   decision: Architecture decision records.
   dependencies: Third-party crate policy and selection.
+  diagnostics: Logging, health checks, and self-inspection.
   documentation: Project documentation structure, ownership, and validation.
   git: Version-control integration and diffing.
   input: Keyboard grammar and mouse handling.

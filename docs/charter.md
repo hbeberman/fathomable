@@ -30,7 +30,7 @@ the agent does the writing.
   long-running local review conversation across many agent sessions.
 - A **diff lens**: a Git gutter strip showing changed lines, and diff views for
   both "working tree vs HEAD" and "what changed since I last looked".
-- An **agent endpoint**: `fathomable mcp` is a stdio MCP server that binds to a
+- An **agent endpoint**: `fathomable --mcp` is a stdio MCP server that binds to a
   running session so an agent can open files, jump to locations, list
   annotations, and reply to threads.
 - **Modal**: Vim grammar for navigation, `:` command line, `/` search, and

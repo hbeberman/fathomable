@@ -12,3 +12,4 @@ supersede rather than edit history.
 - [0006 Git access](0006-git-access.md)
 - [0007 Key grammar and mouse](0007-key-grammar-and-mouse.md)
 - [0008 Configuration format](0008-configuration-format.md)
+- [0009 CLI and diagnostics](0009-cli-and-diagnostics.md)

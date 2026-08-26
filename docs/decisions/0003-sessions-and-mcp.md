@@ -25,7 +25,7 @@ repositories at once.
   writes a session record to `$XDG_STATE_HOME/fathomable/sessions/<id>/` and
   listens on a Unix socket in `$XDG_RUNTIME_DIR/fathomable/<id>.sock`. Records
   of dead sessions are cleaned up on next start.
-- `fathomable mcp` is a stdio MCP server intended to be launched by the agent
+- `fathomable --mcp` is a stdio MCP server intended to be launched by the agent
   TUI. It binds to the session whose workspace root contains the current
   working directory (longest match). It always exposes `session_list` and
   `session_switch` so the agent can rebind explicitly.
@@ -37,6 +37,10 @@ repositories at once.
   `thread_reply`, `follow` (mark files the agent is actively working on so the
   TUI can lazily follow them).
 - Transport is stdio only. HTTP is deferred.
+- Agent identity in replies is unresolved: what can be deduced from the MCP
+  `initialize` handshake versus what the agent declares, and how to flag
+  impersonation when several agents share a workspace. Tracked in
+  [parked ideas](../parked.md).
 
 ## Consequences
 

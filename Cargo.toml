@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/fathomable",
+    "crates/fathomable-core",
 ]
 resolver = "3"
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @okf-doc: /decisions/0002-crate-layout.md
 set -euo pipefail
 
 verbose=0
@@ -16,6 +17,8 @@ Runs source-level boundary tripwires for workspace crates.
 Checks:
   - no public unsafe function declarations under crates/
   - no public glob re-exports under crates/
+  - fathomable-core does not depend on ratatui, crossterm, or rmcp
+    (docs/decisions/0002-crate-layout.md)
 
 The compiler-wide workspace lint forbids unsafe code. The remaining source
 checks supplement compiler validation; exported API shape checks live in
@@ -82,3 +85,23 @@ deny_matches \
 
 log "checking: public glob re-exports"
 scripts/check-rust-source-policy.py
+
+log "checking: fathomable-core terminal and MCP dependencies"
+: >"$matches"
+core_deps_script='
+import json, sys
+forbidden = {"ratatui", "crossterm", "rmcp"}
+metadata = json.load(sys.stdin)
+for package in metadata["packages"]:
+    if package["name"] != "fathomable-core":
+        continue
+    for dependency in package["dependencies"]:
+        if dependency["name"] in forbidden:
+            print("fathomable-core depends on " + dependency["name"])
+'
+if ! cargo metadata --format-version 1 --no-deps | python3 -c "$core_deps_script" >"$matches"; then
+    fail "cannot inspect fathomable-core dependencies"
+fi
+if [[ -s "$matches" ]]; then
+    fail "fathomable-core must not depend on ratatui, crossterm, or rmcp"
+fi

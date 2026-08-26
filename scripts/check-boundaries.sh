@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+verbose=0
+for arg in "$@"; do
+    case "$arg" in
+        -v|--verbose)
+            verbose=1
+            ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: check-boundaries.sh [-v|--verbose]
+
+Runs source-level boundary tripwires for workspace crates.
+
+Checks:
+  - no public unsafe function declarations under crates/
+  - no public glob re-exports under crates/
+
+The compiler-wide workspace lint forbids unsafe code. The remaining source
+checks supplement compiler validation; exported API shape checks live in
+scripts/check-public-api.sh.
+
+Requires ripgrep and Python 3.
+USAGE
+            exit 0
+            ;;
+        *)
+            printf 'unknown argument: %s\n' "$arg" >&2
+            exit 2
+            ;;
+    esac
+done
+
+command -v rg >/dev/null 2>&1 || {
+    printf 'boundary check failed: ripgrep (rg) is required\n' >&2
+    exit 1
+}
+command -v python3 >/dev/null 2>&1 || {
+    printf 'boundary check failed: python3 is required\n' >&2
+    exit 1
+}
+
+matches=$(mktemp)
+trap 'rm -f "$matches"' EXIT
+
+log() {
+    if [[ $verbose -eq 1 ]]; then
+        printf '%s\n' "$1"
+    fi
+}
+
+fail() {
+    if [[ -s "$matches" ]]; then
+        printf -- '----- boundary matches -----\n' >&2
+        cat "$matches" >&2
+    fi
+    printf 'boundary check failed: %s\n' "$1" >&2
+    exit 1
+}
+
+deny_matches() {
+    local description=$1
+    shift
+
+    log "checking: $description"
+    : >"$matches"
+    if rg --color never "$@" >"$matches"; then
+        fail "source tripwire: $description"
+    else
+        status=$?
+        if [[ $status -ne 1 ]]; then
+            fail "ripgrep failed while checking: $description"
+        fi
+    fi
+}
+
+deny_matches \
+    "public unsafe function declaration found" \
+    -n --type rust '^[[:space:]]*pub(\([^)]*\))?[^{;]*\bunsafe\b[^{;]*\bfn\b' \
+    crates
+
+log "checking: public glob re-exports"
+scripts/check-rust-source-policy.py

@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  cargo-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - name: Install nightly Rust for public API scan
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install system tools
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Install cargo tools
+        uses: taiki-e/install-action@2ca9b94c269419b7b0c711c09d0b21c4e1d51145 # v2.83.1
+        with:
+          tool: cargo-audit@0.22.1,cargo-hack@0.6.44,cargo-nextest@0.9.138,lychee@0.24.2
+      - name: Install cargo-public-api
+        run: cargo install cargo-public-api --locked --version 0.51.0
+      - name: Install documentation lint dependencies
+        run: python3 -m pip install --requirement requirements-docs.txt
+      - name: Format
+        run: make fmt-check
+      - name: Clippy
+        run: make clippy
+      - name: Test all features
+        run: make test
+      - name: Test documentation
+        run: make doctest
+      - name: Check documentation bundle
+        run: make docs-check
+      - name: Test default features
+        run: cargo nextest run --all-targets
+      - name: Boundary checks
+        run: make boundaries
+      - name: Public API checks
+        run: make public-api
+      - name: Rustdoc
+        run: make doc
+      - name: Audit dependencies
+        run: make audit
+      - name: Feature powerset
+        run: make features
+
+  unused-dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly --profile minimal
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Install cargo-udeps
+        uses: taiki-e/install-action@2ca9b94c269419b7b0c711c09d0b21c4e1d51145 # v2.83.1
+        with:
+          tool: cargo-udeps@0.1.61
+      - name: Check unused dependencies
+        run: make udeps

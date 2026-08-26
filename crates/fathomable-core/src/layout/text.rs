@@ -63,6 +63,24 @@ impl LineIndex {
         Some(start..end.max(start))
     }
 
+    /// The byte offset of display column `column` on 1-based `line`.
+    ///
+    /// Columns past the end of the line map to its end; `None` when `line`
+    /// is out of range.
+    #[must_use]
+    pub fn offset_at(&self, text: &str, line: usize, column: usize) -> Option<usize> {
+        let range = self.range_of(line)?;
+        let slice = text.get(range.clone())?;
+        let mut cells = 0;
+        for (offset, grapheme) in graphemes(slice) {
+            if cells >= column {
+                return Some(range.start + offset);
+            }
+            cells += display_width(grapheme);
+        }
+        Some(range.end)
+    }
+
     /// The 0-based display column of `offset` within its line.
     #[must_use]
     pub fn column_of(&self, text: &str, offset: usize) -> usize {

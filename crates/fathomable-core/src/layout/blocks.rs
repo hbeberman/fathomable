@@ -82,7 +82,8 @@ pub(super) fn parse(text: &str) -> Vec<Block> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH;
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
     let events = Parser::new_ext(text, options).into_offset_iter();
     let mut parser = BlockParser {
         events: events.peekable(),
@@ -137,7 +138,7 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
         let block = match tag {
             Tag::Paragraph => Block::Paragraph(self.inlines()),
             Tag::Heading { level, .. } => Block::Heading(level as u8, self.inlines()),
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(_) | Tag::MetadataBlock(_) => {
                 let mut text = String::new();
                 while let Some((Event::Text(_), _)) = self.events.peek() {
                     if let Some((Event::Text(part), _)) = self.events.next() {

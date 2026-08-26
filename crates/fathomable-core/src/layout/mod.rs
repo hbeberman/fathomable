@@ -198,6 +198,22 @@ impl Line {
         self.spans.iter().map(Span::width).sum()
     }
 
+    /// Display columns at which each grapheme cluster starts.
+    ///
+    /// Cursor motion steps through these so a wide character is never split.
+    #[must_use]
+    pub fn columns(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut col = 0;
+        for span in &self.spans {
+            for (_, grapheme) in text::graphemes(&span.text) {
+                out.push(col);
+                col += display_width(grapheme);
+            }
+        }
+        out
+    }
+
     /// The source byte offset under display column `col`, if any.
     ///
     /// Falls back to the nearest span with a source range so that clicking on
@@ -207,10 +223,16 @@ impl Line {
         let mut cells = 0;
         for span in &self.spans {
             let width = span.width();
-            if col < cells + width
-                && let Some(offset) = span.source_at(col - cells)
+            if col < cells + width {
+                // Inside this span; chrome without a source falls through to
+                // the next sourced span so clicks on a bullet land on its text.
+                if let Some(offset) = span.source_at(col.saturating_sub(cells)) {
+                    return Some(offset);
+                }
+            } else if col < cells
+                && let Some(range) = &span.source
             {
-                return Some(offset);
+                return Some(range.start);
             }
             cells += width;
         }
@@ -317,10 +339,12 @@ impl Layout {
             if range.contains(&offset) || (range.start == range.end && range.start == offset) {
                 return Some(row);
             }
+            // Ties prefer the line after the offset so a list marker maps to
+            // its own item, not the previous one.
             let distance = if offset < range.start {
-                range.start - offset
+                (range.start - offset) * 2 - 1
             } else {
-                offset - range.end + 1
+                (offset - range.end + 1) * 2
             };
             if best.is_none_or(|(_, d)| distance < d) {
                 best = Some((row, distance));

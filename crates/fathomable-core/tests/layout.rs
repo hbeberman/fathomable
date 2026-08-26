@@ -223,6 +223,16 @@ fn line_index_maps_offsets_and_columns() -> TestResult {
     assert_eq!(index.range_of(3).ok_or("no line 3")?, 6..6);
     assert_eq!(index.range_of(5), None);
     assert_eq!(index.column_of(src, 4), 1);
+    assert_eq!(index.offset_at(src, 2, 1).ok_or("no offset")?, 4);
+    assert_eq!(index.offset_at(src, 2, 9).ok_or("no offset")?, 5);
+    assert_eq!(index.offset_at(src, 9, 0), None);
+    let wide = "日本語";
+    assert_eq!(
+        LineIndex::new(wide)
+            .offset_at(wide, 1, 2)
+            .ok_or("no offset")?,
+        3
+    );
     Ok(())
 }
 
@@ -243,4 +253,13 @@ fn layout_is_deterministic_for_a_width() {
     let src = include_str!("../../../README.md");
     assert_eq!(Layout::render(src, 72), Layout::render(src, 72));
     assert_ne!(Layout::render(src, 72), Layout::render(src, 40));
+}
+
+#[test]
+fn yaml_front_matter_renders_as_a_code_block() {
+    let src = "---\ntitle: X\n---\n\nbody\n";
+    let layout = Layout::render(src, 40);
+    assert_eq!(texts(&layout)[..3], ["title: X", "", "body"]);
+    assert_eq!(layout.lines()[0].spans()[0].style().face, Face::CodeBlock);
+    assert_eq!(numbers(&layout), [Some(2), None, Some(5)]);
 }

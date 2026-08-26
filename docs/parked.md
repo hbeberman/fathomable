@@ -55,6 +55,10 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
+- **TODO: OSC 8 hyperlinks for links.** 0004 wants clickable links;
+  `ratatui` 0.30 has no hyperlink support in its buffer, so the viewer only
+  colours `Face::Link` spans. Needs either a ratatui feature or raw escape
+  output around the backend. Origin: milestone-1 viewer.
 - **TODO: `syntect` highlighting for code blocks.** Layout emits
   `Face::CodeBlock` spans without a language; 0004's syntect highlighting
   waits on the theme format. Origin: milestone-1 layout engine.

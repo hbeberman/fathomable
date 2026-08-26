@@ -2,6 +2,7 @@
 type: Decision
 title: Key grammar and mouse
 description: Vim grammar by default with first-class mouse support; Helix mode deferred.
+resource: crates/fathomable/src/viewer/keys.rs
 tags:
   - decision
   - input

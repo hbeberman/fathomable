@@ -55,7 +55,8 @@ Rules:
 - Versions are locked in `Cargo.lock`; bumps are deliberate commits.
 - `cargo deny` runs in the local gate with an explicit license allowlist
   (MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib,
-  MPL-2.0), a `crates.io`-only source list, and `wildcards = deny`.
+  MPL-2.0, and CC0-1.0 for `notify`, added 2026-08-26), a `crates.io`-only
+  source list, and `wildcards = deny`.
 - Crates that build C code (`*-sys`, `openssl`, `onig`, `libgit2`) are not
   banned but each requires its own decision record before it lands.
 - XDG directory resolution is implemented from environment variables in the

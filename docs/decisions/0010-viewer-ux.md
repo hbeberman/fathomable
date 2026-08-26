@@ -2,6 +2,11 @@
 type: Decision
 title: Viewer UX conventions
 description: Cursor, gutter, status line, selection-to-clipboard, search, and reload behaviour of the rendered view, modelled on Neovim and Helix.
+resource: crates/fathomable/src/viewer/mod.rs
+related_resources:
+  - crates/fathomable/src/viewer/view.rs
+  - crates/fathomable/src/viewer/ui.rs
+  - crates/fathomable/src/viewer/clipboard.rs
 tags:
   - decision
   - input
@@ -94,6 +99,13 @@ viewer, the layout engine, and later themes agree.
   (theme key `ui.search.match`) until Esc or `:noh`.
 - An invalid pattern shows the regex error in the status line and leaves the
   view where it was.
+
+### Source view
+
+- `gs` toggles between rendered Markdown and the raw source (`:source` does
+  the same); the cursor keeps its source line across the toggle. The key was
+  chosen during implementation (2026-08-26) as an unused `g` prefix; change
+  it here if a better one emerges.
 
 ### Width and wrapping
 

@@ -4,6 +4,7 @@
 
 mod doctor;
 mod logging;
+mod viewer;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -73,6 +74,20 @@ fn main() -> ExitCode {
     };
     tracing::info!(session = %session.id(), "starting");
 
+    if !cli.mcp && !cli.sessions && !cli.dump_state && !cli.replay_log && !cli.config_show {
+        let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
+        if path.is_file() {
+            return match viewer::run(&path, session.id()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    tracing::error!(error = format!("{error:#}"), "viewer failed");
+                    eprintln!("fathomable: {error:#}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+    }
+
     let unimplemented = if cli.mcp {
         "--mcp"
     } else if cli.sessions {
@@ -84,7 +99,7 @@ fn main() -> ExitCode {
     } else if cli.config_show {
         "--config-show"
     } else {
-        "the viewer (fathomable [PATH])"
+        "workspace mode (fathomable [DIR])"
     };
     tracing::warn!(feature = unimplemented, "not implemented");
     eprintln!(

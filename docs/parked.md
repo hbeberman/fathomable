@@ -55,6 +55,13 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
+- **TODO: theme files and `--theme`.** [0004](decisions/0004-markdown-rendering.md)
+  and [0008](decisions/0008-configuration-format.md) say themes are KDL under
+  `$XDG_CONFIG_HOME/fathomable/themes/`, but no schema is decided. The viewer
+  ships one built-in palette (`viewer/ui.rs`, `Theme`) keyed by the names in
+  [0010](decisions/0010-viewer-ux.md); `--theme` warns and is ignored. Needs
+  a decision record for the KDL theme schema before light/dark files can
+  ship. Origin: milestone-1 viewer.
 - **TODO: OSC 8 hyperlinks for links.** 0004 wants clickable links;
   `ratatui` 0.30 has no hyperlink support in its buffer, so the viewer only
   colours `Face::Link` spans. Needs either a ratatui feature or raw escape

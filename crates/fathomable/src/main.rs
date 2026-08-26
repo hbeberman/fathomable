@@ -77,6 +77,14 @@ fn main() -> ExitCode {
     if !cli.mcp && !cli.sessions && !cli.dump_state && !cli.replay_log && !cli.config_show {
         let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
         if path.is_file() {
+            if let Some(theme) = &cli.theme {
+                // TODO(parked): theme files wait on the KDL theme schema.
+                tracing::warn!(
+                    theme,
+                    "--theme is not implemented; using the built-in theme"
+                );
+                eprintln!("fathomable: --theme is not implemented yet; using the built-in theme");
+            }
             return match viewer::run(&path, session.id()) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {

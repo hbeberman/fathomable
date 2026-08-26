@@ -37,10 +37,9 @@ repositories at once.
   `thread_reply`, `follow` (mark files the agent is actively working on so the
   TUI can lazily follow them).
 - Transport is stdio only. HTTP is deferred.
-- Agent identity in replies is unresolved: what can be deduced from the MCP
-  `initialize` handshake versus what the agent declares, and how to flag
-  impersonation when several agents share a workspace. Tracked in
-  [parked ideas](../parked.md).
+- Agent identity in replies was left open here and is settled in
+  [0014](0014-mcp-server-and-socket-v1.md): observed client identity and a
+  self-declared persona are both recorded.
 
 ## Consequences
 

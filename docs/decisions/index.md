@@ -17,3 +17,4 @@ supersede rather than edit history.
 - [0011 Theme schema](0011-theme-schema.md)
 - [0012 Workspace mode](0012-workspace-mode.md)
 - [0013 Annotation storage and UX](0013-annotation-storage-and-ux.md)
+- [0014 MCP server and socket protocol v1](0014-mcp-server-and-socket-v1.md)

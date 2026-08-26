@@ -1,0 +1,119 @@
+---
+type: Decision
+title: MCP server and socket protocol v1
+description: The stdio MCP server built on rmcp 3 against the 2026-07-28 spec, the v1 session socket operations it forwards, per-request agent identity, and session binding.
+tags:
+  - decision
+  - sessions
+  - annotations
+  - architecture
+---
+
+# 0014 MCP server and socket protocol v1
+
+Status: accepted (2026-08-26)
+
+## Context
+
+[0003](0003-sessions-and-mcp.md) decided that `fathomable --mcp` is a stdio
+MCP server acting as a thin client of the session socket, and listed the
+tool surface. [0012](0012-workspace-mode.md) shipped socket protocol v0,
+which answers only `ping` and `session_info`. Milestone 4 of the
+[roadmap](../roadmap.md) needs the real operations.
+
+Meanwhile MCP published the 2026-07-28 revision, its largest since launch.
+It removes the `initialize`/`initialized` handshake and protocol-level
+sessions: a client may start with `server/discover`, and every request then
+carries protocol version, client info, and capabilities in `_meta`.
+Server-to-client requests become multi-round-trip results (`InputRequired`
+with an opaque `requestState`), tasks are an official extension, and roots,
+sampling, and logging are deprecated. `rmcp` 3.x implements this while
+staying compatible with the `initialize` flow, which agent hosts still send
+over stdio. The choices below were captured in a question round on
+2026-08-26.
+
+## Decision
+
+### MCP server
+
+- `rmcp` 3.x with features `server`, `transport-io`, `macros`, in the
+  `fathomable` binary crate only (per [0001](0001-dependency-policy.md) and
+  [0002](0002-crate-layout.md)). Socket request and response types stay in
+  `fathomable-core`.
+- Transport is stdio only; HTTP stays parked. The 2026-07-28 stateless HTTP
+  work targets load-balanced deployments; an agent-launched subprocess gains
+  nothing from it and would add an authorization surface.
+- The server accepts both the legacy `initialize` flow and discovery-first
+  startup. No code depends on handshake state: client identity is read from
+  the request context on every call.
+- Every tool completes in one round trip and returns `Complete`. No
+  multi-round-trip requests, no tasks extension, no `request-state` feature.
+- No use of MCP `logging/*`, roots, or sampling. Diagnostics go to the file
+  log of [0009](0009-cli-and-diagnostics.md).
+- Tool results carry `structured_content` JSON for anything list-shaped
+  (`session_list`, `annotations_list`) plus a short text summary, since some
+  hosts render only text.
+
+### Tools
+
+| Tool | Arguments | Effect |
+|---|---|---|
+| `session_list` | – | Live session records, marking the current default. |
+| `session_switch` | `session` | Sets the default session for later calls. |
+| `open` | `path`, optional `line`, `end_line`, `session` | Open a file in the TUI and scroll to the range. |
+| `follow` | `paths`, `session` | Record the files the agent is working on. |
+| `annotations_list` | optional `since` (Unix seconds), `path`, `session` | Threads and replies created or changed since `since`. |
+| `thread_reply` | `thread`, `body`, optional `resolve`, `persona`, `session` | Append a reply, optionally resolving. |
+
+Every tool accepts an optional `session` id that overrides the default.
+The default is chosen at startup by longest workspace-root match on the
+current directory, as in 0003, and changed by `session_switch`. That
+default is the only state the `--mcp` process holds.
+
+`follow` in this milestone only stores the list in the session and shows a
+status-line marker; hints and jumping are milestone 6.
+
+### Agent identity
+
+A reply written through `thread_reply` records two things: the client
+`name` and `version` observed in the MCP request context, and an optional
+self-declared `persona` argument. `Author::Agent` grows from a bare name to
+`{ name, client }`, where `name` is the persona if given and the client
+name otherwise; existing JSONL that stores a plain string still loads
+(`#[serde(default)]` on `client`). The thread panel shows `persona (client)`
+when they differ. Impersonation among same-uid processes cannot be
+prevented, so Fathomable shows provenance rather than enforcing it. This
+closes the "agent identity" investigation of 0003.
+
+### Annotation consumption
+
+Agents poll with `annotations_list since=<ts>`; the agent owns its cursor
+and the server stores none. This matches the stateless direction of the
+spec. A server-side per-agent cursor is parked until polling proves
+inadequate.
+
+### Socket protocol v1
+
+- Line-delimited JSON as before, `"v":1`. Requests are a serde enum tagged
+  by `op`, replacing the hand-written v0 parser. A v0 `ping` or
+  `session_info` is still answered.
+- Operations mirror the tools one to one: `ping`, `session_info`, `open`,
+  `follow`, `annotations_list`, `thread_reply`. Responses are
+  `{"ok":true,...}` or `{"ok":false,"error":...}`.
+- Authorization is the mode-0700 `$XDG_RUNTIME_DIR` plus a peer-uid check
+  (`SO_PEERCRED`) that rejects other users. No token.
+- The TUI removes its session record and socket on SIGTERM and SIGHUP as
+  well as on clean quit (`tokio` `signal` feature), so `session_list` stays
+  accurate for agents.
+
+## Consequences
+
+- The tool surface is a pure function of the request plus the socket reply,
+  so switching a host to discovery-first startup changes nothing in
+  Fathomable.
+- Identity in threads is honest about its source: what the host said and
+  what the agent claimed are both kept.
+- The socket enum makes adding an operation a one-arm change on each side;
+  the v0 compatibility arm can be dropped once no released binary speaks it.
+- The `annotations.rs` author schema changes shape; the JSONL stays
+  readable by older builds only for replies without a `client` field.

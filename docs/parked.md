@@ -30,7 +30,9 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Multiple panes inside Fathomable.** Origin: initial planning; the layout
   tree is designed for it.
 - **HTTP transport for the MCP server.** Origin:
-  [0003](decisions/0003-sessions-and-mcp.md).
+  [0003](decisions/0003-sessions-and-mcp.md); reaffirmed stdio-only in
+  [0014](decisions/0014-mcp-server-and-socket-v1.md) despite stateless HTTP
+  in MCP 2026-07-28.
 - **16-color theme fallback.** Origin: 0004; true-color first. ANSI colour
   names already work in themes ([0011](decisions/0011-theme-schema.md)).
 - **Automatic light/dark theme choice** from the terminal background
@@ -49,11 +51,10 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 1 scaffolding follow-ups
 
-- **TODO: remaining approved dependencies.** `syntect` (core) and `rmcp`
-  (binary) are approved by
+- **TODO: remaining approved dependencies.** `syntect` (core) is approved by
   [0001](decisions/0001-dependency-policy.md) but not yet added: the
   `unused-dependencies` gate (`cargo udeps`) rejects a dependency with no
-  consumer, and bypassing hooks is not allowed. Add each one in the commit
+  consumer, and bypassing hooks is not allowed. Add it in the commit
   that first uses it. Origin: milestone-1 scaffolding handoff (2026-08-26);
   list trimmed after milestone 2 added `gix`, `serde`, `serde_json`,
   `nucleo-matcher`, `notify`, `tokio`, and `ratatui`, and milestone 3
@@ -83,18 +84,13 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: comment box editing keys.** The box only appends and
   backspaces; no cursor movement inside the text, no paste handling.
   Origin: 0013.
-- **TODO: remove the session record on SIGTERM/SIGHUP.** Only a clean quit
-  removes the record and socket; a killed session leaves both until the
-  next start sweeps dead pids. A signal handler needs `tokio`'s `signal`
-  feature. Origin: 0012 smoke test.
 
 ## Open investigations
 
-- **Agent identity and impersonation.** What is deterministic from the MCP
-  `initialize` handshake (client name, version, process ancestry) versus a
-  self-declared persona; how replies show provenance when several agent
-  types collaborate on one workspace. Origin:
-  [0003](decisions/0003-sessions-and-mcp.md).
+- **Server-side annotation cursor per agent.** Agents poll with `since`
+  ([0014](decisions/0014-mcp-server-and-socket-v1.md)); revisit if agents
+  prove bad at tracking timestamps.
+
 - **"Last seen" recency heuristic.** When a view counts as read, with
   hysteresis so brief glances and rapid agent edits do not churn snapshots.
   Origin: [0006](decisions/0006-git-access.md).
@@ -103,12 +99,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   than deleted, how should the anchor move? Candidates: neighbor-context
   hashes, nearest-heading fallback, diff-based mapping via `gix`. Origin:
   [0005](decisions/0005-annotations.md).
-- **MCP to session binding details.** Protocol v0 ([0012](decisions/0012-workspace-mode.md))
-  only answers `ping` and `session_info`; the real operations, auth on the
-  Unix socket, and how an agent learns a session exists are still open.
-  Origin: 0003; needs a dedicated session.
-- **Annotation consumption flow.** Whether the agent polls only on request or
-  Fathomable offers a "since last read" cursor per agent. Origin: 0005.
 - **Lazy follow heuristics.** How long after the agent touches a file the
   viewer should jump, and how to avoid jumping while the user is reading.
   Origin: [0006](decisions/0006-git-access.md) and charter.

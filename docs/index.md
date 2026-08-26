@@ -11,5 +11,6 @@ Start here before changing documented behavior or adding project documentation.
 
 - [Fathomable charter](charter.md)
 - [Design decisions](decisions/index.md)
+- [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

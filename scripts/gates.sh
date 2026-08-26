@@ -49,6 +49,7 @@ run "boundaries"       scripts/check-boundaries.sh "${script_args[@]}"
 run "rustdoc"          env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features
 run "public-api"       scripts/check-public-api.sh "${script_args[@]}"
 run "audit"            cargo audit
+run "deny"             cargo deny check
 run "feature-powerset" cargo hack check --feature-powerset --no-dev-deps
 run "unused-dependencies" cargo +nightly udeps --all-targets --all-features
 if [[ -f web/package.json ]]; then

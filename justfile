@@ -45,6 +45,9 @@ public-api:
 audit:
     make audit
 
+deny:
+    make deny
+
 features:
     make features
 

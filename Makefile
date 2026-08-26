@@ -10,7 +10,7 @@ export PERF_BIN
 export PERF_SECONDS
 
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
-	docs-check boundaries public-api audit features udeps mutants mutants-file \
+	docs-check boundaries public-api audit deny features udeps mutants mutants-file \
 	perf install-commit-hooks build-deps clean web-install web-dev web-check \
 	web-build web-lock web-toolchain
 
@@ -30,6 +30,7 @@ help:
 		'boundaries        Run source boundary checks' \
 		'public-api        Check public API shape' \
 		'audit             Audit dependencies' \
+		'deny              Check licenses, sources, and bans with cargo-deny' \
 		'features          Check feature combinations' \
 		'udeps             Check unused dependencies' \
 		'mutants           Run mutation testing' \
@@ -85,6 +86,9 @@ public-api:
 
 audit:
 	cargo audit
+
+deny:
+	cargo deny check
 
 features:
 	cargo hack check --feature-powerset --no-dev-deps

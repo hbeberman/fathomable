@@ -2,6 +2,9 @@
 type: Decision
 title: Dependency policy
 description: Which third-party crates Fathomable takes on, and how the policy is enforced.
+resource: deny.toml
+related_resources:
+  - rust-toolchain.toml
 tags:
   - decision
   - dependencies

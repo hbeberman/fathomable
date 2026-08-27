@@ -25,7 +25,6 @@ use std::time::Duration;
 use kdl::{KdlDocument, KdlNode, KdlValue};
 
 use crate::XdgDirs;
-use crate::follow::Source;
 
 /// Settings read from `config.kdl`, with defaults for anything unset.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -79,8 +78,6 @@ impl MarkdownConfig {
 /// The `follow { ... }` block (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FollowConfig {
-    /// What counts as a change worth hinting.
-    pub source: Source,
     /// Whether auto-jump starts enabled.
     pub auto: bool,
     /// Extra ignore globs, root-relative, on top of the tree's rules.
@@ -98,7 +95,6 @@ pub struct FollowConfig {
 impl Default for FollowConfig {
     fn default() -> Self {
         Self {
-            source: Source::Workspace,
             auto: false,
             ignore: Vec::new(),
             hint_debounce: Duration::from_millis(300),
@@ -171,16 +167,6 @@ impl Config {
                         let line = Some(line_of(child.span().offset()));
                         let follow = &mut config.follow;
                         match child.name().value() {
-                            "source" => {
-                                follow.source =
-                                    one_string(child, line)?.parse().map_err(|error| {
-                                        ConfigError {
-                                            path: None,
-                                            line,
-                                            message: format!("{error}"),
-                                        }
-                                    })?;
-                            }
                             "auto" => follow.auto = one_bool(child, line)?,
                             "ignore" => follow.ignore = strings(child, line, "ignore")?,
                             "hint-debounce" => follow.hint_debounce = millis(child, line)?,
@@ -366,7 +352,6 @@ mod tests {
         let config = Config::parse(
             r#"
 follow {
-    source "followed"
     auto #true
     ignore "target/**" "*.lock"
     hint-debounce 50
@@ -379,7 +364,6 @@ follow {
         .map_err(|e| e.to_string());
         let config = config.unwrap_or_default();
         let follow = config.follow();
-        assert_eq!(follow.source, Source::Followed);
         assert!(follow.auto);
         assert_eq!(follow.ignore, ["target/**", "*.lock"]);
         assert_eq!(follow.hint_debounce, Duration::from_millis(50));
@@ -436,14 +420,12 @@ follow {
     fn follow_defaults_apply_per_key() {
         let config = Config::parse("follow { auto #true }").unwrap_or_default();
         assert!(config.follow().auto);
-        assert_eq!(config.follow().source, Source::Workspace);
         assert_eq!(config.follow().toast, Duration::from_secs(4));
     }
 
     #[test]
     fn follow_errors_name_the_line() {
         let bad = [
-            ("follow { source \"nope\" }", "unknown follow source"),
             ("follow { toast -1 }", "millisecond"),
             ("follow { auto \"yes\" }", "boolean"),
             ("follow { nope 1 }", "unknown follow setting"),

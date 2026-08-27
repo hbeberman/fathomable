@@ -420,21 +420,31 @@ impl View {
         self.relayout();
     }
 
-    /// `gd` / `:diff`: rendered, then the diff against `HEAD`, then
-    /// against the last-seen snapshot when one exists and differs from
-    /// `HEAD`, then rendered again (ADR 0017).
+    /// `gd` / `:diff`: the unified diff against `HEAD`, or back to the
+    /// rendered view (ADR 0017).
     pub fn toggle_diff_view(&mut self) {
-        let seen_differs = self.seen.is_some() && self.seen != self.head;
-        self.display = match self.display {
-            Display::Diff if seen_differs => Display::DiffSeen,
-            Display::Diff | Display::DiffSeen => Display::Rendered,
-            _ if self.head.is_some() => Display::Diff,
-            _ if self.seen.is_some() => Display::DiffSeen,
-            _ => {
-                self.message = Some("no diff base: not in a git repository".to_owned());
-                return;
-            }
-        };
+        if self.display == Display::Diff {
+            self.display = Display::Rendered;
+        } else if self.head.is_some() {
+            self.display = Display::Diff;
+        } else {
+            self.message = Some("no diff base: not in a git repository".to_owned());
+            return;
+        }
+        self.relayout();
+    }
+
+    /// `gD` / `:diff seen`: the unified diff against the last-seen
+    /// snapshot (ADR 0015), or back to the rendered view.
+    pub fn toggle_seen_diff_view(&mut self) {
+        if self.display == Display::DiffSeen {
+            self.display = Display::Rendered;
+        } else if self.seen.is_some() {
+            self.display = Display::DiffSeen;
+        } else {
+            self.message = Some("no last-seen snapshot of this file yet".to_owned());
+            return;
+        }
         self.relayout();
     }
 
@@ -753,24 +763,6 @@ impl View {
         self.toggle_select(true);
     }
 
-    /// `x` (Helix): select the current line, or extend a selection one
-    /// line down, so repeated presses grow the block.
-    pub fn select_line_extend(&mut self) {
-        match self
-            .selection
-            .as_mut()
-            .filter(|_| self.mode == Mode::Select)
-        {
-            Some(selection) => {
-                selection.linewise = true;
-                if self.cursor.row < self.last_row() {
-                    self.move_down(1);
-                }
-            }
-            None => self.toggle_select(true),
-        }
-    }
-
     /// Vim semantics: the same key again leaves select mode, the other key
     /// switches the kind and keeps the anchor.
     fn toggle_select(&mut self, linewise: bool) {
@@ -958,8 +950,9 @@ impl View {
                 self.toggle_diff_view();
                 Effect::None
             }
-            follow if follow == "follow" || follow.starts_with("follow ") => {
-                Effect::Command(follow.to_owned())
+            "diff seen" => {
+                self.toggle_seen_diff_view();
+                Effect::None
             }
             "" => Effect::None,
             number if number.chars().all(|c| c.is_ascii_digit()) => {
@@ -968,10 +961,8 @@ impl View {
                 }
                 Effect::None
             }
-            other => {
-                self.message = Some(format!("not a command: {other}"));
-                Effect::None
-            }
+            // Anything else is the app's to run or refuse.
+            other => Effect::Command(other.to_owned()),
         }
     }
 
@@ -1205,25 +1196,6 @@ mod tests {
     }
 
     #[test]
-    fn x_selects_line_then_extends_downward() {
-        let mut v = view();
-        v.move_down(4);
-        v.select_line_extend();
-        assert_eq!(v.mode(), Mode::Select);
-        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 5)));
-        v.select_line_extend();
-        v.select_line_extend();
-        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 7)));
-        assert_eq!(v.yank(), Effect::Copy("- one\n- two\n- three".to_owned()));
-        // From a character selection, `x` upgrades to lines and extends.
-        v.move_up(2);
-        v.select_chars();
-        v.select_line_extend();
-        assert!(v.selection().is_some_and(|s| s.linewise));
-        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 6)));
-    }
-
-    #[test]
     fn mouse_drag_stays_selected_until_yanked() {
         let mut v = view();
         // Click on "beta" (row 2, col 6) then drag to the end of "one".
@@ -1432,8 +1404,12 @@ mod tests {
     }
 
     #[test]
-    fn diff_view_cycles_head_then_seen_then_rendered() {
+    fn head_and_seen_diffs_toggle_independently() {
         let mut v = view();
+        v.toggle_seen_diff_view();
+        assert!(!v.diff_view(), "never seen: no seen diff");
+        assert!(v.message().is_some_and(|m| m.contains("last-seen")));
+
         let seen = v.text().replace("- two\n", "");
         let head = "# Title\n".to_owned();
         v.set_bases(Some(seen), Some(head.clone()), Some(head));
@@ -1447,6 +1423,9 @@ mod tests {
         assert!(v.diff_view());
         assert!(!v.diff_seen());
         v.toggle_diff_view();
+        assert!(!v.diff_view(), "gd is a toggle");
+
+        v.toggle_seen_diff_view();
         assert!(v.diff_view());
         assert!(v.diff_seen());
         let texts: Vec<String> = v
@@ -1457,24 +1436,24 @@ mod tests {
             .collect();
         assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
         v.toggle_diff_view();
-        assert!(!v.diff_view());
-
-        // Without a differing snapshot the cycle is HEAD then rendered.
-        v.set_bases(
-            None,
-            Some("# Title\n".to_owned()),
-            Some("# Title\n".to_owned()),
+        assert!(
+            v.diff_view() && !v.diff_seen(),
+            "gd from the seen diff goes to HEAD"
         );
-        v.toggle_diff_view();
-        assert!(v.diff_view());
-        v.toggle_diff_view();
+        v.start_command();
+        for ch in "diff seen".chars() {
+            v.input_char(ch);
+        }
+        assert_eq!(v.confirm(), Effect::None);
+        assert!(v.diff_seen(), ":diff seen from the HEAD diff goes to seen");
+        v.toggle_seen_diff_view();
         assert!(!v.diff_view());
 
         v.start_command();
-        for ch in "follow source head".chars() {
+        for ch in "follow".chars() {
             v.input_char(ch);
         }
-        assert!(matches!(v.confirm(), Effect::Command(c) if c == "follow source head"));
+        assert!(matches!(v.confirm(), Effect::Command(c) if c == "follow"));
         assert!(v.line_on_screen(1));
         assert!(!v.line_on_screen(usize::MAX));
         v.touch();

@@ -47,3 +47,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     closed are followed on start through the last-seen snapshot, which is
     pinned while the file has open threads and taken on annotate
     ([0020](decisions/0020-reanchoring-across-restarts.md)).
+12. **Polish pass.** One change source, `gd`/`gD` as independent
+    toggles, a `:status` overlay in place of status-line clutter, one key
+    per job, dead flags gone, and app construction through `Options`
+    ([0021](decisions/0021-polish-pass.md)).

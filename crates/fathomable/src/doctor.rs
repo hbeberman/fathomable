@@ -62,8 +62,7 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
     };
     let theme_name = config.theme().unwrap_or(DEFAULT_THEME).to_owned();
     println!(
-        "  ok    follow source `{}`, auto-jump {}",
-        config.follow().source,
+        "  ok    auto-jump {}",
         if config.follow().auto { "on" } else { "off" }
     );
     match Theme::load(&theme_name, dirs) {

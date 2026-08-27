@@ -1,0 +1,75 @@
+// @okf-doc: /decisions/0021-polish-pass.md
+//! The `:` commands the view hands up to the app, and the `:status` overlay.
+//!
+//! `View::execute` keeps the commands that only touch the pane (`:q`,
+//! `:noh`, `:source`, `:diff`, `:N`); everything else arrives here as
+//! [`Effect::Command`](super::view::Effect::Command).
+
+use super::App;
+
+impl App {
+    /// Run a `:` command the view did not handle itself.
+    pub fn command(&mut self, command: &str) {
+        let mut words = command.split_whitespace();
+        match (words.next(), words.next(), words.next()) {
+            (Some("follow"), None, _) => self.toggle_auto_jump(),
+            (Some("follow"), Some("on"), None) => self.set_auto_jump(true),
+            (Some("follow"), Some("off"), None) => self.set_auto_jump(false),
+            (Some("status"), None, _) => self.open_status(),
+            _ => self.notice(format!("not a command: {command}")),
+        }
+    }
+
+    /// The rows of the `:status` overlay: label, value.
+    pub fn status_lines(&self) -> Vec<(String, String)> {
+        let unavailable = || "unavailable (see the log)".to_owned();
+        let followed = match self.followed.as_slice() {
+            [] => "none".to_owned(),
+            paths => paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        vec![
+            ("session".to_owned(), self.session.clone()),
+            (
+                "workspace".to_owned(),
+                self.workspace.root().display().to_string(),
+            ),
+            (
+                "socket".to_owned(),
+                self.record.socket().map_or_else(
+                    || "none (XDG_RUNTIME_DIR unset)".to_owned(),
+                    |p| p.display().to_string(),
+                ),
+            ),
+            (
+                "threads".to_owned(),
+                self.store
+                    .as_ref()
+                    .map_or_else(unavailable, |s| s.path().display().to_string()),
+            ),
+            (
+                "snapshots".to_owned(),
+                self.seen
+                    .as_ref()
+                    .map_or_else(unavailable, |s| s.dir().display().to_string()),
+            ),
+            (
+                "watching".to_owned(),
+                if self.watching_root {
+                    "the whole workspace".to_owned()
+                } else {
+                    "the open file's directory only".to_owned()
+                },
+            ),
+            (
+                "auto-jump".to_owned(),
+                if self.auto { "on" } else { "off" }.to_owned(),
+            ),
+            ("pending changes".to_owned(), self.queue.len().to_string()),
+            ("agent follows".to_owned(), followed),
+        ]
+    }
+}

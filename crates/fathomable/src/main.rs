@@ -52,14 +52,6 @@ struct Cli {
     #[arg(long)]
     sessions: bool,
 
-    /// Print session and thread state as JSON.
-    #[arg(long)]
-    dump_state: bool,
-
-    /// Re-emit the log for a session in order.
-    #[arg(long)]
-    replay_log: bool,
-
     /// Print the effective configuration after defaults and overrides.
     #[arg(long)]
     config_show: bool,
@@ -99,17 +91,6 @@ fn main() -> ExitCode {
             }
         };
     }
-    if cli.dump_state || cli.replay_log {
-        let unimplemented = if cli.dump_state {
-            "--dump-state"
-        } else {
-            "--replay-log"
-        };
-        tracing::warn!(feature = unimplemented, "not implemented");
-        eprintln!("fathomable: {unimplemented} is not implemented yet");
-        return ExitCode::FAILURE;
-    }
-
     match run_tui(&cli, &dirs, id) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -173,15 +154,15 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     let result = app::run(
         workspace,
         app::Options {
-            open,
-            record: &record,
-            theme: &theme,
+            record: record.clone(),
             store,
             follow: config.follow().clone(),
             seen,
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
         },
+        &theme,
+        open.as_deref(),
     );
     if let Err(error) = record.remove(dirs) {
         tracing::warn!(%error, "cannot remove session record");
@@ -234,7 +215,6 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("theme \"{theme}\"");
     let follow = config.follow();
     println!("follow {{");
-    println!("    source \"{}\"", follow.source);
     println!("    auto #{}", follow.auto);
     if !follow.ignore.is_empty() {
         let globs: Vec<String> = follow.ignore.iter().map(|g| format!("{g:?}")).collect();

@@ -24,3 +24,4 @@ supersede rather than edit history.
 - [0018 The comment box is an editor](0018-comment-editor.md)
 - [0019 Re-anchoring edited lines](0019-reanchoring-edited-lines.md)
 - [0020 Re-anchoring across restarts](0020-reanchoring-across-restarts.md)
+- [0021 Polish pass: one change source, diff toggles, status overlay](0021-polish-pass.md)

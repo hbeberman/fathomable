@@ -2,8 +2,8 @@
 //! Follow mode: which changes the viewer reacts to, the queue of changed
 //! files a jump key walks, and the delta each reload leaves behind.
 //!
-//! [`Source`] is the `follow.source` setting from ADR 0015. [`Ignore`] is
-//! the `follow.ignore` glob list. [`Queue`] keeps one [`Change`] per file,
+//! [`Ignore`] is the `follow.ignore` glob list. [`Queue`] keeps one
+//! [`Change`] per file,
 //! newest first; a later change to a queued file moves it to the front.
 //! Stepping newest-first and oldest-first is what `]f` and `[f` do.
 //! [`Delta`] is the diff between the text that was on screen and the text
@@ -29,7 +29,6 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Instant;
 
 use gix::bstr::BStr;
@@ -37,75 +36,6 @@ use gix::glob::pattern::Case;
 use gix::glob::wildmatch;
 
 use crate::diff::Diff;
-
-/// What counts as a change worth hinting (`follow.source`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Source {
-    /// Any non-ignored file under the workspace root.
-    #[default]
-    Workspace,
-    /// Only paths in the agent's `follow` list.
-    Followed,
-    /// Only agent `open` requests; disk changes never hint.
-    OpenOnly,
-}
-
-impl Source {
-    /// The next source in `Space j s` order, wrapping.
-    #[must_use]
-    pub const fn next(self) -> Self {
-        match self {
-            Self::Workspace => Self::Followed,
-            Self::Followed => Self::OpenOnly,
-            Self::OpenOnly => Self::Workspace,
-        }
-    }
-
-    /// The config and status-line spelling.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Workspace => "workspace",
-            Self::Followed => "followed",
-            Self::OpenOnly => "open-only",
-        }
-    }
-}
-
-impl fmt::Display for Source {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
-    }
-}
-
-/// A `follow.source` value that is not one of the three names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownSource(pub String);
-
-impl fmt::Display for UnknownSource {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "unknown follow source {:?}; expected workspace, followed, or open-only",
-            self.0
-        )
-    }
-}
-
-impl std::error::Error for UnknownSource {}
-
-impl FromStr for Source {
-    type Err = UnknownSource;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "workspace" => Ok(Self::Workspace),
-            "followed" => Ok(Self::Followed),
-            "open-only" => Ok(Self::OpenOnly),
-            other => Err(UnknownSource(other.to_owned())),
-        }
-    }
-}
 
 /// The `follow.ignore` globs, matched against root-relative paths with
 /// gitignore syntax (`*` does not cross `/`, `**` does, a trailing `/`
@@ -435,20 +365,6 @@ mod tests {
         assert_eq!(queue.after(None), None);
         assert_eq!(queue.before(None), None);
         assert_eq!(queue.after(Some(Path::new("a"))), None);
-    }
-
-    #[test]
-    fn source_round_trips_and_cycles() {
-        for source in [Source::Workspace, Source::Followed, Source::OpenOnly] {
-            assert_eq!(source.name().parse::<Source>(), Ok(source));
-            assert_eq!(source.to_string(), source.name());
-        }
-        assert_eq!(Source::Workspace.next().next().next(), Source::Workspace);
-        assert_eq!(Source::default(), Source::Workspace);
-        let error = "nope".parse::<Source>().err();
-        assert_eq!(error, Some(UnknownSource("nope".to_owned())));
-        let message = error.map(|e| e.to_string()).unwrap_or_default();
-        assert!(message.contains("open-only"), "{message}");
     }
 
     #[test]

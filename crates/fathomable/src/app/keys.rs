@@ -47,10 +47,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     if matches!(mode, Mode::Command | Mode::Search { .. }) {
         return input_line(app.view_mut(), key);
     }
-    if ctrl && key.code == KeyCode::Char('b') {
-        app.toggle_sidebar_focus();
-        return Effect::None;
-    }
     if key.code == KeyCode::Char(' ') && mode == Mode::Normal {
         app.open_space_menu();
         return Effect::None;
@@ -103,14 +99,14 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
             KeyCode::Char(ch) => app.jump_menu_select(ch),
             _ => app.close_popup(),
         },
-        Some(Popup::Help) => app.close_popup(),
+        Some(Popup::Help | Popup::Status) => app.close_popup(),
         Some(Popup::Compose(_)) => return compose(app, key, ctrl),
         Some(Popup::Picker(_)) => match (key.code, ctrl) {
             (KeyCode::Esc, _) => app.close_popup(),
             (KeyCode::Enter, _) => app.picker_confirm(),
             (KeyCode::Backspace, _) => app.picker_backspace(),
-            (KeyCode::Down, _) | (KeyCode::Char('j' | 'n'), true) => app.picker_move(1),
-            (KeyCode::Up, _) | (KeyCode::Char('k' | 'p'), true) => app.picker_move(-1),
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => app.picker_move(1),
+            (KeyCode::Up, _) | (KeyCode::Char('p'), true) => app.picker_move(-1),
             (KeyCode::Char(ch), false) => app.picker_char(ch),
             _ => {}
         },
@@ -216,6 +212,7 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
                 KeyCode::Char('g') => view.goto_top(),
                 KeyCode::Char('s') => view.toggle_source_view(),
                 KeyCode::Char('d') => view.toggle_diff_view(),
+                KeyCode::Char('D') => view.toggle_seen_diff_view(),
                 _ => {}
             }
         }
@@ -239,7 +236,6 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
         (KeyCode::Char(':'), _) => view.start_command(),
         (KeyCode::Char('v'), _) => view.select_chars(),
         (KeyCode::Char('V'), _) => view.select_lines(),
-        (KeyCode::Char('x'), _) => view.select_line_extend(),
         (KeyCode::Char('y'), _) if view.mode() == Mode::Select => return view.yank(),
         (KeyCode::Esc, _) => view.escape(),
         _ => {}
@@ -269,7 +265,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     // scroll, click, and resize around it while writing.
     if matches!(
         app.popup(),
-        Some(Popup::Space | Popup::Jump | Popup::Help | Popup::Picker(_))
+        Some(Popup::Space | Popup::Jump | Popup::Help | Popup::Status | Popup::Picker(_))
     ) {
         return Effect::None;
     }

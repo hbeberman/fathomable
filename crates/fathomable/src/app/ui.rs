@@ -244,7 +244,22 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     match app.popup() {
         Some(Popup::Space) => draw_menu(frame, theme, column, &space_entries(&SPACE_MENU)),
         Some(Popup::Jump) => draw_menu(frame, theme, column, &space_entries(&JUMP_MENU)),
-        Some(Popup::Help) => draw_help(frame, theme, area),
+        Some(Popup::Help) => {
+            let rows: Vec<(String, String)> = HELP
+                .iter()
+                .map(|(k, l)| ((*k).to_owned(), (*l).to_owned()))
+                .collect();
+            draw_table(frame, theme, area, " Keys (any key closes)", &rows);
+        }
+        Some(Popup::Status) => {
+            draw_table(
+                frame,
+                theme,
+                area,
+                " Status (any key closes)",
+                &app.status_lines(),
+            );
+        }
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
         }
@@ -256,7 +271,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                 let entries = vec![
                     ("g".to_owned(), "go to top".to_owned()),
                     ("s".to_owned(), "toggle source view".to_owned()),
-                    ("d".to_owned(), "toggle diff view".to_owned()),
+                    ("d".to_owned(), "toggle diff against HEAD".to_owned()),
+                    ("D".to_owned(), "toggle diff against last seen".to_owned()),
                 ];
                 draw_menu(frame, theme, column, &entries);
             }
@@ -747,19 +763,14 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         0 => String::new(),
         n => format!("follow {n}  "),
     };
-    let source = match app.source() {
-        fathomable_core::follow::Source::Workspace => String::new(),
-        other => format!("src:{other}  "),
-    };
     let hint = change_hint(app);
     let changes = match view.diff_counts() {
         None | Some((0, 0)) => String::new(),
         Some((added, removed)) => format!("+{added} -{removed}  "),
     };
     let right = format!(
-        " {line}:{col}  {}%  {changes}{threads}{followed}{source}{} ",
-        view.percent(),
-        app.session()
+        " {line}:{col}  {}%  {changes}{threads}{followed}",
+        view.percent()
     );
     // Keep the right-hand block visible by trimming the path from the left.
     let fixed = display_width(&label) + 3 + display_width(&right) + 8;
@@ -866,23 +877,28 @@ fn draw_menu(frame: &mut Frame<'_>, theme: &Theme, pane: Rect, entries: &[(Strin
     frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
 }
 
-fn draw_help(frame: &mut Frame<'_>, theme: &Theme, area: Rect) {
-    let key_width = HELP
+/// A centred two-column popup with a title row: the key help and the
+/// status overlay.
+fn draw_table(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    area: Rect,
+    title: &str,
+    rows: &[(String, String)],
+) {
+    let key_width = rows
         .iter()
         .map(|(k, _)| display_width(k))
         .max()
         .unwrap_or(1);
-    let lines: Vec<Line<'_>> = std::iter::once(Line::from(Span::styled(
-        " Keys (any key closes)",
-        theme.popup_key,
-    )))
-    .chain(HELP.iter().map(|(key, label)| {
-        Line::from(vec![
-            Span::styled(format!(" {key:<key_width$}"), theme.popup_key),
-            Span::raw(format!("  {label}")),
-        ])
-    }))
-    .collect();
+    let lines: Vec<Line<'_>> = std::iter::once(Line::from(Span::styled(title, theme.popup_key)))
+        .chain(rows.iter().map(|(key, label)| {
+            Line::from(vec![
+                Span::styled(format!(" {key:<key_width$}"), theme.popup_key),
+                Span::raw(format!("  {label}")),
+            ])
+        }))
+        .collect();
     let height = u16_of(lines.len()).min(area.height.saturating_sub(1));
     let width = u16_of(
         lines

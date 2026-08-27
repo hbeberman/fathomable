@@ -6,6 +6,7 @@
 //! the file watcher, and the session socket.
 
 mod clipboard;
+mod commands;
 mod keys;
 mod reanchor;
 mod socket;
@@ -37,7 +38,7 @@ use fathomable_core::annotations::{Store, ThreadId};
 use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
-use fathomable_core::follow::{Change, Delta, Ignore, Queue, Source, Target};
+use fathomable_core::follow::{Change, Delta, Ignore, Queue, Target};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
@@ -193,6 +194,8 @@ pub enum Popup {
     Compose(Compose),
     /// The `Space j` follow submenu (ADR 0015).
     Jump,
+    /// The `:status` overlay (ADR 0021).
+    Status,
 }
 
 /// One space-menu entry: key, label.
@@ -209,10 +212,9 @@ pub const SPACE_MENU: [(char, &str); 9] = [
 ];
 
 /// The `Space j` submenu: key, label.
-pub const JUMP_MENU: [(char, &str); 4] = [
+pub const JUMP_MENU: [(char, &str); 3] = [
     ('j', "jump to newest change"),
     ('a', "toggle auto-jump"),
-    ('s', "cycle change source"),
     ('c', "clear changes"),
 ];
 
@@ -238,7 +240,6 @@ pub const HELP: [(&str, &str); 36] = [
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
     ("v / V / mouse drag", "select text / lines / cells"),
-    ("x", "select line; again extends down (Helix)"),
     ("y (selected)", "copy source to clipboard"),
     ("c (selected)", "comment on the selection"),
     ("Space a", "read thread at cursor"),
@@ -246,26 +247,27 @@ pub const HELP: [(&str, &str); 36] = [
     ("]c / [c", "next / previous thread"),
     ("thread r x n p j k", "reply, resolve, switch, scroll"),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
-    ("gs", "toggle source view"),
-    ("gd / :diff", "diff view: HEAD, then last-seen, then off"),
+    ("gs / :source", "toggle source view"),
+    ("gd / :diff", "toggle the diff against HEAD"),
+    ("gD / :diff seen", "toggle the diff against last seen"),
     ("]g / [g", "next / previous hunk, across files"),
     ("]G / [G", "next / previous uncommitted file"),
     ("]f / [f", "next / previous changed file"),
-    ("Space j", "follow: jump, auto, source, clear"),
+    ("Space j", "follow: jump, auto, clear"),
     (":follow", "toggle auto-jump"),
-    (":follow source S", "workspace | followed | open-only"),
+    (":status", "session, paths, follow state"),
     ("[o / ]o", "previous / next opened file"),
     (":N", "go to source line N"),
     (":noh", "clear search highlight"),
     (":q", "quit"),
-    ("Space e / Ctrl-b", "tree: open and focus, or return focus"),
+    ("Space e", "tree: open and focus, or return focus"),
     ("Space E", "tree: hide"),
     ("Space f / F", "file picker / including ignored"),
     ("Space o", "recent files"),
     ("tree j k h l Enter", "move, collapse, expand or open"),
     ("tree R", "re-read directories"),
     ("tree I", "show ignored entries"),
-    ("picker Up Down Ctrl-j Ctrl-k", "move selection"),
+    ("picker Up Down Ctrl-n Ctrl-p", "move selection"),
     ("Esc", "close / clear"),
 ];
 
@@ -316,13 +318,12 @@ pub struct App {
     store: Option<Store>,
     /// Files an agent said it is working on (ADR 0014 `follow`).
     followed: Vec<PathBuf>,
-    record: Option<Record>,
+    record: Record,
     follow: FollowConfig,
     /// Code highlighting shared by every view (ADR 0016).
     highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
     markdown: MarkdownConfig,
-    source: Source,
     auto: bool,
     ignore: Ignore,
     queue: Queue,
@@ -337,16 +338,19 @@ pub struct App {
 }
 
 impl App {
-    /// Start with no document open, for a terminal of `width` by `height`;
-    /// `store` is `None` when the thread file could not be opened.
-    pub fn new(
-        workspace: Workspace,
-        width: usize,
-        height: usize,
-        session: String,
-        store: Option<Store>,
-        follow: FollowConfig,
-    ) -> Self {
+    /// Start with no document open, for a terminal of `width` by `height`.
+    ///
+    /// Threads on files edited while Fathomable was closed are followed
+    /// through their last-seen snapshots before anything opens (ADR 0020).
+    pub fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
+        let Options {
+            record,
+            store,
+            follow,
+            seen,
+            highlighter,
+            markdown,
+        } = options;
         let ignore = match Ignore::new(&follow.ignore) {
             Ok(ignore) => ignore,
             Err(error) => {
@@ -377,38 +381,26 @@ impl App {
             pending: None,
             width,
             height,
-            session,
+            session: record.id().to_string(),
             store,
             followed: Vec::new(),
-            record: None,
-            source: follow.source,
+            record,
             auto: follow.auto,
             follow,
-            highlighter: Arc::new(Highlighter::plain()),
-            markdown: MarkdownConfig::default(),
+            highlighter,
+            markdown,
             ignore,
             queue: Queue::default(),
             toasts: Vec::new(),
-            seen: None,
+            seen,
             last_change: None,
             watching_root: false,
             status: Status::default(),
         };
         app.relayout();
         app.refresh_status();
+        app.reanchor_from_snapshots();
         app
-    }
-
-    /// The session record, so `session_info` can be answered with state.
-    pub fn set_record(&mut self, record: Record) {
-        self.record = Some(record);
-    }
-
-    /// Install the highlighter and the Markdown file list (ADR 0016) for
-    /// files opened from now on.
-    pub fn set_syntax(&mut self, highlighter: Arc<Highlighter>, markdown: MarkdownConfig) {
-        self.highlighter = highlighter;
-        self.markdown = markdown;
     }
 
     /// How a root-relative `path` should be coloured and first displayed.
@@ -424,15 +416,6 @@ impl App {
         }
     }
 
-    /// The last-seen snapshot store (ADR 0015); without one there is no
-    /// last-seen base.
-    pub fn set_seen_store(&mut self, seen: Option<seen::Store>) {
-        self.seen = seen;
-        if let Some(index) = self.current {
-            self.refresh_base(index);
-        }
-    }
-
     /// Whether the whole workspace is watched, or only the visible
     /// document's directory as a fallback.
     pub fn set_watching_root(&mut self, watching: bool) {
@@ -440,11 +423,6 @@ impl App {
     }
 
     // ----- follow mode (ADR 0015) -----
-
-    /// What counts as a change worth hinting.
-    pub fn source(&self) -> Source {
-        self.source
-    }
 
     /// Whether auto-jump is on.
     pub fn auto_jump(&self) -> bool {
@@ -476,42 +454,16 @@ impl App {
         });
     }
 
-    /// Cycle the change source (`Space j s`).
-    pub fn cycle_source(&mut self) {
-        self.set_source(self.source.next());
-    }
-
-    /// Set the change source (`:follow source NAME`).
-    pub fn set_source(&mut self, source: Source) {
-        self.source = source;
-        self.notice(format!("follow source: {source}"));
-    }
-
     /// Drop every queued change (`Space j c`).
     pub fn clear_queue(&mut self) {
         self.queue.clear();
         self.last_change = None;
     }
 
-    /// Run a `:follow` command line.
-    pub fn command(&mut self, command: &str) {
-        let mut words = command.split_whitespace();
-        match (words.next(), words.next(), words.next(), words.next()) {
-            (Some("follow"), None, _, _) => self.toggle_auto_jump(),
-            (Some("follow"), Some("on"), None, _) => {
-                self.auto = true;
-                self.notice("auto-jump on");
-            }
-            (Some("follow"), Some("off"), None, _) => {
-                self.auto = false;
-                self.notice("auto-jump off");
-            }
-            (Some("follow"), Some("source"), Some(name), None) => match name.parse() {
-                Ok(source) => self.set_source(source),
-                Err(error) => self.notice(error.to_string()),
-            },
-            _ => self.notice(format!("not a command: {command}")),
-        }
+    /// Set auto-jump (`:follow on` / `:follow off`).
+    pub fn set_auto_jump(&mut self, on: bool) {
+        self.auto = on;
+        self.notice(if on { "auto-jump on" } else { "auto-jump off" });
     }
 
     /// `Space j j`: open the newest change.
@@ -734,14 +686,6 @@ impl App {
         {
             return;
         }
-        let wanted = match self.source {
-            Source::Workspace => true,
-            Source::Followed => self.followed.iter().any(|p| p == relative),
-            Source::OpenOnly => false,
-        };
-        if !wanted {
-            return;
-        }
         let (line, counts) = match (loaded, delta) {
             (Some(index), Some(delta)) => (
                 delta
@@ -907,7 +851,6 @@ impl App {
     /// The follow state for `session_info`.
     fn follow_state(&self) -> FollowState {
         FollowState {
-            follow_source: self.source.name().to_owned(),
             auto_jump: self.auto,
         }
     }
@@ -916,6 +859,7 @@ impl App {
         &self.workspace
     }
 
+    /// The session id, as `--sessions` prints it.
     pub fn session(&self) -> &str {
         &self.session
     }
@@ -1197,10 +1141,9 @@ impl App {
     pub fn handle_request(&mut self, request: Request) -> Response {
         match request {
             Request::Ping => Response::Pong,
-            Request::SessionInfo => match &self.record {
-                Some(record) => Response::Session(record.clone(), Some(self.follow_state())),
-                None => Response::Error("session_info is answered by the socket".to_owned()),
-            },
+            Request::SessionInfo => {
+                Response::Session(self.record.clone(), Some(self.follow_state()))
+            }
             Request::Open {
                 path,
                 line,
@@ -1412,7 +1355,7 @@ impl App {
         }
     }
 
-    /// `Space e` / `Ctrl-b`: open and focus the tree, or hand focus back.
+    /// `Space e`: open and focus the tree, or hand focus back.
     pub fn toggle_sidebar_focus(&mut self) {
         if !self.sidebar_visible {
             if !self.ensure_tree() {
@@ -1542,6 +1485,11 @@ impl App {
         self.popup = Some(Popup::Help);
     }
 
+    /// `:status`: the overlay of session facts (ADR 0021).
+    pub fn open_status(&mut self) {
+        self.popup = Some(Popup::Status);
+    }
+
     pub fn close_popup(&mut self) {
         self.popup = None;
     }
@@ -1569,7 +1517,6 @@ impl App {
         match key {
             'j' => self.jump_newest(),
             'a' => self.toggle_auto_jump(),
-            's' => self.cycle_source(),
             'c' => self.clear_queue(),
             _ => {}
         }
@@ -1657,13 +1604,11 @@ impl App {
     }
 }
 
-/// Everything [`run`] needs beyond the workspace.
+/// Everything [`App::new`] needs beyond the workspace and terminal size.
 #[derive(Debug)]
-pub struct Options<'a> {
-    /// Root-relative file to open first, if any.
-    pub open: Option<PathBuf>,
-    pub record: &'a Record,
-    pub theme: &'a Theme,
+pub struct Options {
+    /// This session's record, already written to the sessions directory.
+    pub record: Record,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub store: Option<Store>,
     /// Follow-mode settings (ADR 0015).
@@ -1676,13 +1621,35 @@ pub struct Options<'a> {
     pub markdown: MarkdownConfig,
 }
 
-/// Run the app until the user quits.
-pub fn run(workspace: Workspace, options: Options<'_>) -> anyhow::Result<()> {
+#[cfg(test)]
+impl Options {
+    /// Options for a test app rooted at `root`: no stores, plain code.
+    pub(crate) fn for_test(root: PathBuf) -> Self {
+        use fathomable_core::session::Id;
+        Self {
+            record: Record::new(Id::mint(), root, None),
+            store: None,
+            follow: FollowConfig::default(),
+            seen: None,
+            highlighter: Arc::new(Highlighter::plain()),
+            markdown: MarkdownConfig::default(),
+        }
+    }
+}
+
+/// Run the app until the user quits, showing `open` first when given,
+/// else the tree (ADR 0012).
+pub fn run(
+    workspace: Workspace,
+    options: Options,
+    theme: &Theme,
+    open: Option<&Path>,
+) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start async runtime")?;
-    runtime.block_on(run_async(workspace, options))
+    runtime.block_on(run_async(workspace, options, theme, open))
 }
 
 /// Restores the terminal on drop so a panic or error never leaves raw mode on.
@@ -2005,10 +1972,15 @@ fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<
     }
 }
 
-async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result<()> {
+async fn run_async(
+    workspace: Workspace,
+    options: Options,
+    theme: &Theme,
+    open: Option<&Path>,
+) -> anyhow::Result<()> {
     let (mut doc_watcher, mut reload_rx) = DocWatcher::new()?;
     let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
-    let _socket = serve_socket(options.record, request_tx);
+    let _socket = serve_socket(&options.record, request_tx);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
 
@@ -2018,11 +1990,21 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
     let mut input = spawn_input()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
-    let theme = ui::Theme::from_core(options.theme);
+    let theme = ui::Theme::from_core(theme);
     let size = terminal.size().context("cannot read terminal size")?;
     let hint_debounce = options.follow.hint_debounce;
     let watching = doc_watcher.watch_root(workspace.root());
-    let mut app = start_app(workspace, options, size, watching);
+    let mut app = App::new(
+        workspace,
+        usize::from(size.width),
+        usize::from(size.height),
+        options,
+    );
+    app.set_watching_root(watching);
+    match open {
+        Some(path) => app.open(path),
+        None => app.show_sidebar(),
+    }
 
     let mut batch = ChangeBatch::default();
     loop {
@@ -2104,34 +2086,6 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
     Ok(())
 }
 
-/// Build the app from the options and show its first screen: the file
-/// given on the command line, else the tree (ADR 0012).
-fn start_app(
-    workspace: Workspace,
-    options: Options<'_>,
-    size: ratatui::layout::Size,
-    watching: bool,
-) -> App {
-    let mut app = App::new(
-        workspace,
-        usize::from(size.width),
-        usize::from(size.height),
-        options.record.id().to_string(),
-        options.store,
-        options.follow,
-    );
-    app.set_record(options.record.clone());
-    app.set_seen_store(options.seen);
-    app.reanchor_from_snapshots();
-    app.set_syntax(options.highlighter, options.markdown);
-    app.set_watching_root(watching);
-    match &options.open {
-        Some(path) => app.open(path),
-        None => app.show_sidebar(),
-    }
-    app
-}
-
 fn handle_event(app: &mut App, event: &Event) -> Effect {
     match event {
         Event::Key(key) if key.kind != crossterm::event::KeyEventKind::Release => {
@@ -2161,7 +2115,7 @@ mod tests {
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
 
-    use super::{App, Focus, PickerKind, Popup, is_change, is_git_metadata};
+    use super::{App, Focus, Options, PickerKind, Popup, is_change, is_git_metadata};
 
     struct TempDir(PathBuf);
 
@@ -2185,15 +2139,12 @@ mod tests {
     }
 
     fn app(dir: &TempDir) -> Result<App, WorkspaceError> {
+        app_with(dir, Options::for_test(dir.0.clone()))
+    }
+
+    fn app_with(dir: &TempDir, options: Options) -> Result<App, WorkspaceError> {
         let workspace = Workspace::discover(&dir.0)?;
-        Ok(App::new(
-            workspace,
-            100,
-            30,
-            "test".to_owned(),
-            None,
-            FollowConfig::default(),
-        ))
+        Ok(App::new(workspace, 100, 30, options))
     }
 
     fn picker_items(app: &App) -> Vec<String> {
@@ -2212,11 +2163,13 @@ mod tests {
         let dir = TempDir::new("syntax")?;
         fs::write(dir.0.join("main.rs"), "fn main() {}\n")?;
         fs::write(dir.0.join("LICENSE"), "# Terms\n")?;
-        let mut app = app(&dir)?;
-        app.set_syntax(
-            Arc::new(Highlighter::new("base16-ocean.dark")?),
-            MarkdownConfig::default(),
-        );
+        let mut app = app_with(
+            &dir,
+            Options {
+                highlighter: Arc::new(Highlighter::new("base16-ocean.dark")?),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         app.open(Path::new("main.rs"));
         assert!(app.view().source_view(), "a .rs file opens as source");
         let coloured = app.view().layout().lines()[0]
@@ -2234,14 +2187,16 @@ mod tests {
         );
 
         // A narrower list flips both.
-        let mut app = self::app(&dir)?;
-        app.set_syntax(
-            Arc::new(Highlighter::plain()),
-            MarkdownConfig {
-                extensions: vec!["rs".to_owned()],
-                extensionless: false,
+        let mut app = app_with(
+            &dir,
+            Options {
+                markdown: MarkdownConfig {
+                    extensions: vec!["rs".to_owned()],
+                    extensionless: false,
+                },
+                ..Options::for_test(dir.0.clone())
             },
-        );
+        )?;
         app.open(Path::new("LICENSE"));
         assert!(app.view().source_view());
         app.open(Path::new("main.rs"));
@@ -2661,55 +2616,29 @@ mod tests {
     }
 
     #[test]
-    fn source_and_ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
+    fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
         let dir = TempDir::new("source")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
-
-        app.command("follow source open-only");
         changed(&mut app, &dir, "README.md", "# Readme\n\nchanged\n")?;
-        assert!(
-            app.queue().is_empty(),
-            "open-only never hints on disk changes"
-        );
+        assert_eq!(app.queue().len(), 1, "an edit to the open file hints");
         assert!(
             app.view().text().contains("changed"),
-            "but the open file reloads"
+            "and the open file reloads"
         );
-
-        app.command("follow source followed");
-        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n1\n")?;
-        assert!(app.queue().is_empty(), "not in the follow list");
-        app.handle_request(fathomable_core::session::Request::Follow {
-            paths: vec![PathBuf::from("docs/guide.md")],
-        });
-        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n2\n")?;
-        assert_eq!(app.queue().len(), 1);
-        app.clear_queue();
-
-        app.command("follow source nope");
-        assert!(
-            app.message()
-                .is_some_and(|m| m.contains("unknown follow source"))
-        );
-        app.cycle_source();
-        assert_eq!(app.source(), fathomable_core::follow::Source::OpenOnly);
-        app.cycle_source();
-        assert_eq!(app.source(), fathomable_core::follow::Source::Workspace);
 
         let follow = FollowConfig {
             ignore: vec!["docs/**".to_owned()],
             toast: std::time::Duration::ZERO,
             ..FollowConfig::default()
         };
-        let mut app = App::new(
-            Workspace::discover(&dir.0)?,
-            100,
-            30,
-            "test".to_owned(),
-            None,
-            follow,
-        );
+        let mut app = app_with(
+            &dir,
+            Options {
+                follow,
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n3\n")?;
         assert!(app.queue().is_empty(), "follow.ignore globs apply");
         changed(&mut app, &dir, "README.md", "# Readme\n\nx\n")?;
@@ -2720,6 +2649,9 @@ mod tests {
         assert!(app.auto_jump());
         app.command("follow off");
         assert!(!app.auto_jump());
+        app.command("status");
+        assert!(matches!(app.popup(), Some(Popup::Status)));
+        app.close_popup();
         app.command("nonsense");
         assert!(
             app.message()
@@ -2731,7 +2663,7 @@ mod tests {
     /// The added lines of the last-seen diff view, or `None` when the
     /// view cannot show one.
     fn seen_diff_added(app: &mut App) -> Option<Vec<String>> {
-        app.view_mut().toggle_diff_view();
+        app.view_mut().toggle_seen_diff_view();
         if !app.view().diff_seen() {
             return None;
         }
@@ -2743,17 +2675,21 @@ mod tests {
             .map(fathomable_core::layout::Line::text)
             .filter(|t| t.starts_with('+'))
             .collect();
-        app.view_mut().toggle_diff_view();
+        app.view_mut().toggle_seen_diff_view();
         Some(added)
     }
 
     #[test]
     fn seen_snapshots_feed_the_seen_diff_view() -> anyhow::Result<()> {
         let dir = TempDir::new("seen")?;
-        let mut app = app(&dir)?;
-        app.set_seen_store(Some(fathomable_core::seen::Store::open(
-            &dir.0.join(".seen-state"),
-        )?));
+        let seen_store = || fathomable_core::seen::Store::open(&dir.0.join(".seen-state"));
+        let mut app = app_with(
+            &dir,
+            Options {
+                seen: Some(seen_store()?),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         app.open(Path::new("README.md"));
         assert_eq!(app.view().diff_counts(), None, "not in git: no gutter");
         assert_eq!(seen_diff_added(&mut app), None, "never seen: no seen diff");
@@ -2787,17 +2723,14 @@ mod tests {
             seen_idle: std::time::Duration::from_millis(1),
             ..FollowConfig::default()
         };
-        let mut app2 = App::new(
-            Workspace::discover(&dir.0)?,
-            100,
-            30,
-            "test".to_owned(),
-            None,
-            idle,
-        );
-        app2.set_seen_store(Some(fathomable_core::seen::Store::open(
-            &dir.0.join(".seen-state"),
-        )?));
+        let mut app2 = app_with(
+            &dir,
+            Options {
+                follow: idle,
+                seen: Some(seen_store()?),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         app2.open(Path::new("README.md"));
         assert_eq!(seen_diff_added(&mut app2).map(|a| a.len()), Some(2));
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -2822,14 +2755,13 @@ mod tests {
             jump_debounce: std::time::Duration::ZERO,
             ..FollowConfig::default()
         };
-        let mut app = App::new(
-            Workspace::discover(&dir.0)?,
-            100,
-            30,
-            "test".to_owned(),
-            None,
-            follow,
-        );
+        let mut app = app_with(
+            &dir,
+            Options {
+                follow,
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         app.open(Path::new("README.md"));
         changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
         assert!(app.tick_in().is_some());
@@ -2846,14 +2778,13 @@ mod tests {
             jump_debounce: std::time::Duration::ZERO,
             ..FollowConfig::default()
         };
-        let mut app = App::new(
-            Workspace::discover(&dir.0)?,
-            100,
-            30,
-            "test".to_owned(),
-            None,
-            follow,
-        );
+        let mut app = app_with(
+            &dir,
+            Options {
+                follow,
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
         changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnewer\n")?;
         app.tick();
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
@@ -2870,25 +2801,17 @@ mod tests {
 
     #[test]
     fn agent_open_queues_a_settled_range_and_session_info_reports_state() -> anyhow::Result<()> {
-        use fathomable_core::session::{Id, Record, Request, Response};
+        use fathomable_core::session::{Request, Response};
 
         let dir = TempDir::new("agent")?;
         let mut app = app(&dir)?;
-        assert!(matches!(
-            app.handle_request(Request::SessionInfo),
-            Response::Error(_)
-        ));
-        app.set_record(Record::new(Id::mint(), dir.0.clone(), None));
         let state = match app.handle_request(Request::SessionInfo) {
             Response::Session(_, state) => state,
             _ => None,
         };
         assert_eq!(
             state,
-            Some(fathomable_core::session::FollowState {
-                follow_source: "workspace".to_owned(),
-                auto_jump: false,
-            })
+            Some(fathomable_core::session::FollowState { auto_jump: false })
         );
         let response = app.handle_request(Request::Open {
             path: PathBuf::from("README.md"),

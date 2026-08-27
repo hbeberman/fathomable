@@ -60,12 +60,11 @@ shows the full list inside the app.
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
-| `gd` / `:diff` | diff view: `HEAD`, then last-seen, then off |
+| `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
-| `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, source, clear |
-| `:follow`, `:follow source S` | toggle auto-jump; `workspace`, `followed`, or `open-only` |
+| `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, clear |
+| `:follow`, `:status` | toggle auto-jump; session and path overlay |
 | `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
-| `x` | select the current line; repeat to extend down |
 | `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc` | newline, submit, cancel (twice on a draft) |
@@ -73,9 +72,9 @@ shows the full list inside the app.
 | comment box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
 | comment box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
 | comment box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
-| `Space e` / `Ctrl-b`, `Space E` | tree: open and focus or return focus; hide |
+| `Space e`, `Space E` | tree: open and focus or return focus; hide |
 | tree `j` `k` `h` `l` `Enter`, `R`, `I` | move, collapse, expand or open; re-read; show ignored |
-| `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
+| `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files; `Ctrl-n` `Ctrl-p` move |
 | `[o` `]o` | previous / next opened file |
 | `Esc`, `:q` | close or clear; quit |
 
@@ -128,7 +127,7 @@ of this within a beat.
 There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit,
 comment on it, or leave it alone for five seconds. It never drives the bar
-or `]g`; press `gd` a second time to see it (`DIFF seen`), and a third `gd`
+or `]g`; `gD` (or `:diff seen`) shows it as `DIFF seen`, and `gD` again
 returns to the rendered view. Snapshots live under
 `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at
 any time; they expire after thirty days unless the file has an open
@@ -150,9 +149,7 @@ once its target is on screen.
 and the viewer opens the newest change by itself once writes have been
 quiet for a second. It never jumps while you are selecting, writing a
 comment, reading a thread or diff, have a popup open, or have touched the
-keyboard or mouse in the last three seconds; `[o` takes you back. `Space j
-s` cycles what counts as a change: everything in the workspace, only the
-files an agent named with `follow`, or only agent `open` calls.
+keyboard or mouse in the last three seconds; `[o` takes you back.
 
 ## 7. Configuration and themes
 
@@ -163,7 +160,6 @@ Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 theme "default-light"
 
 follow {
-    source "workspace"      // workspace | followed | open-only
     auto #false             // start with auto-jump on
     ignore "target/**"      // extra globs on top of .gitignore
     hint-debounce 300       // ms of quiet before a write becomes a change
@@ -213,7 +209,7 @@ in the same repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see running sessions; pick one when the cwd heuristic is wrong |
 | `open` | show a file, optionally at a line or line range |
-| `follow` | tell the viewer which files the agent is editing (shown as `follow N` in the status line; with `source "followed"` only these files raise change hints) |
+| `follow` | tell the viewer which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
 | `annotations_list` | read threads, optionally `since` a Unix time or on one `path` |
 | `thread_reply` | answer a thread, optionally resolving it; a `persona` name is recorded next to the client name |
 
@@ -229,6 +225,7 @@ fathomable --config-show   # effective configuration
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-the session id is at the right end of the status line. Set
+`:status` inside the app shows the session id, the socket, and every
+state path. Set
 `FATHOMABLE_LOG=debug` for more. A session killed without a clean quit is
 swept away by the next start.

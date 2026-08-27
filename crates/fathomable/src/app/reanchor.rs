@@ -22,7 +22,7 @@ impl App {
     ///
     /// Threads without a snapshot, whose file cannot be read, or whose
     /// lines were removed rather than rewritten stay detached.
-    pub fn reanchor_from_snapshots(&mut self) {
+    pub(super) fn reanchor_from_snapshots(&mut self) {
         let (Some(store), Some(seen)) = (self.store.as_mut(), self.seen.as_ref()) else {
             return;
         };
@@ -78,12 +78,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::annotations::{Draft, LineRange, Store, Thread};
-    use fathomable_core::config::FollowConfig;
     use fathomable_core::seen;
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::App;
     use crate::app::threads::MarkKind;
+    use crate::app::{App, Options};
 
     struct TempDir(PathBuf);
 
@@ -99,16 +98,12 @@ mod tests {
         fn app(&self) -> anyhow::Result<App> {
             let workspace = Workspace::discover(self.0.join("ws"))?;
             let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let mut app = App::new(
-                workspace,
-                100,
-                30,
-                "test".to_owned(),
-                Some(store),
-                FollowConfig::default(),
-            );
-            app.set_seen_store(Some(seen::Store::open(&self.0.join("state/seen"))?));
-            Ok(app)
+            let options = Options {
+                store: Some(store),
+                seen: Some(seen::Store::open(&self.0.join("state/seen"))?),
+                ..Options::for_test(self.0.join("ws"))
+            };
+            Ok(App::new(workspace, 100, 30, options))
         }
     }
 
@@ -132,7 +127,6 @@ mod tests {
         seen::Store::open(&dir.0.join("state/seen"))?.record(Path::new("a.txt"), ORIGINAL)?;
         fs::write(dir.0.join("ws/a.txt"), edited)?;
         let mut app = dir.app()?;
-        app.reanchor_from_snapshots();
         app.open(Path::new("a.txt"));
         Ok(app)
     }
@@ -170,7 +164,6 @@ mod tests {
         )?;
         fs::write(dir.0.join("ws/a.txt"), "one\nTWO\nthree\nfour\n")?;
         let mut app = dir.app()?;
-        app.reanchor_from_snapshots();
         app.open(Path::new("a.txt"));
         assert_eq!(app.marks()[0].kind(), MarkKind::Detached);
         Ok(())

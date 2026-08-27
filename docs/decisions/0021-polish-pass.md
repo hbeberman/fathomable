@@ -1,0 +1,101 @@
+---
+type: Decision
+title: "Polish pass: one change source, diff toggles, status overlay"
+description: Removals and merges from the first single-user polish pass, so the keymap, command line, and status line each do one thing.
+resource: crates/fathomable/src/app/commands.rs
+tags:
+  - decision
+  - input
+---
+
+# 0021 Polish pass: one change source, diff toggles, status overlay
+
+Status: accepted (2026-08-27)
+
+## Context
+
+Eleven milestones landed in quick succession, each adding a key, a
+command, a config node, or a status segment for the idea it carried. With
+one user and no compatibility promise, a pass on 2026-08-27 looked for
+places where two mechanisms did one job or a mechanism did a job nobody
+had asked for. Each cut below was put as a question and answered:
+
+- *Follow sources.* [0015](0015-follow-mode.md) let `follow.source` pick
+  between the whole workspace, only the agent's `follow` list, or only
+  agent `open` calls, cycled with `Space j s` and `:follow source`, and
+  shown as `src:` in the status line. Only `workspace` was ever used.
+- *Diff bases.* `gd` cycled `HEAD` diff, last-seen diff, off
+  ([0017](0017-git-status-navigation.md)). A three-state key is hard to
+  read from the pill and hard to leave.
+- *Status line.* The right-hand block carried the session id and the
+  follow source next to position, counts, and threads. Neither changes
+  while reading, and the session id is only needed to match a log file or
+  an MCP session.
+- *Duplicate keys.* Helix's `x` (select line, repeat to extend) sat beside
+  Vim's `V`; `Ctrl-b` duplicated `Space e`; the picker moved on both
+  `Ctrl-j`/`Ctrl-k` and `Ctrl-n`/`Ctrl-p`.
+- *Dead flags.* `--dump-state` and `--replay-log` parsed and then printed
+  "not implemented" ([0009](0009-cli-and-diagnostics.md)).
+- *Construction.* `App::new` took six arguments and was followed by four
+  setters before the first draw; `:follow` was the only command that
+  crossed from the view to the app, through a string prefix match.
+
+## Decision
+
+### One change source
+
+- Every non-ignored write under the workspace is a change. The `Source`
+  enum, the `follow.source` config node, `Space j s`, `:follow source`,
+  the `src:` status segment, and the `follow_source` field of the
+  `session_info` response are gone. The agent's `follow` list still shows
+  as `follow N` in the status line and in `:status`.
+
+### Two diff toggles
+
+- `gd` and `:diff` toggle the unified diff against `HEAD`; `gD` and
+  `:diff seen` toggle the diff against the last-seen snapshot. Either
+  key from the other diff switches bases. Outside git `gd` reports "no
+  diff base"; a file never seen reports "no last-seen snapshot".
+
+### Status overlay
+
+- `:status` opens a popup listing the session id, workspace root, socket
+  path, threads file, snapshots directory, what is being watched,
+  auto-jump, pending changes, and the agent's follow list. Any key
+  closes it. The status line keeps the mode pill, path, `[+]`, position,
+  percentage, `+N -M`, thread counts, `follow N`, and the change hint.
+
+### One key per job
+
+- `x` in the view, `Ctrl-b`, and the picker's `Ctrl-j`/`Ctrl-k` are
+  removed. Selection is `v`, `V`, and the mouse; the tree is `Space e`
+  and `h` at column 0; the picker moves on arrows and `Ctrl-n`/`Ctrl-p`.
+
+### Command routing
+
+- `View::execute` handles the commands that touch only the pane (`:q`,
+  `:noh`, `:source`, `:diff`, `:diff seen`, `:N`) and returns everything
+  else as `Effect::Command`; `App::command` in `app/commands.rs` runs
+  `:follow [on|off]` and `:status` and refuses the rest with one
+  message.
+
+### Construction
+
+- `app::Options` carries the record, stores, follow config, highlighter,
+  and Markdown list; `App::new` consumes it and runs the ADR 0020 startup
+  re-anchoring itself. The only setter left is `set_watching_root`,
+  which reports the watcher's outcome. `--dump-state` and `--replay-log`
+  are removed along with their parked entry.
+
+## Consequences
+
+- The `follow` block of `config.kdl` no longer accepts `source`; a
+  config that sets it fails to load with the usual "unknown follow
+  setting" line. Agents reading `session_info` see only `auto_jump`.
+- The `Space j` menu has three entries; `Space ?` lists one binding per
+  action.
+- Tests construct an app with `Options::for_test(root)` and struct
+  update syntax instead of a chain of setters.
+- Parts of [0007](0007-key-grammar-and-mouse.md), 0009, 0012, 0015, and
+  0017 that describe the removed keys, flags, and cycle are superseded by
+  this record.

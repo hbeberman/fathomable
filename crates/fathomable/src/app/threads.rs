@@ -700,7 +700,7 @@ mod tests {
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
     use super::{ComposeTarget, MarkKind};
-    use crate::app::{App, Border, Popup};
+    use crate::app::{App, Border, Options, Popup};
 
     struct TempDir(PathBuf);
 
@@ -720,14 +720,11 @@ mod tests {
         fn app(&self) -> anyhow::Result<App> {
             let workspace = Workspace::discover(self.0.join("ws"))?;
             let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let mut app = App::new(
-                workspace,
-                100,
-                30,
-                "test".to_owned(),
-                Some(store),
-                fathomable_core::config::FollowConfig::default(),
-            );
+            let options = Options {
+                store: Some(store),
+                ..Options::for_test(self.0.join("ws"))
+            };
+            let mut app = App::new(workspace, 100, 30, options);
             app.open(Path::new("README.md"));
             Ok(app)
         }

@@ -355,8 +355,6 @@ pub enum Response {
 /// Follow-mode state reported with `session_info` (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FollowState {
-    /// The effective `follow.source` name.
-    pub follow_source: String,
     /// Whether auto-jump is on.
     pub auto_jump: bool,
 }
@@ -530,13 +528,7 @@ mod tests {
         let responses = [
             Response::Pong,
             Response::Session(record(), None),
-            Response::Session(
-                record(),
-                Some(super::FollowState {
-                    follow_source: "workspace".to_owned(),
-                    auto_jump: true,
-                }),
-            ),
+            Response::Session(record(), Some(super::FollowState { auto_jump: true })),
             Response::Done,
             Response::Threads(Vec::new()),
             Response::Error("nope".to_owned()),

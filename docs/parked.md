@@ -72,8 +72,6 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **TODO: automatic tree refresh.** The sidebar re-reads directories only
   on `R` or expand; a recursive workspace watch was skipped for inotify
   budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).
-- **TODO: `--dump-state` and `--replay-log`.** Wait on a log reader;
-  `--sessions` and `--config-show` work. Origin: 0012.
 - **TODO: annotations path override.** Threads live only under XDG state
   ([0013](decisions/0013-annotation-storage-and-ux.md)); a `config.kdl`
   node pointing at an in-workspace file would let a repo share threads.

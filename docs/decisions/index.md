@@ -27,3 +27,4 @@ supersede rather than edit history.
 - [0021 Polish pass: one change source, diff toggles, status overlay](0021-polish-pass.md)
 - [0022 Crash reports](0022-crash-reports.md)
 - [0023 Sidebar paging](0023-sidebar-paging.md)
+- [0024 Workspace sessions, viewers, and git-scoped threads](0024-workspace-sessions.md)

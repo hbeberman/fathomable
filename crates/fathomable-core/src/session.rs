@@ -1,4 +1,4 @@
-// @okf-doc: /decisions/0012-workspace-mode.md
+// @okf-doc: /decisions/0024-workspace-sessions.md
 //! Session records and the v1 socket protocol.
 //!
 //! A session is one running TUI bound to one workspace root (ADR 0003). It

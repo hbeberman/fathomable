@@ -59,3 +59,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     shows: moving it pages the viewer without taking focus, the sidebar
     wheel steps one row per tick, and `Enter` still commits focus
     ([0023](decisions/0023-sidebar-paging.md)).
+15. **Workspace sessions.** A session is a workspace's annotation state;
+    viewers are named windows onto it that agents broadcast to or target,
+    `--mcp` binds per call and works headless against the store, and a
+    thread belongs to the commit it was written against, shown only when
+    that commit is reachable from HEAD
+    ([0024](decisions/0024-workspace-sessions.md)).

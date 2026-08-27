@@ -8,7 +8,6 @@ related_resources:
   - crates/fathomable-core/src/workspace.rs
   - crates/fathomable-core/src/tree.rs
   - crates/fathomable-core/src/picker.rs
-  - crates/fathomable-core/src/session.rs
 tags:
   - decision
   - input

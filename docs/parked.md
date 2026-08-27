@@ -39,8 +39,10 @@ rejected for good (record rejections in the [charter](charter.md)).
   (OSC 11). Origin: 0011; `default-dark` unless configured.
 - **Loading `.tmTheme` files** for code blocks. Origin: 0011; syntect's
   bundled themes only.
-- **Diff-view animation** to show an agent's edits as they land. Origin:
-  initial planning.
+- **Diff-view animation** to show an agent's edits as they land: hunks lit
+  in the diff faces and fading by age. Origin: initial planning; the edit
+  deltas it needs are specified in
+  [0015](decisions/0015-follow-mode.md).
 - **macOS / Windows support.** Origin: charter; Linux only for now.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
@@ -51,17 +53,10 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 5 follow-ups
 
-- **"Last seen" diff base.** [0006](decisions/0006-git-access.md) names a
-  second base, the content snapshotted when the user last viewed the file;
-  milestone 5 shipped HEAD only. Needs the recency heuristic and snapshot
-  bounds below. Origin: milestone-5 scope decision (2026-08-26).
-- **Side-by-side diff view.** 0006 allows it; only unified shipped.
-- **Jumping between changed files** (`]f`-style) needs a workspace status
-  pass over the tree, and the sidebar could colour changed entries with the
-  same keys. Origin: 0006.
-- **Refreshing the diff base on commit.** The base is re-read on open,
-  switch, and reload; a commit while viewing shows until then. A watch on
-  `.git/HEAD` and the index would make it immediate. Origin: 0006.
+- **Side-by-side diff view.** [0006](decisions/0006-git-access.md) allows
+  it; only unified shipped. The last-seen base, changed-file jumping, and
+  base refresh on commit moved to
+  [0015](decisions/0015-follow-mode.md).
 
 ## Milestone 1 scaffolding follow-ups
 

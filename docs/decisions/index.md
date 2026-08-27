@@ -18,3 +18,4 @@ supersede rather than edit history.
 - [0012 Workspace mode](0012-workspace-mode.md)
 - [0013 Annotation storage and UX](0013-annotation-storage-and-ux.md)
 - [0014 MCP server and socket protocol v1](0014-mcp-server-and-socket-v1.md)
+- [0015 Follow mode and the last-seen diff base](0015-follow-mode.md)

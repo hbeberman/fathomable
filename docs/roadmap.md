@@ -28,4 +28,6 @@ Milestones are ordered; each is usable on its own. Details live in the
    `annotations_list`, `thread_reply`.
 5. **Git.** Gutter strip, HEAD and last-seen diff views, hunk navigation
    ([0006](decisions/0006-git-access.md)).
-6. **Follow mode.** Hints and jump-on-key, optional auto-jump.
+6. **Follow mode.** Change hints, badges, toasts, jump keys, debounced
+   auto-jump, and the last-seen diff base
+   ([0015](decisions/0015-follow-mode.md)).

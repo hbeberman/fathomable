@@ -652,15 +652,17 @@ impl Renderer<'_> {
         let avail = self.avail(first).saturating_sub(chrome).max(columns);
         shrink(&mut widths, avail);
 
-        let border = |left: &str, mid: &str, right: &str| -> Line {
-            let body: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        // Heavy lines frame the table and underline the header; light lines
+        // separate body rows and columns.
+        let border = |left: &str, fill: &str, mid: &str, right: &str| -> Line {
+            let body: Vec<String> = widths.iter().map(|w| fill.repeat(w + 2)).collect();
             Line::from_spans(vec![Span {
                 text: format!("{left}{}{right}", body.join(mid)),
                 style: Style::marker(),
                 source: None,
             }])
         };
-        let mut out = vec![border("┌", "┬", "┐")];
+        let mut out = vec![border("┏", "━", "┯", "┓")];
         for (r, row) in rows.iter().enumerate() {
             let cells: Vec<Vec<Line>> = (0..columns)
                 .map(|col| {
@@ -678,7 +680,7 @@ impl Renderer<'_> {
             let height = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
             for line_no in 0..height {
                 let mut spans = vec![Span {
-                    text: "│ ".to_owned(),
+                    text: "┃ ".to_owned(),
                     style: Style::marker(),
                     source: None,
                 }];
@@ -712,15 +714,17 @@ impl Renderer<'_> {
                     });
                 }
                 if let Some(last) = spans.last_mut() {
-                    " │".clone_into(&mut last.text);
+                    " ┃".clone_into(&mut last.text);
                 }
                 out.push(Line::from_spans(spans));
             }
             if r == 0 {
-                out.push(border("├", "┼", "┤"));
+                out.push(border("┣", "━", "┿", "┫"));
+            } else if r + 1 < rows.len() {
+                out.push(border("┠", "─", "┼", "┨"));
             }
         }
-        out.push(border("└", "┴", "┘"));
+        out.push(border("┗", "━", "┷", "┛"));
         self.emit(out, first, rest);
     }
 }

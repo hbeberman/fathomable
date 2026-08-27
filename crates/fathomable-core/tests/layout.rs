@@ -127,12 +127,13 @@ fn tables_align_columns_and_wrap_to_width() {
     assert_eq!(
         texts(&layout),
         [
-            "┌───────────┬─────┐",
-            "│ Name      │ Qty │",
-            "├───────────┼─────┤",
-            "│ apple pie │   3 │",
-            "│ kiwi      │  12 │",
-            "└───────────┴─────┘",
+            "┏━━━━━━━━━━━┯━━━━━┓",
+            "┃ Name      │ Qty ┃",
+            "┣━━━━━━━━━━━┿━━━━━┫",
+            "┃ apple pie │   3 ┃",
+            "┠───────────┼─────┨",
+            "┃ kiwi      │  12 ┃",
+            "┗━━━━━━━━━━━┷━━━━━┛",
         ]
     );
     // Header cells are bold, body cells map to source.
@@ -145,7 +146,7 @@ fn tables_align_columns_and_wrap_to_width() {
         assert!(line.width() <= 14, "{:?} exceeds width", line.text());
     }
     assert!(
-        narrow.lines().len() > 6,
+        narrow.lines().len() > 7,
         "cells should wrap onto extra rows"
     );
 }

@@ -556,6 +556,18 @@ impl App {
         if git_changed || !seen_paths.is_empty() {
             self.refresh_status();
         }
+        // A file appearing or vanishing changes some directory's listing;
+        // ignored paths (a build under `target/`) never reach the tree, so
+        // they cost nothing here.
+        let tree_dirty = seen_paths.iter().any(|relative| {
+            !(self.workspace.is_ignored(relative, EntryKind::File)
+                || self.ignore.is_ignored(relative))
+        });
+        if tree_dirty {
+            self.file_index = None;
+            self.all_index = None;
+            self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
+        }
     }
 
     // ----- git status (ADR 0017) -----
@@ -2273,6 +2285,39 @@ mod tests {
         // The blank line 4 has no rendered row; the cursor lands on the
         // next one, as `]c` does.
         assert!((4..=5).contains(&app.view().source_position().0));
+        Ok(())
+    }
+
+    #[test]
+    fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
+        let dir = TempDir::new("tree-watch")?;
+        let mut app = app(&dir)?;
+        app.toggle_sidebar_focus();
+        let names = |app: &App| -> Vec<String> {
+            app.tree()
+                .map(|tree| {
+                    tree.rows()
+                        .iter()
+                        .map(|row| row.name().to_owned())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        assert!(!names(&app).contains(&"NEW.md".to_owned()));
+
+        changed(&mut app, &dir, "NEW.md", "# New\n")?;
+        assert!(
+            names(&app).contains(&"NEW.md".to_owned()),
+            "created file shows up"
+        );
+
+        let absolute = dir.0.join("NEW.md");
+        fs::remove_file(&absolute)?;
+        app.on_changes(vec![absolute]);
+        assert!(
+            !names(&app).contains(&"NEW.md".to_owned()),
+            "removed file goes away"
+        );
         Ok(())
     }
 

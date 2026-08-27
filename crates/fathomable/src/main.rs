@@ -18,7 +18,7 @@ use fathomable_core::XdgDirs;
 use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
 use fathomable_core::highlight::Highlighter;
-use fathomable_core::session::{Id, Record};
+use fathomable_core::session::{Id, Marker, Record};
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
 use fathomable_core::workspace::Workspace;
 
@@ -49,9 +49,13 @@ struct Cli {
     #[arg(long)]
     doctor: bool,
 
-    /// List running sessions and their sockets.
+    /// List known workspaces, their live viewers, and their sockets.
     #[arg(long)]
     sessions: bool,
+
+    /// Name this viewer so an agent can target it (also `:name`).
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
 
     /// Print the effective configuration after defaults and overrides.
     #[arg(long)]
@@ -126,10 +130,16 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     if removed > 0 {
         tracing::info!(removed, "swept dead session records");
     }
-    let socket = dirs.runtime_dir().map(|dir| dir.join(format!("{id}.sock")));
-    let record = Record::new(id, workspace.root().to_path_buf(), socket);
+    // One socket per viewer, grouped under the workspace (ADR 0024).
+    let socket = dirs.viewer_socket(workspace.root(), std::process::id());
+    let record =
+        Record::new(id, workspace.root().to_path_buf(), socket).with_name(cli.name.clone());
     record.write(dirs)?;
-    tracing::info!(id = %record.id(), root = %record.root().display(), "session recorded");
+    tracing::info!(id = %record.id(), name = ?record.name(), root = %record.root().display(), "viewer recorded");
+    let marker = Marker::new(workspace.root().to_path_buf());
+    if let Err(error) = marker.write(dirs) {
+        tracing::warn!(%error, "cannot write the workspace marker; headless agents will not find this workspace");
+    }
 
     let config = Config::load(dirs, cli.config.as_deref())?;
     let store = match Store::open(dirs.threads_file(workspace.root())) {
@@ -162,6 +172,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
         workspace,
         app::Options {
             record: record.clone(),
+            dirs: dirs.clone(),
             store,
             follow: config.follow().clone(),
             seen,
@@ -177,23 +188,39 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     result
 }
 
-/// `--sessions`: one line per record, marking dead ones.
+/// `--sessions`: one block per known workspace, then its viewer records,
+/// marking dead ones (ADR 0024).
 fn list_sessions(dirs: &XdgDirs) -> ExitCode {
+    let markers = Marker::list(dirs);
     let records = Record::list(dirs);
-    if records.is_empty() {
+    if markers.is_empty() && records.is_empty() {
         println!("no sessions");
         return ExitCode::SUCCESS;
     }
-    for record in records {
-        println!(
-            "{}\t{}\t{}\t{}",
-            record.id(),
-            if record.is_alive() { "live" } else { "dead" },
-            record.root().display(),
-            record
-                .socket()
-                .map_or_else(|| "(no socket)".to_owned(), |p| p.display().to_string()),
-        );
+    let mut roots: Vec<PathBuf> = markers.iter().map(|m| m.root().to_path_buf()).collect();
+    for record in &records {
+        if !roots.iter().any(|root| root == record.root()) {
+            roots.push(record.root().to_path_buf());
+        }
+    }
+    for root in roots {
+        println!("{}", root.display());
+        let mut any = false;
+        for record in records.iter().filter(|r| r.root() == root) {
+            any = true;
+            println!(
+                "  {}\t{}\t{}\t{}",
+                record.name().unwrap_or("-"),
+                record.id(),
+                if record.is_alive() { "live" } else { "dead" },
+                record
+                    .socket()
+                    .map_or_else(|| "(no socket)".to_owned(), |p| p.display().to_string()),
+            );
+        }
+        if !any {
+            println!("  (no viewers)");
+        }
     }
     ExitCode::SUCCESS
 }

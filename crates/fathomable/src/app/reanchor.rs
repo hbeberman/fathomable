@@ -8,10 +8,11 @@
 //! followed from there.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, ThreadId};
+use fathomable_core::annotations::{LineRange, Store, ThreadId};
 use fathomable_core::reanchor::{Mapping, map_range};
+use fathomable_core::seen;
 
 use super::App;
 use super::threads::now;
@@ -26,6 +27,19 @@ impl App {
         let (Some(store), Some(seen)) = (self.store.as_mut(), self.seen.as_ref()) else {
             return;
         };
+        follow_snapshots(store, seen, self.workspace.root());
+        for index in 0..self.docs.len() {
+            self.refresh_marks(index);
+        }
+    }
+}
+
+/// The mapping behind [`App::reanchor_from_snapshots`], shared with the
+/// headless `--mcp` read (ADR 0024) so an agent sees current ranges with no
+/// viewer running. Returns how many threads moved.
+pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Path) -> usize {
+    let mut moved = 0;
+    {
         let mut paths: Vec<PathBuf> = store
             .threads()
             .iter()
@@ -34,7 +48,7 @@ impl App {
         paths.sort();
         paths.dedup();
         for path in paths {
-            let Ok(text) = fs::read_to_string(self.workspace.root().join(&path)) else {
+            let Ok(text) = fs::read_to_string(root.join(&path)) else {
                 continue;
             };
             let snapshot = match seen.text(&path) {
@@ -45,7 +59,7 @@ impl App {
                     continue;
                 }
             };
-            let moves: Vec<(ThreadId, LineRange, LineRange)> = store
+            let relocations: Vec<(ThreadId, LineRange, LineRange)> = store
                 .for_path(&path)
                 .filter(|thread| thread.locate(&text).is_detached())
                 .filter_map(|thread| {
@@ -57,19 +71,18 @@ impl App {
                     Mapping::Removed => None,
                 })
                 .collect();
-            for (id, from, to) in moves {
+            for (id, from, to) in relocations {
                 match store.relocate(&id, to, &text, now()) {
                     Ok(()) => {
+                        moved += 1;
                         tracing::info!(%id, path = %path.display(), %from, %to, "thread re-anchored from its last-seen snapshot");
                     }
                     Err(error) => tracing::warn!(%id, %error, "cannot re-anchor thread"),
                 }
             }
         }
-        for index in 0..self.docs.len() {
-            self.refresh_marks(index);
-        }
     }
+    moved
 }
 
 #[cfg(test)]

@@ -89,6 +89,14 @@ impl XdgDirs {
             .join(crate::annotations::THREADS_FILE)
     }
 
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, the
+    /// marker that names the root behind the hash (ADR 0024).
+    #[must_use]
+    pub fn workspace_file(&self, root: &Path) -> PathBuf {
+        self.workspace_dir(root)
+            .join(crate::session::WORKSPACE_FILE)
+    }
+
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/seen`, where last-seen
     /// snapshots live (ADR 0015).
     #[must_use]
@@ -100,5 +108,14 @@ impl XdgDirs {
     #[must_use]
     pub fn runtime_dir(&self) -> Option<PathBuf> {
         self.runtime_dir.as_ref().map(|dir| dir.join(APP_DIR))
+    }
+
+    /// `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`, one viewer's socket
+    /// under its workspace (ADR 0024); `None` when the runtime dir is unset.
+    #[must_use]
+    pub fn viewer_socket(&self, root: &Path, pid: u32) -> Option<PathBuf> {
+        let hash = crate::annotations::short_hash(root.as_os_str().as_encoded_bytes());
+        self.runtime_dir()
+            .map(|dir| dir.join(hash).join(format!("{pid}.sock")))
     }
 }

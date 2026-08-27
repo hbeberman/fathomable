@@ -106,7 +106,7 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
     let records = Record::list(dirs);
     let live = records.iter().filter(|record| record.is_alive()).count();
     println!(
-        "  ok    {live} live session{} ({} record{} on disk)",
+        "  ok    {live} live viewer{} ({} record{} on disk)",
         if live == 1 { "" } else { "s" },
         records.len(),
         if records.len() == 1 { "" } else { "s" }

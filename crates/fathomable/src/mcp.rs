@@ -1,13 +1,17 @@
 // @okf-doc: /decisions/0014-mcp-server-and-socket-v1.md
-//! `fathomable --mcp`: a stdio MCP server that forwards tool calls to a
-//! running session over its Unix socket (ADR 0003, ADR 0014).
+//! `fathomable --mcp`: a stdio MCP server that drives the viewers of a
+//! workspace over their Unix sockets and, when none runs, reads and
+//! answers the thread store directly (ADR 0003, ADR 0014, ADR 0024).
 //!
-//! The server holds one piece of state, the default session, chosen at
-//! startup by the longest workspace root containing the current directory
-//! and changed by `session_switch`. Every other tool is a pure function of
-//! its arguments plus the socket reply, and client identity is read from
-//! the request context on each call, so the server behaves the same under
-//! the legacy `initialize` flow and discovery-first startup.
+//! The server holds one piece of state, the pinned workspace set by
+//! `session_switch`. Every call otherwise resolves the workspace afresh: an
+//! explicit `session` argument, then the pin, then the known workspace
+//! whose root is the longest prefix of the current directory. `open` and
+//! `follow` reach every live viewer of that workspace or the one named by
+//! `viewer`; `annotations_list` and `thread_reply` go through a viewer when
+//! one runs and to the store on disk when none does. Client identity is
+//! read from the request context on each call, so the server behaves the
+//! same under the legacy `initialize` flow and discovery-first startup.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -15,8 +19,10 @@ use std::sync::Mutex;
 
 use anyhow::Context;
 use fathomable_core::XdgDirs;
-use fathomable_core::annotations::{Author, Thread, ThreadId};
-use fathomable_core::session::{Id, Record, Request, Response};
+use fathomable_core::annotations::{Author, Reply, Scope, Store, Thread, ThreadId};
+use fathomable_core::seen;
+use fathomable_core::session::{Marker, Record, Request, Response};
+use fathomable_core::workspace::Workspace;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
@@ -26,6 +32,9 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
+
+use crate::app::reanchor::follow_snapshots;
+use crate::app::threads::now;
 
 /// Run the server on stdin/stdout until the client disconnects.
 pub fn run(dirs: &XdgDirs) -> anyhow::Result<()> {
@@ -48,7 +57,7 @@ pub fn run(dirs: &XdgDirs) -> anyhow::Result<()> {
 /// The tool server; see the module docs for what it holds.
 pub struct Server {
     dirs: XdgDirs,
-    default: Mutex<Option<Id>>,
+    pinned: Mutex<Option<PathBuf>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -58,10 +67,18 @@ impl std::fmt::Debug for Server {
     }
 }
 
+/// A workspace an agent can address: its root and the viewers showing it.
+#[derive(Debug, Clone)]
+struct Session {
+    root: PathBuf,
+    viewers: Vec<Record>,
+}
+
 /// `session_switch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SwitchParams {
-    /// Session id as shown by `session_list`.
+    /// A workspace root as shown by `session_list`, or a viewer name or id
+    /// (which selects that viewer's workspace).
     session: String,
 }
 
@@ -76,9 +93,13 @@ pub struct OpenParams {
     /// Last line, when a range should be selected.
     #[serde(default)]
     end_line: Option<usize>,
-    /// Session id; defaults to the bound session.
+    /// Workspace root, viewer name, or viewer id; defaults to the bound
+    /// workspace.
     #[serde(default)]
     session: Option<String>,
+    /// Viewer name or id to show the file in; every viewer when omitted.
+    #[serde(default)]
+    viewer: Option<String>,
 }
 
 /// `follow` arguments.
@@ -86,9 +107,13 @@ pub struct OpenParams {
 pub struct FollowParams {
     /// Workspace-relative paths you are working on; replaces the last list.
     paths: Vec<PathBuf>,
-    /// Session id; defaults to the bound session.
+    /// Workspace root, viewer name, or viewer id; defaults to the bound
+    /// workspace.
     #[serde(default)]
     session: Option<String>,
+    /// Viewer name or id to tell; every viewer when omitted.
+    #[serde(default)]
+    viewer: Option<String>,
 }
 
 /// `annotations_list` arguments.
@@ -100,7 +125,8 @@ pub struct ListParams {
     /// Only threads on this workspace-relative path.
     #[serde(default)]
     path: Option<PathBuf>,
-    /// Session id; defaults to the bound session.
+    /// Workspace root, viewer name, or viewer id; defaults to the bound
+    /// workspace.
     #[serde(default)]
     session: Option<String>,
 }
@@ -118,7 +144,8 @@ pub struct ReplyParams {
     /// Name to sign as; the client name is recorded alongside it.
     #[serde(default)]
     persona: Option<String>,
-    /// Session id; defaults to the bound session.
+    /// Workspace root, viewer name, or viewer id; defaults to the bound
+    /// workspace.
     #[serde(default)]
     session: Option<String>,
 }
@@ -127,48 +154,64 @@ pub struct ReplyParams {
 impl Server {
     fn new(dirs: XdgDirs) -> Self {
         let cwd = env::current_dir().unwrap_or_default();
-        let default = bind(&Record::list(&dirs), &cwd).map(|r| r.id().clone());
-        if let Some(id) = &default {
-            tracing::info!(session = %id, "bound to session");
+        if let Some(session) = bind(&sessions(&dirs), &cwd) {
+            tracing::info!(root = %session.root.display(), viewers = session.viewers.len(), "workspace contains the cwd");
         } else {
-            tracing::warn!(cwd = %cwd.display(), "no live session contains the cwd");
+            tracing::warn!(cwd = %cwd.display(), "no known workspace contains the cwd");
         }
         Self {
             dirs,
-            default: Mutex::new(default),
+            pinned: Mutex::new(None),
             tool_router: Self::tool_router(),
         }
     }
 
-    #[tool(description = "List running Fathomable sessions; the default is marked.")]
+    #[tool(
+        description = "List known workspaces and their running viewers; the default workspace is marked."
+    )]
     fn session_list(&self) -> CallToolResult {
-        let default = self.default_id();
-        let live: Vec<Record> = Record::list(&self.dirs)
-            .into_iter()
-            .filter(Record::is_alive)
-            .collect();
-        let sessions: Vec<Value> = live
+        let all = sessions(&self.dirs);
+        let default = self.resolve(None).ok().map(|s| s.root);
+        let sessions: Vec<Value> = all
             .iter()
-            .map(|r| {
+            .map(|s| {
+                let viewers: Vec<Value> = s
+                    .viewers
+                    .iter()
+                    .map(|v| {
+                        json!({
+                            "id": v.id().as_str(),
+                            "name": v.name(),
+                            "pid": v.pid(),
+                            "started": v.started(),
+                        })
+                    })
+                    .collect();
                 json!({
-                    "id": r.id().as_str(),
-                    "root": r.root(),
-                    "started": r.started(),
-                    "default": default.as_ref() == Some(r.id()),
+                    "root": s.root,
+                    "default": default.as_deref() == Some(s.root.as_path()),
+                    "viewers": viewers,
                 })
             })
             .collect();
-        let summary = if live.is_empty() {
-            "no live sessions".to_owned()
+        let summary = if all.is_empty() {
+            "no known workspaces; start Fathomable in one".to_owned()
         } else {
-            live.iter()
-                .map(|r| {
-                    let mark = if default.as_ref() == Some(r.id()) {
+            all.iter()
+                .map(|s| {
+                    let mark = if default.as_deref() == Some(s.root.as_path()) {
                         "*"
                     } else {
                         " "
                     };
-                    format!("{mark} {}  {}", r.id(), r.root().display())
+                    let mut lines = vec![format!("{mark} {}", s.root.display())];
+                    if s.viewers.is_empty() {
+                        lines.push("    (no viewers running)".to_owned());
+                    }
+                    for v in &s.viewers {
+                        lines.push(format!("    {}  {}", v.name().unwrap_or("-"), v.id()));
+                    }
+                    lines.join("\n")
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -176,17 +219,17 @@ impl Server {
         with_summary(json!({ "sessions": sessions }), summary)
     }
 
-    #[tool(description = "Make a session the default for later calls.")]
+    #[tool(description = "Make a workspace the default for later calls.")]
     fn session_switch(&self, Parameters(p): Parameters<SwitchParams>) -> CallToolResult {
-        match self.record(Some(&p.session)) {
-            Ok(record) => {
-                if let Ok(mut default) = self.default.lock() {
-                    *default = Some(record.id().clone());
+        match self.resolve(Some(&p.session)) {
+            Ok(session) => {
+                if let Ok(mut pinned) = self.pinned.lock() {
+                    *pinned = Some(session.root.clone());
                 }
                 text(format!(
-                    "bound to {} at {}",
-                    record.id(),
-                    record.root().display()
+                    "bound to {} ({} viewer(s) running)",
+                    session.root.display(),
+                    session.viewers.len()
                 ))
             }
             Err(error) => failure(error),
@@ -194,7 +237,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Open a workspace file in the viewer, optionally at a line or line range."
+        description = "Open a workspace file in the viewer(s), optionally at a line or line range."
     )]
     async fn open(&self, Parameters(p): Parameters<OpenParams>) -> CallToolResult {
         let request = Request::Open {
@@ -202,33 +245,48 @@ impl Server {
             line: p.line,
             end_line: p.end_line,
         };
-        match self.call(p.session.as_deref(), &request).await {
-            Ok(Response::Done) => text(format!("opened {}", p.path.display())),
-            other => unexpected(other),
+        match self
+            .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
+            .await
+        {
+            Ok(count) => text(format!("opened {} in {count} viewer(s)", p.path.display())),
+            Err(error) => failure(error),
         }
     }
 
     #[tool(
-        description = "Tell the viewer which files you are working on; replaces the previous list."
+        description = "Tell the viewer(s) which files you are working on; replaces the previous list."
     )]
     async fn follow(&self, Parameters(p): Parameters<FollowParams>) -> CallToolResult {
-        let count = p.paths.len();
+        let files = p.paths.len();
         let request = Request::Follow { paths: p.paths };
-        match self.call(p.session.as_deref(), &request).await {
-            Ok(Response::Done) => text(format!("following {count} file(s)")),
-            other => unexpected(other),
+        match self
+            .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
+            .await
+        {
+            Ok(count) => text(format!("following {files} file(s) in {count} viewer(s)")),
+            Err(error) => failure(error),
         }
     }
 
     #[tool(
-        description = "List annotation threads, optionally changed since a Unix time or on one file."
+        description = "List annotation threads on the current work, optionally changed since a Unix time or on one file."
     )]
     async fn annotations_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
+        let session = match self.resolve(p.session.as_deref()) {
+            Ok(session) => session,
+            Err(error) => return failure(error),
+        };
         let request = Request::AnnotationsList {
             since: p.since,
-            path: p.path,
+            path: p.path.clone(),
         };
-        match self.call(p.session.as_deref(), &request).await {
+        let outcome = match session.viewers.first() {
+            Some(viewer) => call(viewer, &request).await,
+            None => headless_list(&self.dirs, &session.root, p.since, p.path.as_deref())
+                .map(Response::Threads),
+        };
+        match outcome {
             Ok(Response::Threads(threads)) => {
                 let summary = summarize(&threads);
                 match serde_json::to_value(&threads) {
@@ -258,13 +316,29 @@ impl Server {
             Ok(id) => id,
             Err(error) => return failure(error.to_string()),
         };
+        let session = match self.resolve(p.session.as_deref()) {
+            Ok(session) => session,
+            Err(error) => return failure(error),
+        };
         let request = Request::ThreadReply {
-            thread,
-            author,
-            body: p.body,
+            thread: thread.clone(),
+            author: author.clone(),
+            body: p.body.clone(),
             resolve: p.resolve,
         };
-        match self.call(p.session.as_deref(), &request).await {
+        let outcome = match session.viewers.first() {
+            Some(viewer) => call(viewer, &request).await,
+            None => headless_reply(
+                &self.dirs,
+                &session.root,
+                &thread,
+                author,
+                p.body,
+                p.resolve,
+            )
+            .map(|()| Response::Done),
+        };
+        match outcome {
             Ok(Response::Done) => text(format!(
                 "replied to {}{}",
                 p.thread,
@@ -276,35 +350,93 @@ impl Server {
 }
 
 impl Server {
-    fn default_id(&self) -> Option<Id> {
-        self.default.lock().ok().and_then(|d| d.clone())
+    fn pinned(&self) -> Option<PathBuf> {
+        self.pinned.lock().ok().and_then(|p| p.clone())
     }
 
-    /// The live record for `session`, or the default one.
-    fn record(&self, session: Option<&str>) -> Result<Record, String> {
-        let id = match session {
-            Some(text) => text.parse::<Id>().map_err(|e| e.to_string())?,
-            None => self
-                .default_id()
-                .ok_or("no session bound; call session_list and session_switch")?,
+    /// The workspace a call addresses: `session` when given (a root, or a
+    /// viewer name or id), else the pin, else the one containing the cwd.
+    fn resolve(&self, session: Option<&str>) -> Result<Session, String> {
+        let all = sessions(&self.dirs);
+        if let Some(key) = session {
+            if let Some(found) = all
+                .iter()
+                .find(|s| s.viewers.iter().any(|v| v.is_called(key)))
+            {
+                return Ok(found.clone());
+            }
+            let path = PathBuf::from(key);
+            let path = path.canonicalize().unwrap_or(path);
+            return all
+                .iter()
+                .find(|s| s.root == path)
+                .cloned()
+                .ok_or_else(|| format!("no workspace or viewer called `{key}`; see session_list"));
+        }
+        if let Some(pinned) = self.pinned()
+            && let Some(found) = all.iter().find(|s| s.root == pinned)
+        {
+            return Ok(found.clone());
+        }
+        let cwd = env::current_dir().unwrap_or_default();
+        bind(&all, &cwd).cloned().ok_or_else(|| {
+            "no known workspace contains the current directory; call session_list and session_switch"
+                .to_owned()
+        })
+    }
+
+    /// Send `request` to every viewer of the workspace, or to the one
+    /// called `viewer`. Returns how many answered `Done`; the first error
+    /// fails the call.
+    async fn broadcast(
+        &self,
+        session: Option<&str>,
+        viewer: Option<&str>,
+        request: &Request,
+    ) -> Result<usize, String> {
+        let session = self.resolve(session)?;
+        let targets: Vec<&Record> = match viewer {
+            Some(key) => {
+                let found = session
+                    .viewers
+                    .iter()
+                    .find(|v| v.is_called(key))
+                    .ok_or_else(|| {
+                        format!(
+                            "no viewer called `{key}` on {}; see session_list",
+                            session.root.display()
+                        )
+                    })?;
+                vec![found]
+            }
+            None => session.viewers.iter().collect(),
         };
-        Record::list(&self.dirs)
-            .into_iter()
-            .find(|r| *r.id() == id)
-            .filter(Record::is_alive)
-            .ok_or_else(|| format!("session {id} is not running"))
+        if targets.is_empty() {
+            return Err(format!(
+                "no viewer is running for {}; start Fathomable there",
+                session.root.display()
+            ));
+        }
+        let mut count = 0;
+        for viewer in targets {
+            match call(viewer, request).await? {
+                Response::Done => count += 1,
+                Response::Error(message) => return Err(message),
+                other => return Err(format!("unexpected reply {other:?}")),
+            }
+        }
+        Ok(count)
     }
+}
 
-    /// One request-response exchange with the session socket.
-    async fn call(&self, session: Option<&str>, request: &Request) -> Result<Response, String> {
-        let record = self.record(session)?;
-        let socket = record
-            .socket()
-            .ok_or_else(|| format!("session {} has no socket", record.id()))?;
-        exchange(socket, &request.to_line())
-            .await
-            .map_err(|e| format!("session {}: {e}", record.id()))
-    }
+/// One request-response exchange with a viewer's socket.
+async fn call(viewer: &Record, request: &Request) -> Result<Response, String> {
+    let socket = viewer
+        .socket()
+        .ok_or_else(|| format!("viewer {} has no socket", viewer.id()))?;
+    exchange(socket, &request.to_line())
+        .await
+        .map_err(|e| format!("viewer {}: {e}", viewer.id()))
 }
 
 async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
@@ -319,12 +451,108 @@ async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
         .map_err(std::io::Error::other)
 }
 
-/// The live session whose root is the longest prefix of `cwd`.
-fn bind<'a>(records: &'a [Record], cwd: &Path) -> Option<&'a Record> {
-    records
+/// Every known workspace with its live viewers: marked workspaces first
+/// (most recently seen first), then any a live viewer names without a
+/// marker.
+fn sessions(dirs: &XdgDirs) -> Vec<Session> {
+    let mut all: Vec<Session> = Marker::list(dirs)
+        .into_iter()
+        .map(|marker| Session {
+            root: marker.root().to_path_buf(),
+            viewers: Vec::new(),
+        })
+        .collect();
+    for record in Record::live(dirs) {
+        match all.iter_mut().find(|s| s.root == record.root()) {
+            Some(session) => session.viewers.push(record),
+            None => all.push(Session {
+                root: record.root().to_path_buf(),
+                viewers: vec![record],
+            }),
+        }
+    }
+    all
+}
+
+/// The workspace whose root is the longest prefix of `cwd`.
+fn bind<'a>(sessions: &'a [Session], cwd: &Path) -> Option<&'a Session> {
+    sessions
         .iter()
-        .filter(|r| r.is_alive() && cwd.starts_with(r.root()))
-        .max_by_key(|r| r.root().as_os_str().len())
+        .filter(|s| cwd.starts_with(&s.root))
+        .max_by_key(|s| s.root.as_os_str().len())
+}
+
+/// Open the workspace's store with no viewer running: threads edited
+/// offline are followed through their snapshots first (ADR 0020), and the
+/// scope of the current `HEAD` is computed (ADR 0024).
+fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Scope), String> {
+    let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+    let pinned: Vec<PathBuf> = store.open_paths().map(Path::to_path_buf).collect();
+    match seen::Store::open_pinned(&dirs.seen_dir(root), pinned.iter().map(PathBuf::as_path)) {
+        Ok(seen) => {
+            let moved = follow_snapshots(&mut store, &seen, root);
+            if moved > 0 {
+                tracing::info!(moved, "threads re-anchored headlessly");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "cannot open snapshots; reporting stored ranges"),
+    }
+    let scope = match Workspace::discover(root) {
+        Ok(workspace) => workspace
+            .reachable(store.commits())
+            .map_or_else(Scope::unscoped, Scope::reachable),
+        Err(error) => {
+            tracing::warn!(%error, "cannot open the workspace; threads unscoped");
+            Scope::unscoped()
+        }
+    };
+    Ok((store, scope))
+}
+
+fn headless_list(
+    dirs: &XdgDirs,
+    root: &Path,
+    since: Option<u64>,
+    path: Option<&Path>,
+) -> Result<Vec<Thread>, String> {
+    let (store, scope) = headless_store(dirs, root)?;
+    Ok(store
+        .threads()
+        .iter()
+        .filter(|t| scope.includes(t))
+        .filter(|t| since.is_none_or(|s| t.updated() >= s))
+        .filter(|t| path.is_none_or(|p| t.path() == p))
+        .cloned()
+        .collect())
+}
+
+fn headless_reply(
+    dirs: &XdgDirs,
+    root: &Path,
+    thread: &ThreadId,
+    author: Author,
+    body: String,
+    resolve: bool,
+) -> Result<(), String> {
+    let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+    if store.thread(thread).is_none() {
+        return Err(format!("unknown thread {thread}"));
+    }
+    let when = now();
+    let reply = Reply::new(author.clone(), when, body);
+    let reply = if resolve {
+        reply.proposing_resolution()
+    } else {
+        reply
+    };
+    store.reply(thread, reply).map_err(|e| e.to_string())?;
+    if resolve {
+        store
+            .resolve(thread, author, when)
+            .map_err(|e| e.to_string())?;
+    }
+    tracing::info!(%thread, resolve, "agent reply added headlessly");
+    Ok(())
 }
 
 fn summarize(threads: &[Thread]) -> String {
@@ -376,28 +604,112 @@ impl ServerHandler for Server {
             .with_instructions(
                 "Fathomable is the user's read-only viewer. Use `open` to show a file, \
                  `follow` to say which files you are editing, `annotations_list` (with \
-                 `since`) to read the user's comments, and `thread_reply` to answer them.",
+                 `since`) to read the user's comments, and `thread_reply` to answer them. \
+                 Several viewers may show one workspace; `open` and `follow` reach all of \
+                 them unless you name a `viewer`. Reading and answering comments works \
+                 with no viewer running.",
             )
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::{Path, PathBuf};
 
+    use fathomable_core::XdgDirs;
+    use fathomable_core::annotations::{Author, Draft, LineRange, Status, Store, ThreadId};
     use fathomable_core::session::{Id, Record};
 
-    use super::bind;
+    use super::{Session, bind, headless_list, headless_reply};
 
-    fn record(root: &str) -> Record {
-        Record::new(Id::mint(), PathBuf::from(root), None)
+    fn session(root: &str, viewers: usize) -> Session {
+        Session {
+            root: PathBuf::from(root),
+            viewers: (0..viewers)
+                .map(|_| Record::new(Id::mint(), PathBuf::from(root), None))
+                .collect(),
+        }
     }
 
     #[test]
-    fn binding_picks_the_longest_live_root() {
-        let records = [record("/work"), record("/work/repo"), record("/elsewhere")];
-        let bound = bind(&records, Path::new("/work/repo/src"));
-        assert_eq!(bound.map(Record::root), Some(Path::new("/work/repo")));
-        assert!(bind(&records, Path::new("/tmp")).is_none());
+    fn binding_picks_the_longest_root_even_without_viewers() {
+        let sessions = [
+            session("/work", 1),
+            session("/work/repo", 0),
+            session("/x", 2),
+        ];
+        let bound = bind(&sessions, Path::new("/work/repo/src"));
+        assert_eq!(
+            bound.map(|s| s.root.as_path()),
+            Some(Path::new("/work/repo"))
+        );
+        assert!(bind(&sessions, Path::new("/tmp")).is_none());
+    }
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> std::io::Result<Self> {
+            let dir =
+                std::env::temp_dir().join(format!("fathomable-mcp-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(dir.join("ws"))?;
+            fs::create_dir_all(dir.join("state"))?;
+            Ok(Self(dir))
+        }
+
+        fn dirs(&self) -> XdgDirs {
+            let state = self.0.join("state").into_os_string();
+            XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// With no viewer, an agent still reads the store and its reply lands
+    /// in the file the next viewer loads.
+    #[test]
+    fn headless_reads_and_answers_the_store() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("headless")?;
+        let dirs = dir.dirs();
+        let root = dir.0.join("ws").canonicalize()?;
+        fs::write(root.join("a.md"), "one\ntwo\n")?;
+        let id = Store::open(dirs.threads_file(&root))?.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "why?"),
+            "one\ntwo\n",
+            5,
+        )?;
+        let threads = headless_list(&dirs, &root, None, None)?;
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].id(), &id);
+        assert!(headless_list(&dirs, &root, Some(6), None)?.is_empty());
+        headless_reply(
+            &dirs,
+            &root,
+            &id,
+            Author::agent("bot"),
+            "because".to_owned(),
+            true,
+        )?;
+        let again = headless_list(&dirs, &root, None, Some(Path::new("a.md")))?;
+        assert_eq!(again[0].replies().len(), 1);
+        assert_eq!(again[0].status(), Status::AutoResolved);
+        assert!(
+            headless_reply(
+                &dirs,
+                &root,
+                &serde_json::from_str::<ThreadId>(r#""1-2-3""#)?,
+                Author::agent("bot"),
+                "x".to_owned(),
+                false,
+            )
+            .is_err()
+        );
+        Ok(())
     }
 }

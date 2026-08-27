@@ -27,6 +27,7 @@
 //! # Ok::<(), fathomable_core::annotations::StoreError>(())
 //! ```
 
+use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
@@ -36,7 +37,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// The record format version written in every event line.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 /// File name of the thread store inside a workspace state directory.
 pub const THREADS_FILE: &str = "threads.jsonl";
@@ -425,6 +426,10 @@ pub struct Thread {
     /// user replies, resolves, or reopens (ADR 0019).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     edited: Option<u64>,
+    /// The `HEAD` commit the annotation was written against, when the
+    /// workspace had one (ADR 0024); `None` reads as unscoped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commit: Option<String>,
 }
 
 impl Thread {
@@ -496,6 +501,12 @@ impl Thread {
         self.edited
     }
 
+    /// The `HEAD` commit the annotation was written against, if any.
+    #[must_use]
+    pub fn commit(&self) -> Option<&str> {
+        self.commit.as_deref()
+    }
+
     /// Where the thread sits in `text` now.
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
@@ -513,6 +524,7 @@ pub struct Draft {
     path: PathBuf,
     range: LineRange,
     comment: String,
+    commit: Option<String>,
 }
 
 impl Draft {
@@ -523,6 +535,53 @@ impl Draft {
             path: path.to_path_buf(),
             range,
             comment: comment.into(),
+            commit: None,
+        }
+    }
+
+    /// Record the `HEAD` commit the comment is written against
+    /// (ADR 0024), so the thread shows only where that commit is
+    /// reachable.
+    #[must_use]
+    pub fn at_commit(mut self, commit: Option<String>) -> Self {
+        self.commit = commit;
+        self
+    }
+}
+
+/// Which threads the current `HEAD` shows (ADR 0024).
+///
+/// A thread written against a commit is visible only while that commit is
+/// `HEAD` or one of its ancestors; a thread without a commit, or any thread
+/// when the workspace has no `HEAD`, is always visible.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Scope {
+    reachable: Option<HashSet<String>>,
+}
+
+impl Scope {
+    /// A scope that shows every thread: no git, or no `HEAD` yet.
+    #[must_use]
+    pub fn unscoped() -> Self {
+        Self { reachable: None }
+    }
+
+    /// A scope over the commits reachable from `HEAD`. The set need only
+    /// hold the commits that threads mention; see
+    /// [`Workspace::reachable`](crate::workspace::Workspace::reachable).
+    #[must_use]
+    pub fn reachable(commits: HashSet<String>) -> Self {
+        Self {
+            reachable: Some(commits),
+        }
+    }
+
+    /// Whether `thread` is on the current work.
+    #[must_use]
+    pub fn includes(&self, thread: &Thread) -> bool {
+        match (&self.reachable, thread.commit()) {
+            (Some(reachable), Some(commit)) => reachable.contains(commit),
+            _ => true,
         }
     }
 }
@@ -540,6 +599,9 @@ enum Event {
         anchor: Anchor,
         created: u64,
         comment: String,
+        /// Absent in version 1 records, which read as unscoped.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
     },
     Reply {
         v: u32,
@@ -620,6 +682,21 @@ impl Store {
         &self.threads
     }
 
+    /// The distinct commits threads were written against.
+    pub fn commits(&self) -> impl Iterator<Item = &str> + '_ {
+        let mut found: Vec<&str> = Vec::new();
+        self.threads
+            .iter()
+            .filter_map(Thread::commit)
+            .filter(move |commit| {
+                let new = !found.contains(commit);
+                if new {
+                    found.push(commit);
+                }
+                new
+            })
+    }
+
     /// Threads on the workspace-relative `path`, oldest first.
     pub fn for_path<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = &'a Thread> + 'a {
         self.threads
@@ -680,6 +757,7 @@ impl Store {
             anchor,
             created: now,
             comment: draft.comment,
+            commit: draft.commit,
         })?;
         Ok(id)
     }
@@ -782,6 +860,7 @@ impl Store {
                 anchor,
                 created,
                 comment,
+                commit,
                 ..
             } => {
                 self.threads.push(Thread {
@@ -796,6 +875,7 @@ impl Store {
                     replies: Vec::new(),
                     status: Status::Open,
                     edited: None,
+                    commit,
                 });
             }
             Event::Reply { thread, reply, .. } => {
@@ -923,11 +1003,13 @@ impl std::error::Error for StoreError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::fs;
     use std::path::{Path, PathBuf};
 
     use super::{
-        Anchor, Author, Draft, LineRange, Placement, Reply, Status, Store, StoreError, line_hash,
+        Anchor, Author, Draft, LineRange, Placement, Reply, Scope, Status, Store, StoreError,
+        Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1106,8 +1188,59 @@ mod tests {
 
         let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
         assert_eq!(raw.lines().count(), 6);
-        assert!(raw.lines().all(|line| line.contains("\"v\":1")));
+        assert!(raw.lines().all(|line| line.contains("\"v\":2")));
         assert!(raw.contains("\"author\":\"claude\""));
+        Ok(())
+    }
+
+    /// A thread carries the commit it was written against; the scope hides
+    /// it where that commit is not reachable, and a version 1 record with no
+    /// commit is shown everywhere (ADR 0024).
+    #[test]
+    fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), StoreError> {
+        let file = TempFile::new("scope");
+        if let Some(parent) = file.0.parent() {
+            fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
+        }
+        fs::write(
+            &file.0,
+            concat!(
+                r#"{"event":"annotate","v":1,"id":"1-1-1","path":"a.md","range":[1,1],"#,
+                r##""snippet":"# Title","anchor":{"lines":["x"]},"created":1,"comment":"old"}"##,
+                "\n"
+            ),
+        )
+        .map_err(|e| StoreError::io(&file.0, e))?;
+        let mut store = Store::open(&file.0)?;
+        let legacy = store.threads()[0].id().clone();
+        assert_eq!(store.thread(&legacy).and_then(Thread::commit), None);
+        let scoped = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "new")
+                .at_commit(Some("abc123".to_owned())),
+            TEXT,
+            2,
+        )?;
+        assert_eq!(store.commits().collect::<Vec<_>>(), ["abc123"]);
+        let again = Store::open(&file.0)?;
+        assert_eq!(
+            again.thread(&scoped).and_then(Thread::commit),
+            Some("abc123")
+        );
+
+        let everywhere = Scope::unscoped();
+        let on_branch = Scope::reachable(HashSet::from(["abc123".to_owned()]));
+        let elsewhere = Scope::reachable(HashSet::new());
+        let visible = |scope: &Scope| -> Vec<&ThreadId> {
+            again
+                .threads()
+                .iter()
+                .filter(|t| scope.includes(t))
+                .map(Thread::id)
+                .collect()
+        };
+        assert_eq!(visible(&everywhere), [&legacy, &scoped]);
+        assert_eq!(visible(&on_branch), [&legacy, &scoped]);
+        assert_eq!(visible(&elsewhere), [&legacy]);
         Ok(())
     }
 

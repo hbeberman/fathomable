@@ -16,7 +16,16 @@ impl App {
             (Some("follow"), Some("on"), None) => self.set_auto_jump(true),
             (Some("follow"), Some("off"), None) => self.set_auto_jump(false),
             (Some("status"), None, _) => self.open_status(),
+            (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),
+        }
+    }
+
+    /// The viewer as agents see it: its name when set, then the id.
+    pub fn viewer_label(&self) -> String {
+        match self.record.name() {
+            Some(name) => format!("{name} ({})", self.session),
+            None => format!("unnamed ({}); set one with :name", self.session),
         }
     }
 
@@ -61,7 +70,7 @@ impl App {
                 "terminal".to_owned(),
                 format!("{} columns x {} rows", self.width, self.height),
             ),
-            ("session".to_owned(), self.session.clone()),
+            ("viewer".to_owned(), self.viewer_label()),
             (
                 "workspace".to_owned(),
                 self.workspace.root().display().to_string(),

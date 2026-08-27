@@ -293,7 +293,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
         (":q", "quit".to_owned()),
         ("", String::new()),
     ];
-    let facts = [("workspace", root), ("session", app.session().to_owned())];
+    let facts = [("workspace", root), ("viewer", app.viewer_label())];
     let key_width = entries
         .iter()
         .map(|(key, _)| display_width(key))

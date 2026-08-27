@@ -276,3 +276,65 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     );
     Ok(())
 }
+
+/// Commit `files` on `reference` with `parent`, returning the new id.
+fn commit_on(
+    root: &Path,
+    reference: &str,
+    parent: Option<gix::ObjectId>,
+    files: &[(&str, &str)],
+) -> Result<String, Box<dyn Error>> {
+    let repo = gix::open_opts(root, open_options())?;
+    let mut entries = Vec::new();
+    for (name, content) in files {
+        entries.push(gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryKind::Blob.into(),
+            filename: (*name).into(),
+            oid: repo.write_blob(content.as_bytes())?.detach(),
+        });
+    }
+    entries.sort();
+    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
+    let signature = gix::actor::SignatureRef {
+        name: "test".into(),
+        email: "test@example.com".into(),
+        time: "0 +0000",
+    };
+    let id = repo.commit_as(signature, signature, reference, "commit", tree, parent)?;
+    Ok(id.to_hex().to_string())
+}
+
+/// `reachable` answers for `HEAD` and its ancestors only, so a thread
+/// written on another branch is not on this work (ADR 0024).
+#[test]
+fn reachable_commits_are_head_and_its_ancestors() -> TestResult {
+    let dir = TempDir::new("reachable")?;
+    init(&dir.0)?;
+    let plain = Workspace::discover(&dir.0)?;
+    assert_eq!(plain.head_commit(), None, "unborn HEAD has no commit");
+    assert_eq!(plain.reachable(["anything"]), None);
+
+    let first = commit_on(&dir.0, "HEAD", None, &[("a.md", "1\n")])?;
+    let first_id = gix::ObjectId::from_hex(first.as_bytes())?;
+    let second = commit_on(&dir.0, "HEAD", Some(first_id), &[("a.md", "2\n")])?;
+    // A branch off the first commit that HEAD does not contain.
+    let elsewhere = commit_on(
+        &dir.0,
+        "refs/heads/elsewhere",
+        Some(first_id),
+        &[("a.md", "3\n")],
+    )?;
+    let workspace = Workspace::discover(&dir.0)?;
+    assert_eq!(workspace.head_commit().as_deref(), Some(second.as_str()));
+    let wanted = [first.as_str(), second.as_str(), elsewhere.as_str(), "nope"];
+    let reachable = workspace.reachable(wanted).ok_or("git workspace")?;
+    assert!(reachable.contains(&first));
+    assert!(reachable.contains(&second));
+    assert!(!reachable.contains(&elsewhere));
+    assert!(!reachable.contains("nope"));
+    assert_eq!(
+        workspace.reachable(std::iter::empty()).map(|set| set.len()),
+        Some(0)
+    );
+    Ok(())
+}

@@ -1,15 +1,18 @@
 // @okf-doc: /decisions/0024-workspace-sessions.md
-//! Session records and the v1 socket protocol.
+//! Viewer records, workspace markers, and the v2 socket protocol.
 //!
-//! A session is one running TUI bound to one workspace root (ADR 0003). It
-//! writes a [`Record`] under `$XDG_STATE_HOME/fathomable/sessions/<id>/` and
-//! listens on `$XDG_RUNTIME_DIR/fathomable/<id>.sock`. The socket speaks
-//! line-delimited JSON: one [`Request`] per line, answered by one
-//! [`Response`] per line. Every request carries `"v"`; version 1 (ADR 0014)
-//! adds `open`, `follow`, `annotations_list`, and `thread_reply` to the v0
-//! `ping` and `session_info` (ADR 0012), which are still accepted with
-//! `"v":0`. The binary owns the socket and the state behind every operation;
-//! this module owns the wire types.
+//! A session is the annotation state of one workspace root; a running TUI
+//! is a *viewer* of it (ADR 0024). Each viewer writes a [`Record`] under
+//! `$XDG_STATE_HOME/fathomable/sessions/<id>/` and listens on
+//! `$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`; the workspace
+//! itself is marked by a [`Marker`] beside its thread store so an agent can
+//! find it when no viewer runs. The socket speaks line-delimited JSON: one
+//! [`Request`] per line, answered by one [`Response`] per line. Every
+//! request carries `"v"`; version 2 carries the viewer name in records,
+//! version 1 (ADR 0014) added `open`, `follow`, `annotations_list`, and
+//! `thread_reply` to the v0 `ping` and `session_info` (ADR 0012), which
+//! are still accepted with an older `"v"`. The binary owns the socket and
+//! the state behind every operation; this module owns the wire types.
 //!
 //! # Examples
 //!
@@ -35,13 +38,16 @@ use crate::XdgDirs;
 use crate::annotations::{Author, Thread, ThreadId};
 
 /// The protocol version this crate speaks.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The oldest protocol version still accepted, for `ping` and `session_info`.
 const OLDEST_VERSION: u32 = 0;
 
 /// File name of the record inside a session directory.
 pub const RECORD_FILE: &str = "session.json";
+
+/// File name of the workspace marker inside a workspace state directory.
+pub const WORKSPACE_FILE: &str = "workspace.json";
 
 /// A session identifier: `<unix-seconds>-<pid>`, unique per host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -91,7 +97,7 @@ impl FromStr for Id {
     }
 }
 
-/// What a running session writes about itself.
+/// What a running viewer writes about itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     id: Id,
@@ -99,6 +105,9 @@ pub struct Record {
     root: PathBuf,
     socket: PathBuf,
     started: u64,
+    /// The user-set viewer name (ADR 0024 `--name`, `:name`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
 }
 
 impl Record {
@@ -114,7 +123,27 @@ impl Record {
             started: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |elapsed| elapsed.as_secs()),
+            name: None,
         }
+    }
+
+    /// Give the viewer a name; empty clears it.
+    #[must_use]
+    pub fn with_name(mut self, name: Option<String>) -> Self {
+        self.name = name.filter(|name| !name.trim().is_empty());
+        self
+    }
+
+    /// The viewer name, when the user set one.
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Whether `key` names this viewer: its name or its id.
+    #[must_use]
+    pub fn is_called(&self, key: &str) -> bool {
+        self.id.as_str() == key || self.name.as_deref() == Some(key)
     }
 
     /// The session id.
@@ -216,6 +245,15 @@ impl Record {
         records
     }
 
+    /// Live records, oldest first.
+    #[must_use]
+    pub fn live(dirs: &XdgDirs) -> Vec<Self> {
+        Self::list(dirs)
+            .into_iter()
+            .filter(Self::is_alive)
+            .collect()
+    }
+
     /// Remove records whose process is gone. Returns how many were removed.
     pub fn sweep_dead(dirs: &XdgDirs) -> usize {
         let mut removed = 0;
@@ -235,6 +273,84 @@ impl Record {
             }
         }
         removed
+    }
+}
+
+/// The marker a viewer leaves beside a workspace's thread store, so the
+/// root behind the state directory's hash is known when no viewer runs
+/// (ADR 0024).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Marker {
+    root: PathBuf,
+    /// When a viewer last started here, in Unix seconds.
+    last_seen: u64,
+}
+
+impl Marker {
+    /// Mark `root` as a workspace seen now.
+    #[must_use]
+    pub fn new(root: PathBuf) -> Self {
+        Self {
+            root,
+            last_seen: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs()),
+        }
+    }
+
+    /// The workspace root.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// When a viewer last started here, in Unix seconds.
+    #[must_use]
+    pub fn last_seen(&self) -> u64 {
+        self.last_seen
+    }
+
+    /// Write the marker into the workspace state directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error when the directory or file cannot be written.
+    pub fn write(&self, dirs: &XdgDirs) -> io::Result<()> {
+        let path = dirs.workspace_file(&self.root);
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
+        fs::write(path, json)
+    }
+
+    /// Every known workspace, most recently seen first; unreadable markers
+    /// are skipped with a log line.
+    #[must_use]
+    pub fn list(dirs: &XdgDirs) -> Vec<Self> {
+        let mut markers = Vec::new();
+        let Ok(entries) = fs::read_dir(dirs.state_dir().join("workspaces")) else {
+            return markers;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path().join(WORKSPACE_FILE);
+            let text = match fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    tracing::warn!(%error, path = %path.display(), "bad workspace marker");
+                    continue;
+                }
+            };
+            match serde_json::from_str::<Self>(&text) {
+                Ok(marker) => markers.push(marker),
+                Err(error) => {
+                    tracing::warn!(%error, path = %path.display(), "bad workspace marker");
+                }
+            }
+        }
+        markers.sort_by_key(|marker| std::cmp::Reverse(marker.last_seen));
+        markers
     }
 }
 
@@ -498,10 +614,10 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":1,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":2,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
-        assert_eq!(Request::Ping.to_line(), r#"{"v":1,"op":"ping"}"#);
+        assert_eq!(Request::Ping.to_line(), r#"{"v":2,"op":"ping"}"#);
         Ok(())
     }
 
@@ -515,12 +631,29 @@ mod tests {
             r#"{"v":0,"op":"session_info"}"#.parse::<Request>().ok(),
             Some(Request::SessionInfo)
         );
-        let too_old = r#"{"v":0,"op":"follow","paths":[]}"#.parse::<Request>().err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 1")));
-        let too_new = r#"{"v":2,"op":"ping"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("version 2")));
-        assert_eq!(r#"{"v":1,"op":"dance"}"#.parse::<Request>().ok(), None);
+        let too_old = r#"{"v":1,"op":"follow","paths":[]}"#.parse::<Request>().err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 2")));
+        let too_new = r#"{"v":3,"op":"ping"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("version 3")));
+        assert_eq!(r#"{"v":2,"op":"dance"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
+    }
+
+    #[test]
+    fn records_carry_an_optional_name() {
+        let named = record().with_name(Some("left".to_owned()));
+        assert_eq!(named.name(), Some("left"));
+        assert!(named.is_called("left"));
+        assert!(named.is_called("1700000000-42"));
+        assert!(!named.is_called("right"));
+        assert_eq!(record().with_name(Some("  ".to_owned())).name(), None);
+        let line = Response::Session(named.clone(), None).to_line();
+        assert!(line.contains(r#""name":"left""#), "{line}");
+        assert!(!Response::Session(record(), None).to_line().contains("name"));
+        assert_eq!(
+            line.parse::<Response>().ok(),
+            Some(Response::Session(named, None))
+        );
     }
 
     #[test]

@@ -8,10 +8,10 @@
 mod clipboard;
 mod commands;
 mod keys;
-mod reanchor;
+pub(crate) mod reanchor;
 mod sidebar;
 mod socket;
-mod threads;
+pub(crate) mod threads;
 mod ui;
 mod view;
 
@@ -34,8 +34,7 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::Document;
-use fathomable_core::annotations::{Store, ThreadId};
+use fathomable_core::annotations::{Scope, Store, ThreadId};
 use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
@@ -48,6 +47,7 @@ use fathomable_core::status::Status;
 use fathomable_core::theme::Theme;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
+use fathomable_core::{Document, XdgDirs};
 use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -234,7 +234,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 37] = [
+pub const HELP: [(&str, &str); 38] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -258,7 +258,8 @@ pub const HELP: [(&str, &str); 37] = [
     ("]f / [f", "next / previous changed file"),
     ("Space j", "follow: jump, auto, clear"),
     (":follow", "toggle auto-jump"),
-    (":status", "session, paths, follow state"),
+    (":status", "viewer, paths, follow state"),
+    (":name NAME", "name this viewer for agents"),
     ("[o / ]o", "previous / next opened file"),
     (":N", "go to source line N"),
     (":noh", "clear search highlight"),
@@ -322,9 +323,12 @@ pub struct App {
     height: usize,
     session: String,
     store: Option<Store>,
+    /// Which threads the current `HEAD` shows (ADR 0024).
+    scope: Scope,
     /// Files an agent said it is working on (ADR 0014 `follow`).
     followed: Vec<PathBuf>,
     record: Record,
+    dirs: XdgDirs,
     follow: FollowConfig,
     /// Code highlighting shared by every view (ADR 0016).
     highlighter: Arc<Highlighter>,
@@ -351,6 +355,7 @@ impl App {
     pub fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
+            dirs,
             store,
             follow,
             seen,
@@ -389,8 +394,10 @@ impl App {
             height,
             session: record.id().to_string(),
             store,
+            scope: Scope::unscoped(),
             followed: Vec::new(),
             record,
+            dirs,
             auto: follow.auto,
             follow,
             highlighter,
@@ -405,8 +412,76 @@ impl App {
         };
         app.relayout();
         app.refresh_status();
+        app.refresh_scope();
         app.reanchor_from_snapshots();
         app
+    }
+
+    /// Recompute which threads `HEAD` shows (ADR 0024): one history walk
+    /// for the commits the store mentions. Marks are refreshed when the
+    /// answer changed.
+    pub(super) fn refresh_scope(&mut self) {
+        let scope = match self.store.as_ref() {
+            Some(store) => self
+                .workspace
+                .reachable(store.commits())
+                .map_or_else(Scope::unscoped, Scope::reachable),
+            None => Scope::unscoped(),
+        };
+        if scope != self.scope {
+            tracing::info!(head = ?self.workspace.head_commit(), "thread scope changed");
+            self.scope = scope;
+            for index in 0..self.docs.len() {
+                self.refresh_marks(index);
+            }
+        }
+    }
+
+    /// Re-read the thread store after another writer appended to it: a
+    /// second viewer, or a headless `--mcp` reply (ADR 0024). Marks and the
+    /// open thread panel follow.
+    pub fn reload_store(&mut self) {
+        let Some(path) = self.store.as_ref().map(|store| store.path().to_path_buf()) else {
+            return;
+        };
+        match Store::open(&path) {
+            Ok(store) => {
+                let changed = self
+                    .store
+                    .as_ref()
+                    .is_none_or(|old| old.threads() != store.threads());
+                if !changed {
+                    return;
+                }
+                tracing::info!(threads = store.threads().len(), "thread store reloaded");
+                self.store = Some(store);
+                self.refresh_scope();
+                for index in 0..self.docs.len() {
+                    self.refresh_marks(index);
+                }
+                if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
+                    self.open_thread(id);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "cannot reload the thread store"),
+        }
+    }
+
+    /// Where the thread store lives, for the watcher.
+    pub fn store_path(&self) -> Option<&Path> {
+        self.store.as_ref().map(Store::path)
+    }
+
+    /// `:name`: rename this viewer for agents; empty clears the name.
+    pub fn set_name(&mut self, name: Option<&str>) {
+        self.record = self.record.clone().with_name(name.map(str::to_owned));
+        match self.record.write(&self.dirs) {
+            Ok(()) => self.notice(match self.record.name() {
+                Some(name) => format!("viewer named {name}"),
+                None => "viewer name cleared".to_owned(),
+            }),
+            Err(error) => self.notice(format!("cannot save the viewer name: {error}")),
+        }
     }
 
     /// How a root-relative `path` should be coloured and first displayed.
@@ -524,6 +599,11 @@ impl App {
     /// Files the watcher reported, absolute. Loaded documents reload;
     /// changes that pass the source and ignore rules join the queue.
     pub fn on_changes(&mut self, paths: Vec<PathBuf>) {
+        // The store lives outside the root; another writer's append lands
+        // here through the store watch (ADR 0024).
+        if paths.iter().any(|p| Some(p.as_path()) == self.store_path()) {
+            self.reload_store();
+        }
         let root = self.workspace.root().to_path_buf();
         let mut git_changed = false;
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
@@ -545,6 +625,7 @@ impl App {
             for index in 0..self.docs.len() {
                 self.refresh_base(index);
             }
+            self.refresh_scope();
         }
         if git_changed || !seen_paths.is_empty() {
             self.refresh_status();
@@ -865,11 +946,6 @@ impl App {
         &self.workspace
     }
 
-    /// The session id, as `--sessions` prints it.
-    pub fn session(&self) -> &str {
-        &self.session
-    }
-
     /// Files an agent is following, in the order it gave them.
     pub fn followed(&self) -> &[PathBuf] {
         &self.followed
@@ -1165,6 +1241,7 @@ impl App {
                     store
                         .threads()
                         .iter()
+                        .filter(|t| self.scope.includes(t))
                         .filter(|t| since.is_none_or(|s| t.updated() >= s))
                         .filter(|t| path.as_deref().is_none_or(|p| t.path() == p))
                         .cloned()
@@ -1530,8 +1607,10 @@ impl App {
 /// Everything [`App::new`] needs beyond the workspace and terminal size.
 #[derive(Debug)]
 pub struct Options {
-    /// This session's record, already written to the sessions directory.
+    /// This viewer's record, already written to the sessions directory.
     pub record: Record,
+    /// Where records and state live, for `:name` to rewrite the record.
+    pub dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub store: Option<Store>,
     /// Follow-mode settings (ADR 0015).
@@ -1551,6 +1630,7 @@ impl Options {
         use fathomable_core::session::Id;
         Self {
             record: Record::new(Id::mint(), root, None),
+            dirs: XdgDirs::resolve(|_| None),
             store: None,
             follow: FollowConfig::default(),
             seen: None,
@@ -1771,6 +1851,8 @@ struct DocWatcher {
     watcher: notify::RecommendedWatcher,
     target: Option<PathBuf>,
     recursive: bool,
+    /// The thread store, watched through its directory (ADR 0024).
+    store: Option<PathBuf>,
 }
 
 impl DocWatcher {
@@ -1799,6 +1881,7 @@ impl DocWatcher {
                 watcher,
                 target: None,
                 recursive: false,
+                store: None,
             },
             rx,
         ))
@@ -1835,7 +1918,26 @@ impl DocWatcher {
     }
 
     fn is_target(&self, path: &Path) -> bool {
-        self.recursive || self.target.as_deref() == Some(path)
+        self.recursive
+            || self.target.as_deref() == Some(path)
+            || self.store.as_deref() == Some(path)
+    }
+
+    /// Watch the directory holding the thread store, so appends by other
+    /// writers are noticed (ADR 0024).
+    fn watch_store(&mut self, store: Option<&Path>) {
+        let Some(dir) = store.and_then(Path::parent) else {
+            return;
+        };
+        match self.watcher.watch(dir, RecursiveMode::NonRecursive) {
+            Ok(()) => {
+                tracing::info!(dir = %dir.display(), "watching the thread store");
+                self.store = store.map(Path::to_path_buf);
+            }
+            Err(error) => {
+                tracing::warn!(%error, dir = %dir.display(), "cannot watch the thread store");
+            }
+        }
     }
 }
 
@@ -1936,6 +2038,7 @@ async fn run_async(
         options,
     );
     app.set_watching_root(watching);
+    doc_watcher.watch_store(app.store_path());
     match open {
         Some(path) => app.open(path),
         None => app.show_sidebar(),
@@ -2398,6 +2501,82 @@ mod tests {
         // whose text is identical must not hint.
         app.on_changes(vec![dir.0.join("README.md"), dir.0.join("README.md")]);
         assert!(app.queue().is_empty());
+        Ok(())
+    }
+
+    /// A thread written against a commit HEAD does not contain is hidden
+    /// from the marks and from `annotations_list`; one written against
+    /// HEAD, or with no commit, shows. An append by another writer reaches
+    /// the viewer through the store watch (ADR 0024).
+    #[test]
+    fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<()> {
+        use fathomable_core::annotations::{Draft, LineRange, Store};
+        use fathomable_core::session::{Request, Response};
+
+        let dir = TempDir::new("scope")?;
+        gix::ThreadSafeRepository::init_opts(
+            &dir.0,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            open_options(),
+        )?;
+        commit_and_stage(&dir.0, &[("README.md", "# Readme\n\nhello\n")])?;
+        let workspace = Workspace::discover(&dir.0)?;
+        let head = workspace
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+        let store_path = dir.0.join(".state/threads.jsonl");
+        let text = "# Readme\n\nhello\n";
+        let mut store = Store::open(&store_path)?;
+        let here = store.annotate(
+            Draft::new(Path::new("README.md"), LineRange::new(1, 1), "on this work")
+                .at_commit(Some(head)),
+            text,
+            1,
+        )?;
+        store.annotate(
+            Draft::new(
+                Path::new("README.md"),
+                LineRange::new(2, 2),
+                "on other work",
+            )
+            .at_commit(Some("0123456789abcdef0123456789abcdef01234567".to_owned())),
+            text,
+            2,
+        )?;
+        let legacy = store.annotate(
+            Draft::new(Path::new("README.md"), LineRange::new(3, 3), "unscoped"),
+            text,
+            3,
+        )?;
+
+        let mut app = app_with(
+            &dir,
+            Options {
+                store: Some(Store::open(&store_path)?),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
+        app.open(Path::new("README.md"));
+        let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
+        assert_eq!(ids, [here.clone(), legacy.clone()]);
+        let Response::Threads(listed) = app.handle_request(Request::AnnotationsList {
+            since: None,
+            path: None,
+        }) else {
+            anyhow::bail!("expected threads");
+        };
+        assert_eq!(listed.len(), 2);
+
+        // Another writer appends while this viewer runs.
+        let late = store.annotate(
+            Draft::new(Path::new("README.md"), LineRange::new(3, 3), "late"),
+            text,
+            4,
+        )?;
+        app.on_changes(vec![store_path.clone()]);
+        let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
+        assert_eq!(ids, [here, legacy, late]);
         Ok(())
     }
 

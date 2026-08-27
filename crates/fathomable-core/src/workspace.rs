@@ -20,7 +20,7 @@
 //! ```
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -158,6 +158,62 @@ impl Workspace {
     #[must_use]
     pub fn is_git(&self) -> bool {
         self.ignore.is_some()
+    }
+
+    /// The `HEAD` commit as hex, or `None` outside git or before the first
+    /// commit (ADR 0024).
+    #[must_use]
+    pub fn head_commit(&self) -> Option<String> {
+        let git = self.ignore.as_ref()?;
+        match git.repo.head_id() {
+            Ok(id) => Some(id.to_hex().to_string()),
+            Err(error) => {
+                tracing::debug!(%error, "no HEAD commit");
+                None
+            }
+        }
+    }
+
+    /// Which of `wanted` (hex commits) are `HEAD` or one of its ancestors
+    /// (ADR 0024). One walk from `HEAD` answers the whole set; it stops as
+    /// soon as every wanted commit has been met. Returns `None` outside git
+    /// or before the first commit, meaning nothing can be scoped.
+    #[must_use]
+    pub fn reachable<'a>(
+        &self,
+        wanted: impl IntoIterator<Item = &'a str>,
+    ) -> Option<HashSet<String>> {
+        let git = self.ignore.as_ref()?;
+        let head = git.repo.head_id().ok()?;
+        let mut pending: HashSet<String> = wanted.into_iter().map(str::to_owned).collect();
+        let mut found = HashSet::new();
+        if pending.is_empty() {
+            return Some(found);
+        }
+        let walk = match git.repo.rev_walk([head]).all() {
+            Ok(walk) => walk,
+            Err(error) => {
+                tracing::warn!(%error, "cannot walk history from HEAD");
+                return Some(found);
+            }
+        };
+        for info in walk {
+            let info = match info {
+                Ok(info) => info,
+                Err(error) => {
+                    tracing::warn!(%error, "history walk stopped early");
+                    break;
+                }
+            };
+            let hex = info.id.to_hex().to_string();
+            if pending.remove(&hex) {
+                found.insert(hex);
+                if pending.is_empty() {
+                    break;
+                }
+            }
+        }
+        Some(found)
     }
 
     /// The text of root-relative `relative` as committed at `HEAD`, the

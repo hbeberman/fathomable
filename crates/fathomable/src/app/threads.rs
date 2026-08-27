@@ -138,7 +138,7 @@ fn overlaps(a: LineRange, b: LineRange) -> bool {
 }
 
 /// Seconds since the Unix epoch.
-pub(super) fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
@@ -254,6 +254,7 @@ impl App {
         let text = doc.document.text();
         doc.marks = store
             .for_path(&doc.relative)
+            .filter(|thread| self.scope.includes(thread))
             .map(|thread| {
                 let placement = thread.locate(text);
                 Mark {
@@ -418,13 +419,15 @@ impl App {
         };
         let path = self.docs[index].relative.clone();
         let text = self.docs[index].document.text().to_owned();
-        let draft = Draft::new(&path, range, comment);
+        // The thread belongs to the work it was written against (ADR 0024).
+        let draft = Draft::new(&path, range, comment).at_commit(self.workspace.head_commit());
         let Some(store) = self.store_mut() else {
             return;
         };
         match store.annotate(draft, &text, now()) {
             Ok(id) => {
                 tracing::info!(%id, path = %path.display(), %range, "thread started");
+                self.refresh_scope();
                 self.refresh_marks(index);
                 // Commenting on lines means they were read (ADR 0020).
                 self.mark_seen(index);

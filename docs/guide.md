@@ -35,9 +35,12 @@ workflow.
 fathomable README.md     # single file
 fathomable               # workspace rooted at the enclosing git root, or cwd
 fathomable path/to/dir   # workspace rooted there
+fathomable --name review # a second window on the same workspace, named for agents
 ```
 
-A file argument opens the workspace *and* shows that file. The viewer
+A file argument opens the workspace *and* shows that file. Several
+Fathomables may show one workspace; they share its threads, and an agent
+can drive all of them or one by name (`--name`, or `:name` later). The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
@@ -63,7 +66,8 @@ shows the full list inside the app.
 | `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, clear |
-| `:follow`, `:status` | toggle auto-jump; session and path overlay |
+| `:follow`, `:status` | toggle auto-jump; viewer and path overlay |
+| `:name NAME` | name this viewer so an agent can target it; `:name` alone clears it |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
 | `c` with nothing selected | comment on the cursor line |
 | `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
@@ -193,11 +197,14 @@ transparent ([0016](decisions/0016-syntax-highlighting.md)).
 
 ## 8. Connect an agent
 
-Every running Fathomable is a *session*: it writes a record under
-`$XDG_STATE_HOME/fathomable/sessions/` and listens on a Unix socket in
-`$XDG_RUNTIME_DIR/fathomable/`. `fathomable --mcp` is a stdio MCP server
-that binds to the session whose workspace contains the current directory
-and forwards tool calls to it.
+A *session* is a workspace's annotation state; every running Fathomable is
+a *viewer* of one. A viewer writes a record under
+`$XDG_STATE_HOME/fathomable/sessions/`, marks its workspace in
+`$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, and listens
+on `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`. `fathomable --mcp` is a
+stdio MCP server that, on every call, picks the known workspace containing
+the current directory and drives its viewers; reading and answering threads
+also works with no viewer running, straight from the store.
 
 Register it with your agent host once. For Claude Code:
 
@@ -211,27 +218,31 @@ in the same repository, and the tools are:
 
 | Tool | Use |
 | --- | --- |
-| `session_list`, `session_switch` | see running sessions; pick one when the cwd heuristic is wrong |
-| `open` | show a file, optionally at a line or line range |
-| `follow` | tell the viewer which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
-| `annotations_list` | read threads, optionally `since` a Unix time or on one `path` |
-| `thread_reply` | answer a thread, optionally resolving it; a `persona` name is recorded next to the client name |
+| `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
+| `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
+| `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`; works without a viewer |
+| `thread_reply` | answer a thread, optionally resolving it; a `persona` name is recorded next to the client name; works without a viewer |
 
-Every tool accepts an optional `session` id. Details and the wire protocol
-are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
+Every tool accepts an optional `session`: a workspace root, or a viewer name
+or id. A thread belongs to the commit it was written against and is shown
+(here and in the viewer) only while that commit is `HEAD` or one of its
+ancestors, so switching to unrelated work hides it and merging brings it
+along ([0024](decisions/0024-workspace-sessions.md)). Details and the wire
+protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
 
 ## 9. When something is off
 
 ```sh
 fathomable --doctor        # terminal, directories, config, log locations
-fathomable --sessions      # live and dead session records
+fathomable --sessions      # known workspaces and their viewer records
 fathomable --config-show   # effective configuration
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
 `:status` inside the app shows the open document, the terminal size, the
-session id, the socket, and every state path. Set
-`FATHOMABLE_LOG=debug` for more. A session killed without a clean quit is
+viewer name and id, the socket, and every state path. Set
+`FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
 swept away by the next start.
 
 If Fathomable dies, it hands the terminal back and prints one block between

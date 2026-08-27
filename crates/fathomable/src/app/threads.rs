@@ -14,6 +14,7 @@ use fathomable_core::annotations::{
     Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::editor::{Buffer, Cell, Edit};
+use fathomable_core::reanchor::{Mapping, map_range};
 
 use super::ui::SNIPPET_ROWS;
 use super::{App, Focus, PickerKind, PickerState, Popup};
@@ -24,6 +25,9 @@ pub enum MarkKind {
     Resolved,
     AutoResolved,
     Open,
+    /// The lines under the comment were rewritten since the user last
+    /// answered (ADR 0019).
+    Edited,
     /// The annotated lines are gone; shown at the last known range.
     Detached,
 }
@@ -32,6 +36,9 @@ impl MarkKind {
     fn of(thread: &Thread, placement: Placement) -> Self {
         if placement.is_detached() {
             return Self::Detached;
+        }
+        if placement.is_edited() {
+            return Self::Edited;
         }
         match thread.status() {
             Status::Open => Self::Open,
@@ -191,6 +198,52 @@ impl App {
     }
 
     /// Re-locate every thread of the document at `index` in its text.
+    /// After a reload: threads whose lines stopped matching are followed
+    /// through the diff from `old` to the new text and, when their lines
+    /// were rewritten rather than removed, re-anchored onto the
+    /// replacement and recorded as edited (ADR 0019).
+    pub(super) fn remap_marks(&mut self, index: usize, old: &str) {
+        let Some(doc) = self.docs.get(index) else {
+            return;
+        };
+        let text = doc.document.text().to_owned();
+        let path = doc.relative.clone();
+        let previous: Vec<(ThreadId, Placement)> = doc
+            .marks
+            .iter()
+            .map(|mark| (mark.id.clone(), mark.placement))
+            .collect();
+        let Some(store) = self.store.as_mut() else {
+            return;
+        };
+        let stale: Vec<(ThreadId, LineRange)> = store
+            .for_path(&path)
+            .filter(|thread| thread.locate(&text).is_detached())
+            .filter_map(|thread| {
+                // Where it sat in the old text; a thread already detached
+                // there has nothing to follow.
+                previous
+                    .iter()
+                    .find(|(id, _)| id == thread.id())
+                    .filter(|(_, placement)| !placement.is_detached())
+                    .map(|(id, placement)| (id.clone(), placement.range()))
+            })
+            .collect();
+        for (id, range) in stale {
+            let target = match map_range(old, &text, range) {
+                Mapping::Edited(range) | Mapping::Moved(range) => range,
+                Mapping::Removed => continue,
+            };
+            match store.relocate(&id, target, &text, now()) {
+                Ok(()) => {
+                    tracing::info!(%id, path = %path.display(), from = %range, to = %target, "thread re-anchored to edited lines");
+                }
+                Err(error) => tracing::warn!(%id, %error, "cannot re-anchor thread"),
+            }
+        }
+        self.refresh_marks(index);
+    }
+
     pub(super) fn refresh_marks(&mut self, index: usize) {
         let Some(store) = self.store.as_ref() else {
             return;
@@ -728,7 +781,28 @@ mod tests {
         assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
         assert_eq!(app.mark_in(LineRange::new(3, 3)), None);
 
-        // Rewrite them: the thread detaches at its last known range.
+        // Edit one of them: the thread follows onto the rewritten lines
+        // and reads as edited, on disk too (ADR 0019).
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nnew intro\n\nalpha\nBETA\ngamma\n\n- one\n- two\n",
+        )?;
+        app.on_changes(vec![dir.0.join("ws/README.md")]);
+        assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Edited));
+        let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
+        assert!(reopened.threads()[0].edited().is_some());
+        assert_eq!(reopened.threads()[0].range(), LineRange::new(5, 7));
+
+        // The user's reply acknowledges the edit.
+        app.view_mut().move_down(3);
+        app.open_thread_at_cursor();
+        app.thread_reply();
+        type_in(&mut app, "still fine");
+        app.compose_submit();
+        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Open));
+
+        // Rewrite everything: the thread detaches at its last known range.
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.mark_in(LineRange::new(5, 5)), Some(MarkKind::Detached));

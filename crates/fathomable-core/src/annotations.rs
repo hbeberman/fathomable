@@ -198,6 +198,10 @@ impl Anchor {
 pub enum Placement {
     /// The annotated lines were found here.
     Anchored(LineRange),
+    /// The lines were found here, but they are the replacement of the
+    /// lines the comment was written on (ADR 0019) and nobody has
+    /// answered since.
+    Edited(LineRange),
     /// The lines are gone; this is the last known range.
     Detached(LineRange),
 }
@@ -207,8 +211,15 @@ impl Placement {
     #[must_use]
     pub fn range(&self) -> LineRange {
         match self {
-            Self::Anchored(range) | Self::Detached(range) => *range,
+            Self::Anchored(range) | Self::Edited(range) | Self::Detached(range) => *range,
         }
+    }
+
+    /// Whether the lines under the thread were rewritten since the last
+    /// reply or resolution.
+    #[must_use]
+    pub fn is_edited(&self) -> bool {
+        matches!(self, Self::Edited(_))
     }
 
     /// Whether the annotated lines no longer exist.
@@ -410,6 +421,10 @@ pub struct Thread {
     comment: String,
     replies: Vec<Reply>,
     status: Status,
+    /// When the thread was last re-anchored to rewritten lines, until the
+    /// user replies, resolves, or reopens (ADR 0019).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edited: Option<u64>,
 }
 
 impl Thread {
@@ -474,12 +489,20 @@ impl Thread {
         self.status
     }
 
+    /// When the lines under the thread were last rewritten, if the user
+    /// has not answered since.
+    #[must_use]
+    pub fn edited(&self) -> Option<u64> {
+        self.edited
+    }
+
     /// Where the thread sits in `text` now.
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
-        match self.anchor.locate(text, self.range) {
-            Some(range) => Placement::Anchored(range),
-            None => Placement::Detached(self.range),
+        match (self.anchor.locate(text, self.range), self.edited) {
+            (Some(range), Some(_)) => Placement::Edited(range),
+            (Some(range), None) => Placement::Anchored(range),
+            (None, _) => Placement::Detached(self.range),
         }
     }
 }
@@ -533,6 +556,15 @@ enum Event {
     Reopen {
         v: u32,
         thread: ThreadId,
+        created: u64,
+    },
+    /// The thread's lines were rewritten and it now sits on the
+    /// replacement (ADR 0019).
+    Relocate {
+        v: u32,
+        thread: ThreadId,
+        range: LineRange,
+        anchor: Anchor,
         created: u64,
     },
 }
@@ -679,6 +711,33 @@ impl Store {
         })
     }
 
+    /// Move the thread `id` onto `range` of `text`, the lines that replaced
+    /// the ones it was written on (ADR 0019). The thread reads as edited
+    /// until the user replies, resolves, or reopens it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown, the range runs
+    /// past the end of `text`, or the file cannot be appended to.
+    pub fn relocate(
+        &mut self,
+        id: &ThreadId,
+        range: LineRange,
+        text: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let anchor = Anchor::capture(text, range).ok_or(StoreError {
+            kind: ErrorKind::BadRange(range),
+        })?;
+        self.commit(Event::Relocate {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            range,
+            anchor,
+            created: now,
+        })
+    }
+
     /// Apply an event in memory, then append it; the file is only written
     /// when the event is valid.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
@@ -720,11 +779,15 @@ impl Store {
                     comment,
                     replies: Vec::new(),
                     status: Status::Open,
+                    edited: None,
                 });
             }
             Event::Reply { thread, reply, .. } => {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(reply.created);
+                if reply.author.is_user() {
+                    thread.edited = None;
+                }
                 thread.replies.push(reply);
             }
             Event::Resolve {
@@ -735,6 +798,9 @@ impl Store {
             } => {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(created);
+                if by.is_user() {
+                    thread.edited = None;
+                }
                 thread.status = if by.is_user() {
                     Status::Resolved
                 } else {
@@ -747,6 +813,20 @@ impl Store {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(created);
                 thread.status = Status::Open;
+                thread.edited = None;
+            }
+            Event::Relocate {
+                thread,
+                range,
+                anchor,
+                created,
+                ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(created);
+                thread.range = range;
+                thread.anchor = anchor;
+                thread.edited = Some(created);
             }
         }
         Ok(())
@@ -883,6 +963,50 @@ mod tests {
         let edited = "# Title\n\nalpha\nBETA\ngamma\n";
         assert_eq!(anchor.locate(edited, range), None);
         assert_eq!(Anchor::capture(TEXT, LineRange::new(7, 9)), None);
+        Ok(())
+    }
+
+    #[test]
+    fn relocate_moves_a_thread_and_the_user_acknowledges_the_edit() -> Result<(), StoreError> {
+        let file = TempFile::new("relocate");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename"),
+            TEXT,
+            100,
+        )?;
+        let edited = "# Title\n\nalpha\nBETA\ngamma\n";
+        store.relocate(&id, LineRange::new(3, 4), edited, 110)?;
+        let again = Store::open(&file.0)?;
+        assert_eq!(again.threads(), store.threads());
+        let thread = again
+            .thread(&id)
+            .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
+        assert_eq!(thread.edited(), Some(110));
+        assert_eq!(thread.updated(), 110);
+        assert_eq!(
+            thread.snippet(),
+            "alpha\nbeta",
+            "the snippet stays as commented on"
+        );
+        assert!(thread.locate(edited).is_edited());
+        assert!(thread.locate(TEXT).is_detached());
+        // An agent's reply leaves the edit flag; the user's clears it.
+        store.reply(&id, Reply::new(Author::agent("claude"), 111, "fixed"))?;
+        assert!(store.thread(&id).is_some_and(|t| t.edited().is_some()));
+        store.reply(&id, Reply::new(Author::User, 112, "ok"))?;
+        assert!(store.thread(&id).is_some_and(|t| t.edited().is_none()));
+        assert!(
+            store
+                .thread(&id)
+                .is_some_and(|t| !t.locate(edited).is_edited())
+        );
+        // A bad range is an error and writes nothing.
+        assert!(
+            store
+                .relocate(&id, LineRange::new(8, 9), edited, 113)
+                .is_err()
+        );
         Ok(())
     }
 

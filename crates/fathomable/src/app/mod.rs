@@ -1335,7 +1335,7 @@ impl App {
                 }
                 doc.seen_dirty = true;
                 self.refresh_base(index);
-                self.refresh_marks(index);
+                self.remap_marks(index, delta.old());
                 Some(delta)
             }
             Ok(false) => None,

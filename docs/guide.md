@@ -91,7 +91,9 @@ Starting on a directory opens the tree; starting on a file opens the file.
 
 Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
-them changes and shows as *detached* when the lines are gone. Threads live
+them changes, moves onto the rewritten lines and shows as *edited* when an
+agent changes the lines themselves (until you reply or resolve), and shows
+as *detached* when the lines are gone. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.

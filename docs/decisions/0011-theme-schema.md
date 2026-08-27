@@ -98,6 +98,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
 | `annotation.open`, `annotation.resolved`, `annotation.resolved.auto`, `annotation.detached` | gutter note cell by thread state ([0013](0013-annotation-storage-and-ux.md)) |
+| `annotation.edited` | gutter note cell of a thread re-anchored onto rewritten lines ([0019](0019-reanchoring-edited-lines.md)) |
 | `annotation.line` | background of annotated rows (0013) |
 | `markup.heading` | all heading levels; `markup.heading.1`…`.6` override one level |
 | `markup.raw.inline`, `markup.raw.block` | inline code, code block lines |

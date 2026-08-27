@@ -15,6 +15,7 @@ pub mod follow;
 pub mod highlight;
 pub mod layout;
 pub mod picker;
+pub mod reanchor;
 pub mod seen;
 pub mod session;
 pub mod status;

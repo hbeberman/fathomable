@@ -57,6 +57,7 @@ pub struct Theme {
     pub annotation_resolved: Style,
     pub annotation_auto: Style,
     pub annotation_detached: Style,
+    pub annotation_edited: Style,
     pub annotation_line: Style,
     pub diff_plus: Style,
     pub diff_delta: Style,
@@ -100,6 +101,7 @@ impl Theme {
             annotation_resolved: style(Key::AnnotationResolved),
             annotation_auto: style(Key::AnnotationResolvedAuto),
             annotation_detached: style(Key::AnnotationDetached),
+            annotation_edited: style(Key::AnnotationEdited),
             annotation_line: style(Key::AnnotationLine),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
@@ -613,6 +615,7 @@ fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
         MarkKind::Resolved => theme.annotation_resolved,
         MarkKind::AutoResolved => theme.annotation_auto,
         MarkKind::Detached => theme.annotation_detached,
+        MarkKind::Edited => theme.annotation_edited,
     }
 }
 
@@ -1041,6 +1044,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let (index, total) = panel.position();
     let (status, status_style) = match (mark.map(super::threads::Mark::kind), thread.status()) {
         (Some(MarkKind::Detached), _) => ("detached", theme.annotation_detached),
+        (Some(MarkKind::Edited), _) => ("edited", theme.annotation_edited),
         (_, Status::Open) => ("open", theme.annotation_open),
         (_, Status::Resolved) => ("resolved", theme.annotation_resolved),
         (_, Status::AutoResolved) => ("auto-resolved", theme.annotation_auto),

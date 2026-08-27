@@ -40,3 +40,6 @@ Milestones are ordered; each is usable on its own. Details live in the
 9. **Comment editor.** A cursor-bearing buffer in core, motion and
    deletion keys, bracketed paste, click-to-place, a draggable box, and
    the `$EDITOR` hatch ([0018](decisions/0018-comment-editor.md)).
+10. **Re-anchoring edited lines.** Threads follow a local rewrite of their
+    lines through the reload diff, read as *edited* until the user answers,
+    and persist the move ([0019](decisions/0019-reanchoring-edited-lines.md)).

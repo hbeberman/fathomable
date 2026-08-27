@@ -53,6 +53,7 @@ colors {
     "annotation.resolved"      fg="green"
     "annotation.resolved.auto" fg="orange"
     "annotation.detached"      fg="red"
+    "annotation.edited"        fg="purple"
     "annotation.line"          bg="#fff6d6"
 
     "markup.heading"       fg="purple" mods="bold"

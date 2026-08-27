@@ -22,3 +22,4 @@ supersede rather than edit history.
 - [0016 Syntax highlighting and source files](0016-syntax-highlighting.md)
 - [0017 Git status as the primary change layer](0017-git-status-navigation.md)
 - [0018 The comment box is an editor](0018-comment-editor.md)
+- [0019 Re-anchoring edited lines](0019-reanchoring-edited-lines.md)

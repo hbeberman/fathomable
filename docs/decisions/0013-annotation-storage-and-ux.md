@@ -110,10 +110,14 @@ were captured in a question round on 2026-08-26.
 ### Reading and replying
 
 - `Space a` opens the thread panel over the bottom third of the text pane
-  for the thread(s) touching the cursor row: a header with the range,
-  status, and position (`thread 1/2`), the quoted snippet (three lines,
-  then `…`), the comment, and each reply with author, UTC time, and a
-  `proposes resolving` tag when set. `j`/`k` scroll, `n`/`p` switch
+  for the thread(s) touching the cursor row: a rule, a header with the
+  position (`thread 1/2`), range, status in its gutter colour, and the
+  keys right-aligned; the quoted snippet with line numbers (three lines,
+  then `…`); the comment; and each reply with the author's short name,
+  its age (`5m ago`, `yesterday 06:38`, then the UTC date), and a
+  `[proposes resolving]` badge when set. Bodies are indented under their
+  author. When the text overflows the last row reads `▼ N more`, and
+  scrolling stops at the end. `j`/`k` scroll, `n`/`p` switch
   between threads on the row, `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
 - While replying the panel stays on screen above the box (taking up to

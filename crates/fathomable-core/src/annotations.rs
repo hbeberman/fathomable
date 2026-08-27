@@ -272,6 +272,15 @@ impl Author {
     pub fn is_user(&self) -> bool {
         matches!(self, Self::User)
     }
+
+    /// The short label: `user` or the agent's name, without the client.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::User => "user",
+            Self::Agent { name, .. } => name,
+        }
+    }
 }
 
 impl fmt::Display for Author {

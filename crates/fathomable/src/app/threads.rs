@@ -14,6 +14,7 @@ use fathomable_core::annotations::{
     Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 
+use super::ui::SNIPPET_ROWS;
 use super::{App, PickerKind, PickerState, Popup};
 
 /// How a thread should be coloured in the gutter.
@@ -123,7 +124,7 @@ fn overlaps(a: LineRange, b: LineRange) -> bool {
 }
 
 /// Seconds since the Unix epoch.
-fn now() -> u64 {
+pub(super) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
@@ -436,8 +437,24 @@ impl App {
 
     /// `j` / `k`: scroll the panel text.
     pub fn thread_scroll(&mut self, delta: isize) {
+        let Some(panel) = self.panel_mut() else {
+            return;
+        };
+        let id = panel.id().clone();
+        let scroll = panel.scroll.saturating_add_signed(delta);
+        // The rendered height depends on wrapping, so the panel clamps to the
+        // unwrapped line count: `j` past the end never runs away, and the
+        // drawing code trims the remainder.
+        let limit = self.thread(&id).map_or(0, |thread| {
+            let replies: usize = thread
+                .replies()
+                .iter()
+                .map(|reply| reply.body().lines().count() + 2)
+                .sum();
+            SNIPPET_ROWS + 2 + thread.comment().lines().count() + replies
+        });
         if let Some(panel) = self.panel_mut() {
-            panel.scroll = panel.scroll.saturating_add_signed(delta);
+            panel.scroll = scroll.min(limit);
         }
     }
 
@@ -652,6 +669,88 @@ mod tests {
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.mark_in(LineRange::new(5, 5)), Some(MarkKind::Detached));
+        Ok(())
+    }
+
+    #[test]
+    fn thread_panel_renders_header_snippet_badge_and_overflow() -> anyhow::Result<()> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let dir = TempDir::new("render")?;
+        let mut app = dir.app()?;
+        app.resize(80, 24);
+        app.view_mut().move_down(2);
+        app.view_mut().select_lines();
+        app.start_comment();
+        type_in(&mut app, "What is this?");
+        app.compose_submit();
+        let id = app.marks()[0].id().clone();
+        let long = (1..=12)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.agent_reply(
+            &id,
+            Author::Agent {
+                name: "Copilot".to_owned(),
+                client: Some("github-copilot-developer".to_owned()),
+            },
+            long,
+            true,
+        )
+        .map_err(anyhow::Error::msg)?;
+        app.open_thread(id);
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::ui::Theme::from_core(&core);
+        let render = |app: &App| -> anyhow::Result<Vec<String>> {
+            let mut terminal = Terminal::new(TestBackend::new(80, 36))?;
+            terminal.draw(|frame| crate::app::ui::draw(frame, app, &theme))?;
+            let buffer = terminal.backend().buffer().clone();
+            Ok((0..buffer.area.height)
+                .map(|y| {
+                    (0..buffer.area.width)
+                        .map(|x| buffer[(x, y)].symbol().to_owned())
+                        .collect::<String>()
+                })
+                .skip_while(|row| !row.contains(" thread "))
+                .collect())
+        };
+        app.resize(80, 36);
+        let panel = render(&app)?;
+        let screen = panel.join("\n");
+        assert!(
+            panel[0].contains("thread  L3-5  auto-resolved"),
+            "header carries range and status:\n{screen}"
+        );
+        assert!(
+            panel.iter().any(|row| row.contains("3 │ alpha")),
+            "snippet lines are numbered:\n{screen}"
+        );
+        assert!(
+            panel
+                .iter()
+                .any(|row| row.contains("Copilot") && row.contains("[proposes resolving]")),
+            "short author and badge share the row:\n{screen}"
+        );
+        assert!(
+            !screen.contains("github-copilot-developer"),
+            "client id is not shown"
+        );
+        assert!(
+            panel
+                .iter()
+                .any(|row| row.contains("▼") && row.contains("more")),
+            "overflow indicator:\n{screen}"
+        );
+        for _ in 0..100 {
+            app.thread_scroll(1);
+        }
+        let Some(Popup::Thread(panel)) = app.popup() else {
+            anyhow::bail!("panel closed");
+        };
+        assert!(panel.scroll() < 40, "scroll clamps to the thread length");
         Ok(())
     }
 

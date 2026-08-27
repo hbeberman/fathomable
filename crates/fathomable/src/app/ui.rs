@@ -20,7 +20,9 @@ use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_M
 const COMPOSE_MAX_ROWS: usize = 8;
 
 /// Snippet lines quoted at the top of the thread panel.
-const SNIPPET_ROWS: usize = 3;
+pub(super) const SNIPPET_ROWS: usize = 3;
+/// Cells a message body is indented under its author row.
+const MESSAGE_INDENT: usize = 3;
 
 /// Ratatui styles for the chrome and Markdown faces.
 ///
@@ -850,7 +852,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
 
 /// Rows the comment box takes: its text plus a title, capped.
 fn compose_rows(compose: &Compose, pane: Rect) -> usize {
-    (compose.text().split('\n').count() + 1)
+    // Rule and title rows sit above the text.
+    (compose.text().split('\n').count() + 2)
         .min(COMPOSE_MAX_ROWS)
         .min(usize::from(pane.height))
 }
@@ -876,21 +879,26 @@ fn draw_compose(
         }
     };
     let hint = if compose.panel().is_some() {
-        "  Enter newline · Ctrl/Alt-Enter submit · Up/Down scroll thread · Esc"
+        "Enter newline · Ctrl/Alt-Enter submit · Up/Down scroll thread · Esc"
     } else {
-        "  Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel"
+        "Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel"
     };
     let width = usize::from(pane.width);
     let text: Vec<&str> = compose.text().split('\n').collect();
-    if rows < 2 {
+    if rows < 3 {
         return;
     }
-    let body_rows = rows - 1;
+    let body_rows = rows - 2;
     let first = text.len().saturating_sub(body_rows);
-    let mut lines = vec![Line::from(vec![
-        Span::styled(title, theme.popup_key),
-        Span::styled(fit(hint, width), theme.info),
-    ])];
+    let mut lines = vec![
+        rule_line(theme, width),
+        header_line(
+            theme,
+            vec![Span::styled(title, theme.popup_key)],
+            hint,
+            width,
+        ),
+    ];
     for line in &text[first..] {
         lines.push(Line::from(Span::raw(fit(&format!(" {line}"), width))));
     }
@@ -919,69 +927,89 @@ fn draw_thread(
     let Some(thread) = app.thread(panel.id()) else {
         return;
     };
-    if rows == 0 || pane.height == 0 {
+    if rows < 3 || pane.height == 0 {
         return;
     }
     let width = usize::from(pane.width);
     let inner = width.saturating_sub(2);
+    let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = panel.position();
-    let status = match (mark.map(super::threads::Mark::kind), thread.status()) {
-        (Some(MarkKind::Detached), _) => "detached",
-        (_, Status::Open) => "open",
-        (_, Status::Resolved) => "resolved",
-        (_, Status::AutoResolved) => "auto-resolved",
+    let (status, status_style) = match (mark.map(super::threads::Mark::kind), thread.status()) {
+        (Some(MarkKind::Detached), _) => ("detached", theme.annotation_detached),
+        (_, Status::Open) => ("open", theme.annotation_open),
+        (_, Status::Resolved) => ("resolved", theme.annotation_resolved),
+        (_, Status::AutoResolved) => ("auto-resolved", theme.annotation_auto),
     };
-    let range = mark.map_or_else(|| thread.range().to_string(), |m| m.range().to_string());
+    let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
     let which = if total > 1 {
-        format!("thread {index}/{total}")
+        format!(" thread {index}/{total}")
     } else {
-        "thread".to_owned()
+        " thread".to_owned()
     };
-    let hint = "  r reply · x resolve/reopen · n/p switch · j/k scroll · Esc";
-    let mut lines = vec![Line::from(vec![
-        Span::styled(format!(" {which}  L{range}  {status}"), theme.popup_key),
-        Span::styled(hint, theme.info),
-    ])];
+    let left = vec![
+        Span::styled(which, theme.popup_key),
+        Span::styled(format!("  L{range}  "), theme.info),
+        Span::styled(status.to_owned(), status_style),
+    ];
+    let hint = "r reply · x resolve/reopen · n/p switch · j/k scroll · Esc";
+    let mut lines = vec![
+        rule_line(theme, width),
+        header_line(theme, left, hint, width),
+    ];
     let mut body: Vec<Line<'_>> = Vec::new();
     let snippet: Vec<&str> = thread.snippet().lines().collect();
-    for line in snippet.iter().take(SNIPPET_ROWS) {
+    let number_width = (range.start() + snippet.len()).to_string().len();
+    for (offset, line) in snippet.iter().take(SNIPPET_ROWS).enumerate() {
         body.push(Line::from(Span::styled(
-            fit(&format!(" │ {line}"), width),
+            fit(
+                &format!(" {:>number_width$} │ {line}", range.start() + offset),
+                width,
+            ),
             theme.info,
         )));
     }
     if snippet.len() > SNIPPET_ROWS {
-        body.push(Line::from(Span::styled(" │ …", theme.info)));
+        body.push(Line::from(Span::styled(
+            format!(" {:>number_width$} │ …", ""),
+            theme.info,
+        )));
     }
     body.push(Line::from(""));
     body.extend(message_lines(
         theme,
         "user",
         thread.created(),
+        now,
         thread.comment(),
-        "",
+        None,
         inner,
     ));
     for reply in thread.replies() {
         body.push(Line::from(""));
-        let tag = if reply.proposes_resolution() {
-            "  proposes resolving"
-        } else {
-            ""
-        };
+        let badge = reply.proposes_resolution().then_some("proposes resolving");
         body.extend(message_lines(
             theme,
-            &reply.author().to_string(),
+            reply.author().name(),
             reply.created(),
+            now,
             reply.body(),
-            tag,
+            badge,
             inner,
         ));
     }
-    let body_rows = rows - 1;
+    let body_rows = rows - 2;
     let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
-    lines.extend(body.into_iter().skip(scroll).take(body_rows));
+    let below = body.len().saturating_sub(scroll + body_rows);
+    let shown = if below > 0 { body_rows - 1 } else { body_rows };
+    lines.extend(body.into_iter().skip(scroll).take(shown));
+    if below > 0 {
+        // The last body row becomes the indicator, so it hides one more.
+        lines.push(Line::from(Span::styled(
+            format!(" ▼ {} more", below + 1),
+            theme.info,
+        )));
+    }
     let area = Rect {
         x: pane.x,
         y: pane.y + pane.height - u16_of(rows),
@@ -993,24 +1021,67 @@ fn draw_thread(
 }
 
 /// `author  time[tag]` then the wrapped body, indented one cell.
+/// A `thread` panel message: author, age and an optional badge on one
+/// row, the body indented beneath it.
 fn message_lines<'a>(
     theme: &Theme,
     author: &str,
     created: u64,
+    now: u64,
     body: &str,
-    tag: &str,
+    badge: Option<&str>,
     width: usize,
 ) -> Vec<Line<'a>> {
-    let mut out = vec![Line::from(vec![
+    let mut header = vec![
         Span::styled(format!(" {author}"), theme.popup_key),
-        Span::styled(format!("  {}{tag}", format_time(created)), theme.info),
-    ])];
+        Span::styled(format!("  {}", format_age(created, now)), theme.info),
+    ];
+    if let Some(badge) = badge {
+        header.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
+    }
+    let mut out = vec![Line::from(header)];
     for paragraph in body.lines() {
-        for line in wrap(paragraph, width.saturating_sub(1).max(1)) {
-            out.push(Line::from(Span::raw(format!(" {line}"))));
+        for line in wrap(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)) {
+            out.push(Line::from(Span::raw(format!(
+                "{}{line}",
+                " ".repeat(MESSAGE_INDENT)
+            ))));
         }
     }
     out
+}
+
+/// A popup header: `left` spans, then `hint` right-aligned when it fits.
+fn header_line<'a>(theme: &Theme, left: Vec<Span<'a>>, hint: &str, width: usize) -> Line<'a> {
+    let used: usize = left.iter().map(|s| display_width(&s.content)).sum();
+    let mut spans = left;
+    let free = width.saturating_sub(used);
+    let hint_width = display_width(hint) + 1;
+    if free >= hint_width + 2 {
+        spans.push(Span::raw(" ".repeat(free - hint_width)));
+        spans.push(Span::styled(format!("{hint} "), theme.info));
+    }
+    Line::from(spans)
+}
+
+/// A full-width rule marking the top edge of a bottom-anchored popup.
+fn rule_line<'a>(theme: &Theme, width: usize) -> Line<'a> {
+    Line::from(Span::styled("─".repeat(width), theme.info))
+}
+
+/// `created` relative to `now` when recent, otherwise the UTC date.
+fn format_age(created: u64, now: u64) -> String {
+    let elapsed = now.saturating_sub(created);
+    match elapsed {
+        0..60 => "just now".to_owned(),
+        60..3600 => format!("{}m ago", elapsed / 60),
+        3600..86_400 => format!("{}h ago", elapsed / 3600),
+        86_400..172_800 => {
+            let stamp = format_time(created);
+            format!("yesterday {}", &stamp[11..])
+        }
+        _ => format_time(created),
+    }
 }
 
 /// Greedy word wrap to `width` cells; words longer than a line are split.
@@ -1093,7 +1164,7 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_time, wrap};
+    use super::{format_age, format_time, wrap};
 
     #[test]
     fn wraps_words_and_splits_long_ones() {
@@ -1107,5 +1178,18 @@ mod tests {
         assert_eq!(format_time(0), "1970-01-01 00:00");
         assert_eq!(format_time(1_700_000_000), "2023-11-14 22:13");
         assert_eq!(format_time(951_782_400), "2000-02-29 00:00");
+    }
+
+    #[test]
+    fn ages_recent_times_and_dates_old_ones() {
+        let now = 1_700_000_000;
+        assert_eq!(format_age(now, now), "just now");
+        assert_eq!(format_age(now - 59, now), "just now");
+        assert_eq!(format_age(now - 60, now), "1m ago");
+        assert_eq!(format_age(now - 3_599, now), "59m ago");
+        assert_eq!(format_age(now - 7_200, now), "2h ago");
+        assert_eq!(format_age(now - 86_400, now), "yesterday 22:13");
+        assert_eq!(format_age(now - 172_800, now), "2023-11-12 22:13");
+        assert_eq!(format_age(now + 500, now), "just now");
     }
 }

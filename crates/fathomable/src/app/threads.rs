@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fathomable_core::annotations::{
     Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
-use fathomable_core::editor::{Buffer, Edit};
+use fathomable_core::editor::{Buffer, Cell, Edit};
 
 use super::ui::SNIPPET_ROWS;
 use super::{App, Focus, PickerKind, PickerState, Popup};
@@ -94,6 +94,12 @@ impl Compose {
     /// Whether the box is asking for a second Esc.
     pub fn confirming_discard(&self) -> bool {
         self.confirm_discard
+    }
+
+    /// A mouse click at a wrapped cell moves the cursor there.
+    pub fn place_cursor(&mut self, width: usize, cell: Cell) {
+        self.confirm_discard = false;
+        self.buffer.place_cursor(width, cell);
     }
 }
 
@@ -624,7 +630,7 @@ mod tests {
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
     use super::{ComposeTarget, MarkKind};
-    use crate::app::{App, Popup};
+    use crate::app::{App, Border, Popup};
 
     struct TempDir(PathBuf);
 
@@ -1153,6 +1159,20 @@ mod tests {
         assert_eq!(app.compose_first_row(), 4);
         app.compose_edit(Edit::Move(Motion::Up));
         assert_eq!(app.compose_first_row(), 0);
+        // A click lands on the wrapped cell under the pointer; dragging the
+        // box's rule gives it the rows the pointer leaves below.
+        app.compose_click(2, 6);
+        assert_eq!(
+            draft(&app)?.1,
+            Cursor {
+                line: 0,
+                column: width * 2 + 5
+            }
+        );
+        app.begin_drag(Border::Compose);
+        app.drag_to(0, app.pane_rows() - 12);
+        app.end_drag();
+        assert_eq!(app.compose_rows(), 12);
         Ok(())
     }
 }

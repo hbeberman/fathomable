@@ -278,7 +278,10 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     let column = usize::from(event.column);
     let rows = app.pane_rows();
     let sidebar = app.sidebar_width();
-    let thread_top = rows.saturating_sub(app.thread_rows());
+    // The box sits under the thread pane and pushes it up (ADR 0013).
+    let box_rows = app.compose_rows();
+    let box_top = rows.saturating_sub(box_rows);
+    let thread_top = box_top.saturating_sub(app.thread_rows());
     if app.dragging().is_some() {
         match event.kind {
             MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
@@ -296,6 +299,17 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
             app.begin_drag(Border::Thread);
             return Effect::None;
         }
+        if box_rows > 0 && column >= sidebar && row == box_top {
+            app.begin_drag(Border::Compose);
+            return Effect::None;
+        }
+    }
+    if box_rows > 0 && column >= sidebar && row > box_top && row < rows {
+        // Rule and header, then the text rows.
+        if event.kind == MouseEventKind::Down(MouseButton::Left) && row >= box_top + 2 {
+            app.compose_click(row - box_top - 2, column - sidebar);
+        }
+        return Effect::None;
     }
     if column < sidebar {
         match event.kind {
@@ -316,7 +330,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
         }
         return Effect::None;
     }
-    if row >= thread_top && row < rows {
+    if row >= thread_top && row < box_top {
         match event.kind {
             MouseEventKind::ScrollDown => app.thread_scroll(WHEEL_LINES),
             MouseEventKind::ScrollUp => app.thread_scroll(-WHEEL_LINES),

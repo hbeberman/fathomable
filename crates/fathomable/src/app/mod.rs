@@ -33,6 +33,7 @@ use fathomable_core::Document;
 use fathomable_core::annotations::{Store, ThreadId};
 use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
+use fathomable_core::editor::Cell;
 use fathomable_core::follow::{Change, Delta, Ignore, Queue, Source, Target};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::picker::{Match, Picker};
@@ -97,6 +98,8 @@ pub enum Border {
     Sidebar,
     /// The rule along the top of the thread pane.
     Thread,
+    /// The rule along the top of the comment box (ADR 0018).
+    Compose,
 }
 
 /// What the file picker lists.
@@ -960,7 +963,14 @@ impl App {
     pub fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
             Some(Border::Sidebar) => self.sidebar_cols = Some(column + 1),
-            Some(Border::Thread) => self.thread_rows = Some(self.pane_rows().saturating_sub(row)),
+            Some(Border::Thread) => {
+                self.thread_rows = Some(
+                    self.pane_rows()
+                        .saturating_sub(self.compose_rows())
+                        .saturating_sub(row),
+                );
+            }
+            Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
             None => return,
         }
         self.relayout();
@@ -1087,6 +1097,19 @@ impl App {
             .row
             .saturating_sub(body - 1)
             .min(total.saturating_sub(body))
+    }
+
+    /// A click in the comment box's text: `row` counts from the first
+    /// visible wrapped row, `column` from the box's left edge.
+    pub fn compose_click(&mut self, row: usize, column: usize) {
+        let width = self.compose_width();
+        let cell = Cell {
+            row: self.compose_first_row() + row,
+            column: column.saturating_sub(1),
+        };
+        if let Some(Popup::Compose(compose)) = &mut self.popup {
+            compose.place_cursor(width, cell);
+        }
     }
 
     /// Bracketed paste: into the comment box, else nothing to paste into.

@@ -12,6 +12,7 @@ mod threads;
 mod ui;
 mod view;
 
+use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -20,6 +21,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -525,27 +527,19 @@ impl App {
     pub fn on_changes(&mut self, paths: Vec<PathBuf>) {
         let root = self.workspace.root().to_path_buf();
         let mut git_changed = false;
-        let mut seen_paths: Vec<PathBuf> = Vec::new();
+        let mut seen_paths: HashSet<PathBuf> = HashSet::new();
         for absolute in paths {
             let Ok(relative) = absolute.strip_prefix(&root) else {
                 continue;
             };
-            let relative = relative.to_path_buf();
             if relative.starts_with(".git") {
-                git_changed = true;
+                git_changed |= is_git_metadata(relative);
                 continue;
             }
-            if seen_paths.contains(&relative) {
+            if !seen_paths.insert(relative.to_path_buf()) {
                 continue;
             }
-            seen_paths.push(relative.clone());
-            if !absolute.is_file() {
-                if self.queue.remove(&relative) {
-                    tracing::info!(path = %relative.display(), "changed file went away");
-                }
-                continue;
-            }
-            self.on_change(&relative, &absolute);
+            self.on_change(relative, &absolute);
         }
         if git_changed {
             tracing::info!("git metadata changed; refreshing HEAD bases");
@@ -557,7 +551,26 @@ impl App {
 
     fn on_change(&mut self, relative: &Path, absolute: &Path) {
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
+        // Ignore rules come before the `stat`: a build writing under
+        // `target/` must cost one cached lookup per path, nothing more.
+        if loaded.is_none()
+            && (self.workspace.is_ignored(relative, EntryKind::File)
+                || self.ignore.is_ignored(relative))
+        {
+            return;
+        }
+        if !absolute.is_file() {
+            if self.queue.remove(relative) {
+                tracing::info!(path = %relative.display(), "changed file went away");
+            }
+            return;
+        }
         let delta = loaded.and_then(|index| self.reload_doc(index));
+        if loaded.is_some() && delta.is_none() {
+            // The event did not change the text (a touch, or our own
+            // write); nothing to hint about.
+            return;
+        }
         if self.workspace.is_ignored(relative, EntryKind::File) || self.ignore.is_ignored(relative)
         {
             return;
@@ -577,11 +590,7 @@ impl App {
                     .or_else(|| self.docs[index].view.first_hunk_line()),
                 delta.diff().counts(),
             ),
-            (Some(index), None) => {
-                let view = &self.docs[index].view;
-                (view.first_hunk_line(), view.diff_counts().unwrap_or((0, 0)))
-            }
-            (None, _) => self.unloaded_change(relative, absolute),
+            _ => self.unloaded_change(relative, absolute),
         };
         let path = relative.to_path_buf();
         self.push_change(Change::new(path, Target::Line(line.unwrap_or(1))), counts);
@@ -1375,8 +1384,13 @@ struct TerminalGuard {
 impl TerminalGuard {
     fn enter() -> anyhow::Result<Self> {
         enable_raw_mode().context("cannot enable raw mode")?;
-        crossterm::execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)
-            .context("cannot enter alternate screen")?;
+        crossterm::execute!(
+            io::stdout(),
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            SetCursorStyle::SteadyBlock
+        )
+        .context("cannot enter alternate screen")?;
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
         // the comment box (ADR 0013); terminals without it still get Alt-Enter.
         let enhanced = matches!(
@@ -1397,7 +1411,12 @@ impl Drop for TerminalGuard {
         if self.enhanced {
             let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
         }
-        let _ = crossterm::execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
+        let _ = crossterm::execute!(
+            io::stdout(),
+            SetCursorStyle::DefaultUserShape,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = disable_raw_mode();
     }
 }
@@ -1435,9 +1454,15 @@ impl DocWatcher {
         let watcher =
             notify::recommended_watcher(
                 move |result: notify::Result<notify::Event>| match result {
+                    // `notify` also reports opens (`Access`): our own
+                    // reads of the document, `.gitignore`, and `.git`
+                    // would otherwise feed back as changes, forever.
                     Ok(event) => {
-                        for path in event.paths {
-                            let _ = tx.send(path);
+                        tracing::debug!(kind = ?event.kind, paths = ?event.paths, "watcher event");
+                        if is_change(event.kind) {
+                            for path in event.paths {
+                                let _ = tx.send(path);
+                            }
                         }
                     }
                     Err(error) => tracing::warn!(%error, "file watcher error"),
@@ -1489,6 +1514,60 @@ impl DocWatcher {
     }
 }
 
+/// Whether a path under `.git` can move HEAD or the index. Object
+/// writes, reflogs, and lock files churn constantly and change neither.
+fn is_git_metadata(relative: &Path) -> bool {
+    // Lock files (`HEAD.lock`, `index.lock`) fall through the exact match.
+    relative
+        .components()
+        .nth(1)
+        .and_then(|c| c.as_os_str().to_str())
+        .is_some_and(|first| {
+            matches!(
+                first,
+                "HEAD" | "ORIG_HEAD" | "index" | "packed-refs" | "refs"
+            )
+        })
+}
+
+/// Events that mean a file's content or existence may have changed.
+fn is_change(kind: notify::EventKind) -> bool {
+    use notify::EventKind;
+    matches!(
+        kind,
+        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+    )
+}
+
+/// Watcher paths waiting out the hint debounce (ADR 0015).
+#[derive(Default)]
+struct ChangeBatch {
+    paths: Vec<PathBuf>,
+    flush_at: Option<Instant>,
+}
+
+impl ChangeBatch {
+    /// Adds a path; the first one after a flush starts the quiet period.
+    fn push(&mut self, path: PathBuf, debounce: Duration) {
+        self.paths.push(path);
+        self.flush_at
+            .get_or_insert_with(|| Instant::now() + debounce);
+    }
+
+    /// Resolves once the quiet period ends; never while the batch is empty.
+    async fn settled(&self) {
+        match self.flush_at {
+            Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
+            None => std::future::pending().await,
+        }
+    }
+
+    fn take(&mut self) -> Vec<PathBuf> {
+        self.flush_at = None;
+        std::mem::take(&mut self.paths)
+    }
+}
+
 fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<socket::Serving> {
     let Some(path) = record.socket() else {
         tracing::warn!("XDG_RUNTIME_DIR unset; no session socket");
@@ -1536,6 +1615,7 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
         app.open(path);
     }
 
+    let mut batch = ChangeBatch::default();
     loop {
         doc_watcher.follow(app.current_abs_path());
         app.settle();
@@ -1561,17 +1641,22 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
                 None => Effect::Quit,
             },
             notice = reload_rx.recv() => {
-                if let Some(first) = notice {
+                if let Some(path) = notice {
                     // One quiet period turns a burst of writes into one
                     // change per file (ADR 0015 `follow.hint-debounce`).
-                    tokio::time::sleep(hint_debounce).await;
-                    let mut changed = vec![first];
+                    // The wait is its own arm below, so input keeps
+                    // flowing while the burst settles.
+                    batch.push(path, hint_debounce);
                     while let Ok(path) = reload_rx.try_recv() {
-                        changed.push(path);
+                        batch.push(path, hint_debounce);
                     }
-                    changed.retain(|p| doc_watcher.is_target(p));
-                    app.on_changes(changed);
                 }
+                Effect::None
+            }
+            () = batch.settled() => {
+                let mut changed = batch.take();
+                changed.retain(|p| doc_watcher.is_target(p));
+                app.on_changes(changed);
                 Effect::None
             }
             () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
@@ -1634,7 +1719,7 @@ mod tests {
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::workspace::{Workspace, WorkspaceError};
 
-    use super::{App, Focus, PickerKind, Popup};
+    use super::{App, Focus, PickerKind, Popup, is_change, is_git_metadata};
 
     struct TempDir(PathBuf);
 
@@ -1782,6 +1867,44 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
         assert_eq!(app.focus(), Focus::View);
+        Ok(())
+    }
+
+    #[test]
+    fn watcher_keeps_writes_and_drops_reads() {
+        use notify::EventKind;
+        use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
+        assert!(is_change(EventKind::Create(CreateKind::File)));
+        assert!(is_change(EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(EventKind::Remove(RemoveKind::File)));
+        assert!(!is_change(EventKind::Access(AccessKind::Open(
+            notify::event::AccessMode::Read
+        ))));
+        assert!(!is_change(EventKind::Any));
+    }
+
+    #[test]
+    fn git_metadata_is_head_index_and_refs() {
+        assert!(is_git_metadata(Path::new(".git/HEAD")));
+        assert!(is_git_metadata(Path::new(".git/index")));
+        assert!(is_git_metadata(Path::new(".git/refs/heads/main")));
+        assert!(is_git_metadata(Path::new(".git/packed-refs")));
+        assert!(!is_git_metadata(Path::new(".git/index.lock")));
+        assert!(!is_git_metadata(Path::new(".git/objects/ab/cdef")));
+        assert!(!is_git_metadata(Path::new(".git/logs/HEAD")));
+        assert!(!is_git_metadata(Path::new(".git")));
+    }
+
+    #[test]
+    fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
+        let dir = TempDir::new("touch")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("README.md"));
+        app.open(Path::new("docs/guide.md"));
+        // A touch (or our own read, reported as a change) on an open file
+        // whose text is identical must not hint.
+        app.on_changes(vec![dir.0.join("README.md"), dir.0.join("README.md")]);
+        assert!(app.queue().is_empty());
         Ok(())
     }
 

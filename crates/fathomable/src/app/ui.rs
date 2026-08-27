@@ -255,10 +255,8 @@ fn place_cursor(
         let col = 1 + display_width(view.input());
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
     } else if app.focus() == Focus::Sidebar {
-        if let Some(tree) = app.tree() {
-            let row = tree.cursor().saturating_sub(app.sidebar_scroll()) + 1;
-            frame.set_cursor_position((text_area.x.saturating_sub(1), u16_of(row)));
-        }
+        // The highlighted row is the cursor; leaving the terminal cursor
+        // unset keeps it hidden rather than parked on the divider.
     } else {
         let cursor = view.cursor();
         let screen_row = cursor.row.saturating_sub(view.scroll());

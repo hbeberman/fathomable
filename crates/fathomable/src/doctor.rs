@@ -141,8 +141,22 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
         }
     }
     if let Ok(cwd) = std::env::current_dir()
-        && let Ok(workspace) = Workspace::discover(&cwd)
+        && let Ok(mut workspace) = Workspace::discover(&cwd)
     {
+        if workspace.is_git() {
+            match workspace.status() {
+                Ok(status) => println!(
+                    "  ok    {} uncommitted path{} ({} staged)",
+                    status.len(),
+                    if status.len() == 1 { "" } else { "s" },
+                    status.entries().iter().filter(|e| e.is_staged()).count()
+                ),
+                Err(error) => {
+                    ok = false;
+                    println!("  FAIL  git status: {error}");
+                }
+            }
+        }
         let dir = dirs.seen_dir(workspace.root());
         match fathomable_core::seen::Store::open(&dir) {
             Ok(seen) => println!(

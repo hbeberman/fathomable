@@ -27,10 +27,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
         match (pending, key.code) {
             ('[', KeyCode::Char('o')) => app.history_back(),
             (']', KeyCode::Char('o')) => app.history_forward(),
-            ('[', KeyCode::Char('a')) => app.prev_annotation(),
-            (']', KeyCode::Char('a')) => app.next_annotation(),
-            ('[', KeyCode::Char('c')) => app.view_mut().prev_hunk(),
-            (']', KeyCode::Char('c')) => app.view_mut().next_hunk(),
+            ('[', KeyCode::Char('c')) => app.prev_annotation(),
+            (']', KeyCode::Char('c')) => app.next_annotation(),
+            ('[', KeyCode::Char('g')) => app.hunk_prev(),
+            (']', KeyCode::Char('g')) => app.hunk_next(),
+            ('[', KeyCode::Char('G')) => app.dirty_prev(),
+            (']', KeyCode::Char('G')) => app.dirty_next(),
             ('[', KeyCode::Char('f')) => app.jump_prev(),
             (']', KeyCode::Char('f')) => app.jump_next(),
             _ => {}

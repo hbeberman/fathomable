@@ -59,12 +59,13 @@ shows the full list inside the app.
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
-| `gd` / `:diff`, `]c` `[c` | diff view: last-seen, then `HEAD`, then off; next / previous hunk |
+| `gd` / `:diff` | diff view: `HEAD`, then last-seen, then off |
+| `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, source, clear |
 | `:follow`, `:follow source S` | toggle auto-jump; `workspace`, `followed`, or `open-only` |
 | `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
 | `x` | select the current line; repeat to extend down |
-| `Space a`, `Space A`, `]a` `[a` | thread at cursor, pick a thread, next/previous thread |
+| `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
 | thread panel `r` `x` `n` `p` `j` `k` | reply, resolve or reopen, switch, scroll |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter` | newline, submit |
 | `Space e` / `Ctrl-b`, `Space E` | tree: open and focus or return focus; hide |
@@ -92,18 +93,29 @@ what differs from `HEAD`: a green bar for added lines, orange for changed
 ones, and a thin red rule along the top of the line that follows a removal
 (the removed text itself is only shown in the diff view). Annotation marks
 sit at the far left of the gutter.
-`]c` and `[c` walk the hunks, `gd` swaps the pane for a unified diff of
-the file, and the status line counts `+added -removed` lines.
+The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
+for one that is staged; a new untracked file is all thin green. `gd` swaps
+the pane for a unified diff of the file against `HEAD` (`DIFF`), and the
+status line counts `+added -removed` lines.
 
-There are two bases. **Last seen** is the file as it was when you last
+`]g` and `[g` walk the hunks, and when a file's hunks run out they carry
+on into the next uncommitted file in path order, wrapping at the end, so
+holding `]g` from the top of the tree visits every uncommitted change.
+`]G` and `[G` step by file instead, landing on the first hunk. The tree
+shows every uncommitted file with a letter after its name, `M`odified,
+`A`dded, `D`eleted, or `?` untracked, in one colour when the change is
+staged and another when it is not, followed by its `+added -removed`
+counts; a collapsed folder shows the most advanced letter and the summed
+counts of everything beneath it. A save, `git add`, or commit updates all
+of this within a beat.
+
+There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit, or
-leave it alone for five seconds, so the bar shows what changed since then.
-**HEAD** is the last commit. `gd` shows the last-seen diff first (`DIFF
-seen`), `gd` again the `HEAD` diff (`DIFF head`), and a third `gd` returns
-to the rendered view; whichever base the diff view used last is the one the
-bar and `]c` use. A file that has never been seen uses `HEAD`. Snapshots
-live under `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be
-deleted at any time; a commit refreshes the `HEAD` base immediately.
+leave it alone for five seconds. It never drives the bar or `]g`; press
+`gd` a second time to see it (`DIFF seen`), and a third `gd` returns to the
+rendered view. Snapshots live under
+`~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at
+any time.
 
 ## 6. Following an agent
 
@@ -113,8 +125,9 @@ a toast in the bottom-right corner for a few seconds, and a hint in the
 status line, `→ src/foo.rs +12 -3 (3)`, naming the newest change and how
 many are pending. `]f` and `[f` step through the changed files, newest
 first; `Space j j` jumps straight to the newest. A jump lands on the first
-hunk against the last-seen base (or the range an agent passed to `open`),
-and a change is forgotten once its target is on screen.
+hunk against `HEAD` (or the range an agent passed to `open`; outside git,
+the first hunk against the last-seen snapshot), and a change is forgotten
+once its target is on screen.
 
 `Space j a` (or `:follow`) turns on **auto-jump**: the pill reads `AUTO`
 and the viewer opens the newest change by itself once writes have been

@@ -34,3 +34,6 @@ Milestones are ordered; each is usable on its own. Details live in the
 7. **Syntax highlighting.** `syntect` for fenced code blocks and whole
    source files, plus the Markdown file list
    ([0016](decisions/0016-syntax-highlighting.md)).
+8. **Git status navigation.** Dirty set, staged/unstaged gutter, `]g`
+   across files, sidebar git marks
+   ([0017](decisions/0017-git-status-navigation.md)).

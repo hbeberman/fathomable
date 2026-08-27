@@ -10,6 +10,7 @@ use ratatui::widgets::{Clear, Paragraph};
 
 use fathomable_core::annotations::Status;
 use fathomable_core::diff::LineStatus;
+use fathomable_core::status::Summary;
 
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
@@ -58,6 +59,8 @@ pub struct Theme {
     pub diff_plus: Style,
     pub diff_delta: Style,
     pub diff_minus: Style,
+    pub git_staged: Style,
+    pub git_unstaged: Style,
 }
 
 impl Theme {
@@ -99,6 +102,8 @@ impl Theme {
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
             diff_minus: style(Key::DiffMinus),
+            git_staged: style(Key::GitStaged),
+            git_unstaged: style(Key::GitUnstaged),
         }
     }
 }
@@ -365,21 +370,20 @@ fn sidebar_lines<'a>(
         } else {
             app.queue().contains(row.path())
         };
-        if badge && inner > 2 {
-            let badge_style = style
-                .bg
-                .map_or(theme.diff_delta, |bg| theme.diff_delta.bg(bg));
-            out.push(Line::from(vec![
-                Span::styled(fit(&text, inner - 2), style),
-                Span::styled("● ", badge_style),
-                divider.clone(),
-            ]));
-        } else {
-            out.push(Line::from(vec![
-                Span::styled(fit(&text, inner), style),
-                divider.clone(),
-            ]));
+        let mut tail = sidebar_marks(app, row, theme, style, badge);
+        // The marks follow the name directly, one space apart, and the
+        // rest of the row is padded; a narrow sidebar drops the marks.
+        let tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
+        if tail_width == 0 || inner <= tail_width + 1 {
+            tail.clear();
         }
+        let name = fit(&text, inner - tail_width).trim_end().to_owned();
+        let used = display_width(&name) + tail_width;
+        let mut spans = vec![Span::styled(name, style)];
+        spans.extend(tail);
+        spans.push(Span::styled(" ".repeat(inner - used), style));
+        spans.push(divider.clone());
+        out.push(Line::from(spans));
     }
     while out.len() < rows {
         out.push(Line::from(vec![
@@ -388,6 +392,59 @@ fn sidebar_lines<'a>(
         ]));
     }
     out
+}
+
+/// The marks after a sidebar name: the git letter and counts (ADR 0017)
+/// and the follow badge (ADR 0015), each drawn over the row's background.
+fn sidebar_marks<'a>(
+    app: &App,
+    row: &fathomable_core::tree::Row,
+    theme: &Theme,
+    style: Style,
+    badge: bool,
+) -> Vec<Span<'a>> {
+    // A collapsed directory folds what is beneath it.
+    let git = if row.is_dir() {
+        (!row.expanded())
+            .then(|| app.status().summary_under(row.path()))
+            .flatten()
+    } else {
+        app.status().get(row.path()).map(|entry| Summary {
+            state: entry.state(),
+            staged: entry.is_staged(),
+            added: entry.added(),
+            removed: entry.removed(),
+        })
+    };
+    let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
+    let mut tail = Vec::new();
+    if let Some(git) = git {
+        let letter = if git.staged {
+            theme.git_staged
+        } else {
+            theme.git_unstaged
+        };
+        tail.push(Span::styled(
+            format!(" {}", git.state.letter()),
+            on_bg(letter),
+        ));
+        if git.added > 0 {
+            tail.push(Span::styled(
+                format!(" +{}", git.added),
+                on_bg(theme.diff_plus),
+            ));
+        }
+        if git.removed > 0 {
+            tail.push(Span::styled(
+                format!(" -{}", git.removed),
+                on_bg(theme.diff_minus),
+            ));
+        }
+    }
+    if badge {
+        tail.push(Span::styled(" ●", on_bg(theme.diff_delta)));
+    }
+    tail
 }
 
 /// Pad or truncate `text` to exactly `width` cells.
@@ -483,9 +540,15 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             .map_or_else(
                 || Span::styled(" ", row_style),
                 |status| {
-                    let glyph = match status {
-                        LineStatus::Added | LineStatus::Modified => "▎",
-                        LineStatus::Removed => "▔",
+                    // A hunk the index already holds draws thicker
+                    // (ADR 0017): `▌` staged, `▎` not yet.
+                    let staged = view
+                        .source_line_of_row(row)
+                        .is_some_and(|line| view.line_staged(line));
+                    let glyph = match (status, staged) {
+                        (LineStatus::Removed, _) => "▔",
+                        (_, true) => "▌",
+                        (_, false) => "▎",
                     };
                     Span::styled(glyph, status_style(theme, status).patch(row_style))
                 },
@@ -555,7 +618,11 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {
-        format!("DIFF {}", view.base_kind().0.label())
+        if view.diff_seen() {
+            "DIFF seen".to_owned()
+        } else {
+            "DIFF".to_owned()
+        }
     } else if app.auto_jump() && mode == Mode::Normal {
         "AUTO".to_owned()
     } else {

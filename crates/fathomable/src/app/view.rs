@@ -45,8 +45,10 @@ pub enum Display {
     Rendered,
     /// The raw source (`gs`, ADR 0010).
     Source,
-    /// A unified diff against the base (`gd`, ADR 0006).
+    /// A unified diff against `HEAD` (`gd`, ADR 0006, ADR 0017).
     Diff,
+    /// A unified diff against the last-seen snapshot (ADR 0015).
+    DiffSeen,
 }
 
 /// A position in rendered coordinates.
@@ -108,25 +110,18 @@ pub enum Effect {
     Command(String),
 }
 
-/// Which text the gutter and diff view compare against (ADR 0015).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BaseKind {
-    /// The last-seen snapshot, or `HEAD` when there is none.
-    #[default]
-    Seen,
-    /// The file as committed at `HEAD`.
-    Head,
-}
-
-impl BaseKind {
-    /// The status-pill spelling.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Seen => "seen",
-            Self::Head => "head",
-        }
-    }
+/// What `]g` / `[g` did (ADR 0017), so the app can cross into the next
+/// dirty file when the hunks of this one run out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HunkStep {
+    /// The cursor moved to another hunk in this file.
+    Moved,
+    /// The only next hunk is back at the other end of the file.
+    Wrapped,
+    /// The file has no hunks against `HEAD`.
+    Clean,
+    /// Not in a git repository.
+    NoBase,
 }
 
 /// How a view colours and initially displays its text (ADR 0016).
@@ -163,11 +158,14 @@ pub struct View {
     /// The last-seen snapshot (ADR 0015), `None` when the file has never
     /// been seen.
     seen: Option<String>,
+    /// The file as staged in the index (ADR 0017), `None` outside git.
+    index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
     head: Option<String>,
-    /// Which of the two the gutter and diff view use.
-    base_kind: BaseKind,
+    /// The working tree against `HEAD`: the gutter, `]g`, and the counts.
     diff: Option<Diff>,
+    /// The working tree against the index: which hunks are not yet staged.
+    unstaged: Option<Diff>,
     /// The last time the reader moved, searched, or selected here.
     activity: Instant,
     cursor: Cursor,
@@ -211,9 +209,10 @@ impl View {
             height: height.max(1),
             display,
             seen: None,
+            index: None,
             head: None,
-            base_kind: BaseKind::Seen,
             diff: None,
+            unstaged: None,
             activity: Instant::now(),
             cursor: Cursor::default(),
             want_col: 0,
@@ -250,10 +249,10 @@ impl View {
         self.activity.elapsed()
     }
 
-    /// Which base the gutter and diff view compare against, and whether
-    /// that base exists.
-    pub fn base_kind(&self) -> (BaseKind, bool) {
-        (self.base_kind, self.base().is_some())
+    /// Whether the diff view is showing the last-seen diff rather than
+    /// the `HEAD` one.
+    pub fn diff_seen(&self) -> bool {
+        self.display == Display::DiffSeen
     }
 
     /// Whether 1-based source `line` is within the rows on screen.
@@ -265,7 +264,7 @@ impl View {
             .is_some_and(|row| row >= self.scroll && row < self.scroll + self.height)
     }
 
-    /// The 1-based line of the first hunk against the current base.
+    /// The 1-based line of the first hunk against `HEAD`.
     pub fn first_hunk_line(&self) -> Option<usize> {
         let diff = self.diff.as_ref()?;
         diff.hunks()
@@ -273,11 +272,12 @@ impl View {
             .map(|hunk| hunk.target_line(diff.new_lines()))
     }
 
-    fn base(&self) -> Option<&str> {
-        match self.base_kind {
-            BaseKind::Seen => self.seen.as_deref().or(self.head.as_deref()),
-            BaseKind::Head => self.head.as_deref(),
-        }
+    /// The 1-based line of the last hunk against `HEAD`.
+    pub fn last_hunk_line(&self) -> Option<usize> {
+        let diff = self.diff.as_ref()?;
+        diff.hunks()
+            .last()
+            .map(|hunk| hunk.target_line(diff.new_lines()))
     }
 
     pub fn index(&self) -> &LineIndex {
@@ -325,15 +325,24 @@ impl View {
     }
 
     pub fn diff_view(&self) -> bool {
-        self.display == Display::Diff
+        matches!(self.display, Display::Diff | Display::DiffSeen)
     }
 
-    /// The gutter status of 1-based source line `line` against the base.
+    /// The gutter status of 1-based source line `line` against `HEAD`.
     pub fn line_status(&self, line: usize) -> Option<LineStatus> {
         self.diff.as_ref()?.status(line)
     }
 
-    /// `(added, removed)` lines against the base, `None` outside git.
+    /// Whether 1-based source line `line` is already in the index, so its
+    /// change against `HEAD` is staged (ADR 0017). A line the index does
+    /// not yet hold shows as unstaged.
+    pub fn line_staged(&self, line: usize) -> bool {
+        self.unstaged
+            .as_ref()
+            .is_some_and(|unstaged| unstaged.status(line).is_none())
+    }
+
+    /// `(added, removed)` lines against `HEAD`, `None` outside git.
     pub fn diff_counts(&self) -> Option<(usize, usize)> {
         self.diff.as_ref().map(Diff::counts)
     }
@@ -374,28 +383,29 @@ impl View {
         self.relayout();
     }
 
-    /// Set the diff bases, either `None` when it does not exist; the
+    /// Set the diff bases, each `None` when it does not exist; the
     /// gutter and the diff view follow.
-    pub fn set_bases(&mut self, seen: Option<String>, head: Option<String>) {
-        if seen == self.seen && head == self.head {
+    pub fn set_bases(&mut self, seen: Option<String>, index: Option<String>, head: Option<String>) {
+        if seen == self.seen && index == self.index && head == self.head {
             return;
         }
         self.seen = seen;
+        self.index = index;
         self.head = head;
         self.rediff();
-        if self.display == Display::Diff {
+        if self.diff_view() {
             self.relayout();
         }
     }
 
     fn rediff(&mut self) {
-        self.diff = self.base().map(|base| Diff::new(base, &self.text));
+        self.diff = self.head.as_deref().map(|base| Diff::new(base, &self.text));
+        self.unstaged = self
+            .index
+            .as_deref()
+            .map(|base| Diff::new(base, &self.text));
         if let Some(diff) = &self.diff {
-            tracing::debug!(
-                hunks = diff.hunks().len(),
-                base = self.base_kind.label(),
-                "diff against base"
-            );
+            tracing::debug!(hunks = diff.hunks().len(), "diff against HEAD");
         }
     }
 
@@ -408,69 +418,70 @@ impl View {
         self.relayout();
     }
 
-    /// `gd` / `:diff`: rendered, then the diff against last-seen, then
-    /// against `HEAD` (skipping a base that does not exist or is the same
-    /// text), then rendered again. The base chosen stays for the gutter
-    /// and `]c` (ADR 0015).
+    /// `gd` / `:diff`: rendered, then the diff against `HEAD`, then
+    /// against the last-seen snapshot when one exists and differs from
+    /// `HEAD`, then rendered again (ADR 0017).
     pub fn toggle_diff_view(&mut self) {
-        let both = self.seen.is_some() && self.head.is_some() && self.seen != self.head;
-        let next = match (self.display, self.base_kind, both) {
-            (Display::Diff, BaseKind::Seen, true) => Some(BaseKind::Head),
-            (Display::Diff, _, _) => None,
-            (_, _, _) if self.seen.is_some() => Some(BaseKind::Seen),
-            (_, _, _) if self.head.is_some() => Some(BaseKind::Head),
+        let seen_differs = self.seen.is_some() && self.seen != self.head;
+        self.display = match self.display {
+            Display::Diff if seen_differs => Display::DiffSeen,
+            Display::Diff | Display::DiffSeen => Display::Rendered,
+            _ if self.head.is_some() => Display::Diff,
+            _ if self.seen.is_some() => Display::DiffSeen,
             _ => {
                 self.message = Some("no diff base: not in a git repository".to_owned());
                 return;
             }
         };
-        match next {
-            Some(kind) => {
-                self.display = Display::Diff;
-                if kind != self.base_kind {
-                    self.base_kind = kind;
-                    self.rediff();
-                }
-            }
-            None => self.display = Display::Rendered,
-        }
         self.relayout();
     }
 
-    /// `]c`: the cursor to the next change, wrapping to the first.
-    pub fn next_hunk(&mut self) {
-        self.jump_hunk(true);
+    /// `]g` within the file: the cursor to the next hunk against `HEAD`.
+    /// Reports a wrap instead of taking it, so the app can cross into the
+    /// next dirty file (ADR 0017).
+    pub fn next_hunk(&mut self) -> HunkStep {
+        self.step_hunk(true)
     }
 
-    /// `[c`: the cursor to the previous change, wrapping to the last.
-    pub fn prev_hunk(&mut self) {
-        self.jump_hunk(false);
+    /// `[g` within the file: the cursor to the previous hunk.
+    pub fn prev_hunk(&mut self) -> HunkStep {
+        self.step_hunk(false)
     }
 
-    fn jump_hunk(&mut self, forward: bool) {
+    fn step_hunk(&mut self, forward: bool) -> HunkStep {
         let Some(diff) = &self.diff else {
-            self.message = Some("no diff base: not in a git repository".to_owned());
-            return;
+            return HunkStep::NoBase;
         };
-        let line = self.cursor_source_line().unwrap_or(0);
-        let found = if forward {
-            diff.next_hunk(line)
-        } else {
-            diff.prev_hunk(line)
-        };
-        let Some((hunk, wrapped)) = found else {
-            self.message = Some(format!("no changes against {}", self.base_kind.label()));
-            return;
-        };
-        let target = hunk.target_line(diff.new_lines());
-        if wrapped {
-            self.message = Some(if forward {
-                "wrapped to first change".to_owned()
-            } else {
-                "wrapped to last change".to_owned()
-            });
+        if diff.hunks().is_empty() {
+            return HunkStep::Clean;
         }
-        self.goto_source_line(target);
+        // Compare rendered rows, not source lines: a hunk on a blank line
+        // has no row of its own in the rendered view, so the cursor sits
+        // on the row after it and a line comparison would find the same
+        // hunk forever.
+        let current = self.cursor.row;
+        let rows = diff
+            .hunks()
+            .iter()
+            .filter_map(|hunk| self.row_of_source_line(hunk.target_line(diff.new_lines())));
+        let found = if forward {
+            rows.filter(|row| *row > current).min()
+        } else {
+            rows.filter(|row| *row < current).max()
+        };
+        match found {
+            Some(row) => {
+                self.jump_to_row(row);
+                HunkStep::Moved
+            }
+            None => HunkStep::Wrapped,
+        }
+    }
+
+    /// The rendered row 1-based source `line` starts on.
+    fn row_of_source_line(&self, line: usize) -> Option<usize> {
+        let range = self.layout.index().range_of(line)?;
+        self.layout.line_at_offset(range.start)
     }
 
     fn relayout(&mut self) {
@@ -478,17 +489,22 @@ impl View {
         // above the cursor does not drag it onto unrelated text (ADR 0010).
         let (line, column) = self.source_position();
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
-        self.layout = match (self.display, self.base()) {
+        let base = match self.display {
+            Display::Diff => self.head.as_deref(),
+            Display::DiffSeen => self.seen.as_deref(),
+            _ => None,
+        };
+        self.layout = match (self.display, base) {
             (Display::Source, _) => Layout::source_with(
                 &self.text,
                 self.width,
                 &self.syntax.hint,
                 &self.syntax.highlighter,
             ),
-            (Display::Diff, Some(base)) => Layout::diff(base, &self.text, self.width),
-            (Display::Rendered | Display::Diff, _) => {
-                Layout::render_with(&self.text, self.width, &self.syntax.highlighter)
+            (Display::Diff | Display::DiffSeen, Some(base)) => {
+                Layout::diff(base, &self.text, self.width)
             }
+            _ => Layout::render_with(&self.text, self.width, &self.syntax.highlighter),
         };
         let index = self.layout.index();
         let line = line.min(index.line_count());
@@ -945,9 +961,7 @@ impl View {
 
     /// Move to the rendered line showing source line `line`.
     pub fn goto_source_line(&mut self, line: usize) {
-        if let Some(range) = self.layout.index().range_of(line)
-            && let Some(row) = self.layout.line_at_offset(range.start)
-        {
+        if let Some(row) = self.row_of_source_line(line) {
             self.jump_to_row(row);
         }
     }
@@ -1052,7 +1066,7 @@ mod tests {
 
     use fathomable_core::annotations::LineRange;
 
-    use super::{BaseKind, Cursor, Effect, Mode, View};
+    use super::{Cursor, Effect, HunkStep, Mode, View};
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
@@ -1325,36 +1339,35 @@ mod tests {
         let mut v = view();
         assert_eq!(v.diff_counts(), None);
         assert_eq!(v.line_status(1), None);
-        v.next_hunk();
-        assert_eq!(v.message(), Some("no diff base: not in a git repository"));
+        assert_eq!(v.next_hunk(), HunkStep::NoBase);
         v.toggle_diff_view();
         assert!(!v.diff_view(), "no base, no diff view");
+        assert_eq!(v.message(), Some("no diff base: not in a git repository"));
 
-        // The committed text lacked "- two" and had a different last line.
-        v.set_bases(
-            None,
-            Some("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned()),
-        );
-        assert_eq!(
-            v.base_kind(),
-            (BaseKind::Seen, true),
-            "HEAD stands in for seen"
-        );
+        // The committed text lacked "- two" and had a different last line;
+        // the index already holds "- two", so that hunk is staged.
+        let head = "# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned();
+        let index = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast word here\n".to_owned();
+        v.set_bases(None, Some(index), Some(head));
         assert_eq!(v.line_status(6), Some(LineStatus::Added));
+        assert!(v.line_staged(6), "the index has the added line");
         assert_eq!(v.line_status(9), Some(LineStatus::Modified));
+        assert!(!v.line_staged(9), "the last line is not staged");
         assert_eq!(v.line_status(1), None);
         assert_eq!(v.diff_counts(), Some((2, 1)));
+        assert_eq!(v.first_hunk_line(), Some(6));
+        assert_eq!(v.last_hunk_line(), Some(9));
 
-        v.next_hunk();
+        assert_eq!(v.next_hunk(), HunkStep::Moved);
         assert_eq!(v.source_position().0, 6);
-        v.next_hunk();
+        assert_eq!(v.next_hunk(), HunkStep::Moved);
         assert_eq!(v.source_position().0, 9);
-        v.next_hunk();
+        assert_eq!(v.next_hunk(), HunkStep::Wrapped);
+        assert_eq!(v.source_position().0, 9, "a wrap is reported, not taken");
+        assert_eq!(v.prev_hunk(), HunkStep::Moved);
         assert_eq!(v.source_position().0, 6);
-        assert_eq!(v.message(), Some("wrapped to first change"));
-        v.prev_hunk();
-        assert_eq!(v.source_position().0, 9);
-        assert_eq!(v.message(), Some("wrapped to last change"));
+        assert_eq!(v.prev_hunk(), HunkStep::Wrapped);
+        v.goto_source_line(9);
 
         v.toggle_diff_view();
         assert!(v.diff_view());
@@ -1377,45 +1390,53 @@ mod tests {
         // A reload against the same base re-diffs; an identical text is clean.
         v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
         assert_eq!(v.diff_counts(), Some((0, 0)));
+        assert_eq!(v.next_hunk(), HunkStep::Clean);
         v.toggle_diff_view();
         assert_eq!(v.layout().lines().len(), 1);
-        v.set_bases(None, None);
+        v.set_bases(None, None, None);
         assert_eq!(v.diff_counts(), None);
         assert!(v.diff_view(), "display sticks; layout falls back");
         assert!(v.layout().lines().len() > 1);
     }
 
     #[test]
-    fn diff_view_cycles_seen_then_head_then_rendered() {
+    fn diff_view_cycles_head_then_seen_then_rendered() {
         let mut v = view();
         let seen = v.text().replace("- two\n", "");
         let head = "# Title\n".to_owned();
-        v.set_bases(Some(seen), Some(head));
-        assert_eq!(v.base_kind(), (BaseKind::Seen, true));
-        assert_eq!(v.diff_counts(), Some((1, 0)));
-        assert_eq!(v.first_hunk_line(), Some(6));
+        v.set_bases(Some(seen), Some(head.clone()), Some(head));
+        assert!(
+            v.diff_counts().is_some_and(|(added, _)| added > 1),
+            "the gutter counts against HEAD, not seen"
+        );
+        assert_eq!(v.first_hunk_line(), Some(2));
 
         v.toggle_diff_view();
         assert!(v.diff_view());
-        assert_eq!(v.base_kind().0, BaseKind::Seen);
+        assert!(!v.diff_seen());
         v.toggle_diff_view();
         assert!(v.diff_view());
-        assert_eq!(v.base_kind().0, BaseKind::Head);
-        assert!(v.diff_counts().is_some_and(|(added, _)| added > 1));
+        assert!(v.diff_seen());
+        let texts: Vec<String> = v
+            .layout()
+            .lines()
+            .iter()
+            .map(fathomable_core::layout::Line::text)
+            .collect();
+        assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
         v.toggle_diff_view();
         assert!(!v.diff_view());
-        assert_eq!(
-            v.base_kind().0,
-            BaseKind::Head,
-            "the base sticks for the gutter"
+
+        // Without a differing snapshot the cycle is HEAD then rendered.
+        v.set_bases(
+            None,
+            Some("# Title\n".to_owned()),
+            Some("# Title\n".to_owned()),
         );
-        v.next_hunk();
         v.toggle_diff_view();
-        assert_eq!(
-            v.base_kind().0,
-            BaseKind::Seen,
-            "opening the diff starts from seen"
-        );
+        assert!(v.diff_view());
+        v.toggle_diff_view();
+        assert!(!v.diff_view());
 
         v.start_command();
         for ch in "follow source head".chars() {

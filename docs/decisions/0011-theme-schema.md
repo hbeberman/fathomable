@@ -93,6 +93,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.statusline.normal`, `.select`, `.input` | mode pills |
 | `ui.statusline.info` | transient messages, pending keys, `[+]` |
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
+| `git.staged`, `git.unstaged` | sidebar git letters ([0017](0017-git-status-navigation.md)) |
 | `ui.sidebar`, `ui.sidebar.selected`, `ui.sidebar.dir` | tree sidebar background, its cursor row, directory names ([0012](0012-workspace-mode.md)) |
 | `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |

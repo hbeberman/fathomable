@@ -46,6 +46,9 @@ colors {
     "diff.delta"           fg="orange"
     "diff.minus"           fg="red"
 
+    "git.staged"           fg="teal"
+    "git.unstaged"         fg="orange"
+
     "annotation.open"          fg="yellow"
     "annotation.resolved"      fg="green"
     "annotation.resolved.auto" fg="orange"

@@ -20,12 +20,18 @@
 //! ```
 
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use gix::ObjectId;
+use gix::bstr::{BString, ByteSlice};
 use gix::worktree::stack::state::ignore::Source;
+
+use crate::diff::Diff;
+use crate::status::{self, State, Status};
 
 /// One directory entry, as the sidebar shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +116,11 @@ impl Workspace {
                 .parent()
                 .map_or_else(|| PathBuf::from("/"), Path::to_path_buf)
         };
-        match gix::discover(&dir) {
+        match gix::discover_opts(
+            &dir,
+            gix::discover::upwards::Options::default(),
+            open_options(),
+        ) {
             Ok(repo) => match repo.workdir() {
                 Some(root) => {
                     let root = root.to_path_buf();
@@ -203,6 +213,171 @@ impl Workspace {
         String::from_utf8(object.detach().data)
             .map(Some)
             .map_err(|error| fail(format!("HEAD blob is not UTF-8 text: {error}")))
+    }
+
+    /// The text of root-relative `relative` as staged in the index, the
+    /// middle text that tells a staged hunk from an unstaged one
+    /// (ADR 0017).
+    ///
+    /// Returns `None` outside git, and `Some("")` when the index has no
+    /// such path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the index or the blob cannot be
+    /// read, or the blob is not UTF-8 text.
+    pub fn index_text(&self, relative: &Path) -> Result<Option<String>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(None);
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        let index = git
+            .repo
+            .index_or_empty()
+            .map_err(|error| fail(format!("cannot read the index: {error}")))?;
+        let path = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative));
+        let Some(entry) = index.entry_by_path(path.as_ref()) else {
+            return Ok(Some(String::new()));
+        };
+        if !matches!(
+            entry.mode,
+            gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
+        ) {
+            return Ok(Some(String::new()));
+        }
+        let object = git
+            .repo
+            .find_object(entry.id)
+            .map_err(|error| fail(format!("cannot read blob from the index: {error}")))?;
+        String::from_utf8(object.detach().data)
+            .map(Some)
+            .map_err(|error| fail(format!("index blob is not UTF-8 text: {error}")))
+    }
+
+    /// Every uncommitted path (ADR 0017): the index against `HEAD` for
+    /// staged changes, the working tree against the index for unstaged
+    /// ones, and non-ignored files the index lacks as untracked. Empty
+    /// outside git.
+    ///
+    /// A tracked file whose size and mtime match the index is taken as
+    /// clean without reading it, as git does; anything else is hashed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD` or the index cannot be read.
+    pub fn status(&mut self) -> Result<Status, WorkspaceError> {
+        let started = std::time::Instant::now();
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(Status::default());
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.clone(),
+            message,
+        };
+        let index = git
+            .repo
+            .index_or_empty()
+            .map_err(|error| fail(format!("cannot read the index: {error}")))?;
+        let mut head: BTreeMap<BString, ObjectId> = BTreeMap::new();
+        let unborn = git
+            .repo
+            .head()
+            .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
+            .is_unborn();
+        if !unborn {
+            let tree = git
+                .repo
+                .head_tree()
+                .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+            collect_blobs(&tree, &mut BString::default(), &mut head)
+                .map_err(|error| fail(format!("cannot walk HEAD tree: {error}")))?;
+        }
+        let hash = git.repo.object_hash();
+        let mut dirty: BTreeMap<BString, (State, bool)> = BTreeMap::new();
+        let mut in_index: BTreeSet<BString> = BTreeSet::new();
+        for entry in index.entries() {
+            if entry.stage() != gix::index::entry::Stage::Unconflicted
+                || !matches!(
+                    entry.mode,
+                    gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
+                )
+            {
+                continue;
+            }
+            let path = entry.path(&index).to_owned();
+            in_index.insert(path.clone());
+            let staged = match head.get(&path) {
+                Some(id) if *id == entry.id => None,
+                Some(_) => Some(State::Modified),
+                None => Some(State::Added),
+            };
+            let absolute = self.root.join(gix::path::from_bstr(path.as_bstr()));
+            let worktree = match gix::index::fs::Metadata::from_path_no_follow(&absolute) {
+                Ok(meta) if meta.is_file() => {
+                    let fresh = gix::index::entry::Stat::from_fs(&meta)
+                        .ok()
+                        .is_some_and(|stat| {
+                            stat.size == entry.stat.size
+                                && stat.mtime == entry.stat.mtime
+                                && entry.stat.mtime.secs != 0
+                        });
+                    if fresh {
+                        None
+                    } else {
+                        let same = fs::read(&absolute).ok().is_some_and(|data| {
+                            gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &data)
+                                .is_ok_and(|id| id == entry.id)
+                        });
+                        (!same).then_some(State::Modified)
+                    }
+                }
+                _ => Some(State::Deleted),
+            };
+            if let Some(state) = worktree.or(staged) {
+                dirty.insert(path, (state, staged.is_some()));
+            }
+        }
+        for path in head.keys() {
+            if !in_index.contains(path) {
+                dirty.insert(path.clone(), (State::Deleted, true));
+            }
+        }
+        for file in self.walk_files(Filter::Visible) {
+            let path = BString::from(file);
+            if !in_index.contains(&path) {
+                dirty.insert(path, (State::Untracked, false));
+            }
+        }
+        let mut entries = Vec::with_capacity(dirty.len());
+        for (path, (state, staged)) in dirty {
+            let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
+            let (added, removed) = self.count_lines(&relative, state);
+            let entry = status::Entry::new(relative, state, added, removed);
+            entries.push(if staged { entry.staged() } else { entry });
+        }
+        let status = Status::from_entries(entries);
+        tracing::debug!(dirty = status.len(), elapsed = ?started.elapsed(), "git status");
+        Ok(status)
+    }
+
+    /// `(added, removed)` lines of the working tree against `HEAD`, zero
+    /// for files that are not text.
+    fn count_lines(&self, relative: &Path, state: State) -> (usize, usize) {
+        let head = match state {
+            State::Untracked => Some(String::new()),
+            _ => self.head_text(relative).ok().flatten(),
+        };
+        let worktree = match state {
+            State::Deleted => Some(String::new()),
+            _ => fs::read_to_string(self.root.join(relative)).ok(),
+        };
+        match (head, worktree) {
+            (Some(old), Some(new)) => Diff::new(&old, &new).counts(),
+            _ => (0, 0),
+        }
     }
 
     /// `path` relative to the root, or as given when it lies outside.
@@ -380,4 +555,37 @@ impl From<WorkspaceError> for io::Error {
     fn from(error: WorkspaceError) -> Self {
         Self::other(error)
     }
+}
+
+/// How every repository is opened: as git would, except that `GIT_DIR`,
+/// `GIT_INDEX_FILE`, and the other `GIT_*` overrides are ignored. The
+/// workspace is the path the user gave, so a viewer started from a git
+/// hook (which exports those) still looks at that path's own repository.
+#[must_use]
+pub fn open_options() -> gix::open::Options {
+    let mut permissions = gix::open::Permissions::default();
+    permissions.env.git_prefix = gix::sec::Permission::Deny;
+    gix::open::Options::default().permissions(permissions)
+}
+
+/// Every blob under `tree`, keyed by slash-separated path.
+fn collect_blobs(
+    tree: &gix::Tree<'_>,
+    prefix: &mut BString,
+    out: &mut BTreeMap<BString, ObjectId>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    for entry in tree.iter() {
+        let entry = entry?;
+        let len = prefix.len();
+        prefix.extend_from_slice(entry.filename());
+        if entry.mode().is_tree() {
+            let subtree = entry.object()?.into_tree();
+            prefix.push(b'/');
+            collect_blobs(&subtree, prefix, out)?;
+        } else if entry.mode().is_blob() {
+            out.insert(prefix.clone(), entry.object_id());
+        }
+        prefix.truncate(len);
+    }
+    Ok(())
 }

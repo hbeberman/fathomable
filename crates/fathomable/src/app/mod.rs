@@ -38,6 +38,7 @@ use fathomable_core::highlight::Highlighter;
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
 use fathomable_core::session::{FollowState, Record, Request, Response};
+use fathomable_core::status::Status;
 use fathomable_core::theme::Theme;
 use fathomable_core::tree::{Activation, Tree};
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
@@ -48,7 +49,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 pub use threads::{Compose, Mark, ThreadPanel};
-use view::{Effect, Syntax, View};
+use view::{Effect, HunkStep, Syntax, View};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
@@ -209,7 +210,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 35] = [
+pub const HELP: [(&str, &str); 36] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -222,12 +223,13 @@ pub const HELP: [(&str, &str); 35] = [
     ("c (selected)", "comment on the selection"),
     ("Space a", "read thread at cursor"),
     ("Space A", "pick a thread in this file"),
-    ("]a / [a", "next / previous thread"),
+    ("]c / [c", "next / previous thread"),
     ("thread r x n p j k", "reply, resolve, switch, scroll"),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
     ("gs", "toggle source view"),
-    ("gd / :diff", "diff view: last-seen, then HEAD, then off"),
-    ("]c / [c", "next / previous hunk"),
+    ("gd / :diff", "diff view: HEAD, then last-seen, then off"),
+    ("]g / [g", "next / previous hunk, across files"),
+    ("]G / [G", "next / previous uncommitted file"),
     ("]f / [f", "next / previous changed file"),
     ("Space j", "follow: jump, auto, source, clear"),
     (":follow", "toggle auto-jump"),
@@ -300,6 +302,8 @@ pub struct App {
     last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
     watching_root: bool,
+    /// Every uncommitted path (ADR 0017), refreshed on git and file events.
+    status: Status,
 }
 
 impl App {
@@ -353,8 +357,10 @@ impl App {
             seen: None,
             last_change: None,
             watching_root: false,
+            status: Status::default(),
         };
         app.relayout();
+        app.refresh_status();
         app
     }
 
@@ -547,6 +553,112 @@ impl App {
                 self.refresh_base(index);
             }
         }
+        if git_changed || !seen_paths.is_empty() {
+            self.refresh_status();
+        }
+    }
+
+    // ----- git status (ADR 0017) -----
+
+    /// Every uncommitted path, in path order.
+    pub fn status(&self) -> &Status {
+        &self.status
+    }
+
+    /// Re-read the dirty set. Runs after the hint debounce, so a burst of
+    /// writes costs one walk; a failure is reported and leaves the set as
+    /// it was.
+    fn refresh_status(&mut self) {
+        match self.workspace.status() {
+            Ok(status) => {
+                if status != self.status {
+                    tracing::info!(dirty = status.len(), "dirty set changed");
+                }
+                self.status = status;
+            }
+            Err(error) => self.notice(format!("git status: {error}")),
+        }
+    }
+
+    /// `]g`: the next hunk in this file, or the first hunk of the next
+    /// uncommitted file when this one's run out, wrapping.
+    pub fn hunk_next(&mut self) {
+        self.step_hunk(true);
+    }
+
+    /// `[g`: the previous hunk, crossing into the last hunk of the
+    /// previous uncommitted file.
+    pub fn hunk_prev(&mut self) {
+        self.step_hunk(false);
+    }
+
+    fn step_hunk(&mut self, forward: bool) {
+        let step = if forward {
+            self.view_mut().next_hunk()
+        } else {
+            self.view_mut().prev_hunk()
+        };
+        match step {
+            HunkStep::Moved => {}
+            HunkStep::NoBase => self.notice("no diff base: not in a git repository"),
+            HunkStep::Wrapped | HunkStep::Clean => self.step_dirty(forward, true),
+        }
+    }
+
+    /// `]G`: the next uncommitted file in path order, at its first hunk.
+    pub fn dirty_next(&mut self) {
+        self.step_dirty(true, false);
+    }
+
+    /// `[G`: the previous uncommitted file, at its first hunk.
+    pub fn dirty_prev(&mut self) {
+        self.step_dirty(false, false);
+    }
+
+    /// Open the next (or previous) dirty file. `from_hunk` lands on the
+    /// last hunk when stepping backwards, so `[g` walks hunks in order;
+    /// `]G` always lands on the first.
+    fn step_dirty(&mut self, forward: bool, from_hunk: bool) {
+        let current = self.current.map(|i| self.docs[i].relative.clone());
+        let next = if forward {
+            self.status.after(current.as_deref())
+        } else {
+            self.status.before(current.as_deref())
+        };
+        let Some(entry) = next else {
+            self.notice("nothing uncommitted");
+            return;
+        };
+        let path = entry.path().to_path_buf();
+        let is_current = current.as_deref() == Some(path.as_path());
+        let wrapped = is_current
+            || match (forward, current.as_deref()) {
+                (true, Some(cur)) => path < *cur,
+                (false, Some(cur)) => path > *cur,
+                _ => false,
+            };
+        if !is_current {
+            if !self.workspace.root().join(&path).is_file() {
+                self.notice(format!("{} is deleted", path.display()));
+                return;
+            }
+            self.close_popup();
+            self.focus = Focus::View;
+            self.open(&path);
+        }
+        let line = if forward || !from_hunk {
+            self.view().first_hunk_line()
+        } else {
+            self.view().last_hunk_line()
+        };
+        self.view_mut().goto_source_line(line.unwrap_or(1));
+        if wrapped {
+            self.notice(if forward {
+                "wrapped to first change"
+            } else {
+                "wrapped to last change"
+            });
+        }
     }
 
     fn on_change(&mut self, relative: &Path, absolute: &Path) {
@@ -596,17 +708,18 @@ impl App {
         self.push_change(Change::new(path, Target::Line(line.unwrap_or(1))), counts);
     }
 
-    /// The first hunk and counts of a file that is not open, against its
-    /// last-seen base.
+    /// The first hunk and counts of a file that is not open, against
+    /// `HEAD` (ADR 0017), or against its last-seen snapshot outside git.
     fn unloaded_change(&self, relative: &Path, absolute: &Path) -> (Option<usize>, (usize, usize)) {
         let Ok(text) = fs::read_to_string(absolute) else {
             return (None, (0, 0));
         };
         let base = self
-            .seen
-            .as_ref()
-            .and_then(|seen| seen.text(relative).ok().flatten())
-            .or_else(|| self.workspace.head_text(relative).ok().flatten());
+            .workspace
+            .head_text(relative)
+            .ok()
+            .flatten()
+            .or_else(|| self.seen.as_ref()?.text(relative).ok().flatten());
         let Some(base) = base else {
             return (None, (0, 0));
         };
@@ -1065,6 +1178,13 @@ impl App {
                 None
             }
         };
+        let staged = match self.workspace.index_text(&relative) {
+            Ok(base) => base,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the index text; hunks show as unstaged");
+                None
+            }
+        };
         let seen = self
             .seen
             .as_ref()
@@ -1076,7 +1196,7 @@ impl App {
                 }
             });
         if let Some(doc) = self.docs.get_mut(index) {
-            doc.view.set_bases(seen, head);
+            doc.view.set_bases(seen, staged, head);
         }
     }
 
@@ -1717,7 +1837,7 @@ mod tests {
 
     use fathomable_core::config::{FollowConfig, MarkdownConfig};
     use fathomable_core::highlight::Highlighter;
-    use fathomable_core::workspace::{Workspace, WorkspaceError};
+    use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
 
     use super::{App, Focus, PickerKind, Popup, is_change, is_git_metadata};
 
@@ -1915,6 +2035,204 @@ mod tests {
         Ok(())
     }
 
+    /// Write `files` (root-relative, content) as a tree object, nested
+    /// directories and all, and return its id.
+    fn write_tree(repo: &gix::Repository, files: &[(&str, &str)]) -> anyhow::Result<gix::ObjectId> {
+        use std::collections::BTreeMap;
+        let mut entries = Vec::new();
+        let mut subdirs: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
+        for (path, content) in files {
+            match path.split_once('/') {
+                Some((dir, rest)) => subdirs.entry(dir).or_default().push((rest, content)),
+                None => entries.push(gix::objs::tree::Entry {
+                    mode: gix::objs::tree::EntryKind::Blob.into(),
+                    filename: (*path).into(),
+                    oid: repo.write_blob(content.as_bytes())?.detach(),
+                }),
+            }
+        }
+        for (dir, files) in subdirs {
+            entries.push(gix::objs::tree::Entry {
+                mode: gix::objs::tree::EntryKind::Tree.into(),
+                filename: dir.into(),
+                oid: write_tree(repo, &files)?,
+            });
+        }
+        entries.sort();
+        Ok(repo.write_object(gix::objs::Tree { entries })?.detach())
+    }
+
+    /// Commit `files` as `HEAD` and stage the same tree, as `git add -A`
+    /// then `git commit` would leave things.
+    fn commit_and_stage(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
+        let repo = gix::open_opts(root, open_options())?;
+        let tree = write_tree(&repo, files)?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "0 +0000",
+        };
+        let parent = repo.head_id().ok().map(gix::Id::detach);
+        repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
+        stage(root, files)
+    }
+
+    /// Replace the index with `files`.
+    fn stage(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
+        let repo = gix::open_opts(root, open_options())?;
+        let tree = write_tree(&repo, files)?;
+        let state = gix::index::State::from_tree(
+            &tree,
+            &repo.objects,
+            gix::validate::path::component::Options::default(),
+        )?;
+        let mut file = gix::index::File::from_state(state, repo.index_path());
+        file.write(gix::index::write::Options::default())?;
+        Ok(())
+    }
+
+    #[test]
+    #[expect(clippy::too_many_lines, reason = "one walk through the whole key set")]
+    fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
+        use fathomable_core::status::State;
+
+        let dir = TempDir::new("hunks")?;
+        gix::ThreadSafeRepository::init_opts(
+            &dir.0,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            open_options(),
+        )?;
+        let committed = [
+            ("README.md", "# Readme\n\nhello\n"),
+            ("docs/guide.md", "# Guide\n"),
+            ("docs/notes.md", "# Notes\n"),
+        ];
+        commit_and_stage(&dir.0, &committed)?;
+        fs::write(
+            dir.0.join("README.md"),
+            "# Readme\n\nfirst\n\nhello\n\nlast\n",
+        )?;
+        fs::write(dir.0.join("docs/notes.md"), "# Notes\n\nmore\n")?;
+        fs::write(dir.0.join("docs/new.md"), "# New\n")?;
+        let mut app = app(&dir)?;
+
+        let dirty: Vec<(String, State, bool)> = app
+            .status()
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state(), e.is_staged()))
+            .collect();
+        assert_eq!(
+            dirty,
+            vec![
+                ("README.md".to_owned(), State::Modified, false),
+                ("docs/new.md".to_owned(), State::Untracked, false),
+                ("docs/notes.md".to_owned(), State::Modified, false),
+            ]
+        );
+        assert_eq!(
+            app.status()
+                .summary_under(Path::new("docs"))
+                .map(|d| (d.state, d.added, d.removed)),
+            Some((State::Untracked, 3, 0))
+        );
+
+        // `]g` walks README's two hunks, then crosses into the next dirty
+        // files, then wraps.
+        app.open(Path::new("README.md"));
+        assert_eq!(app.view().diff_counts(), Some((4, 0)));
+        app.hunk_next();
+        assert_eq!(app.view().source_position().0, 3);
+        app.hunk_next();
+        assert_eq!(app.view().source_position().0, 7);
+        app.hunk_next();
+        assert_eq!(app.current_path(), Path::new("docs/new.md"));
+        assert_eq!(app.view().source_position().0, 1);
+        assert!(!app.view().line_staged(1), "untracked lines are unstaged");
+        app.hunk_next();
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.view().source_position().0, 3);
+        app.hunk_next();
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.view().source_position().0, 3);
+        assert_eq!(app.message(), Some("wrapped to first change"));
+
+        // `[g` from README's first hunk lands on the last hunk of the last
+        // dirty file.
+        app.hunk_prev();
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.view().source_position().0, 3);
+        assert_eq!(app.message(), Some("wrapped to last change"));
+        app.hunk_prev();
+        assert_eq!(app.current_path(), Path::new("docs/new.md"));
+        app.hunk_prev();
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert!(
+            app.view().source_position().0 >= 6,
+            "backwards lands on the last hunk"
+        );
+
+        // `]G` / `[G` step by file, always to the first hunk.
+        app.dirty_next();
+        assert_eq!(app.current_path(), Path::new("docs/new.md"));
+        app.dirty_prev();
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.view().source_position().0, 3);
+        app.dirty_prev();
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.message(), Some("wrapped to last change"));
+
+        // A clean file that is open steps into the next dirty one in
+        // path order.
+        app.open(Path::new("docs/guide.md"));
+        app.hunk_next();
+        assert_eq!(app.current_path(), Path::new("docs/new.md"));
+
+        // Staging README marks its lines staged; the index event refreshes
+        // both the bases and the dirty set.
+        stage(
+            &dir.0,
+            &[
+                ("README.md", "# Readme\n\nfirst\n\nhello\n\nlast\n"),
+                ("docs/guide.md", "# Guide\n"),
+                ("docs/notes.md", "# Notes\n"),
+            ],
+        )?;
+        app.open(Path::new("README.md"));
+        app.on_changes(vec![dir.0.join(".git/index")]);
+        assert!(app.view().line_staged(3));
+        assert!(app.view().line_staged(7));
+        assert_eq!(
+            app.view().diff_counts(),
+            Some((4, 0)),
+            "counts stay against HEAD"
+        );
+        assert_eq!(
+            app.status()
+                .get(Path::new("README.md"))
+                .map(|e| (e.state(), e.is_staged())),
+            Some((State::Modified, true))
+        );
+
+        // Committing everything empties the set.
+        commit_and_stage(
+            &dir.0,
+            &[
+                ("README.md", "# Readme\n\nfirst\n\nhello\n\nlast\n"),
+                ("docs/guide.md", "# Guide\n"),
+                ("docs/new.md", "# New\n"),
+                ("docs/notes.md", "# Notes\n\nmore\n"),
+            ],
+        )?;
+        app.on_changes(vec![dir.0.join(".git/HEAD")]);
+        assert!(app.status().is_empty());
+        assert_eq!(app.view().diff_counts(), Some((0, 0)));
+        app.hunk_next();
+        assert_eq!(app.message(), Some("nothing uncommitted"));
+        Ok(())
+    }
+
     #[test]
     fn workspace_changes_queue_newest_first_and_jump() -> anyhow::Result<()> {
         let dir = TempDir::new("changes")?;
@@ -2026,31 +2344,51 @@ mod tests {
         Ok(())
     }
 
+    /// The added lines of the last-seen diff view, or `None` when the
+    /// view cannot show one.
+    fn seen_diff_added(app: &mut App) -> Option<Vec<String>> {
+        app.view_mut().toggle_diff_view();
+        if !app.view().diff_seen() {
+            return None;
+        }
+        let added = app
+            .view()
+            .layout()
+            .lines()
+            .iter()
+            .map(fathomable_core::layout::Line::text)
+            .filter(|t| t.starts_with('+'))
+            .collect();
+        app.view_mut().toggle_diff_view();
+        Some(added)
+    }
+
     #[test]
-    fn seen_snapshots_become_the_diff_base() -> anyhow::Result<()> {
+    fn seen_snapshots_feed_the_seen_diff_view() -> anyhow::Result<()> {
         let dir = TempDir::new("seen")?;
         let mut app = app(&dir)?;
         app.set_seen_store(Some(fathomable_core::seen::Store::open(
             &dir.0.join(".seen-state"),
         )?));
         app.open(Path::new("README.md"));
-        assert_eq!(
-            app.view().diff_counts(),
-            None,
-            "never seen, not in git: no base"
-        );
+        assert_eq!(app.view().diff_counts(), None, "not in git: no gutter");
+        assert_eq!(seen_diff_added(&mut app), None, "never seen: no seen diff");
 
-        // Switching away snapshots the file; coming back diffs against it.
+        // Switching away snapshots the file; coming back, the seen diff
+        // view shows what arrived, while the gutter stays git-only.
         app.open(Path::new("docs/guide.md"));
         fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n")?;
         app.on_changes(vec![dir.0.join("README.md")]);
-        app.open(Path::new("README.md"));
-        assert_eq!(app.view().diff_counts(), Some((2, 0)));
-        assert_eq!(app.view().first_hunk_line(), Some(4));
         assert_eq!(
             app.queue().newest().map(|c| c.target.line()),
             Some(4),
-            "an unopened file's target comes from its last-seen base"
+            "outside git an unopened file's target comes from its last-seen base"
+        );
+        app.open(Path::new("README.md"));
+        assert_eq!(app.view().diff_counts(), None, "the gutter means git");
+        assert_eq!(
+            seen_diff_added(&mut app).as_deref(),
+            Some(&["+".to_owned(), "+world".to_owned()][..])
         );
 
         // Idle long enough, the tick marks it seen and the next change is
@@ -2077,15 +2415,15 @@ mod tests {
             &dir.0.join(".seen-state"),
         )?));
         app2.open(Path::new("README.md"));
-        assert_eq!(app2.view().diff_counts(), Some((2, 0)));
+        assert_eq!(seen_diff_added(&mut app2).map(|a| a.len()), Some(2));
         std::thread::sleep(std::time::Duration::from_millis(5));
         assert!(app2.tick_in().is_some());
         app2.tick();
         fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n\n!\n")?;
         app2.on_changes(vec![dir.0.join("README.md")]);
         assert_eq!(
-            app2.view().diff_counts(),
-            Some((2, 0)),
+            seen_diff_added(&mut app2).as_deref(),
+            Some(&["+".to_owned(), "+!".to_owned()][..]),
             "base is the idle snapshot"
         );
         app2.on_quit();

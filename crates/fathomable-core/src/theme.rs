@@ -180,6 +180,8 @@ pub enum Key {
     DiffPlus,
     DiffDelta,
     DiffMinus,
+    GitStaged,
+    GitUnstaged,
     AnnotationOpen,
     AnnotationResolved,
     AnnotationResolvedAuto,
@@ -196,7 +198,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 31] = [
+    const NAMED: [(&'static str, Self); 33] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -217,6 +219,8 @@ impl Key {
         ("diff.plus", Self::DiffPlus),
         ("diff.delta", Self::DiffDelta),
         ("diff.minus", Self::DiffMinus),
+        ("git.staged", Self::GitStaged),
+        ("git.unstaged", Self::GitUnstaged),
         ("annotation.open", Self::AnnotationOpen),
         ("annotation.resolved", Self::AnnotationResolved),
         ("annotation.resolved.auto", Self::AnnotationResolvedAuto),

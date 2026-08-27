@@ -20,3 +20,4 @@ supersede rather than edit history.
 - [0014 MCP server and socket protocol v1](0014-mcp-server-and-socket-v1.md)
 - [0015 Follow mode and the last-seen diff base](0015-follow-mode.md)
 - [0016 Syntax highlighting and source files](0016-syntax-highlighting.md)
+- [0017 Git status as the primary change layer](0017-git-status-navigation.md)

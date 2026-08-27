@@ -477,12 +477,12 @@ impl App {
 
     // ----- navigation -----
 
-    /// `]a`: the next mark below the cursor, wrapping to the top.
+    /// `]c`: the next mark below the cursor, wrapping to the top.
     pub fn next_annotation(&mut self) {
         self.jump_annotation(1);
     }
 
-    /// `[a`: the previous mark above the cursor, wrapping to the bottom.
+    /// `[c`: the previous mark above the cursor, wrapping to the bottom.
     pub fn prev_annotation(&mut self) {
         self.jump_annotation(-1);
     }

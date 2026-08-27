@@ -61,10 +61,11 @@ impl App {
         });
     }
 
-    /// A click on sidebar row `row` (screen coordinates).
+    /// A click on sidebar row `row` (screen coordinates): activate the
+    /// row but stay in the tree. A click pages the viewer just as the
+    /// wheel does (ADR 0023); only `Enter` commits focus to the view.
     pub fn sidebar_click(&mut self, row: usize) {
         let index = self.sidebar_scroll + row;
-        self.focus = Focus::Sidebar;
         self.with_tree_result(|tree, workspace| {
             if index >= tree.rows().len() {
                 return Ok(None);
@@ -72,6 +73,7 @@ impl App {
             tree.set_cursor(index);
             tree.activate(workspace)
         });
+        self.focus = Focus::Sidebar;
     }
 
     pub(super) fn scroll_sidebar(&mut self) {

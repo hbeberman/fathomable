@@ -33,8 +33,10 @@ highlight drives the pane.
   history and the recent list ([0012](0012-workspace-mode.md)), and the
   file left behind is snapshotted as seen ([0015](0015-follow-mode.md)),
   exactly as an `Enter`-open always did.
-- `Enter` and a click still commit: the same open, and focus moves to the
-  view.
+- `Enter` still commits: the same open, and focus moves to the view. A
+  click activates the row it hits — expanding a directory or showing a
+  file — but leaves focus in the tree, so clicking is paging too
+  (amended 2026-08-27; a click first committed like `Enter`).
 - The wheel over the sidebar steps **one row per tick**, so a tick is a
   page turn. Every other pane keeps the three-line wheel.
 - Only a highlight the user *moved* opens a file: the key and wheel

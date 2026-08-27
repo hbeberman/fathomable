@@ -234,7 +234,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 36] = [
+pub const HELP: [(&str, &str); 37] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -242,8 +242,9 @@ pub const HELP: [(&str, &str); 36] = [
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
     ("v / V / mouse drag", "select text / lines / cells"),
+    ("x", "select the line; again, one more below"),
     ("y (selected)", "copy source to clipboard"),
-    ("c (selected)", "comment on the selection"),
+    ("c", "comment on the selection or cursor line"),
     ("Space a", "read thread at cursor"),
     ("Space A", "pick a thread in this file"),
     ("]c / [c", "next / previous thread"),
@@ -2255,7 +2256,9 @@ mod tests {
 
     #[test]
     fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+        use crossterm::event::{
+            KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        };
 
         use super::keys;
         let dir = TempDir::new("paging")?;
@@ -2293,8 +2296,21 @@ mod tests {
         app.history_back();
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
 
+        // A click pages too: it shows the row it lands on and stays in
+        // the tree. Row 0 is the root header, so screen row 4 is README.
+        keys::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 0,
+                row: 4,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.focus(), Focus::Sidebar, "a click does not steal focus");
+
         // Enter commits: focus moves to the viewer.
-        app.toggle_sidebar_focus();
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert_eq!(app.focus(), Focus::View);
         Ok(())

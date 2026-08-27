@@ -69,7 +69,11 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
                 app.set_pending(Some(']'));
                 Effect::None
             }
-            KeyCode::Char('c') if mode == Mode::Select => {
+            // With no selection, `c` annotates the cursor line.
+            KeyCode::Char('c')
+                if matches!(mode, Mode::Normal | Mode::Select)
+                    && app.view().pending().is_none() =>
+            {
                 app.start_comment();
                 Effect::None
             }
@@ -254,6 +258,7 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
         (KeyCode::Char(':'), _) => view.start_command(),
         (KeyCode::Char('v'), _) => view.select_chars(),
         (KeyCode::Char('V'), _) => view.select_lines(),
+        (KeyCode::Char('x'), _) => view.extend_line_below(),
         (KeyCode::Char('y'), _) if view.mode() == Mode::Select => return view.yank(),
         (KeyCode::Esc, _) => view.escape(),
         _ => {}

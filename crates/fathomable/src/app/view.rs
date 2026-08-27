@@ -763,6 +763,28 @@ impl View {
         self.toggle_select(true);
     }
 
+    /// `x` (Helix semantics): select the whole cursor line; each further
+    /// press takes in one more line below. A `v` selection widens to whole
+    /// lines first, keeping its anchor.
+    pub fn extend_line_below(&mut self) {
+        if self.mode == Mode::Select
+            && let Some(selection) = self.selection.as_mut()
+        {
+            if selection.linewise {
+                self.move_down(1);
+            } else {
+                selection.linewise = true;
+            }
+            return;
+        }
+        self.selection = Some(Selection {
+            anchor: self.cursor,
+            head: self.cursor,
+            linewise: true,
+        });
+        self.mode = Mode::Select;
+    }
+
     /// Vim semantics: the same key again leaves select mode, the other key
     /// switches the kind and keeps the anchor.
     fn toggle_select(&mut self, linewise: bool) {
@@ -1193,6 +1215,33 @@ mod tests {
         assert!(v.selection().is_some_and(|s| s.linewise));
         v.select_lines();
         assert_eq!(v.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn extend_line_below_grows_one_line_per_press_like_helix() {
+        let mut v = view();
+        // Row 4 is "- one"; first `x` selects just that line.
+        v.move_down(4);
+        v.extend_line_below();
+        assert_eq!(v.mode(), Mode::Select);
+        assert!(v.selection().is_some_and(|s| s.linewise));
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 5)));
+        // Each further press takes in the next line down.
+        v.extend_line_below();
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 6)));
+        v.extend_line_below();
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 7)));
+        // A `v` selection widens to whole lines before growing.
+        v.escape();
+        v.goto_top();
+        v.move_down(4);
+        v.move_right();
+        v.select_chars();
+        v.extend_line_below();
+        assert!(v.selection().is_some_and(|s| s.linewise));
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 5)));
+        v.extend_line_below();
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 6)));
     }
 
     #[test]

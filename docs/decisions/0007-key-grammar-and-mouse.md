@@ -29,7 +29,9 @@ the mouse.
   (2026-08-27): the wheel scrolls the text or the thread pane it is over
   — over the tree it steps one row per tick, showing the file it lands on
   (amended 2026-08-27, [0023](0023-sidebar-paging.md)) — and a click
-  focuses the pane it is over (the tree's header row included).
+  focuses the pane it is over. On the tree that pane is the tree itself,
+  even when the click lands on a file and shows it in the main pane
+  ([0023](0023-sidebar-paging.md)).
   A press on the tree's divider column or on the thread pane's top rule
   starts a drag that resizes it; the tree keeps at least 8 columns and
   leaves the text 20, the thread pane keeps at least 3 rows and leaves
@@ -42,7 +44,11 @@ the mouse.
   cursor, mouse release copies the source Markdown via OSC 52, `/` is regex,
   only `:q` quits (`Ctrl-c` was dropped 2026-08-26 to match vim/helix). [0013](0013-annotation-storage-and-ux.md)
   (2026-08-26) then removed copy-on-release: a mouse selection stays in
-  `SEL` mode where `y` copies and `c` comments.
+  `SEL` mode where `y` copies and `c` comments. With nothing selected,
+  `c` comments on the cursor line (2026-08-27).
+- One Helix key rides along despite the vim grammar (2026-08-27): `x`
+  selects the whole cursor line and each further press takes in one more
+  line below; a `v` selection widens to whole lines first.
 - Layout: a toggleable tree sidebar on the left plus a fuzzy file picker
   popup; one bottom line shared by status, `:` and `/` input, and key hints.
 - Follow mode: when an agent marks a file via `follow` or edits one, the

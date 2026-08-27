@@ -64,7 +64,8 @@ shows the full list inside the app.
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, clear |
 | `:follow`, `:status` | toggle auto-jump; session and path overlay |
-| `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
+| `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
+| `c` with nothing selected | comment on the cursor line |
 | `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc` | newline, submit, cancel (twice on a draft) |
@@ -83,7 +84,9 @@ terminals and multiplexers.
 
 The mouse works on whichever pane it is over: the wheel scrolls the text
 or the thread pane under the pointer — over the tree it steps one row per
-tick, showing each file it lands on — and a click focuses the pane.
+tick, showing each file it lands on — and a click focuses the pane. A
+click in the tree stays in the tree: it expands a directory or shows a
+file like the wheel does, and only `Enter` moves focus to the view.
 Drag the tree's divider or the thread pane's top rule to resize them.
 Starting on a directory opens the tree; starting on a file opens the file.
 

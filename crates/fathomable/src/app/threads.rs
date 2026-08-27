@@ -695,6 +695,8 @@ mod tests {
     use fathomable_core::annotations::Author;
     use fathomable_core::session::{Request, Response};
 
+    use anyhow::Context as _;
+
     use crate::app::Focus;
 
     use fathomable_core::editor::{Cursor, Edit, Motion};
@@ -1271,6 +1273,71 @@ mod tests {
         app.drag_to(0, app.pane_rows() - 12);
         app.end_drag();
         assert_eq!(app.compose_rows(), 12);
+        Ok(())
+    }
+
+    /// Every pane, popup and overlay draws at any terminal size a terminal
+    /// emulator can report, down to a single cell.
+    #[test]
+    fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let dir = TempDir::new("sizes")?;
+        let mut app = dir.app()?;
+        app.view_mut().move_down(2);
+        app.view_mut().select_lines();
+        app.start_comment();
+        type_in(&mut app, "a question about this line");
+        app.compose_submit();
+        let id = app.marks()[0].id().clone();
+        app.agent_reply(
+            &id,
+            Author::Agent {
+                name: "Copilot".to_owned(),
+                client: None,
+            },
+            (1..=12)
+                .map(|n| format!("line {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            true,
+        )
+        .map_err(anyhow::Error::msg)?;
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::ui::Theme::from_core(&core);
+        let draw = |app: &mut App, state: &str| -> anyhow::Result<()> {
+            for width in [1u16, 2, 4, 8, 12, 20, 40, 80] {
+                for height in 1..=6u16 {
+                    app.resize(usize::from(width), usize::from(height));
+                    let mut terminal = Terminal::new(TestBackend::new(width, height))?;
+                    terminal
+                        .draw(|frame| crate::app::ui::draw(frame, app, &theme))
+                        .with_context(|| format!("{state} at {width}x{height}"))?;
+                }
+            }
+            app.resize(100, 30);
+            Ok(())
+        };
+
+        draw(&mut app, "text")?;
+        app.show_sidebar();
+        draw(&mut app, "sidebar")?;
+        app.open_thread(id);
+        draw(&mut app, "thread")?;
+        app.thread_reply();
+        type_in(&mut app, "a reply long enough to wrap more than once over");
+        draw(&mut app, "compose over thread")?;
+        app.close_popup();
+        app.open_help();
+        draw(&mut app, "help")?;
+        app.close_popup();
+        app.open_status();
+        draw(&mut app, "status")?;
+        app.close_popup();
+        app.open_picker(crate::app::PickerKind::Files);
+        draw(&mut app, "picker")?;
         Ok(())
     }
 }

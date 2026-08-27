@@ -4,7 +4,8 @@
 //! A missing file is valid and yields [`Config::default`]. Every node the
 //! file may contain is known; an unknown node is an error with a location
 //! rather than being ignored, so typos surface immediately. `theme` and the
-//! `follow` block (ADR 0015) are understood.
+//! `follow` block (ADR 0015) and the `markdown` block (ADR 0016) are
+//! understood.
 //!
 //! # Examples
 //!
@@ -31,6 +32,40 @@ use crate::follow::Source;
 pub struct Config {
     theme: Option<String>,
     follow: FollowConfig,
+    markdown: MarkdownConfig,
+}
+
+/// The `markdown { ... }` block (ADR 0016): which files render as Markdown.
+/// Everything else opens as highlighted source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkdownConfig {
+    /// Extensions, lowercase, without the dot.
+    pub extensions: Vec<String>,
+    /// Whether files with no extension (README, LICENSE) count.
+    pub extensionless: bool,
+}
+
+impl Default for MarkdownConfig {
+    fn default() -> Self {
+        Self {
+            extensions: ["md", "markdown", "mdx"].map(str::to_owned).to_vec(),
+            extensionless: true,
+        }
+    }
+}
+
+impl MarkdownConfig {
+    /// Whether `path` should render as Markdown.
+    #[must_use]
+    pub fn matches(&self, path: &Path) -> bool {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some(ext) => {
+                let ext = ext.to_ascii_lowercase();
+                self.extensions.contains(&ext)
+            }
+            None => self.extensionless,
+        }
+    }
 }
 
 /// The `follow { ... }` block (ADR 0015).
@@ -139,22 +174,7 @@ impl Config {
                                     })?;
                             }
                             "auto" => follow.auto = one_bool(child, line)?,
-                            "ignore" => {
-                                follow.ignore = child
-                                    .entries()
-                                    .iter()
-                                    .filter(|e| e.name().is_none())
-                                    .map(|e| {
-                                        e.value().as_string().map(str::to_owned).ok_or_else(|| {
-                                            ConfigError {
-                                                path: None,
-                                                line,
-                                                message: "`ignore` takes strings".to_owned(),
-                                            }
-                                        })
-                                    })
-                                    .collect::<Result<_, _>>()?;
-                            }
+                            "ignore" => follow.ignore = strings(child, line, "ignore")?,
                             "hint-debounce" => follow.hint_debounce = millis(child, line)?,
                             "jump-debounce" => follow.jump_debounce = millis(child, line)?,
                             "seen-idle" => follow.seen_idle = millis(child, line)?,
@@ -164,6 +184,35 @@ impl Config {
                                     path: None,
                                     line,
                                     message: format!("unknown follow setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
+                "markdown" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`markdown` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        let markdown = &mut config.markdown;
+                        match child.name().value() {
+                            "extensions" => {
+                                markdown.extensions = strings(child, line, "extensions")?
+                                    .into_iter()
+                                    .map(|ext| ext.trim_start_matches('.').to_ascii_lowercase())
+                                    .collect();
+                            }
+                            "extensionless" => markdown.extensionless = one_bool(child, line)?,
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown markdown setting `{other}`"),
                                 });
                             }
                         }
@@ -192,6 +241,30 @@ impl Config {
     pub fn follow(&self) -> &FollowConfig {
         &self.follow
     }
+
+    /// Which files render as Markdown (ADR 0016).
+    #[must_use]
+    pub fn markdown(&self) -> &MarkdownConfig {
+        &self.markdown
+    }
+}
+
+/// Every positional string argument of `node`.
+fn strings(node: &KdlNode, line: Option<usize>, name: &str) -> Result<Vec<String>, ConfigError> {
+    node.entries()
+        .iter()
+        .filter(|e| e.name().is_none())
+        .map(|e| {
+            e.value()
+                .as_string()
+                .map(str::to_owned)
+                .ok_or_else(|| ConfigError {
+                    path: None,
+                    line,
+                    message: format!("`{name}` takes strings"),
+                })
+        })
+        .collect()
 }
 
 /// The single positional argument of `node`, if it is exactly one.
@@ -305,6 +378,45 @@ follow {
         assert_eq!(follow.jump_debounce, Duration::from_secs(2));
         assert_eq!(follow.seen_idle, Duration::from_millis(10));
         assert_eq!(follow.toast, Duration::ZERO);
+    }
+
+    #[test]
+    fn markdown_block_parses_and_matches() {
+        let config =
+            Config::parse("markdown { extensions \".MD\" \"txt\"\n extensionless #false }")
+                .unwrap_or_default();
+        let markdown = config.markdown();
+        assert_eq!(markdown.extensions, ["md", "txt"]);
+        assert!(!markdown.extensionless);
+        assert!(markdown.matches(Path::new("a/Notes.Md")));
+        assert!(markdown.matches(Path::new("x.txt")));
+        assert!(!markdown.matches(Path::new("README")));
+        assert!(!markdown.matches(Path::new("main.rs")));
+    }
+
+    #[test]
+    fn markdown_defaults_cover_readme_and_md() {
+        let markdown = MarkdownConfig::default();
+        assert!(markdown.matches(Path::new("README")));
+        assert!(markdown.matches(Path::new("docs/guide.md")));
+        assert!(markdown.matches(Path::new("x.mdx")));
+        assert!(!markdown.matches(Path::new("Cargo.toml")));
+        assert!(!markdown.matches(Path::new("src/main.rs")));
+    }
+
+    #[test]
+    fn markdown_errors_name_the_line() {
+        for (text, needle) in [
+            ("markdown { nope 1 }", "unknown markdown setting"),
+            ("markdown { extensions 1 }", "takes strings"),
+            ("markdown \"x\"", "block"),
+        ] {
+            let error = Config::parse(text)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(error.contains(needle), "{text}: {error}");
+        }
     }
 
     #[test]

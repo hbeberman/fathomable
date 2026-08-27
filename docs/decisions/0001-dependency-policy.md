@@ -38,7 +38,7 @@ Approved core set:
 | `tokio` | Tokio org | async runtime for file watching, sockets, MCP stdio |
 | `notify` | notify-rs org | filesystem change notification |
 | `pulldown-cmark` | pulldown-cmark org | CommonMark + GFM parsing with byte offsets |
-| `syntect` (`default-fancy`, no `onig`) | trishume; used by bat, delta, zola | syntax highlighting, themes |
+| `syntect` (`parsing`, `default-syntaxes`, `default-themes`, `regex-fancy`, `dump-load`; no `onig`) | trishume; used by bat, delta, zola | syntax highlighting, themes (added 2026-08-26, [0016](0016-syntax-highlighting.md)) |
 | `gix` | GitoxideLabs org | git status, diff, blob access |
 | `rmcp` | modelcontextprotocol org | MCP server SDK |
 | `serde`, `serde_json` | dtolnay | annotation and session serialization |
@@ -60,6 +60,11 @@ Rules:
   source list, and `wildcards = deny`.
 - Crates that build C code (`*-sys`, `openssl`, `onig`, `libgit2`) are not
   banned but each requires its own decision record before it lands.
+- Advisory ignores in `deny.toml` are for "unmaintained" notices only, each
+  with a reason and the decision record that accepted it; a vulnerability is
+  never ignored. (Added 2026-08-26: RUSTSEC-2025-0141 for `bincode` 1.3.3,
+  which syntect's bundled dumps require; see
+  [0016](0016-syntax-highlighting.md).)
 - XDG directory resolution is implemented from environment variables in the
   standard library rather than adding a crate.
 - The toolchain is pinned to a specific stable release in

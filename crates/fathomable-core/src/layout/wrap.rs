@@ -191,26 +191,39 @@ fn break_word(lines: &mut Vec<Line>, line: &mut Builder, word: &Word<'_>, width:
 
 /// Hard-wrap `chunk` between grapheme clusters, never at words.
 pub(super) fn wrap_hard(chunk: &Chunk, width: usize) -> Vec<Line> {
+    wrap_hard_chunks(std::slice::from_ref(chunk), width)
+}
+
+/// Hard-wrap `chunks`, which together form one source line, between
+/// grapheme clusters; a style change never forces a break.
+pub(super) fn wrap_hard_chunks(chunks: &[Chunk], width: usize) -> Vec<Line> {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = Builder::default();
-    let mut start = 0;
-    for (offset, grapheme) in graphemes(&chunk.text) {
-        let cell = display_width(grapheme);
-        if line.width + cell > width && line.width > 0 {
-            line.push(chunk, start..offset);
-            lines.push(Line::from_spans(std::mem::take(&mut line.spans)));
-            line.width = 0;
-            start = offset;
+    for chunk in chunks {
+        let mut start = 0;
+        for (offset, grapheme) in graphemes(&chunk.text) {
+            let cell = display_width(grapheme);
+            if line.width + cell > width && line.width > 0 {
+                line.push(chunk, start..offset);
+                lines.push(Line::from_spans(std::mem::take(&mut line.spans)));
+                line.width = 0;
+                start = offset;
+            }
+            line.width += cell;
         }
-        line.width += cell;
+        let used = line.width;
+        line.width = 0;
+        line.push(chunk, start..chunk.text.len());
+        line.width = used;
     }
-    line.width = 0;
-    line.push(chunk, start..chunk.text.len());
     lines.push(Line::from_spans(std::mem::take(&mut line.spans)));
     // An empty source line still has a (zero-length) range for the gutter.
-    if lines.len() == 1 && lines[0].source.is_none() {
-        lines[0].source.clone_from(&chunk.source);
+    if lines.len() == 1
+        && lines[0].source.is_none()
+        && let Some(first) = chunks.first()
+    {
+        lines[0].source.clone_from(&first.source);
     }
     lines
 }

@@ -8,6 +8,7 @@ use std::process::ExitCode;
 
 use fathomable_core::XdgDirs;
 use fathomable_core::config::Config;
+use fathomable_core::highlight::{self, Highlighter};
 use fathomable_core::session::Record;
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
 use fathomable_core::workspace::Workspace;
@@ -66,7 +67,26 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
         if config.follow().auto { "on" } else { "off" }
     );
     match Theme::load(&theme_name, dirs) {
-        Ok(theme) => println!("  ok    theme `{}` loaded", theme.name()),
+        Ok(theme) => {
+            println!("  ok    theme `{}` loaded", theme.name());
+            match Highlighter::new(theme.syntect()) {
+                Ok(highlighter) if highlighter.is_enabled() => {
+                    println!(
+                        "  ok    code highlighting with syntect theme `{}`",
+                        theme.syntect()
+                    );
+                }
+                Ok(_) => println!("  ok    code highlighting off (code.syntect unset)"),
+                Err(error) => {
+                    ok = false;
+                    println!("  FAIL  {error}");
+                }
+            }
+            println!(
+                "  ok    bundled syntect themes: {}",
+                highlight::theme_names().join(", ")
+            );
+        }
         Err(error) => {
             ok = false;
             println!("  FAIL  {error}");

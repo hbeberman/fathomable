@@ -15,6 +15,7 @@ mod view;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -28,9 +29,10 @@ use crossterm::terminal::{
 };
 use fathomable_core::Document;
 use fathomable_core::annotations::{Store, ThreadId};
-use fathomable_core::config::FollowConfig;
+use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
 use fathomable_core::follow::{Change, Delta, Ignore, Queue, Source, Target};
+use fathomable_core::highlight::Highlighter;
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
 use fathomable_core::session::{FollowState, Record, Request, Response};
@@ -44,7 +46,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 pub use threads::{Compose, Mark, ThreadPanel};
-use view::{Effect, View};
+use view::{Effect, Syntax, View};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
@@ -282,6 +284,10 @@ pub struct App {
     followed: Vec<PathBuf>,
     record: Option<Record>,
     follow: FollowConfig,
+    /// Code highlighting shared by every view (ADR 0016).
+    highlighter: Arc<Highlighter>,
+    /// Which files render as Markdown (ADR 0016).
+    markdown: MarkdownConfig,
     source: Source,
     auto: bool,
     ignore: Ignore,
@@ -337,6 +343,8 @@ impl App {
             source: follow.source,
             auto: follow.auto,
             follow,
+            highlighter: Arc::new(Highlighter::plain()),
+            markdown: MarkdownConfig::default(),
             ignore,
             queue: Queue::default(),
             toasts: Vec::new(),
@@ -351,6 +359,26 @@ impl App {
     /// The session record, so `session_info` can be answered with state.
     pub fn set_record(&mut self, record: Record) {
         self.record = Some(record);
+    }
+
+    /// Install the highlighter and the Markdown file list (ADR 0016) for
+    /// files opened from now on.
+    pub fn set_syntax(&mut self, highlighter: Arc<Highlighter>, markdown: MarkdownConfig) {
+        self.highlighter = highlighter;
+        self.markdown = markdown;
+    }
+
+    /// How a root-relative `path` should be coloured and first displayed.
+    fn syntax_for(&self, path: &Path) -> Syntax {
+        Syntax {
+            highlighter: Arc::clone(&self.highlighter),
+            hint: path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_default(),
+            markdown: self.markdown.matches(path),
+        }
     }
 
     /// The last-seen snapshot store (ADR 0015); without one there is no
@@ -832,7 +860,12 @@ impl App {
             let absolute = self.workspace.root().join(&relative);
             match Document::load(&absolute) {
                 Ok(document) => {
-                    let view = View::new(document.text().to_owned(), 1, 1);
+                    let view = View::with_syntax(
+                        document.text().to_owned(),
+                        1,
+                        1,
+                        self.syntax_for(&relative),
+                    );
                     self.docs.push(Doc {
                         document,
                         relative: relative.clone(),
@@ -1318,6 +1351,10 @@ pub struct Options<'a> {
     pub follow: FollowConfig,
     /// The last-seen snapshot store, or `None` when it could not be opened.
     pub seen: Option<seen::Store>,
+    /// Code highlighting for fences and source files (ADR 0016).
+    pub highlighter: Arc<Highlighter>,
+    /// Which files render as Markdown (ADR 0016).
+    pub markdown: MarkdownConfig,
 }
 
 /// Run the app until the user quits.
@@ -1492,6 +1529,7 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
     );
     app.set_record(options.record.clone());
     app.set_seen_store(options.seen);
+    app.set_syntax(options.highlighter, options.markdown);
     let watching = doc_watcher.watch_root(app.workspace().root());
     app.set_watching_root(watching);
     if let Some(path) = &options.open {
@@ -1590,7 +1628,10 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use fathomable_core::config::FollowConfig;
+    use std::sync::Arc;
+
+    use fathomable_core::config::{FollowConfig, MarkdownConfig};
+    use fathomable_core::highlight::Highlighter;
     use fathomable_core::workspace::{Workspace, WorkspaceError};
 
     use super::{App, Focus, PickerKind, Popup};
@@ -1637,6 +1678,48 @@ mod tests {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    #[test]
+    fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result<()> {
+        let dir = TempDir::new("syntax")?;
+        fs::write(dir.0.join("main.rs"), "fn main() {}\n")?;
+        fs::write(dir.0.join("LICENSE"), "# Terms\n")?;
+        let mut app = app(&dir)?;
+        app.set_syntax(
+            Arc::new(Highlighter::new("base16-ocean.dark")?),
+            MarkdownConfig::default(),
+        );
+        app.open(Path::new("main.rs"));
+        assert!(app.view().source_view(), "a .rs file opens as source");
+        let coloured = app.view().layout().lines()[0]
+            .spans()
+            .iter()
+            .any(|span| span.style().fg.is_some());
+        assert!(coloured, "the source layout is highlighted by extension");
+        app.open(Path::new("README.md"));
+        assert!(!app.view().source_view(), "Markdown opens rendered");
+        assert_eq!(app.view().layout().lines()[0].text(), "Readme");
+        app.open(Path::new("LICENSE"));
+        assert!(
+            !app.view().source_view(),
+            "extensionless files render as Markdown"
+        );
+
+        // A narrower list flips both.
+        let mut app = self::app(&dir)?;
+        app.set_syntax(
+            Arc::new(Highlighter::plain()),
+            MarkdownConfig {
+                extensions: vec!["rs".to_owned()],
+                extensionless: false,
+            },
+        );
+        app.open(Path::new("LICENSE"));
+        assert!(app.view().source_view());
+        app.open(Path::new("main.rs"));
+        assert!(!app.view().source_view());
+        Ok(())
     }
 
     #[test]

@@ -41,6 +41,13 @@ A file argument opens the workspace *and* shows that file. The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
+Markdown files (`.md`, `.markdown`, `.mdx`, and extensionless files such as
+`README`) open rendered; every other file opens as syntax-highlighted
+source, coloured by its extension. Fenced code blocks inside Markdown are
+coloured by their info string (` ```rust `). A language syntect does not
+bundle (TOML, KDL, Dockerfile among them) shows plain. `gs` still flips any
+file between the two views.
+
 ## 3. Keys
 
 Vim-style movement in the view; `Space` opens a Helix-style menu. `Space ?`
@@ -134,16 +141,25 @@ follow {
     seen-idle 5000          // ms alone with a file before it counts as seen
     toast 4000              // ms a toast stays; 0 disables toasts
 }
+
+markdown {
+    extensions "md" "markdown" "mdx"   // files rendered as Markdown
+    extensionless #true                // README, LICENSE, ... too
+}
 ```
 
-Every key is optional; the values above are the defaults.
+Every key is optional; the values above are the defaults and
+`--config-show` prints the effective ones.
 
 Built-in themes are `default-dark` and `default-light`. Drop your own at
 `~/.config/fathomable/themes/<name>.kdl`; it can `inherits` a built-in and
 override only the keys it wants. `--theme NAME` selects one for a single
 run; `--config PATH` points at another config file. The theme file shape
 and the key vocabulary are in
-[0011](decisions/0011-theme-schema.md).
+[0011](decisions/0011-theme-schema.md). A theme's `code.syntect` picks one
+of syntect's bundled themes for code colours (`--doctor` lists them); only
+their foreground colours are used, so a transparent background stays
+transparent ([0016](decisions/0016-syntax-highlighting.md)).
 
 ## 8. Connect an agent
 

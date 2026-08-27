@@ -5,10 +5,12 @@
 //! without a terminal; `ui` draws it and `keys` drives it.
 
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Diff, LineStatus};
+use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, LineIndex, display_width};
 use regex::Regex;
 
@@ -127,10 +129,34 @@ impl BaseKind {
     }
 }
 
+/// How a view colours and initially displays its text (ADR 0016).
+#[derive(Debug, Clone)]
+pub struct Syntax {
+    /// The shared highlighter.
+    pub highlighter: Arc<Highlighter>,
+    /// Language hint for the source layout: the file extension, or empty.
+    pub hint: String,
+    /// Whether the file opens rendered as Markdown rather than as source.
+    pub markdown: bool,
+}
+
+impl Syntax {
+    /// Plain Markdown: no colours, rendered first.
+    #[must_use]
+    pub fn plain() -> Self {
+        Self {
+            highlighter: Arc::new(Highlighter::plain()),
+            hint: String::new(),
+            markdown: true,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct View {
     text: String,
     layout: Layout,
+    syntax: Syntax,
     width: usize,
     height: usize,
     display: Display,
@@ -159,15 +185,31 @@ pub struct View {
 }
 
 impl View {
-    /// Lay `text` out for a text area of `width` by `height` cells.
+    /// Lay `text` out for a text area of `width` by `height` cells, as
+    /// uncoloured Markdown.
     pub fn new(text: String, width: usize, height: usize) -> Self {
-        let layout = Layout::render(&text, width);
+        Self::with_syntax(text, width, height, Syntax::plain())
+    }
+
+    /// Lay `text` out for a text area of `width` by `height` cells,
+    /// coloured and initially displayed as `syntax` says.
+    pub fn with_syntax(text: String, width: usize, height: usize, syntax: Syntax) -> Self {
+        let display = if syntax.markdown {
+            Display::Rendered
+        } else {
+            Display::Source
+        };
+        let layout = match display {
+            Display::Rendered => Layout::render_with(&text, width, &syntax.highlighter),
+            _ => Layout::source_with(&text, width, &syntax.hint, &syntax.highlighter),
+        };
         Self {
             text,
             layout,
+            syntax,
             width,
             height: height.max(1),
-            display: Display::Rendered,
+            display,
             seen: None,
             head: None,
             base_kind: BaseKind::Seen,
@@ -437,9 +479,16 @@ impl View {
         let (line, column) = self.source_position();
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
         self.layout = match (self.display, self.base()) {
-            (Display::Source, _) => Layout::source(&self.text, self.width),
+            (Display::Source, _) => Layout::source_with(
+                &self.text,
+                self.width,
+                &self.syntax.hint,
+                &self.syntax.highlighter,
+            ),
             (Display::Diff, Some(base)) => Layout::diff(base, &self.text, self.width),
-            (Display::Rendered | Display::Diff, _) => Layout::render(&self.text, self.width),
+            (Display::Rendered | Display::Diff, _) => {
+                Layout::render_with(&self.text, self.width, &self.syntax.highlighter)
+            }
         };
         let index = self.layout.index();
         let line = line.min(index.line_count());

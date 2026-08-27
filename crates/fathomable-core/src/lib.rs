@@ -11,6 +11,7 @@ pub mod config;
 pub mod diff;
 mod document;
 pub mod follow;
+pub mod highlight;
 pub mod layout;
 pub mod picker;
 pub mod seen;

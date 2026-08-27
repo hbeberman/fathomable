@@ -29,6 +29,8 @@ mod wrap;
 use std::ops::Range;
 
 use crate::diff::DiffKind;
+use crate::highlight::Highlighter;
+use crate::theme::Color;
 
 use blocks::{Align, Block, Inline, Item, Table};
 pub use text::{LineIndex, display_width};
@@ -74,6 +76,9 @@ pub struct Style {
     pub strong: bool,
     /// Struck-through text.
     pub strikethrough: bool,
+    /// A syntax-highlighting foreground that overrides the face's colour
+    /// (ADR 0016).
+    pub fg: Option<Color>,
 }
 
 impl Style {
@@ -94,6 +99,14 @@ pub struct Span {
 }
 
 impl Span {
+    fn from_chunk(chunk: Chunk) -> Self {
+        Self {
+            text: chunk.text,
+            style: chunk.style,
+            source: chunk.source,
+        }
+    }
+
     /// The rendered text.
     #[must_use]
     pub fn text(&self) -> &str {
@@ -271,14 +284,23 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// Lay `text` out as rendered Markdown wrapped to `width` cells.
+    /// Lay `text` out as rendered Markdown wrapped to `width` cells, with
+    /// code blocks left plain.
     #[must_use]
     pub fn render(text: &str, width: usize) -> Self {
+        Self::render_with(text, width, &Highlighter::plain())
+    }
+
+    /// Lay `text` out as rendered Markdown wrapped to `width` cells,
+    /// colouring fenced code blocks by their info string (ADR 0016).
+    #[must_use]
+    pub fn render_with(text: &str, width: usize, highlighter: &Highlighter) -> Self {
         let index = LineIndex::new(text);
         let mut renderer = Renderer {
             text,
             width: width.max(1),
             lines: Vec::new(),
+            highlighter,
         };
         renderer.blocks(&blocks::parse(text), "", "");
         while renderer.lines.last().is_some_and(is_blank) {
@@ -290,14 +312,25 @@ impl Layout {
     /// Lay `text` out verbatim, one source line per rendered line before wrapping.
     #[must_use]
     pub fn source(text: &str, width: usize) -> Self {
+        Self::source_with(text, width, "", &Highlighter::plain())
+    }
+
+    /// Lay `text` out verbatim as [`Self::source`], coloured as the language
+    /// `hint` names (a file extension or fence token, ADR 0016). An unknown
+    /// hint leaves the text plain.
+    #[must_use]
+    pub fn source_with(text: &str, width: usize, hint: &str, highlighter: &Highlighter) -> Self {
         let index = LineIndex::new(text);
+        let runs = highlighter.highlight(text, hint);
         let mut lines = Vec::new();
         for line in 1..=index.line_count() {
             let Some(range) = index.range_of(line) else {
                 continue;
             };
-            let chunk = Chunk::new(&text[range.clone()], Style::default(), Some(range));
-            lines.extend(wrap_hard(&chunk, width));
+            let source = &text[range.clone()];
+            let line_runs = runs.as_ref().and_then(|runs| runs.get(line - 1));
+            let chunks = coloured_chunks(source, range.start, &Style::default(), line_runs);
+            lines.extend(wrap_hard_all(&chunks, width));
         }
         Self::finish(lines, width, index)
     }
@@ -427,6 +460,7 @@ struct Renderer<'a> {
     text: &'a str,
     width: usize,
     lines: Vec<Line>,
+    highlighter: &'a Highlighter,
 }
 
 impl Renderer<'_> {
@@ -463,8 +497,11 @@ impl Renderer<'_> {
                 };
                 self.paragraph(inlines, &style, first, rest);
             }
-            Block::Code { text, source } | Block::Html { text, source } => {
-                self.code(text, source.clone(), first, rest);
+            Block::Code { text, source, lang } => {
+                self.code(text, source.clone(), lang, first, rest);
+            }
+            Block::Html { text, source } => {
+                self.code(text, source.clone(), "", first, rest);
             }
             Block::List { start, items } => self.list(*start, items, first, rest),
             Block::Quote(blocks) => {
@@ -507,31 +544,43 @@ impl Renderer<'_> {
     }
 
     /// Code lines are never wrapped; the frontend truncates or scrolls them.
-    fn code(&mut self, text: &str, source: Range<usize>, first: &str, rest: &str) {
+    /// A non-empty `lang` colours the block through the highlighter.
+    fn code(&mut self, text: &str, source: Range<usize>, lang: &str, first: &str, rest: &str) {
         let style = Style {
             face: Face::CodeBlock,
             ..Style::default()
+        };
+        let runs = if lang.is_empty() {
+            None
+        } else {
+            self.highlighter.highlight(text, lang)
         };
         // Locate each rendered line inside the block's source so selection
         // maps to the exact bytes even when the fence is indented.
         let block = self.text.get(source.clone()).unwrap_or("");
         let mut cursor = 0;
         let mut prefix = first;
-        for line in text.lines() {
+        for (index, line) in text.lines().enumerate() {
             let found = block.get(cursor..).and_then(|rest| rest.find(line));
             let range = found.map(|pos| {
                 let start = source.start + cursor + pos;
                 cursor = (cursor + pos + line.len() + 1).min(block.len());
                 start..start + line.len()
             });
-            let spans = if line.is_empty() {
-                Vec::new()
-            } else {
-                vec![Span {
+            let line_runs = runs.as_ref().and_then(|runs| runs.get(index));
+            let spans = match (&range, line_runs) {
+                (Some(range), Some(line_runs)) if !line_runs.is_empty() => {
+                    coloured_chunks(line, range.start, &style, Some(line_runs))
+                        .into_iter()
+                        .map(Span::from_chunk)
+                        .collect()
+                }
+                _ if line.is_empty() => Vec::new(),
+                _ => vec![Span {
                     text: line.to_owned(),
                     style: style.clone(),
                     source: range.clone(),
-                }]
+                }],
             };
             let mut rendered = Line::from_spans(spans);
             if rendered.source.is_none() {
@@ -677,6 +726,58 @@ impl Renderer<'_> {
 }
 
 /// Shrink the widest columns until they fit `avail`, never below three cells.
+/// Split one source line into chunks, one per highlighter run plus plain
+/// gaps, each carrying its source range offset by `base`.
+fn coloured_chunks(
+    line: &str,
+    base: usize,
+    style: &Style,
+    runs: Option<&Vec<crate::highlight::Run>>,
+) -> Vec<Chunk> {
+    let mut pieces: Vec<(Range<usize>, Option<Color>)> = Vec::new();
+    let mut at = 0;
+    for run in runs.into_iter().flatten() {
+        let end = run.range.end.min(line.len());
+        if run.range.start > at {
+            pieces.push((at..run.range.start.min(end), None));
+        }
+        pieces.push((run.range.start.max(at)..end, Some(run.fg)));
+        at = at.max(end);
+    }
+    if at < line.len() || pieces.is_empty() {
+        pieces.push((at..line.len(), None));
+    }
+    let chunks: Vec<Chunk> = pieces
+        .into_iter()
+        .filter(|(range, _)| {
+            !range.is_empty()
+                && line.is_char_boundary(range.start)
+                && line.is_char_boundary(range.end)
+        })
+        .map(|(range, fg)| {
+            let style = Style {
+                fg,
+                ..style.clone()
+            };
+            Chunk::new(
+                &line[range.clone()],
+                style,
+                Some(base + range.start..base + range.end),
+            )
+        })
+        .collect();
+    if chunks.is_empty() {
+        // An empty line keeps a zero-length range so the gutter numbers it.
+        return vec![Chunk::new("", style.clone(), Some(base..base))];
+    }
+    chunks
+}
+
+/// Hard-wrap a sequence of chunks that together form one source line.
+fn wrap_hard_all(chunks: &[Chunk], width: usize) -> Vec<Line> {
+    wrap::wrap_hard_chunks(chunks, width)
+}
+
 fn shrink(widths: &mut [usize], avail: usize) {
     const MIN: usize = 3;
     while widths.iter().sum::<usize>() > avail {

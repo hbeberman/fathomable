@@ -270,3 +270,106 @@ fn list_items_ending_with_links_stay_separate() {
     let layout = Layout::render(src, 40);
     assert_eq!(texts(&layout), ["• one", "• two (note)", "• three"]);
 }
+
+// ADR 0016: highlighted code blocks and source files.
+
+#[test]
+fn fenced_block_is_coloured_by_its_info_string() -> TestResult {
+    use fathomable_core::highlight::Highlighter;
+    let highlighter = Highlighter::new("base16-ocean.dark")?;
+    let text = "Intro\n\n```rust\nfn main() {}\n```\n";
+    let plain = Layout::render(text, 40);
+    let coloured = Layout::render_with(text, 40, &highlighter);
+    assert_eq!(
+        texts(&plain),
+        texts(&coloured),
+        "colour never changes the text"
+    );
+    let code = coloured
+        .lines()
+        .iter()
+        .find(|line| line.text() == "fn main() {}")
+        .ok_or("code line missing")?;
+    assert!(
+        code.spans().len() > 1,
+        "keyword and body are separate spans"
+    );
+    assert!(
+        code.spans()
+            .iter()
+            .all(|s| s.style().face == Face::CodeBlock)
+    );
+    assert!(code.spans().iter().any(|s| s.style().fg.is_some()));
+    // Every span still maps to its exact source bytes.
+    for span in code.spans() {
+        let source = span.source().ok_or("span without source")?;
+        assert_eq!(&text[source], span.text());
+    }
+    Ok(())
+}
+
+#[test]
+fn unknown_language_and_plain_highlighter_leave_code_uncoloured() -> TestResult {
+    use fathomable_core::highlight::Highlighter;
+    let highlighter = Highlighter::new("base16-ocean.dark")?;
+    for text in [
+        "```no-such-lang\nx = 1\n```\n",
+        "```\nx = 1\n```\n",
+        "    x = 1\n",
+    ] {
+        let layout = Layout::render_with(text, 40, &highlighter);
+        let code = layout
+            .lines()
+            .iter()
+            .find(|line| line.text().contains("x = 1"))
+            .ok_or("code line missing")?;
+        assert!(
+            code.spans().iter().all(|s| s.style().fg.is_none()),
+            "{text:?}"
+        );
+    }
+    let plain = Layout::render_with("```rust\nfn x() {}\n```\n", 40, &Highlighter::plain());
+    assert!(
+        plain
+            .lines()
+            .iter()
+            .flat_map(Line::spans)
+            .all(|s| s.style().fg.is_none())
+    );
+    Ok(())
+}
+
+#[test]
+fn source_layout_colours_by_extension_and_keeps_line_ranges() -> TestResult {
+    use fathomable_core::highlight::Highlighter;
+    let highlighter = Highlighter::new("base16-ocean.dark")?;
+    let text = "fn main() {\n\n    let long_name = 1;\n}\n";
+    let plain = Layout::source(text, 12);
+    let coloured = Layout::source_with(text, 12, "rs", &highlighter);
+    assert_eq!(
+        texts(&plain),
+        texts(&coloured),
+        "hard wrapping is unchanged"
+    );
+    assert!(coloured.lines().len() > 4, "the long line wraps");
+    for (a, b) in plain.lines().iter().zip(coloured.lines()) {
+        assert_eq!(a.source(), b.source(), "source ranges match plain layout");
+    }
+    // The empty line keeps its zero-length range for the gutter.
+    assert_eq!(coloured.lines()[1].source_line(), Some(2));
+    assert!(
+        coloured.lines()[0]
+            .spans()
+            .iter()
+            .any(|s| s.style().fg.is_some())
+    );
+    let unknown = Layout::source_with(text, 12, "zzz", &highlighter);
+    assert!(
+        unknown
+            .lines()
+            .iter()
+            .flat_map(Line::spans)
+            .all(|s| s.style().fg.is_none())
+    );
+    Ok(())
+}

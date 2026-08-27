@@ -424,6 +424,9 @@ fn face_style(theme: &Theme, face: &Face_) -> Style {
         Face::DiffHeader => theme.diff_delta,
     };
     let mut style = base;
+    if let Some(fg) = face.fg {
+        style = style.fg(convert_color(fg));
+    }
     if face.emphasis {
         style = style.add_modifier(Modifier::ITALIC);
     }

@@ -21,7 +21,8 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Rendered Mermaid diagrams** instead of a code block. Origin: initial
   planning. Likely needs image rendering first.
 - **Syntax highlighting inside Markdown inline code.** Origin: initial
-  planning; stretch goal.
+  planning; stretch goal. Reaffirmed parked in
+  [0016](decisions/0016-syntax-highlighting.md).
 - **Helix-style selection-first key grammar** as a config switch. Origin:
   [0007](decisions/0007-key-grammar-and-mouse.md).
 - **Keymap remapping** through KDL config. Origin: 0007.
@@ -60,14 +61,6 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 1 scaffolding follow-ups
 
-- **TODO: remaining approved dependencies.** `syntect` (core) is approved by
-  [0001](decisions/0001-dependency-policy.md) but not yet added: the
-  `unused-dependencies` gate (`cargo udeps`) rejects a dependency with no
-  consumer, and bypassing hooks is not allowed. Add it in the commit
-  that first uses it. Origin: milestone-1 scaffolding handoff (2026-08-26);
-  list trimmed after milestone 2 added `gix`, `serde`, `serde_json`,
-  `nucleo-matcher`, `notify`, `tokio`, and `ratatui`, and milestone 3
-  added `sha2`.
 - **TODO: horizontal scroll for code blocks.** The layout leaves code lines
   unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
   truncates them at the pane edge. Origin: milestone-1 layout engine.
@@ -75,10 +68,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   `ratatui` 0.30 has no hyperlink support in its buffer, so the viewer only
   colours `Face::Link` spans. Needs either a ratatui feature or raw escape
   output around the backend. Origin: milestone-1 viewer.
-- **TODO: `syntect` highlighting for code blocks.** Layout emits
-  `Face::CodeBlock` spans without a language; the theme names the syntect
-  theme via `code.syntect` ([0011](decisions/0011-theme-schema.md)) but
-  nothing reads it yet. Origin: milestone-1 layout engine.
 - **TODO: automatic tree refresh.** The sidebar re-reads directories only
   on `R` or expand; a recursive workspace watch was skipped for inotify
   budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).

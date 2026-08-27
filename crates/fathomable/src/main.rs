@@ -9,11 +9,14 @@ mod mcp;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use anyhow::Context;
 use clap::Parser;
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
+use fathomable_core::highlight::Highlighter;
 use fathomable_core::session::{Id, Record};
 use fathomable_core::theme::{DEFAULT_THEME, Theme};
 use fathomable_core::workspace::Workspace;
@@ -121,6 +124,13 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
     let theme = load_theme(cli, dirs)?;
     tracing::info!(theme = theme.name(), "theme loaded");
+    let highlighter = Highlighter::new(theme.syntect())
+        .with_context(|| format!("theme `{}`: code.syntect", theme.name()))?;
+    tracing::info!(
+        syntect = theme.syntect(),
+        enabled = highlighter.is_enabled(),
+        "highlighter loaded"
+    );
     let workspace = Workspace::discover(&path)?;
     let open = path.is_file().then(|| workspace.relative(&path));
 
@@ -163,6 +173,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             store,
             follow: config.follow().clone(),
             seen,
+            highlighter: Arc::new(highlighter),
+            markdown: config.markdown().clone(),
         },
     );
     if let Err(error) = record.remove(dirs) {
@@ -226,6 +238,16 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("    jump-debounce {}", follow.jump_debounce.as_millis());
     println!("    seen-idle {}", follow.seen_idle.as_millis());
     println!("    toast {}", follow.toast.as_millis());
+    println!("}}");
+    let markdown = config.markdown();
+    let extensions: Vec<String> = markdown
+        .extensions
+        .iter()
+        .map(|e| format!("{e:?}"))
+        .collect();
+    println!("markdown {{");
+    println!("    extensions {}", extensions.join(" "));
+    println!("    extensionless #{}", markdown.extensionless);
     println!("}}");
     ExitCode::SUCCESS
 }

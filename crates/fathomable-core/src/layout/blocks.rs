@@ -4,7 +4,7 @@
 use std::iter::Peekable;
 use std::ops::Range;
 
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use super::{Face, Style};
 
@@ -59,6 +59,8 @@ pub(super) enum Block {
     Code {
         text: String,
         source: Range<usize>,
+        /// The first word of the fence info string, empty when absent.
+        lang: String,
     },
     List {
         start: Option<u64>,
@@ -131,6 +133,17 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
         blocks
     }
 
+    /// The text events of a code or metadata block, trailing newlines trimmed.
+    fn code_text(&mut self) -> String {
+        let mut text = String::new();
+        while let Some((Event::Text(_), _)) = self.events.peek() {
+            if let Some((Event::Text(part), _)) = self.events.next() {
+                text.push_str(&part);
+            }
+        }
+        text.trim_end_matches('\n').to_owned()
+    }
+
     fn block(&mut self) -> Option<Block> {
         let (Event::Start(tag), range) = self.events.next()? else {
             return None;
@@ -138,18 +151,25 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
         let block = match tag {
             Tag::Paragraph => Block::Paragraph(self.inlines()),
             Tag::Heading { level, .. } => Block::Heading(level as u8, self.inlines()),
-            Tag::CodeBlock(_) | Tag::MetadataBlock(_) => {
-                let mut text = String::new();
-                while let Some((Event::Text(_), _)) = self.events.peek() {
-                    if let Some((Event::Text(part), _)) = self.events.next() {
-                        text.push_str(&part);
+            Tag::CodeBlock(kind) => {
+                let lang = match kind {
+                    CodeBlockKind::Fenced(info) => {
+                        info.split_whitespace().next().unwrap_or("").to_owned()
                     }
-                }
+                    CodeBlockKind::Indented => String::new(),
+                };
+                let text = self.code_text();
                 Block::Code {
-                    text: text.trim_end_matches('\n').to_owned(),
+                    text,
                     source: range,
+                    lang,
                 }
             }
+            Tag::MetadataBlock(_) => Block::Code {
+                text: self.code_text(),
+                source: range,
+                lang: String::new(),
+            },
             Tag::List(start) => Block::List {
                 start,
                 items: self.items(),

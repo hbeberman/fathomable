@@ -31,3 +31,6 @@ Milestones are ordered; each is usable on its own. Details live in the
 6. **Follow mode.** Change hints, badges, toasts, jump keys, debounced
    auto-jump, and the last-seen diff base
    ([0015](decisions/0015-follow-mode.md)).
+7. **Syntax highlighting.** `syntect` for fenced code blocks and whole
+   source files, plus the Markdown file list
+   ([0016](decisions/0016-syntax-highlighting.md)).

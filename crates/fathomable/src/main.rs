@@ -144,16 +144,6 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     tracing::info!(id = %record.id(), root = %record.root().display(), "session recorded");
 
     let config = Config::load(dirs, cli.config.as_deref())?;
-    let seen = match fathomable_core::seen::Store::open(&dirs.seen_dir(workspace.root())) {
-        Ok(seen) => {
-            tracing::info!(path = %seen.dir().display(), files = seen.len(), "last-seen snapshots loaded");
-            Some(seen)
-        }
-        Err(error) => {
-            tracing::error!(%error, "cannot open the snapshot store; no last-seen base");
-            None
-        }
-    };
     let store = match Store::open(dirs.threads_file(workspace.root())) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
@@ -161,6 +151,22 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
         }
         Err(error) => {
             tracing::error!(%error, "cannot open the thread store; annotations disabled");
+            None
+        }
+    };
+    // Snapshots of files with open threads are kept past their age so a
+    // thread edited offline can still be followed (ADR 0020).
+    let pinned = store.iter().flat_map(Store::open_paths);
+    let seen = match fathomable_core::seen::Store::open_pinned(
+        &dirs.seen_dir(workspace.root()),
+        pinned,
+    ) {
+        Ok(seen) => {
+            tracing::info!(path = %seen.dir().display(), files = seen.len(), "last-seen snapshots loaded");
+            Some(seen)
+        }
+        Err(error) => {
+            tracing::error!(%error, "cannot open the snapshot store; no last-seen base");
             None
         }
     };

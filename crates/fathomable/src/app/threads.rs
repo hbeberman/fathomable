@@ -426,6 +426,8 @@ impl App {
             Ok(id) => {
                 tracing::info!(%id, path = %path.display(), %range, "thread started");
                 self.refresh_marks(index);
+                // Commenting on lines means they were read (ADR 0020).
+                self.mark_seen(index);
                 self.view_mut().clear_selection();
                 self.notice(format!("annotated L{range}"));
             }

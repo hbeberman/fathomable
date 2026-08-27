@@ -64,6 +64,21 @@ impl Store {
     /// Returns the I/O error when the directory or log cannot be created
     /// or read; a malformed log line is skipped, not fatal.
     pub fn open(dir: &Path) -> io::Result<Self> {
+        Self::open_pinned(dir, std::iter::empty())
+    }
+
+    /// Open like [`open`](Self::open), but keep the snapshots of `pinned`
+    /// paths however old they are (ADR 0020: files with open threads).
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error when the directory or log cannot be created
+    /// or read; a malformed log line is skipped, not fatal.
+    pub fn open_pinned<'a>(
+        dir: &Path,
+        pinned: impl IntoIterator<Item = &'a Path>,
+    ) -> io::Result<Self> {
+        let pinned: HashSet<&Path> = pinned.into_iter().collect();
         fs::create_dir_all(dir.join(BLOBS_DIR))?;
         let log_path = dir.join(LOG_FILE);
         let text = match fs::read_to_string(&log_path) {
@@ -75,7 +90,7 @@ impl Store {
         let mut entries = BTreeMap::new();
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             match serde_json::from_str::<Entry>(line) {
-                Ok(entry) if entry.at >= cutoff => {
+                Ok(entry) if entry.at >= cutoff || pinned.contains(entry.path.as_path()) => {
                     entries.insert(entry.path.clone(), entry);
                 }
                 Ok(_) => {}
@@ -287,6 +302,12 @@ mod tests {
         writeln!(log, "{}", serde_json::to_string(&stale)?)?;
         writeln!(log, "not json")?;
         drop(log);
+        let store = Store::open_pinned(&tmp.0, [Path::new("old.md")])?;
+        assert!(
+            store.contains(Path::new("old.md")),
+            "pinned records outlive MAX_AGE"
+        );
+        drop(store);
         let store = Store::open(&tmp.0)?;
         assert!(!store.contains(Path::new("old.md")));
         assert!(store.contains(Path::new("a.md")));

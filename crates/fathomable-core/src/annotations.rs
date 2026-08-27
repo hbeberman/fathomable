@@ -627,6 +627,22 @@ impl Store {
             .filter(move |thread| thread.path == path)
     }
 
+    /// The distinct paths that have an open thread, in first-seen order.
+    pub fn open_paths(&self) -> impl Iterator<Item = &Path> + '_ {
+        let mut found: Vec<&Path> = Vec::new();
+        self.threads
+            .iter()
+            .filter(|thread| thread.status == Status::Open)
+            .map(|thread| thread.path.as_path())
+            .filter(move |path| {
+                let new = !found.contains(path);
+                if new {
+                    found.push(path);
+                }
+                new
+            })
+    }
+
     /// The thread with `id`, if any.
     #[must_use]
     pub fn thread(&self, id: &ThreadId) -> Option<&Thread> {

@@ -7,6 +7,7 @@
 
 mod clipboard;
 mod keys;
+mod reanchor;
 mod socket;
 mod threads;
 mod ui;
@@ -881,7 +882,7 @@ impl App {
     }
 
     /// Snapshot the document at `index` as seen.
-    fn mark_seen(&mut self, index: usize) {
+    pub(super) fn mark_seen(&mut self, index: usize) {
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };
@@ -2121,6 +2122,7 @@ fn start_app(
     );
     app.set_record(options.record.clone());
     app.set_seen_store(options.seen);
+    app.reanchor_from_snapshots();
     app.set_syntax(options.highlighter, options.markdown);
     app.set_watching_root(watching);
     match &options.open {

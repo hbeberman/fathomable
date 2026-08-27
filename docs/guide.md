@@ -93,7 +93,10 @@ Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
-as *detached* when the lines are gone. Threads live
+as *detached* when the lines are gone. Edits made while Fathomable was not
+running are followed too, on the next start, through the file's last-seen
+snapshot (section 5); commenting snapshots the file so there is always
+one. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
@@ -123,12 +126,13 @@ the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
 of this within a beat.
 
 There is a second base. **Last seen** is the file as it was when you last
-looked at it: Fathomable snapshots a file when you switch away, quit, or
-leave it alone for five seconds. It never drives the bar or `]g`; press
-`gd` a second time to see it (`DIFF seen`), and a third `gd` returns to the
-rendered view. Snapshots live under
+looked at it: Fathomable snapshots a file when you switch away, quit,
+comment on it, or leave it alone for five seconds. It never drives the bar
+or `]g`; press `gd` a second time to see it (`DIFF seen`), and a third `gd`
+returns to the rendered view. Snapshots live under
 `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at
-any time.
+any time; they expire after thirty days unless the file has an open
+thread.
 
 ## 6. Following an agent
 

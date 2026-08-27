@@ -158,7 +158,13 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
             }
         }
         let dir = dirs.seen_dir(workspace.root());
-        match fathomable_core::seen::Store::open(&dir) {
+        // Opening prunes, so pin what the viewer pins (ADR 0020).
+        let threads =
+            fathomable_core::annotations::Store::open(dirs.threads_file(workspace.root())).ok();
+        let pinned = threads
+            .iter()
+            .flat_map(fathomable_core::annotations::Store::open_paths);
+        match fathomable_core::seen::Store::open_pinned(&dir, pinned) {
             Ok(seen) => println!(
                 "  ok    {} last-seen snapshot{} ({} bytes) in {}",
                 seen.len(),

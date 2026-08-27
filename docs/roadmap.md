@@ -43,3 +43,7 @@ Milestones are ordered; each is usable on its own. Details live in the
 10. **Re-anchoring edited lines.** Threads follow a local rewrite of their
     lines through the reload diff, read as *edited* until the user answers,
     and persist the move ([0019](decisions/0019-reanchoring-edited-lines.md)).
+11. **Re-anchoring across restarts.** Threads edited while Fathomable was
+    closed are followed on start through the last-seen snapshot, which is
+    pinned while the file has open threads and taken on annotate
+    ([0020](decisions/0020-reanchoring-across-restarts.md)).

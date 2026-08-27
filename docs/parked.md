@@ -89,11 +89,11 @@ rejected for good (record rejections in the [charter](charter.md)).
   hysteresis so brief glances and rapid agent edits do not churn snapshots.
   Origin: [0006](decisions/0006-git-access.md).
 
-- **Re-anchoring across restarts.** A thread whose lines were edited while
-  Fathomable was not running still detaches
-  ([0019](decisions/0019-reanchoring-edited-lines.md) follows edits only
-  through the live reload diff). Candidates: keep a snapshot of annotated
-  lines in the store, or map through the last-seen snapshot of 0015.
+- **Re-anchoring without a snapshot.** A thread on a file over 2 MiB, or
+  whose snapshot blob is missing, still detaches when edited offline
+  ([0020](decisions/0020-reanchoring-across-restarts.md) maps through the
+  last-seen snapshot only). Candidate: a snapshot of the annotated lines
+  in the thread store.
 - **Lazy follow heuristics.** How long after the agent touches a file the
   viewer should jump, and how to avoid jumping while the user is reading.
   Origin: [0006](decisions/0006-git-access.md) and charter.

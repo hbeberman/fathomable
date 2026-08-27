@@ -20,7 +20,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -53,6 +53,7 @@ use ratatui::backend::CrosstermBackend;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
+use crate::crash;
 pub use threads::{Compose, Mark, ThreadPanel};
 use view::{Effect, HunkStep, Syntax, View};
 
@@ -1652,23 +1653,46 @@ pub fn run(
     runtime.block_on(run_async(workspace, options, theme, open))
 }
 
-/// Restores the terminal on drop so a panic or error never leaves raw mode on.
-struct TerminalGuard {
-    /// Whether keyboard enhancement flags were pushed and must be popped.
-    enhanced: bool,
+/// Whether the alternate screen is ours, and whether the kitty flags were
+/// pushed. These live outside [`TerminalGuard`] so the crash reporter can
+/// hand the terminal back from a panic hook, which runs before the guard is
+/// dropped and so cannot reach it (ADR 0022).
+static TERMINAL_ENTERED: AtomicBool = AtomicBool::new(false);
+static KEYBOARD_ENHANCED: AtomicBool = AtomicBool::new(false);
+
+/// Give the terminal back to the shell (or `$EDITOR`). The first call after
+/// each entry does the work; later ones find nothing left to undo, so the
+/// panic hook and the guard's `Drop` can both call it.
+pub(crate) fn restore_terminal() {
+    if !TERMINAL_ENTERED.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    if KEYBOARD_ENHANCED.swap(false, Ordering::SeqCst) {
+        let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
+    let _ = crossterm::execute!(
+        io::stdout(),
+        SetCursorStyle::DefaultUserShape,
+        DisableBracketedPaste,
+        DisableMouseCapture,
+        LeaveAlternateScreen
+    );
+    let _ = disable_raw_mode();
 }
+
+/// Restores the terminal on drop so a panic or error never leaves raw mode on.
+struct TerminalGuard;
 
 impl TerminalGuard {
     fn enter() -> anyhow::Result<Self> {
-        let mut guard = Self { enhanced: false };
-        guard.resume()?;
-        Ok(guard)
+        Self::resume()?;
+        Ok(Self)
     }
 
     /// Raw mode, the alternate screen, mouse capture, bracketed paste, and
     /// the kitty flags: on entry and again after `$EDITOR` gives the
     /// terminal back.
-    fn resume(&mut self) -> anyhow::Result<()> {
+    fn resume() -> anyhow::Result<()> {
         enable_raw_mode().context("cannot enable raw mode")?;
         crossterm::execute!(
             io::stdout(),
@@ -1678,9 +1702,10 @@ impl TerminalGuard {
             SetCursorStyle::SteadyBlock
         )
         .context("cannot enter alternate screen")?;
+        TERMINAL_ENTERED.store(true, Ordering::SeqCst);
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
         // the comment box (ADR 0013); terminals without it still get Alt-Enter.
-        self.enhanced = matches!(
+        let enhanced = matches!(
             crossterm::terminal::supports_keyboard_enhancement(),
             Ok(true)
         ) && crossterm::execute!(
@@ -1688,30 +1713,15 @@ impl TerminalGuard {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )
         .is_ok();
-        tracing::info!(enhanced = self.enhanced, "keyboard enhancement");
+        KEYBOARD_ENHANCED.store(enhanced, Ordering::SeqCst);
+        tracing::info!(enhanced, "keyboard enhancement");
         Ok(())
-    }
-
-    /// Give the terminal back to the shell (or `$EDITOR`).
-    fn leave(&mut self) {
-        if self.enhanced {
-            let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
-            self.enhanced = false;
-        }
-        let _ = crossterm::execute!(
-            io::stdout(),
-            SetCursorStyle::DefaultUserShape,
-            DisableBracketedPaste,
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        );
-        let _ = disable_raw_mode();
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        self.leave();
+        restore_terminal();
     }
 }
 
@@ -1784,7 +1794,6 @@ fn spawn_input() -> anyhow::Result<Input> {
 /// is not submitted; the socket and watcher wait while the editor runs.
 async fn edit_draft(
     app: &mut App,
-    guard: &mut TerminalGuard,
     input: &Input,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> anyhow::Result<()> {
@@ -1803,7 +1812,7 @@ async fn edit_draft(
     let path = std::env::temp_dir().join(format!("fathomable-comment-{}.md", std::process::id()));
     fs::write(&path, draft).with_context(|| format!("cannot write {}", path.display()))?;
     input.pause().await;
-    guard.leave();
+    restore_terminal();
     tracing::info!(%editor, path = %path.display(), "editing the comment draft");
     let status = Command::new("sh")
         .arg("-c")
@@ -1811,7 +1820,7 @@ async fn edit_draft(
         .arg("fathomable")
         .arg(&path)
         .status();
-    guard.resume()?;
+    TerminalGuard::resume()?;
     input.resume();
     terminal.clear().context("cannot redraw after the editor")?;
     match status {
@@ -1986,7 +1995,7 @@ async fn run_async(
 
     // The guard queries the terminal, so it must run before the input
     // thread starts consuming responses.
-    let mut guard = TerminalGuard::enter()?;
+    let _guard = TerminalGuard::enter()?;
     let mut input = spawn_input()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
@@ -2010,6 +2019,10 @@ async fn run_async(
     loop {
         doc_watcher.follow(app.current_abs_path());
         app.settle();
+        // What a crash report says the viewer was showing (ADR 0022): the
+        // `:status` rows, refreshed here so they describe the frame that
+        // dies rather than the one before it.
+        crash::observe(app.status_lines());
         terminal
             .draw(|frame| ui::draw(frame, &app, &theme))
             .context("draw failed")?;
@@ -2078,7 +2091,7 @@ async fn run_async(
                 clipboard::copy(&text).context("cannot write to clipboard")?;
             }
             Effect::Command(command) => app.command(&command),
-            Effect::EditDraft => edit_draft(&mut app, &mut guard, &input, &mut terminal).await?,
+            Effect::EditDraft => edit_draft(&mut app, &input, &mut terminal).await?,
         }
     }
     app.on_quit();

@@ -18,6 +18,11 @@ pub fn log_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
     dirs.log_dir().join(format!("{id}.log"))
 }
 
+/// Where the crash report for session `id` is written (ADR 0022).
+pub fn crash_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
+    dirs.log_dir().join(format!("{id}.crash"))
+}
+
 /// Keeps the log file open for the lifetime of the process.
 #[must_use = "dropping the guard stops logging"]
 pub struct Guard {

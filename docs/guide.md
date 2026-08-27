@@ -225,7 +225,14 @@ fathomable --config-show   # effective configuration
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-`:status` inside the app shows the session id, the socket, and every
-state path. Set
+`:status` inside the app shows the open document, the terminal size, the
+session id, the socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A session killed without a clean quit is
 swept away by the next start.
+
+If Fathomable dies, it hands the terminal back and prints one block between
+two rules: what it was showing, where its state lives, and a backtrace with
+the runtime plumbing dropped. Paste that block at your agent. A copy is
+written to `$XDG_STATE_HOME/fathomable/log/<session-id>.crash`, so a report
+that has scrolled away is still there; `--doctor` counts what is waiting
+there ([0022](decisions/0022-crash-reports.md)).

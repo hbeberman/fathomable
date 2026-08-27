@@ -51,3 +51,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     toggles, a `:status` overlay in place of status-line clutter, one key
     per job, dead flags gone, and app construction through `Options`
     ([0021](decisions/0021-polish-pass.md)).
+13. **Crash reports.** A panic hands the terminal back, then prints one
+    pasteable block — what the viewer was showing, where its state lives,
+    and a backtrace with the plumbing dropped — and leaves a copy beside
+    the session log ([0022](decisions/0022-crash-reports.md)).

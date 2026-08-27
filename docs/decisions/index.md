@@ -25,3 +25,4 @@ supersede rather than edit history.
 - [0019 Re-anchoring edited lines](0019-reanchoring-edited-lines.md)
 - [0020 Re-anchoring across restarts](0020-reanchoring-across-restarts.md)
 - [0021 Polish pass: one change source, diff toggles, status overlay](0021-polish-pass.md)
+- [0022 Crash reports](0022-crash-reports.md)

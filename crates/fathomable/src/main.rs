@@ -3,6 +3,7 @@
 //! Fathomable binary: terminal UI, MCP server, and admin flags (ADR 0009).
 
 mod app;
+mod crash;
 mod doctor;
 mod logging;
 mod mcp;
@@ -91,11 +92,17 @@ fn main() -> ExitCode {
             }
         };
     }
+    // Only the TUI needs the hook: it is the one that dies behind the
+    // alternate screen, where the default message is never seen (ADR 0022).
+    crash::arm(
+        logging::crash_path(&dirs, &id),
+        logging::log_path(&dirs, &id),
+    );
     match run_tui(&cli, &dirs, id) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(error = format!("{error:#}"), "failed");
-            eprintln!("fathomable: {error:#}");
+            crash::fatal(&error);
             ExitCode::FAILURE
         }
     }

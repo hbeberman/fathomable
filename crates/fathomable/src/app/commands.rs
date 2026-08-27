@@ -31,7 +31,36 @@ impl App {
                 .collect::<Vec<_>>()
                 .join(", "),
         };
+        let view = self.view();
+        let (line, column) = view.source_position();
+        let base = if view.diff_view() {
+            if view.diff_seen() {
+                ", diff against last seen"
+            } else {
+                ", diff against HEAD"
+            }
+        } else {
+            ""
+        };
+        let document = if self.has_document() {
+            format!(
+                "{} ({}{base}) at {line}:{column}",
+                self.current_path().display(),
+                if view.source_view() {
+                    "source"
+                } else {
+                    "rendered"
+                },
+            )
+        } else {
+            "none (the welcome screen)".to_owned()
+        };
         vec![
+            ("document".to_owned(), document),
+            (
+                "terminal".to_owned(),
+                format!("{} columns x {} rows", self.width, self.height),
+            ),
             ("session".to_owned(), self.session.clone()),
             (
                 "workspace".to_owned(),

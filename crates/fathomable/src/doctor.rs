@@ -49,6 +49,15 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
         }
     }
 
+    match crash_reports(&dirs.log_dir()) {
+        0 => println!("  ok    no crash reports"),
+        n => println!(
+            "  ok    {n} crash report{} in {} (`.crash`, newest last)",
+            if n == 1 { "" } else { "s" },
+            dirs.log_dir().display()
+        ),
+    }
+
     let config = match Config::load(dirs, None) {
         Ok(config) => {
             println!("  ok    config parsed");
@@ -179,6 +188,17 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
     }
 
     ok
+}
+
+/// How many crash reports a past run left behind (ADR 0022).
+fn crash_reports(log_dir: &Path) -> usize {
+    let Ok(entries) = fs::read_dir(log_dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|e| e == "crash"))
+        .count()
 }
 
 fn log_dir_writable(log_dir: &Path) -> io::Result<()> {

@@ -3,6 +3,8 @@ type: Decision
 title: Follow mode and the last-seen diff base
 description: Change hints, sidebar badges, toasts, jump keys, debounced auto-jump, and the content-addressed snapshots that define "since I last looked".
 resource: crates/fathomable-core/src/follow.rs
+related_resources:
+  - crates/fathomable-core/src/seen.rs
 tags:
   - decision
   - input
@@ -173,7 +175,9 @@ than replacing them. Unknown keys are errors as in
 - `--doctor` reports the snapshot directory, its blob count and size, and
   the effective `follow.source`.
 - No MCP tool changes. `session_info` gains `follow_source` and `auto_jump`
-  so an agent can tell whether its `follow` list is being honoured.
+  so an agent can tell whether its `follow` list is being honoured; the
+  TUI answers it, and the socket alone answers without those fields when
+  the loop is gone.
 
 ## Consequences
 

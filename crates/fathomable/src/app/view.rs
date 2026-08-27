@@ -5,6 +5,7 @@
 //! without a terminal; `ui` draws it and `keys` drives it.
 
 use std::fmt;
+use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Diff, LineStatus};
@@ -101,6 +102,29 @@ pub enum Effect {
     None,
     Quit,
     Copy(String),
+    /// A `:` command the app handles (`:follow ...`, ADR 0015).
+    Command(String),
+}
+
+/// Which text the gutter and diff view compare against (ADR 0015).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BaseKind {
+    /// The last-seen snapshot, or `HEAD` when there is none.
+    #[default]
+    Seen,
+    /// The file as committed at `HEAD`.
+    Head,
+}
+
+impl BaseKind {
+    /// The status-pill spelling.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Seen => "seen",
+            Self::Head => "head",
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -110,10 +134,16 @@ pub struct View {
     width: usize,
     height: usize,
     display: Display,
-    /// The diff base: the file as committed at `HEAD` (ADR 0006), `None`
-    /// outside git.
-    base: Option<String>,
+    /// The last-seen snapshot (ADR 0015), `None` when the file has never
+    /// been seen.
+    seen: Option<String>,
+    /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
+    head: Option<String>,
+    /// Which of the two the gutter and diff view use.
+    base_kind: BaseKind,
     diff: Option<Diff>,
+    /// The last time the reader moved, searched, or selected here.
+    activity: Instant,
     cursor: Cursor,
     want_col: usize,
     scroll: usize,
@@ -138,8 +168,11 @@ impl View {
             width,
             height: height.max(1),
             display: Display::Rendered,
-            base: None,
+            seen: None,
+            head: None,
+            base_kind: BaseKind::Seen,
             diff: None,
+            activity: Instant::now(),
             cursor: Cursor::default(),
             want_col: 0,
             scroll: 0,
@@ -157,6 +190,52 @@ impl View {
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    /// The document text as laid out.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// Note that the reader did something here (ADR 0015 guardrails and
+    /// seen-idle).
+    pub fn touch(&mut self) {
+        self.activity = Instant::now();
+    }
+
+    /// Time since the reader last did something here.
+    pub fn idle(&self) -> Duration {
+        self.activity.elapsed()
+    }
+
+    /// Which base the gutter and diff view compare against, and whether
+    /// that base exists.
+    pub fn base_kind(&self) -> (BaseKind, bool) {
+        (self.base_kind, self.base().is_some())
+    }
+
+    /// Whether 1-based source `line` is within the rows on screen.
+    pub fn line_on_screen(&self, line: usize) -> bool {
+        self.layout
+            .index()
+            .range_of(line)
+            .and_then(|range| self.layout.line_at_offset(range.start))
+            .is_some_and(|row| row >= self.scroll && row < self.scroll + self.height)
+    }
+
+    /// The 1-based line of the first hunk against the current base.
+    pub fn first_hunk_line(&self) -> Option<usize> {
+        let diff = self.diff.as_ref()?;
+        diff.hunks()
+            .first()
+            .map(|hunk| hunk.target_line(diff.new_lines()))
+    }
+
+    fn base(&self) -> Option<&str> {
+        match self.base_kind {
+            BaseKind::Seen => self.seen.as_deref().or(self.head.as_deref()),
+            BaseKind::Head => self.head.as_deref(),
+        }
     }
 
     pub fn index(&self) -> &LineIndex {
@@ -253,13 +332,14 @@ impl View {
         self.relayout();
     }
 
-    /// Set the diff base, or clear it outside git; the gutter and the
-    /// diff view follow.
-    pub fn set_base(&mut self, base: Option<String>) {
-        if base == self.base {
+    /// Set the diff bases, either `None` when it does not exist; the
+    /// gutter and the diff view follow.
+    pub fn set_bases(&mut self, seen: Option<String>, head: Option<String>) {
+        if seen == self.seen && head == self.head {
             return;
         }
-        self.base = base;
+        self.seen = seen;
+        self.head = head;
         self.rediff();
         if self.display == Display::Diff {
             self.relayout();
@@ -267,9 +347,13 @@ impl View {
     }
 
     fn rediff(&mut self) {
-        self.diff = self.base.as_deref().map(|base| Diff::new(base, &self.text));
+        self.diff = self.base().map(|base| Diff::new(base, &self.text));
         if let Some(diff) = &self.diff {
-            tracing::debug!(hunks = diff.hunks().len(), "diff against base");
+            tracing::debug!(
+                hunks = diff.hunks().len(),
+                base = self.base_kind.label(),
+                "diff against base"
+            );
         }
     }
 
@@ -282,17 +366,32 @@ impl View {
         self.relayout();
     }
 
-    /// Switch between rendered Markdown and the unified diff against the
-    /// base (`gd`, `:diff`).
+    /// `gd` / `:diff`: rendered, then the diff against last-seen, then
+    /// against `HEAD` (skipping a base that does not exist or is the same
+    /// text), then rendered again. The base chosen stays for the gutter
+    /// and `]c` (ADR 0015).
     pub fn toggle_diff_view(&mut self) {
-        if self.base.is_none() {
-            self.message = Some("no diff base: not in a git repository".to_owned());
-            return;
-        }
-        self.display = match self.display {
-            Display::Diff => Display::Rendered,
-            _ => Display::Diff,
+        let both = self.seen.is_some() && self.head.is_some() && self.seen != self.head;
+        let next = match (self.display, self.base_kind, both) {
+            (Display::Diff, BaseKind::Seen, true) => Some(BaseKind::Head),
+            (Display::Diff, _, _) => None,
+            (_, _, _) if self.seen.is_some() => Some(BaseKind::Seen),
+            (_, _, _) if self.head.is_some() => Some(BaseKind::Head),
+            _ => {
+                self.message = Some("no diff base: not in a git repository".to_owned());
+                return;
+            }
         };
+        match next {
+            Some(kind) => {
+                self.display = Display::Diff;
+                if kind != self.base_kind {
+                    self.base_kind = kind;
+                    self.rediff();
+                }
+            }
+            None => self.display = Display::Rendered,
+        }
         self.relayout();
     }
 
@@ -318,7 +417,7 @@ impl View {
             diff.prev_hunk(line)
         };
         let Some((hunk, wrapped)) = found else {
-            self.message = Some("no changes against HEAD".to_owned());
+            self.message = Some(format!("no changes against {}", self.base_kind.label()));
             return;
         };
         let target = hunk.target_line(diff.new_lines());
@@ -337,7 +436,7 @@ impl View {
         // above the cursor does not drag it onto unrelated text (ADR 0010).
         let (line, column) = self.source_position();
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
-        self.layout = match (self.display, self.base.as_deref()) {
+        self.layout = match (self.display, self.base()) {
             (Display::Source, _) => Layout::source(&self.text, self.width),
             (Display::Diff, Some(base)) => Layout::diff(base, &self.text, self.width),
             (Display::Rendered | Display::Diff, _) => Layout::render(&self.text, self.width),
@@ -778,6 +877,9 @@ impl View {
                 self.toggle_diff_view();
                 Effect::None
             }
+            follow if follow == "follow" || follow.starts_with("follow ") => {
+                Effect::Command(follow.to_owned())
+            }
             "" => Effect::None,
             number if number.chars().all(|c| c.is_ascii_digit()) => {
                 if let Ok(line) = number.parse::<usize>() {
@@ -897,9 +999,11 @@ fn ceil_char(text: &str, mut offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use fathomable_core::annotations::LineRange;
 
-    use super::{Cursor, Effect, Mode, View};
+    use super::{BaseKind, Cursor, Effect, Mode, View};
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
@@ -1178,9 +1282,15 @@ mod tests {
         assert!(!v.diff_view(), "no base, no diff view");
 
         // The committed text lacked "- two" and had a different last line.
-        v.set_base(Some(
-            "# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned(),
-        ));
+        v.set_bases(
+            None,
+            Some("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned()),
+        );
+        assert_eq!(
+            v.base_kind(),
+            (BaseKind::Seen, true),
+            "HEAD stands in for seen"
+        );
         assert_eq!(v.line_status(6), Some(LineStatus::Added));
         assert_eq!(v.line_status(9), Some(LineStatus::Modified));
         assert_eq!(v.line_status(1), None);
@@ -1220,10 +1330,53 @@ mod tests {
         assert_eq!(v.diff_counts(), Some((0, 0)));
         v.toggle_diff_view();
         assert_eq!(v.layout().lines().len(), 1);
-        v.set_base(None);
+        v.set_bases(None, None);
         assert_eq!(v.diff_counts(), None);
         assert!(v.diff_view(), "display sticks; layout falls back");
         assert!(v.layout().lines().len() > 1);
+    }
+
+    #[test]
+    fn diff_view_cycles_seen_then_head_then_rendered() {
+        let mut v = view();
+        let seen = v.text().replace("- two\n", "");
+        let head = "# Title\n".to_owned();
+        v.set_bases(Some(seen), Some(head));
+        assert_eq!(v.base_kind(), (BaseKind::Seen, true));
+        assert_eq!(v.diff_counts(), Some((1, 0)));
+        assert_eq!(v.first_hunk_line(), Some(6));
+
+        v.toggle_diff_view();
+        assert!(v.diff_view());
+        assert_eq!(v.base_kind().0, BaseKind::Seen);
+        v.toggle_diff_view();
+        assert!(v.diff_view());
+        assert_eq!(v.base_kind().0, BaseKind::Head);
+        assert!(v.diff_counts().is_some_and(|(added, _)| added > 1));
+        v.toggle_diff_view();
+        assert!(!v.diff_view());
+        assert_eq!(
+            v.base_kind().0,
+            BaseKind::Head,
+            "the base sticks for the gutter"
+        );
+        v.next_hunk();
+        v.toggle_diff_view();
+        assert_eq!(
+            v.base_kind().0,
+            BaseKind::Seen,
+            "opening the diff starts from seen"
+        );
+
+        v.start_command();
+        for ch in "follow source head".chars() {
+            v.input_char(ch);
+        }
+        assert!(matches!(v.confirm(), Effect::Command(c) if c == "follow source head"));
+        assert!(v.line_on_screen(1));
+        assert!(!v.line_on_screen(usize::MAX));
+        v.touch();
+        assert!(v.idle() < Duration::from_secs(1));
     }
 
     #[test]

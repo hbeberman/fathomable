@@ -339,8 +339,10 @@ impl FromStr for Request {
 pub enum Response {
     /// Answer to [`Request::Ping`].
     Pong,
-    /// Answer to [`Request::SessionInfo`].
-    Session(Record),
+    /// Answer to [`Request::SessionInfo`]: the record plus the follow-mode
+    /// state when the TUI answered (ADR 0015), `None` when the socket
+    /// answered alone.
+    Session(Record, Option<FollowState>),
     /// Answer to [`Request::Open`], [`Request::Follow`], and
     /// [`Request::ThreadReply`]: the operation took effect.
     Done,
@@ -350,6 +352,15 @@ pub enum Response {
     Error(String),
 }
 
+/// Follow-mode state reported with `session_info` (ADR 0015).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowState {
+    /// The effective `follow.source` name.
+    pub follow_source: String,
+    /// Whether auto-jump is on.
+    pub auto_jump: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ResponseWire {
     ok: bool,
@@ -357,6 +368,8 @@ struct ResponseWire {
     pong: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     session: Option<Record>,
+    #[serde(default, flatten, skip_serializing_if = "Option::is_none")]
+    follow: Option<FollowState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     threads: Option<Vec<Thread>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -371,12 +384,16 @@ impl Response {
             ok: true,
             pong: None,
             session: None,
+            follow: None,
             threads: None,
             error: None,
         };
         match self {
             Self::Pong => wire.pong = Some(true),
-            Self::Session(record) => wire.session = Some(record.clone()),
+            Self::Session(record, follow) => {
+                wire.session = Some(record.clone());
+                wire.follow.clone_from(follow);
+            }
             Self::Done => {}
             Self::Threads(threads) => wire.threads = Some(threads.clone()),
             Self::Error(message) => {
@@ -400,8 +417,9 @@ impl FromStr for Response {
             } => Self::Error(error.unwrap_or_else(|| "unspecified error".to_owned())),
             ResponseWire {
                 session: Some(record),
+                follow,
                 ..
-            } => Self::Session(record),
+            } => Self::Session(record, follow),
             ResponseWire {
                 threads: Some(threads),
                 ..
@@ -511,7 +529,14 @@ mod tests {
     fn responses_round_trip() -> Result<(), ProtocolError> {
         let responses = [
             Response::Pong,
-            Response::Session(record()),
+            Response::Session(record(), None),
+            Response::Session(
+                record(),
+                Some(super::FollowState {
+                    follow_source: "workspace".to_owned(),
+                    auto_jump: true,
+                }),
+            ),
             Response::Done,
             Response::Threads(Vec::new()),
             Response::Error("nope".to_owned()),

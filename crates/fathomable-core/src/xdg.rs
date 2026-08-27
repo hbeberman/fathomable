@@ -89,6 +89,13 @@ impl XdgDirs {
             .join(crate::annotations::THREADS_FILE)
     }
 
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/seen`, where last-seen
+    /// snapshots live (ADR 0015).
+    #[must_use]
+    pub fn seen_dir(&self, root: &Path) -> PathBuf {
+        self.workspace_dir(root).join("seen")
+    }
+
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.
     #[must_use]
     pub fn runtime_dir(&self) -> Option<PathBuf> {

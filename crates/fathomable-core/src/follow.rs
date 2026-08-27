@@ -1,11 +1,14 @@
 // @okf-doc: /decisions/0015-follow-mode.md
-//! Follow mode: which changes the viewer reacts to and the queue of
-//! changed files a jump key walks.
+//! Follow mode: which changes the viewer reacts to, the queue of changed
+//! files a jump key walks, and the delta each reload leaves behind.
 //!
-//! [`Source`] is the `follow.source` setting from ADR 0015. [`Queue`]
-//! keeps one [`Change`] per file, newest first; a later change to a queued
-//! file moves it to the front. Stepping newest-first and oldest-first is
-//! what `]f` and `[f` do.
+//! [`Source`] is the `follow.source` setting from ADR 0015. [`Ignore`] is
+//! the `follow.ignore` glob list. [`Queue`] keeps one [`Change`] per file,
+//! newest first; a later change to a queued file moves it to the front.
+//! Stepping newest-first and oldest-first is what `]f` and `[f` do.
+//! [`Delta`] is the diff between the text that was on screen and the text
+//! that replaced it, stamped with when it landed, so a later animation can
+//! fade hunks by age.
 //!
 //! # Examples
 //!
@@ -27,6 +30,13 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::time::Instant;
+
+use gix::bstr::BStr;
+use gix::glob::pattern::Case;
+use gix::glob::wildmatch;
+
+use crate::diff::Diff;
 
 /// What counts as a change worth hinting (`follow.source`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -94,6 +104,129 @@ impl FromStr for Source {
             "open-only" => Ok(Self::OpenOnly),
             other => Err(UnknownSource(other.to_owned())),
         }
+    }
+}
+
+/// The `follow.ignore` globs, matched against root-relative paths with
+/// gitignore syntax (`*` does not cross `/`, `**` does, a trailing `/`
+/// means a directory).
+#[derive(Debug, Clone, Default)]
+pub struct Ignore {
+    patterns: Vec<gix::glob::Pattern>,
+}
+
+impl Ignore {
+    /// Compile `globs`; an empty or negated pattern is reported by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns the offending glob when it cannot be parsed.
+    pub fn new(globs: &[String]) -> Result<Self, UnknownGlob> {
+        let patterns = globs
+            .iter()
+            .map(|glob| {
+                gix::glob::Pattern::from_bytes_without_negation(glob.as_bytes())
+                    .filter(|_| !glob.starts_with('!'))
+                    .ok_or_else(|| UnknownGlob(glob.clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self { patterns })
+    }
+
+    /// Whether the root-relative `path` (a file) matches any glob, or sits
+    /// under a directory that does.
+    #[must_use]
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        let text = path.to_string_lossy();
+        let text = text.trim_start_matches("./");
+        let mut end = text.len();
+        loop {
+            let candidate = &text[..end];
+            let is_dir = end != text.len();
+            let basename = candidate.rfind('/').map(|p| p + 1);
+            if self.patterns.iter().any(|pattern| {
+                pattern.matches_repo_relative_path(
+                    BStr::new(candidate),
+                    basename,
+                    Some(is_dir),
+                    Case::Sensitive,
+                    wildmatch::Mode::NO_MATCH_SLASH_LITERAL,
+                )
+            }) {
+                return true;
+            }
+            match candidate.rfind('/') {
+                Some(slash) => end = slash,
+                None => return false,
+            }
+        }
+    }
+}
+
+/// A `follow.ignore` glob that cannot be compiled.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownGlob(pub String);
+
+impl fmt::Display for UnknownGlob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid follow ignore glob {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownGlob {}
+
+/// What one reload changed: the previous text, its diff against the new
+/// text, and when it landed (ADR 0015 edit deltas).
+#[derive(Debug, Clone)]
+pub struct Delta {
+    old: String,
+    diff: Diff,
+    at: Instant,
+}
+
+impl Delta {
+    /// Diff `old` (what was on screen) against `new` (what replaced it).
+    #[must_use]
+    pub fn new(old: String, new: &str) -> Self {
+        let diff = Diff::new(&old, new);
+        Self {
+            old,
+            diff,
+            at: Instant::now(),
+        }
+    }
+
+    /// The text before the reload, so removed lines can be shown in place.
+    #[must_use]
+    pub fn old(&self) -> &str {
+        &self.old
+    }
+
+    /// Hunks in the new text's line space.
+    #[must_use]
+    pub fn diff(&self) -> &Diff {
+        &self.diff
+    }
+
+    /// When the reload landed.
+    #[must_use]
+    pub fn at(&self) -> Instant {
+        self.at
+    }
+
+    /// Whether the reload changed nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.diff.is_empty()
+    }
+
+    /// The 1-based line of the first hunk, if any.
+    #[must_use]
+    pub fn first_line(&self) -> Option<usize> {
+        self.diff
+            .hunks()
+            .first()
+            .map(|hunk| hunk.target_line(self.diff.new_lines()))
     }
 }
 
@@ -316,6 +449,42 @@ mod tests {
         assert_eq!(error, Some(UnknownSource("nope".to_owned())));
         let message = error.map(|e| e.to_string()).unwrap_or_default();
         assert!(message.contains("open-only"), "{message}");
+    }
+
+    #[test]
+    fn ignore_globs_follow_gitignore_rules() {
+        let ignore = Ignore::new(&[
+            "target/**".to_owned(),
+            "*.lock".to_owned(),
+            "docs/".to_owned(),
+            "build".to_owned(),
+        ])
+        .map_err(|e| e.to_string());
+        let ignore = ignore.unwrap_or_default();
+        assert!(ignore.is_ignored(Path::new("target/debug/app")));
+        assert!(ignore.is_ignored(Path::new("Cargo.lock")));
+        assert!(ignore.is_ignored(Path::new("sub/Cargo.lock")));
+        assert!(ignore.is_ignored(Path::new("docs/guide.md")));
+        assert!(ignore.is_ignored(Path::new("a/build/out.o")));
+        assert!(!ignore.is_ignored(Path::new("src/main.rs")));
+        assert!(!ignore.is_ignored(Path::new("targets/x")));
+        assert!(!ignore.is_ignored(Path::new("docs")));
+        assert_eq!(
+            Ignore::new(&["!x".to_owned()]).err(),
+            Some(UnknownGlob("!x".to_owned()))
+        );
+        assert!(!Ignore::default().is_ignored(Path::new("anything")));
+    }
+
+    #[test]
+    fn delta_reports_first_hunk() {
+        let delta = Delta::new("a\nb\nc\n".to_owned(), "a\nB\nc\nd\n");
+        assert!(!delta.is_empty());
+        assert_eq!(delta.first_line(), Some(2));
+        assert_eq!(delta.old(), "a\nb\nc\n");
+        assert_eq!(delta.diff().counts(), (2, 1));
+        assert!(Delta::new("x\n".to_owned(), "x\n").is_empty());
+        assert_eq!(Delta::new("x\n".to_owned(), "x\n").first_line(), None);
     }
 
     #[test]

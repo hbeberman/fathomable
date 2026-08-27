@@ -13,6 +13,7 @@ mod document;
 pub mod follow;
 pub mod layout;
 pub mod picker;
+pub mod seen;
 pub mod session;
 pub mod theme;
 pub mod tree;

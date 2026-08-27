@@ -48,17 +48,23 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
         }
     }
 
-    let theme_name = match Config::load(dirs, None) {
+    let config = match Config::load(dirs, None) {
         Ok(config) => {
             println!("  ok    config parsed");
-            config.theme().unwrap_or(DEFAULT_THEME).to_owned()
+            config
         }
         Err(error) => {
             ok = false;
             println!("  FAIL  config: {error}");
-            DEFAULT_THEME.to_owned()
+            Config::default()
         }
     };
+    let theme_name = config.theme().unwrap_or(DEFAULT_THEME).to_owned();
+    println!(
+        "  ok    follow source `{}`, auto-jump {}",
+        config.follow().source,
+        if config.follow().auto { "on" } else { "off" }
+    );
     match Theme::load(&theme_name, dirs) {
         Ok(theme) => println!("  ok    theme `{}` loaded", theme.name()),
         Err(error) => {
@@ -67,6 +73,27 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
         }
     }
 
+    ok &= workspace_checks(dirs);
+
+    let records = Record::list(dirs);
+    let live = records.iter().filter(|record| record.is_alive()).count();
+    println!(
+        "  ok    {live} live session{} ({} record{} on disk)",
+        if live == 1 { "" } else { "s" },
+        records.len(),
+        if records.len() == 1 { "" } else { "s" }
+    );
+
+    if ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+/// The git and snapshot checks for the workspace around the cwd.
+fn workspace_checks(dirs: &XdgDirs) -> bool {
+    let mut ok = true;
     match std::env::current_dir()
         .map_err(|error| error.to_string())
         .and_then(|cwd| Workspace::discover(&cwd).map_err(|error| error.to_string()))
@@ -85,7 +112,7 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
             }
         }
         Ok(workspace) => println!(
-            "  ok    {} is not a git work tree; no diff gutter",
+            "  ok    {} is not a git work tree; no HEAD diff base",
             workspace.root().display()
         ),
         Err(error) => {
@@ -93,21 +120,26 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
             println!("  FAIL  workspace: {error}");
         }
     }
-
-    let records = Record::list(dirs);
-    let live = records.iter().filter(|record| record.is_alive()).count();
-    println!(
-        "  ok    {live} live session{} ({} record{} on disk)",
-        if live == 1 { "" } else { "s" },
-        records.len(),
-        if records.len() == 1 { "" } else { "s" }
-    );
-
-    if ok {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(workspace) = Workspace::discover(&cwd)
+    {
+        let dir = dirs.seen_dir(workspace.root());
+        match fathomable_core::seen::Store::open(&dir) {
+            Ok(seen) => println!(
+                "  ok    {} last-seen snapshot{} ({} bytes) in {}",
+                seen.len(),
+                if seen.len() == 1 { "" } else { "s" },
+                seen.blob_bytes(),
+                dir.display()
+            ),
+            Err(error) => {
+                ok = false;
+                println!("  FAIL  snapshots: {error}");
+            }
+        }
     }
+
+    ok
 }
 
 fn log_dir_writable(log_dir: &Path) -> io::Result<()> {

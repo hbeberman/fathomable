@@ -133,6 +133,17 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     record.write(dirs)?;
     tracing::info!(id = %record.id(), root = %record.root().display(), "session recorded");
 
+    let config = Config::load(dirs, cli.config.as_deref())?;
+    let seen = match fathomable_core::seen::Store::open(&dirs.seen_dir(workspace.root())) {
+        Ok(seen) => {
+            tracing::info!(path = %seen.dir().display(), files = seen.len(), "last-seen snapshots loaded");
+            Some(seen)
+        }
+        Err(error) => {
+            tracing::error!(%error, "cannot open the snapshot store; no last-seen base");
+            None
+        }
+    };
     let store = match Store::open(dirs.threads_file(workspace.root())) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
@@ -150,6 +161,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             record: &record,
             theme: &theme,
             store,
+            follow: config.follow().clone(),
+            seen,
         },
     );
     if let Err(error) = record.remove(dirs) {
@@ -201,6 +214,19 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
             .display()
     );
     println!("theme \"{theme}\"");
+    let follow = config.follow();
+    println!("follow {{");
+    println!("    source \"{}\"", follow.source);
+    println!("    auto #{}", follow.auto);
+    if !follow.ignore.is_empty() {
+        let globs: Vec<String> = follow.ignore.iter().map(|g| format!("{g:?}")).collect();
+        println!("    ignore {}", globs.join(" "));
+    }
+    println!("    hint-debounce {}", follow.hint_debounce.as_millis());
+    println!("    jump-debounce {}", follow.jump_debounce.as_millis());
+    println!("    seen-idle {}", follow.seen_idle.as_millis());
+    println!("    toast {}", follow.toast.as_millis());
+    println!("}}");
     ExitCode::SUCCESS
 }
 

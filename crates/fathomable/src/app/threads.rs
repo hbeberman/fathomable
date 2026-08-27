@@ -585,7 +585,14 @@ mod tests {
         fn app(&self) -> anyhow::Result<App> {
             let workspace = Workspace::discover(self.0.join("ws"))?;
             let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let mut app = App::new(workspace, 100, 30, "test".to_owned(), Some(store));
+            let mut app = App::new(
+                workspace,
+                100,
+                30,
+                "test".to_owned(),
+                Some(store),
+                fathomable_core::config::FollowConfig::default(),
+            );
             app.open(Path::new("README.md"));
             Ok(app)
         }
@@ -637,13 +644,13 @@ mod tests {
             dir.0.join("ws/README.md"),
             "# Readme\n\nnew intro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
         )?;
-        app.reload(&dir.0.join("ws/README.md"));
+        app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
         assert_eq!(app.mark_in(LineRange::new(3, 3)), None);
 
         // Rewrite them: the thread detaches at its last known range.
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
-        app.reload(&dir.0.join("ws/README.md"));
+        app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.mark_in(LineRange::new(5, 5)), Some(MarkKind::Detached));
         Ok(())
     }

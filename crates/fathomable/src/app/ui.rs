@@ -13,7 +13,7 @@ use fathomable_core::diff::LineStatus;
 
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
-use super::{App, Focus, HELP, PickerState, Popup, SPACE_MENU};
+use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_MENU};
 
 /// Most rows the comment box grows to before it scrolls.
 const COMPOSE_MAX_ROWS: usize = 8;
@@ -203,8 +203,10 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         status_area,
     );
 
+    draw_toasts(frame, app, theme, text_area);
     match app.popup() {
-        Some(Popup::Space) => draw_menu(frame, theme, text_area, &space_entries()),
+        Some(Popup::Space) => draw_menu(frame, theme, text_area, &space_entries(&SPACE_MENU)),
+        Some(Popup::Jump) => draw_menu(frame, theme, text_area, &space_entries(&JUMP_MENU)),
         Some(Popup::Help) => draw_help(frame, theme, area),
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
@@ -267,11 +269,43 @@ fn place_cursor(
     }
 }
 
-fn space_entries() -> Vec<(String, String)> {
-    SPACE_MENU
-        .iter()
+fn space_entries(menu: &[(char, &str)]) -> Vec<(String, String)> {
+    menu.iter()
         .map(|(key, label)| (key.to_string(), (*label).to_owned()))
         .collect()
+}
+
+/// Change toasts, bottom-right above the status line, newest at the
+/// bottom (ADR 0015).
+fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
+    let toasts = app.toasts();
+    if toasts.is_empty() || pane.height == 0 {
+        return;
+    }
+    let shown = toasts.iter().rev().take(MAX_TOASTS).rev();
+    let lines: Vec<String> = shown.map(|t| format!(" {} ", t.text())).collect();
+    let width = lines
+        .iter()
+        .map(|l| display_width(l))
+        .max()
+        .unwrap_or(0)
+        .min(usize::from(pane.width));
+    let height = u16_of(lines.len()).min(pane.height);
+    let area = Rect {
+        x: pane.x + pane.width - u16_of(width),
+        y: pane.y + pane.height - height,
+        width: u16_of(width),
+        height,
+    };
+    let text: Vec<Line<'_>> = lines
+        .iter()
+        .rev()
+        .take(usize::from(height))
+        .rev()
+        .map(|l| Line::from(Span::styled(fit(l, width), theme.popup)))
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(Paragraph::new(text).style(theme.popup), area);
 }
 
 fn sidebar_lines<'a>(
@@ -326,10 +360,28 @@ fn sidebar_lines<'a>(
                 style = style.remove_modifier(Modifier::BOLD);
             }
         }
-        out.push(Line::from(vec![
-            Span::styled(fit(&text, inner), style),
-            divider.clone(),
-        ]));
+        // A queued change marks its file, and its collapsed ancestors so it
+        // shows however the tree is folded (ADR 0015).
+        let badge = if row.is_dir() {
+            !row.expanded() && app.has_change_under(row.path())
+        } else {
+            app.queue().contains(row.path())
+        };
+        if badge && inner > 2 {
+            let badge_style = style
+                .bg
+                .map_or(theme.diff_delta, |bg| theme.diff_delta.bg(bg));
+            out.push(Line::from(vec![
+                Span::styled(fit(&text, inner - 2), style),
+                Span::styled("● ", badge_style),
+                divider.clone(),
+            ]));
+        } else {
+            out.push(Line::from(vec![
+                Span::styled(fit(&text, inner), style),
+                divider.clone(),
+            ]));
+        }
     }
     while out.len() < rows {
         out.push(Line::from(vec![
@@ -502,7 +554,9 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {
-        "DIFF".to_owned()
+        format!("DIFF {}", view.base_kind().0.label())
+    } else if app.auto_jump() && mode == Mode::Normal {
+        "AUTO".to_owned()
     } else {
         mode.to_string()
     };
@@ -515,12 +569,32 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         0 => String::new(),
         n => format!("follow {n}  "),
     };
+    let source = match app.source() {
+        fathomable_core::follow::Source::Workspace => String::new(),
+        other => format!("src:{other}  "),
+    };
+    let hint = app.queue().newest().map(|change| {
+        let counts = if app.current_path() == change.path {
+            view.diff_counts()
+        } else {
+            None
+        };
+        let counts = match counts {
+            Some((a, r)) if a + r > 0 => format!(" +{a} -{r}"),
+            _ => String::new(),
+        };
+        format!(
+            "→ {}{counts} ({})",
+            change.path.display(),
+            app.queue().len()
+        )
+    });
     let changes = match view.diff_counts() {
         None | Some((0, 0)) => String::new(),
         Some((added, removed)) => format!("+{added} -{removed}  "),
     };
     let right = format!(
-        " {line}:{col}  {}%  {changes}{threads}{followed}{} ",
+        " {line}:{col}  {}%  {changes}{threads}{followed}{source}{} ",
         view.percent(),
         app.session()
     );
@@ -540,6 +614,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     }
     if let Some(message) = app.message().or_else(|| view.message()) {
         left.push(Span::styled(format!("  {message}"), theme.info));
+    } else if let Some(hint) = hint {
+        left.push(Span::styled(format!("  {hint}"), theme.diff_delta));
     }
     let used: usize = left
         .iter()

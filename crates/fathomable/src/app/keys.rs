@@ -31,9 +31,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             (']', KeyCode::Char('a')) => app.next_annotation(),
             ('[', KeyCode::Char('c')) => app.view_mut().prev_hunk(),
             (']', KeyCode::Char('c')) => app.view_mut().next_hunk(),
+            ('[', KeyCode::Char('f')) => app.jump_prev(),
+            (']', KeyCode::Char('f')) => app.jump_next(),
             _ => {}
         }
         return Effect::None;
+    }
+    if app.focus() == Focus::View {
+        // Reader activity holds auto-jump back and delays "seen" (ADR 0015).
+        app.view_mut().touch();
     }
     let mode = app.view().mode();
     if matches!(mode, Mode::Command | Mode::Search { .. }) {
@@ -74,6 +80,10 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
     match app.popup() {
         Some(Popup::Space) => match key.code {
             KeyCode::Char(ch) => app.space_menu_select(ch),
+            _ => app.close_popup(),
+        },
+        Some(Popup::Jump) => match key.code {
+            KeyCode::Char(ch) => app.jump_menu_select(ch),
             _ => app.close_popup(),
         },
         Some(Popup::Help) => app.close_popup(),
@@ -239,6 +249,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     let gutter = sidebar + super::ui::gutter_width(app.view());
     let col = column.saturating_sub(gutter);
     let view = app.view_mut();
+    view.touch();
     match event.kind {
         MouseEventKind::ScrollDown => view.scroll_by(WHEEL_LINES),
         MouseEventKind::ScrollUp => view.scroll_by(-WHEEL_LINES),

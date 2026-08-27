@@ -31,10 +31,10 @@ fn theme_is_read() -> TestResult {
 
 #[test]
 fn unknown_setting_is_an_error_with_a_line() -> TestResult {
-    let error = must_fail("theme \"x\"\n\nfollow #true")?;
+    let error = must_fail("theme \"x\"\n\nfollwo #true")?;
     assert_eq!(error.line(), Some(3));
     assert!(
-        error.to_string().contains("unknown setting `follow`"),
+        error.to_string().contains("unknown setting `follwo`"),
         "{error}"
     );
     Ok(())

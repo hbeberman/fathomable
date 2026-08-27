@@ -52,7 +52,9 @@ shows the full list inside the app.
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
-| `gd` / `:diff`, `]c` `[c` | toggle unified diff against `HEAD`; next / previous change |
+| `gd` / `:diff`, `]c` `[c` | diff view: last-seen, then `HEAD`, then off; next / previous hunk |
+| `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, source, clear |
+| `:follow`, `:follow source S` | toggle auto-jump; `workspace`, `followed`, or `open-only` |
 | `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
 | `x` | select the current line; repeat to extend down |
 | `Space a`, `Space A`, `]a` `[a` | thread at cursor, pick a thread, next/previous thread |
@@ -83,19 +85,58 @@ what differs from `HEAD`: a green bar for added lines, orange for changed
 ones, and a thin red rule along the top of the line that follows a removal
 (the removed text itself is only shown in the diff view). Annotation marks
 sit at the far left of the gutter.
-`]c` and `[c` walk the changes, `gd` swaps the pane for a unified diff of
-the file (`gd` again returns), and the status line counts `+added -removed`
-lines. The base is re-read when you open, switch to, or the agent rewrites
-a file, so a fresh commit shows at the next change.
+`]c` and `[c` walk the hunks, `gd` swaps the pane for a unified diff of
+the file, and the status line counts `+added -removed` lines.
 
-## 6. Configuration and themes
+There are two bases. **Last seen** is the file as it was when you last
+looked at it: Fathomable snapshots a file when you switch away, quit, or
+leave it alone for five seconds, so the bar shows what changed since then.
+**HEAD** is the last commit. `gd` shows the last-seen diff first (`DIFF
+seen`), `gd` again the `HEAD` diff (`DIFF head`), and a third `gd` returns
+to the rendered view; whichever base the diff view used last is the one the
+bar and `]c` use. A file that has never been seen uses `HEAD`. Snapshots
+live under `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be
+deleted at any time; a commit refreshes the `HEAD` base immediately.
+
+## 6. Following an agent
+
+Any file written under the workspace (ignoring what git ignores) becomes a
+*change*: a `●` next to it in the tree (and on collapsed folders above it),
+a toast in the bottom-right corner for a few seconds, and a hint in the
+status line, `→ src/foo.rs +12 -3 (3)`, naming the newest change and how
+many are pending. `]f` and `[f` step through the changed files, newest
+first; `Space j j` jumps straight to the newest. A jump lands on the first
+hunk against the last-seen base (or the range an agent passed to `open`),
+and a change is forgotten once its target is on screen.
+
+`Space j a` (or `:follow`) turns on **auto-jump**: the pill reads `AUTO`
+and the viewer opens the newest change by itself once writes have been
+quiet for a second. It never jumps while you are selecting, writing a
+comment, reading a thread or diff, have a popup open, or have touched the
+keyboard or mouse in the last three seconds; `[o` takes you back. `Space j
+s` cycles what counts as a change: everything in the workspace, only the
+files an agent named with `follow`, or only agent `open` calls.
+
+## 7. Configuration and themes
 
 Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 (`~/.config/fathomable/config.kdl`):
 
 ```kdl
 theme "default-light"
+
+follow {
+    source "workspace"      // workspace | followed | open-only
+    auto #false             // start with auto-jump on
+    ignore "target/**"      // extra globs on top of .gitignore
+    hint-debounce 300       // ms of quiet before a write becomes a change
+    jump-debounce 1000      // ms of quiet before auto-jump moves
+    seen-idle 5000          // ms alone with a file before it counts as seen
+    toast 4000              // ms a toast stays; 0 disables toasts
+}
 ```
+
+Every key is optional; the values above are the defaults.
 
 Built-in themes are `default-dark` and `default-light`. Drop your own at
 `~/.config/fathomable/themes/<name>.kdl`; it can `inherits` a built-in and
@@ -104,7 +145,7 @@ run; `--config PATH` points at another config file. The theme file shape
 and the key vocabulary are in
 [0011](decisions/0011-theme-schema.md).
 
-## 7. Connect an agent
+## 8. Connect an agent
 
 Every running Fathomable is a *session*: it writes a record under
 `$XDG_STATE_HOME/fathomable/sessions/` and listens on a Unix socket in
@@ -126,14 +167,14 @@ in the same repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see running sessions; pick one when the cwd heuristic is wrong |
 | `open` | show a file, optionally at a line or line range |
-| `follow` | tell the viewer which files the agent is editing (shown as `follow N` in the status line) |
+| `follow` | tell the viewer which files the agent is editing (shown as `follow N` in the status line; with `source "followed"` only these files raise change hints) |
 | `annotations_list` | read threads, optionally `since` a Unix time or on one `path` |
 | `thread_reply` | answer a thread, optionally resolving it; a `persona` name is recorded next to the client name |
 
 Every tool accepts an optional `session` id. Details and the wire protocol
 are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
 
-## 8. When something is off
+## 9. When something is off
 
 ```sh
 fathomable --doctor        # terminal, directories, config, log locations

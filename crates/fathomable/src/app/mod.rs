@@ -12,10 +12,11 @@ mod threads;
 mod ui;
 mod view;
 
+use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use crossterm::event::{
@@ -27,11 +28,15 @@ use crossterm::terminal::{
 };
 use fathomable_core::Document;
 use fathomable_core::annotations::{Store, ThreadId};
+use fathomable_core::config::FollowConfig;
+use fathomable_core::diff::Diff;
+use fathomable_core::follow::{Change, Delta, Ignore, Queue, Source, Target};
 use fathomable_core::picker::{Match, Picker};
-use fathomable_core::session::{Record, Request, Response};
+use fathomable_core::seen;
+use fathomable_core::session::{FollowState, Record, Request, Response};
 use fathomable_core::theme::Theme;
 use fathomable_core::tree::{Activation, Tree};
-use fathomable_core::workspace::{Filter, Workspace};
+use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -43,7 +48,14 @@ use view::{Effect, View};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
-const RELOAD_DEBOUNCE: Duration = Duration::from_millis(40);
+/// Reader activity newer than this holds auto-jump back (ADR 0015).
+const RECENT_ACTIVITY: Duration = Duration::from_secs(3);
+
+/// How many edit deltas a document keeps.
+const MAX_DELTAS: usize = 8;
+
+/// Toasts visible at once.
+pub const MAX_TOASTS: usize = 3;
 
 /// Sidebar width in columns before clamping to a third of the terminal.
 const SIDEBAR_WIDTH: usize = 32;
@@ -154,10 +166,12 @@ pub enum Popup {
     Compose(Compose),
     /// A thread being read.
     Thread(ThreadPanel),
+    /// The `Space j` follow submenu (ADR 0015).
+    Jump,
 }
 
 /// One space-menu entry: key, label.
-pub const SPACE_MENU: [(char, &str); 8] = [
+pub const SPACE_MENU: [(char, &str); 9] = [
     ('e', "toggle tree focus"),
     ('E', "hide tree"),
     ('f', "open file"),
@@ -165,11 +179,33 @@ pub const SPACE_MENU: [(char, &str); 8] = [
     ('o', "recent files"),
     ('a', "thread at cursor"),
     ('A', "threads in file"),
+    ('j', "follow / jump"),
     ('?', "all keys"),
 ];
 
+/// The `Space j` submenu: key, label.
+pub const JUMP_MENU: [(char, &str); 4] = [
+    ('j', "jump to newest change"),
+    ('a', "toggle auto-jump"),
+    ('s', "cycle change source"),
+    ('c', "clear changes"),
+];
+
+/// A transient one-line notice about a change (ADR 0015).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toast {
+    text: String,
+    until: Instant,
+}
+
+impl Toast {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 31] = [
+pub const HELP: [(&str, &str); 35] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -186,8 +222,12 @@ pub const HELP: [(&str, &str); 31] = [
     ("thread r x n p j k", "reply, resolve, switch, scroll"),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
     ("gs", "toggle source view"),
-    ("gd / :diff", "toggle diff view against HEAD"),
-    ("]c / [c", "next / previous change"),
+    ("gd / :diff", "diff view: last-seen, then HEAD, then off"),
+    ("]c / [c", "next / previous hunk"),
+    ("]f / [f", "next / previous changed file"),
+    ("Space j", "follow: jump, auto, source, clear"),
+    (":follow", "toggle auto-jump"),
+    (":follow source S", "workspace | followed | open-only"),
     ("[o / ]o", "previous / next opened file"),
     (":N", "go to source line N"),
     (":noh", "clear search highlight"),
@@ -209,6 +249,11 @@ struct Doc {
     relative: PathBuf,
     view: View,
     marks: Vec<Mark>,
+    /// What recent reloads changed, newest last (ADR 0015 edit deltas).
+    deltas: Vec<Delta>,
+    /// Whether the text has changed or been read since it was last
+    /// snapshotted as seen.
+    seen_dirty: bool,
 }
 
 /// All application state.
@@ -235,6 +280,18 @@ pub struct App {
     store: Option<Store>,
     /// Files an agent said it is working on (ADR 0014 `follow`).
     followed: Vec<PathBuf>,
+    record: Option<Record>,
+    follow: FollowConfig,
+    source: Source,
+    auto: bool,
+    ignore: Ignore,
+    queue: Queue,
+    toasts: Vec<Toast>,
+    seen: Option<seen::Store>,
+    /// When the queue last changed, for the auto-jump debounce.
+    last_change: Option<Instant>,
+    /// Whether the recursive workspace watch is in place.
+    watching_root: bool,
 }
 
 impl App {
@@ -246,7 +303,15 @@ impl App {
         height: usize,
         session: String,
         store: Option<Store>,
+        follow: FollowConfig,
     ) -> Self {
+        let ignore = match Ignore::new(&follow.ignore) {
+            Ok(ignore) => ignore,
+            Err(error) => {
+                tracing::warn!(%error, "ignoring follow.ignore");
+                Ignore::default()
+            }
+        };
         let mut app = Self {
             workspace,
             docs: Vec::new(),
@@ -268,9 +333,386 @@ impl App {
             session,
             store,
             followed: Vec::new(),
+            record: None,
+            source: follow.source,
+            auto: follow.auto,
+            follow,
+            ignore,
+            queue: Queue::default(),
+            toasts: Vec::new(),
+            seen: None,
+            last_change: None,
+            watching_root: false,
         };
         app.relayout();
         app
+    }
+
+    /// The session record, so `session_info` can be answered with state.
+    pub fn set_record(&mut self, record: Record) {
+        self.record = Some(record);
+    }
+
+    /// The last-seen snapshot store (ADR 0015); without one there is no
+    /// last-seen base.
+    pub fn set_seen_store(&mut self, seen: Option<seen::Store>) {
+        self.seen = seen;
+        if let Some(index) = self.current {
+            self.refresh_base(index);
+        }
+    }
+
+    /// Whether the whole workspace is watched, or only the visible
+    /// document's directory as a fallback.
+    pub fn set_watching_root(&mut self, watching: bool) {
+        self.watching_root = watching;
+    }
+
+    // ----- follow mode (ADR 0015) -----
+
+    /// What counts as a change worth hinting.
+    pub fn source(&self) -> Source {
+        self.source
+    }
+
+    /// Whether auto-jump is on.
+    pub fn auto_jump(&self) -> bool {
+        self.auto
+    }
+
+    /// Changed files, newest first.
+    pub fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    /// Live toasts, oldest first.
+    pub fn toasts(&self) -> &[Toast] {
+        &self.toasts
+    }
+
+    /// Whether a queued change sits at or under the root-relative `path`.
+    pub fn has_change_under(&self, path: &Path) -> bool {
+        self.queue.iter().any(|c| c.path.starts_with(path))
+    }
+
+    /// Toggle auto-jump (`Space j a`, `:follow`).
+    pub fn toggle_auto_jump(&mut self) {
+        self.auto = !self.auto;
+        self.notice(if self.auto {
+            "auto-jump on"
+        } else {
+            "auto-jump off"
+        });
+    }
+
+    /// Cycle the change source (`Space j s`).
+    pub fn cycle_source(&mut self) {
+        self.set_source(self.source.next());
+    }
+
+    /// Set the change source (`:follow source NAME`).
+    pub fn set_source(&mut self, source: Source) {
+        self.source = source;
+        self.notice(format!("follow source: {source}"));
+    }
+
+    /// Drop every queued change (`Space j c`).
+    pub fn clear_queue(&mut self) {
+        self.queue.clear();
+        self.last_change = None;
+    }
+
+    /// Run a `:follow` command line.
+    pub fn command(&mut self, command: &str) {
+        let mut words = command.split_whitespace();
+        match (words.next(), words.next(), words.next(), words.next()) {
+            (Some("follow"), None, _, _) => self.toggle_auto_jump(),
+            (Some("follow"), Some("on"), None, _) => {
+                self.auto = true;
+                self.notice("auto-jump on");
+            }
+            (Some("follow"), Some("off"), None, _) => {
+                self.auto = false;
+                self.notice("auto-jump off");
+            }
+            (Some("follow"), Some("source"), Some(name), None) => match name.parse() {
+                Ok(source) => self.set_source(source),
+                Err(error) => self.notice(error.to_string()),
+            },
+            _ => self.notice(format!("not a command: {command}")),
+        }
+    }
+
+    /// `Space j j`: open the newest change.
+    pub fn jump_newest(&mut self) {
+        match self.queue.newest().cloned() {
+            Some(change) => self.jump_to(&change),
+            None => self.notice("no changes"),
+        }
+    }
+
+    /// `]f`: the next older change after the current file, wrapping.
+    pub fn jump_next(&mut self) {
+        let current = self.current.map(|i| self.docs[i].relative.clone());
+        match self.queue.after(current.as_deref()).cloned() {
+            Some(change) => self.jump_to(&change),
+            None => self.notice("no changes"),
+        }
+    }
+
+    /// `[f`: the next newer change before the current file, wrapping.
+    pub fn jump_prev(&mut self) {
+        let current = self.current.map(|i| self.docs[i].relative.clone());
+        match self.queue.before(current.as_deref()).cloned() {
+            Some(change) => self.jump_to(&change),
+            None => self.notice("no changes"),
+        }
+    }
+
+    fn jump_to(&mut self, change: &Change) {
+        self.close_popup();
+        self.focus = Focus::View;
+        self.open(&change.path);
+        if self.current_path() != change.path {
+            return;
+        }
+        let view = self.view_mut();
+        view.escape();
+        match change.target {
+            Target::Line(line) => view.goto_source_line(line),
+            Target::Range(start, end) => {
+                view.goto_source_line(start);
+                if end > start {
+                    view.select_lines();
+                    view.goto_source_line(end);
+                }
+            }
+        }
+        self.queue.remove(&change.path);
+        tracing::info!(path = %change.path.display(), "jumped to change");
+    }
+
+    /// Files the watcher reported, absolute. Loaded documents reload;
+    /// changes that pass the source and ignore rules join the queue.
+    pub fn on_changes(&mut self, paths: Vec<PathBuf>) {
+        let root = self.workspace.root().to_path_buf();
+        let mut git_changed = false;
+        let mut seen_paths: Vec<PathBuf> = Vec::new();
+        for absolute in paths {
+            let Ok(relative) = absolute.strip_prefix(&root) else {
+                continue;
+            };
+            let relative = relative.to_path_buf();
+            if relative.starts_with(".git") {
+                git_changed = true;
+                continue;
+            }
+            if seen_paths.contains(&relative) {
+                continue;
+            }
+            seen_paths.push(relative.clone());
+            if !absolute.is_file() {
+                if self.queue.remove(&relative) {
+                    tracing::info!(path = %relative.display(), "changed file went away");
+                }
+                continue;
+            }
+            self.on_change(&relative, &absolute);
+        }
+        if git_changed {
+            tracing::info!("git metadata changed; refreshing HEAD bases");
+            for index in 0..self.docs.len() {
+                self.refresh_base(index);
+            }
+        }
+    }
+
+    fn on_change(&mut self, relative: &Path, absolute: &Path) {
+        let loaded = self.docs.iter().position(|doc| doc.relative == relative);
+        let delta = loaded.and_then(|index| self.reload_doc(index));
+        if self.workspace.is_ignored(relative, EntryKind::File) || self.ignore.is_ignored(relative)
+        {
+            return;
+        }
+        let wanted = match self.source {
+            Source::Workspace => true,
+            Source::Followed => self.followed.iter().any(|p| p == relative),
+            Source::OpenOnly => false,
+        };
+        if !wanted {
+            return;
+        }
+        let (line, counts) = match (loaded, delta) {
+            (Some(index), Some(delta)) => (
+                delta
+                    .first_line()
+                    .or_else(|| self.docs[index].view.first_hunk_line()),
+                delta.diff().counts(),
+            ),
+            (Some(index), None) => {
+                let view = &self.docs[index].view;
+                (view.first_hunk_line(), view.diff_counts().unwrap_or((0, 0)))
+            }
+            (None, _) => self.unloaded_change(relative, absolute),
+        };
+        let path = relative.to_path_buf();
+        self.push_change(Change::new(path, Target::Line(line.unwrap_or(1))), counts);
+    }
+
+    /// The first hunk and counts of a file that is not open, against its
+    /// last-seen base.
+    fn unloaded_change(&self, relative: &Path, absolute: &Path) -> (Option<usize>, (usize, usize)) {
+        let Ok(text) = fs::read_to_string(absolute) else {
+            return (None, (0, 0));
+        };
+        let base = self
+            .seen
+            .as_ref()
+            .and_then(|seen| seen.text(relative).ok().flatten())
+            .or_else(|| self.workspace.head_text(relative).ok().flatten());
+        let Some(base) = base else {
+            return (None, (0, 0));
+        };
+        let diff = Diff::new(&base, &text);
+        let line = diff
+            .hunks()
+            .first()
+            .map(|hunk| hunk.target_line(diff.new_lines()));
+        (line, diff.counts())
+    }
+
+    fn push_change(&mut self, change: Change, counts: (usize, usize)) {
+        tracing::info!(path = %change.path.display(), line = change.target.line(), "change queued");
+        if self.follow.toast > Duration::ZERO {
+            let (added, removed) = counts;
+            let text = if added == 0 && removed == 0 {
+                change.path.display().to_string()
+            } else {
+                format!("{} +{added} -{removed}", change.path.display())
+            };
+            self.toasts.push(Toast {
+                text,
+                until: Instant::now() + self.follow.toast,
+            });
+            if self.toasts.len() > MAX_TOASTS {
+                self.toasts.remove(0);
+            }
+        }
+        self.queue.push(change);
+        self.last_change = Some(Instant::now());
+    }
+
+    /// Drop the current file from the queue once its target is on screen.
+    pub fn settle(&mut self) {
+        let Some(index) = self.current else {
+            return;
+        };
+        let doc = &self.docs[index];
+        let target = self
+            .queue
+            .iter()
+            .find(|c| c.path == doc.relative)
+            .map(|c| c.target.line());
+        if let Some(line) = target
+            && doc.view.line_on_screen(line)
+        {
+            self.queue.remove(&doc.relative.clone());
+        }
+    }
+
+    /// Expire toasts, snapshot the current file once it has been idle long
+    /// enough, and auto-jump when the guardrails allow it.
+    pub fn tick(&mut self) {
+        let now = Instant::now();
+        self.toasts.retain(|toast| toast.until > now);
+        if let Some(index) = self.current
+            && self.docs[index].seen_dirty
+            && self.docs[index].view.idle() >= self.follow.seen_idle
+        {
+            self.mark_seen(index);
+        }
+        if self.auto
+            && let Some(change) = self.queue.newest().cloned()
+            && self
+                .last_change
+                .is_some_and(|at| at.elapsed() >= self.follow.jump_debounce)
+            && self.auto_jump_allowed()
+        {
+            self.jump_to(&change);
+        }
+    }
+
+    fn auto_jump_allowed(&self) -> bool {
+        if self.popup.is_some() {
+            return false;
+        }
+        let Some(index) = self.current else {
+            return true;
+        };
+        let view = &self.docs[index].view;
+        view.selection().is_none()
+            && view.mode() == view::Mode::Normal
+            && !view.diff_view()
+            && view.idle() >= RECENT_ACTIVITY
+    }
+
+    /// How long until [`App::tick`] has something to do, `None` when
+    /// nothing is pending.
+    pub fn tick_in(&self) -> Option<Duration> {
+        let now = Instant::now();
+        let mut next: Option<Duration> = None;
+        let mut consider = |d: Duration| {
+            next = Some(next.map_or(d, |n| n.min(d)));
+        };
+        if let Some(toast) = self.toasts.first() {
+            consider(toast.until.saturating_duration_since(now));
+        }
+        if let Some(index) = self.current
+            && self.docs[index].seen_dirty
+        {
+            let idle = self.docs[index].view.idle();
+            consider(self.follow.seen_idle.saturating_sub(idle));
+        }
+        if self.auto && !self.queue.is_empty() {
+            let since = self.last_change.map_or(Duration::ZERO, |at| at.elapsed());
+            let wait = self.follow.jump_debounce.saturating_sub(since);
+            let activity = self.current.map_or(Duration::ZERO, |i| {
+                RECENT_ACTIVITY.saturating_sub(self.docs[i].view.idle())
+            });
+            consider(wait.max(activity).max(Duration::from_millis(50)));
+        }
+        next
+    }
+
+    /// Snapshot the document at `index` as seen.
+    fn mark_seen(&mut self, index: usize) {
+        let Some(doc) = self.docs.get_mut(index) else {
+            return;
+        };
+        doc.seen_dirty = false;
+        let Some(seen) = self.seen.as_mut() else {
+            return;
+        };
+        match seen.record(&doc.relative, doc.document.text()) {
+            Ok(true) => tracing::debug!(path = %doc.relative.display(), "snapshotted as seen"),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(%error, "cannot snapshot as seen"),
+        }
+    }
+
+    /// Snapshot the visible file before the session ends.
+    pub fn on_quit(&mut self) {
+        if let Some(index) = self.current {
+            self.mark_seen(index);
+        }
+    }
+
+    /// The follow state for `session_info`.
+    fn follow_state(&self) -> FollowState {
+        FollowState {
+            follow_source: self.source.name().to_owned(),
+            auto_jump: self.auto,
+        }
     }
 
     pub fn workspace(&self) -> &Workspace {
@@ -396,6 +838,8 @@ impl App {
                         relative: relative.clone(),
                         view,
                         marks: Vec::new(),
+                        deltas: Vec::new(),
+                        seen_dirty: true,
                     });
                     self.docs.len() - 1
                 }
@@ -415,9 +859,10 @@ impl App {
     pub fn handle_request(&mut self, request: Request) -> Response {
         match request {
             Request::Ping => Response::Pong,
-            Request::SessionInfo => {
-                Response::Error("session_info is answered by the socket".to_owned())
-            }
+            Request::SessionInfo => match &self.record {
+                Some(record) => Response::Session(record.clone(), Some(self.follow_state())),
+                None => Response::Error("session_info is answered by the socket".to_owned()),
+            },
             Request::Open {
                 path,
                 line,
@@ -482,6 +927,15 @@ impl App {
                     .unwrap_or_else(|| format!("cannot open {}", path.display())),
             );
         }
+        // An agent `open` is a change with an explicit target in every
+        // source mode (ADR 0015); it is on screen at once, so it settles.
+        let target = match (line, end_line) {
+            (Some(start), Some(end)) if end > start => Target::Range(start, end),
+            (Some(start), _) => Target::Line(start),
+            (None, _) => Target::Line(1),
+        };
+        self.queue.push(Change::new(path.to_path_buf(), target));
+        self.last_change = None;
         if let Some(line) = line {
             let view = self.view_mut();
             view.escape();
@@ -495,6 +949,11 @@ impl App {
     }
 
     fn show(&mut self, index: usize) {
+        if let Some(previous) = self.current
+            && previous != index
+        {
+            self.mark_seen(previous);
+        }
         self.current = Some(index);
         self.focus = Focus::View;
         self.refresh_base(index);
@@ -523,44 +982,59 @@ impl App {
         }
     }
 
-    /// Re-read a document whose file changed on disk; `absolute` is the
-    /// watcher's path.
-    pub fn reload(&mut self, absolute: &Path) {
-        let Some(index) = self
-            .docs
-            .iter()
-            .position(|doc| doc.document.path() == absolute)
-        else {
-            return;
-        };
+    /// Re-read the document at `index`; the delta of what changed, if the
+    /// text differs.
+    fn reload_doc(&mut self, index: usize) -> Option<Delta> {
         let doc = &mut self.docs[index];
         match doc.document.reload() {
             Ok(true) => {
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
+                let old = doc.view.text().to_owned();
+                let delta = Delta::new(old, doc.document.text());
                 doc.view.reload(doc.document.text().to_owned());
+                doc.deltas.push(delta.clone());
+                if doc.deltas.len() > MAX_DELTAS {
+                    doc.deltas.remove(0);
+                }
+                doc.seen_dirty = true;
                 self.refresh_base(index);
                 self.refresh_marks(index);
+                Some(delta)
             }
-            Ok(false) => {}
-            Err(error) => tracing::warn!(%error, "reload failed; keeping previous text"),
+            Ok(false) => None,
+            Err(error) => {
+                tracing::warn!(%error, "reload failed; keeping previous text");
+                None
+            }
         }
     }
 
-    /// Re-read the `HEAD` text of the document at `index` as its diff base
-    /// (ADR 0006). A read failure is reported once and leaves no base.
+    /// Re-read the diff bases of the document at `index`: the last-seen
+    /// snapshot (ADR 0015) and the `HEAD` text (ADR 0006). A `HEAD` read
+    /// failure is reported once and leaves no base.
     fn refresh_base(&mut self, index: usize) {
-        let Some(doc) = self.docs.get(index) else {
+        let Some(relative) = self.docs.get(index).map(|doc| doc.relative.clone()) else {
             return;
         };
-        let base = match self.workspace.head_text(&doc.relative) {
+        let head = match self.workspace.head_text(&relative) {
             Ok(base) => base,
             Err(error) => {
                 self.notice(format!("no diff base: {error}"));
                 None
             }
         };
+        let seen = self
+            .seen
+            .as_ref()
+            .and_then(|seen| match seen.text(&relative) {
+                Ok(text) => text,
+                Err(error) => {
+                    tracing::warn!(%error, "cannot read last-seen snapshot");
+                    None
+                }
+            });
         if let Some(doc) = self.docs.get_mut(index) {
-            doc.view.set_base(base);
+            doc.view.set_bases(seen, head);
         }
     }
 
@@ -731,7 +1205,20 @@ impl App {
             'o' => self.open_picker(PickerKind::Recent),
             'a' => self.open_thread_at_cursor(),
             'A' => self.open_thread_picker(),
+            'j' => self.popup = Some(Popup::Jump),
             '?' => self.open_help(),
+            _ => {}
+        }
+    }
+
+    /// Run a `Space j` entry; unknown keys just close the menu.
+    pub fn jump_menu_select(&mut self, key: char) {
+        self.popup = None;
+        match key {
+            'j' => self.jump_newest(),
+            'a' => self.toggle_auto_jump(),
+            's' => self.cycle_source(),
+            'c' => self.clear_queue(),
             _ => {}
         }
     }
@@ -827,6 +1314,10 @@ pub struct Options<'a> {
     pub theme: &'a Theme,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub store: Option<Store>,
+    /// Follow-mode settings (ADR 0015).
+    pub follow: FollowConfig,
+    /// The last-seen snapshot store, or `None` when it could not be opened.
+    pub seen: Option<seen::Store>,
 }
 
 /// Run the app until the user quits.
@@ -891,12 +1382,14 @@ fn spawn_input() -> anyhow::Result<mpsc::Receiver<io::Result<Event>>> {
     Ok(input_rx)
 }
 
-/// Watches the directory of the visible document, following it as it
-/// changes (a rename lands as a directory event, so the file itself is
-/// never watched directly).
+/// Watches the workspace root recursively (ADR 0015). When that fails
+/// (inotify limits), falls back to the directory of the visible document,
+/// following it as it changes (a rename lands as a directory event, so the
+/// file itself is never watched directly).
 struct DocWatcher {
     watcher: notify::RecommendedWatcher,
     target: Option<PathBuf>,
+    recursive: bool,
 }
 
 impl DocWatcher {
@@ -918,13 +1411,29 @@ impl DocWatcher {
             Self {
                 watcher,
                 target: None,
+                recursive: false,
             },
             rx,
         ))
     }
 
+    /// Watch everything under `root`; false when the watch cannot be set up.
+    fn watch_root(&mut self, root: &Path) -> bool {
+        match self.watcher.watch(root, RecursiveMode::Recursive) {
+            Ok(()) => {
+                tracing::info!(root = %root.display(), "watching workspace");
+                self.recursive = true;
+            }
+            Err(error) => {
+                tracing::warn!(%error, root = %root.display(), "cannot watch workspace; watching the open file only");
+                self.recursive = false;
+            }
+        }
+        self.recursive
+    }
+
     fn follow(&mut self, target: Option<&Path>) {
-        if target == self.target.as_deref() {
+        if self.recursive || target == self.target.as_deref() {
             return;
         }
         if let Some(old) = self.target.as_ref().and_then(|p| p.parent()) {
@@ -939,7 +1448,7 @@ impl DocWatcher {
     }
 
     fn is_target(&self, path: &Path) -> bool {
-        self.target.as_deref() == Some(path)
+        self.recursive || self.target.as_deref() == Some(path)
     }
 }
 
@@ -972,19 +1481,26 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
     let theme = ui::Theme::from_core(options.theme);
     let size = terminal.size().context("cannot read terminal size")?;
+    let hint_debounce = options.follow.hint_debounce;
     let mut app = App::new(
         workspace,
         usize::from(size.width),
         usize::from(size.height),
         options.record.id().to_string(),
         options.store,
+        options.follow,
     );
+    app.set_record(options.record.clone());
+    app.set_seen_store(options.seen);
+    let watching = doc_watcher.watch_root(app.workspace().root());
+    app.set_watching_root(watching);
     if let Some(path) = &options.open {
         app.open(path);
     }
 
     loop {
         doc_watcher.follow(app.current_abs_path());
+        app.settle();
         terminal
             .draw(|frame| ui::draw(frame, &app, &theme))
             .context("draw failed")?;
@@ -1008,15 +1524,20 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
             },
             notice = reload_rx.recv() => {
                 if let Some(first) = notice {
-                    tokio::time::sleep(RELOAD_DEBOUNCE).await;
+                    // One quiet period turns a burst of writes into one
+                    // change per file (ADR 0015 `follow.hint-debounce`).
+                    tokio::time::sleep(hint_debounce).await;
                     let mut changed = vec![first];
                     while let Ok(path) = reload_rx.try_recv() {
                         changed.push(path);
                     }
-                    if let Some(target) = changed.into_iter().find(|p| doc_watcher.is_target(p)) {
-                        app.reload(&target);
-                    }
+                    changed.retain(|p| doc_watcher.is_target(p));
+                    app.on_changes(changed);
                 }
+                Effect::None
+            }
+            () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
+                app.tick();
                 Effect::None
             }
             envelope = request_rx.recv() => {
@@ -1042,8 +1563,10 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
                 tracing::debug!(bytes = text.len(), "copied selection via OSC 52");
                 clipboard::copy(&text).context("cannot write to clipboard")?;
             }
+            Effect::Command(command) => app.command(&command),
         }
     }
+    app.on_quit();
     tracing::info!("app closed");
     Ok(())
 }
@@ -1067,6 +1590,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use fathomable_core::config::FollowConfig;
     use fathomable_core::workspace::{Workspace, WorkspaceError};
 
     use super::{App, Focus, PickerKind, Popup};
@@ -1094,7 +1618,14 @@ mod tests {
 
     fn app(dir: &TempDir) -> Result<App, WorkspaceError> {
         let workspace = Workspace::discover(&dir.0)?;
-        Ok(App::new(workspace, 100, 30, "test".to_owned(), None))
+        Ok(App::new(
+            workspace,
+            100,
+            30,
+            "test".to_owned(),
+            None,
+            FollowConfig::default(),
+        ))
     }
 
     fn picker_items(app: &App) -> Vec<String> {
@@ -1168,6 +1699,278 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
         assert_eq!(app.focus(), Focus::View);
+        Ok(())
+    }
+
+    fn changed(app: &mut App, dir: &TempDir, relative: &str, text: &str) -> std::io::Result<()> {
+        let absolute = dir.0.join(relative);
+        fs::write(&absolute, text)?;
+        app.on_changes(vec![absolute]);
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_changes_queue_newest_first_and_jump() -> anyhow::Result<()> {
+        let dir = TempDir::new("changes")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("README.md"));
+        assert!(app.queue().is_empty());
+
+        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\nmore\n")?;
+        changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
+        assert_eq!(app.queue().len(), 2);
+        assert_eq!(
+            app.queue().newest().map(|c| c.path.clone()),
+            Some(PathBuf::from("docs/notes.md"))
+        );
+        assert!(app.has_change_under(Path::new("docs")));
+        assert!(!app.has_change_under(Path::new("README.md")));
+        assert_eq!(app.toasts().len(), 2);
+
+        app.jump_newest();
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.queue().len(), 1, "a visited change leaves the queue");
+        app.jump_next();
+        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+        assert!(app.queue().is_empty());
+        app.jump_next();
+        assert_eq!(app.message(), Some("no changes"));
+
+        // A change to the open file reloads it and lands on the first hunk.
+        changed(
+            &mut app,
+            &dir,
+            "docs/guide.md",
+            "# Guide\n\nmore\n\nagain\n",
+        )?;
+        assert!(app.view().text().contains("again"));
+        assert_eq!(app.queue().newest().map(|c| c.target.line()), Some(4));
+        app.jump_newest();
+        // The blank line 4 has no rendered row; the cursor lands on the
+        // next one, as `]c` does.
+        assert!((4..=5).contains(&app.view().source_position().0));
+        Ok(())
+    }
+
+    #[test]
+    fn source_and_ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
+        let dir = TempDir::new("source")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("README.md"));
+
+        app.command("follow source open-only");
+        changed(&mut app, &dir, "README.md", "# Readme\n\nchanged\n")?;
+        assert!(
+            app.queue().is_empty(),
+            "open-only never hints on disk changes"
+        );
+        assert!(
+            app.view().text().contains("changed"),
+            "but the open file reloads"
+        );
+
+        app.command("follow source followed");
+        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n1\n")?;
+        assert!(app.queue().is_empty(), "not in the follow list");
+        app.handle_request(fathomable_core::session::Request::Follow {
+            paths: vec![PathBuf::from("docs/guide.md")],
+        });
+        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n2\n")?;
+        assert_eq!(app.queue().len(), 1);
+        app.clear_queue();
+
+        app.command("follow source nope");
+        assert!(
+            app.message()
+                .is_some_and(|m| m.contains("unknown follow source"))
+        );
+        app.cycle_source();
+        assert_eq!(app.source(), fathomable_core::follow::Source::OpenOnly);
+        app.cycle_source();
+        assert_eq!(app.source(), fathomable_core::follow::Source::Workspace);
+
+        let follow = FollowConfig {
+            ignore: vec!["docs/**".to_owned()],
+            toast: std::time::Duration::ZERO,
+            ..FollowConfig::default()
+        };
+        let mut app = App::new(
+            Workspace::discover(&dir.0)?,
+            100,
+            30,
+            "test".to_owned(),
+            None,
+            follow,
+        );
+        changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n3\n")?;
+        assert!(app.queue().is_empty(), "follow.ignore globs apply");
+        changed(&mut app, &dir, "README.md", "# Readme\n\nx\n")?;
+        assert_eq!(app.queue().len(), 1);
+        assert!(app.toasts().is_empty(), "toast 0 disables toasts");
+
+        app.command("follow");
+        assert!(app.auto_jump());
+        app.command("follow off");
+        assert!(!app.auto_jump());
+        app.command("nonsense");
+        assert!(
+            app.message()
+                .is_some_and(|m| m.starts_with("not a command"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn seen_snapshots_become_the_diff_base() -> anyhow::Result<()> {
+        let dir = TempDir::new("seen")?;
+        let mut app = app(&dir)?;
+        app.set_seen_store(Some(fathomable_core::seen::Store::open(
+            &dir.0.join(".seen-state"),
+        )?));
+        app.open(Path::new("README.md"));
+        assert_eq!(
+            app.view().diff_counts(),
+            None,
+            "never seen, not in git: no base"
+        );
+
+        // Switching away snapshots the file; coming back diffs against it.
+        app.open(Path::new("docs/guide.md"));
+        fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n")?;
+        app.on_changes(vec![dir.0.join("README.md")]);
+        app.open(Path::new("README.md"));
+        assert_eq!(app.view().diff_counts(), Some((2, 0)));
+        assert_eq!(app.view().first_hunk_line(), Some(4));
+        assert_eq!(
+            app.queue().newest().map(|c| c.target.line()),
+            Some(4),
+            "an unopened file's target comes from its last-seen base"
+        );
+
+        // Idle long enough, the tick marks it seen and the next change is
+        // measured from there.
+        app.settle();
+        assert!(
+            app.queue().is_empty(),
+            "target on screen settles the change"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let idle = FollowConfig {
+            seen_idle: std::time::Duration::from_millis(1),
+            ..FollowConfig::default()
+        };
+        let mut app2 = App::new(
+            Workspace::discover(&dir.0)?,
+            100,
+            30,
+            "test".to_owned(),
+            None,
+            idle,
+        );
+        app2.set_seen_store(Some(fathomable_core::seen::Store::open(
+            &dir.0.join(".seen-state"),
+        )?));
+        app2.open(Path::new("README.md"));
+        assert_eq!(app2.view().diff_counts(), Some((2, 0)));
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(app2.tick_in().is_some());
+        app2.tick();
+        fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n\n!\n")?;
+        app2.on_changes(vec![dir.0.join("README.md")]);
+        assert_eq!(
+            app2.view().diff_counts(),
+            Some((2, 0)),
+            "base is the idle snapshot"
+        );
+        app2.on_quit();
+        Ok(())
+    }
+
+    #[test]
+    fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
+        let dir = TempDir::new("auto")?;
+        let follow = FollowConfig {
+            auto: true,
+            jump_debounce: std::time::Duration::ZERO,
+            ..FollowConfig::default()
+        };
+        let mut app = App::new(
+            Workspace::discover(&dir.0)?,
+            100,
+            30,
+            "test".to_owned(),
+            None,
+            follow,
+        );
+        app.open(Path::new("README.md"));
+        changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
+        assert!(app.tick_in().is_some());
+        app.tick();
+        assert_eq!(
+            app.current_path(),
+            Path::new("README.md"),
+            "the reader just opened a file: recent activity holds the jump"
+        );
+
+        // No activity in the welcome view: nothing open, so the jump goes.
+        let follow = FollowConfig {
+            auto: true,
+            jump_debounce: std::time::Duration::ZERO,
+            ..FollowConfig::default()
+        };
+        let mut app = App::new(
+            Workspace::discover(&dir.0)?,
+            100,
+            30,
+            "test".to_owned(),
+            None,
+            follow,
+        );
+        changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnewer\n")?;
+        app.tick();
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert!(app.queue().is_empty());
+
+        app.open_space_menu();
+        app.space_menu_select('j');
+        assert!(matches!(app.popup(), Some(Popup::Jump)));
+        app.jump_menu_select('a');
+        assert!(!app.auto_jump());
+        assert!(app.popup().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn agent_open_queues_a_settled_range_and_session_info_reports_state() -> anyhow::Result<()> {
+        use fathomable_core::session::{Id, Record, Request, Response};
+
+        let dir = TempDir::new("agent")?;
+        let mut app = app(&dir)?;
+        assert!(matches!(
+            app.handle_request(Request::SessionInfo),
+            Response::Error(_)
+        ));
+        app.set_record(Record::new(Id::mint(), dir.0.clone(), None));
+        let state = match app.handle_request(Request::SessionInfo) {
+            Response::Session(_, state) => state,
+            _ => None,
+        };
+        assert_eq!(
+            state,
+            Some(fathomable_core::session::FollowState {
+                follow_source: "workspace".to_owned(),
+                auto_jump: false,
+            })
+        );
+        let response = app.handle_request(Request::Open {
+            path: PathBuf::from("README.md"),
+            line: Some(1),
+            end_line: Some(3),
+        });
+        assert_eq!(response, Response::Done);
+        assert_eq!(app.queue().len(), 1);
+        app.settle();
+        assert!(app.queue().is_empty(), "the opened range is on screen");
         Ok(())
     }
 }

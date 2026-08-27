@@ -90,7 +90,12 @@ async fn connection(stream: UnixStream, record: Record, app: mpsc::Sender<Envelo
         tracing::debug!(request = %line, "socket request");
         let response = match line.parse::<Request>() {
             Ok(Request::Ping) => Response::Pong,
-            Ok(Request::SessionInfo) => Response::Session(record.clone()),
+            // The TUI adds the follow state (ADR 0015); the socket alone still
+            // answers when the loop is gone.
+            Ok(Request::SessionInfo) => match forward(&app, Request::SessionInfo).await {
+                Response::Error(_) => Response::Session(record.clone(), None),
+                answer => answer,
+            },
             Ok(request) => forward(&app, request).await,
             Err(error) => Response::Error(error.to_string()),
         };

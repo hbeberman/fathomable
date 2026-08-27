@@ -50,12 +50,18 @@ choices were captured in a question round on 2026-08-26.
 
 ### Sidebar
 
-- Closed by default, including in workspace mode; `Space e` opens it and
-  gives it focus, and `Ctrl-b` does the same for one-handed use. With the
-  sidebar focused, `Space e` or `Esc` returns focus to the view and leaves
-  the tree visible; `Space E` hides it. Opening a file from the tree also
-  returns focus to the view.
-- Width is 32 columns, clamped to a third of the terminal.
+- Open and focused when Fathomable starts on a workspace (`fathomable`
+  or `fathomable DIR`; amended 2026-08-27, it was closed by default), and
+  closed when it starts on a file. `Space e` opens it and gives it focus,
+  and `Ctrl-b` does the same for one-handed use. With the sidebar focused,
+  `Space e` or `Esc` returns focus to the view and leaves the tree
+  visible; `Space E` hides it. Opening a file from the tree also returns
+  focus to the view.
+- Width is 32 columns, clamped to a third of the terminal, until the
+  divider is dragged ([0007](0007-key-grammar-and-mouse.md)).
+- Before a file is open the text column shows a welcome block, not a
+  document: the name, the workspace root, the session id, and the keys
+  that get going. It has no gutter and no cursor (2026-08-27).
 - Directories are read only when expanded (lazy). `l`/`Enter`/`Right`
   expand or open, `h`/`Left` collapse or go to the parent, `j`/`k` move,
   `gg`/`G` jump, a click on an entry does what `Enter` does. `R` re-reads

@@ -15,7 +15,7 @@ use fathomable_core::annotations::{
 };
 
 use super::ui::SNIPPET_ROWS;
-use super::{App, PickerKind, PickerState, Popup};
+use super::{App, Focus, PickerKind, PickerState, Popup};
 
 /// How a thread should be coloured in the gutter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -76,19 +76,11 @@ pub enum ComposeTarget {
 pub struct Compose {
     target: ComposeTarget,
     text: String,
-    /// The thread panel a reply was started from; it stays on screen
-    /// above the box and comes back on cancel.
-    panel: Option<ThreadPanel>,
 }
 
 impl Compose {
     pub fn target(&self) -> &ComposeTarget {
         &self.target
-    }
-
-    /// The thread being replied to, still readable while typing.
-    pub fn panel(&self) -> Option<&ThreadPanel> {
-        self.panel.as_ref()
     }
 
     pub fn text(&self) -> &str {
@@ -255,14 +247,13 @@ impl App {
             self.notice("nothing to annotate here");
             return;
         };
-        self.open_compose(ComposeTarget::New(range), None);
+        self.open_compose(ComposeTarget::New(range));
     }
 
-    fn open_compose(&mut self, target: ComposeTarget, panel: Option<ThreadPanel>) {
+    fn open_compose(&mut self, target: ComposeTarget) {
         self.popup = Some(Popup::Compose(Compose {
             target,
             text: String::new(),
-            panel,
         }));
     }
 
@@ -292,15 +283,17 @@ impl App {
 
     /// Up / Down while replying: scroll the thread shown above the box.
     pub fn compose_scroll(&mut self, delta: isize) {
-        if let Some(panel) = self.compose_mut().and_then(|c| c.panel.as_mut()) {
-            panel.scroll = panel.scroll.saturating_add_signed(delta);
+        if matches!(self.popup, Some(Popup::Compose(_))) {
+            self.thread_scroll(delta);
         }
     }
 
-    /// Esc: drop the comment box; a reply returns to its thread panel.
+    /// Esc: drop the comment box; a reply returns to its thread pane.
     pub fn compose_cancel(&mut self) {
-        if let Some(Popup::Compose(compose)) = self.popup.take() {
-            self.popup = compose.panel.map(Popup::Thread);
+        if let Some(Popup::Compose(_)) = self.popup.take() {
+            if self.thread.is_some() {
+                self.focus = Focus::Thread;
+            }
             self.notice("comment cancelled");
         }
     }
@@ -318,6 +311,9 @@ impl App {
         match compose.target {
             ComposeTarget::New(range) => self.submit_annotation(range, text),
             ComposeTarget::Reply(id) => self.submit_reply(&id, text),
+        }
+        if self.thread.is_some() {
+            self.focus = Focus::Thread;
         }
     }
 
@@ -387,13 +383,13 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
-        if matches!(&self.popup, Some(Popup::Thread(panel)) if panel.id() == id) {
+        if self.thread.as_ref().is_some_and(|panel| panel.id() == id) {
             self.open_thread(id.clone());
         }
         Ok(())
     }
 
-    // ----- thread panel -----
+    // ----- thread pane -----
 
     /// `Space a`: show the thread(s) under the cursor.
     pub fn open_thread_at_cursor(&mut self) {
@@ -402,27 +398,48 @@ impl App {
             self.notice("no thread on this line");
             return;
         }
-        self.popup = Some(Popup::Thread(ThreadPanel {
+        self.show_panel(ThreadPanel {
             ids,
             index: 0,
             scroll: 0,
-        }));
+        });
     }
 
-    /// Show one thread; the panel lists only it.
+    /// Show one thread; the pane lists only it.
     pub fn open_thread(&mut self, id: ThreadId) {
-        self.popup = Some(Popup::Thread(ThreadPanel {
+        let scroll = self
+            .thread
+            .as_ref()
+            .filter(|panel| panel.id() == &id)
+            .map_or(0, ThreadPanel::scroll);
+        self.show_panel(ThreadPanel {
             ids: vec![id],
             index: 0,
-            scroll: 0,
-        }));
+            scroll,
+        });
+    }
+
+    /// The pane opens along the bottom of the text and takes the keys
+    /// unless the comment box is up.
+    fn show_panel(&mut self, panel: ThreadPanel) {
+        self.thread = Some(panel);
+        if self.popup.is_none() {
+            self.focus = Focus::Thread;
+        }
+        self.relayout();
+    }
+
+    /// Esc in the pane: close it and hand the keys back to the text.
+    pub fn close_thread(&mut self) {
+        self.thread = None;
+        if self.focus == Focus::Thread {
+            self.focus = Focus::View;
+        }
+        self.relayout();
     }
 
     fn panel_mut(&mut self) -> Option<&mut ThreadPanel> {
-        match self.popup.as_mut() {
-            Some(Popup::Thread(panel)) => Some(panel),
-            _ => None,
-        }
+        self.thread.as_mut()
     }
 
     /// `n` / `p`: another thread on the same line.
@@ -458,11 +475,11 @@ impl App {
         }
     }
 
-    /// `r`: reply to the shown thread through the comment box.
+    /// `r`: reply to the shown thread through the comment box; the pane
+    /// stays readable above it.
     pub fn thread_reply(&mut self) {
-        if let Some(Popup::Thread(panel)) = self.popup.take() {
-            let id = panel.id().clone();
-            self.open_compose(ComposeTarget::Reply(id), Some(panel));
+        if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
+            self.open_compose(ComposeTarget::Reply(id));
         }
     }
 
@@ -580,6 +597,8 @@ mod tests {
 
     use fathomable_core::annotations::Author;
     use fathomable_core::session::{Request, Response};
+
+    use crate::app::Focus;
 
     use super::{ComposeTarget, MarkKind};
     use crate::app::{App, Popup};
@@ -747,7 +766,7 @@ mod tests {
         for _ in 0..100 {
             app.thread_scroll(1);
         }
-        let Some(Popup::Thread(panel)) = app.popup() else {
+        let Some(panel) = app.thread_panel() else {
             anyhow::bail!("panel closed");
         };
         assert!(panel.scroll() < 40, "scroll clamps to the thread length");
@@ -766,32 +785,37 @@ mod tests {
         assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(MarkKind::Open));
 
         app.open_thread_at_cursor();
-        let Some(Popup::Thread(panel)) = app.popup() else {
+        let Some(panel) = app.thread_panel() else {
             anyhow::bail!("panel did not open");
         };
         assert_eq!(panel.position(), (1, 1));
+        assert_eq!(app.focus(), Focus::Thread);
         let id = panel.id().clone();
         app.thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if c.target() == &ComposeTarget::Reply(id.clone()))
         );
         assert!(
-            matches!(app.popup(), Some(Popup::Compose(c)) if c.panel().is_some()),
+            app.thread_panel().is_some(),
             "the thread stays readable while replying"
         );
         app.compose_scroll(2);
         app.compose_cancel();
+        assert!(app.popup().is_none());
         assert!(
-            matches!(app.popup(), Some(Popup::Thread(p)) if p.scroll() == 2),
-            "Esc returns to the panel"
+            app.thread_panel().is_some_and(|p| p.scroll() == 2),
+            "Esc returns to the pane"
         );
+        assert_eq!(app.focus(), Focus::Thread);
         app.thread_reply();
         type_in(&mut app, "second thoughts");
         app.compose_submit();
+        assert!(app.popup().is_none());
         assert!(
-            matches!(app.popup(), Some(Popup::Thread(_))),
-            "panel reopens after a reply"
+            app.thread_panel().is_some(),
+            "pane stays open after a reply"
         );
+        assert_eq!(app.focus(), Focus::Thread);
         let thread = app.thread(&id).cloned();
         assert_eq!(thread.as_ref().map(|t| t.replies().len()), Some(1));
 
@@ -806,6 +830,88 @@ mod tests {
         let again = Store::open(dir.0.join("state/threads.jsonl"))?;
         assert_eq!(again.threads().len(), 1);
         assert_eq!(again.threads()[0].replies()[0].body(), "second thoughts");
+        Ok(())
+    }
+
+    #[test]
+    fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        use super::ThreadPanel;
+        use crate::app::{Border, keys};
+
+        let mouse = |kind, column: usize, row: usize| MouseEvent {
+            kind,
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        };
+        let down = MouseEventKind::Down(MouseButton::Left);
+        let drag = MouseEventKind::Drag(MouseButton::Left);
+        let up = MouseEventKind::Up(MouseButton::Left);
+
+        let dir = TempDir::new("mouse")?;
+        let mut app = dir.app()?;
+        app.start_comment();
+        type_in(&mut app, "first");
+        app.compose_submit();
+        app.open_thread_at_cursor();
+        assert_eq!(app.focus(), Focus::Thread);
+        let rows = app.pane_rows();
+        let top = rows - app.thread_rows();
+        assert_eq!(app.text_rows(), top, "the pane takes rows from the text");
+
+        // The wheel scrolls the pane under the pointer, focus aside.
+        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, top + 2));
+        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
+        assert_eq!(app.view().scroll(), 0);
+        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        assert_eq!(app.focus(), Focus::View, "a click on the text focuses it");
+        assert!(app.thread_panel().is_some(), "the pane stays open");
+        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 20, top + 2));
+        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(0));
+        keys::handle_mouse(&mut app, mouse(down, 20, top + 2));
+        assert_eq!(app.focus(), Focus::Thread, "a click on the pane focuses it");
+
+        // Dragging the rule resizes the pane.
+        keys::handle_mouse(&mut app, mouse(down, 20, top));
+        assert_eq!(app.dragging(), Some(Border::Thread));
+        keys::handle_mouse(&mut app, mouse(drag, 20, top - 4));
+        assert_eq!(app.thread_rows(), rows - top + 4);
+        assert_eq!(app.text_rows(), top - 4);
+        keys::handle_mouse(&mut app, mouse(up, 20, top - 4));
+        assert_eq!(app.dragging(), None);
+        assert_eq!(app.view().selection(), None, "a border drag never selects");
+
+        // Dragging the tree's divider resizes the tree.
+        app.toggle_sidebar_focus();
+        let width = app.sidebar_width();
+        keys::handle_mouse(&mut app, mouse(down, width - 1, 3));
+        assert_eq!(app.dragging(), Some(Border::Sidebar));
+        keys::handle_mouse(&mut app, mouse(drag, 44, 3));
+        assert_eq!(app.sidebar_width(), 45);
+        keys::handle_mouse(&mut app, mouse(drag, 2, 3));
+        assert_eq!(app.sidebar_width(), 8, "no narrower than the minimum");
+        keys::handle_mouse(&mut app, mouse(up, 2, 3));
+        keys::handle_mouse(&mut app, mouse(down, 3, 0));
+        assert_eq!(
+            app.focus(),
+            Focus::Sidebar,
+            "the header row focuses the tree"
+        );
+
+        // The comment box keeps the keys but lets the mouse through.
+        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        app.thread_reply();
+        assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+        let top = rows - app.thread_rows();
+        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, top + 2));
+        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
+        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        assert!(
+            matches!(app.popup(), Some(Popup::Compose(_))),
+            "a click away leaves the box open"
+        );
         Ok(())
     }
 
@@ -840,11 +946,12 @@ mod tests {
         assert!(picker.item(&picker.matches()[0]).contains("top"));
         app.picker_move(1);
         app.picker_confirm();
-        assert!(matches!(app.popup(), Some(Popup::Thread(_))));
+        assert!(app.popup().is_none());
+        assert!(app.thread_panel().is_some());
         assert_eq!(app.view().cursor_source_line(), bottom);
 
-        app.compose_cancel();
-        app.close_popup();
+        app.close_thread();
+        assert_eq!(app.focus(), Focus::View);
         app.start_comment();
         app.compose_submit();
         assert_eq!(app.message(), Some("empty comment discarded"));

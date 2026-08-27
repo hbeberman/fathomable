@@ -109,8 +109,13 @@ were captured in a question round on 2026-08-26.
 
 ### Reading and replying
 
-- `Space a` opens the thread panel over the bottom third of the text pane
-  for the thread(s) touching the cursor row: a rule, a header with the
+- `Space a` opens the thread pane along the bottom third of the text
+  column for the thread(s) touching the cursor row. It is a pane, not a
+  popup (amended 2026-08-27): it takes rows from the text rather than
+  covering it, draws on the text background with no highlight of its own,
+  holds focus (the pill reads `THREAD`) while its keys apply, and a click
+  on the text or the tree moves focus there and leaves it open; its top
+  rule is draggable ([0007](0007-key-grammar-and-mouse.md)). It shows a rule, a header with the
   position (`thread 1/2`), range, status in its gutter colour, and the
   keys right-aligned; the quoted snippet with line numbers (three lines,
   then `…`); the comment; and each reply with the author's short name,
@@ -120,9 +125,11 @@ were captured in a question round on 2026-08-26.
   scrolling stops at the end. `j`/`k` scroll, `n`/`p` switch
   between threads on the row, `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
-- While replying the panel stays on screen above the box (taking up to
-  half the pane) so the thread can be read; Up/Down scroll it, and Esc
-  returns to the panel rather than closing everything.
+- While replying the pane stays on screen above the box, pushed up by
+  the box's rows, so the thread can be read; Up/Down scroll it, and Esc
+  returns focus to the pane rather than closing everything. The box takes
+  the keys but not the mouse (2026-08-27): the wheel, clicks, and border
+  drags still work in the other panes and leave the box open.
 - `]a` and `[a` jump to the next and previous thread in the file, wrapping
   with a notice. `Space A` opens the picker over the file's threads
   (`L3-5  open  first line of the comment`); choosing one jumps there and

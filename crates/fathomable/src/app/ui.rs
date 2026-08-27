@@ -186,11 +186,31 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         height: pane_height,
         ..area
     };
-    let text_area = Rect {
+    // The text column: the view on top, the thread pane along the bottom.
+    let column = Rect {
         x: area.x + sidebar_area.width,
         width: area.width.saturating_sub(sidebar_area.width),
         height: pane_height,
         ..area
+    };
+    // The comment box grows up from the status line, pushing the thread
+    // pane up so a reply is written under the thread it answers.
+    let box_rows = match app.popup() {
+        Some(Popup::Compose(compose)) => compose_rows(compose, column),
+        _ => 0,
+    };
+    let thread_rows = u16_of(app.thread_rows()).min(column.height.saturating_sub(u16_of(box_rows)));
+    let text_area = Rect {
+        height: column
+            .height
+            .saturating_sub(thread_rows)
+            .saturating_sub(u16_of(box_rows)),
+        ..column
+    };
+    let thread_area = Rect {
+        y: text_area.y + text_area.height,
+        height: thread_rows,
+        ..column
     };
     let status_area = Rect {
         y: area.y + pane_height,
@@ -204,10 +224,21 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             sidebar_area,
         );
     }
-    frame.render_widget(
-        Paragraph::new(text_lines(app, theme, gutter, rows)).style(theme.text),
-        text_area,
-    );
+    let text_rows = usize::from(text_area.height);
+    if app.has_document() {
+        frame.render_widget(
+            Paragraph::new(text_lines(app, theme, gutter, text_rows)).style(theme.text),
+            text_area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
+            text_area,
+        );
+    }
+    if let Some(panel) = app.thread_panel() {
+        draw_thread(frame, app, theme, thread_area, panel);
+    }
     frame.render_widget(
         status_line(app, theme, usize::from(area.width)),
         status_area,
@@ -215,29 +246,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_toasts(frame, app, theme, text_area);
     match app.popup() {
-        Some(Popup::Space) => draw_menu(frame, theme, text_area, &space_entries(&SPACE_MENU)),
-        Some(Popup::Jump) => draw_menu(frame, theme, text_area, &space_entries(&JUMP_MENU)),
+        Some(Popup::Space) => draw_menu(frame, theme, column, &space_entries(&SPACE_MENU)),
+        Some(Popup::Jump) => draw_menu(frame, theme, column, &space_entries(&JUMP_MENU)),
         Some(Popup::Help) => draw_help(frame, theme, area),
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
         }
         Some(Popup::Compose(compose)) => {
-            let box_rows = compose_rows(compose, text_area);
-            if let Some(panel) = compose.panel() {
-                // The thread stays readable above the box while replying.
-                let above = Rect {
-                    height: text_area.height.saturating_sub(u16_of(box_rows)),
-                    ..text_area
-                };
-                let rows = usize::from(above.height / 2).clamp(4, usize::from(above.height.max(1)));
-                draw_thread(frame, app, theme, above, panel, rows);
-            }
-            draw_compose(frame, app, theme, text_area, compose, box_rows);
-        }
-        Some(Popup::Thread(panel)) => {
-            let rows =
-                usize::from(text_area.height / 3).clamp(6, usize::from(text_area.height.max(1)));
-            draw_thread(frame, app, theme, text_area, panel, rows);
+            draw_compose(frame, app, theme, column, compose, box_rows);
         }
         None => {
             if view.pending() == Some('g') {
@@ -246,11 +262,72 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                     ("s".to_owned(), "toggle source view".to_owned()),
                     ("d".to_owned(), "toggle diff view".to_owned()),
                 ];
-                draw_menu(frame, theme, text_area, &entries);
+                draw_menu(frame, theme, column, &entries);
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
     }
+}
+
+/// What the text column shows before any file is open: the workspace,
+/// the session, and the keys that get going, centred as a block.
+fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
+    let root = app.workspace().root().display().to_string();
+    let entries: [(&str, String); 6] = [
+        ("Space f", "open a file".to_owned()),
+        ("Space e", "browse the tree".to_owned()),
+        ("Space a", "read the thread under the cursor".to_owned()),
+        ("Space ?", "list every key".to_owned()),
+        (":q", "quit".to_owned()),
+        ("", String::new()),
+    ];
+    let facts = [("workspace", root), ("session", app.session().to_owned())];
+    let key_width = entries
+        .iter()
+        .map(|(key, _)| display_width(key))
+        .chain(facts.iter().map(|(label, _)| display_width(label)))
+        .max()
+        .unwrap_or(0);
+    let width = usize::from(area.width);
+    let block_width = entries
+        .iter()
+        .map(|(_, label)| key_width + 2 + display_width(label))
+        .chain(
+            facts
+                .iter()
+                .map(|(_, value)| key_width + 2 + display_width(value)),
+        )
+        .max()
+        .unwrap_or(0)
+        .min(width);
+    let left = " ".repeat(width.saturating_sub(block_width) / 2);
+    let mut body: Vec<Line<'a>> = vec![
+        Line::from(Span::styled(
+            format!("{left}Fathomable"),
+            theme.heading[0].add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    for (label, value) in facts {
+        body.push(Line::from(vec![
+            Span::styled(format!("{left}{label:<key_width$}"), theme.info),
+            Span::raw(format!(
+                "  {}",
+                truncate_left(&value, block_width.saturating_sub(key_width + 2))
+            )),
+        ]));
+    }
+    body.push(Line::from(""));
+    for (key, label) in entries.iter().filter(|(key, _)| !key.is_empty()) {
+        body.push(Line::from(vec![
+            Span::styled(format!("{left}{key:<key_width$}"), theme.popup_key),
+            Span::raw(format!("  {label}")),
+        ]));
+    }
+    let top = usize::from(area.height).saturating_sub(body.len()) / 3;
+    let mut out = vec![Line::from(""); top];
+    out.extend(body);
+    out
 }
 
 fn place_cursor(
@@ -264,7 +341,7 @@ fn place_cursor(
     if matches!(view.mode(), Mode::Command | Mode::Search { .. }) {
         let col = 1 + display_width(view.input());
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
-    } else if app.focus() == Focus::Sidebar {
+    } else if app.focus() != Focus::View || !app.has_document() {
         // The highlighted row is the cursor; leaving the terminal cursor
         // unset keeps it hidden rather than parked on the divider.
     } else {
@@ -424,8 +501,9 @@ fn sidebar_lines<'a>(
 }
 
 /// The marks around a sidebar name: the git letter for the gutter column
-/// (ADR 0017), then the counts and the follow badge (ADR 0015) that follow
-/// the name, each drawn over the row's background.
+/// (ADR 0017; files only, a folder's state is its children's), then the
+/// counts and the follow badge (ADR 0015) that follow the name, each drawn
+/// over the row's background.
 fn sidebar_marks<'a>(
     app: &App,
     row: &fathomable_core::tree::Row,
@@ -455,10 +533,12 @@ fn sidebar_marks<'a>(
         } else {
             theme.git_unstaged
         };
-        letter = Some(Span::styled(
-            git.state.letter().to_string(),
-            on_bg(letter_style),
-        ));
+        if !row.is_dir() {
+            letter = Some(Span::styled(
+                git.state.letter().to_string(),
+                on_bg(letter_style),
+            ));
+        }
         if git.added > 0 {
             tail.push(Span::styled(
                 format!(" +{}", git.added),
@@ -646,6 +726,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     };
     let label = if app.focus() == Focus::Sidebar {
         "TREE".to_owned()
+    } else if app.focus() == Focus::Thread {
+        "THREAD".to_owned()
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {
@@ -672,22 +754,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         fathomable_core::follow::Source::Workspace => String::new(),
         other => format!("src:{other}  "),
     };
-    let hint = app.queue().newest().map(|change| {
-        let counts = if app.current_path() == change.path {
-            view.diff_counts()
-        } else {
-            None
-        };
-        let counts = match counts {
-            Some((a, r)) if a + r > 0 => format!(" +{a} -{r}"),
-            _ => String::new(),
-        };
-        format!(
-            "→ {}{counts} ({})",
-            change.path.display(),
-            app.queue().len()
-        )
-    });
+    let hint = change_hint(app);
     let changes = match view.diff_counts() {
         None | Some((0, 0)) => String::new(),
         Some((added, removed)) => format!("+{added} -{removed}  "),
@@ -725,6 +792,26 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     left.push(Span::raw(" ".repeat(pad)));
     left.push(Span::raw(right));
     Paragraph::new(Line::from(left)).style(theme.statusline)
+}
+
+/// The newest queued change for the status line (ADR 0015), with its
+/// counts when it is the open file.
+fn change_hint(app: &App) -> Option<String> {
+    let change = app.queue().newest()?;
+    let counts = if app.current_path() == change.path {
+        app.view().diff_counts()
+    } else {
+        None
+    };
+    let counts = match counts {
+        Some((a, r)) if a + r > 0 => format!(" +{a} -{r}"),
+        _ => String::new(),
+    };
+    Some(format!(
+        "→ {}{counts} ({})",
+        change.path.display(),
+        app.queue().len()
+    ))
 }
 
 /// Drop leading characters so `text` fits `max` cells, marking the cut with `…`.
@@ -907,7 +994,7 @@ fn draw_compose(
             format!(" reply{range}")
         }
     };
-    let hint = if compose.panel().is_some() {
+    let hint = if app.thread_panel().is_some() {
         "Enter newline · Ctrl/Alt-Enter submit · Up/Down scroll thread · Esc"
     } else {
         "Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel"
@@ -944,22 +1031,17 @@ fn draw_compose(
     frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(rows - 1)));
 }
 
-/// The thread panel: header, quoted snippet, comment, replies.
-fn draw_thread(
-    frame: &mut Frame<'_>,
-    app: &App,
-    theme: &Theme,
-    pane: Rect,
-    panel: &ThreadPanel,
-    rows: usize,
-) {
+/// The thread pane, filling `area`: rule, header, quoted snippet, comment,
+/// replies. It is a pane, not a popup, so it draws on the text background.
+fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPanel) {
     let Some(thread) = app.thread(panel.id()) else {
         return;
     };
-    if rows < 3 || pane.height == 0 {
+    let rows = usize::from(area.height);
+    if rows < 3 {
         return;
     }
-    let width = usize::from(pane.width);
+    let width = usize::from(area.width);
     let inner = width.saturating_sub(2);
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
@@ -981,7 +1063,11 @@ fn draw_thread(
         Span::styled(format!("  L{range}  "), theme.info),
         Span::styled(status.to_owned(), status_style),
     ];
-    let hint = "r reply · x resolve/reopen · n/p switch · j/k scroll · Esc";
+    let hint = if app.focus() == Focus::Thread {
+        "r reply · x resolve/reopen · n/p switch · j/k scroll · Esc close"
+    } else {
+        "click or Space a to focus"
+    };
     let mut lines = vec![
         rule_line(theme, width),
         header_line(theme, left, hint, width),
@@ -1039,14 +1125,8 @@ fn draw_thread(
             theme.info,
         )));
     }
-    let area = Rect {
-        x: pane.x,
-        y: pane.y + pane.height - u16_of(rows),
-        width: pane.width,
-        height: u16_of(rows),
-    };
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
+    frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
 /// `author  time[tag]` then the wrapped body, indented one cell.

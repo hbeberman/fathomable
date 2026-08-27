@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use fathomable_core::tree::Tree;
 
 use super::view::{Effect, Mode, View};
-use super::{App, Focus, Popup};
+use super::{App, Border, Focus, Popup};
 
 /// Lines moved per scroll-wheel notch.
 const WHEEL_LINES: isize = 3;
@@ -56,6 +56,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
         return Effect::None;
     }
     match app.focus() {
+        Focus::Thread => {
+            thread(app, key);
+            Effect::None
+        }
         Focus::Sidebar => {
             sidebar(app, key);
             Effect::None
@@ -115,16 +119,6 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
                 _ => {}
             }
         }
-        Some(Popup::Thread(_)) => match key.code {
-            KeyCode::Esc => app.close_popup(),
-            KeyCode::Char('j') | KeyCode::Down => app.thread_scroll(1),
-            KeyCode::Char('k') | KeyCode::Up => app.thread_scroll(-1),
-            KeyCode::Char('n') => app.thread_step(1),
-            KeyCode::Char('p') => app.thread_step(-1),
-            KeyCode::Char('r') => app.thread_reply(),
-            KeyCode::Char('x') => app.thread_toggle_resolved(),
-            _ => {}
-        },
         Some(Popup::Picker(_)) => match (key.code, ctrl) {
             (KeyCode::Esc, _) => app.close_popup(),
             (KeyCode::Enter, _) => app.picker_confirm(),
@@ -232,15 +226,55 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
     Effect::None
 }
 
-/// Apply a mouse event to whichever pane it lands on.
+/// Keys while the thread pane has focus (ADR 0013).
+fn thread(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.close_thread(),
+        KeyCode::Char('j') | KeyCode::Down => app.thread_scroll(1),
+        KeyCode::Char('k') | KeyCode::Up => app.thread_scroll(-1),
+        KeyCode::Char('n') => app.thread_step(1),
+        KeyCode::Char('p') => app.thread_step(-1),
+        KeyCode::Char('r') => app.thread_reply(),
+        KeyCode::Char('x') => app.thread_toggle_resolved(),
+        _ => {}
+    }
+}
+
+/// Apply a mouse event to whichever pane it lands on: the wheel scrolls
+/// the pane under the pointer, a click focuses it, and a press on the
+/// tree's divider or the thread pane's rule drags that border.
 pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
-    if app.popup().is_some() {
+    // The comment box keeps the keys but not the mouse: the reader can
+    // scroll, click, and resize around it while writing.
+    if matches!(
+        app.popup(),
+        Some(Popup::Space | Popup::Jump | Popup::Help | Popup::Picker(_))
+    ) {
         return Effect::None;
     }
     let row = usize::from(event.row);
     let column = usize::from(event.column);
     let rows = app.pane_rows();
     let sidebar = app.sidebar_width();
+    let thread_top = rows.saturating_sub(app.thread_rows());
+    if app.dragging().is_some() {
+        match event.kind {
+            MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
+            MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
+            _ => {}
+        }
+        return Effect::None;
+    }
+    if event.kind == MouseEventKind::Down(MouseButton::Left) && row < rows {
+        if sidebar > 0 && column + 1 == sidebar {
+            app.begin_drag(Border::Sidebar);
+            return Effect::None;
+        }
+        if app.thread_rows() > 0 && column >= sidebar && row == thread_top {
+            app.begin_drag(Border::Thread);
+            return Effect::None;
+        }
+    }
     if column < sidebar {
         match event.kind {
             MouseEventKind::ScrollDown => app.with_tree(|tree, _| {
@@ -255,19 +289,35 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
             MouseEventKind::Down(MouseButton::Left) if row >= 1 && row < rows => {
                 app.sidebar_click(row - 1);
             }
+            MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Sidebar),
+            _ => {}
+        }
+        return Effect::None;
+    }
+    if row >= thread_top && row < rows {
+        match event.kind {
+            MouseEventKind::ScrollDown => app.thread_scroll(WHEEL_LINES),
+            MouseEventKind::ScrollUp => app.thread_scroll(-WHEEL_LINES),
+            MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Thread),
             _ => {}
         }
         return Effect::None;
     }
     let gutter = sidebar + super::ui::gutter_width(app.view());
     let col = column.saturating_sub(gutter);
+    let text_rows = app.text_rows();
+    if event.kind == MouseEventKind::Down(MouseButton::Left) {
+        app.focus_pane(Focus::View);
+    }
     let view = app.view_mut();
     view.touch();
     match event.kind {
         MouseEventKind::ScrollDown => view.scroll_by(WHEEL_LINES),
         MouseEventKind::ScrollUp => view.scroll_by(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row < rows => view.click(row, col),
-        MouseEventKind::Drag(MouseButton::Left) => view.drag(row.min(rows.saturating_sub(1)), col),
+        MouseEventKind::Down(MouseButton::Left) if row < text_rows => view.click(row, col),
+        MouseEventKind::Drag(MouseButton::Left) => {
+            view.drag(row.min(text_rows.saturating_sub(1)), col);
+        }
         MouseEventKind::Up(MouseButton::Left) => view.release(),
         _ => {}
     }

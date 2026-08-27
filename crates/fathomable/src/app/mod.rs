@@ -65,22 +65,34 @@ pub const MAX_TOASTS: usize = 3;
 /// Sidebar width in columns before clamping to a third of the terminal.
 const SIDEBAR_WIDTH: usize = 32;
 
+/// Narrowest the tree can be dragged.
+const SIDEBAR_MIN_WIDTH: usize = 8;
+
+/// Fewest text columns a drag leaves the view.
+const TEXT_MIN_WIDTH: usize = 20;
+
+/// Shortest the thread pane can be dragged: rule, header, one body row.
+const THREAD_MIN_ROWS: usize = 3;
+
 /// Rows kept visible above and below the sidebar cursor.
 const SIDEBAR_SCROLLOFF: usize = 2;
-
-/// What the view shows before any file is open.
-const WELCOME: &str = "# Fathomable\n\nNo file is open.\n\n\
-- `Space f` opens the file picker\n\
-- `Space e` opens the tree\n\
-- `V` or a mouse drag selects lines; `y` copies, `c` comments\n\
-- `Space ?` lists every key\n\
-- `:q` quits\n";
 
 /// Which pane receives keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     View,
     Sidebar,
+    /// The thread pane (ADR 0013).
+    Thread,
+}
+
+/// A pane border the mouse is dragging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Border {
+    /// The rule between the tree and the text.
+    Sidebar,
+    /// The rule along the top of the thread pane.
+    Thread,
 }
 
 /// What the file picker lists.
@@ -169,8 +181,6 @@ pub enum Popup {
     Picker(PickerState),
     /// The comment box (ADR 0013).
     Compose(Compose),
-    /// A thread being read.
-    Thread(ThreadPanel),
     /// The `Space j` follow submenu (ADR 0015).
     Jump,
 }
@@ -274,6 +284,14 @@ pub struct App {
     tree: Option<Tree>,
     sidebar_visible: bool,
     sidebar_scroll: usize,
+    /// Tree width once dragged; the default follows the terminal.
+    sidebar_cols: Option<usize>,
+    /// The thread pane along the bottom of the text (ADR 0013).
+    thread: Option<ThreadPanel>,
+    /// Thread pane height once dragged; the default follows the terminal.
+    thread_rows: Option<usize>,
+    /// The border a mouse drag is moving.
+    drag: Option<Border>,
     focus: Focus,
     popup: Option<Popup>,
     file_index: Option<Vec<String>>,
@@ -330,10 +348,14 @@ impl App {
             current: None,
             history: Vec::new(),
             history_pos: 0,
-            welcome: View::new(WELCOME.to_owned(), 1, 1),
+            welcome: View::new(String::new(), 1, 1),
             tree: None,
             sidebar_visible: false,
             sidebar_scroll: 0,
+            sidebar_cols: None,
+            thread: None,
+            thread_rows: None,
+            drag: None,
             focus: Focus::View,
             popup: None,
             file_index: None,
@@ -805,7 +827,7 @@ impl App {
     }
 
     fn auto_jump_allowed(&self) -> bool {
-        if self.popup.is_some() {
+        if self.popup.is_some() || self.thread.is_some() {
             return false;
         }
         let Some(index) = self.current else {
@@ -894,6 +916,53 @@ impl App {
         self.focus
     }
 
+    /// A click lands in a pane: it takes the keys, when it is on screen.
+    pub fn focus_pane(&mut self, focus: Focus) {
+        let present = match focus {
+            Focus::View => true,
+            Focus::Sidebar => self.tree().is_some(),
+            Focus::Thread => self.thread.is_some(),
+        };
+        if present {
+            self.focus = focus;
+        }
+    }
+
+    /// Whether a document is open, rather than the welcome screen.
+    pub fn has_document(&self) -> bool {
+        self.current.is_some()
+    }
+
+    /// The open thread pane.
+    pub fn thread_panel(&self) -> Option<&ThreadPanel> {
+        self.thread.as_ref()
+    }
+
+    /// The border a drag is moving, while the button is down.
+    pub fn dragging(&self) -> Option<Border> {
+        self.drag
+    }
+
+    /// The mouse went down on a border.
+    pub fn begin_drag(&mut self, border: Border) {
+        self.drag = Some(border);
+    }
+
+    /// The mouse moved with a border held: the tree's divider follows the
+    /// column, the thread pane's rule follows the row.
+    pub fn drag_to(&mut self, column: usize, row: usize) {
+        match self.drag {
+            Some(Border::Sidebar) => self.sidebar_cols = Some(column + 1),
+            Some(Border::Thread) => self.thread_rows = Some(self.pane_rows().saturating_sub(row)),
+            None => return,
+        }
+        self.relayout();
+    }
+
+    pub fn end_drag(&mut self) {
+        self.drag = None;
+    }
+
     pub fn popup(&self) -> Option<&Popup> {
         self.popup.as_ref()
     }
@@ -944,16 +1013,38 @@ impl App {
 
     /// Sidebar width in columns, 0 when hidden.
     pub fn sidebar_width(&self) -> usize {
-        if self.sidebar_visible {
-            SIDEBAR_WIDTH.min(self.width / 3)
-        } else {
-            0
+        if !self.sidebar_visible {
+            return 0;
         }
+        let widest = self.width.saturating_sub(TEXT_MIN_WIDTH);
+        self.sidebar_cols
+            .map_or_else(
+                || SIDEBAR_WIDTH.min(self.width / 3),
+                |cols| cols.min(widest),
+            )
+            .max(SIDEBAR_MIN_WIDTH)
     }
 
     /// Rows available to panes once the status line is taken.
     pub fn pane_rows(&self) -> usize {
         self.height.saturating_sub(1).max(1)
+    }
+
+    /// Rows the thread pane takes along the bottom, 0 when closed.
+    pub fn thread_rows(&self) -> usize {
+        if self.thread.is_none() {
+            return 0;
+        }
+        let rows = self.pane_rows();
+        let tallest = rows.saturating_sub(1);
+        self.thread_rows
+            .unwrap_or_else(|| (rows / 3).max(6))
+            .clamp(THREAD_MIN_ROWS.min(tallest), tallest)
+    }
+
+    /// Rows left to the text once the thread pane is taken.
+    pub fn text_rows(&self) -> usize {
+        self.pane_rows().saturating_sub(self.thread_rows()).max(1)
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -963,7 +1054,7 @@ impl App {
     }
 
     fn relayout(&mut self) {
-        let rows = self.pane_rows();
+        let rows = self.text_rows();
         let sidebar = self.sidebar_width();
         let text_width = self
             .width
@@ -1231,6 +1322,13 @@ impl App {
                 self.notice(error.to_string());
                 false
             }
+        }
+    }
+
+    /// Show and focus the tree, as a workspace start does (ADR 0012).
+    pub fn show_sidebar(&mut self) {
+        if !self.sidebar_visible {
+            self.toggle_sidebar_focus();
         }
     }
 
@@ -1730,22 +1828,8 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
     let theme = ui::Theme::from_core(options.theme);
     let size = terminal.size().context("cannot read terminal size")?;
     let hint_debounce = options.follow.hint_debounce;
-    let mut app = App::new(
-        workspace,
-        usize::from(size.width),
-        usize::from(size.height),
-        options.record.id().to_string(),
-        options.store,
-        options.follow,
-    );
-    app.set_record(options.record.clone());
-    app.set_seen_store(options.seen);
-    app.set_syntax(options.highlighter, options.markdown);
-    let watching = doc_watcher.watch_root(app.workspace().root());
-    app.set_watching_root(watching);
-    if let Some(path) = &options.open {
-        app.open(path);
-    }
+    let watching = doc_watcher.watch_root(workspace.root());
+    let mut app = start_app(workspace, options, size, watching);
 
     let mut batch = ChangeBatch::default();
     loop {
@@ -1824,6 +1908,33 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
     app.on_quit();
     tracing::info!("app closed");
     Ok(())
+}
+
+/// Build the app from the options and show its first screen: the file
+/// given on the command line, else the tree (ADR 0012).
+fn start_app(
+    workspace: Workspace,
+    options: Options<'_>,
+    size: ratatui::layout::Size,
+    watching: bool,
+) -> App {
+    let mut app = App::new(
+        workspace,
+        usize::from(size.width),
+        usize::from(size.height),
+        options.record.id().to_string(),
+        options.store,
+        options.follow,
+    );
+    app.set_record(options.record.clone());
+    app.set_seen_store(options.seen);
+    app.set_syntax(options.highlighter, options.markdown);
+    app.set_watching_root(watching);
+    match &options.open {
+        Some(path) => app.open(path),
+        None => app.show_sidebar(),
+    }
+    app
 }
 
 fn handle_event(app: &mut App, event: &Event) -> Effect {

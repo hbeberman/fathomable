@@ -67,7 +67,7 @@ shows the full list inside the app.
 | `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
 | `x` | select the current line; repeat to extend down |
 | `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
-| thread panel `r` `x` `n` `p` `j` `k` | reply, resolve or reopen, switch, scroll |
+| thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter` | newline, submit |
 | `Space e` / `Ctrl-b`, `Space E` | tree: open and focus or return focus; hide |
 | tree `j` `k` `h` `l` `Enter`, `R`, `I` | move, collapse, expand or open; re-read; show ignored |
@@ -77,6 +77,11 @@ shows the full list inside the app.
 
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.
+
+The mouse works on whichever pane it is over: the wheel scrolls the tree,
+the text, or the thread pane under the pointer, and a click focuses it.
+Drag the tree's divider or the thread pane's top rule to resize them.
+Starting on a directory opens the tree; starting on a file opens the file.
 
 ## 4. Annotations
 

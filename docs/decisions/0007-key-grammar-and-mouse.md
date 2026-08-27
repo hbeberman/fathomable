@@ -25,6 +25,13 @@ the mouse.
 - Mouse is enabled always: click to focus and place the cursor, drag to select
   lines, scroll wheel to scroll, click on tree entries and links. Mouse and
   keyboard share one selection model.
+- The mouse goes to the pane under the pointer, not the focused one
+  (2026-08-27): the wheel scrolls the tree, the text, or the thread pane
+  it is over; a click focuses that pane (the tree's header row included).
+  A press on the tree's divider column or on the thread pane's top rule
+  starts a drag that resizes it; the tree keeps at least 8 columns and
+  leaves the text 20, the thread pane keeps at least 3 rows and leaves
+  the text one. Sizes last for the session.
 - A which-key style hint bar shows pending key sequences.
 - Keymap is fixed in v1; remapping through KDL config comes later.
 - Helix selection-first grammar is deferred and would be a config switch.

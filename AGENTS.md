@@ -40,6 +40,16 @@ user, system, or repo policy.
   change as any flag, key, file path, config node, or MCP tool it names.
 - Run `just okf` and `just links` after documentation or documented-resource
   changes. Both checks are enforced by the canonical commit gate.
+- OKF rules that bite on every new ADR:
+  - A source file carries at most **one** `@okf-doc:` backlink. A new ADR
+    whose `resource` is an existing file needs that file re-pointed, or a
+    new module of its own; `related_resources` must not name files that
+    already back another document.
+  - Every frontmatter tag must exist in `docs/tags.md`; add it there with a
+    description or reuse an existing tag.
+  - Add the record to `docs/decisions/index.md` and the milestone to
+    `docs/roadmap.md` in the same change.
+- Commit headers are at most 72 characters; the hook rejects longer ones.
 
 ## Ephemeral handoff state
 

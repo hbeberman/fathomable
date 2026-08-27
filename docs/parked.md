@@ -48,7 +48,8 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment
-  box discussion, [0005](decisions/0005-annotations.md).
+  box discussion, [0005](decisions/0005-annotations.md). The draft-only
+  hatch shipped in [0018](decisions/0018-comment-editor.md).
 - **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
   whether to warn or rate-limit. Origin: 0005.
 
@@ -77,9 +78,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   ([0013](decisions/0013-annotation-storage-and-ux.md)); a `config.kdl`
   node pointing at an in-workspace file would let a repo share threads.
   Origin: 0013 question round.
-- **TODO: comment box editing keys.** The box only appends and
-  backspaces; no cursor movement inside the text, no paste handling.
-  Origin: 0013.
 
 ## Open investigations
 

@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fathomable_core::annotations::{
     Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
+use fathomable_core::editor::{Buffer, Edit};
 
 use super::ui::SNIPPET_ROWS;
 use super::{App, Focus, PickerKind, PickerState, Popup};
@@ -75,7 +76,9 @@ pub enum ComposeTarget {
 #[derive(Debug)]
 pub struct Compose {
     target: ComposeTarget,
-    text: String,
+    buffer: Buffer,
+    /// Esc was pressed on a non-empty draft; the next Esc discards it.
+    confirm_discard: bool,
 }
 
 impl Compose {
@@ -83,8 +86,14 @@ impl Compose {
         &self.target
     }
 
-    pub fn text(&self) -> &str {
-        &self.text
+    /// The draft and its cursor (ADR 0018).
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    /// Whether the box is asking for a second Esc.
+    pub fn confirming_discard(&self) -> bool {
+        self.confirm_discard
     }
 }
 
@@ -253,49 +262,61 @@ impl App {
     fn open_compose(&mut self, target: ComposeTarget) {
         self.popup = Some(Popup::Compose(Compose {
             target,
-            text: String::new(),
+            buffer: Buffer::new(),
+            confirm_discard: false,
         }));
     }
 
+    /// The open comment box, its discard prompt cleared: any edit means
+    /// the draft is being kept.
     fn compose_mut(&mut self) -> Option<&mut Compose> {
         match self.popup.as_mut() {
-            Some(Popup::Compose(compose)) => Some(compose),
+            Some(Popup::Compose(compose)) => {
+                compose.confirm_discard = false;
+                Some(compose)
+            }
             _ => None,
         }
     }
 
-    pub fn compose_char(&mut self, ch: char) {
+    /// A typed character or a paste, inserted at the cursor.
+    pub fn compose_insert(&mut self, text: &str) {
         if let Some(compose) = self.compose_mut() {
-            compose.text.push(ch);
+            compose.buffer.insert(text);
         }
     }
 
-    /// Enter: a new line in the comment.
-    pub fn compose_newline(&mut self) {
-        self.compose_char('\n');
-    }
-
-    pub fn compose_backspace(&mut self) {
+    /// A motion or deletion in the comment (ADR 0018).
+    pub fn compose_edit(&mut self, edit: Edit) {
         if let Some(compose) = self.compose_mut() {
-            compose.text.pop();
+            compose.buffer.apply(edit);
         }
     }
 
-    /// Up / Down while replying: scroll the thread shown above the box.
+    /// `PageUp` / `PageDown` / Alt-Up / Alt-Down while replying: scroll the
+    /// thread shown above the box.
     pub fn compose_scroll(&mut self, delta: isize) {
         if matches!(self.popup, Some(Popup::Compose(_))) {
             self.thread_scroll(delta);
         }
     }
 
-    /// Esc: drop the comment box; a reply returns to its thread pane.
+    /// Esc: drop the comment box; a reply returns to its thread pane. A
+    /// non-empty draft asks for a second Esc first.
     pub fn compose_cancel(&mut self) {
-        if let Some(Popup::Compose(_)) = self.popup.take() {
-            if self.thread.is_some() {
-                self.focus = Focus::Thread;
-            }
-            self.notice("comment cancelled");
+        let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
+            return;
+        };
+        if !compose.confirm_discard && !compose.buffer.text().trim().is_empty() {
+            compose.confirm_discard = true;
+            self.notice("Esc again to discard the comment");
+            return;
         }
+        self.popup = None;
+        if self.thread.is_some() {
+            self.focus = Focus::Thread;
+        }
+        self.notice("comment cancelled");
     }
 
     /// Ctrl-Enter / Alt-Enter: write the comment to the store.
@@ -303,7 +324,7 @@ impl App {
         let Some(Popup::Compose(compose)) = self.popup.take() else {
             return;
         };
-        let text = compose.text.trim().to_owned();
+        let text = compose.buffer.text().trim().to_owned();
         if text.is_empty() {
             self.notice("empty comment discarded");
             return;
@@ -600,6 +621,8 @@ mod tests {
 
     use crate::app::Focus;
 
+    use fathomable_core::editor::{Cursor, Edit, Motion};
+
     use super::{ComposeTarget, MarkKind};
     use crate::app::{App, Popup};
 
@@ -643,9 +666,9 @@ mod tests {
     fn type_in(app: &mut App, text: &str) {
         for ch in text.chars() {
             if ch == '\n' {
-                app.compose_newline();
+                app.compose_edit(Edit::Newline);
             } else {
-                app.compose_char(ch);
+                app.compose_insert(&ch.to_string());
             }
         }
     }
@@ -1049,6 +1072,87 @@ mod tests {
             resolve: false,
         });
         assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
+        Ok(())
+    }
+
+    fn draft(app: &App) -> anyhow::Result<(String, Cursor)> {
+        let Some(Popup::Compose(compose)) = app.popup() else {
+            anyhow::bail!("comment box is not open");
+        };
+        Ok((
+            compose.buffer().text().to_owned(),
+            compose.buffer().cursor(),
+        ))
+    }
+
+    #[test]
+    fn the_comment_box_edits_around_a_cursor_and_takes_pastes() -> anyhow::Result<()> {
+        let dir = TempDir::new("editor")?;
+        let mut app = dir.app()?;
+        app.view_mut().select_lines();
+        app.start_comment();
+        type_in(&mut app, "second\nfourth");
+        app.compose_edit(Edit::Move(Motion::Up));
+        app.compose_edit(Edit::Move(Motion::LineStart));
+        app.compose_insert("first ");
+        app.paste("\r\nthird\r\n");
+        assert_eq!(
+            draft(&app)?,
+            (
+                "first \nthird\nsecond\nfourth".to_owned(),
+                Cursor { line: 2, column: 0 }
+            )
+        );
+        app.compose_edit(Edit::DeleteWordBack);
+        assert_eq!(draft(&app)?.0, "first \nsecond\nfourth");
+        // The box is three rows over the header until dragged; with a
+        // 100-column pane nothing wraps.
+        assert_eq!(app.compose_rows(), 5);
+        assert_eq!(app.compose_first_row(), 0);
+        app.compose_submit();
+        assert!(app.popup().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn esc_asks_twice_before_discarding_a_draft() -> anyhow::Result<()> {
+        let dir = TempDir::new("discard")?;
+        let mut app = dir.app()?;
+        app.view_mut().select_lines();
+        app.start_comment();
+        app.compose_cancel();
+        assert!(app.popup().is_none(), "an empty box closes at once");
+        app.start_comment();
+        type_in(&mut app, "keep me");
+        app.compose_cancel();
+        assert_eq!(app.message(), Some("Esc again to discard the comment"));
+        // Typing keeps the draft and drops the prompt.
+        type_in(&mut app, "!");
+        let Some(Popup::Compose(compose)) = app.popup() else {
+            anyhow::bail!("draft was lost");
+        };
+        assert!(!compose.confirming_discard());
+        assert_eq!(compose.buffer().text(), "keep me!");
+        app.compose_cancel();
+        app.compose_cancel();
+        assert!(app.popup().is_none());
+        assert_eq!(app.thread_counts(), (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn a_long_comment_wraps_and_scrolls_to_the_cursor() -> anyhow::Result<()> {
+        let dir = TempDir::new("wrap")?;
+        let mut app = dir.app()?;
+        app.view_mut().select_lines();
+        app.start_comment();
+        let width = app.compose_width();
+        type_in(&mut app, &"x".repeat(width * 10));
+        // Ten wrapped rows exceed the cap: eight rows, cursor row last.
+        assert_eq!(app.compose_rows(), 8);
+        assert_eq!(app.compose_first_row(), 4);
+        app.compose_edit(Edit::Move(Motion::Up));
+        assert_eq!(app.compose_first_row(), 0);
         Ok(())
     }
 }

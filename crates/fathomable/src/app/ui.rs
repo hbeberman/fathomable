@@ -19,9 +19,6 @@ use super::view::{Mode, View};
 
 use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_MENU};
 
-/// Most rows the comment box grows to before it scrolls.
-const COMPOSE_MAX_ROWS: usize = 8;
-
 /// Snippet lines quoted at the top of the thread panel.
 pub(super) const SNIPPET_ROWS: usize = 3;
 /// Cells a message body is indented under its author row.
@@ -195,10 +192,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     };
     // The comment box grows up from the status line, pushing the thread
     // pane up so a reply is written under the thread it answers.
-    let box_rows = match app.popup() {
-        Some(Popup::Compose(compose)) => compose_rows(compose, column),
-        _ => 0,
-    };
+    let box_rows = app.compose_rows().min(usize::from(column.height));
     let thread_rows = u16_of(app.thread_rows()).min(column.height.saturating_sub(u16_of(box_rows)));
     let text_area = Rect {
         height: column
@@ -966,15 +960,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }
 
-/// Rows the comment box takes: its text plus a title, capped.
-fn compose_rows(compose: &Compose, pane: Rect) -> usize {
-    // Rule and title rows sit above the text.
-    (compose.text().split('\n').count() + 2)
-        .min(COMPOSE_MAX_ROWS)
-        .min(usize::from(pane.height))
-}
-
-/// The comment box: grows up from the status line (ADR 0005, 0013).
+/// The comment box: grows up from the status line (ADR 0005, 0013), the
+/// draft wrapped and scrolled so the cursor's row is visible (ADR 0018).
 fn draw_compose(
     frame: &mut Frame<'_>,
     app: &App,
@@ -994,18 +981,22 @@ fn draw_compose(
             format!(" reply{range}")
         }
     };
-    let hint = if app.thread_panel().is_some() {
-        "Enter newline · Ctrl/Alt-Enter submit · Up/Down scroll thread · Esc"
+    let hint = if compose.confirming_discard() {
+        "Esc again to discard · any key keeps the draft"
+    } else if app.thread_panel().is_some() {
+        "Ctrl/Alt-Enter submit · PgUp/PgDn thread · Ctrl-e $EDITOR · Esc"
     } else {
-        "Enter newline · Ctrl-Enter / Alt-Enter submit · Esc cancel"
+        "Enter newline · Ctrl/Alt-Enter submit · Ctrl-e $EDITOR · Esc"
     };
     let width = usize::from(pane.width);
-    let text: Vec<&str> = compose.text().split('\n').collect();
     if rows < 3 {
         return;
     }
     let body_rows = rows - 2;
-    let first = text.len().saturating_sub(body_rows);
+    let text_width = app.compose_width();
+    let buffer = compose.buffer();
+    let wrapped = buffer.rows(text_width);
+    let first = app.compose_first_row();
     let mut lines = vec![
         rule_line(theme, width),
         header_line(
@@ -1015,8 +1006,9 @@ fn draw_compose(
             width,
         ),
     ];
-    for line in &text[first..] {
-        lines.push(Line::from(Span::raw(fit(&format!(" {line}"), width))));
+    for row in wrapped.iter().skip(first).take(body_rows) {
+        let text = buffer.row_text(*row);
+        lines.push(Line::from(Span::raw(fit(&format!(" {text}"), width))));
     }
     let area = Rect {
         x: pane.x,
@@ -1026,9 +1018,10 @@ fn draw_compose(
     };
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
-    let last = text.last().copied().unwrap_or_default();
-    let col = (1 + display_width(last)).min(width.saturating_sub(1));
-    frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(rows - 1)));
+    let cell = buffer.cursor_cell(text_width);
+    let col = (1 + cell.column).min(width.saturating_sub(1));
+    let row = 2 + cell.row.saturating_sub(first).min(body_rows - 1);
+    frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(row)));
 }
 
 /// The thread pane, filling `area`: rule, header, quoted snippet, comment,

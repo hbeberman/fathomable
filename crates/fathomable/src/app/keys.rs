@@ -2,6 +2,7 @@
 //! Translate crossterm key and mouse events into app and view operations.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::tree::Tree;
 
 use super::view::{Effect, Mode, View};
@@ -104,21 +105,7 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
             _ => app.close_popup(),
         },
         Some(Popup::Help) => app.close_popup(),
-        Some(Popup::Compose(_)) => {
-            let submit = key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
-            match key.code {
-                KeyCode::Esc => app.compose_cancel(),
-                KeyCode::Enter if submit => app.compose_submit(),
-                KeyCode::Enter => app.compose_newline(),
-                KeyCode::Backspace => app.compose_backspace(),
-                KeyCode::Down => app.compose_scroll(1),
-                KeyCode::Up => app.compose_scroll(-1),
-                KeyCode::Char(ch) if !ctrl => app.compose_char(ch),
-                _ => {}
-            }
-        }
+        Some(Popup::Compose(_)) => compose(app, key, ctrl),
         Some(Popup::Picker(_)) => match (key.code, ctrl) {
             (KeyCode::Esc, _) => app.close_popup(),
             (KeyCode::Enter, _) => app.picker_confirm(),
@@ -130,6 +117,41 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
         },
         None => {}
     }
+}
+
+/// Keys in the comment box (ADR 0018): readline-style motion and kills,
+/// none of them a zellij lock; Alt-Up/Down and PageUp/Down scroll the
+/// thread above a reply.
+fn compose(app: &mut App, key: KeyEvent, ctrl: bool) {
+    let alt = key.modifiers.contains(KeyModifiers::ALT);
+    let edit = match key.code {
+        KeyCode::Esc => return app.compose_cancel(),
+        KeyCode::Enter if ctrl || alt => return app.compose_submit(),
+        KeyCode::Up if alt => return app.compose_scroll(-1),
+        KeyCode::Down if alt => return app.compose_scroll(1),
+        KeyCode::PageUp => return app.compose_scroll(-WHEEL_LINES),
+        KeyCode::PageDown => return app.compose_scroll(WHEEL_LINES),
+        KeyCode::Enter => Edit::Newline,
+        KeyCode::Backspace => Edit::DeleteBack,
+        KeyCode::Delete => Edit::DeleteForward,
+        KeyCode::Left => Edit::Move(Motion::Left),
+        KeyCode::Right => Edit::Move(Motion::Right),
+        KeyCode::Up => Edit::Move(Motion::Up),
+        KeyCode::Down => Edit::Move(Motion::Down),
+        KeyCode::Home => Edit::Move(Motion::LineStart),
+        KeyCode::End => Edit::Move(Motion::LineEnd),
+        KeyCode::Char('a') if ctrl => Edit::Move(Motion::LineStart),
+        KeyCode::Char('w') if ctrl => Edit::DeleteWordBack,
+        KeyCode::Char('u') if ctrl => Edit::DeleteToLineStart,
+        KeyCode::Char('k') if ctrl => Edit::DeleteToLineEnd,
+        KeyCode::Char('b') if alt => Edit::Move(Motion::WordBack),
+        KeyCode::Char('f') if alt => Edit::Move(Motion::WordForward),
+        KeyCode::Char(ch) if !ctrl && !alt => {
+            return app.compose_insert(ch.encode_utf8(&mut [0; 4]));
+        }
+        _ => return,
+    };
+    app.compose_edit(edit);
 }
 
 fn sidebar(app: &mut App, key: KeyEvent) {

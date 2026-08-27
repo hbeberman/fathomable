@@ -68,7 +68,11 @@ shows the full list inside the app.
 | `x` | select the current line; repeat to extend down |
 | `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
-| comment box `Enter`, `Ctrl-Enter` / `Alt-Enter` | newline, submit |
+| comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc` | newline, submit, cancel (twice on a draft) |
+| comment box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
+| comment box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
+| comment box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
+| comment box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Space e` / `Ctrl-b`, `Space E` | tree: open and focus or return focus; hide |
 | tree `j` `k` `h` `l` `Enter`, `R`, `I` | move, collapse, expand or open; re-read; show ignored |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |

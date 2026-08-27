@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -73,6 +73,10 @@ const TEXT_MIN_WIDTH: usize = 20;
 
 /// Shortest the thread pane can be dragged: rule, header, one body row.
 const THREAD_MIN_ROWS: usize = 3;
+/// Most rows the comment box grows to on its own before it scrolls.
+const COMPOSE_MAX_ROWS: usize = 8;
+/// Rule, header, and one line of text.
+const COMPOSE_MIN_ROWS: usize = 3;
 
 /// Rows kept visible above and below the sidebar cursor.
 const SIDEBAR_SCROLLOFF: usize = 2;
@@ -290,6 +294,8 @@ pub struct App {
     thread: Option<ThreadPanel>,
     /// Thread pane height once dragged; the default follows the terminal.
     thread_rows: Option<usize>,
+    /// Comment box height once dragged; the default follows its text.
+    compose_rows: Option<usize>,
     /// The border a mouse drag is moving.
     drag: Option<Border>,
     focus: Focus,
@@ -355,6 +361,7 @@ impl App {
             sidebar_cols: None,
             thread: None,
             thread_rows: None,
+            compose_rows: None,
             drag: None,
             focus: Focus::View,
             popup: None,
@@ -1042,6 +1049,53 @@ impl App {
             .clamp(THREAD_MIN_ROWS.min(tallest), tallest)
     }
 
+    /// Rows the comment box takes along the bottom, 0 when closed: its
+    /// wrapped text plus the rule and header, capped, unless its rule was
+    /// dragged (ADR 0018).
+    pub fn compose_rows(&self) -> usize {
+        let Some(Popup::Compose(compose)) = &self.popup else {
+            return 0;
+        };
+        let tallest = self.pane_rows().saturating_sub(1);
+        let wanted = self.compose_rows.unwrap_or_else(|| {
+            (compose.buffer().rows(self.compose_width()).len() + 2).min(COMPOSE_MAX_ROWS)
+        });
+        wanted.clamp(COMPOSE_MIN_ROWS.min(tallest), tallest)
+    }
+
+    /// Columns the comment's text wraps at: the text column less the
+    /// one-space margin.
+    pub fn compose_width(&self) -> usize {
+        self.width
+            .saturating_sub(self.sidebar_width())
+            .saturating_sub(1)
+            .max(1)
+    }
+
+    /// The first wrapped row the comment box shows, chosen so the cursor's
+    /// row is visible.
+    pub fn compose_first_row(&self) -> usize {
+        let Some(Popup::Compose(compose)) = &self.popup else {
+            return 0;
+        };
+        let width = self.compose_width();
+        let body = self.compose_rows().saturating_sub(2).max(1);
+        let total = compose.buffer().rows(width).len();
+        compose
+            .buffer()
+            .cursor_cell(width)
+            .row
+            .saturating_sub(body - 1)
+            .min(total.saturating_sub(body))
+    }
+
+    /// Bracketed paste: into the comment box, else nothing to paste into.
+    pub fn paste(&mut self, text: &str) {
+        if matches!(self.popup, Some(Popup::Compose(_))) {
+            self.compose_insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
+        }
+    }
+
     /// Rows left to the text once the thread pane is taken.
     pub fn text_rows(&self) -> usize {
         self.pane_rows().saturating_sub(self.thread_rows()).max(1)
@@ -1618,6 +1672,7 @@ impl TerminalGuard {
             io::stdout(),
             EnterAlternateScreen,
             EnableMouseCapture,
+            EnableBracketedPaste,
             SetCursorStyle::SteadyBlock
         )
         .context("cannot enter alternate screen")?;
@@ -1644,6 +1699,7 @@ impl Drop for TerminalGuard {
         let _ = crossterm::execute!(
             io::stdout(),
             SetCursorStyle::DefaultUserShape,
+            DisableBracketedPaste,
             DisableMouseCapture,
             LeaveAlternateScreen
         );
@@ -1943,6 +1999,10 @@ fn handle_event(app: &mut App, event: &Event) -> Effect {
             keys::handle_key(app, *key)
         }
         Event::Mouse(mouse) => keys::handle_mouse(app, *mouse),
+        Event::Paste(text) => {
+            app.paste(text);
+            Effect::None
+        }
         Event::Resize(width, height) => {
             app.resize(usize::from(*width), usize::from(*height));
             Effect::None

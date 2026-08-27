@@ -126,7 +126,9 @@ were captured in a question round on 2026-08-26.
   between threads on the row, `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
 - While replying the pane stays on screen above the box, pushed up by
-  the box's rows, so the thread can be read; Up/Down scroll it, and Esc
+  the box's rows, so the thread can be read; Up/Down scroll it
+  (superseded by [0018](0018-comment-editor.md), 2026-08-27: Up/Down
+  move in the comment, PageUp/PageDown scroll the pane), and Esc
   returns focus to the pane rather than closing everything. The box takes
   the keys but not the mouse (2026-08-27): the wheel, clicks, and border
   drags still work in the other panes and leave the box open.

@@ -1,6 +1,8 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
 //! Draw the app with ratatui: sidebar, gutter and text, popups, status line.
 
+use std::path::Path;
+
 use fathomable_core::layout::{Face, Style as Face_, display_width};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -14,6 +16,7 @@ use fathomable_core::status::Summary;
 
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
+
 use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_MENU};
 
 /// Most rows the comment box grows to before it scrolls.
@@ -328,13 +331,33 @@ fn sidebar_lines<'a>(
         .file_name()
         .map_or_else(|| "/".to_owned(), |n| n.to_string_lossy().into_owned());
     let mut out = Vec::with_capacity(rows);
-    out.push(Line::from(vec![
-        Span::styled(
-            fit(&format!(" {root}"), inner),
-            theme.sidebar_dir.add_modifier(Modifier::BOLD),
-        ),
-        divider.clone(),
-    ]));
+    // The header carries the repo's summed `+n -m` (ADR 0017).
+    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    let mut header = vec![Span::styled(format!(" {root}"), header_style)];
+    let mut header_width = 1 + display_width(&root);
+    if let Some(total) = app.status().summary_under(Path::new("")) {
+        let counts = [
+            ('+', total.added, theme.diff_plus),
+            ('-', total.removed, theme.diff_minus),
+        ];
+        for (sign, count, style) in counts {
+            if count == 0 {
+                continue;
+            }
+            let text = format!(" {sign}{count}");
+            if header_width + display_width(&text) > inner {
+                break;
+            }
+            header_width += display_width(&text);
+            header.push(Span::styled(text, style));
+        }
+    }
+    header.push(Span::styled(
+        " ".repeat(inner.saturating_sub(header_width)),
+        header_style,
+    ));
+    header.push(divider.clone());
+    out.push(Line::from(header));
     let focused = app.focus() == Focus::Sidebar;
     for (index, row) in tree
         .rows()
@@ -372,7 +395,7 @@ fn sidebar_lines<'a>(
         } else {
             app.queue().contains(row.path())
         };
-        let mut tail = sidebar_marks(app, row, theme, style, badge);
+        let (letter, mut tail) = sidebar_marks(app, row, theme, style, badge);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
         let tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
@@ -381,7 +404,11 @@ fn sidebar_lines<'a>(
         }
         let name = fit(&text, inner - tail_width).trim_end().to_owned();
         let used = display_width(&name) + tail_width;
-        let mut spans = vec![Span::styled(name, style)];
+        // The git letter takes the gutter column ahead of the indent.
+        let mut spans = match letter {
+            Some(letter) => vec![letter, Span::styled(name[1..].to_owned(), style)],
+            None => vec![Span::styled(name, style)],
+        };
         spans.extend(tail);
         spans.push(Span::styled(" ".repeat(inner - used), style));
         spans.push(divider.clone());
@@ -396,15 +423,16 @@ fn sidebar_lines<'a>(
     out
 }
 
-/// The marks after a sidebar name: the git letter and counts (ADR 0017)
-/// and the follow badge (ADR 0015), each drawn over the row's background.
+/// The marks around a sidebar name: the git letter for the gutter column
+/// (ADR 0017), then the counts and the follow badge (ADR 0015) that follow
+/// the name, each drawn over the row's background.
 fn sidebar_marks<'a>(
     app: &App,
     row: &fathomable_core::tree::Row,
     theme: &Theme,
     style: Style,
     badge: bool,
-) -> Vec<Span<'a>> {
+) -> (Option<Span<'a>>, Vec<Span<'a>>) {
     // A collapsed directory folds what is beneath it.
     let git = if row.is_dir() {
         (!row.expanded())
@@ -419,16 +447,17 @@ fn sidebar_marks<'a>(
         })
     };
     let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
+    let mut letter = None;
     let mut tail = Vec::new();
     if let Some(git) = git {
-        let letter = if git.staged {
+        let letter_style = if git.staged {
             theme.git_staged
         } else {
             theme.git_unstaged
         };
-        tail.push(Span::styled(
-            format!(" {}", git.state.letter()),
-            on_bg(letter),
+        letter = Some(Span::styled(
+            git.state.letter().to_string(),
+            on_bg(letter_style),
         ));
         if git.added > 0 {
             tail.push(Span::styled(
@@ -446,7 +475,7 @@ fn sidebar_marks<'a>(
     if badge {
         tail.push(Span::styled(" ●", on_bg(theme.diff_delta)));
     }
-    tail
+    (letter, tail)
 }
 
 /// Pad or truncate `text` to exactly `width` cells.

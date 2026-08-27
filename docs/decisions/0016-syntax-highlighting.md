@@ -72,7 +72,8 @@ settled in a question round on 2026-08-26.
 
   `extensions` are matched case-insensitively without the dot;
   `extensionless` says whether files with no extension (README, LICENSE)
-  render as Markdown. Both keys are optional; the defaults above are
+  render as Markdown; dotfiles (`.gitignore`, `.env`) never do, as their
+  "extension" is their whole name. Both keys are optional; the defaults above are
   echoed by `--config-show`. Unknown keys are errors as in
   [0008](0008-configuration-format.md).
 - The welcome document and a file passed on the command line follow the

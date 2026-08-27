@@ -42,7 +42,7 @@ re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
 Markdown files (`.md`, `.markdown`, `.mdx`, and extensionless files such as
-`README`) open rendered; every other file opens as syntax-highlighted
+`README`, though not dotfiles like `.gitignore`) open rendered; every other file opens as syntax-highlighted
 source, coloured by its extension. Fenced code blocks inside Markdown are
 coloured by their info string (` ```rust `). A language syntect does not
 bundle (TOML, KDL, Dockerfile among them) shows plain. `gs` still flips any
@@ -56,6 +56,7 @@ shows the full list inside the app.
 | Keys | Action |
 | --- | --- |
 | `j` `k` `h` `l`, `gg`, `G`, `Ctrl-d` `Ctrl-u` | move, top, bottom, half page |
+| `h` at column 0 | focus the tree (a selection wraps to the line above instead) |
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
@@ -102,11 +103,12 @@ status line counts `+added -removed` lines.
 on into the next uncommitted file in path order, wrapping at the end, so
 holding `]g` from the top of the tree visits every uncommitted change.
 `]G` and `[G` step by file instead, landing on the first hunk. The tree
-shows every uncommitted file with a letter after its name, `M`odified,
-`A`dded, `D`eleted, or `?` untracked, in one colour when the change is
-staged and another when it is not, followed by its `+added -removed`
-counts; a collapsed folder shows the most advanced letter and the summed
-counts of everything beneath it. A save, `git add`, or commit updates all
+shows every uncommitted file with a letter in its gutter column,
+`M`odified, `A`dded, `D`eleted, or `?` untracked, in one colour when the
+change is staged and another when it is not, and its `+added -removed`
+counts after the name; a collapsed folder shows the most advanced letter
+and the summed counts of everything beneath it, and the root header shows
+the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
 of this within a beat.
 
 There is a second base. **Last seen** is the file as it was when you last

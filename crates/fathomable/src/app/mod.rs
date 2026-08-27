@@ -1985,6 +1985,35 @@ mod tests {
     }
 
     #[test]
+    fn left_at_column_zero_hands_focus_to_the_tree() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use super::keys;
+        let dir = TempDir::new("left")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("docs/notes.md"));
+        let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        keys::handle_key(&mut app, left);
+        assert_eq!(app.focus(), Focus::View, "no tree, nothing to focus");
+        app.toggle_sidebar_focus();
+        app.toggle_sidebar_focus();
+        assert_eq!(app.focus(), Focus::View);
+        keys::handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
+        );
+        keys::handle_key(&mut app, left);
+        assert_eq!(app.focus(), Focus::View, "a selection keeps focus");
+        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        keys::handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
+        );
+        assert_eq!(app.focus(), Focus::Sidebar);
+        Ok(())
+    }
+
+    #[test]
     fn picker_filters_and_opens() -> anyhow::Result<()> {
         let dir = TempDir::new("picker")?;
         let mut app = app(&dir)?;

@@ -603,10 +603,24 @@ impl View {
         self.jump_to_row(self.last_row());
     }
 
+    /// Whether `h` has nowhere left to go on this row.
+    #[must_use]
+    pub fn at_line_start(&self) -> bool {
+        !self
+            .columns(self.cursor.row)
+            .iter()
+            .any(|&c| c < self.cursor.col)
+    }
+
+    /// One cell left; a selection wraps onto the end of the row above.
     pub fn move_left(&mut self) {
         let columns = self.columns(self.cursor.row);
         if let Some(&col) = columns.iter().rev().find(|&&c| c < self.cursor.col) {
             self.cursor.col = col;
+        } else if self.mode == Mode::Select && self.cursor.row > 0 {
+            self.cursor.row -= 1;
+            self.cursor.col = self.columns(self.cursor.row).last().copied().unwrap_or(0);
+            self.ensure_visible();
         }
         self.want_col = self.cursor.col;
         self.extend_selection();
@@ -1133,6 +1147,22 @@ mod tests {
         // Deleted line: nearest surviving line wins.
         v.reload("# Title\n\nalpha\n".to_owned());
         assert_eq!(v.cursor().row, 2);
+    }
+
+    #[test]
+    fn left_at_column_zero_stops_unless_selecting() {
+        let mut v = view();
+        v.move_down(2);
+        assert!(v.at_line_start());
+        v.move_left();
+        assert_eq!(v.cursor().row, 2, "normal mode stays put at column 0");
+        v.move_right();
+        assert!(!v.at_line_start());
+        v.select_chars();
+        v.move_left();
+        v.move_left();
+        assert_eq!(v.cursor().row, 1, "a selection wraps onto the row above");
+        assert_eq!(v.cursor().col, v.columns(1).last().copied().unwrap_or(0));
     }
 
     #[test]

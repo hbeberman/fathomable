@@ -96,12 +96,15 @@ letters follow Helix; the sidebar shows a git letter and line counts.
 
 ### Sidebar
 
-- A dirty file's tree row shows, after its name and one space, a state
-  letter and its line counts: `mod.rs M +12 -3`, `new.rs ? +40`,
-  `old.rs D -18`. Letters are `M`, `A`, `D`, `?`, in `git.unstaged` or,
-  when the path is staged, `git.staged`; `+a` in `diff.plus` and `-r` in
-  `diff.minus`, each omitted when zero. Nothing is padded to a column;
-  colour tells the parts apart.
+- A dirty file's tree row shows a state letter in the gutter column
+  (column 0, ahead of the indent, so names stay aligned) and its line
+  counts after the name and one space: `M   mod.rs +12 -3`,
+  `?   new.rs +40`, `D   old.rs -18`. Letters are `M`, `A`, `D`, `?`, in
+  `git.unstaged` or, when the path is staged, `git.staged`; `+a` in
+  `diff.plus` and `-r` in `diff.minus`, each omitted when zero. The counts
+  are not padded to a column; colour tells the parts apart.
+- The root header carries the summed counts of the whole dirty set
+  (`demo +12 -3`) in the same colours.
 - A collapsed directory shows the letter of its most advanced descendant
   (`?` > `A` > `D` > `M`) and the summed counts, so a dirty tree is visible
   however it is folded. The follow `●` of 0015 sits after the git mark

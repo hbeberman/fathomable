@@ -63,7 +63,15 @@ impl MarkdownConfig {
                 let ext = ext.to_ascii_lowercase();
                 self.extensions.contains(&ext)
             }
-            None => self.extensionless,
+            // A dotfile such as `.gitignore` has no extension to Rust but
+            // is not prose either.
+            None => {
+                self.extensionless
+                    && !path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with('.'))
+            }
         }
     }
 }
@@ -402,6 +410,11 @@ follow {
         assert!(markdown.matches(Path::new("x.mdx")));
         assert!(!markdown.matches(Path::new("Cargo.toml")));
         assert!(!markdown.matches(Path::new("src/main.rs")));
+        assert!(
+            !markdown.matches(Path::new(".gitignore")),
+            "dotfiles are not prose"
+        );
+        assert!(!markdown.matches(Path::new("a/.env")));
     }
 
     #[test]

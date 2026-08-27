@@ -73,6 +73,17 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
                 app.start_comment();
                 Effect::None
             }
+            // At column 0, `h` steps back into the tree; a selection wraps
+            // instead (see `View::move_left`).
+            KeyCode::Char('h') | KeyCode::Left
+                if mode == Mode::Normal
+                    && app.view().pending().is_none()
+                    && app.tree().is_some()
+                    && app.view().at_line_start() =>
+            {
+                app.toggle_sidebar_focus();
+                Effect::None
+            }
             _ => normal(app.view_mut(), key, ctrl),
         },
     }

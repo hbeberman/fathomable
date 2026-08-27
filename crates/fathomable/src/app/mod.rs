@@ -16,7 +16,9 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1690,6 +1692,15 @@ struct TerminalGuard {
 
 impl TerminalGuard {
     fn enter() -> anyhow::Result<Self> {
+        let mut guard = Self { enhanced: false };
+        guard.resume()?;
+        Ok(guard)
+    }
+
+    /// Raw mode, the alternate screen, mouse capture, bracketed paste, and
+    /// the kitty flags: on entry and again after `$EDITOR` gives the
+    /// terminal back.
+    fn resume(&mut self) -> anyhow::Result<()> {
         enable_raw_mode().context("cannot enable raw mode")?;
         crossterm::execute!(
             io::stdout(),
@@ -1701,7 +1712,7 @@ impl TerminalGuard {
         .context("cannot enter alternate screen")?;
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
         // the comment box (ADR 0013); terminals without it still get Alt-Enter.
-        let enhanced = matches!(
+        self.enhanced = matches!(
             crossterm::terminal::supports_keyboard_enhancement(),
             Ok(true)
         ) && crossterm::execute!(
@@ -1709,15 +1720,15 @@ impl TerminalGuard {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         )
         .is_ok();
-        tracing::info!(enhanced, "keyboard enhancement");
-        Ok(Self { enhanced })
+        tracing::info!(enhanced = self.enhanced, "keyboard enhancement");
+        Ok(())
     }
-}
 
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
+    /// Give the terminal back to the shell (or `$EDITOR`).
+    fn leave(&mut self) {
         if self.enhanced {
             let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
+            self.enhanced = false;
         }
         let _ = crossterm::execute!(
             io::stdout(),
@@ -1730,12 +1741,65 @@ impl Drop for TerminalGuard {
     }
 }
 
-fn spawn_input() -> anyhow::Result<mpsc::Receiver<io::Result<Event>>> {
-    let (input_tx, input_rx) = mpsc::channel::<io::Result<Event>>(64);
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        self.leave();
+    }
+}
+
+/// The input thread's state: reading, asked to pause, or paused while
+/// `$EDITOR` owns the terminal (ADR 0018).
+const INPUT_READING: u8 = 0;
+const INPUT_PAUSE_REQUESTED: u8 = 1;
+const INPUT_PAUSED: u8 = 2;
+
+/// The input thread: reads terminal events until it is told to pause.
+struct Input {
+    events: mpsc::Receiver<io::Result<Event>>,
+    state: Arc<AtomicU8>,
+}
+
+impl Input {
+    /// Stop the thread reading, and wait until it has, so nothing typed
+    /// into the editor is swallowed here.
+    async fn pause(&self) {
+        self.state.store(INPUT_PAUSE_REQUESTED, Ordering::SeqCst);
+        while self.state.load(Ordering::SeqCst) != INPUT_PAUSED {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn resume(&self) {
+        self.state.store(INPUT_READING, Ordering::SeqCst);
+    }
+}
+
+fn spawn_input() -> anyhow::Result<Input> {
+    let (input_tx, events) = mpsc::channel::<io::Result<Event>>(64);
+    let state = Arc::new(AtomicU8::new(INPUT_READING));
+    let flag = Arc::clone(&state);
     thread::Builder::new()
         .name("input".to_owned())
         .spawn(move || {
             loop {
+                match flag.load(Ordering::SeqCst) {
+                    INPUT_PAUSE_REQUESTED => flag.store(INPUT_PAUSED, Ordering::SeqCst),
+                    INPUT_PAUSED => {
+                        thread::sleep(Duration::from_millis(20));
+                        continue;
+                    }
+                    _ => {}
+                }
+                // Poll rather than block so a pause request is seen within
+                // a beat; `poll` consumes nothing.
+                match crossterm::event::poll(Duration::from_millis(100)) {
+                    Ok(false) => continue,
+                    Ok(true) => {}
+                    Err(error) => {
+                        let _ = input_tx.blocking_send(Err(error));
+                        break;
+                    }
+                }
                 let event = crossterm::event::read();
                 let failed = event.is_err();
                 if input_tx.blocking_send(event).is_err() || failed {
@@ -1744,7 +1808,56 @@ fn spawn_input() -> anyhow::Result<mpsc::Receiver<io::Result<Event>>> {
             }
         })
         .context("cannot start input thread")?;
-    Ok(input_rx)
+    Ok(Input { events, state })
+}
+
+/// `Ctrl-e` in the comment box: hand the draft to `$VISUAL` or `$EDITOR`
+/// on a temporary file and load the result back (ADR 0018). The comment
+/// is not submitted; the socket and watcher wait while the editor runs.
+async fn edit_draft(
+    app: &mut App,
+    guard: &mut TerminalGuard,
+    input: &Input,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> anyhow::Result<()> {
+    let Some(draft) = app.compose_draft() else {
+        return Ok(());
+    };
+    let editor = ["VISUAL", "EDITOR"].iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    });
+    let Some(editor) = editor else {
+        app.notice("set $VISUAL or $EDITOR to edit the comment there");
+        return Ok(());
+    };
+    let path = std::env::temp_dir().join(format!("fathomable-comment-{}.md", std::process::id()));
+    fs::write(&path, draft).with_context(|| format!("cannot write {}", path.display()))?;
+    input.pause().await;
+    guard.leave();
+    tracing::info!(%editor, path = %path.display(), "editing the comment draft");
+    let status = Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("fathomable")
+        .arg(&path)
+        .status();
+    guard.resume()?;
+    input.resume();
+    terminal.clear().context("cannot redraw after the editor")?;
+    match status {
+        Ok(status) if status.success() => {
+            let text = fs::read_to_string(&path)
+                .with_context(|| format!("cannot read {}", path.display()))?;
+            app.set_compose_text(text.strip_suffix('\n').unwrap_or(&text));
+            app.notice("draft loaded from the editor; Ctrl-Enter submits");
+        }
+        Ok(status) => app.notice(format!("{editor} exited with {status}; draft kept")),
+        Err(error) => app.notice(format!("cannot run {editor}: {error}")),
+    }
+    let _ = fs::remove_file(&path);
+    Ok(())
 }
 
 /// Watches the workspace root recursively (ADR 0015). When that fails
@@ -1900,8 +2013,8 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
 
     // The guard queries the terminal, so it must run before the input
     // thread starts consuming responses.
-    let _guard = TerminalGuard::enter()?;
-    let mut input_rx = spawn_input()?;
+    let mut guard = TerminalGuard::enter()?;
+    let mut input = spawn_input()?;
     let mut terminal =
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
     let theme = ui::Theme::from_core(options.theme);
@@ -1918,14 +2031,14 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
             .draw(|frame| ui::draw(frame, &app, &theme))
             .context("draw failed")?;
         let effect = tokio::select! {
-            event = input_rx.recv() => match event {
+            event = input.events.recv() => match event {
                 Some(Ok(event)) => {
                     let mut effect = handle_event(&mut app, &event);
                     // Coalesce a burst (wheel flick, key repeat) into one
                     // frame: draining here keeps the redraw from lagging
                     // behind the queue and jumping several notches at once.
                     while matches!(effect, Effect::None)
-                        && let Ok(next) = input_rx.try_recv()
+                        && let Ok(next) = input.events.try_recv()
                     {
                         let next = next.context("reading terminal input")?;
                         effect = handle_event(&mut app, &next);
@@ -1982,6 +2095,7 @@ async fn run_async(workspace: Workspace, options: Options<'_>) -> anyhow::Result
                 clipboard::copy(&text).context("cannot write to clipboard")?;
             }
             Effect::Command(command) => app.command(&command),
+            Effect::EditDraft => edit_draft(&mut app, &mut guard, &input, &mut terminal).await?,
         }
     }
     app.on_quit();

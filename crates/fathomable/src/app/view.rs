@@ -108,6 +108,8 @@ pub enum Effect {
     Copy(String),
     /// A `:` command the app handles (`:follow ...`, ADR 0015).
     Command(String),
+    /// Hand the comment draft to `$EDITOR` (ADR 0018).
+    EditDraft,
 }
 
 /// What `]g` / `[g` did (ADR 0017), so the app can cross into the next

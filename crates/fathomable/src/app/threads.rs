@@ -299,6 +299,21 @@ impl App {
         }
     }
 
+    /// The draft in the comment box, for the `$EDITOR` hatch.
+    pub fn compose_draft(&self) -> Option<&str> {
+        match &self.popup {
+            Some(Popup::Compose(compose)) => Some(compose.buffer.text()),
+            _ => None,
+        }
+    }
+
+    /// Replace the whole draft (back from `$EDITOR`), cursor at the end.
+    pub fn set_compose_text(&mut self, text: &str) {
+        if let Some(compose) = self.compose_mut() {
+            compose.buffer = Buffer::from_text(text);
+        }
+    }
+
     /// `PageUp` / `PageDown` / Alt-Up / Alt-Down while replying: scroll the
     /// thread shown above the box.
     pub fn compose_scroll(&mut self, delta: isize) {
@@ -1111,9 +1126,19 @@ mod tests {
         );
         app.compose_edit(Edit::DeleteWordBack);
         assert_eq!(draft(&app)?.0, "first \nsecond\nfourth");
-        // The box is three rows over the header until dragged; with a
-        // 100-column pane nothing wraps.
-        assert_eq!(app.compose_rows(), 5);
+        // The editor hatch round-trips the whole draft, cursor at the end.
+        assert_eq!(app.compose_draft(), Some("first \nsecond\nfourth"));
+        app.set_compose_text("from the editor\nline two");
+        assert_eq!(
+            draft(&app)?,
+            (
+                "from the editor\nline two".to_owned(),
+                Cursor { line: 1, column: 8 }
+            )
+        );
+        // The box is two rows over the rule and header until dragged; with
+        // a 100-column pane nothing wraps.
+        assert_eq!(app.compose_rows(), 4);
         assert_eq!(app.compose_first_row(), 0);
         app.compose_submit();
         assert!(app.popup().is_none());

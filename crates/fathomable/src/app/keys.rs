@@ -18,8 +18,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     app.view_mut().clear_message();
 
     if app.popup().is_some() {
-        popup(app, key, ctrl);
-        return Effect::None;
+        return popup(app, key, ctrl);
     }
     if let Some(pending) = app.pending()
         && matches!(pending, '[' | ']')
@@ -94,7 +93,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     }
 }
 
-fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
+fn popup(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
     match app.popup() {
         Some(Popup::Space) => match key.code {
             KeyCode::Char(ch) => app.space_menu_select(ch),
@@ -105,7 +104,7 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
             _ => app.close_popup(),
         },
         Some(Popup::Help) => app.close_popup(),
-        Some(Popup::Compose(_)) => compose(app, key, ctrl),
+        Some(Popup::Compose(_)) => return compose(app, key, ctrl),
         Some(Popup::Picker(_)) => match (key.code, ctrl) {
             (KeyCode::Esc, _) => app.close_popup(),
             (KeyCode::Enter, _) => app.picker_confirm(),
@@ -117,41 +116,41 @@ fn popup(app: &mut App, key: KeyEvent, ctrl: bool) {
         },
         None => {}
     }
+    Effect::None
 }
 
 /// Keys in the comment box (ADR 0018): readline-style motion and kills,
 /// none of them a zellij lock; Alt-Up/Down and PageUp/Down scroll the
 /// thread above a reply.
-fn compose(app: &mut App, key: KeyEvent, ctrl: bool) {
+fn compose(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
     let alt = key.modifiers.contains(KeyModifiers::ALT);
-    let edit = match key.code {
-        KeyCode::Esc => return app.compose_cancel(),
-        KeyCode::Enter if ctrl || alt => return app.compose_submit(),
-        KeyCode::Up if alt => return app.compose_scroll(-1),
-        KeyCode::Down if alt => return app.compose_scroll(1),
-        KeyCode::PageUp => return app.compose_scroll(-WHEEL_LINES),
-        KeyCode::PageDown => return app.compose_scroll(WHEEL_LINES),
-        KeyCode::Enter => Edit::Newline,
-        KeyCode::Backspace => Edit::DeleteBack,
-        KeyCode::Delete => Edit::DeleteForward,
-        KeyCode::Left => Edit::Move(Motion::Left),
-        KeyCode::Right => Edit::Move(Motion::Right),
-        KeyCode::Up => Edit::Move(Motion::Up),
-        KeyCode::Down => Edit::Move(Motion::Down),
-        KeyCode::Home => Edit::Move(Motion::LineStart),
-        KeyCode::End => Edit::Move(Motion::LineEnd),
-        KeyCode::Char('a') if ctrl => Edit::Move(Motion::LineStart),
-        KeyCode::Char('w') if ctrl => Edit::DeleteWordBack,
-        KeyCode::Char('u') if ctrl => Edit::DeleteToLineStart,
-        KeyCode::Char('k') if ctrl => Edit::DeleteToLineEnd,
-        KeyCode::Char('b') if alt => Edit::Move(Motion::WordBack),
-        KeyCode::Char('f') if alt => Edit::Move(Motion::WordForward),
-        KeyCode::Char(ch) if !ctrl && !alt => {
-            return app.compose_insert(ch.encode_utf8(&mut [0; 4]));
-        }
-        _ => return,
-    };
-    app.compose_edit(edit);
+    match key.code {
+        KeyCode::Esc => app.compose_cancel(),
+        KeyCode::Enter if ctrl || alt => app.compose_submit(),
+        KeyCode::Char('e') if ctrl => return Effect::EditDraft,
+        KeyCode::Up if alt => app.compose_scroll(-1),
+        KeyCode::Down if alt => app.compose_scroll(1),
+        KeyCode::PageUp => app.compose_scroll(-WHEEL_LINES),
+        KeyCode::PageDown => app.compose_scroll(WHEEL_LINES),
+        KeyCode::Enter => app.compose_edit(Edit::Newline),
+        KeyCode::Backspace => app.compose_edit(Edit::DeleteBack),
+        KeyCode::Delete => app.compose_edit(Edit::DeleteForward),
+        KeyCode::Left => app.compose_edit(Edit::Move(Motion::Left)),
+        KeyCode::Right => app.compose_edit(Edit::Move(Motion::Right)),
+        KeyCode::Up => app.compose_edit(Edit::Move(Motion::Up)),
+        KeyCode::Down => app.compose_edit(Edit::Move(Motion::Down)),
+        KeyCode::Home => app.compose_edit(Edit::Move(Motion::LineStart)),
+        KeyCode::End => app.compose_edit(Edit::Move(Motion::LineEnd)),
+        KeyCode::Char('a') if ctrl => app.compose_edit(Edit::Move(Motion::LineStart)),
+        KeyCode::Char('w') if ctrl => app.compose_edit(Edit::DeleteWordBack),
+        KeyCode::Char('u') if ctrl => app.compose_edit(Edit::DeleteToLineStart),
+        KeyCode::Char('k') if ctrl => app.compose_edit(Edit::DeleteToLineEnd),
+        KeyCode::Char('b') if alt => app.compose_edit(Edit::Move(Motion::WordBack)),
+        KeyCode::Char('f') if alt => app.compose_edit(Edit::Move(Motion::WordForward)),
+        KeyCode::Char(ch) if !ctrl && !alt => app.compose_insert(ch.encode_utf8(&mut [0; 4])),
+        _ => {}
+    }
+    Effect::None
 }
 
 fn sidebar(app: &mut App, key: KeyEvent) {

@@ -422,8 +422,11 @@ fn sidebar_lines<'a>(
     let mut out = Vec::with_capacity(rows);
     // The header carries the repo's summed `+n -m` (ADR 0017).
     let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
-    let mut header = vec![Span::styled(format!(" {root}"), header_style)];
-    let mut header_width = 1 + display_width(&root);
+    // A sidebar too narrow for the whole name cuts it rather than spilling
+    // over the divider.
+    let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
+    let mut header_width = display_width(&title);
+    let mut header = vec![Span::styled(title, header_style)];
     if let Some(total) = app.status().summary_under(Path::new("")) {
         let counts = [
             ('+', total.added, theme.diff_plus),
@@ -487,19 +490,23 @@ fn sidebar_lines<'a>(
         let (letter, mut tail) = sidebar_marks(app, row, theme, style, badge);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
-        let tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
+        let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
         if tail_width == 0 || inner <= tail_width + 1 {
             tail.clear();
+            tail_width = 0;
         }
         let name = fit(&text, inner - tail_width).trim_end().to_owned();
+        // The git letter takes the gutter column ahead of the indent, which
+        // is the name's leading space; a sidebar too narrow to hold any of
+        // the name has no such column to take.
+        let letter = letter.filter(|_| !name.is_empty());
         let used = display_width(&name) + tail_width;
-        // The git letter takes the gutter column ahead of the indent.
         let mut spans = match letter {
             Some(letter) => vec![letter, Span::styled(name[1..].to_owned(), style)],
             None => vec![Span::styled(name, style)],
         };
         spans.extend(tail);
-        spans.push(Span::styled(" ".repeat(inner - used), style));
+        spans.push(Span::styled(" ".repeat(inner.saturating_sub(used)), style));
         spans.push(divider.clone());
         out.push(Line::from(spans));
     }

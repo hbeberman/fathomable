@@ -2227,6 +2227,72 @@ mod tests {
         Ok(())
     }
 
+    /// A sidebar squeezed past the width of its narrowest name still draws
+    /// whole rows: the git letter has no column to take, and the marks that
+    /// no longer fit take no width either.
+    #[test]
+    fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let dir = TempDir::new("narrow")?;
+        gix::ThreadSafeRepository::init_opts(
+            &dir.0,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            open_options(),
+        )?;
+        commit_and_stage(
+            &dir.0,
+            &[
+                ("README.md", "# Readme\n"),
+                (
+                    "docs/deep/notes.md",
+                    concat!("# Notes\n", "old\nold\nold\nold\nold\nold\nold\nold\n"),
+                ),
+            ],
+        )?;
+        // A modified file earns the git letter, and enough changed lines
+        // earn `+n -m` counts wider than the sidebar itself.
+        fs::write(dir.0.join("README.md"), "# Readme\n\nmore\n")?;
+        fs::create_dir_all(dir.0.join("docs/deep"))?;
+        fs::write(
+            dir.0.join("docs/deep/notes.md"),
+            "# Notes\n".to_owned() + &"line\n".repeat(400),
+        )?;
+        let mut app = app(&dir)?;
+        // Opening the nested file unfolds the tree down to it, so the rows
+        // are indented past what a narrow sidebar can show.
+        app.open(Path::new("docs/deep/notes.md"));
+        app.show_sidebar();
+        assert!(
+            app.tree()
+                .is_some_and(|tree| tree.rows().iter().any(|row| row.depth() == 2)),
+            "the tree is unfolded to the nested file"
+        );
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::ui::Theme::from_core(&core);
+        for width in 1..=40u16 {
+            app.resize(usize::from(width), 12);
+            let mut terminal = Terminal::new(TestBackend::new(width, 12))?;
+            terminal.draw(|frame| crate::app::ui::draw(frame, &app, &theme))?;
+            let buffer = terminal.backend().buffer().clone();
+            let divider = u16::try_from(app.sidebar_width())?.saturating_sub(1);
+            if divider >= width {
+                continue;
+            }
+            for y in 0..buffer.area.height - 1 {
+                assert_eq!(
+                    buffer[(divider, y)].symbol(),
+                    "│",
+                    "row {y} of a {width}-column terminal ends at the divider"
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn sidebar_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
         let dir = TempDir::new("sidebar")?;

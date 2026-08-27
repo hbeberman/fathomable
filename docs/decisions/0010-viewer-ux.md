@@ -130,7 +130,7 @@ viewer, the layout engine, and later themes agree.
 
 ### Quitting and Esc
 
-- Only `:q` and `Ctrl-c` quit. `q` is reserved. Esc clears, in order, the
+- Only `:q` quits, as in vim/helix; `Ctrl-c` does nothing (dropped 2026-08-26). `q` is reserved. Esc clears, in order, the
   active input line, a pending key sequence, the selection, and search
   highlights; it never quits.
 

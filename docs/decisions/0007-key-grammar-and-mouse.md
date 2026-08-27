@@ -31,7 +31,7 @@ the mouse.
 - Cursor model, gutter, status line, clipboard, search, and Esc/quit details
   are fixed in [0010](0010-viewer-ux.md) (2026-08-26): a real row/column
   cursor, mouse release copies the source Markdown via OSC 52, `/` is regex,
-  only `:q`/`Ctrl-c` quit. [0013](0013-annotation-storage-and-ux.md)
+  only `:q` quits (`Ctrl-c` was dropped 2026-08-26 to match vim/helix). [0013](0013-annotation-storage-and-ux.md)
   (2026-08-26) then removed copy-on-release: a mouse selection stays in
   `SEL` mode where `y` copies and `c` comments.
 - Layout: a toggleable tree sidebar on the left plus a fuzzy file picker

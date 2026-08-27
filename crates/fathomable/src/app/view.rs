@@ -400,6 +400,13 @@ impl View {
         self.ensure_visible();
     }
 
+    /// Jump to `row` and land on its first column, as Helix does for
+    /// `gg`, `ge`, and `:N` (only `j`/`k` keep the sticky column).
+    fn jump_to_row(&mut self, row: usize) {
+        self.want_col = 0;
+        self.set_row(row);
+    }
+
     fn extend_selection(&mut self) {
         if let Some(selection) = self.selection.as_mut()
             && self.mode == Mode::Select
@@ -425,11 +432,11 @@ impl View {
     }
 
     pub fn goto_top(&mut self) {
-        self.set_row(0);
+        self.jump_to_row(0);
     }
 
     pub fn goto_bottom(&mut self) {
-        self.set_row(self.last_row());
+        self.jump_to_row(self.last_row());
     }
 
     pub fn move_left(&mut self) {
@@ -714,10 +721,6 @@ impl View {
 
     pub fn input_backspace(&mut self) {
         self.input.pop();
-        if self.input.is_empty() && matches!(self.mode, Mode::Command | Mode::Search { .. }) {
-            self.mode = Mode::Normal;
-            return;
-        }
         self.incremental();
     }
 
@@ -794,7 +797,7 @@ impl View {
         if let Some(range) = self.layout.index().range_of(line)
             && let Some(row) = self.layout.line_at_offset(range.start)
         {
-            self.set_row(row);
+            self.jump_to_row(row);
         }
     }
 
@@ -1097,12 +1100,17 @@ mod tests {
     #[test]
     fn commands_quit_goto_and_toggle_source() {
         let mut v = view();
+        v.move_down(2);
+        v.move_right();
+        v.move_right();
+        assert_eq!(v.cursor().col, 2);
         v.start_command();
         for ch in "9".chars() {
             v.input_char(ch);
         }
         assert_eq!(v.confirm(), Effect::None);
         assert_eq!(v.source_position().0, 9);
+        assert_eq!(v.cursor().col, 0, ":N lands on the first column");
         v.start_command();
         v.input_char('q');
         assert_eq!(v.confirm(), Effect::Quit);
@@ -1114,6 +1122,26 @@ mod tests {
         assert!(v.source_view());
         assert_eq!(v.layout().lines()[0].text(), "# Title");
         assert_eq!(v.source_position().0, 9, "toggle keeps the source line");
+        v.move_right();
+        v.goto_top();
+        assert_eq!(v.cursor().col, 0, "gg lands on the first column");
+    }
+
+    #[test]
+    fn backspace_on_empty_input_stays_in_command_and_search() {
+        let mut v = view();
+        v.start_command();
+        v.input_char('q');
+        v.input_backspace();
+        v.input_backspace();
+        assert_eq!(v.mode(), Mode::Command);
+        assert!(v.input().is_empty());
+        v.escape();
+        assert_eq!(v.mode(), Mode::Normal);
+
+        v.start_search(false);
+        v.input_backspace();
+        assert!(matches!(v.mode(), Mode::Search { .. }));
     }
 
     #[test]

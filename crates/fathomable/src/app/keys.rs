@@ -13,9 +13,6 @@ const WHEEL_LINES: isize = 3;
 /// Apply a key press to `app`.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    if ctrl && key.code == KeyCode::Char('c') {
-        return Effect::Quit;
-    }
     app.clear_message();
     app.view_mut().clear_message();
 

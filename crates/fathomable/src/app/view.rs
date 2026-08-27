@@ -566,6 +566,24 @@ impl View {
         self.toggle_select(true);
     }
 
+    /// `x` (Helix): select the current line, or extend a selection one
+    /// line down, so repeated presses grow the block.
+    pub fn select_line_extend(&mut self) {
+        match self
+            .selection
+            .as_mut()
+            .filter(|_| self.mode == Mode::Select)
+        {
+            Some(selection) => {
+                selection.linewise = true;
+                if self.cursor.row < self.last_row() {
+                    self.move_down(1);
+                }
+            }
+            None => self.toggle_select(true),
+        }
+    }
+
     /// Vim semantics: the same key again leaves select mode, the other key
     /// switches the kind and keeps the anchor.
     fn toggle_select(&mut self, linewise: bool) {
@@ -982,6 +1000,25 @@ mod tests {
         assert!(v.selection().is_some_and(|s| s.linewise));
         v.select_lines();
         assert_eq!(v.mode(), Mode::Normal);
+    }
+
+    #[test]
+    fn x_selects_line_then_extends_downward() {
+        let mut v = view();
+        v.move_down(4);
+        v.select_line_extend();
+        assert_eq!(v.mode(), Mode::Select);
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 5)));
+        v.select_line_extend();
+        v.select_line_extend();
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 7)));
+        assert_eq!(v.yank(), Effect::Copy("- one\n- two\n- three".to_owned()));
+        // From a character selection, `x` upgrades to lines and extends.
+        v.move_up(2);
+        v.select_chars();
+        v.select_line_extend();
+        assert!(v.selection().is_some_and(|s| s.linewise));
+        assert_eq!(v.selected_lines(), Some(LineRange::new(5, 6)));
     }
 
     #[test]

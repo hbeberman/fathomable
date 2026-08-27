@@ -169,7 +169,7 @@ pub const SPACE_MENU: [(char, &str); 8] = [
 ];
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 30] = [
+pub const HELP: [(&str, &str); 31] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -177,6 +177,7 @@ pub const HELP: [(&str, &str); 30] = [
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
     ("v / V / mouse drag", "select text / lines / cells"),
+    ("x", "select line; again extends down (Helix)"),
     ("y (selected)", "copy source to clipboard"),
     ("c (selected)", "comment on the selection"),
     ("Space a", "read thread at cursor"),

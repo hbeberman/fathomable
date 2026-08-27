@@ -204,6 +204,7 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
         (KeyCode::Char(':'), _) => view.start_command(),
         (KeyCode::Char('v'), _) => view.select_chars(),
         (KeyCode::Char('V'), _) => view.select_lines(),
+        (KeyCode::Char('x'), _) => view.select_line_extend(),
         (KeyCode::Char('y'), _) if view.mode() == Mode::Select => return view.yank(),
         (KeyCode::Esc, _) => view.escape(),
         _ => {}

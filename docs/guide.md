@@ -54,6 +54,7 @@ shows the full list inside the app.
 | `gs` | toggle raw source view |
 | `gd` / `:diff`, `]c` `[c` | toggle unified diff against `HEAD`; next / previous change |
 | `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
+| `x` | select the current line; repeat to extend down |
 | `Space a`, `Space A`, `]a` `[a` | thread at cursor, pick a thread, next/previous thread |
 | thread panel `r` `x` `n` `p` `j` `k` | reply, resolve or reopen, switch, scroll |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter` | newline, submit |

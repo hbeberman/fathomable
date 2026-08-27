@@ -26,8 +26,10 @@ the mouse.
   lines, scroll wheel to scroll, click on tree entries and links. Mouse and
   keyboard share one selection model.
 - The mouse goes to the pane under the pointer, not the focused one
-  (2026-08-27): the wheel scrolls the tree, the text, or the thread pane
-  it is over; a click focuses that pane (the tree's header row included).
+  (2026-08-27): the wheel scrolls the text or the thread pane it is over
+  — over the tree it steps one row per tick, showing the file it lands on
+  (amended 2026-08-27, [0023](0023-sidebar-paging.md)) — and a click
+  focuses the pane it is over (the tree's header row included).
   A press on the tree's divider column or on the thread pane's top rule
   starts a drag that resizes it; the tree keeps at least 8 columns and
   leaves the text 20, the thread pane keeps at least 3 rows and leaves

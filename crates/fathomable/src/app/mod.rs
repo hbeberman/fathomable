@@ -9,6 +9,7 @@ mod clipboard;
 mod commands;
 mod keys;
 mod reanchor;
+mod sidebar;
 mod socket;
 mod threads;
 mod ui;
@@ -45,7 +46,7 @@ use fathomable_core::seen;
 use fathomable_core::session::{FollowState, Record, Request, Response};
 use fathomable_core::status::Status;
 use fathomable_core::theme::Theme;
-use fathomable_core::tree::{Activation, Tree};
+use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
@@ -265,7 +266,10 @@ pub const HELP: [(&str, &str); 36] = [
     ("Space E", "tree: hide"),
     ("Space f / F", "file picker / including ignored"),
     ("Space o", "recent files"),
-    ("tree j k h l Enter", "move, collapse, expand or open"),
+    (
+        "tree j k h l Enter",
+        "move (showing files), collapse, expand or open",
+    ),
     ("tree R", "re-read directories"),
     ("tree I", "show ignored entries"),
     ("picker Up Down Ctrl-n Ctrl-p", "move selection"),
@@ -1393,89 +1397,6 @@ impl App {
         }
     }
 
-    /// Run `f` on the tree, then keep the cursor on screen.
-    pub fn with_tree(&mut self, f: impl FnOnce(&mut Tree, &mut Workspace) -> Option<Activation>) {
-        let Some(tree) = self.tree.as_mut() else {
-            return;
-        };
-        let activation = f(tree, &mut self.workspace);
-        self.scroll_sidebar();
-        if let Some(Activation::Open(path)) = activation {
-            self.open(&path);
-        }
-    }
-
-    /// A tree operation that can fail: report the error on the status line.
-    pub fn with_tree_result(
-        &mut self,
-        f: impl FnOnce(
-            &mut Tree,
-            &mut Workspace,
-        )
-            -> Result<Option<Activation>, fathomable_core::workspace::WorkspaceError>,
-    ) {
-        let mut failure = None;
-        self.with_tree(|tree, workspace| match f(tree, workspace) {
-            Ok(activation) => activation,
-            Err(error) => {
-                failure = Some(error.to_string());
-                None
-            }
-        });
-        if let Some(message) = failure {
-            self.notice(message);
-        }
-    }
-
-    /// `R` in the tree: re-read directories and drop the picker indexes.
-    pub fn refresh_tree(&mut self) {
-        self.file_index = None;
-        self.all_index = None;
-        self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
-        self.notice("tree refreshed");
-    }
-
-    /// `I` in the tree: toggle ignored entries.
-    pub fn toggle_ignored(&mut self) {
-        let filter = match self.tree.as_ref().map(Tree::filter) {
-            Some(Filter::Visible) => Filter::All,
-            _ => Filter::Visible,
-        };
-        self.with_tree_result(move |tree, workspace| {
-            tree.set_filter(workspace, filter).map(|()| None)
-        });
-    }
-
-    /// A click on sidebar row `row` (screen coordinates).
-    pub fn sidebar_click(&mut self, row: usize) {
-        let index = self.sidebar_scroll + row;
-        self.focus = Focus::Sidebar;
-        self.with_tree_result(|tree, workspace| {
-            if index >= tree.rows().len() {
-                return Ok(None);
-            }
-            tree.set_cursor(index);
-            tree.activate(workspace)
-        });
-    }
-
-    fn scroll_sidebar(&mut self) {
-        let rows = self.pane_rows().saturating_sub(1).max(1);
-        let Some(tree) = self.tree.as_ref() else {
-            return;
-        };
-        let cursor = tree.cursor();
-        let off = SIDEBAR_SCROLLOFF.min(rows.saturating_sub(1) / 2);
-        if cursor < self.sidebar_scroll + off {
-            self.sidebar_scroll = cursor.saturating_sub(off);
-        }
-        if cursor + off >= self.sidebar_scroll + rows {
-            self.sidebar_scroll = (cursor + off + 1).saturating_sub(rows);
-        }
-        let max = tree.rows().len().saturating_sub(rows);
-        self.sidebar_scroll = self.sidebar_scroll.min(max);
-    }
-
     // ----- popups -----
 
     pub fn open_space_menu(&mut self) {
@@ -2329,6 +2250,53 @@ mod tests {
         assert!(app.tree().is_some(), "tree stays visible");
         app.hide_sidebar();
         assert!(app.tree().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+        use super::keys;
+        let dir = TempDir::new("paging")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("README.md"));
+        app.toggle_sidebar_focus();
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        // Directories come first, so `k` from README.md lands on `docs`.
+        keys::handle_key(&mut app, key('k'));
+        assert_eq!(
+            app.current_path(),
+            Path::new("README.md"),
+            "a directory row leaves the pane on the file it shows"
+        );
+        keys::handle_key(&mut app, key('l'));
+        keys::handle_key(&mut app, key('j'));
+        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+        assert_eq!(app.focus(), Focus::Sidebar, "paging does not steal focus");
+
+        // The wheel steps one row per tick: guide.md to notes.md, not three
+        // rows down.
+        keys::handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 0,
+                row: 5,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.focus(), Focus::Sidebar);
+
+        // Paged-through files are history, so `[o` walks back through them.
+        app.history_back();
+        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+
+        // Enter commits: focus moves to the viewer.
+        app.toggle_sidebar_focus();
+        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(app.focus(), Focus::View);
         Ok(())
     }
 

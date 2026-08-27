@@ -150,6 +150,24 @@ fn compose(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
 }
 
 fn sidebar(app: &mut App, key: KeyEvent) {
+    let before = highlight(app);
+    sidebar_key(app, key);
+    // The highlight is what the main pane shows (ADR 0023): a key that
+    // moved it onto a file shows that file. Comparing paths keeps `R`, `I`,
+    // and `Esc` from re-showing a highlight the reader has since left.
+    if highlight(app) != before {
+        app.show_highlight();
+    }
+}
+
+/// Root-relative path of the row under the tree cursor.
+fn highlight(app: &App) -> Option<std::path::PathBuf> {
+    app.tree()
+        .and_then(Tree::current)
+        .map(|row| row.path().to_path_buf())
+}
+
+fn sidebar_key(app: &mut App, key: KeyEvent) {
     if let Some(pending) = app.pending() {
         app.set_pending(None);
         if pending == 'g' && key.code == KeyCode::Char('g') {
@@ -308,14 +326,23 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     }
     if column < sidebar {
         match event.kind {
-            MouseEventKind::ScrollDown => app.with_tree(|tree, _| {
-                tree.move_down(WHEEL_LINES.unsigned_abs());
-                None
-            }),
-            MouseEventKind::ScrollUp => app.with_tree(|tree, _| {
-                tree.move_up(WHEEL_LINES.unsigned_abs());
-                None
-            }),
+            // One row per tick, not `WHEEL_LINES`: each tick pages the main
+            // pane to the next file (ADR 0023). The text and thread panes
+            // below keep their three-line wheel.
+            kind @ (MouseEventKind::ScrollDown | MouseEventKind::ScrollUp) => {
+                let before = highlight(app);
+                app.with_tree(|tree, _| {
+                    if kind == MouseEventKind::ScrollDown {
+                        tree.move_down(1);
+                    } else {
+                        tree.move_up(1);
+                    }
+                    None
+                });
+                if highlight(app) != before {
+                    app.show_highlight();
+                }
+            }
             // Row 0 is the root header.
             MouseEventKind::Down(MouseButton::Left) if row >= 1 && row < rows => {
                 app.sidebar_click(row - 1);

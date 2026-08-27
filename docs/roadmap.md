@@ -55,3 +55,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     pasteable block — what the viewer was showing, where its state lives,
     and a backtrace with the plumbing dropped — and leaves a copy beside
     the session log ([0022](decisions/0022-crash-reports.md)).
+14. **Sidebar paging.** The tree highlight is the file the main pane
+    shows: moving it pages the viewer without taking focus, the sidebar
+    wheel steps one row per tick, and `Enter` still commits focus
+    ([0023](decisions/0023-sidebar-paging.md)).

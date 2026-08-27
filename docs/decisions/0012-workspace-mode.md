@@ -65,7 +65,10 @@ choices were captured in a question round on 2026-08-26.
 - Directories are read only when expanded (lazy). `l`/`Enter`/`Right`
   expand or open, `h`/`Left` collapse or go to the parent, `j`/`k` move,
   `gg`/`G` jump, a click on an entry does what `Enter` does. `R` re-reads
-  the expanded directories.
+  the expanded directories. Amended 2026-08-27: moving the highlight
+  onto a file also shows it in the main pane without taking focus, so the
+  tree pages the viewer; `Enter` and a click still move focus to the view
+  ([0023](0023-sidebar-paging.md)).
 - The tree shows the directory name of the root at the top; entries are
   sorted directories first, then files, case-insensitively.
 - A file that is not valid UTF-8 is not opened; the status line says why.

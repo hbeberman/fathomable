@@ -73,7 +73,7 @@ shows the full list inside the app.
 | comment box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
 | comment box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
-| tree `j` `k` `h` `l` `Enter`, `R`, `I` | move, collapse, expand or open; re-read; show ignored |
+| tree `j` `k` `h` `l` `Enter`, `R`, `I` | move (the highlighted file is shown), collapse, expand or open and focus; re-read; show ignored |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files; `Ctrl-n` `Ctrl-p` move |
 | `[o` `]o` | previous / next opened file |
 | `Esc`, `:q` | close or clear; quit |
@@ -81,8 +81,9 @@ shows the full list inside the app.
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.
 
-The mouse works on whichever pane it is over: the wheel scrolls the tree,
-the text, or the thread pane under the pointer, and a click focuses it.
+The mouse works on whichever pane it is over: the wheel scrolls the text
+or the thread pane under the pointer — over the tree it steps one row per
+tick, showing each file it lands on — and a click focuses the pane.
 Drag the tree's divider or the thread pane's top rule to resize them.
 Starting on a directory opens the tree; starting on a file opens the file.
 

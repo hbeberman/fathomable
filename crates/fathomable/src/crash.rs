@@ -44,13 +44,16 @@ pub fn observe(rows: Vec<(String, String)>) {
     }
 }
 
-/// Report an error that ends the run. The terminal is already back by the
-/// time this is called, so it only prints.
+/// Report an error that ends the run, making sure the terminal is back
+/// first so the report is not lost with the alternate screen.
 ///
 /// An error thrown before the viewer drew anything — a mistyped `--theme`,
 /// an unreadable config — is a mistake to correct, not a crash to report, so
 /// it stays the one line it always was.
 pub fn fatal(error: &anyhow::Error) {
+    // Usually a no-op: the guard has already restored on the way out. It
+    // matters when entering the terminal itself failed partway.
+    crate::app::restore_terminal();
     if STATE.try_lock().is_ok_and(|state| state.is_empty()) {
         eprintln!("fathomable: {error:#}");
         return;

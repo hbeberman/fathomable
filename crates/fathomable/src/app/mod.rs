@@ -1694,6 +1694,11 @@ impl TerminalGuard {
     /// terminal back.
     fn resume() -> anyhow::Result<()> {
         enable_raw_mode().context("cannot enable raw mode")?;
+        // Marked entered as soon as raw mode is on, not after the whole
+        // sequence: if entering the alternate screen fails partway,
+        // `restore_terminal` must still turn raw mode off, and the extra
+        // leave sequences are no-ops to a terminal still on the main screen.
+        TERMINAL_ENTERED.store(true, Ordering::SeqCst);
         crossterm::execute!(
             io::stdout(),
             EnterAlternateScreen,
@@ -1702,7 +1707,6 @@ impl TerminalGuard {
             SetCursorStyle::SteadyBlock
         )
         .context("cannot enter alternate screen")?;
-        TERMINAL_ENTERED.store(true, Ordering::SeqCst);
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
         // the comment box (ADR 0013); terminals without it still get Alt-Enter.
         let enhanced = matches!(

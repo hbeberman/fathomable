@@ -556,12 +556,33 @@ impl View {
         Some(LineRange::new(first.start(), last.end()))
     }
 
-    /// Start a keyboard line selection (`V`).
+    /// `v`: toggle a character selection anchored at the cursor.
+    pub fn select_chars(&mut self) {
+        self.toggle_select(false);
+    }
+
+    /// `V`: toggle a line selection anchored at the cursor.
     pub fn select_lines(&mut self) {
+        self.toggle_select(true);
+    }
+
+    /// Vim semantics: the same key again leaves select mode, the other key
+    /// switches the kind and keeps the anchor.
+    fn toggle_select(&mut self, linewise: bool) {
+        if self.mode == Mode::Select
+            && let Some(selection) = self.selection.as_mut()
+        {
+            if selection.linewise == linewise {
+                self.clear_selection();
+            } else {
+                selection.linewise = linewise;
+            }
+            return;
+        }
         self.selection = Some(Selection {
             anchor: self.cursor,
             head: self.cursor,
-            linewise: true,
+            linewise,
         });
         self.mode = Mode::Select;
     }
@@ -936,6 +957,31 @@ mod tests {
         assert_eq!(v.yank(), Effect::Copy("- one\n- two".to_owned()));
         assert_eq!(v.mode(), Mode::Normal);
         assert_eq!(v.message(), Some("copied 2 lines"));
+    }
+
+    #[test]
+    fn char_selection_toggles_and_switches_kind_like_vim() {
+        let mut v = view();
+        // Row 2 is "alpha beta"; select "lpha" one character at a time.
+        v.move_down(2);
+        v.move_right();
+        v.select_chars();
+        assert_eq!(v.mode(), Mode::Select);
+        assert!(v.selection().is_some_and(|s| !s.linewise));
+        v.move_right();
+        v.move_right();
+        v.move_right();
+        assert_eq!(v.yank(), Effect::Copy("lpha".to_owned()));
+        // `v` again leaves select mode; `V` inside `v` switches to lines.
+        v.select_chars();
+        v.select_chars();
+        assert_eq!(v.mode(), Mode::Normal);
+        assert!(v.selection().is_none());
+        v.select_chars();
+        v.select_lines();
+        assert!(v.selection().is_some_and(|s| s.linewise));
+        v.select_lines();
+        assert_eq!(v.mode(), Mode::Normal);
     }
 
     #[test]

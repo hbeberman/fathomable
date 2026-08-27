@@ -176,7 +176,7 @@ pub const HELP: [(&str, &str); 30] = [
     ("Ctrl-d / Ctrl-u", "half page down / up"),
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
-    ("V / mouse drag", "select lines / cells"),
+    ("v / V / mouse drag", "select text / lines / cells"),
     ("y (selected)", "copy source to clipboard"),
     ("c (selected)", "comment on the selection"),
     ("Space a", "read thread at cursor"),

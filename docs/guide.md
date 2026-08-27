@@ -53,7 +53,7 @@ shows the full list inside the app.
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
 | `gd` / `:diff`, `]c` `[c` | toggle unified diff against `HEAD`; next / previous change |
-| `V` or mouse drag, then `y` / `c` | select lines, then copy or comment |
+| `v` / `V` or mouse drag, then `y` / `c` | select text / lines, then copy or comment |
 | `Space a`, `Space A`, `]a` `[a` | thread at cursor, pick a thread, next/previous thread |
 | thread panel `r` `x` `n` `p` `j` `k` | reply, resolve or reopen, switch, scroll |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter` | newline, submit |
@@ -68,7 +68,7 @@ terminals and multiplexers.
 
 ## 4. Annotations
 
-Select lines with `V` or the mouse and press `c`. The comment becomes a
+Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
 them changes and shows as *detached* when the lines are gone. Threads live
 outside the repository at

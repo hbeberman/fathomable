@@ -90,7 +90,8 @@ viewer, the layout engine, and later themes agree.
 - The clipboard is reached through OSC 52. No clipboard crate and no
   `wl-copy`/`xclip` subprocess; terminals that do not implement OSC 52 get a
   status-line notice from `--doctor`, not a fallback.
-- Keyboard selection (`V`) uses the same selection model and also copies on
+- Keyboard selection (`v` characters, `V` lines; the same key again exits,
+  the other switches kind) uses the same selection model and also copies on
   `y`; this is the path annotations take in milestone 3.
 
 ### Search

@@ -37,3 +37,6 @@ Milestones are ordered; each is usable on its own. Details live in the
 8. **Git status navigation.** Dirty set, staged/unstaged gutter, `]g`
    across files, sidebar git marks
    ([0017](decisions/0017-git-status-navigation.md)).
+9. **Comment editor.** A cursor-bearing buffer in core, motion and
+   deletion keys, bracketed paste, click-to-place, a draggable box, and
+   the `$EDITOR` hatch ([0018](decisions/0018-comment-editor.md)).

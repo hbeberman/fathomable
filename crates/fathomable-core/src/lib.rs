@@ -10,6 +10,7 @@ pub mod annotations;
 pub mod config;
 pub mod diff;
 mod document;
+pub mod editor;
 pub mod follow;
 pub mod highlight;
 pub mod layout;

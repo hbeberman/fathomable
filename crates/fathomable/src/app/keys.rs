@@ -155,13 +155,13 @@ fn compose(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
     let alt = key.modifiers.contains(KeyModifiers::ALT);
     match key.code {
         KeyCode::Esc => app.compose_cancel(),
-        KeyCode::Enter if ctrl || alt => app.compose_submit(),
+        KeyCode::Enter if ctrl || alt => app.compose_edit(Edit::Newline),
         KeyCode::Char('e') if ctrl => return Effect::EditDraft,
         KeyCode::Up if alt => app.compose_scroll(-1),
         KeyCode::Down if alt => app.compose_scroll(1),
         KeyCode::PageUp => app.compose_scroll(-WHEEL_LINES),
         KeyCode::PageDown => app.compose_scroll(WHEEL_LINES),
-        KeyCode::Enter => app.compose_edit(Edit::Newline),
+        KeyCode::Enter => app.compose_submit(),
         KeyCode::Backspace => app.compose_edit(Edit::DeleteBack),
         KeyCode::Delete => app.compose_edit(Edit::DeleteForward),
         KeyCode::Left => app.compose_edit(Edit::Move(Motion::Left)),

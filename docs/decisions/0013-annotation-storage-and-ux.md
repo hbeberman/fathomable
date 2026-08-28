@@ -83,8 +83,8 @@ were captured in a question round on 2026-08-26.
 ### Comment box
 
 - `c` opens a box anchored to the bottom of the text pane, above the status
-  line, titled with the range (`comment on L3-5`) or `reply`. Enter adds a
-  line; Ctrl-Enter or Alt-Enter submits; Esc cancels. The box grows to
+  line, titled with the range (`comment on L3-5`) or `reply`. Enter submits;
+  Ctrl-Enter or Alt-Enter adds a line; Esc cancels. The box grows to
   eight rows, then scrolls. An empty comment is discarded with a notice.
 - Ctrl-Enter is only distinguishable from Enter when the terminal supports
   the kitty keyboard protocol, so the TUI pushes

@@ -543,7 +543,7 @@ impl App {
         compose.confirm_discard = false;
     }
 
-    /// Ctrl-Enter / Alt-Enter: write the comment to the store.
+    /// Enter: write the comment to the store.
     pub fn compose_submit(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.take() else {
             return;

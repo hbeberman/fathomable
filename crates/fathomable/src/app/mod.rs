@@ -280,7 +280,10 @@ pub const HELP: [(&str, &str); 45] = [
         "thread r x n p j k",
         "reply, resolve, next / previous in file, scroll",
     ),
-    ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
+    (
+        "comment Enter",
+        "submit; Ctrl-Enter or Alt-Enter adds a newline",
+    ),
     ("gs / :source", "toggle source view"),
     ("gd / :diff", "toggle the diff against HEAD"),
     ("gD / :diff seen", "toggle the diff against last seen"),
@@ -2140,7 +2143,7 @@ async fn edit_draft(
             let text = fs::read_to_string(&path)
                 .with_context(|| format!("cannot read {}", path.display()))?;
             app.set_compose_text(text.strip_suffix('\n').unwrap_or(&text));
-            app.notice("draft loaded from the editor; Ctrl-Enter submits");
+            app.notice("draft loaded from the editor; Enter submits");
         }
         Ok(status) => app.notice(format!("{editor} exited with {status}; draft kept")),
         Err(error) => app.notice(format!("cannot run {editor}: {error}")),

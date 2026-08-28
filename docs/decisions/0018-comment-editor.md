@@ -58,7 +58,8 @@ These choices were settled in a question round on 2026-08-27.
   end, `Delete` forward. `Ctrl-e` is the editor hatch below rather than
   line end, since `End` already does that. None of these is a zellij
   lock (`Ctrl-g/p/t/n/h/s/o/q/b`, 0012).
-- Enter still adds a line; `Ctrl-Enter` or `Alt-Enter` still submits.
+- Enter submits; `Ctrl-Enter` or `Alt-Enter` adds a line (swapped from
+  the original 0013 binding: most comments are one line).
 - Esc on an empty box closes it as before. Esc on a non-empty draft shows
   `Esc again to discard`; a second Esc discards, any other key keeps the
   draft and clears the prompt.

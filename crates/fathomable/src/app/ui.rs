@@ -1346,9 +1346,9 @@ fn draw_compose(
     let hint = if compose.confirming_discard() {
         "Esc again to discard · any key keeps the draft"
     } else if app.thread_panel().is_some() {
-        "Ctrl/Alt-Enter submit · PgUp/PgDn thread · Ctrl-e $EDITOR · Esc"
+        "Enter submit · Alt-Enter newline · PgUp/PgDn thread · Ctrl-e $EDITOR · Esc"
     } else {
-        "Enter newline · Ctrl/Alt-Enter submit · Ctrl-e $EDITOR · Esc"
+        "Enter submit · Alt-Enter newline · Ctrl-e $EDITOR · Esc"
     };
     let width = usize::from(pane.width);
     if rows < 3 {

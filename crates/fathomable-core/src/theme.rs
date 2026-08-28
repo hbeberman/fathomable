@@ -170,6 +170,8 @@ pub enum Key {
     UiStatuslineSelect,
     UiStatuslineInput,
     UiStatuslineInfo,
+    /// A banner that warns: the deleted-file row (ADR 0028).
+    UiWarning,
     UiSidebar,
     UiSidebarSelected,
     UiSidebarDir,
@@ -199,7 +201,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 34] = [
+    const NAMED: [(&'static str, Self); 35] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -210,6 +212,7 @@ impl Key {
         ("ui.statusline.select", Self::UiStatuslineSelect),
         ("ui.statusline.input", Self::UiStatuslineInput),
         ("ui.statusline.info", Self::UiStatuslineInfo),
+        ("ui.warning", Self::UiWarning),
         ("ui.sidebar", Self::UiSidebar),
         ("ui.sidebar.selected", Self::UiSidebarSelected),
         ("ui.sidebar.dir", Self::UiSidebarDir),

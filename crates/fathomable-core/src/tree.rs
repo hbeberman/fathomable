@@ -168,6 +168,68 @@ impl Tree {
         Ok(())
     }
 
+    /// Re-read one directory after a file appeared, vanished, or was
+    /// renamed in it (ADR 0028). Only an expanded directory is re-read;
+    /// a collapsed or unread one is seen when it is expanded. Expansion
+    /// state of surviving subdirectories and the cursor path are kept.
+    /// Returns whether anything was re-read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the directory cannot be read; a
+    /// directory that vanished is collapsed and reported as unchanged.
+    pub fn refresh_dir(
+        &mut self,
+        workspace: &mut Workspace,
+        dir: &Path,
+    ) -> Result<bool, WorkspaceError> {
+        let filter = self.filter;
+        let Some(node) = find_node(&mut self.root, dir) else {
+            return Ok(false);
+        };
+        if !node.is_dir || !node.expanded || node.children.is_none() {
+            return Ok(false);
+        }
+        let fresh = match read_children(workspace, dir, filter) {
+            Ok(fresh) => fresh,
+            Err(error) if !workspace.root().join(dir).is_dir() => {
+                tracing::debug!(%error, "directory gone; collapsing it");
+                node.expanded = false;
+                node.children = None;
+                self.rebuild();
+                return Ok(false);
+            }
+            Err(error) => return Err(error),
+        };
+        let mut old = node.children.take().unwrap_or_default();
+        node.children = Some(
+            fresh
+                .into_iter()
+                .map(|child| {
+                    match old
+                        .iter()
+                        .position(|o| o.name == child.name && o.is_dir == child.is_dir)
+                    {
+                        Some(index) => old.swap_remove(index),
+                        None => child,
+                    }
+                })
+                .collect(),
+        );
+        let cursor_path = self.current().map(|row| row.path.clone());
+        self.rebuild();
+        if let Some(path) = cursor_path {
+            self.select_path(&path);
+        }
+        Ok(true)
+    }
+
+    /// Whether `path` is one of the visible rows.
+    #[must_use]
+    pub fn contains(&self, path: &Path) -> bool {
+        self.rows.iter().any(|row| row.path == path)
+    }
+
     /// Move the cursor down `n` rows.
     pub fn move_down(&mut self, n: usize) {
         let last = self.rows.len().saturating_sub(1);
@@ -271,20 +333,41 @@ impl Tree {
         workspace: &mut Workspace,
         path: &Path,
     ) -> Result<bool, WorkspaceError> {
+        Ok(self.expand_to(workspace, path)? && self.select_path(path))
+    }
+
+    /// Expand every directory on the way to `path` without moving the
+    /// cursor (ADR 0028: a followed file is shown, not selected). Returns
+    /// `false` if the path is not in the tree (hidden or missing).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when a directory on the way cannot be read.
+    pub fn expand_to(
+        &mut self,
+        workspace: &mut Workspace,
+        path: &Path,
+    ) -> Result<bool, WorkspaceError> {
+        let cursor_path = self.current().map(|row| row.path.clone());
         let mut prefix = PathBuf::new();
         let components: Vec<_> = path.components().collect();
+        let mut found = true;
         for component in components.iter().take(components.len().saturating_sub(1)) {
             let Component::Normal(name) = component else {
-                return Ok(false);
+                found = false;
+                break;
             };
             prefix.push(name);
             if !self.expand_path(workspace, &prefix)? {
-                self.rebuild();
-                return Ok(false);
+                found = false;
+                break;
             }
         }
         self.rebuild();
-        Ok(self.select_path(path))
+        if let Some(cursor_path) = cursor_path {
+            self.select_path(&cursor_path);
+        }
+        Ok(found && self.contains(path))
     }
 
     fn select_path(&mut self, path: &Path) -> bool {

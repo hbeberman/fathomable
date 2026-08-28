@@ -629,6 +629,14 @@ enum Event {
         anchor: Anchor,
         created: u64,
     },
+    /// The file was renamed and the thread now lives at `path`, range
+    /// and anchor unchanged (ADR 0028).
+    Move {
+        v: u32,
+        thread: ThreadId,
+        path: PathBuf,
+        created: u64,
+    },
 }
 
 /// The threads of one workspace, backed by an append-only JSONL file.
@@ -832,6 +840,23 @@ impl Store {
         })
     }
 
+    /// Move the thread `id` to `path`, the file's name after a rename
+    /// (ADR 0028). Its range and anchor are untouched, so it locates in
+    /// the renamed file exactly as it did before.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn move_path(&mut self, id: &ThreadId, path: &Path, now: u64) -> Result<(), StoreError> {
+        self.commit(Event::Move {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            path: path.to_path_buf(),
+            created: now,
+        })
+    }
+
     /// Apply an event in memory, then append it; the file is only written
     /// when the event is valid.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
@@ -923,6 +948,16 @@ impl Store {
                 thread.range = range;
                 thread.anchor = anchor;
                 thread.edited = Some(created);
+            }
+            Event::Move {
+                thread,
+                path,
+                created,
+                ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(created);
+                thread.path = path;
             }
         }
         Ok(())
@@ -1105,6 +1140,37 @@ mod tests {
                 .relocate(&id, LineRange::new(8, 9), edited, 113)
                 .is_err()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn move_path_carries_a_thread_to_the_renamed_file() -> Result<(), StoreError> {
+        let file = TempFile::new("move");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("old.md"), LineRange::new(3, 4), "rename"),
+            TEXT,
+            100,
+        )?;
+        store.move_path(&id, Path::new("docs/new.md"), 120)?;
+        let again = Store::open(&file.0)?;
+        assert_eq!(again.threads(), store.threads());
+        let thread = again
+            .thread(&id)
+            .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
+        assert_eq!(thread.path(), Path::new("docs/new.md"));
+        assert_eq!(thread.updated(), 120, "since polling sees the move");
+        assert_eq!(thread.range(), LineRange::new(3, 4));
+        assert_eq!(
+            thread.locate(TEXT).range(),
+            LineRange::new(3, 4),
+            "the anchor still finds its lines"
+        );
+        assert!(again.for_path(Path::new("old.md")).next().is_none());
+        let log = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+        assert!(log.contains(r#""event":"move""#));
+        let unknown = ThreadId("nope".to_owned());
+        assert!(store.move_path(&unknown, Path::new("x"), 1).is_err());
         Ok(())
     }
 

@@ -117,6 +117,62 @@ fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> 
     Ok(())
 }
 
+#[test]
+fn refresh_dir_rereads_one_expanded_directory() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("refresh-dir")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    assert!(tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?);
+
+    // A collapsed or unread directory is left alone.
+    fs::write(dir.0.join(".hidden/x"), "")?;
+    assert!(!tree.refresh_dir(&mut workspace, Path::new(".hidden"))?);
+    assert!(!tree.contains(Path::new(".hidden/x")));
+
+    // An expanded one is re-read; subdirectories keep their expansion and
+    // the cursor stays on its row.
+    fs::write(dir.0.join("src/lib.rs"), "")?;
+    fs::remove_file(dir.0.join("src/main.rs"))?;
+    assert!(tree.refresh_dir(&mut workspace, Path::new("src"))?);
+    assert_eq!(
+        names(&tree),
+        [
+            ".hidden",
+            "src",
+            "  nested",
+            "    deep.rs",
+            "  lib.rs",
+            "A.txt",
+            "b.txt",
+            "README.md"
+        ]
+    );
+    assert_eq!(tree.current().map(Row::name), Some("deep.rs"));
+
+    // The root is a directory too.
+    fs::write(dir.0.join("NEW.md"), "")?;
+    assert!(tree.refresh_dir(&mut workspace, Path::new(""))?);
+    assert!(tree.contains(Path::new("NEW.md")));
+
+    // A directory that vanished collapses rather than failing.
+    fs::remove_dir_all(dir.0.join("src/nested"))?;
+    assert!(!tree.refresh_dir(&mut workspace, Path::new("src/nested"))?);
+    assert!(!tree.contains(Path::new("src/nested/deep.rs")));
+    assert!(tree.refresh_dir(&mut workspace, Path::new("src"))?);
+    assert!(!tree.contains(Path::new("src/nested")));
+
+    // `expand_to` opens the way to a file without moving the cursor.
+    tree.goto_top();
+    fs::create_dir_all(dir.0.join("docs/inner"))?;
+    fs::write(dir.0.join("docs/inner/a.md"), "")?;
+    tree.refresh_dir(&mut workspace, Path::new(""))?;
+    assert!(tree.expand_to(&mut workspace, Path::new("docs/inner/a.md"))?);
+    assert!(tree.contains(Path::new("docs/inner/a.md")));
+    assert_eq!(tree.cursor(), 0);
+    assert!(!tree.expand_to(&mut workspace, Path::new("docs/none/b.md"))?);
+    Ok(())
+}
+
 /// A minimal repository gix can discover: HEAD, config, and empty
 /// object and ref stores, so the test never depends on host git.
 fn init_git(dir: &Path) -> std::io::Result<()> {

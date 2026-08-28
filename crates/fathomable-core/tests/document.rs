@@ -50,6 +50,22 @@ fn reload_keeps_previous_text_on_error() -> TestResult {
 }
 
 #[test]
+fn rename_keeps_content_and_reloads_from_the_new_path() -> TestResult {
+    let path = scratch_file("before.md", b"same\n")?;
+    let mut document = Document::load(&path, Policy::default())?;
+    let moved = path.with_file_name("after.md");
+    fs::rename(&path, &moved)?;
+    document.rename(&moved);
+    assert_eq!(document.path(), moved);
+    assert_eq!(document.text(), Some("same\n"));
+    assert!(!document.reload()?, "the renamed file still reads the same");
+    fs::write(&moved, "changed\n")?;
+    assert!(document.reload()?);
+    assert_eq!(document.text(), Some("changed\n"));
+    Ok(())
+}
+
+#[test]
 fn load_rejects_non_utf8_text() -> TestResult {
     // No NUL, so git would call it text; it still cannot be shown.
     let path = scratch_file("latin1.txt", &[0xff, 0xfe, b'\n'])?;

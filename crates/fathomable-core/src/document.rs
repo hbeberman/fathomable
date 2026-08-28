@@ -72,6 +72,14 @@ impl Document {
         Ok(changed)
     }
 
+    /// Follow the file to `path` after it was renamed on disk (ADR 0028):
+    /// the content stays and the next [`Document::reload`] reads the new
+    /// path.
+    pub fn rename(&mut self, path: impl Into<PathBuf>) {
+        self.path = path.into();
+        tracing::debug!(path = %self.path.display(), "document renamed");
+    }
+
     /// Where the document was read from.
     #[must_use]
     pub fn path(&self) -> &Path {

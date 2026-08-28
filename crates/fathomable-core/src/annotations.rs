@@ -507,6 +507,20 @@ impl Thread {
         self.commit.as_deref()
     }
 
+    /// Whether the thread is open and its newest message is not the user's.
+    ///
+    /// Such a thread is *waiting* on the user (ADR 0030): an agent replied
+    /// last, and only the user's reply, resolve, or reopen ends the wait.
+    /// A resolved thread never waits.
+    #[must_use]
+    pub fn awaits_user(&self) -> bool {
+        self.status == Status::Open
+            && self
+                .replies
+                .last()
+                .is_some_and(|reply| !reply.author().is_user())
+    }
+
     /// Where the thread sits in `text` now.
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
@@ -1084,6 +1098,27 @@ mod tests {
         assert!(range.contains(4) && !range.contains(6));
         assert_eq!(range.to_string(), "3-5");
         assert_eq!(LineRange::new(0, 0).to_string(), "1");
+    }
+
+    #[test]
+    fn thread_waits_after_agent_reply_until_user_answers() -> Result<(), StoreError> {
+        let file = TempFile::new("waiting");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            TEXT,
+            10,
+        )?;
+        let waiting = |store: &Store| store.thread(&id).is_some_and(Thread::awaits_user);
+        assert!(!waiting(&store), "a fresh comment is the user's own");
+        store.reply(&id, Reply::new(Author::agent("claude"), 11, "because"))?;
+        assert!(waiting(&store));
+        store.reply(&id, Reply::new(Author::User, 12, "ok"))?;
+        assert!(!waiting(&store));
+        store.reply(&id, Reply::new(Author::agent("claude"), 13, "done"))?;
+        store.resolve(&id, Author::User, 14)?;
+        assert!(!waiting(&store), "a resolved thread never waits");
+        Ok(())
     }
 
     #[test]

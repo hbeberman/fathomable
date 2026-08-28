@@ -27,6 +27,8 @@ pub enum MarkKind {
     Resolved,
     AutoResolved,
     Open,
+    /// Open, and an agent wrote the newest message (ADR 0030).
+    Waiting,
     /// The lines under the comment were rewritten since the user last
     /// answered (ADR 0019).
     Edited,
@@ -41,6 +43,9 @@ impl MarkKind {
         }
         if placement.is_edited() {
             return Self::Edited;
+        }
+        if thread.awaits_user() {
+            return Self::Waiting;
         }
         match thread.status() {
             Status::Open => Self::Open,
@@ -218,7 +223,12 @@ impl App {
         let open = self
             .marks()
             .iter()
-            .filter(|mark| matches!(mark.kind(), MarkKind::Open | MarkKind::Detached))
+            .filter(|mark| {
+                matches!(
+                    mark.kind(),
+                    MarkKind::Open | MarkKind::Waiting | MarkKind::Detached
+                )
+            })
             .count();
         (open, self.marks().len())
     }

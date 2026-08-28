@@ -94,6 +94,7 @@ shows the full list inside the app.
 | `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
+| `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the one under the cursor highlighted |
 | file threads `j` `k` `Enter` `r` `x`, `Esc` | next / previous thread (the cursor follows), open its pane, reply, resolve or reopen; back to the text |
@@ -160,6 +161,16 @@ in full. It takes the text column the way a document does; the tree
 stays beside it. `Enter` opens the file at the selected thread with its
 pane, `r` and `x` reply and resolve in place, `f` narrows the list to the
 file you were reading, and `Esc` goes back to it.
+
+A thread is **waiting** on you when it is open and an agent wrote its
+newest message; your reply, resolve, or reopen ends the wait. Waiting
+threads have their own colour (`annotation.waiting`) in the gutter
+bracket, the file-threads pane, and the thread list, the status line
+counts them (`2 waiting`), the tree tags their files `↩`, and a reply
+landing while you read raises a toast (`reply on src/lib.rs:42`). `]r`
+and `[r` step through them — this file first, then the others in path
+order, wrapping — and open each one's pane, so holding `]r` reads every
+reply that needs an answer.
 
 ## 5. Changes against git
 

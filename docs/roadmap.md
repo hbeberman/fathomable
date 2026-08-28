@@ -90,3 +90,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     `zl`/`zh`/`zL`/`zH` and the horizontal wheel, with edge markers and
     search keeping its match in view
     ([0029](decisions/0029-horizontal-scroll.md)).
+21. **Waiting threads.** An open thread whose newest message is an
+    agent's is *waiting*: its own gutter colour, a status-line count, a
+    toast when a reply lands, and `]r`/`[r` to step through them across
+    files ([0030](decisions/0030-waiting-threads.md)).

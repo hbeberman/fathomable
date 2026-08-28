@@ -113,6 +113,7 @@ impl App {
                 if self.auto { "on" } else { "off" }.to_owned(),
             ),
             ("pending changes".to_owned(), self.queue.len().to_string()),
+            ("waiting".to_owned(), self.waiting_total().to_string()),
             ("agent follows".to_owned(), followed),
         ]
     }

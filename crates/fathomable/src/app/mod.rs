@@ -18,6 +18,7 @@ pub(crate) mod thread_list;
 pub(crate) mod threads;
 mod ui;
 mod view;
+mod waiting;
 mod watch;
 
 use std::collections::HashSet;
@@ -238,7 +239,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 44] = [
+pub const HELP: [(&str, &str); 45] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / ge G", "top / bottom"),
@@ -265,6 +266,10 @@ pub const HELP: [(&str, &str); 44] = [
         "reply, resolve, fold, fold resolved, file only",
     ),
     ("]c / [c", "next / previous thread"),
+    (
+        "]r / [r",
+        "next / previous thread waiting on you, across files",
+    ),
     ("Space t", "focus the file-threads pane under the tree"),
     (
         "file j k Enter r x",
@@ -506,7 +511,13 @@ impl App {
                     return;
                 }
                 tracing::info!(threads = store.threads().len(), "thread store reloaded");
+                let before = self
+                    .store
+                    .as_ref()
+                    .map(Self::waiting_ids)
+                    .unwrap_or_default();
                 self.store = Some(store);
+                self.toast_waiting(&before);
                 self.refresh_scope();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
@@ -1039,13 +1050,7 @@ impl App {
             } else {
                 format!("{} +{added} -{removed}", change.path.display())
             };
-            self.toasts.push(Toast {
-                text,
-                until: Instant::now() + self.follow.toast,
-            });
-            if self.toasts.len() > MAX_TOASTS {
-                self.toasts.remove(0);
-            }
+            self.push_toast(text);
         }
         self.queue.push(change);
         self.last_change = Some(Instant::now());
@@ -1424,6 +1429,20 @@ impl App {
 
     pub fn clear_message(&mut self) {
         self.message = None;
+    }
+
+    /// Raise a toast for `follow.toast`, dropping the oldest past the cap.
+    pub(super) fn push_toast(&mut self, text: String) {
+        if self.follow.toast == Duration::ZERO {
+            return;
+        }
+        self.toasts.push(Toast {
+            text,
+            until: Instant::now() + self.follow.toast,
+        });
+        if self.toasts.len() > MAX_TOASTS {
+            self.toasts.remove(0);
+        }
     }
 
     fn notice(&mut self, message: impl Into<String>) {

@@ -29,6 +29,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             (']', KeyCode::Char('o')) => app.history_forward(),
             ('[', KeyCode::Char('c')) => app.prev_annotation(),
             (']', KeyCode::Char('c')) => app.next_annotation(),
+            ('[', KeyCode::Char('r')) => app.waiting_prev(),
+            (']', KeyCode::Char('r')) => app.waiting_next(),
             ('[', KeyCode::Char('g')) => app.hunk_prev(),
             (']', KeyCode::Char('g')) => app.hunk_next(),
             ('[', KeyCode::Char('G')) => app.dirty_prev(),

@@ -127,10 +127,16 @@ impl Rows {
 }
 
 fn is_open(kind: MarkKind) -> bool {
-    matches!(kind, MarkKind::Open | MarkKind::Edited | MarkKind::Detached)
+    matches!(
+        kind,
+        MarkKind::Open | MarkKind::Waiting | MarkKind::Edited | MarkKind::Detached
+    )
 }
 
 fn kind_of(thread: &Thread) -> MarkKind {
+    if thread.awaits_user() {
+        return MarkKind::Waiting;
+    }
     match thread.status() {
         Status::Open => MarkKind::Open,
         Status::Resolved => MarkKind::Resolved,

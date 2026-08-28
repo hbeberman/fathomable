@@ -62,6 +62,7 @@ pub struct Theme {
     pub annotation_auto: Style,
     pub annotation_detached: Style,
     pub annotation_edited: Style,
+    pub annotation_waiting: Style,
     pub annotation_line: Style,
     pub diff_plus: Style,
     pub diff_delta: Style,
@@ -107,6 +108,7 @@ impl Theme {
             annotation_auto: style(Key::AnnotationResolvedAuto),
             annotation_detached: style(Key::AnnotationDetached),
             annotation_edited: style(Key::AnnotationEdited),
+            annotation_waiting: style(Key::AnnotationWaiting),
             annotation_line: style(Key::AnnotationLine),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
@@ -617,6 +619,10 @@ fn sidebar_marks<'a>(
     if badge {
         tail.push(Span::styled(" ●", on_bg(theme.diff_delta)));
     }
+    // A file with a thread waiting on the user (ADR 0030).
+    if !row.is_dir() && app.path_waits(row.path()) {
+        tail.push(Span::styled(" ↩", on_bg(theme.annotation_waiting)));
+    }
     (letter, tail)
 }
 
@@ -800,6 +806,7 @@ fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
         MarkKind::AutoResolved => theme.annotation_auto,
         MarkKind::Detached => theme.annotation_detached,
         MarkKind::Edited => theme.annotation_edited,
+        MarkKind::Waiting => theme.annotation_waiting,
     }
 }
 
@@ -1079,6 +1086,10 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         (_, 0) => String::new(),
         (open, total) => format!("{open}/{total} threads  "),
     };
+    let waiting = match app.waiting_count() {
+        0 => String::new(),
+        n => format!("{n} waiting  "),
+    };
     let followed = match app.followed().len() {
         0 => String::new(),
         n => format!("follow {n}  "),
@@ -1089,7 +1100,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         Some((added, removed)) => format!("+{added} -{removed}  "),
     };
     let right = format!(
-        " {line}:{col}  {}%  {changes}{threads}{followed}",
+        " {line}:{col}  {}%  {changes}{waiting}{threads}{followed}",
         view.percent()
     );
     // Keep the right-hand block visible by trimming the path from the left.
@@ -1476,6 +1487,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             let (status, status_style) = match kind {
                 MarkKind::Detached => ("detached", theme.annotation_detached),
                 MarkKind::Edited => ("edited", theme.annotation_edited),
+                MarkKind::Waiting => ("waiting", theme.annotation_waiting),
                 MarkKind::Open => ("open", theme.annotation_open),
                 MarkKind::Resolved => ("resolved", theme.annotation_resolved),
                 MarkKind::AutoResolved => ("auto-resolved", theme.annotation_auto),
@@ -1538,6 +1550,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let (status, status_style) = match (mark.map(super::threads::Mark::kind), thread.status()) {
         (Some(MarkKind::Detached), _) => ("detached", theme.annotation_detached),
         (Some(MarkKind::Edited), _) => ("edited", theme.annotation_edited),
+        (Some(MarkKind::Waiting), _) => ("waiting", theme.annotation_waiting),
         (_, Status::Open) => ("open", theme.annotation_open),
         (_, Status::Resolved) => ("resolved", theme.annotation_resolved),
         (_, Status::AutoResolved) => ("auto-resolved", theme.annotation_auto),

@@ -1250,7 +1250,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let inner = width.saturating_sub(2);
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
-    let (index, total) = panel.position();
+    let (index, total) = app.thread_position().unwrap_or((1, 1));
     let (status, status_style) = match (mark.map(super::threads::Mark::kind), thread.status()) {
         (Some(MarkKind::Detached), _) => ("detached", theme.annotation_detached),
         (Some(MarkKind::Edited), _) => ("edited", theme.annotation_edited),
@@ -1270,7 +1270,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         Span::styled(status.to_owned(), status_style),
     ];
     let hint = if app.focus() == Focus::Thread {
-        "r reply · x resolve/reopen · n/p switch · j/k scroll · Esc close"
+        "r reply · x resolve/reopen · n/p next/prev · j/k scroll · Esc close"
     } else {
         "click or Space a to focus"
     };

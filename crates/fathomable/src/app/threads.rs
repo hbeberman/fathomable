@@ -111,22 +111,19 @@ impl Compose {
     }
 }
 
-/// The open thread panel: the threads under the cursor and which is shown.
+/// The open thread panel: the thread it shows and how far it is scrolled.
+/// Its place among the file's threads is computed from the document's
+/// marks ([`App::thread_position`]), so a reload cannot strand it
+/// (ADR 0027).
 #[derive(Debug)]
 pub struct ThreadPanel {
-    ids: Vec<ThreadId>,
-    index: usize,
+    id: ThreadId,
     scroll: usize,
 }
 
 impl ThreadPanel {
     pub fn id(&self) -> &ThreadId {
-        &self.ids[self.index.min(self.ids.len() - 1)]
-    }
-
-    /// `(current, total)`, 1-based, for the panel header.
-    pub fn position(&self) -> (usize, usize) {
-        (self.index + 1, self.ids.len())
+        &self.id
     }
 
     pub fn scroll(&self) -> usize {
@@ -269,6 +266,24 @@ impl App {
         }
     }
 
+    /// The document's threads in line order: by first line, then the
+    /// order the store holds them (ADR 0027). This is the order `n`/`p`
+    /// in the thread pane and the file-threads pane walk.
+    pub fn file_threads(&self) -> Vec<ThreadId> {
+        let mut marks: Vec<&Mark> = self.marks().iter().collect();
+        marks.sort_by_key(|mark| mark.range().start());
+        marks.into_iter().map(|mark| mark.id().clone()).collect()
+    }
+
+    /// `(current, total)`, 1-based, of the open pane's thread among the
+    /// file's threads, for the pane header.
+    pub fn thread_position(&self) -> Option<(usize, usize)> {
+        let id = self.thread.as_ref()?.id();
+        let order = self.file_threads();
+        let index = order.iter().position(|other| other == id)?;
+        Some((index + 1, order.len()))
+    }
+
     /// Threads whose range touches the cursor's rendered row.
     pub fn threads_at_cursor(&self) -> Vec<ThreadId> {
         let view = self.view();
@@ -288,8 +303,20 @@ impl App {
 
     // ----- comment box -----
 
-    /// `c`: open the comment box on the selection, or the cursor line.
+    /// `c`: open the thread on the cursor row when there is one and
+    /// nothing is selected (ADR 0027); otherwise the comment box on the
+    /// selection, or the cursor line.
     pub fn start_comment(&mut self) {
+        if self.view().selected_lines().is_none() && !self.threads_at_cursor().is_empty() {
+            self.open_thread_at_cursor();
+            return;
+        }
+        self.start_new_comment();
+    }
+
+    /// `C`: open the comment box on the selection, or the cursor line,
+    /// whether or not a thread is already there.
+    pub fn start_new_comment(&mut self) {
         let Some(doc) = self.current.and_then(|index| self.docs.get(index)) else {
             self.notice("open a file to annotate it");
             return;
@@ -521,32 +548,24 @@ impl App {
 
     // ----- thread pane -----
 
-    /// `Space a`: show the thread(s) under the cursor.
+    /// `Space a`: show the first thread under the cursor; the others on
+    /// the row are one `n` away.
     pub fn open_thread_at_cursor(&mut self) {
-        let ids = self.threads_at_cursor();
-        if ids.is_empty() {
+        let Some(id) = self.threads_at_cursor().into_iter().next() else {
             self.notice("no thread on this line");
             return;
-        }
-        self.show_panel(ThreadPanel {
-            ids,
-            index: 0,
-            scroll: 0,
-        });
+        };
+        self.open_thread(id);
     }
 
-    /// Show one thread; the pane lists only it.
+    /// Show one thread, keeping the scroll when it is already shown.
     pub fn open_thread(&mut self, id: ThreadId) {
         let scroll = self
             .thread
             .as_ref()
             .filter(|panel| panel.id() == &id)
             .map_or(0, ThreadPanel::scroll);
-        self.show_panel(ThreadPanel {
-            ids: vec![id],
-            index: 0,
-            scroll,
-        });
+        self.show_panel(ThreadPanel { id, scroll });
     }
 
     /// The pane opens along the bottom of the text and takes the keys
@@ -572,13 +591,35 @@ impl App {
         self.thread.as_mut()
     }
 
-    /// `n` / `p`: another thread on the same line.
+    /// `n` / `p`: the next or previous thread in the file, wrapping; the
+    /// cursor moves to its first line (ADR 0027).
     pub fn thread_step(&mut self, delta: isize) {
+        let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) else {
+            return;
+        };
+        let order = self.file_threads();
+        if order.is_empty() {
+            return;
+        }
+        let index = order.iter().position(|other| *other == id).unwrap_or(0);
+        let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
+        let next = order[(index + step) % order.len()].clone();
         if let Some(panel) = self.panel_mut() {
-            let len = panel.ids.len();
-            let step = delta.rem_euclid(len.cast_signed()).cast_unsigned();
-            panel.index = (panel.index + step) % len;
+            panel.id = next.clone();
             panel.scroll = 0;
+        }
+        self.goto_thread(&next);
+    }
+
+    /// Move the cursor to the first line of `id`, when the document has it.
+    pub(super) fn goto_thread(&mut self, id: &ThreadId) {
+        if let Some(line) = self
+            .marks()
+            .iter()
+            .find(|mark| mark.id() == id)
+            .map(|mark| mark.range().start())
+        {
+            self.view_mut().goto_source_line(line);
         }
     }
 
@@ -687,14 +728,7 @@ impl App {
 
     /// The list's Enter (ADR 0025): jump to `id` and open the pane on it.
     pub(super) fn show_thread(&mut self, id: ThreadId) {
-        if let Some(line) = self
-            .marks()
-            .iter()
-            .find(|mark| *mark.id() == id)
-            .map(|mark| mark.range().start())
-        {
-            self.view_mut().goto_source_line(line);
-        }
+        self.goto_thread(&id);
         self.open_thread(id);
     }
 }
@@ -923,9 +957,9 @@ mod tests {
         let Some(panel) = app.thread_panel() else {
             anyhow::bail!("panel did not open");
         };
-        assert_eq!(panel.position(), (1, 1));
-        assert_eq!(app.focus(), Focus::Thread);
         let id = panel.id().clone();
+        assert_eq!(app.thread_position(), Some((1, 1)));
+        assert_eq!(app.focus(), Focus::Thread);
         app.thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if c.target() == &ComposeTarget::Reply(id.clone()))
@@ -1072,9 +1106,60 @@ mod tests {
         assert_eq!(app.message(), Some("wrapped to first thread"));
         app.prev_annotation();
         assert_eq!(app.view().cursor_source_line(), bottom);
-        app.start_comment();
+        app.start_new_comment();
         app.compose_submit();
         assert_eq!(app.message(), Some("empty comment discarded"));
+        Ok(())
+    }
+
+    /// ADR 0027: `c` on an annotated row opens the thread, `C` starts a
+    /// second one there, and `n`/`p` in the pane walk the file's threads
+    /// in line order with the cursor following.
+    #[test]
+    fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
+        let dir = TempDir::new("walk")?;
+        let mut app = dir.app()?;
+        app.view_mut().goto_bottom();
+        app.start_comment();
+        type_in(&mut app, "bottom");
+        app.compose_submit();
+        let bottom = app.view().cursor_source_line();
+        app.view_mut().goto_top();
+        app.start_comment();
+        type_in(&mut app, "top");
+        app.compose_submit();
+        assert!(app.thread_panel().is_none());
+
+        // `c` again on the row opens the pane rather than a box.
+        app.start_comment();
+        assert!(app.popup().is_none());
+        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.thread_position(), Some((1, 2)));
+        app.close_thread();
+
+        // `C` starts a second thread on the same line.
+        app.start_new_comment();
+        assert!(
+            matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::New(_)))
+        );
+        type_in(&mut app, "top again");
+        app.compose_submit();
+        assert_eq!(app.thread_counts(), (3, 3));
+
+        // The walk is by line, then store order, and moves the cursor.
+        app.open_thread_at_cursor();
+        assert_eq!(app.thread_position(), Some((1, 3)));
+        app.thread_step(1);
+        assert_eq!(app.thread_position(), Some((2, 3)));
+        assert_eq!(app.view().cursor_source_line(), Some(1));
+        app.thread_step(1);
+        assert_eq!(app.thread_position(), Some((3, 3)));
+        assert_eq!(app.view().cursor_source_line(), bottom);
+        app.thread_step(1);
+        assert_eq!(app.thread_position(), Some((1, 3)), "wraps");
+        assert_eq!(app.view().cursor_source_line(), Some(1));
+        app.thread_step(-1);
+        assert_eq!(app.view().cursor_source_line(), bottom);
         Ok(())
     }
 

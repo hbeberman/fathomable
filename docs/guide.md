@@ -79,9 +79,10 @@ shows the full list inside the app.
 | `:follow`, `:status` | toggle auto-jump; viewer and path overlay |
 | `:name NAME` | name this viewer so an agent can target it; `:name` alone clears it |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
-| `c` with nothing selected | comment on the cursor line |
+| `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
+| `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
-| thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
+| thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
 | list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |

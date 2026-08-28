@@ -73,13 +73,22 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
                 app.set_pending(Some(']'));
                 Effect::None
             }
-            // With no selection, `c` annotates the cursor line.
+            // `c` opens the thread on the cursor row, else annotates the
+            // selection or the cursor line; `C` always annotates (ADR 0027).
             KeyCode::Char('c')
                 if !ctrl
                     && matches!(mode, Mode::Normal | Mode::Select)
                     && app.view().pending().is_none() =>
             {
                 app.start_comment();
+                Effect::None
+            }
+            KeyCode::Char('C')
+                if !ctrl
+                    && matches!(mode, Mode::Normal | Mode::Select)
+                    && app.view().pending().is_none() =>
+            {
+                app.start_new_comment();
                 Effect::None
             }
             // At column 0, `h` steps back into the tree; a selection wraps

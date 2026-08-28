@@ -230,7 +230,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 40] = [
+pub const HELP: [(&str, &str); 41] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / ge G", "top / bottom"),
@@ -240,7 +240,11 @@ pub const HELP: [(&str, &str); 40] = [
     ("v / V / mouse drag", "select text / lines / cells"),
     ("x", "select the line; again, one more below"),
     ("y (selected)", "copy source to clipboard"),
-    ("c", "comment on the selection or cursor line"),
+    (
+        "c",
+        "open the thread here, else comment on the selection or line",
+    ),
+    ("C", "always start a new thread"),
     ("Space a", "read thread at cursor"),
     ("Space A", "list every thread on this work"),
     ("list j k gg ge G Enter", "move, jump, open the thread"),
@@ -249,7 +253,10 @@ pub const HELP: [(&str, &str); 40] = [
         "reply, resolve, fold, fold resolved, file only",
     ),
     ("]c / [c", "next / previous thread"),
-    ("thread r x n p j k", "reply, resolve, switch, scroll"),
+    (
+        "thread r x n p j k",
+        "reply, resolve, next / previous in file, scroll",
+    ),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
     ("gs / :source", "toggle source view"),
     ("gd / :diff", "toggle the diff against HEAD"),

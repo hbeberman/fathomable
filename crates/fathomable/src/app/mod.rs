@@ -849,10 +849,10 @@ impl App {
             .find(|doc| doc.relative == relative)
             .and_then(|doc| doc.document.text())
         {
-            return Some(Fingerprint::of(text.as_bytes()));
+            return Some(Fingerprint::from_bytes(text.as_bytes()));
         }
         let text = self.seen.as_ref()?.text(relative).ok().flatten()?;
-        Some(Fingerprint::of(text.as_bytes()))
+        Some(Fingerprint::from_bytes(text.as_bytes()))
     }
 
     // ----- git status (ADR 0017) -----
@@ -2230,7 +2230,7 @@ async fn run_async(
                     // The wait is its own arm below, so input keeps
                     // flowing while the burst settles.
                     batch.push(raw, hint_debounce);
-                    while let Ok(raw) = reload_rx.try_recv() {
+                    while let Some(raw) = reload_rx.try_recv() {
                         batch.push(raw, hint_debounce);
                     }
                 }

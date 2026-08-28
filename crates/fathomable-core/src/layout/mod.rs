@@ -246,7 +246,7 @@ impl Line {
     /// (ADR 0029): a code block line, a source or diff line, or a row of
     /// a table wider than the pane.
     #[must_use]
-    pub fn unwrapped(&self) -> bool {
+    pub fn is_unwrapped(&self) -> bool {
         self.unwrapped
     }
 

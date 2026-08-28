@@ -207,7 +207,7 @@ fn source_view_is_verbatim_and_never_wraps() -> TestResult {
     assert_eq!(numbers(&layout), [Some(1), Some(2), Some(3)]);
     let range = layout.lines()[2].source().ok_or("no source")?;
     assert_eq!(&src[range], "- item with **bold**");
-    assert!(layout.lines().iter().all(Line::unwrapped));
+    assert!(layout.lines().iter().all(Line::is_unwrapped));
     assert_eq!(layout.unwrapped_width(), 20);
     Ok(())
 }
@@ -219,19 +219,19 @@ fn code_blocks_and_wide_tables_are_unwrapped_but_prose_is_not() -> TestResult {
                | a | b |\n| --- | --- |\n| 1 | 2 |\n";
     let layout = Layout::render(src, 12);
     let lines = layout.lines();
-    assert!(!lines[0].unwrapped(), "prose wraps");
+    assert!(!lines[0].is_unwrapped(), "prose wraps");
     let code = lines
         .iter()
         .find(|line| line.text().contains("let x"))
         .ok_or("no code line")?;
-    assert!(code.unwrapped());
+    assert!(code.is_unwrapped());
     assert_eq!(code.fixed_cells(), 2, "the quote bar stays put");
     assert_eq!(code.text(), "│ let x = 1234567890;");
     assert!(
         lines
             .iter()
             .filter(|line| line.text().starts_with('┃'))
-            .all(|line| !line.unwrapped()),
+            .all(|line| !line.is_unwrapped()),
         "a table that fits its pane wraps like prose"
     );
     // The widest shiftable width is the code line minus its prefix.
@@ -241,7 +241,7 @@ fn code_blocks_and_wide_tables_are_unwrapped_but_prose_is_not() -> TestResult {
     let wide = "| alpha | beta | gamma | delta |\n| --- | --- | --- | --- |\n| 1 | 2 | 3 | 4 |\n";
     let squeezed = Layout::render(wide, 10);
     assert!(
-        squeezed.lines().iter().all(Line::unwrapped),
+        squeezed.lines().iter().all(Line::is_unwrapped),
         "a table wider than the pane scrolls as a whole"
     );
     assert!(squeezed.unwrapped_width() > 10);

@@ -361,7 +361,7 @@ impl View {
         let Some(line) = self.layout.lines().get(row) else {
             return Some(col);
         };
-        if !line.unwrapped() || col < line.fixed_cells() {
+        if !line.is_unwrapped() || col < line.fixed_cells() {
             return Some(col);
         }
         (col - line.fixed_cells())
@@ -372,7 +372,7 @@ impl View {
     /// The line column shown at screen column `col` on rendered `row`.
     fn line_col(&self, row: usize, col: usize) -> usize {
         match self.layout.lines().get(row) {
-            Some(line) if line.unwrapped() && col >= line.fixed_cells() => {
+            Some(line) if line.is_unwrapped() && col >= line.fixed_cells() => {
                 col + self.column_offset()
             }
             _ => col,
@@ -1136,7 +1136,7 @@ impl View {
         let Some(line) = self.layout.lines().get(self.cursor.row) else {
             return;
         };
-        if !line.unwrapped() || self.cursor.col < line.fixed_cells() {
+        if !line.is_unwrapped() || self.cursor.col < line.fixed_cells() {
             return;
         }
         let avail = self

@@ -233,7 +233,7 @@ fn diff_layout_keeps_long_lines_whole_with_a_fixed_sign() {
     let texts: Vec<String> = layout.lines().iter().map(Line::text).collect();
     assert_eq!(texts, ["@@ -0,0 +1 @@", "+abcdefghijklmnopqrstuvwxyz"]);
     // ADR 0029: the line scrolls sideways under its sign.
-    assert!(layout.lines()[1].unwrapped());
+    assert!(layout.lines()[1].is_unwrapped());
     assert_eq!(layout.lines()[1].fixed_cells(), 1);
     assert_eq!(layout.unwrapped_width(), 26);
 }

@@ -867,7 +867,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             }
             style
         };
-        let offset = if line.unwrapped() {
+        let offset = if line.is_unwrapped() {
             view.column_offset()
         } else {
             0

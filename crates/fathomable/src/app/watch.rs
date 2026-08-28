@@ -59,7 +59,7 @@ pub struct Fingerprint {
 impl Fingerprint {
     /// The fingerprint of `bytes`.
     #[must_use]
-    pub fn of(bytes: &[u8]) -> Self {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
         Self {
             size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
             hash: short_hash(bytes),
@@ -72,25 +72,25 @@ impl Fingerprint {
         if !meta.is_file() {
             return None;
         }
-        fs::read(path).ok().as_deref().map(Self::of)
+        fs::read(path).ok().as_deref().map(Self::from_bytes)
     }
 }
 
 /// One raw watcher notification, before debouncing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Raw {
+    /// A file or directory appeared.
     Create(PathBuf),
+    /// A file's content or metadata changed.
     Modify(PathBuf),
+    /// A file or directory vanished.
     Remove(PathBuf),
     /// The old name of a rename whose new name may follow.
     RenameFrom(PathBuf),
     /// The new name of a rename whose old name may have come before.
     RenameTo(PathBuf),
     /// A rename the platform paired itself.
-    Rename {
-        from: PathBuf,
-        to: PathBuf,
-    },
+    Rename { from: PathBuf, to: PathBuf },
 }
 
 impl Raw {
@@ -121,6 +121,24 @@ impl Raw {
     }
 }
 
+/// Raw events from the platform watcher, in arrival order.
+#[derive(Debug)]
+pub struct Raws {
+    rx: mpsc::UnboundedReceiver<Raw>,
+}
+
+impl Raws {
+    /// The next event; `None` once the watcher is gone.
+    pub async fn recv(&mut self) -> Option<Raw> {
+        self.rx.recv().await
+    }
+
+    /// An event already waiting, without blocking.
+    pub fn try_recv(&mut self) -> Option<Raw> {
+        self.rx.try_recv().ok()
+    }
+}
+
 /// Watches the workspace root recursively (ADR 0015). When that fails
 /// (inotify limits), falls back to the directory of the visible document,
 /// following it as it changes (a rename lands as a directory event, so the
@@ -144,12 +162,12 @@ impl std::fmt::Debug for Watcher {
 }
 
 impl Watcher {
-    /// Start a watcher; raw events arrive on the returned receiver.
+    /// Start a watcher; raw events arrive on the returned [`Raws`].
     ///
     /// # Errors
     ///
     /// Fails when the platform watcher cannot be created.
-    pub fn new() -> anyhow::Result<(Self, mpsc::UnboundedReceiver<Raw>)> {
+    pub fn new() -> anyhow::Result<(Self, Raws)> {
         let (tx, rx) = mpsc::unbounded_channel::<Raw>();
         let watcher =
             notify::recommended_watcher(
@@ -174,7 +192,7 @@ impl Watcher {
                 recursive: false,
                 store: None,
             },
-            rx,
+            Raws { rx },
         ))
     }
 
@@ -560,7 +578,7 @@ mod tests {
         fs::write(&new, "same content\n")?;
         fs::write(&other, "different\n")?;
         let old = dir.join("old.md");
-        let seen = |path: &Path| (path == old).then(|| Fingerprint::of(b"same content\n"));
+        let seen = |path: &Path| (path == old).then(|| Fingerprint::from_bytes(b"same content\n"));
         let events = classify(
             &[
                 Raw::Remove(old.clone()),
@@ -582,7 +600,7 @@ mod tests {
         // No snapshot, or a different one: a delete and a create.
         let events = classify(
             &[Raw::Remove(old.clone()), Raw::Create(new.clone())],
-            |_| Some(Fingerprint::of(b"else\n")),
+            |_| Some(Fingerprint::from_bytes(b"else\n")),
         );
         assert_eq!(events, [Event::Removed(old), Event::Created(new)]);
         fs::remove_dir_all(&dir)

@@ -8,6 +8,7 @@
 //! one; the [`ThreadPanel`] reads a thread and resolves it. All of it is
 //! plain state so ADR 0013 behaviour is tested without a terminal.
 
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fathomable_core::annotations::{
@@ -301,6 +302,31 @@ impl App {
         }
     }
 
+    /// Move every thread whose path `moved` maps to its new path, after a
+    /// file or directory rename (ADR 0028). Range and anchor are kept, so
+    /// the threads sit on the same lines in the renamed file.
+    pub(super) fn move_threads(&mut self, moved: &impl Fn(&Path) -> Option<PathBuf>) {
+        let Some(store) = self.store.as_mut() else {
+            return;
+        };
+        let targets: Vec<(ThreadId, PathBuf)> = store
+            .threads()
+            .iter()
+            .filter_map(|thread| Some((thread.id().clone(), moved(thread.path())?)))
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+        let when = now();
+        for (id, path) in &targets {
+            match store.move_path(id, path, when) {
+                Ok(()) => tracing::info!(%id, to = %path.display(), "thread moved with its file"),
+                Err(error) => tracing::warn!(%id, %error, "cannot move thread"),
+            }
+        }
+        self.refresh_all_marks();
+    }
+
     /// Re-locate every loaded document's threads, after a change that
     /// may touch files other than the current one (ADR 0025).
     pub(super) fn refresh_all_marks(&mut self) {
@@ -393,6 +419,27 @@ impl App {
     }
 
     pub(super) fn open_compose(&mut self, target: ComposeTarget) {
+        // A new thread would anchor to a snapshot no file matches, and a
+        // reply would land on one (ADR 0028).
+        let deleted = match &target {
+            ComposeTarget::New(_) => self
+                .current
+                .and_then(|index| self.docs.get(index))
+                .filter(|doc| doc.deleted.is_some())
+                .map(|doc| doc.relative.clone()),
+            ComposeTarget::Reply(id) => self
+                .thread(id)
+                .map(|thread| thread.path().to_path_buf())
+                .filter(|path| {
+                    self.docs
+                        .iter()
+                        .any(|doc| doc.relative == *path && doc.deleted.is_some())
+                }),
+        };
+        if let Some(path) = deleted {
+            self.notice(format!("{} was deleted; cannot comment", path.display()));
+            return;
+        }
         self.popup = Some(Popup::Compose(Compose {
             target,
             buffer: Buffer::new(),
@@ -841,6 +888,126 @@ mod tests {
                 app.compose_insert(&ch.to_string());
             }
         }
+    }
+
+    /// Annotate L3-5 of the open README with `comment`.
+    fn annotate(app: &mut App, comment: &str) -> anyhow::Result<()> {
+        app.view_mut().move_down(2);
+        app.view_mut().select_lines();
+        app.start_comment();
+        type_in(app, comment);
+        app.compose_submit();
+        anyhow::ensure!(app.thread_counts().1 == 1, "thread not created");
+        Ok(())
+    }
+
+    #[test]
+    fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
+        use crate::app::watch::Event;
+        let dir = TempDir::new("rename")?;
+        let mut app = dir.app()?;
+        annotate(&mut app, "keep me")?;
+        let id = app.marks()[0].id().clone();
+        app.view_mut().move_down(1);
+        let cursor = app.view().cursor();
+
+        // A file rename: the view follows with cursor and marks intact
+        // and the store records the move.
+        fs::create_dir_all(dir.0.join("ws/docs"))?;
+        fs::rename(dir.0.join("ws/README.md"), dir.0.join("ws/docs/GUIDE.md"))?;
+        app.on_events(vec![Event::Renamed {
+            from: dir.0.join("ws/README.md"),
+            to: dir.0.join("ws/docs/GUIDE.md"),
+        }]);
+        assert_eq!(app.current_path(), Path::new("docs/GUIDE.md"));
+        assert_eq!(app.message(), Some("renamed to docs/GUIDE.md"));
+        assert_eq!(app.view().cursor(), cursor);
+        assert_eq!(app.marks()[0].range(), LineRange::new(3, 5));
+        assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(MarkKind::Open));
+        assert_eq!(
+            app.thread(&id).map(Thread::path),
+            Some(Path::new("docs/GUIDE.md"))
+        );
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        assert_eq!(
+            store.thread(&id).map(Thread::path),
+            Some(Path::new("docs/GUIDE.md")),
+            "the move is on disk"
+        );
+
+        // A directory rename moves everything under it by prefix.
+        fs::rename(dir.0.join("ws/docs"), dir.0.join("ws/notes"))?;
+        app.on_events(vec![Event::Renamed {
+            from: dir.0.join("ws/docs"),
+            to: dir.0.join("ws/notes"),
+        }]);
+        assert_eq!(app.current_path(), Path::new("notes/GUIDE.md"));
+        assert_eq!(
+            app.thread(&id).map(Thread::path),
+            Some(Path::new("notes/GUIDE.md"))
+        );
+        assert_eq!(app.thread_counts(), (1, 1));
+
+        // A later edit reloads from the new path.
+        fs::write(
+            dir.0.join("ws/notes/GUIDE.md"),
+            "# Readme\n\nintro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        app.on_events(vec![Event::Change(dir.0.join("ws/notes/GUIDE.md"))]);
+        assert!(app.view().text().contains("intro"));
+        assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+        Ok(())
+    }
+
+    #[test]
+    fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result<()> {
+        use crate::app::watch::Event;
+        let dir = TempDir::new("deleted")?;
+        let mut app = dir.app()?;
+        annotate(&mut app, "still here")?;
+        let id = app.marks()[0].id().clone();
+        fs::write(dir.0.join("ws/other.md"), "# Other\n")?;
+
+        fs::remove_file(dir.0.join("ws/README.md"))?;
+        app.on_events(vec![Event::Removed(dir.0.join("ws/README.md"))]);
+        assert!(app.deleted());
+        assert_eq!(app.banner(), Some("deleted"));
+        assert!(app.view().text().contains("alpha"), "last content stays");
+        assert_eq!(app.thread_counts(), (1, 1), "threads still read");
+        assert!(
+            app.status_lines()
+                .iter()
+                .any(|(_, v)| v.contains("deleted"))
+        );
+        app.start_new_comment();
+        assert!(app.popup().is_none());
+        assert!(app.message().is_some_and(|m| m.contains("deleted")));
+        app.open_thread(id.clone());
+        app.thread_reply();
+        assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
+        app.close_thread();
+
+        // Shown again while still gone: the file-info pane.
+        app.open(Path::new("other.md"));
+        assert!(app.info().is_none());
+        app.open(Path::new("README.md"));
+        let info = app.info().context("no info pane for the deleted file")?;
+        assert!(info.rows.iter().any(|(_, v)| v == "deleted"));
+        assert_eq!(app.banner(), None);
+
+        // Back on disk: reloaded, banner gone, thread re-anchored.
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nintro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        app.on_events(vec![Event::Created(dir.0.join("ws/README.md"))]);
+        assert!(!app.deleted());
+        assert!(app.info().is_none());
+        assert!(app.view().text().contains("intro"));
+        assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+        app.start_new_comment();
+        assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+        Ok(())
     }
 
     #[test]

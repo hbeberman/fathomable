@@ -56,9 +56,10 @@ impl App {
         } else {
             ""
         };
+        let deleted = if self.deleted() { ", deleted" } else { "" };
         let document = if self.has_document() {
             format!(
-                "{} ({}{base}) at {line}:{column}{col}",
+                "{} ({}{base}{deleted}) at {line}:{column}{col}",
                 self.current_path().display(),
                 if view.source_view() {
                     "source"

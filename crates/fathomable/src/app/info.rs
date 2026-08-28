@@ -26,6 +26,20 @@ impl App {
     #[must_use]
     pub fn info(&self) -> Option<Info> {
         let doc = self.current.and_then(|index| self.docs.get(index))?;
+        // Shown again while its file is gone (ADR 0028): the pane says
+        // so instead of the stale content.
+        if self.deleted_info() {
+            return Some(Info {
+                rows: vec![
+                    ("path".to_owned(), doc.relative.display().to_string()),
+                    ("state".to_owned(), "deleted".to_owned()),
+                ],
+                notice: vec![
+                    "Deleted: the file is gone from the workspace.".to_owned(),
+                    "Its threads are kept; it reloads if the file comes back.".to_owned(),
+                ],
+            });
+        }
         let (size, format_row, notice) = match doc.document.content() {
             Content::Text(_) => return None,
             Content::Binary { size, format } => (

@@ -54,7 +54,6 @@ use fathomable_core::theme::Theme;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 use fathomable_core::{Document, XdgDirs};
-use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use thread_list::ThreadList;
@@ -64,6 +63,7 @@ use tokio::sync::mpsc;
 use crate::crash;
 pub use threads::{Compose, Mark, ThreadPanel};
 use view::{Effect, HunkStep, Syntax, View};
+use watch::{Fingerprint, is_git_metadata};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
@@ -314,6 +314,18 @@ struct Doc {
     /// Whether the text has changed or been read since it was last
     /// snapshotted as seen.
     seen_dirty: bool,
+    /// Set while the file is gone from disk (ADR 0028); the last content
+    /// stays loaded until it returns.
+    deleted: Option<Deleted>,
+}
+
+/// How a deleted open file is shown (ADR 0028).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Deleted {
+    /// Deleted under the reader: the last content under a banner row.
+    Banner,
+    /// Shown again while still gone: the file-info pane.
+    Info,
 }
 
 /// All application state.
@@ -632,29 +644,90 @@ impl App {
         tracing::info!(path = %change.path.display(), "jumped to change");
     }
 
-    /// Files the watcher reported, absolute. Loaded documents reload;
-    /// changes that pass the source and ignore rules join the queue.
+    /// Files the watcher reported, absolute: a change for each that
+    /// exists, a removal for each that does not.
+    #[cfg(test)]
     pub fn on_changes(&mut self, paths: Vec<PathBuf>) {
+        let events = paths
+            .into_iter()
+            .map(|path| {
+                if path.exists() {
+                    watch::Event::Change(path)
+                } else {
+                    watch::Event::Removed(path)
+                }
+            })
+            .collect();
+        self.on_events(events);
+    }
+
+    /// What one settled watcher batch did (ADR 0028). Loaded documents
+    /// reload, follow their rename, or keep their content under a
+    /// `deleted` banner; changes that pass the source and ignore rules
+    /// join the queue; the directories whose listings changed are
+    /// re-read in the tree.
+    pub fn on_events(&mut self, events: Vec<watch::Event>) {
         // The store lives outside the root; another writer's append lands
         // here through the store watch (ADR 0024).
-        if paths.iter().any(|p| Some(p.as_path()) == self.store_path()) {
+        if events.iter().any(|e| Some(e.path()) == self.store_path()) {
             self.reload_store();
         }
         let root = self.workspace.root().to_path_buf();
+        let banner_before = self.banner().is_some();
         let mut git_changed = false;
+        let mut touched = false;
+        // Root-relative directories whose listing changed.
+        let mut dirs: Vec<PathBuf> = Vec::new();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
-        for absolute in paths {
-            let Ok(relative) = absolute.strip_prefix(&root) else {
+        for event in events {
+            let event = match event {
+                // A move across the root's edge is a plain arrival or
+                // departure on this side of it.
+                watch::Event::Renamed { from, to } => {
+                    match (from.starts_with(&root), to.starts_with(&root)) {
+                        (true, true) => watch::Event::Renamed { from, to },
+                        (true, false) => watch::Event::Removed(from),
+                        (false, true) => watch::Event::Created(to),
+                        (false, false) => continue,
+                    }
+                }
+                other => other,
+            };
+            let Ok(relative) = event.path().strip_prefix(&root).map(Path::to_path_buf) else {
                 continue;
             };
             if relative.starts_with(".git") {
-                git_changed |= is_git_metadata(relative);
+                git_changed |= is_git_metadata(&relative);
                 continue;
             }
-            if !seen_paths.insert(relative.to_path_buf()) {
-                continue;
+            touched = true;
+            match event {
+                watch::Event::Change(absolute) | watch::Event::Created(absolute) => {
+                    if !seen_paths.insert(relative.clone()) {
+                        continue;
+                    }
+                    let listed = self
+                        .tree
+                        .as_ref()
+                        .is_some_and(|tree| tree.contains(&relative));
+                    if !listed {
+                        self.note_dir(&relative, &mut dirs);
+                    }
+                    self.on_change(&relative, &absolute);
+                }
+                watch::Event::Removed(_) => {
+                    self.note_dir(&relative, &mut dirs);
+                    self.on_removed(&relative);
+                }
+                watch::Event::Renamed { from, .. } => {
+                    let Ok(from) = from.strip_prefix(&root).map(Path::to_path_buf) else {
+                        continue;
+                    };
+                    self.note_dir(&from, &mut dirs);
+                    self.note_dir(&relative, &mut dirs);
+                    self.on_renamed(&from, &relative);
+                }
             }
-            self.on_change(relative, &absolute);
         }
         if git_changed {
             tracing::info!("git metadata changed; refreshing HEAD bases");
@@ -663,21 +736,123 @@ impl App {
             }
             self.refresh_scope();
         }
-        if git_changed || !seen_paths.is_empty() {
+        if git_changed || touched {
             self.refresh_status();
         }
-        // A file appearing or vanishing changes some directory's listing;
-        // ignored paths (a build under `target/`) never reach the tree, so
-        // they cost nothing here.
-        let tree_dirty = seen_paths.iter().any(|relative| {
-            !(self.workspace.is_ignored(relative, EntryKind::File)
-                || self.ignore.is_ignored(relative))
-        });
-        if tree_dirty {
+        // The banner row takes a text row, so the view re-fits when it
+        // comes or goes.
+        if banner_before != self.banner().is_some() {
+            self.relayout();
+        }
+        if !dirs.is_empty() {
+            // A new file is one `Space f` away (ADR 0028).
             self.file_index = None;
             self.all_index = None;
-            self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
+            for dir in dirs {
+                self.with_tree_result(|tree, workspace| {
+                    tree.refresh_dir(workspace, &dir).map(|_| None)
+                });
+            }
         }
+    }
+
+    /// Note that the listing holding root-relative `path` changed, unless
+    /// the tree would hide the path anyway (ADR 0028): build output
+    /// churning under `target/` costs nothing here.
+    fn note_dir(&mut self, path: &Path, dirs: &mut Vec<PathBuf>) {
+        if self.ignore.is_ignored(path) {
+            return;
+        }
+        let filter = self.tree.as_ref().map(Tree::filter).unwrap_or_default();
+        let kind = if self.workspace.root().join(path).is_dir() {
+            EntryKind::Dir
+        } else {
+            EntryKind::File
+        };
+        if filter == Filter::Visible && self.workspace.is_ignored(path, kind) {
+            return;
+        }
+        let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+
+    /// The root-relative `relative` vanished: a loaded document keeps its
+    /// last content under a banner (ADR 0028); a directory takes every
+    /// document under it along.
+    fn on_removed(&mut self, relative: &Path) {
+        if self.queue.remove(relative) {
+            tracing::info!(path = %relative.display(), "changed file went away");
+        }
+        let root = self.workspace.root().to_path_buf();
+        for index in 0..self.docs.len() {
+            let doc = &mut self.docs[index];
+            if !(doc.relative == relative || doc.relative.starts_with(relative))
+                || doc.deleted.is_some()
+                || root.join(&doc.relative).is_file()
+            {
+                continue;
+            }
+            tracing::info!(path = %doc.relative.display(), "open file deleted; keeping its last content");
+            doc.deleted = Some(Deleted::Banner);
+            if self.current == Some(index) {
+                self.notice(format!("{} was deleted", relative.display()));
+            }
+        }
+    }
+
+    /// Root-relative `from` became `to`: threads move with it, and a
+    /// loaded document follows with its view intact (ADR 0028).
+    fn on_renamed(&mut self, from: &Path, to: &Path) {
+        tracing::info!(from = %from.display(), to = %to.display(), "renamed");
+        let root = self.workspace.root().to_path_buf();
+        let is_dir = root.join(to).is_dir();
+        let moved = |path: &Path| -> Option<PathBuf> {
+            if path == from {
+                Some(to.to_path_buf())
+            } else if is_dir {
+                path.strip_prefix(from).ok().map(|rest| to.join(rest))
+            } else {
+                None
+            }
+        };
+        self.queue.remove(from);
+        let mut current_moved = None;
+        for index in 0..self.docs.len() {
+            let Some(target) = moved(&self.docs[index].relative) else {
+                continue;
+            };
+            let doc = &mut self.docs[index];
+            doc.relative.clone_from(&target);
+            doc.document.rename(root.join(&target));
+            doc.deleted = None;
+            if self.current == Some(index) {
+                current_moved = Some(target);
+            }
+            self.refresh_base(index);
+            self.refresh_marks(index);
+        }
+        self.move_threads(&moved);
+        if let Some(target) = current_moved {
+            self.notice(format!("renamed to {}", target.display()));
+        }
+    }
+
+    /// The fingerprint the file at absolute `path` last had, from its
+    /// loaded text or its last-seen snapshot, for rename pairing.
+    pub fn last_seen_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
+        let relative = path.strip_prefix(self.workspace.root()).ok()?;
+        if let Some(text) = self
+            .docs
+            .iter()
+            .find(|doc| doc.relative == relative)
+            .and_then(|doc| doc.document.text())
+        {
+            return Some(Fingerprint::of(text.as_bytes()));
+        }
+        let text = self.seen.as_ref()?.text(relative).ok().flatten()?;
+        Some(Fingerprint::of(text.as_bytes()))
     }
 
     // ----- git status (ADR 0017) -----
@@ -798,6 +973,16 @@ impl App {
                 tracing::info!(path = %relative.display(), "changed file went away");
             }
             return;
+        }
+        // A deleted file that came back: the banner goes and the reload
+        // below re-anchors its threads (ADR 0028).
+        if let Some(index) = loaded
+            && self.docs[index].deleted.take().is_some()
+        {
+            tracing::info!(path = %relative.display(), "deleted file is back");
+            if self.current == Some(index) {
+                self.notice(format!("{} is back", relative.display()));
+            }
         }
         let delta = loaded.and_then(|index| self.reload_doc(index));
         if loaded.is_some() && delta.is_none() {
@@ -1096,6 +1281,30 @@ impl App {
             .map(|doc| doc.document.path())
     }
 
+    /// Whether the current document's file is gone from disk (ADR 0028).
+    pub fn deleted(&self) -> bool {
+        self.current
+            .and_then(|i| self.docs.get(i))
+            .is_some_and(|doc| doc.deleted.is_some())
+    }
+
+    /// The banner row over the text: `deleted` while the current file is
+    /// gone and its last content is still shown (ADR 0028).
+    pub fn banner(&self) -> Option<&'static str> {
+        self.current
+            .and_then(|i| self.docs.get(i))
+            .filter(|doc| doc.deleted == Some(Deleted::Banner) && !self.list.is_open())
+            .map(|_| "deleted")
+    }
+
+    /// Whether the current document is shown as the file-info pane
+    /// because it was deleted and shown again while gone (ADR 0028).
+    pub(super) fn deleted_info(&self) -> bool {
+        self.current
+            .and_then(|i| self.docs.get(i))
+            .is_some_and(|doc| doc.deleted == Some(Deleted::Info))
+    }
+
     /// Sidebar width in columns, 0 when hidden.
     pub fn sidebar_width(&self) -> usize {
         if !self.sidebar_visible {
@@ -1189,7 +1398,10 @@ impl App {
 
     /// Rows left to the text once the thread pane is taken.
     pub fn text_rows(&self) -> usize {
-        self.pane_rows().saturating_sub(self.thread_rows()).max(1)
+        self.pane_rows()
+            .saturating_sub(self.thread_rows())
+            .saturating_sub(usize::from(self.banner().is_some()))
+            .max(1)
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -1249,6 +1461,7 @@ impl App {
                         marks: Vec::new(),
                         deltas: Vec::new(),
                         seen_dirty: true,
+                        deleted: None,
                     });
                     self.docs.len() - 1
                 }
@@ -1279,6 +1492,7 @@ impl App {
             Request::Follow { paths } => {
                 tracing::info!(count = paths.len(), "agent follow list replaced");
                 self.followed = paths;
+                self.reveal_followed();
                 Response::Done
             }
             Request::AnnotationsList { since, path } => match &self.store {
@@ -1364,6 +1578,14 @@ impl App {
             self.mark_seen(previous);
         }
         self.current = Some(index);
+        // Shown again while still gone: the file-info pane says so
+        // (ADR 0028).
+        if let Some(doc) = self.docs.get_mut(index)
+            && doc.deleted.is_some()
+            && !doc.document.path().is_file()
+        {
+            doc.deleted = Some(Deleted::Info);
+        }
         // A document takes the column back from the list (ADR 0025).
         self.list.close();
         self.focus = Focus::View;
@@ -1526,6 +1748,31 @@ impl App {
             && let Err(error) = tree.reveal(&mut self.workspace, &path)
         {
             tracing::debug!(%error, "cannot reveal current file in tree");
+        }
+    }
+
+    /// Show every followed file the tree does not list yet (ADR 0028):
+    /// its parents expand without moving the cursor, unless the sidebar
+    /// has focus, in which case the cursor lands on it and pages the
+    /// viewer to it as the tree keys do (ADR 0023).
+    fn reveal_followed(&mut self) {
+        if self.tree.is_none() {
+            return;
+        }
+        for path in self.followed.clone() {
+            if self.tree.as_ref().is_some_and(|tree| tree.contains(&path)) {
+                continue;
+            }
+            if self.focus == Focus::Sidebar {
+                self.with_tree_result(|tree, workspace| {
+                    tree.reveal(workspace, &path).map(|_| None)
+                });
+                self.show_highlight();
+            } else {
+                self.with_tree_result(|tree, workspace| {
+                    tree.expand_to(workspace, &path).map(|_| None)
+                });
+            }
         }
     }
 
@@ -1898,158 +2145,6 @@ async fn edit_draft(
     Ok(())
 }
 
-/// Watches the workspace root recursively (ADR 0015). When that fails
-/// (inotify limits), falls back to the directory of the visible document,
-/// following it as it changes (a rename lands as a directory event, so the
-/// file itself is never watched directly).
-struct DocWatcher {
-    watcher: notify::RecommendedWatcher,
-    target: Option<PathBuf>,
-    recursive: bool,
-    /// The thread store, watched through its directory (ADR 0024).
-    store: Option<PathBuf>,
-}
-
-impl DocWatcher {
-    fn new() -> anyhow::Result<(Self, mpsc::UnboundedReceiver<PathBuf>)> {
-        let (tx, rx) = mpsc::unbounded_channel::<PathBuf>();
-        let watcher =
-            notify::recommended_watcher(
-                move |result: notify::Result<notify::Event>| match result {
-                    // `notify` also reports opens (`Access`): our own
-                    // reads of the document, `.gitignore`, and `.git`
-                    // would otherwise feed back as changes, forever.
-                    Ok(event) => {
-                        tracing::debug!(kind = ?event.kind, paths = ?event.paths, "watcher event");
-                        if is_change(event.kind) {
-                            for path in event.paths {
-                                let _ = tx.send(path);
-                            }
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "file watcher error"),
-                },
-            )
-            .context("cannot create file watcher")?;
-        Ok((
-            Self {
-                watcher,
-                target: None,
-                recursive: false,
-                store: None,
-            },
-            rx,
-        ))
-    }
-
-    /// Watch everything under `root`; false when the watch cannot be set up.
-    fn watch_root(&mut self, root: &Path) -> bool {
-        match self.watcher.watch(root, RecursiveMode::Recursive) {
-            Ok(()) => {
-                tracing::info!(root = %root.display(), "watching workspace");
-                self.recursive = true;
-            }
-            Err(error) => {
-                tracing::warn!(%error, root = %root.display(), "cannot watch workspace; watching the open file only");
-                self.recursive = false;
-            }
-        }
-        self.recursive
-    }
-
-    fn follow(&mut self, target: Option<&Path>) {
-        if self.recursive || target == self.target.as_deref() {
-            return;
-        }
-        if let Some(old) = self.target.as_ref().and_then(|p| p.parent()) {
-            let _ = self.watcher.unwatch(old);
-        }
-        if let Some(dir) = target.and_then(Path::parent)
-            && let Err(error) = self.watcher.watch(dir, RecursiveMode::NonRecursive)
-        {
-            tracing::warn!(%error, dir = %dir.display(), "cannot watch directory");
-        }
-        self.target = target.map(Path::to_path_buf);
-    }
-
-    fn is_target(&self, path: &Path) -> bool {
-        self.recursive
-            || self.target.as_deref() == Some(path)
-            || self.store.as_deref() == Some(path)
-    }
-
-    /// Watch the directory holding the thread store, so appends by other
-    /// writers are noticed (ADR 0024).
-    fn watch_store(&mut self, store: Option<&Path>) {
-        let Some(dir) = store.and_then(Path::parent) else {
-            return;
-        };
-        match self.watcher.watch(dir, RecursiveMode::NonRecursive) {
-            Ok(()) => {
-                tracing::info!(dir = %dir.display(), "watching the thread store");
-                self.store = store.map(Path::to_path_buf);
-            }
-            Err(error) => {
-                tracing::warn!(%error, dir = %dir.display(), "cannot watch the thread store");
-            }
-        }
-    }
-}
-
-/// Whether a path under `.git` can move HEAD or the index. Object
-/// writes, reflogs, and lock files churn constantly and change neither.
-fn is_git_metadata(relative: &Path) -> bool {
-    // Lock files (`HEAD.lock`, `index.lock`) fall through the exact match.
-    relative
-        .components()
-        .nth(1)
-        .and_then(|c| c.as_os_str().to_str())
-        .is_some_and(|first| {
-            matches!(
-                first,
-                "HEAD" | "ORIG_HEAD" | "index" | "packed-refs" | "refs"
-            )
-        })
-}
-
-/// Events that mean a file's content or existence may have changed.
-fn is_change(kind: notify::EventKind) -> bool {
-    use notify::EventKind;
-    matches!(
-        kind,
-        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-    )
-}
-
-/// Watcher paths waiting out the hint debounce (ADR 0015).
-#[derive(Default)]
-struct ChangeBatch {
-    paths: Vec<PathBuf>,
-    flush_at: Option<Instant>,
-}
-
-impl ChangeBatch {
-    /// Adds a path; the first one after a flush starts the quiet period.
-    fn push(&mut self, path: PathBuf, debounce: Duration) {
-        self.paths.push(path);
-        self.flush_at
-            .get_or_insert_with(|| Instant::now() + debounce);
-    }
-
-    /// Resolves once the quiet period ends; never while the batch is empty.
-    async fn settled(&self) {
-        match self.flush_at {
-            Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
-            None => std::future::pending().await,
-        }
-    }
-
-    fn take(&mut self) -> Vec<PathBuf> {
-        self.flush_at = None;
-        std::mem::take(&mut self.paths)
-    }
-}
-
 fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<socket::Serving> {
     let Some(path) = record.socket() else {
         tracing::warn!("XDG_RUNTIME_DIR unset; no session socket");
@@ -2070,7 +2165,7 @@ async fn run_async(
     theme: &Theme,
     open: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let (mut doc_watcher, mut reload_rx) = DocWatcher::new()?;
+    let (mut doc_watcher, mut reload_rx) = watch::Watcher::new()?;
     let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
     let _socket = serve_socket(&options.record, request_tx);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
@@ -2099,7 +2194,7 @@ async fn run_async(
         None => app.show_sidebar(),
     }
 
-    let mut batch = ChangeBatch::default();
+    let mut batch = watch::Batch::default();
     loop {
         doc_watcher.follow(app.current_abs_path());
         app.settle();
@@ -2129,22 +2224,22 @@ async fn run_async(
                 None => Effect::Quit,
             },
             notice = reload_rx.recv() => {
-                if let Some(path) = notice {
+                if let Some(raw) = notice {
                     // One quiet period turns a burst of writes into one
                     // change per file (ADR 0015 `follow.hint-debounce`).
                     // The wait is its own arm below, so input keeps
                     // flowing while the burst settles.
-                    batch.push(path, hint_debounce);
-                    while let Ok(path) = reload_rx.try_recv() {
-                        batch.push(path, hint_debounce);
+                    batch.push(raw, hint_debounce);
+                    while let Ok(raw) = reload_rx.try_recv() {
+                        batch.push(raw, hint_debounce);
                     }
                 }
                 Effect::None
             }
             () = batch.settled() => {
-                let mut changed = batch.take();
-                changed.retain(|p| doc_watcher.is_target(p));
-                app.on_changes(changed);
+                let mut events = batch.take(|path| app.last_seen_fingerprint(path));
+                events.retain(|event| doc_watcher.is_target(event.path()));
+                app.on_events(events);
                 Effect::None
             }
             () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
@@ -2210,9 +2305,10 @@ mod tests {
 
     use fathomable_core::config::{FollowConfig, MarkdownConfig};
     use fathomable_core::highlight::Highlighter;
+    use fathomable_core::tree::Tree;
     use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
 
-    use super::{App, Focus, Options, PickerKind, Popup, is_change, is_git_metadata};
+    use super::{App, Focus, Options, PickerKind, Popup};
 
     struct TempDir(PathBuf);
 
@@ -2624,31 +2720,6 @@ mod tests {
     }
 
     #[test]
-    fn watcher_keeps_writes_and_drops_reads() {
-        use notify::EventKind;
-        use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind};
-        assert!(is_change(EventKind::Create(CreateKind::File)));
-        assert!(is_change(EventKind::Modify(ModifyKind::Any)));
-        assert!(is_change(EventKind::Remove(RemoveKind::File)));
-        assert!(!is_change(EventKind::Access(AccessKind::Open(
-            notify::event::AccessMode::Read
-        ))));
-        assert!(!is_change(EventKind::Any));
-    }
-
-    #[test]
-    fn git_metadata_is_head_index_and_refs() {
-        assert!(is_git_metadata(Path::new(".git/HEAD")));
-        assert!(is_git_metadata(Path::new(".git/index")));
-        assert!(is_git_metadata(Path::new(".git/refs/heads/main")));
-        assert!(is_git_metadata(Path::new(".git/packed-refs")));
-        assert!(!is_git_metadata(Path::new(".git/index.lock")));
-        assert!(!is_git_metadata(Path::new(".git/objects/ab/cdef")));
-        assert!(!is_git_metadata(Path::new(".git/logs/HEAD")));
-        assert!(!is_git_metadata(Path::new(".git")));
-    }
-
-    #[test]
     fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
         let dir = TempDir::new("touch")?;
         let mut app = app(&dir)?;
@@ -2982,6 +3053,102 @@ mod tests {
         // The blank line 4 has no rendered row; the cursor lands on the
         // next one, as `]c` does.
         assert!((4..=5).contains(&app.view().source_position().0));
+        Ok(())
+    }
+
+    #[test]
+    fn watcher_events_refresh_expanded_directories_only() -> anyhow::Result<()> {
+        use super::watch::Event;
+        let dir = TempDir::new("tree-events")?;
+        let follow = FollowConfig {
+            ignore: vec!["build/**".to_owned()],
+            ..FollowConfig::default()
+        };
+        let mut app = app_with(
+            &dir,
+            Options {
+                follow,
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
+        app.toggle_sidebar_focus();
+        app.open_picker(PickerKind::Files);
+        assert!(!picker_items(&app).iter().any(|p| p == "NEW.md"));
+        app.close_popup();
+        let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
+
+        // A created file lands in the root listing and the picker index.
+        fs::write(dir.0.join("NEW.md"), "# New\n")?;
+        app.on_events(vec![Event::Created(dir.0.join("NEW.md"))]);
+        assert!(has(&app, "NEW.md"));
+        assert_eq!(app.tree().map(Tree::cursor), Some(0), "cursor stays");
+        app.open_picker(PickerKind::Files);
+        assert!(picker_items(&app).iter().any(|p| p == "NEW.md"));
+        app.close_popup();
+
+        // A collapsed directory is not re-read until it is expanded.
+        fs::write(dir.0.join("docs/deep.md"), "# Deep\n")?;
+        app.on_events(vec![Event::Created(dir.0.join("docs/deep.md"))]);
+        assert!(!has(&app, "docs/deep.md"));
+        app.with_tree_result(Tree::activate);
+        assert!(has(&app, "docs/deep.md"));
+
+        // A path `follow.ignore` hides never triggers a re-read.
+        fs::create_dir_all(dir.0.join("build"))?;
+        fs::write(dir.0.join("build/out"), "")?;
+        app.on_events(vec![Event::Created(dir.0.join("build/out"))]);
+        assert!(!has(&app, "build"));
+        app.refresh_tree();
+        assert!(has(&app, "build"));
+
+        // A rename re-reads both listings.
+        fs::rename(dir.0.join("NEW.md"), dir.0.join("docs/MOVED.md"))?;
+        app.on_events(vec![Event::Renamed {
+            from: dir.0.join("NEW.md"),
+            to: dir.0.join("docs/MOVED.md"),
+        }]);
+        assert!(!has(&app, "NEW.md"));
+        assert!(has(&app, "docs/MOVED.md"));
+        Ok(())
+    }
+
+    #[test]
+    fn followed_files_are_revealed_in_the_tree() -> anyhow::Result<()> {
+        use fathomable_core::session::Request;
+        let dir = TempDir::new("follow-reveal")?;
+        let mut app = app(&dir)?;
+        app.show_sidebar();
+        app.focus_pane(Focus::View);
+        let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
+        assert!(!has(&app, "docs/guide.md"));
+
+        // The view has focus: parents expand, the cursor stays put.
+        app.handle_request(Request::Follow {
+            paths: vec![PathBuf::from("docs/guide.md")],
+        });
+        assert!(has(&app, "docs/guide.md"));
+        assert_eq!(app.tree().map(Tree::cursor), Some(0));
+        assert!(!app.has_document());
+
+        // The tree has focus: the cursor lands on it and shows it.
+        app.with_tree(|tree, _| {
+            tree.collapse();
+            None
+        });
+        assert!(!has(&app, "docs/notes.md"));
+        app.focus_pane(Focus::Sidebar);
+        app.handle_request(Request::Follow {
+            paths: vec![PathBuf::from("docs/notes.md")],
+        });
+        assert!(has(&app, "docs/notes.md"));
+        assert_eq!(
+            app.tree()
+                .and_then(Tree::current)
+                .map(|row| row.path().to_path_buf()),
+            Some(PathBuf::from("docs/notes.md"))
+        );
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+        assert_eq!(app.focus(), Focus::Sidebar);
         Ok(())
     }
 

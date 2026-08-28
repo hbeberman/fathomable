@@ -45,6 +45,8 @@ pub struct Theme {
     pub search_match: Style,
     pub statusline: Style,
     pub info: Style,
+    /// The `deleted` banner (ADR 0028).
+    pub warning: Style,
     pub mode_normal: Style,
     pub mode_select: Style,
     pub mode_input: Style,
@@ -89,6 +91,7 @@ impl Theme {
             search_match: style(Key::UiSearchMatch),
             statusline: style(Key::UiStatusline),
             info: style(Key::UiStatuslineInfo),
+            warning: style(Key::UiWarning),
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
@@ -217,6 +220,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     };
 
     draw_sidebar(frame, app, theme, sidebar_area);
+    let text_area = draw_banner(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     if let Some(panel) = app.thread_panel() {
         draw_thread(frame, app, theme, thread_area, panel);
@@ -264,6 +268,27 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
+    }
+}
+
+/// A deleted file keeps its content under a banner row in the warning
+/// face (ADR 0028); the rest of the text area is returned.
+fn draw_banner(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect) -> Rect {
+    let Some(banner) = app.banner().filter(|_| text_area.height > 1) else {
+        return text_area;
+    };
+    let banner_area = Rect {
+        height: 1,
+        ..text_area
+    };
+    frame.render_widget(
+        Paragraph::new(format!(" {banner}")).style(theme.warning),
+        banner_area,
+    );
+    Rect {
+        y: text_area.y + 1,
+        height: text_area.height - 1,
+        ..text_area
     }
 }
 
@@ -1034,6 +1059,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         "THREADS".to_owned()
     } else if app.focus() == Focus::FileThreads {
         "FILE".to_owned()
+    } else if app.deleted() && mode == Mode::Normal {
+        "DELETED".to_owned()
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {

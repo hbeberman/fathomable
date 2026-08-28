@@ -38,6 +38,7 @@ use crate::status::{self, State, Status};
 pub struct Entry {
     name: String,
     is_dir: bool,
+    is_link: bool,
 }
 
 impl Entry {
@@ -47,11 +48,17 @@ impl Entry {
         &self.name
     }
 
-    /// Whether the entry is a directory; a symlink never is, even one
-    /// pointing at a directory, matching how git tracks it.
+    /// Whether the entry is browsable as a directory; a symlink to one
+    /// counts, though git and the dirty set treat any symlink as a file.
     #[must_use]
     pub fn is_dir(&self) -> bool {
         self.is_dir
+    }
+
+    /// Whether the entry is a symlink, wherever it points.
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        self.is_link
     }
 }
 
@@ -491,11 +498,17 @@ impl Workspace {
             if name == ".git" {
                 continue;
             }
-            // The entry's own type, never the symlink target's: git
-            // tracks a symlink as a file-like entry even when it points
-            // at a directory, and descending one could loop forever.
-            let is_dir = item.file_type().is_ok_and(|kind| kind.is_dir());
-            let kind = if is_dir {
+            // Browsing may follow a symlink into its target directory,
+            // but git never does: for ignore rules and the dirty set the
+            // link is a file-like entry, wherever it points.
+            let file_type = item.file_type().ok();
+            let is_link = file_type.is_some_and(|kind| kind.is_symlink());
+            let is_dir = if is_link {
+                item.path().is_dir()
+            } else {
+                file_type.is_some_and(|kind| kind.is_dir())
+            };
+            let kind = if is_dir && !is_link {
                 EntryKind::Dir
             } else {
                 EntryKind::File
@@ -503,7 +516,11 @@ impl Workspace {
             if filter == Filter::Visible && self.is_ignored(&relative.join(&name), kind) {
                 continue;
             }
-            entries.push(Entry { name, is_dir });
+            entries.push(Entry {
+                name,
+                is_dir,
+                is_link,
+            });
         }
         entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
             (true, false) => Ordering::Less,
@@ -519,7 +536,8 @@ impl Workspace {
 
     /// Every file under the root as a root-relative path: a directory's
     /// files in listing order, then its subdirectories in listing order,
-    /// honouring the same filters as [`Workspace::list_dir`].
+    /// honouring the same filters as [`Workspace::list_dir`]. A symlink
+    /// is a file here and is never descended, as `git status` treats it.
     ///
     /// Directories that cannot be read are logged and skipped.
     pub fn walk_files(&mut self, filter: Filter) -> Vec<String> {
@@ -536,7 +554,7 @@ impl Workspace {
             let mut dirs = Vec::new();
             for entry in entries {
                 let path = dir.join(&entry.name);
-                if entry.is_dir {
+                if entry.is_dir && !entry.is_link {
                     dirs.push(path);
                 } else {
                     out.push(path.to_string_lossy().into_owned());

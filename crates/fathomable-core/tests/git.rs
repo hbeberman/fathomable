@@ -378,7 +378,7 @@ fn symlinks_diff_by_target_path_not_followed_content() -> TestResult {
 
 #[cfg(unix)]
 #[test]
-fn directory_symlinks_list_as_files_and_are_not_descended() -> TestResult {
+fn directory_symlinks_browse_as_dirs_but_status_never_descends() -> TestResult {
     use fathomable_core::status::State;
     use gix::objs::tree::EntryKind;
 
@@ -392,19 +392,19 @@ fn directory_symlinks_list_as_files_and_are_not_descended() -> TestResult {
     commit_and_stage(&dir.0, &[("linkdir", "real", EntryKind::Link)])?;
 
     let mut workspace = Workspace::discover(&dir.0)?;
-    let listed: Vec<(String, bool)> = workspace
+    let listed: Vec<(String, bool, bool)> = workspace
         .list_dir("")?
         .iter()
-        .map(|entry| (entry.name().to_owned(), entry.is_dir()))
+        .map(|entry| (entry.name().to_owned(), entry.is_dir(), entry.is_symlink()))
         .collect();
     assert_eq!(
         listed,
         vec![
-            ("real".to_owned(), true),
-            ("linkdir".to_owned(), false),
-            ("loop".to_owned(), false),
+            ("linkdir".to_owned(), true, true),
+            ("loop".to_owned(), true, true),
+            ("real".to_owned(), true, false),
         ],
-        "a symlink lists as a file even when it points at a directory"
+        "a symlink to a directory stays browsable and is flagged as a link"
     );
 
     let status = workspace.status()?;

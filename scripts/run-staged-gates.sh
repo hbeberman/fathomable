@@ -9,8 +9,13 @@ fail() {
     exit 1
 }
 
-if [[ ! -d .git || -L .git ]]; then
-    fail "linked worktrees and external Git directories are not supported"
+# The repository root is either the main worktree (a `.git` directory) or
+# a linked worktree (a `.git` file naming its gitdir); a symlinked `.git`
+# or an external Git directory is neither.
+if [[ -L .git ]]; then
+    fail "symlinked Git directories are not supported"
+elif [[ ! -d .git ]] && ! { [[ -f .git ]] && grep -q '^gitdir: ' .git; }; then
+    fail "external Git directories are not supported"
 fi
 
 git_root=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR git rev-parse --show-toplevel 2>/dev/null) \

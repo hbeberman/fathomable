@@ -34,3 +34,4 @@ supersede rather than edit history.
 - [0028 Live workspace](0028-live-workspace.md)
 - [0029 Horizontal scroll for long lines](0029-horizontal-scroll.md)
 - [0030 Threads waiting on the user](0030-waiting-threads.md)
+- [0031 Lazy follow](0031-lazy-follow.md)

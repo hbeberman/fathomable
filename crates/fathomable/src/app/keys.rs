@@ -11,8 +11,13 @@ use super::{App, Border, Focus, Popup, hscroll};
 /// Lines moved per scroll-wheel notch.
 const WHEEL_LINES: isize = 3;
 
-/// Apply a key press to `app`.
+/// Apply a key press to `app`. Going elsewhere switches auto-jump off
+/// (ADR 0031).
 pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
+    app.with_navigation_watch(|app| key_event(app, key))
+}
+
+fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     app.clear_message();
     app.view_mut().clear_message();
@@ -442,6 +447,10 @@ fn thread_list_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
 /// the pane under the pointer, a click focuses it, and a press on the
 /// tree's divider or the thread pane's rule drags that border.
 pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
+    app.with_navigation_watch(|app| mouse_event(app, event))
+}
+
+fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     // The comment box keeps the keys but not the mouse: the reader can
     // scroll, click, and resize around it while writing.
     if matches!(

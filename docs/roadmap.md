@@ -94,3 +94,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     agent's is *waiting*: its own gutter colour, a status-line count, a
     toast when a reply lands, and `]r`/`[r` to step through them across
     files ([0030](decisions/0030-waiting-threads.md)).
+22. **Lazy follow.** Auto-jump switches itself off when the reader
+    navigates elsewhere, keeps still while the visible file's hunk is on
+    screen, and prefers the file the agent says it is editing
+    ([0031](decisions/0031-lazy-follow.md)).

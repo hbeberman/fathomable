@@ -77,7 +77,4 @@ rejected for good (record rejections in the [charter](charter.md)).
   ([0020](decisions/0020-reanchoring-across-restarts.md) maps through the
   last-seen snapshot only). Candidate: a snapshot of the annotated lines
   in the thread store.
-- **Lazy follow heuristics.** How long after the agent touches a file the
-  viewer should jump, and how to avoid jumping while the user is reading.
-  Origin: [0006](decisions/0006-git-access.md) and charter.
 - **Snapshot bounds** for "last seen" diff bases. Origin: 0006.

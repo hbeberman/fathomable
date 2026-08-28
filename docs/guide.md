@@ -224,9 +224,16 @@ your highlight unless the tree has focus.
 
 `Space j a` (or `:follow`) turns on **auto-jump**: the pill reads `AUTO`
 and the viewer opens the newest change by itself once writes have been
-quiet for a second. It never jumps while you are selecting, writing a
-comment, reading a thread or diff, have a popup open, or have touched the
-keyboard or mouse in the last three seconds; `[o` takes you back.
+quiet for a second, preferring a file the agent said it is editing
+(`follow`). It is a monitor, not a leash: it waits while you are
+selecting, writing a comment, reading a thread or diff, have a popup
+open, or have touched the keyboard or mouse in the last three seconds,
+and it switches itself off — toast `auto-jump off`, pill cleared — the
+moment you go somewhere else: another file, a thread, the thread list,
+the diff view, a selection. Scrolling and searching in the file it
+landed on keep it on. When the change is in the file you are reading it
+only scrolls if the hunk is off screen. `[o` takes you back; `Space j a`
+turns it on again.
 
 ## 7. Configuration and themes
 

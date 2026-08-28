@@ -5,6 +5,7 @@
 //! terminal; `ui` draws it, `keys` drives it, and [`run`] owns the terminal,
 //! the file watcher, and the session socket.
 
+mod autojump;
 mod clipboard;
 mod commands;
 pub(crate) mod file_threads;
@@ -68,9 +69,6 @@ use watch::{Fingerprint, is_git_metadata};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
-/// Reader activity newer than this holds auto-jump back (ADR 0015).
-const RECENT_ACTIVITY: Duration = Duration::from_secs(3);
-
 /// How many edit deltas a document keeps.
 const MAX_DELTAS: usize = 8;
 
@@ -1085,29 +1083,7 @@ impl App {
         {
             self.mark_seen(index);
         }
-        if self.auto
-            && let Some(change) = self.queue.newest().cloned()
-            && self
-                .last_change
-                .is_some_and(|at| at.elapsed() >= self.follow.jump_debounce)
-            && self.auto_jump_allowed()
-        {
-            self.jump_to(&change);
-        }
-    }
-
-    fn auto_jump_allowed(&self) -> bool {
-        if self.popup.is_some() || self.thread.is_some() {
-            return false;
-        }
-        let Some(index) = self.current else {
-            return true;
-        };
-        let view = &self.docs[index].view;
-        view.selection().is_none()
-            && view.mode() == view::Mode::Normal
-            && !view.diff_view()
-            && view.idle() >= RECENT_ACTIVITY
+        self.auto_jump_tick();
     }
 
     /// How long until [`App::tick`] has something to do, `None` when
@@ -1127,13 +1103,8 @@ impl App {
             let idle = self.docs[index].view.idle();
             consider(self.follow.seen_idle.saturating_sub(idle));
         }
-        if self.auto && !self.queue.is_empty() {
-            let since = self.last_change.map_or(Duration::ZERO, |at| at.elapsed());
-            let wait = self.follow.jump_debounce.saturating_sub(since);
-            let activity = self.current.map_or(Duration::ZERO, |i| {
-                RECENT_ACTIVITY.saturating_sub(self.docs[i].view.idle())
-            });
-            consider(wait.max(activity).max(Duration::from_millis(50)));
+        if let Some(wait) = self.auto_jump_in() {
+            consider(wait);
         }
         next
     }

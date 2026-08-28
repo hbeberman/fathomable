@@ -259,6 +259,14 @@ impl View {
         self.activity.elapsed()
     }
 
+    /// Pretend the reader has been still for `duration`.
+    #[cfg(test)]
+    pub fn rest(&mut self, duration: Duration) {
+        if let Some(then) = Instant::now().checked_sub(duration) {
+            self.activity = then;
+        }
+    }
+
     /// Whether the diff view is showing the last-seen diff rather than
     /// the `HEAD` one.
     pub fn diff_seen(&self) -> bool {

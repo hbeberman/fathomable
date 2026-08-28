@@ -76,3 +76,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     shows a file-info pane with its format, sizes, and git state, and
     the sidebar tags it `bin`
     ([0026](decisions/0026-binary-files-and-file-info.md)).
+18. **Revisiting threads.** `c` on a thread opens it and `C` always
+    starts one; the thread pane's `n`/`p` walk every thread in the
+    file; the gutter brackets a thread's rows with `╭ │ ╰` and dots a
+    one-row thread; and a file-threads pane under the tree lists the
+    file's threads, open and resolved, highlighting the one under the
+    cursor ([0027](decisions/0027-revisiting-threads.md)).

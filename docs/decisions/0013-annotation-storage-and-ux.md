@@ -76,6 +76,9 @@ were captured in a question round on 2026-08-26.
   selections are therefore indistinguishable once made.
 - `c` on a selection annotates the source lines it touches; a wrapped
   paragraph that renders as one row annotates all of its source lines.
+  With no selection, `c` on a row that already carries a thread opens
+  it instead, and `C` always starts a new thread
+  ([0027](0027-revisiting-threads.md), 2026-08-28).
 
 ### Comment box
 
@@ -94,7 +97,9 @@ were captured in a question round on 2026-08-26.
 
 - The gutter gains a fourth cell: `[line number][space][diff bar][note]`
   (moved to the far left by [0006](0006-git-access.md), 2026-08-26).
-  The note cell shows `▎` coloured by thread state; the diff bar keeps its
+  The note cell shows `▎` coloured by thread state (superseded by
+  [0027](0027-revisiting-threads.md), 2026-08-28: a rounded bracket
+  `╭ │ ╰` over the thread's rows, `•` for one row); the diff bar keeps its
   own cell so git and annotation information never hide each other. A
   thread's rows also get the `annotation.line` background.
 - Theme keys (added to the [0011](0011-theme-schema.md) table):
@@ -123,7 +128,9 @@ were captured in a question round on 2026-08-26.
   `[proposes resolving]` badge when set. Bodies are indented under their
   author. When the text overflows the last row reads `▼ N more`, and
   scrolling stops at the end. `j`/`k` scroll, `n`/`p` switch
-  between threads on the row, `r` replies through the comment box, `x`
+  between threads on the row (superseded by
+  [0027](0027-revisiting-threads.md), 2026-08-28: they walk every thread
+  in the file, moving the cursor), `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
 - While replying the pane stays on screen above the box, pushed up by
   the box's rows, so the thread can be read; Up/Down scroll it

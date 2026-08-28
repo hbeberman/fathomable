@@ -64,6 +64,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             sidebar(app, key);
             Effect::None
         }
+        Focus::FileThreads => {
+            file_threads(app, key);
+            Effect::None
+        }
         Focus::View => match key.code {
             KeyCode::Char('[') if mode == Mode::Normal => {
                 app.set_pending(Some('['));
@@ -303,6 +307,67 @@ fn thread(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// The mouse over the tree column: the file-threads pane along its bottom
+/// (ADR 0027) takes what lands on it; the tree above pages the viewer.
+fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+    let tree_rows = app.sidebar_rows();
+    if row >= tree_rows && row < app.pane_rows() {
+        file_threads_mouse(app, kind, row - tree_rows);
+        return;
+    }
+    match kind {
+        // One row per tick, not `WHEEL_LINES`: each tick pages the main
+        // pane to the next file (ADR 0023). The text and thread panes
+        // below keep their three-line wheel.
+        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+            let before = highlight(app);
+            app.with_tree(|tree, _| {
+                if kind == MouseEventKind::ScrollDown {
+                    tree.move_down(1);
+                } else {
+                    tree.move_up(1);
+                }
+                None
+            });
+            if highlight(app) != before {
+                app.show_highlight();
+            }
+        }
+        // Row 0 is the root header.
+        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.sidebar_click(row - 1),
+        MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Sidebar),
+        _ => {}
+    }
+}
+
+/// Keys in the file-threads pane (ADR 0027).
+fn file_threads(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc => app.leave_file_threads(),
+        KeyCode::Char('j') | KeyCode::Down => app.file_thread_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.file_thread_move(-1),
+        KeyCode::Enter => app.file_thread_open(),
+        KeyCode::Char('r') => app.file_thread_reply(),
+        KeyCode::Char('x') => app.file_thread_toggle_resolved(),
+        KeyCode::Char(':') => app.view_mut().start_command(),
+        _ => {}
+    }
+}
+
+/// The mouse over the file-threads pane (ADR 0027): the wheel steps
+/// between threads, a click on an entry goes to it, and the rule drags.
+/// Row 0 is the rule, row 1 the header.
+fn file_threads_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+    match kind {
+        MouseEventKind::ScrollDown => app.file_thread_move(1),
+        MouseEventKind::ScrollUp => app.file_thread_move(-1),
+        MouseEventKind::Down(MouseButton::Left) if row == 0 => app.begin_drag(Border::FileThreads),
+        MouseEventKind::Down(MouseButton::Left) if row >= 2 => app.file_thread_click(row - 2),
+        MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::FileThreads),
+        _ => {}
+    }
+}
+
 /// Keys in the thread list (ADR 0025).
 fn thread_list(app: &mut App, key: KeyEvent, ctrl: bool) {
     if let Some(pending) = app.pending() {
@@ -399,31 +464,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
         return Effect::None;
     }
     if column < sidebar {
-        match event.kind {
-            // One row per tick, not `WHEEL_LINES`: each tick pages the main
-            // pane to the next file (ADR 0023). The text and thread panes
-            // below keep their three-line wheel.
-            kind @ (MouseEventKind::ScrollDown | MouseEventKind::ScrollUp) => {
-                let before = highlight(app);
-                app.with_tree(|tree, _| {
-                    if kind == MouseEventKind::ScrollDown {
-                        tree.move_down(1);
-                    } else {
-                        tree.move_up(1);
-                    }
-                    None
-                });
-                if highlight(app) != before {
-                    app.show_highlight();
-                }
-            }
-            // Row 0 is the root header.
-            MouseEventKind::Down(MouseButton::Left) if row >= 1 && row < rows => {
-                app.sidebar_click(row - 1);
-            }
-            MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Sidebar),
-            _ => {}
-        }
+        sidebar_mouse(app, event.kind, row);
         return Effect::None;
     }
     if row >= thread_top && row < box_top {

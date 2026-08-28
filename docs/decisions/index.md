@@ -30,3 +30,4 @@ supersede rather than edit history.
 - [0024 Workspace sessions, viewers, and git-scoped threads](0024-workspace-sessions.md)
 - [0025 The thread list](0025-thread-list.md)
 - [0026 Binary files and the file-info pane](0026-binary-files-and-file-info.md)
+- [0027 Revisiting threads](0027-revisiting-threads.md)

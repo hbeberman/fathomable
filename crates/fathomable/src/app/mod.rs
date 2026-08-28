@@ -7,6 +7,7 @@
 
 mod clipboard;
 mod commands;
+pub(crate) mod file_threads;
 pub(crate) mod info;
 mod keys;
 pub(crate) mod reanchor;
@@ -101,6 +102,8 @@ pub enum Focus {
     Thread,
     /// The thread list (ADR 0025).
     Threads,
+    /// The file-threads pane under the tree (ADR 0027).
+    FileThreads,
 }
 
 /// A pane border the mouse is dragging.
@@ -112,6 +115,8 @@ pub enum Border {
     Thread,
     /// The rule along the top of the comment box (ADR 0018).
     Compose,
+    /// The rule along the top of the file-threads pane (ADR 0027).
+    FileThreads,
 }
 
 /// What the file picker lists.
@@ -197,7 +202,7 @@ pub enum Popup {
 }
 
 /// One space-menu entry: key, label.
-pub const SPACE_MENU: [(char, &str); 9] = [
+pub const SPACE_MENU: [(char, &str); 10] = [
     ('e', "toggle tree focus"),
     ('E', "hide tree"),
     ('f', "open file"),
@@ -205,6 +210,7 @@ pub const SPACE_MENU: [(char, &str); 9] = [
     ('o', "recent files"),
     ('a', "thread at cursor"),
     ('A', "thread list"),
+    ('t', "file threads"),
     ('j', "follow / jump"),
     ('?', "all keys"),
 ];
@@ -230,7 +236,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 41] = [
+pub const HELP: [(&str, &str); 43] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / ge G", "top / bottom"),
@@ -253,6 +259,11 @@ pub const HELP: [(&str, &str); 41] = [
         "reply, resolve, fold, fold resolved, file only",
     ),
     ("]c / [c", "next / previous thread"),
+    ("Space t", "focus the file-threads pane under the tree"),
+    (
+        "file j k Enter r x",
+        "next / previous thread, open, reply, resolve",
+    ),
     (
         "thread r x n p j k",
         "reply, resolve, next / previous in file, scroll",
@@ -319,6 +330,9 @@ pub struct App {
     list: ThreadList,
     /// Thread pane height once dragged; the default follows the terminal.
     thread_rows: Option<usize>,
+    /// File-threads pane height once dragged; the default follows its
+    /// entries (ADR 0027).
+    file_rows: Option<usize>,
     /// Comment box height once dragged; the default follows its text.
     compose_rows: Option<usize>,
     /// The border a mouse drag is moving.
@@ -399,6 +413,7 @@ impl App {
             thread: None,
             list: ThreadList::default(),
             thread_rows: None,
+            file_rows: None,
             compose_rows: None,
             drag: None,
             focus: Focus::View,
@@ -977,6 +992,7 @@ impl App {
             Focus::Sidebar => self.tree().is_some(),
             Focus::Thread => self.thread.is_some(),
             Focus::Threads => self.list.is_open(),
+            Focus::FileThreads => self.file_thread_pane_rows() > 0,
         };
         if present {
             self.focus = focus;
@@ -1016,6 +1032,7 @@ impl App {
                 );
             }
             Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
+            Some(Border::FileThreads) => self.drag_file_threads_to(row),
             None => return,
         }
         self.relayout();
@@ -1536,6 +1553,7 @@ impl App {
             'o' => self.open_picker(PickerKind::Recent),
             'a' => self.open_thread_at_cursor(),
             'A' => self.open_thread_list(),
+            't' => self.focus_file_threads(),
             'j' => self.popup = Some(Popup::Jump),
             '?' => self.open_help(),
             _ => {}

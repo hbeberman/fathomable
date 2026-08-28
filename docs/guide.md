@@ -83,6 +83,8 @@ shows the full list inside the app.
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
+| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the one under the cursor highlighted |
+| file threads `j` `k` `Enter` `r` `x`, `Esc` | next / previous thread (the cursor follows), open its pane, reply, resolve or reopen; back to the text |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
 | list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
@@ -105,7 +107,8 @@ or the thread pane under the pointer — over the tree it steps one row per
 tick, showing each file it lands on — and a click focuses the pane. A
 click in the tree stays in the tree: it expands a directory or shows a
 file like the wheel does, and only `Enter` moves focus to the view.
-Drag the tree's divider or the thread pane's top rule to resize them.
+Drag the tree's divider, the thread pane's top rule, or the file-threads
+pane's top rule to resize them.
 Starting on a directory opens the tree; starting on a file opens the file.
 
 ## 4. Annotations
@@ -121,6 +124,13 @@ one. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
+
+While the tree is shown, a file with threads gets a **file-threads pane**
+under it: one row per thread in line order — range, `●` open or `✓`
+resolved in the gutter colour, the first line of the comment, and the
+reply count and age at the edge. The highlighted row is the thread under
+the cursor, so reading the file walks the pane; `Space t` or a click
+focuses it, and `j`/`k`, `Enter`, `r`, and `x` act on the highlight.
 
 `Space A` shows the whole review at once: every thread on the current
 work (the ones whose commit `HEAD` can reach), open ones first and then

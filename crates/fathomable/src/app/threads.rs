@@ -295,6 +295,10 @@ impl App {
             .filter(|m| m.kind() == MarkKind::Detached)
             .count();
         tracing::debug!(path = %doc.relative.display(), marks = doc.marks.len(), detached, "marks refreshed");
+        // The file-threads pane's height follows the marks (ADR 0027).
+        if self.current == Some(index) {
+            self.scroll_sidebar();
+        }
     }
 
     /// Re-locate every loaded document's threads, after a change that
@@ -540,7 +544,9 @@ impl App {
             Ok(()) => {
                 tracing::info!(%id, "reply added");
                 self.refresh_all_marks();
-                if !self.list.is_open() {
+                // The list and the file-threads pane reply in place; a
+                // reply from the text opens the thread it answered.
+                if !self.list.is_open() && self.focus != Focus::FileThreads {
                     self.open_thread(id.clone());
                 }
             }
@@ -734,7 +740,7 @@ impl App {
         self.jump_annotation(-1);
     }
 
-    fn jump_annotation(&mut self, direction: isize) {
+    pub(super) fn jump_annotation(&mut self, direction: isize) {
         let mut starts: Vec<usize> = self.marks().iter().map(|m| m.range().start()).collect();
         starts.sort_unstable();
         starts.dedup();

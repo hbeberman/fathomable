@@ -216,12 +216,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         ..area
     };
 
-    if let Some(tree) = app.tree() {
-        frame.render_widget(
-            Paragraph::new(sidebar_lines(app, tree, theme, sidebar, rows)).style(theme.sidebar),
-            sidebar_area,
-        );
-    }
+    draw_sidebar(frame, app, theme, sidebar_area);
     draw_column(frame, app, theme, text_area, gutter);
     if let Some(panel) = app.thread_panel() {
         draw_thread(frame, app, theme, thread_area, panel);
@@ -599,6 +594,124 @@ fn sidebar_marks<'a>(
     (letter, tail)
 }
 
+/// The tree column: the tree on top, the file-threads pane along the
+/// bottom (ADR 0027).
+fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    let Some(tree) = app.tree() else {
+        return;
+    };
+    let width = usize::from(area.width);
+    let tree_area = Rect {
+        height: u16_of(app.sidebar_rows()).min(area.height),
+        ..area
+    };
+    let file_area = Rect {
+        y: tree_area.y + tree_area.height,
+        height: area.height.saturating_sub(tree_area.height),
+        ..area
+    };
+    frame.render_widget(
+        Paragraph::new(sidebar_lines(
+            app,
+            tree,
+            theme,
+            width,
+            usize::from(tree_area.height),
+        ))
+        .style(theme.sidebar),
+        tree_area,
+    );
+    if file_area.height > 0 {
+        frame.render_widget(
+            Paragraph::new(file_thread_lines(
+                app,
+                theme,
+                width,
+                usize::from(file_area.height),
+            ))
+            .style(theme.sidebar),
+            file_area,
+        );
+    }
+}
+
+/// The file-threads pane (ADR 0027) under the tree: a rule, a header with
+/// the open and total counts, then one row per thread — range, status
+/// glyph, first line of the comment, and the reply count and age at the
+/// right edge when the column has room.
+fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -> Vec<Line<'a>> {
+    let inner = width.saturating_sub(1);
+    let divider = Span::styled("│", theme.marker);
+    let with_divider = |spans: Vec<Span<'a>>| {
+        let mut spans = spans;
+        spans.push(divider.clone());
+        Line::from(spans)
+    };
+    let mut out = Vec::with_capacity(rows);
+    out.push(with_divider(vec![Span::styled(
+        "─".repeat(inner),
+        theme.info,
+    )]));
+    let (open, total) = app.thread_counts();
+    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    out.push(with_divider(vec![Span::styled(
+        fit(&format!(" threads {open}/{total}"), inner),
+        header_style,
+    )]));
+    let focused = app.focus() == Focus::FileThreads;
+    let selected = app.file_thread_selected();
+    let now = super::threads::now();
+    for (index, row) in app
+        .file_thread_rows()
+        .iter()
+        .enumerate()
+        .skip(app.file_thread_scroll())
+        .take(rows.saturating_sub(2))
+    {
+        let mut style = theme.sidebar;
+        if selected == Some(index) {
+            style = style.patch(theme.sidebar_selected);
+            if !focused {
+                style = style.remove_modifier(Modifier::BOLD);
+            }
+        }
+        let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
+        let resolved = matches!(row.kind(), MarkKind::Resolved | MarkKind::AutoResolved);
+        let glyph = if resolved { "✓" } else { "●" };
+        let lead = format!(" L{} ", row.range());
+        let tail = format!(
+            " ↩{} {}",
+            row.replies(),
+            format_age_short(row.updated(), now)
+        );
+        let lead_width = display_width(&lead) + 1;
+        // The tail goes first when the column is narrow; the summary
+        // takes what is left, however little.
+        let tail_width = display_width(&tail);
+        let keep_tail = inner >= lead_width + tail_width + 4;
+        let summary_width = inner
+            .saturating_sub(lead_width)
+            .saturating_sub(if keep_tail { tail_width } else { 0 });
+        let summary = fit(&format!(" {}", row.summary()), summary_width);
+        let mut spans = vec![
+            Span::styled(fit(&lead, lead_width - 1), style),
+            Span::styled(glyph, on_bg(mark_style(theme, row.kind())).patch(style)),
+            Span::styled(summary, if resolved { on_bg(theme.info) } else { style }),
+        ];
+        if keep_tail {
+            spans.push(Span::styled(tail, on_bg(theme.info)));
+        }
+        out.push(with_divider(spans));
+    }
+    while out.len() < rows {
+        out.push(with_divider(vec![Span::styled(
+            " ".repeat(inner),
+            theme.sidebar,
+        )]));
+    }
+    out
+}
+
 /// Pad or truncate `text` to exactly `width` cells.
 fn fit(text: &str, width: usize) -> String {
     let mut out = String::new();
@@ -781,6 +894,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         "THREAD".to_owned()
     } else if app.focus() == Focus::Threads {
         "THREADS".to_owned()
+    } else if app.focus() == Focus::FileThreads {
+        "FILE".to_owned()
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {
@@ -1400,6 +1515,17 @@ fn format_age(created: u64, now: u64) -> String {
     }
 }
 
+/// `created` relative to `now` in the fewest cells: `now`, `5m`, `2h`, `3d`.
+fn format_age_short(created: u64, now: u64) -> String {
+    let elapsed = now.saturating_sub(created);
+    match elapsed {
+        0..60 => "now".to_owned(),
+        60..3600 => format!("{}m", elapsed / 60),
+        3600..86_400 => format!("{}h", elapsed / 3600),
+        _ => format!("{}d", elapsed / 86_400),
+    }
+}
+
 /// `YYYY-MM-DD HH:MM` in UTC from Unix seconds (Howard Hinnant's civil-date
 /// algorithm; no calendar crate needed for a timestamp label).
 pub(super) fn format_time(secs: u64) -> String {
@@ -1434,7 +1560,7 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_age, format_time};
+    use super::{format_age, format_age_short, format_time};
 
     #[test]
     fn formats_unix_seconds_as_utc() {
@@ -1454,5 +1580,9 @@ mod tests {
         assert_eq!(format_age(now - 86_400, now), "yesterday 22:13");
         assert_eq!(format_age(now - 172_800, now), "2023-11-12 22:13");
         assert_eq!(format_age(now + 500, now), "just now");
+        assert_eq!(format_age_short(now - 30, now), "now");
+        assert_eq!(format_age_short(now - 300, now), "5m");
+        assert_eq!(format_age_short(now - 7_200, now), "2h");
+        assert_eq!(format_age_short(now - 259_200, now), "3d");
     }
 }

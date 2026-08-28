@@ -77,7 +77,8 @@ impl App {
     }
 
     pub(super) fn scroll_sidebar(&mut self) {
-        let rows = self.pane_rows().saturating_sub(1).max(1);
+        // The file-threads pane (ADR 0027) takes rows from the tree.
+        let rows = self.sidebar_rows().saturating_sub(1).max(1);
         let Some(tree) = self.tree.as_ref() else {
             return;
         };

@@ -673,9 +673,10 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     let mut out = Vec::with_capacity(rows);
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
         let is_cursor = row == cursor.row;
-        let mark = view.source_lines_of_row(row).and_then(|n| app.mark_in(n));
+        // The note cell brackets a thread's rows (ADR 0027).
+        let note = view.source_lines_of_row(row).and_then(|n| app.note_in(n));
         let mut row_style = Style::default();
-        if mark.is_some() {
+        if note.is_some() {
             row_style = row_style.patch(theme.annotation_line);
         }
         if is_cursor {
@@ -706,9 +707,9 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
                     Span::styled(glyph, status_style(theme, status).patch(row_style))
                 },
             );
-        let note = mark.map_or_else(
+        let note = note.map_or_else(
             || Span::styled(" ", row_style),
-            |kind| Span::styled("▎", mark_style(theme, kind).patch(row_style)),
+            |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
         );
         let mut spans = vec![
             note,

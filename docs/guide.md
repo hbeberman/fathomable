@@ -136,7 +136,9 @@ Inside a git work tree the bar between the line numbers and the text shows
 what differs from `HEAD`: a green bar for added lines, orange for changed
 ones, and a thin red rule along the top of the line that follows a removal
 (the removed text itself is only shown in the diff view). Annotation marks
-sit at the far left of the gutter.
+sit at the far left of the gutter: a thread's rows are bracketed `╭`, `│`,
+`╰`, a thread on one row is `•`, and a thread nested inside another
+re-draws the corners on the outer one's line.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
 for one that is staged; a new untracked file is all thin green. `gd` swaps
 the pane for a unified diff of the file against `HEAD` (`DIFF`), and the

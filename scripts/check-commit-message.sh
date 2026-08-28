@@ -12,6 +12,11 @@ fi
 # repository. Git supplies an in-repository working directory for the hook.
 msg_file=$(cd "$(dirname -- "$msg_file")" && pwd -P)/$(basename -- "$msg_file")
 
+if grep -Eiq '^[[:space:]]*(Claude-Session:|Co-Authored-By:[^[:cntrl:]]*(Copilot|Claude|Codex|noreply@openai[.]com))' "$msg_file"; then
+    echo "✗ commit message contains forbidden Copilot, Claude, Codex, or Claude-Session metadata" >&2
+    exit 1
+fi
+
 header=""
 case "$(basename -- "$msg_file")" in
     MERGE_MSG|SQUASH_MSG)
@@ -64,4 +69,3 @@ MSG
         esac
         ;;
 esac
-

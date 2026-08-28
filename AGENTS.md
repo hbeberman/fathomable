@@ -84,6 +84,8 @@ Do not bypass hooks with `--no-verify`.
 
 ## Commit messages
 
+- Do not add `Co-Authored-By:` lines naming Copilot, Claude, or Codex, or any `Claude-Session:` line; the commit hook rejects this assistant metadata.
+
 Commit messages follow Conventional Commits:
 
 ```text

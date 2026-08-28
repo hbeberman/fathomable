@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use anyhow::Context;
 use fathomable_core::XdgDirs;
-use fathomable_core::annotations::{Author, Reply, Scope, Store, Thread, ThreadId};
+use fathomable_core::annotations::{Author, LineRange, Reply, Scope, Store, Thread, ThreadId};
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
 use fathomable_core::workspace::Workspace;
@@ -33,6 +33,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+use crate::app::open_thread::follow_reply_lines;
 use crate::app::reanchor::follow_snapshots;
 use crate::app::threads::now;
 
@@ -141,6 +142,13 @@ pub struct ReplyParams {
     /// Also resolve the thread.
     #[serde(default)]
     resolve: bool,
+    /// First line the thread's lines are on now, when you rewrote them;
+    /// the thread re-anchors there before the reply is added.
+    #[serde(default)]
+    line: Option<usize>,
+    /// Last line of that range; defaults to `line`.
+    #[serde(default)]
+    end_line: Option<usize>,
     /// Name to sign as; the client name is recorded alongside it.
     #[serde(default)]
     persona: Option<String>,
@@ -298,7 +306,10 @@ impl Server {
         }
     }
 
-    #[tool(description = "Reply to a thread, optionally resolving it.")]
+    #[tool(
+        description = "Reply to a thread, optionally resolving it. If you rewrote the lines \
+                       the thread is on, pass `line` (and `end_line`) so it follows them."
+    )]
     async fn thread_reply(
         &self,
         Parameters(p): Parameters<ReplyParams>,
@@ -320,11 +331,15 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
+        let lines = p
+            .line
+            .map(|line| LineRange::new(line, p.end_line.unwrap_or(line)));
         let request = Request::ThreadReply {
             thread: thread.clone(),
             author: author.clone(),
             body: p.body.clone(),
             resolve: p.resolve,
+            lines,
         };
         let outcome = match session.viewers.first() {
             Some(viewer) => call(viewer, &request).await,
@@ -335,6 +350,7 @@ impl Server {
                 author,
                 p.body,
                 p.resolve,
+                lines,
             )
             .map(|()| Response::Done),
         };
@@ -533,12 +549,16 @@ fn headless_reply(
     author: Author,
     body: String,
     resolve: bool,
+    lines: Option<LineRange>,
 ) -> Result<(), String> {
     let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
     if store.thread(thread).is_none() {
         return Err(format!("unknown thread {thread}"));
     }
     let when = now();
+    if let Some(lines) = lines {
+        follow_reply_lines(&mut store, root, thread, lines, when)?;
+    }
     let reply = Reply::new(author.clone(), when, body);
     let reply = if resolve {
         reply.proposing_resolution()
@@ -695,6 +715,7 @@ mod tests {
             Author::agent("bot"),
             "because".to_owned(),
             true,
+            None,
         )?;
         let again = headless_list(&dirs, &root, None, Some(Path::new("a.md")))?;
         assert_eq!(again[0].replies().len(), 1);
@@ -707,6 +728,7 @@ mod tests {
                 Author::agent("bot"),
                 "x".to_owned(),
                 false,
+                None,
             )
             .is_err()
         );

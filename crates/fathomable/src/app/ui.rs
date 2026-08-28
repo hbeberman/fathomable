@@ -64,6 +64,7 @@ pub struct Theme {
     pub annotation_edited: Style,
     pub annotation_waiting: Style,
     pub annotation_line: Style,
+    pub annotation_focus: Style,
     pub diff_plus: Style,
     pub diff_delta: Style,
     pub diff_minus: Style,
@@ -110,6 +111,7 @@ impl Theme {
             annotation_edited: style(Key::AnnotationEdited),
             annotation_waiting: style(Key::AnnotationWaiting),
             annotation_line: style(Key::AnnotationLine),
+            annotation_focus: style(Key::AnnotationFocus),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
             diff_minus: style(Key::DiffMinus),
@@ -820,10 +822,15 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
         let is_cursor = row == cursor.row;
         // The note cell brackets a thread's rows (ADR 0027).
-        let note = view.source_lines_of_row(row).and_then(|n| app.note_in(n));
+        let source = view.source_lines_of_row(row);
+        let note = source.and_then(|n| app.note_in(n));
         let mut row_style = Style::default();
         if note.is_some() {
             row_style = row_style.patch(theme.annotation_line);
+        }
+        // The open thread's own lines stand out from the rest (ADR 0033).
+        if source.is_some_and(|n| app.open_thread_in(n)) {
+            row_style = row_style.patch(theme.annotation_focus);
         }
         if is_cursor {
             row_style = row_style.patch(theme.cursorline);

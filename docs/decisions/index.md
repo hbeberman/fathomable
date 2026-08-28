@@ -36,3 +36,4 @@ supersede rather than edit history.
 - [0030 Threads waiting on the user](0030-waiting-threads.md)
 - [0031 Lazy follow](0031-lazy-follow.md)
 - [0032 Placement and state](0032-placement-and-state.md)
+- [0033 Open thread lines](0033-open-thread-lines.md)

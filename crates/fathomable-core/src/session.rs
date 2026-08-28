@@ -35,7 +35,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use crate::XdgDirs;
-use crate::annotations::{Author, Thread, ThreadId};
+use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks.
 pub const PROTOCOL_VERSION: u32 = 2;
@@ -388,13 +388,17 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
-    /// Append a reply to a thread, optionally resolving it.
+    /// Append a reply to a thread, optionally resolving it. `lines`, when
+    /// given, says where the thread's lines are now (ADR 0033): the
+    /// thread is re-anchored there before the reply is added.
     ThreadReply {
         thread: ThreadId,
         author: Author,
         body: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         resolve: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lines: Option<LineRange>,
     },
 }
 
@@ -563,7 +567,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{Id, ProtocolError, Record, Request, Response};
-    use crate::annotations::Author;
+    use crate::annotations::{Author, LineRange};
 
     fn record() -> Record {
         Record::new(
@@ -610,6 +614,7 @@ mod tests {
                 },
                 body: "done".to_owned(),
                 resolve: true,
+                lines: Some(LineRange::new(4, 6)),
             },
         ];
         for request in requests {

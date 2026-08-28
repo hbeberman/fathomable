@@ -191,6 +191,7 @@ pub enum Key {
     AnnotationEdited,
     AnnotationWaiting,
     AnnotationLine,
+    AnnotationFocus,
     MarkupHeading,
     /// One heading level, 1 through 6; falls back to [`Key::MarkupHeading`].
     MarkupHeadingLevel(u8),
@@ -202,7 +203,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 36] = [
+    const NAMED: [(&'static str, Self); 37] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -233,6 +234,7 @@ impl Key {
         ("annotation.edited", Self::AnnotationEdited),
         ("annotation.waiting", Self::AnnotationWaiting),
         ("annotation.line", Self::AnnotationLine),
+        ("annotation.focus", Self::AnnotationFocus),
         ("markup.heading", Self::MarkupHeading),
         ("markup.raw.inline", Self::MarkupRawInline),
         ("markup.raw.block", Self::MarkupRawBlock),

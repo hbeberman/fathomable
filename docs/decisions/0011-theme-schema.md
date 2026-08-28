@@ -102,6 +102,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `annotation.edited` | gutter note cell of a thread re-anchored onto rewritten lines ([0019](0019-reanchoring-edited-lines.md)) |
 | `annotation.waiting` | gutter note cell, list rows, and sidebar tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
 | `annotation.line` | background of annotated rows (0013) |
+| `annotation.focus` | background of the rows of the thread open in the thread pane ([0033](0033-open-thread-lines.md)) |
 | `markup.heading` | all heading levels; `markup.heading.1`…`.6` override one level |
 | `markup.raw.inline`, `markup.raw.block` | inline code, code block lines |
 | `markup.link` | link text |

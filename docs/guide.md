@@ -138,7 +138,9 @@ Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
-as *detached* when the lines are gone. Where the lines went and what
+as *detached* when the lines are gone. The lines of the thread open in
+the thread pane are tinted more strongly than other annotated lines
+(`annotation.focus`). Where the lines went and what
 state the thread is in are separate: the thread pane's header reads
 `detached · auto-resolved` or `edited · waiting`, placement first, and
 a thread at its own lines shows the state alone. Edits made while Fathomable was not
@@ -307,7 +309,7 @@ in the same repository, and the tools are:
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range |
 | `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`; works without a viewer |
-| `thread_reply` | answer a thread, optionally resolving it; a `persona` name is recorded next to the client name; works without a viewer |
+| `thread_reply` | answer a thread, optionally resolving it; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; works without a viewer |
 
 Every tool accepts an optional `session`: a workspace root, or a viewer name
 or id. A thread belongs to the commit it was written against and is shown

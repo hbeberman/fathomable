@@ -103,3 +103,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     agent reply toasts in the viewer it came through, and the store
     appends each event in one write
     ([0032](decisions/0032-placement-and-state.md)).
+24. **Open thread lines.** The rows of the thread shown in the pane draw
+    in `annotation.focus`, and `thread_reply` takes `line`/`end_line` so
+    an agent that rewrote the lines re-anchors the thread as it answers
+    ([0033](decisions/0033-open-thread-lines.md)).

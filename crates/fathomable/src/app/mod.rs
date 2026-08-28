@@ -13,6 +13,7 @@ mod hscroll;
 pub(crate) mod info;
 mod keys;
 pub(crate) mod mark_words;
+pub(crate) mod open_thread;
 pub(crate) mod reanchor;
 mod sidebar;
 mod socket;
@@ -1505,7 +1506,8 @@ impl App {
                 author,
                 body,
                 resolve,
-            } => match self.agent_reply(&thread, author, body, resolve) {
+                lines,
+            } => match self.agent_reply(&thread, author, body, resolve, lines) {
                 Ok(()) => Response::Done,
                 Err(error) => Response::Error(error),
             },

@@ -137,7 +137,7 @@ impl ThreadPanel {
     }
 }
 
-fn overlaps(a: LineRange, b: LineRange) -> bool {
+pub(super) fn overlaps(a: LineRange, b: LineRange) -> bool {
     a.start() <= b.end() && b.start() <= a.end()
 }
 
@@ -619,7 +619,9 @@ impl App {
         author: Author,
         body: String,
         resolve: bool,
+        lines: Option<LineRange>,
     ) -> Result<(), String> {
+        let root = self.workspace.root().to_path_buf();
         let store = self
             .store
             .as_mut()
@@ -628,6 +630,9 @@ impl App {
             return Err(format!("unknown thread {id}"));
         }
         let when = now();
+        if let Some(lines) = lines {
+            super::open_thread::follow_reply_lines(store, &root, id, lines, when)?;
+        }
         let reply = Reply::new(author.clone(), when, body);
         let reply = if resolve {
             reply.proposing_resolution()
@@ -1122,6 +1127,7 @@ mod tests {
             },
             long,
             true,
+            None,
         )
         .map_err(anyhow::Error::msg)?;
         app.open_thread(id);
@@ -1602,6 +1608,7 @@ mod tests {
             author: author.clone(),
             body: "fixed".to_owned(),
             resolve: true,
+            lines: None,
         });
         assert_eq!(reply, Response::Done);
         assert_eq!(
@@ -1626,6 +1633,7 @@ mod tests {
             author,
             body: "?".to_owned(),
             resolve: false,
+            lines: None,
         });
         assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
         Ok(())
@@ -1780,6 +1788,7 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("\n"),
             true,
+            None,
         )
         .map_err(anyhow::Error::msg)?;
 

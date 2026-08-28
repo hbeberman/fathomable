@@ -70,8 +70,11 @@ shows the full list inside the app.
 | `:name NAME` | name this viewer so an agent can target it; `:name` alone clears it |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
 | `c` with nothing selected | comment on the cursor line |
-| `Space a`, `Space A`, `]c` `[c` | thread at cursor, pick a thread, next/previous thread |
+| `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
+| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
+| list `j` `k` `gg` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
+| list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc` | newline, submit, cancel (twice on a draft) |
 | comment box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
 | comment box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
@@ -107,6 +110,14 @@ one. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
+
+`Space A` shows the whole review at once: every thread on the current
+work (the ones whose commit `HEAD` can reach), open ones first and then
+resolved ones dimmed, grouped by file, each with its comment and replies
+in full. It takes the text column the way a document does; the tree
+stays beside it. `Enter` opens the file at the selected thread with its
+pane, `r` and `x` reply and resolve in place, `f` narrows the list to the
+file you were reading, and `Esc` goes back to it.
 
 ## 5. Changes against git
 

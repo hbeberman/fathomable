@@ -11,6 +11,7 @@ mod keys;
 pub(crate) mod reanchor;
 mod sidebar;
 mod socket;
+pub(crate) mod thread_list;
 pub(crate) mod threads;
 mod ui;
 mod view;
@@ -34,7 +35,7 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::annotations::{Scope, Store, ThreadId};
+use fathomable_core::annotations::{Scope, Store};
 use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
@@ -51,6 +52,7 @@ use fathomable_core::{Document, XdgDirs};
 use notify::{RecursiveMode, Watcher};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use thread_list::ThreadList;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
@@ -95,6 +97,8 @@ pub enum Focus {
     Sidebar,
     /// The thread pane (ADR 0013).
     Thread,
+    /// The thread list (ADR 0025).
+    Threads,
 }
 
 /// A pane border the mouse is dragging.
@@ -117,8 +121,6 @@ pub enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
-    /// Threads on the current document (ADR 0013).
-    Threads,
 }
 
 /// The open picker popup.
@@ -129,8 +131,6 @@ pub struct PickerState {
     input: String,
     matches: Vec<Match>,
     selected: usize,
-    /// Thread behind each item, for [`PickerKind::Threads`].
-    ids: Vec<ThreadId>,
 }
 
 impl PickerState {
@@ -143,13 +143,7 @@ impl PickerState {
             input: String::new(),
             matches,
             selected: 0,
-            ids: Vec::new(),
         }
-    }
-
-    fn with_ids(mut self, ids: Vec<ThreadId>) -> Self {
-        self.ids = ids;
-        self
     }
 
     pub fn kind(&self) -> PickerKind {
@@ -208,7 +202,7 @@ pub const SPACE_MENU: [(char, &str); 9] = [
     ('F', "open file (incl. ignored)"),
     ('o', "recent files"),
     ('a', "thread at cursor"),
-    ('A', "threads in file"),
+    ('A', "thread list"),
     ('j', "follow / jump"),
     ('?', "all keys"),
 ];
@@ -234,7 +228,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 38] = [
+pub const HELP: [(&str, &str); 40] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / G", "top / bottom"),
@@ -246,7 +240,12 @@ pub const HELP: [(&str, &str); 38] = [
     ("y (selected)", "copy source to clipboard"),
     ("c", "comment on the selection or cursor line"),
     ("Space a", "read thread at cursor"),
-    ("Space A", "pick a thread in this file"),
+    ("Space A", "list every thread on this work"),
+    ("list j k gg G Enter", "move, jump, open the thread"),
+    (
+        "list r x z Z f",
+        "reply, resolve, fold, fold resolved, file only",
+    ),
     ("]c / [c", "next / previous thread"),
     ("thread r x n p j k", "reply, resolve, switch, scroll"),
     ("comment Enter", "newline; Ctrl-Enter or Alt-Enter submits"),
@@ -307,6 +306,8 @@ pub struct App {
     sidebar_cols: Option<usize>,
     /// The thread pane along the bottom of the text (ADR 0013).
     thread: Option<ThreadPanel>,
+    /// The thread list shown in place of the document (ADR 0025).
+    list: ThreadList,
     /// Thread pane height once dragged; the default follows the terminal.
     thread_rows: Option<usize>,
     /// Comment box height once dragged; the default follows its text.
@@ -381,6 +382,7 @@ impl App {
             sidebar_scroll: 0,
             sidebar_cols: None,
             thread: None,
+            list: ThreadList::default(),
             thread_rows: None,
             compose_rows: None,
             drag: None,
@@ -961,6 +963,7 @@ impl App {
             Focus::View => true,
             Focus::Sidebar => self.tree().is_some(),
             Focus::Thread => self.thread.is_some(),
+            Focus::Threads => self.list.is_open(),
         };
         if present {
             self.focus = focus;
@@ -1319,6 +1322,8 @@ impl App {
             self.mark_seen(previous);
         }
         self.current = Some(index);
+        // A document takes the column back from the list (ADR 0025).
+        self.list.close();
         self.focus = Focus::View;
         self.refresh_base(index);
         self.refresh_marks(index);
@@ -1504,7 +1509,7 @@ impl App {
             'F' => self.open_picker(PickerKind::AllFiles),
             'o' => self.open_picker(PickerKind::Recent),
             'a' => self.open_thread_at_cursor(),
-            'A' => self.open_thread_picker(),
+            'A' => self.open_thread_list(),
             'j' => self.popup = Some(Popup::Jump),
             '?' => self.open_help(),
             _ => {}
@@ -1535,10 +1540,6 @@ impl App {
                     }
                 }
                 seen
-            }
-            PickerKind::Threads => {
-                self.open_thread_picker();
-                return;
             }
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
@@ -1590,16 +1591,14 @@ impl App {
     pub fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
             let m = picker.matches.get(picker.selected)?;
-            let id = picker.ids.get(m.index()).cloned();
-            Some((picker.kind, picker.item(m).to_owned(), id))
+            Some((picker.kind, picker.item(m).to_owned()))
         });
         self.popup = None;
         match choice {
-            Some((PickerKind::Threads, _, Some(id))) => self.show_thread(id),
-            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path, _)) => {
+            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path)) => {
                 self.open(Path::new(&path));
             }
-            _ => {}
+            None => {}
         }
     }
 }

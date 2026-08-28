@@ -135,7 +135,9 @@ were captured in a question round on 2026-08-26.
 - `]a` and `[a` jump to the next and previous thread in the file, wrapping
   with a notice. `Space A` opens the picker over the file's threads
   (`L3-5  open  first line of the comment`); choosing one jumps there and
-  opens the panel. Both space entries follow 0012's rule that new
+  opens the panel (superseded by [0025](0025-thread-list.md), 2026-08-27:
+  `Space A` opens the workspace thread list and the picker is gone). Both
+  space entries follow 0012's rule that new
   commands live in the Space menu; none of the keys are zellij locks.
 
 ## Consequences

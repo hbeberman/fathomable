@@ -14,6 +14,7 @@ use fathomable_core::annotations::Status;
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
+use super::thread_list::{Row, Rows};
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
 
@@ -220,18 +221,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             sidebar_area,
         );
     }
-    let text_rows = usize::from(text_area.height);
-    if app.has_document() {
-        frame.render_widget(
-            Paragraph::new(text_lines(app, theme, gutter, text_rows)).style(theme.text),
-            text_area,
-        );
-    } else {
-        frame.render_widget(
-            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
-            text_area,
-        );
-    }
+    draw_column(frame, app, theme, text_area, gutter);
     if let Some(panel) = app.thread_panel() {
         draw_thread(frame, app, theme, thread_area, panel);
     }
@@ -278,6 +268,25 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
+    }
+}
+
+/// The text column: the thread list when it is open (ADR 0025), else the
+/// document, else the welcome block.
+fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
+    let text_rows = usize::from(text_area.height);
+    if app.thread_list().is_open() {
+        draw_thread_list(frame, app, theme, text_area);
+    } else if app.has_document() {
+        frame.render_widget(
+            Paragraph::new(text_lines(app, theme, gutter, text_rows)).style(theme.text),
+            text_area,
+        );
+    } else {
+        frame.render_widget(
+            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
+            text_area,
+        );
     }
 }
 
@@ -353,7 +362,7 @@ fn place_cursor(
     if matches!(view.mode(), Mode::Command | Mode::Search { .. }) {
         let col = 1 + display_width(view.input());
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
-    } else if app.focus() != Focus::View || !app.has_document() {
+    } else if app.focus() != Focus::View || !app.has_document() || app.thread_list().is_open() {
         // The highlighted row is the cursor; leaving the terminal cursor
         // unset keeps it hidden rather than parked on the divider.
     } else {
@@ -748,6 +757,8 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         "TREE".to_owned()
     } else if app.focus() == Focus::Thread {
         "THREAD".to_owned()
+    } else if app.focus() == Focus::Threads {
+        "THREADS".to_owned()
     } else if view.source_view() && mode == Mode::Normal {
         "SRC".to_owned()
     } else if view.diff_view() && mode == Mode::Normal {
@@ -931,7 +942,6 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Files => "files",
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
-        super::PickerKind::Threads => "threads",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
@@ -1052,6 +1062,128 @@ fn draw_compose(
 
 /// The thread pane, filling `area`: rule, header, quoted snippet, comment,
 /// replies. It is a pane, not a popup, so it draws on the text background.
+/// The thread list (ADR 0025) in place of the document: a header with
+/// the filter, the counts, and the keys, then the rows from the scroll.
+fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    let width = usize::from(area.width);
+    let rows = usize::from(area.height);
+    if rows == 0 {
+        return;
+    }
+    let list = app.thread_list();
+    let Rows { rows: all, .. } = app.thread_list_rows(width);
+    let (open, resolved) = all.iter().fold((0, 0), |(o, r), row| match row {
+        Row::Section {
+            resolved: false,
+            count,
+            ..
+        } => (*count, r),
+        Row::Section {
+            resolved: true,
+            count,
+            ..
+        } => (o, *count),
+        _ => (o, r),
+    });
+    let scope = if list.file_only() {
+        format!(" threads: {}", app.current_path().display())
+    } else {
+        " threads: workspace".to_owned()
+    };
+    let left = vec![
+        Span::styled(scope, theme.popup_key),
+        Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
+    ];
+    let hint = if app.focus() == Focus::Threads {
+        "Enter open · r reply · x resolve · z/Z fold · f file · Esc"
+    } else {
+        "click or Space A to focus"
+    };
+    let now = super::threads::now();
+    let mut lines = vec![header_line(theme, left, hint, width)];
+    let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
+    for row in all.iter().skip(scroll).take(rows - 1) {
+        lines.push(list_row(theme, row, now, width));
+    }
+    frame.render_widget(Paragraph::new(lines).style(theme.text), area);
+}
+
+fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+    match row {
+        Row::Section {
+            resolved,
+            count,
+            folded,
+        } => {
+            let label = if *resolved { "resolved" } else { "open" };
+            let fold = if *folded { " ▸" } else { "" };
+            Line::from(Span::styled(
+                format!(" {label} {count}{fold}"),
+                theme.popup_key,
+            ))
+        }
+        Row::File(path) => Line::from(Span::styled(
+            fit(&format!(" {}", path.display()), width),
+            theme.heading[2],
+        )),
+        Row::Header {
+            range,
+            kind,
+            updated,
+            selected,
+            folded,
+            dim,
+            ..
+        } => {
+            let (status, status_style) = match kind {
+                MarkKind::Detached => ("detached", theme.annotation_detached),
+                MarkKind::Edited => ("edited", theme.annotation_edited),
+                MarkKind::Open => ("open", theme.annotation_open),
+                MarkKind::Resolved => ("resolved", theme.annotation_resolved),
+                MarkKind::AutoResolved => ("auto-resolved", theme.annotation_auto),
+            };
+            let fold = if *folded { "  ▸" } else { "" };
+            let mut spans = vec![
+                Span::styled(
+                    format!("   L{range}  "),
+                    if *dim { theme.info } else { theme.text },
+                ),
+                Span::styled(status.to_owned(), status_style),
+                Span::styled(format!("  {}{fold}", format_age(*updated, now)), theme.info),
+            ];
+            if *selected {
+                let used: usize = spans.iter().map(|s| display_width(&s.content)).sum();
+                spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+                return Line::from(spans).style(theme.picker_selected);
+            }
+            Line::from(spans)
+        }
+        Row::Message {
+            author,
+            created,
+            badge,
+            dim,
+        } => {
+            let mut spans = vec![
+                Span::styled(
+                    format!("   {author}"),
+                    if *dim { theme.info } else { theme.popup_key },
+                ),
+                Span::styled(format!("  {}", format_age(*created, now)), theme.info),
+            ];
+            if let Some(badge) = badge {
+                spans.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
+            }
+            Line::from(spans)
+        }
+        Row::Body { text, dim } => Line::from(Span::styled(
+            format!("  {text}"),
+            if *dim { theme.info } else { theme.text },
+        )),
+        Row::Blank => Line::from(""),
+    }
+}
+
 fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPanel) {
     let Some(thread) = app.thread(panel.id()) else {
         return;
@@ -1214,50 +1346,7 @@ fn format_age(created: u64, now: u64) -> String {
 }
 
 /// Greedy word wrap to `width` cells; words longer than a line are split.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines = vec![String::new()];
-    for word in text.split_whitespace() {
-        let mut word = word.to_owned();
-        loop {
-            let current = lines
-                .last_mut()
-                .unwrap_or_else(|| unreachable!("always one line"));
-            let sep = usize::from(!current.is_empty());
-            if display_width(current) + sep + display_width(&word) <= width {
-                if sep == 1 {
-                    current.push(' ');
-                }
-                current.push_str(&word);
-                break;
-            }
-            if current.is_empty() {
-                // Split a word that cannot fit on an empty line.
-                let mut taken = String::new();
-                let mut rest = String::new();
-                for ch in word.chars() {
-                    if rest.is_empty()
-                        && display_width(&taken) + display_width(&ch.to_string()) <= width
-                    {
-                        taken.push(ch);
-                    } else {
-                        rest.push(ch);
-                    }
-                }
-                if taken.is_empty() {
-                    taken = rest.chars().take(1).collect();
-                    rest = rest.chars().skip(1).collect();
-                }
-                current.push_str(&taken);
-                if rest.is_empty() {
-                    break;
-                }
-                word = rest;
-            }
-            lines.push(String::new());
-        }
-    }
-    lines
-}
+use super::thread_list::wrap;
 
 /// `YYYY-MM-DD HH:MM` in UTC from Unix seconds (Howard Hinnant's civil-date
 /// algorithm; no calendar crate needed for a timestamp label).
@@ -1293,14 +1382,7 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_age, format_time, wrap};
-
-    #[test]
-    fn wraps_words_and_splits_long_ones() {
-        assert_eq!(wrap("the quick brown fox", 9), ["the quick", "brown fox"]);
-        assert_eq!(wrap("abcdefghij", 4), ["abcd", "efgh", "ij"]);
-        assert_eq!(wrap("", 4), [""]);
-    }
+    use super::{format_age, format_time};
 
     #[test]
     fn formats_unix_seconds_as_utc() {

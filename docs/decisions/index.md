@@ -28,3 +28,4 @@ supersede rather than edit history.
 - [0022 Crash reports](0022-crash-reports.md)
 - [0023 Sidebar paging](0023-sidebar-paging.md)
 - [0024 Workspace sessions, viewers, and git-scoped threads](0024-workspace-sessions.md)
+- [0025 The thread list](0025-thread-list.md)

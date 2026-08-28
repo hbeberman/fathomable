@@ -17,7 +17,7 @@ use fathomable_core::editor::{Buffer, Cell, Edit};
 use fathomable_core::reanchor::{Mapping, map_range};
 
 use super::ui::SNIPPET_ROWS;
-use super::{App, Focus, PickerKind, PickerState, Popup};
+use super::{App, Focus, Popup};
 
 /// How a thread should be coloured in the gutter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -144,21 +144,9 @@ pub(crate) fn now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// One line describing a thread for the picker: range, status, comment.
-fn describe(thread: &Thread, placement: Placement) -> String {
-    let status = match (placement.is_detached(), thread.status()) {
-        (true, _) => "detached",
-        (false, Status::Open) => "open",
-        (false, Status::Resolved) => "resolved",
-        (false, Status::AutoResolved) => "auto-resolved",
-    };
-    let first = thread.comment().lines().next().unwrap_or_default();
-    format!("L{:<7} {status:<13} {first}", placement.range().to_string())
-}
-
 impl App {
     /// The store, or a status-line notice explaining why there is none.
-    fn store_mut(&mut self) -> Option<&mut Store> {
+    pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
         if self.store.is_none() {
             self.notice("annotations unavailable; see the log");
         }
@@ -272,8 +260,10 @@ impl App {
         tracing::debug!(path = %doc.relative.display(), marks = doc.marks.len(), detached, "marks refreshed");
     }
 
-    fn refresh_current_marks(&mut self) {
-        if let Some(index) = self.current {
+    /// Re-locate every loaded document's threads, after a change that
+    /// may touch files other than the current one (ADR 0025).
+    pub(super) fn refresh_all_marks(&mut self) {
+        for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
     }
@@ -319,7 +309,7 @@ impl App {
         self.open_compose(ComposeTarget::New(range));
     }
 
-    fn open_compose(&mut self, target: ComposeTarget) {
+    pub(super) fn open_compose(&mut self, target: ComposeTarget) {
         self.popup = Some(Popup::Compose(Compose {
             target,
             buffer: Buffer::new(),
@@ -388,9 +378,7 @@ impl App {
             return;
         }
         self.popup = None;
-        if self.thread.is_some() {
-            self.focus = Focus::Thread;
-        }
+        self.refocus_after_compose();
         self.notice("comment cancelled");
     }
 
@@ -408,8 +396,16 @@ impl App {
             ComposeTarget::New(range) => self.submit_annotation(range, text),
             ComposeTarget::Reply(id) => self.submit_reply(&id, text),
         }
+        self.refocus_after_compose();
+    }
+
+    /// The box closed: the keys go back to the pane or the list it was
+    /// opened from.
+    fn refocus_after_compose(&mut self) {
         if self.thread.is_some() {
             self.focus = Focus::Thread;
+        } else if self.list.is_open() {
+            self.focus = Focus::Threads;
         }
     }
 
@@ -445,8 +441,10 @@ impl App {
         match store.reply(id, Reply::new(Author::User, now(), body)) {
             Ok(()) => {
                 tracing::info!(%id, "reply added");
-                self.refresh_current_marks();
-                self.open_thread(id.clone());
+                self.refresh_all_marks();
+                if !self.list.is_open() {
+                    self.open_thread(id.clone());
+                }
             }
             Err(error) => self.notice(format!("cannot save reply: {error}")),
         }
@@ -585,24 +583,27 @@ impl App {
 
     /// `x`: resolve the shown thread, or reopen it when already resolved.
     pub fn thread_toggle_resolved(&mut self) {
-        let Some(id) = self.panel_mut().map(|panel| panel.id().clone()) else {
-            return;
-        };
+        if let Some(id) = self.panel_mut().map(|panel| panel.id().clone()) {
+            self.toggle_resolved(&id);
+        }
+    }
+
+    /// Resolve `id` when open, reopen it otherwise; every loaded
+    /// document's marks follow.
+    pub(super) fn toggle_resolved(&mut self, id: &ThreadId) {
         let Some(store) = self.store_mut() else {
             return;
         };
-        let open = store
-            .thread(&id)
-            .is_some_and(|t| t.status() == Status::Open);
+        let open = store.thread(id).is_some_and(|t| t.status() == Status::Open);
         let result = if open {
-            store.resolve(&id, Author::User, now())
+            store.resolve(id, Author::User, now())
         } else {
-            store.reopen(&id, now())
+            store.reopen(id, now())
         };
         match result {
             Ok(()) => {
                 tracing::info!(%id, resolved = open, "thread status changed");
-                self.refresh_current_marks();
+                self.refresh_all_marks();
                 self.notice(if open { "resolved" } else { "reopened" });
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),
@@ -652,28 +653,7 @@ impl App {
         self.view_mut().goto_source_line(target);
     }
 
-    /// `Space A`: pick among the threads of the current document.
-    pub fn open_thread_picker(&mut self) {
-        let Some(store) = self.store.as_ref() else {
-            self.store_mut();
-            return;
-        };
-        let (items, ids): (Vec<String>, Vec<ThreadId>) = self
-            .marks()
-            .iter()
-            .filter_map(|mark| store.thread(mark.id()).map(|t| (t, mark)))
-            .map(|(thread, mark)| (describe(thread, mark.placement), mark.id().clone()))
-            .unzip();
-        if items.is_empty() {
-            self.notice("no threads in this file");
-            return;
-        }
-        self.popup = Some(Popup::Picker(
-            PickerState::new(PickerKind::Threads, items).with_ids(ids),
-        ));
-    }
-
-    /// Picker confirm for [`PickerKind::Threads`]: jump there and open it.
+    /// The list's Enter (ADR 0025): jump to `id` and open the pane on it.
     pub(super) fn show_thread(&mut self, id: ThreadId) {
         if let Some(line) = self
             .marks()
@@ -705,6 +685,7 @@ mod tests {
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
     use super::{ComposeTarget, MarkKind};
+    use crate::app::thread_list::Row;
     use crate::app::{App, Border, Options, Popup};
 
     struct TempDir(PathBuf);
@@ -1059,24 +1040,109 @@ mod tests {
         assert_eq!(app.message(), Some("wrapped to first thread"));
         app.prev_annotation();
         assert_eq!(app.view().cursor_source_line(), bottom);
-
-        app.open_thread_picker();
-        let Some(Popup::Picker(picker)) = app.popup() else {
-            anyhow::bail!("picker did not open");
-        };
-        assert_eq!(picker.matches().len(), 2);
-        assert!(picker.item(&picker.matches()[0]).contains("top"));
-        app.picker_move(1);
-        app.picker_confirm();
-        assert!(app.popup().is_none());
-        assert!(app.thread_panel().is_some());
-        assert_eq!(app.view().cursor_source_line(), bottom);
-
-        app.close_thread();
-        assert_eq!(app.focus(), Focus::View);
         app.start_comment();
         app.compose_submit();
         assert_eq!(app.message(), Some("empty comment discarded"));
+        Ok(())
+    }
+
+    #[test]
+    fn the_thread_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
+        let dir = TempDir::new("list")?;
+        let mut app = dir.app()?;
+        app.start_comment();
+        type_in(&mut app, "top");
+        app.compose_submit();
+        app.view_mut().goto_bottom();
+        app.start_comment();
+        type_in(&mut app, "bottom");
+        app.compose_submit();
+        let bottom = app.view().cursor_source_line();
+        app.view_mut().goto_top();
+
+        // The list (ADR 0025) takes the column: both threads, open first,
+        // under the file; Enter jumps to the selected one and opens the pane.
+        app.open_thread_list();
+        assert_eq!(app.focus(), Focus::Threads);
+        assert!(app.thread_panel().is_none());
+        let rows = app.thread_list_rows(60);
+        assert_eq!(rows.entries.len(), 2);
+        assert!(matches!(
+            rows.rows.first(),
+            Some(Row::Section {
+                resolved: false,
+                count: 2,
+                ..
+            })
+        ));
+        assert!(matches!(&rows.rows[1], Row::File(path) if path == Path::new("README.md")));
+        assert!(
+            rows.rows
+                .iter()
+                .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "top"))
+        );
+        app.thread_list_move(1);
+        app.thread_list_open_entry();
+        assert!(!app.thread_list().is_open());
+        assert_eq!(app.focus(), Focus::Thread);
+        assert!(app.thread_panel().is_some());
+        assert_eq!(app.view().cursor_source_line(), bottom);
+
+        // `x` moves an entry to the resolved section; `f` narrows to the
+        // file; `Z` folds the resolved section; reopening keeps the entry.
+        app.open_thread_list();
+        app.thread_list_toggle_resolved();
+        let rows = app.thread_list_rows(60);
+        assert!(matches!(
+            rows.rows.first(),
+            Some(Row::Section {
+                resolved: false,
+                count: 1,
+                ..
+            })
+        ));
+        assert!(rows.rows.iter().any(|row| matches!(
+            row,
+            Row::Section {
+                resolved: true,
+                count: 1,
+                ..
+            }
+        )));
+        assert_eq!(app.message(), Some("resolved"));
+        app.thread_list_fold_resolved();
+        let rows = app.thread_list_rows(60);
+        assert_eq!(rows.entries.len(), 2);
+        assert_eq!(
+            rows.rows
+                .iter()
+                .filter(|row| matches!(row, Row::File(_)))
+                .count(),
+            1
+        );
+        app.thread_list_fold_resolved();
+        app.thread_list_toggle_file();
+        assert_eq!(app.thread_list_rows(60).entries.len(), 2);
+        app.thread_list_toggle_file();
+        app.close_thread_list();
+        assert_eq!(app.focus(), Focus::View);
+        app.open_thread_list();
+        app.thread_list_reply();
+        type_in(&mut app, "still here");
+        app.compose_submit();
+        assert_eq!(app.focus(), Focus::Threads);
+        assert!(app.thread_list().is_open());
+        assert!(
+            app.thread_list_rows(60)
+                .rows
+                .iter()
+                .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "still here"))
+        );
+        // A file opened by any route takes the column back.
+        app.open(Path::new("README.md"));
+        assert!(!app.thread_list().is_open());
+        assert_eq!(app.focus(), Focus::View);
+
         Ok(())
     }
 
@@ -1341,6 +1407,12 @@ mod tests {
         app.close_popup();
         app.open_picker(crate::app::PickerKind::Files);
         draw(&mut app, "picker")?;
+        app.close_popup();
+        app.open_thread_list();
+        draw(&mut app, "thread list")?;
+        app.thread_list_reply();
+        type_in(&mut app, "a reply from the list");
+        draw(&mut app, "compose over list")?;
         Ok(())
     }
 }

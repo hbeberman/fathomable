@@ -56,6 +56,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             thread(app, key);
             Effect::None
         }
+        Focus::Threads => {
+            thread_list(app, key, ctrl);
+            Effect::None
+        }
         Focus::Sidebar => {
             sidebar(app, key);
             Effect::None
@@ -280,6 +284,48 @@ fn thread(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Keys in the thread list (ADR 0025).
+fn thread_list(app: &mut App, key: KeyEvent, ctrl: bool) {
+    if let Some(pending) = app.pending() {
+        app.set_pending(None);
+        if pending == 'g' && key.code == KeyCode::Char('g') {
+            app.thread_list_goto(false);
+        }
+        return;
+    }
+    let half = isize::try_from(app.text_rows() / 2)
+        .unwrap_or(isize::MAX)
+        .max(1);
+    match (key.code, ctrl) {
+        (KeyCode::Esc, _) => app.close_thread_list(),
+        (KeyCode::Char('j') | KeyCode::Down, _) => app.thread_list_move(1),
+        (KeyCode::Char('k') | KeyCode::Up, _) => app.thread_list_move(-1),
+        (KeyCode::Char('d'), true) | (KeyCode::PageDown, _) => app.thread_list_move(half),
+        (KeyCode::Char('u'), true) | (KeyCode::PageUp, _) => app.thread_list_move(-half),
+        (KeyCode::Char('g'), _) => app.set_pending(Some('g')),
+        (KeyCode::Char('G'), _) => app.thread_list_goto(true),
+        (KeyCode::Enter, _) => app.thread_list_open_entry(),
+        (KeyCode::Char('r'), _) => app.thread_list_reply(),
+        (KeyCode::Char('x'), _) => app.thread_list_toggle_resolved(),
+        (KeyCode::Char('z'), _) => app.thread_list_fold(),
+        (KeyCode::Char('Z'), _) => app.thread_list_fold_resolved(),
+        (KeyCode::Char('f'), _) => app.thread_list_toggle_file(),
+        (KeyCode::Char(':'), _) => app.view_mut().start_command(),
+        _ => {}
+    }
+}
+
+/// The mouse over the thread list (ADR 0025): the wheel scrolls, a click
+/// selects the entry under the pointer. Row 0 is the list header.
+fn thread_list_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+    match kind {
+        MouseEventKind::ScrollDown => app.thread_list_scroll(WHEEL_LINES),
+        MouseEventKind::ScrollUp => app.thread_list_scroll(-WHEEL_LINES),
+        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.thread_list_click(row - 1),
+        _ => {}
+    }
+}
+
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
 /// tree's divider or the thread pane's rule drags that border.
@@ -364,6 +410,10 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
             MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Thread),
             _ => {}
         }
+        return Effect::None;
+    }
+    if app.thread_list().is_open() {
+        thread_list_mouse(app, event.kind, row);
         return Effect::None;
     }
     let gutter = sidebar + super::ui::gutter_width(app.view());

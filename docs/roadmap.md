@@ -65,3 +65,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     thread belongs to the commit it was written against, shown only when
     that commit is reachable from HEAD
     ([0024](decisions/0024-workspace-sessions.md)).
+16. **The thread list.** `Space A` shows every thread on the current
+    work in place of the document: open then resolved, grouped by file,
+    each in full; `Enter` jumps to one, `r` and `x` act in place, and the
+    file-scoped picker is gone
+    ([0025](decisions/0025-thread-list.md)).

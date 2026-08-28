@@ -382,6 +382,21 @@ impl App {
         self.notice("comment cancelled");
     }
 
+    /// Ctrl-C: wipe a non-empty draft in place; an empty box closes.
+    pub fn compose_clear(&mut self) {
+        let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
+            return;
+        };
+        if compose.buffer.text().trim().is_empty() {
+            self.popup = None;
+            self.refocus_after_compose();
+            self.notice("comment cancelled");
+            return;
+        }
+        compose.buffer = Buffer::new();
+        compose.confirm_discard = false;
+    }
+
     /// Ctrl-Enter / Alt-Enter: write the comment to the store.
     pub fn compose_submit(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.take() else {
@@ -1310,6 +1325,24 @@ mod tests {
         assert_eq!(compose.buffer().text(), "keep me!");
         app.compose_cancel();
         app.compose_cancel();
+        assert!(app.popup().is_none());
+        assert_eq!(app.thread_counts(), (0, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn ctrl_c_clears_the_draft_and_closes_an_empty_box() -> anyhow::Result<()> {
+        let dir = TempDir::new("clear")?;
+        let mut app = dir.app()?;
+        app.view_mut().select_lines();
+        app.start_comment();
+        app.compose_clear();
+        assert!(app.popup().is_none(), "an empty box closes at once");
+        app.start_comment();
+        type_in(&mut app, "wipe me");
+        app.compose_clear();
+        assert_eq!(draft(&app)?.0, "", "the box stays open, emptied");
+        app.compose_clear();
         assert!(app.popup().is_none());
         assert_eq!(app.thread_counts(), (0, 0));
         Ok(())

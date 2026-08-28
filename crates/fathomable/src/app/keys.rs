@@ -75,7 +75,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
             }
             // With no selection, `c` annotates the cursor line.
             KeyCode::Char('c')
-                if matches!(mode, Mode::Normal | Mode::Select)
+                if !ctrl
+                    && matches!(mode, Mode::Normal | Mode::Select)
                     && app.view().pending().is_none() =>
             {
                 app.start_comment();
@@ -146,6 +147,7 @@ fn compose(app: &mut App, key: KeyEvent, ctrl: bool) -> Effect {
         KeyCode::Home => app.compose_edit(Edit::Move(Motion::LineStart)),
         KeyCode::End => app.compose_edit(Edit::Move(Motion::LineEnd)),
         KeyCode::Char('a') if ctrl => app.compose_edit(Edit::Move(Motion::LineStart)),
+        KeyCode::Char('c') if ctrl => app.compose_clear(),
         KeyCode::Char('w') if ctrl => app.compose_edit(Edit::DeleteWordBack),
         KeyCode::Char('u') if ctrl => app.compose_edit(Edit::DeleteToLineStart),
         KeyCode::Char('k') if ctrl => app.compose_edit(Edit::DeleteToLineEnd),

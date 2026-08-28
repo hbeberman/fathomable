@@ -74,6 +74,14 @@ a failing gate.
 
 Do not bypass hooks with `--no-verify`.
 
+## Committing
+
+- Commit after every completed task: once the change is done and
+  `scripts/gates.sh` passes, commit it rather than leaving the work
+  uncommitted in the tree.
+- Keep each commit to one task; do not batch unrelated tasks into a
+  single commit.
+
 ## Commit messages
 
 Commit messages follow Conventional Commits:

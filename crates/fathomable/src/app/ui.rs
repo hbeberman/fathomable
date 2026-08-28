@@ -368,11 +368,12 @@ fn place_cursor(
     {
         // The highlighted row is the cursor; leaving the terminal cursor
         // unset keeps it hidden rather than parked on the divider.
-    } else {
-        let cursor = view.cursor();
-        let screen_row = cursor.row.saturating_sub(view.scroll());
+    } else if let Some(col) = view.screen_col(view.cursor().row, view.cursor().col) {
+        // A cursor the horizontal scroll has moved out of view stays
+        // hidden rather than parked on the wrong cell (ADR 0029).
+        let screen_row = view.cursor().row.saturating_sub(view.scroll());
         frame.set_cursor_position((
-            text_area.x + u16_of(gutter + cursor.col),
+            text_area.x + u16_of(gutter + col),
             text_area.y + u16_of(screen_row),
         ));
     }
@@ -831,23 +832,34 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             bar,
         ];
         let matches: Vec<_> = view.matches().iter().filter(|m| m.row == row).collect();
-        let mut col = 0;
+        let styled = |col: usize, base: Style| {
+            let mut style = base;
+            if matches.iter().any(|m| col >= m.start && col < m.end) {
+                style = style.patch(theme.search_match);
+            }
+            if selection.is_some_and(|s| s.contains(row, col)) {
+                style = style.patch(theme.selection);
+            }
+            style
+        };
+        let offset = if line.unwrapped() {
+            view.column_offset()
+        } else {
+            0
+        };
+        let mut window = Window::new(line.fixed_cells(), offset, view.layout().width());
         for span in line.spans() {
             let base = face_style(theme, span.style()).patch(row_style);
             // Split the span per character so selection and match highlights
             // can start and end mid-span.
             for grapheme in grapheme_cells(span.text()) {
-                let mut style = base;
-                if matches.iter().any(|m| col >= m.start && col < m.end) {
-                    style = style.patch(theme.search_match);
+                let style = styled(window.col, base);
+                if !window.push(grapheme, style) {
+                    break;
                 }
-                if selection.is_some_and(|s| s.contains(row, col)) {
-                    style = style.patch(theme.selection);
-                }
-                spans.push(Span::styled(grapheme, style));
-                col += display_width(grapheme);
             }
         }
+        spans.extend(window.finish());
         out.push(Line::from(spans).style(row_style));
     }
     // The one row past the end that the view may scroll to: a `~` in the
@@ -859,6 +871,132 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         ]));
     }
     out
+}
+
+/// The cells of one text row as the pane shows them (ADR 0029): the
+/// first `fixed` cells stay, the next `offset` cells are scrolled away,
+/// and what is left is cut at `width`. A wide character is cut whole,
+/// never split, and a dim `‹` or `›` marks each cut edge.
+struct Window<'a> {
+    fixed: usize,
+    offset: usize,
+    width: usize,
+    /// The line column of the next cell.
+    col: usize,
+    /// Screen cells used so far.
+    used: usize,
+    cells: Vec<(Cell<'a>, Style, usize)>,
+    cut_left: bool,
+    cut_right: bool,
+}
+
+/// A grapheme or the blank that stands in for a wide one cut at an edge.
+#[derive(Clone, Copy)]
+enum Cell<'a> {
+    Text(&'a str),
+    Blank(usize),
+}
+
+impl<'a> Window<'a> {
+    fn new(fixed: usize, offset: usize, width: usize) -> Self {
+        Self {
+            fixed,
+            offset,
+            width,
+            col: 0,
+            used: 0,
+            cells: Vec::new(),
+            cut_left: false,
+            cut_right: false,
+        }
+    }
+
+    /// Place `grapheme` at the next column. Returns `false` once the row
+    /// is full, so the caller can stop early.
+    fn push(&mut self, grapheme: &'a str, style: Style) -> bool {
+        let cells = display_width(grapheme);
+        let start = self.col;
+        self.col += cells;
+        if start >= self.fixed {
+            let shifted = start - self.fixed;
+            if shifted + cells <= self.offset {
+                self.cut_left = true;
+                return true;
+            }
+            if shifted < self.offset {
+                // A wide character straddling the left edge is dropped
+                // whole; a blank keeps the columns after it aligned.
+                self.cut_left = true;
+                let blank = shifted + cells - self.offset;
+                self.cells.push((Cell::Blank(blank), style, blank));
+                self.used += blank;
+                return true;
+            }
+        }
+        if self.used + cells > self.width {
+            self.cut_right = true;
+            return false;
+        }
+        self.cells.push((Cell::Text(grapheme), style, cells));
+        self.used += cells;
+        true
+    }
+
+    /// The row's spans with the edge markers painted in.
+    fn finish(mut self) -> Vec<Span<'a>> {
+        if self.cut_right {
+            // Free the last cell for the marker, dropping a wide character
+            // that would straddle it.
+            let mut used = self.used;
+            while used > self.width.saturating_sub(1) {
+                if let Some((_, _, cells)) = self.cells.pop() {
+                    used -= cells;
+                }
+            }
+            let (pad, style) = (
+                self.width.saturating_sub(1) - used,
+                self.cells.last().map_or(Style::default(), |c| c.1),
+            );
+            if pad > 0 {
+                self.cells.push((Cell::Blank(pad), style, pad));
+            }
+            self.cells.push((Cell::Text("›"), faint(style), 1));
+        }
+        if self.cut_left {
+            // The first shifted cell becomes the marker; a wide character
+            // there loses its second cell to a blank. In a one-cell pane
+            // the right marker has already taken the cell.
+            let mut at = 0;
+            let index = self.cells.iter().position(|entry| {
+                let here = at == self.fixed;
+                at += entry.2;
+                here
+            });
+            if let Some(index) = index
+                && !(self.cut_right && index + 1 == self.cells.len())
+            {
+                let (_, style, cells) = self.cells[index];
+                let style = faint(style);
+                self.cells[index] = (Cell::Text("‹"), style, 1);
+                if cells > 1 {
+                    self.cells
+                        .insert(index + 1, (Cell::Blank(cells - 1), style, cells - 1));
+                }
+            }
+        }
+        self.cells
+            .into_iter()
+            .map(|(cell, style, _)| match cell {
+                Cell::Text(text) => Span::styled(text, style),
+                Cell::Blank(n) => Span::styled(" ".repeat(n), style),
+            })
+            .collect()
+    }
+}
+
+/// The faint face for an edge marker: dim over whatever the cell wore.
+fn faint(style: Style) -> Style {
+    style.add_modifier(Modifier::DIM)
 }
 
 fn grapheme_cells(text: &str) -> impl Iterator<Item = &str> {
@@ -937,6 +1075,9 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     ];
     if view.changed() {
         left.push(Span::styled(" [+]", theme.info));
+    }
+    if view.count() > 0 {
+        left.push(Span::styled(format!("  {}", view.count()), theme.info));
     }
     if let Some(pending) = app.pending() {
         left.push(Span::styled(format!("  {pending}"), theme.info));
@@ -1560,7 +1701,61 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_age, format_age_short, format_time};
+    use ratatui::style::Style;
+
+    use super::{Window, format_age, format_age_short, format_time, grapheme_cells};
+
+    /// The visible text of a window, cell by cell.
+    fn render(window: Window<'_>) -> String {
+        window
+            .finish()
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect()
+    }
+
+    // ADR 0029: rows slice by display cells and mark their cut edges.
+    #[test]
+    fn window_slices_by_cells_and_marks_cut_edges() {
+        let fill = |window: &mut Window<'_>, text: &'static str| {
+            for grapheme in grapheme_cells(text) {
+                if !window.push(grapheme, Style::default()) {
+                    break;
+                }
+            }
+        };
+        // Unshifted and too long: only the right edge is marked.
+        let mut window = Window::new(0, 0, 6);
+        fill(&mut window, "abcdefghij");
+        assert_eq!(render(window), "abcde›");
+        // Shifted: both edges.
+        let mut window = Window::new(0, 3, 6);
+        fill(&mut window, "abcdefghij");
+        assert_eq!(render(window), "‹efgh›");
+        // Shifted to the tail: only the left edge.
+        let mut window = Window::new(0, 6, 6);
+        fill(&mut window, "abcdefghij");
+        assert_eq!(render(window), "‹hij");
+        // A fixed prefix stays put and the marker follows it.
+        let mut window = Window::new(2, 3, 8);
+        fill(&mut window, "│ abcdefghij");
+        assert_eq!(render(window), "│ ‹efgh›");
+        // A wide character is cut whole at either edge, with a blank
+        // keeping the columns after it aligned.
+        let mut window = Window::new(0, 1, 6);
+        fill(&mut window, "日本語xyz");
+        assert_eq!(render(window), "‹本語›");
+        let mut window = Window::new(0, 0, 5);
+        fill(&mut window, "ab日本");
+        assert_eq!(render(window), "ab日›");
+        let mut window = Window::new(0, 0, 4);
+        fill(&mut window, "ab日本");
+        assert_eq!(render(window), "ab ›");
+        // Nothing cut, nothing marked.
+        let mut window = Window::new(0, 0, 6);
+        fill(&mut window, "abc");
+        assert_eq!(render(window), "abc");
+    }
 
     #[test]
     fn formats_unix_seconds_as_utc() {

@@ -70,7 +70,8 @@ shows the full list inside the app.
 | --- | --- |
 | `j` `k` `h` `l`, `gg`, `ge` / `G`, `Ctrl-d` `Ctrl-u` | move, top, bottom, half page |
 | `h` at column 0 | focus the tree (a selection wraps to the line above instead) |
-| `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
+| `zl` `zh`, `zL` `zH`, horizontal wheel | scroll long lines sideways by a column (a count applies: `10zl`), by half the pane, by four columns |
+| `/` `?`, `n` `N`, `:noh` | search, next match (scrolling sideways to show it on a long line), clear highlight |
 | `:N` | go to source line N |
 | `gs` | toggle raw source view |
 | `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
@@ -101,6 +102,14 @@ shows the full list inside the app.
 
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.
+
+Prose wraps to the pane; code block lines, source lines, and diff lines
+never do. A line cut off at the right edge ends in a dim `›`; `zl` scrolls
+every such line sideways together (the gutter, wrapped prose, and a diff
+sign stay put), and a line cut on the left then starts with a dim `‹`.
+The offset is per file, survives reloads and `gs`/`gd`, and `:status`
+reports it as `col N`. Copying a selection always yields the whole
+source line, not the visible slice.
 
 The mouse works on whichever pane it is over: the wheel scrolls the text
 or the thread pane under the pointer — over the tree it steps one row per

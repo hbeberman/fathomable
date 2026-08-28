@@ -42,6 +42,11 @@ impl App {
         };
         let view = self.view();
         let (line, column) = view.source_position();
+        // Horizontal scroll, only when there is some (ADR 0029).
+        let col = match view.column_offset() {
+            0 => String::new(),
+            offset => format!(", col {offset}"),
+        };
         let base = if view.diff_view() {
             if view.diff_seen() {
                 ", diff against last seen"
@@ -53,7 +58,7 @@ impl App {
         };
         let document = if self.has_document() {
             format!(
-                "{} ({}{base}) at {line}:{column}",
+                "{} ({}{base}) at {line}:{column}{col}",
                 self.current_path().display(),
                 if view.source_view() {
                     "source"

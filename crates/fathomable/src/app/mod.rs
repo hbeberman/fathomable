@@ -238,11 +238,15 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 43] = [
+pub const HELP: [(&str, &str); 44] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / ge G", "top / bottom"),
     ("Ctrl-d / Ctrl-u", "half page down / up"),
+    (
+        "zl / zh, zL / zH",
+        "scroll long lines sideways; half the pane",
+    ),
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
     ("v / V / mouse drag", "select text / lines / cells"),
@@ -2453,6 +2457,60 @@ mod tests {
             .and_then(Tree::current)
             .map(|r| r.path().to_path_buf());
         assert_eq!(last, after, "ge lands on the last tree row");
+        Ok(())
+    }
+
+    // ADR 0029: `z` is a prefix in the view, with a count, and the
+    // horizontal wheel scrolls the text pane.
+    #[test]
+    fn z_keys_scroll_long_lines_sideways_in_the_view() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+
+        use super::keys;
+        let dir = TempDir::new("hscroll")?;
+        let code = format!("```\n{}\n```\n", "x".repeat(200));
+        fs::write(dir.0.join("long.md"), code)?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("long.md"));
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        for c in ['1', '0', 'z', 'l'] {
+            keys::handle_key(&mut app, key(c));
+        }
+        assert_eq!(app.view().column_offset(), 10, "10zl scrolls ten columns");
+        keys::handle_key(&mut app, key('z'));
+        keys::handle_key(&mut app, key('h'));
+        assert_eq!(app.view().column_offset(), 9);
+        keys::handle_key(&mut app, key('z'));
+        keys::handle_key(&mut app, key('L'));
+        let half = app.view().layout().width() / 2;
+        assert_eq!(app.view().column_offset(), 9 + half);
+        assert!(
+            app.status_lines()
+                .iter()
+                .any(|(_, value)| value.contains(&format!("col {}", 9 + half))),
+            ":status shows the offset"
+        );
+        // A count that reaches another key is dropped, and Esc clears one.
+        keys::handle_key(&mut app, key('5'));
+        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.view().count(), 0);
+        keys::handle_key(&mut app, key('3'));
+        keys::handle_key(&mut app, key('j'));
+        assert_eq!(app.view().count(), 0);
+        keys::handle_key(&mut app, key('0'));
+        assert_eq!(app.view().cursor().col, 0, "0 alone is still line start");
+
+        let wheel = |kind| MouseEvent {
+            kind,
+            column: 40,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        };
+        let before = app.view().column_offset();
+        keys::handle_mouse(&mut app, wheel(MouseEventKind::ScrollRight));
+        assert_eq!(app.view().column_offset(), before + 4);
+        keys::handle_mouse(&mut app, wheel(MouseEventKind::ScrollLeft));
+        assert_eq!(app.view().column_offset(), before);
         Ok(())
     }
 

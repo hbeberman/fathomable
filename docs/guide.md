@@ -44,9 +44,10 @@ can drive all of them or one by name (`--name`, or `:name` later). The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
-Markdown files (`.md`, `.markdown`, `.mdx`, and extensionless files such as
-`README`, though not dotfiles like `.gitignore`) open rendered; every other file opens as syntax-highlighted
-source, coloured by its extension. Fenced code blocks inside Markdown are
+Markdown files (`.md`, `.markdown`, `.mdx`, and well-known extensionless
+prose such as `README` and `LICENSE`) open rendered; every other file,
+`justfile` and `Makefile` included, opens as syntax-highlighted source,
+coloured by its extension or, without one, its file name. Fenced code blocks inside Markdown are
 coloured by their info string (` ```rust `). A language syntect does not
 bundle (TOML, KDL, Dockerfile among them) shows plain. `gs` still flips any
 file between the two views.
@@ -189,7 +190,8 @@ follow {
 
 markdown {
     extensions "md" "markdown" "mdx"   // files rendered as Markdown
-    extensionless #true                // README, LICENSE, ... too
+    names "README" "LICENSE" "LICENCE" "COPYING" "CHANGELOG" \
+          "CONTRIBUTING" "AUTHORS" "NOTICE"   // extensionless prose
 }
 ```
 

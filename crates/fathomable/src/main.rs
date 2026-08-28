@@ -267,7 +267,8 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         .collect();
     println!("markdown {{");
     println!("    extensions {}", extensions.join(" "));
-    println!("    extensionless #{}", markdown.extensionless);
+    let names: Vec<String> = markdown.names.iter().map(|n| format!("{n:?}")).collect();
+    println!("    names {}", names.join(" "));
     println!("}}");
     ExitCode::SUCCESS
 }

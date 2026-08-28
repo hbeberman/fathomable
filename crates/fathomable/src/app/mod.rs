@@ -40,7 +40,7 @@ use fathomable_core::config::{FollowConfig, MarkdownConfig};
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
 use fathomable_core::follow::{Change, Delta, Ignore, Queue, Target};
-use fathomable_core::highlight::Highlighter;
+use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
 use fathomable_core::session::{FollowState, Record, Request, Response};
@@ -490,11 +490,7 @@ impl App {
     fn syntax_for(&self, path: &Path) -> Syntax {
         Syntax {
             highlighter: Arc::clone(&self.highlighter),
-            hint: path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(str::to_ascii_lowercase)
-                .unwrap_or_default(),
+            hint: language_hint(path),
             markdown: self.markdown.matches(path),
         }
     }
@@ -2204,6 +2200,7 @@ mod tests {
         let dir = TempDir::new("syntax")?;
         fs::write(dir.0.join("main.rs"), "fn main() {}\n")?;
         fs::write(dir.0.join("LICENSE"), "# Terms\n")?;
+        fs::write(dir.0.join("justfile"), "default:\n    make help\n")?;
         let mut app = app_with(
             &dir,
             Options {
@@ -2224,7 +2221,12 @@ mod tests {
         app.open(Path::new("LICENSE"));
         assert!(
             !app.view().source_view(),
-            "extensionless files render as Markdown"
+            "listed extensionless names render as Markdown"
+        );
+        app.open(Path::new("justfile"));
+        assert!(
+            app.view().source_view(),
+            "unlisted extensionless files open as source"
         );
 
         // A narrower list flips both.
@@ -2233,7 +2235,7 @@ mod tests {
             Options {
                 markdown: MarkdownConfig {
                     extensions: vec!["rs".to_owned()],
-                    extensionless: false,
+                    names: Vec::new(),
                 },
                 ..Options::for_test(dir.0.clone())
             },

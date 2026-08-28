@@ -11,7 +11,7 @@ tags:
 
 # 0016 Syntax highlighting and source files
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26), amended 2026-08-27 (the extensionless rule)
 
 ## Context
 
@@ -66,16 +66,30 @@ settled in a question round on 2026-08-26.
   ```kdl
   markdown {
       extensions "md" "markdown" "mdx"
-      extensionless #true
+      names "README" "LICENSE" "LICENCE" "COPYING" "CHANGELOG" \
+            "CONTRIBUTING" "AUTHORS" "NOTICE"
   }
   ```
 
-  `extensions` are matched case-insensitively without the dot;
-  `extensionless` says whether files with no extension (README, LICENSE)
-  render as Markdown; dotfiles (`.gitignore`, `.env`) never do, as their
-  "extension" is their whole name. Both keys are optional; the defaults above are
-  echoed by `--config-show`. Unknown keys are errors as in
-  [0008](0008-configuration-format.md).
+  `extensions` are matched case-insensitively without the dot; `names`
+  lists the extensionless file names, matched case-insensitively, that
+  are prose. Every other extensionless file (`justfile`, `Makefile`,
+  `Dockerfile`, dotfiles such as `.gitignore`) is source. Both keys are
+  optional; the defaults above are echoed by `--config-show`. Unknown keys
+  are errors as in [0008](0008-configuration-format.md).
+
+  *Amendment (2026-08-27).* The first cut had an `extensionless #true`
+  switch that sent every non-dotfile without an extension through the
+  Markdown renderer, so a `justfile` lost its blank lines and had its
+  recipes fused into paragraphs. Prose files without extensions are a
+  short, well-known set; build files without extensions are open-ended,
+  so the allow-list replaced the switch. `extensionless` is no longer a
+  key and is rejected as unknown.
+- The source layout's language hint is the extension, or for a file with
+  none its file name, so syntect's own file-name matches (`Makefile`,
+  `GNUmakefile`, `Rakefile`) apply; `justfile` is mapped to the make
+  grammar, the closest bundled one. `language_hint` in `highlight` owns
+  this mapping.
 - The welcome document and a file passed on the command line follow the
   same rule.
 

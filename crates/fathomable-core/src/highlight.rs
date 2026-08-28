@@ -4,8 +4,10 @@
 //! A [`Highlighter`] wraps syntect's bundled syntax and theme sets. It maps
 //! a language **hint**, a fence info string such as `rust` or a file
 //! extension such as `rs`, to foreground colours per byte range of each
-//! line. Only the foreground is used: the background and modifiers come
-//! from the Fathomable theme so transparent terminals keep showing through.
+//! line. [`language_hint`] derives the hint for a path: its extension, or
+//! for an extensionless file such as `Makefile` its name. Only the
+//! foreground is used: the background and modifiers come from the
+//! Fathomable theme so transparent terminals keep showing through.
 //!
 //! ```
 //! use fathomable_core::highlight::Highlighter;
@@ -20,6 +22,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::ops::Range;
+use std::path::Path;
 use std::sync::Mutex;
 
 use syntect::easy::HighlightLines;
@@ -82,6 +85,34 @@ impl fmt::Debug for Highlighter {
         f.debug_struct("Highlighter")
             .field("enabled", &self.inner.is_some())
             .finish_non_exhaustive()
+    }
+}
+
+/// The language hint for `path`: its extension lowercased, or, for a
+/// file with none, its file name so that syntect can match `Makefile`
+/// or `Rakefile`. Names syntect does not bundle a grammar for but a
+/// close one exists (`justfile` reads as make) are mapped to that.
+///
+/// ```
+/// use std::path::Path;
+/// use fathomable_core::highlight::language_hint;
+///
+/// assert_eq!(language_hint(Path::new("src/Main.RS")), "rs");
+/// assert_eq!(language_hint(Path::new("GNUmakefile")), "GNUmakefile");
+/// assert_eq!(language_hint(Path::new("Justfile")), "make");
+/// assert_eq!(language_hint(Path::new(".gitignore")), "gitignore");
+/// ```
+#[must_use]
+pub fn language_hint(path: &Path) -> String {
+    if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+        return ext.to_ascii_lowercase();
+    }
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return String::new();
+    };
+    match name.to_ascii_lowercase().as_str() {
+        "justfile" | ".justfile" => "make".to_owned(),
+        _ => name.trim_start_matches('.').to_owned(),
     }
 }
 
@@ -238,6 +269,16 @@ mod tests {
         let last = lines[0].last().ok_or("last run")?;
         assert_eq!(keyword.range, 0..2);
         assert_ne!(keyword.fg, last.fg);
+        Ok(())
+    }
+
+    #[test]
+    fn file_names_reach_bundled_grammars() -> TestResult {
+        let highlighter = Highlighter::new("base16-ocean.dark")?;
+        assert!(highlighter.knows(&language_hint(Path::new("Makefile"))));
+        assert!(highlighter.knows(&language_hint(Path::new("justfile"))));
+        assert!(highlighter.knows(&language_hint(Path::new("Rakefile"))));
+        assert!(!highlighter.knows(&language_hint(Path::new("Dockerfile"))));
         Ok(())
     }
 

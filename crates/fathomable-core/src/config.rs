@@ -40,15 +40,27 @@ pub struct Config {
 pub struct MarkdownConfig {
     /// Extensions, lowercase, without the dot.
     pub extensions: Vec<String>,
-    /// Whether files with no extension (README, LICENSE) count.
-    pub extensionless: bool,
+    /// Extensionless file names that are prose (README, LICENSE), matched
+    /// case-insensitively. Every other extensionless file is source.
+    pub names: Vec<String>,
 }
 
 impl Default for MarkdownConfig {
     fn default() -> Self {
         Self {
             extensions: ["md", "markdown", "mdx"].map(str::to_owned).to_vec(),
-            extensionless: true,
+            names: [
+                "readme",
+                "license",
+                "licence",
+                "copying",
+                "changelog",
+                "contributing",
+                "authors",
+                "notice",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
         }
     }
 }
@@ -62,15 +74,10 @@ impl MarkdownConfig {
                 let ext = ext.to_ascii_lowercase();
                 self.extensions.contains(&ext)
             }
-            // A dotfile such as `.gitignore` has no extension to Rust but
-            // is not prose either.
-            None => {
-                self.extensionless
-                    && !path
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .is_some_and(|name| name.starts_with('.'))
-            }
+            None => path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| self.names.contains(&name.to_ascii_lowercase())),
         }
     }
 }
@@ -201,7 +208,12 @@ impl Config {
                                     .map(|ext| ext.trim_start_matches('.').to_ascii_lowercase())
                                     .collect();
                             }
-                            "extensionless" => markdown.extensionless = one_bool(child, line)?,
+                            "names" => {
+                                markdown.names = strings(child, line, "names")?
+                                    .into_iter()
+                                    .map(|name| name.to_ascii_lowercase())
+                                    .collect();
+                            }
                             other => {
                                 return Err(ConfigError {
                                     path: None,
@@ -374,14 +386,14 @@ follow {
 
     #[test]
     fn markdown_block_parses_and_matches() {
-        let config =
-            Config::parse("markdown { extensions \".MD\" \"txt\"\n extensionless #false }")
-                .unwrap_or_default();
+        let config = Config::parse("markdown { extensions \".MD\" \"txt\"\n names \"Notes\" }")
+            .unwrap_or_default();
         let markdown = config.markdown();
         assert_eq!(markdown.extensions, ["md", "txt"]);
-        assert!(!markdown.extensionless);
+        assert_eq!(markdown.names, ["notes"]);
         assert!(markdown.matches(Path::new("a/Notes.Md")));
         assert!(markdown.matches(Path::new("x.txt")));
+        assert!(markdown.matches(Path::new("docs/NOTES")));
         assert!(!markdown.matches(Path::new("README")));
         assert!(!markdown.matches(Path::new("main.rs")));
     }
@@ -390,10 +402,15 @@ follow {
     fn markdown_defaults_cover_readme_and_md() {
         let markdown = MarkdownConfig::default();
         assert!(markdown.matches(Path::new("README")));
+        assert!(markdown.matches(Path::new("License")));
         assert!(markdown.matches(Path::new("docs/guide.md")));
         assert!(markdown.matches(Path::new("x.mdx")));
         assert!(!markdown.matches(Path::new("Cargo.toml")));
         assert!(!markdown.matches(Path::new("src/main.rs")));
+        assert!(
+            !markdown.matches(Path::new("justfile")) && !markdown.matches(Path::new("Makefile")),
+            "unlisted extensionless files are source"
+        );
         assert!(
             !markdown.matches(Path::new(".gitignore")),
             "dotfiles are not prose"

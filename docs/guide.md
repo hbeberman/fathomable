@@ -129,8 +129,9 @@ While the tree is shown, a file with threads gets a **file-threads pane**
 under it: one row per thread in line order — range, `●` open or `✓`
 resolved in the gutter colour, the first line of the comment, and the
 reply count and age at the edge. The highlighted row is the thread under
-the cursor, so reading the file walks the pane; `Space t` or a click
-focuses it, and `j`/`k`, `Enter`, `r`, and `x` act on the highlight.
+the cursor, so reading the file walks the pane; `Space t` or a click on
+its header focuses it, a click on a row opens that thread, and `j`/`k`,
+`Enter`, `r`, and `x` act on the highlight.
 
 `Space A` shows the whole review at once: every thread on the current
 work (the ones whose commit `HEAD` can reach), open ones first and then

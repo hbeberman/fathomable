@@ -182,13 +182,14 @@ impl App {
     }
 
     /// A click on entry row `row` (counted from the first drawn entry):
-    /// move the cursor to that thread and take the keys.
+    /// open the thread pane on that thread, as `Enter` does; a click
+    /// past the entries only takes the keys.
     pub fn file_thread_click(&mut self, row: usize) {
         let index = self.file_thread_scroll() + row;
-        if let Some(id) = self.file_threads().into_iter().nth(index) {
-            self.goto_thread(&id);
+        match self.file_threads().into_iter().nth(index) {
+            Some(id) => self.show_thread(id),
+            None => self.focus_pane(Focus::FileThreads),
         }
-        self.focus_pane(Focus::FileThreads);
     }
 
     /// The pane's rule was dragged to screen row `row`.
@@ -380,9 +381,14 @@ mod tests {
         let top = app.sidebar_rows();
         assert_eq!(app.pane_rows() - top, 4);
 
-        // A click on an entry moves the cursor there and focuses the pane.
+        // A click on an entry opens its thread pane, cursor on the thread.
         keys::handle_mouse(&mut app, mouse(down, 2, top + 3));
         assert_eq!(app.view().cursor_source_line(), Some(6));
+        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.thread_position(), Some((2, 2)));
+        app.close_thread();
+        // A click on the header only focuses the pane.
+        keys::handle_mouse(&mut app, mouse(down, 2, top + 1));
         assert_eq!(app.focus(), Focus::FileThreads);
         // The wheel steps between threads.
         keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 2, top + 1));

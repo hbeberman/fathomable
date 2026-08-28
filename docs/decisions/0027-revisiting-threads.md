@@ -117,9 +117,10 @@ question round on 2026-08-28; the choices are recorded below.
   view cursor to the next or previous thread, wrapping as `]c`/`[c`
   do; `Enter` opens the thread pane on the highlighted thread and
   focuses it; `r` replies and `x` resolves or reopens it in place;
-  `Esc` returns focus to the text. A click on a row moves the cursor to
-  that thread. The tree's `j` never crosses into the pane: the two are
-  separate pages of the column.
+  `Esc` returns focus to the text. A click on a row opens the thread
+  pane on that thread, as `Enter` does; a click on the header only
+  focuses the pane. The tree's `j` never crosses into the pane: the two
+  are separate pages of the column.
 
 ## Consequences
 

@@ -723,6 +723,14 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         }
         out.push(Line::from(spans).style(row_style));
     }
+    // The one row past the end that the view may scroll to: a `~` in the
+    // number column and nothing else, as Helix draws it.
+    if out.len() < rows && view.scroll() + out.len() == lines.len() {
+        out.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(format!("{:>digits$}", "~"), theme.line_number),
+        ]));
+    }
     out
 }
 

@@ -565,8 +565,13 @@ impl View {
         if self.cursor.row + off >= bottom {
             self.scroll = (self.cursor.row + off + 1).saturating_sub(height);
         }
-        let max_scroll = self.layout.lines().len().saturating_sub(height);
-        self.scroll = self.scroll.min(max_scroll);
+        self.scroll = self.scroll.min(self.max_scroll());
+    }
+
+    /// The furthest the viewport scrolls: one row past the last line, so
+    /// the end of the file can sit anywhere on screen, as in Helix.
+    fn max_scroll(&self) -> usize {
+        (self.layout.lines().len() + 1).saturating_sub(self.height)
     }
 
     fn set_row(&mut self, row: usize) {
@@ -661,8 +666,10 @@ impl View {
 
     /// Scroll the viewport without a cursor jump unless the cursor leaves it.
     pub fn scroll_by(&mut self, delta: isize) {
-        let max_scroll = self.layout.lines().len().saturating_sub(self.height);
-        self.scroll = self.scroll.saturating_add_signed(delta).min(max_scroll);
+        self.scroll = self
+            .scroll
+            .saturating_add_signed(delta)
+            .min(self.max_scroll());
         let top = self.scroll;
         let bottom = self.scroll + self.height - 1;
         if self.cursor.row < top {
@@ -1113,7 +1120,8 @@ mod tests {
         assert_eq!(v.scroll(), 1);
         v.goto_bottom();
         assert_eq!(v.cursor().row, 8);
-        assert_eq!(v.scroll(), 4);
+        // Scrolloff pushes the view one row past the end.
+        assert_eq!(v.scroll(), 5);
         v.goto_top();
         assert_eq!(v.scroll(), 0);
         v.half_page_down();

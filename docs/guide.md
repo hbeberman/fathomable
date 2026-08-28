@@ -68,7 +68,7 @@ shows the full list inside the app.
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` `h` `l`, `gg`, `G`, `Ctrl-d` `Ctrl-u` | move, top, bottom, half page |
+| `j` `k` `h` `l`, `gg`, `ge` / `G`, `Ctrl-d` `Ctrl-u` | move, top, bottom, half page |
 | `h` at column 0 | focus the tree (a selection wraps to the line above instead) |
 | `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
 | `:N` | go to source line N |
@@ -83,7 +83,7 @@ shows the full list inside the app.
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, switch, scroll; close |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
-| list `j` `k` `gg` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
+| list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | newline, submit, cancel (twice on a draft), clear the draft (empty closes) |
 | comment box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |

@@ -180,11 +180,18 @@ fn highlight(app: &App) -> Option<std::path::PathBuf> {
 fn sidebar_key(app: &mut App, key: KeyEvent) {
     if let Some(pending) = app.pending() {
         app.set_pending(None);
-        if pending == 'g' && key.code == KeyCode::Char('g') {
-            app.with_tree(|tree, _| {
-                tree.goto_top();
-                None
-            });
+        if pending == 'g' {
+            match key.code {
+                KeyCode::Char('g') => app.with_tree(|tree, _| {
+                    tree.goto_top();
+                    None
+                }),
+                KeyCode::Char('e') => app.with_tree(|tree, _| {
+                    tree.goto_bottom();
+                    None
+                }),
+                _ => {}
+            }
         }
         return;
     }
@@ -238,6 +245,7 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
         if pending == 'g' {
             match key.code {
                 KeyCode::Char('g') => view.goto_top(),
+                KeyCode::Char('e') => view.goto_bottom(),
                 KeyCode::Char('s') => view.toggle_source_view(),
                 KeyCode::Char('d') => view.toggle_diff_view(),
                 KeyCode::Char('D') => view.toggle_seen_diff_view(),
@@ -290,8 +298,12 @@ fn thread(app: &mut App, key: KeyEvent) {
 fn thread_list(app: &mut App, key: KeyEvent, ctrl: bool) {
     if let Some(pending) = app.pending() {
         app.set_pending(None);
-        if pending == 'g' && key.code == KeyCode::Char('g') {
-            app.thread_list_goto(false);
+        if pending == 'g' {
+            match key.code {
+                KeyCode::Char('g') => app.thread_list_goto(false),
+                KeyCode::Char('e') => app.thread_list_goto(true),
+                _ => {}
+            }
         }
         return;
     }

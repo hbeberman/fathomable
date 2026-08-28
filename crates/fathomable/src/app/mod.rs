@@ -233,7 +233,7 @@ impl Toast {
 pub const HELP: [(&str, &str); 40] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
-    ("gg / G", "top / bottom"),
+    ("gg / ge G", "top / bottom"),
     ("Ctrl-d / Ctrl-u", "half page down / up"),
     ("/ ?", "search forward / backward"),
     ("n / N", "next / previous match"),
@@ -243,7 +243,7 @@ pub const HELP: [(&str, &str); 40] = [
     ("c", "comment on the selection or cursor line"),
     ("Space a", "read thread at cursor"),
     ("Space A", "list every thread on this work"),
-    ("list j k gg G Enter", "move, jump, open the thread"),
+    ("list j k gg ge G Enter", "move, jump, open the thread"),
     (
         "list r x z Z f",
         "reply, resolve, fold, fold resolved, file only",
@@ -2384,6 +2384,48 @@ mod tests {
         assert!(app.tree().is_some(), "tree stays visible");
         app.hide_sidebar();
         assert!(app.tree().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn ge_goes_to_the_end_like_g_in_the_tree_and_the_view() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use super::{Tree, keys};
+        let dir = TempDir::new("ge")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("README.md"));
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        keys::handle_key(&mut app, key('g'));
+        keys::handle_key(&mut app, key('e'));
+        let bottom = app.view().source_position().0;
+        keys::handle_key(&mut app, key('g'));
+        keys::handle_key(&mut app, key('g'));
+        let top = app.view().source_position().0;
+        assert!(bottom > top, "ge leaves the top line");
+        keys::handle_key(&mut app, key('G'));
+        assert_eq!(app.view().source_position().0, bottom, "ge matches G");
+
+        app.toggle_sidebar_focus();
+        keys::handle_key(&mut app, key('g'));
+        keys::handle_key(&mut app, key('g'));
+        let top = app
+            .tree()
+            .and_then(Tree::current)
+            .map(|r| r.path().to_path_buf());
+        keys::handle_key(&mut app, key('g'));
+        keys::handle_key(&mut app, key('e'));
+        let last = app
+            .tree()
+            .and_then(Tree::current)
+            .map(|r| r.path().to_path_buf());
+        assert_ne!(top, last, "ge leaves the first tree row");
+        keys::handle_key(&mut app, key('j'));
+        let after = app
+            .tree()
+            .and_then(Tree::current)
+            .map(|r| r.path().to_path_buf());
+        assert_eq!(last, after, "ge lands on the last tree row");
         Ok(())
     }
 

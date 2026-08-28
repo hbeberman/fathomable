@@ -62,21 +62,6 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Milestone 1 scaffolding follow-ups
 
-- **TODO: horizontal scroll for code blocks.** The layout leaves code lines
-  unwrapped ([0004](decisions/0004-markdown-rendering.md)); the viewer
-  truncates them at the pane edge. Origin: milestone-1 layout engine.
-- **TODO: OSC 8 hyperlinks for links.** 0004 wants clickable links;
-  `ratatui` 0.30 has no hyperlink support in its buffer, so the viewer only
-  colours `Face::Link` spans. Needs either a ratatui feature or raw escape
-  output around the backend. Origin: milestone-1 viewer.
-- **TODO: automatic tree refresh.** The sidebar re-reads directories only
-  on `R` or expand; a recursive workspace watch was skipped for inotify
-  budget reasons. Origin: [0012](decisions/0012-workspace-mode.md).
-- **TODO: annotations path override.** Threads live only under XDG state
-  ([0013](decisions/0013-annotation-storage-and-ux.md)); a `config.kdl`
-  node pointing at an in-workspace file would let a repo share threads.
-  Origin: 0013 question round.
-
 ## Open investigations
 
 - **Server-side annotation cursor per agent.** Agents poll with `since`

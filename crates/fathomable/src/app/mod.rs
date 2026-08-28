@@ -8,6 +8,7 @@
 mod clipboard;
 mod commands;
 pub(crate) mod file_threads;
+mod hscroll;
 pub(crate) mod info;
 mod keys;
 pub(crate) mod reanchor;
@@ -17,6 +18,7 @@ pub(crate) mod thread_list;
 pub(crate) mod threads;
 mod ui;
 mod view;
+mod watch;
 
 use std::collections::HashSet;
 use std::fs;

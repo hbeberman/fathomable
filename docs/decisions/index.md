@@ -31,3 +31,5 @@ supersede rather than edit history.
 - [0025 The thread list](0025-thread-list.md)
 - [0026 Binary files and the file-info pane](0026-binary-files-and-file-info.md)
 - [0027 Revisiting threads](0027-revisiting-threads.md)
+- [0028 Live workspace](0028-live-workspace.md)
+- [0029 Horizontal scroll for long lines](0029-horizontal-scroll.md)

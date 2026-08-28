@@ -82,3 +82,11 @@ Milestones are ordered; each is usable on its own. Details live in the
     one-row thread; and a file-threads pane under the tree lists the
     file's threads, open and resolved, highlighting the one under the
     cursor ([0027](decisions/0027-revisiting-threads.md)).
+19. **Live workspace.** The tree follows the agent creating, deleting,
+    and renaming files; a deleted open file keeps its content under a
+    banner; a rename carries the file's threads and is recorded in the
+    store ([0028](decisions/0028-live-workspace.md)).
+20. **Horizontal scroll.** Unwrapped code lines scroll sideways with
+    `zl`/`zh`/`zL`/`zH` and the horizontal wheel, with edge markers and
+    search keeping its match in view
+    ([0029](decisions/0029-horizontal-scroll.md)).

@@ -3,9 +3,10 @@
 //! and resolved, in line order along the bottom of the tree column.
 //!
 //! The pane keeps no selection of its own. The highlighted row is the
-//! thread under the view cursor, derived on every draw and key from the
-//! document's marks, so the pane can never disagree with the text or go
-//! stale on a reload. Its only state is the height a drag gave it.
+//! thread open in the thread pane, else the thread under the view cursor,
+//! derived on every draw and key from the document's marks, so the pane
+//! can never disagree with the text or go stale on a reload. Its only
+//! state is the height a drag gave it.
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
@@ -105,11 +106,15 @@ impl App {
             .max(1)
     }
 
-    /// The highlighted entry: among the threads on the cursor row, the
-    /// open pane's, else the first (in line order) starting on the cursor
-    /// line, else the first in line order; with none on the row, the
-    /// nearest thread starting above the cursor, else the first.
+    /// The highlighted entry: the thread open in the thread pane when it
+    /// is one of this file's; else, among the threads on the cursor row,
+    /// the first (in line order) starting on the cursor line, else the
+    /// first in line order; with none on the row, the nearest thread
+    /// starting above the cursor, else the first.
     ///
+    /// The open pane wins outright because a jump to its thread may not
+    /// land the cursor on it: a rendered blank line has no row, so the
+    /// cursor stays put and "under the cursor" would name another thread.
     /// Ranges overlap, so "first on the row" alone would highlight a long
     /// earlier thread after a jump to the one starting under the cursor.
     pub fn file_thread_selected(&self) -> Option<usize> {
@@ -117,18 +122,12 @@ impl App {
         if order.is_empty() {
             return None;
         }
-        let line = self.view().cursor_source_line().unwrap_or(0);
-        let at_cursor = self.threads_at_cursor();
         let position = |id: &ThreadId| order.iter().position(|other| other == id);
-        if let Some(index) = self
-            .thread
-            .as_ref()
-            .map(ThreadPanel::id)
-            .filter(|open| at_cursor.contains(open))
-            .and_then(position)
-        {
+        if let Some(index) = self.thread.as_ref().map(ThreadPanel::id).and_then(position) {
             return Some(index);
         }
+        let line = self.view().cursor_source_line().unwrap_or(0);
+        let at_cursor = self.threads_at_cursor();
         let mut candidates: Vec<usize> = at_cursor.iter().filter_map(position).collect();
         candidates.sort_unstable();
         let starts_here = candidates.iter().copied().find(|&index| {
@@ -425,6 +424,27 @@ mod tests {
         );
         app.view_mut().goto_source_line(3);
         assert_eq!(app.file_thread_selected(), Some(0));
+        Ok(())
+    }
+
+    #[test]
+    fn the_highlight_follows_the_open_pane_when_the_cursor_cannot() -> anyhow::Result<()> {
+        let dir = TempDir::new("blank")?;
+        let mut app = dir.app()?;
+        app.show_sidebar();
+        annotate(&mut app, 2, "on the blank line");
+        annotate(&mut app, 7, "on the list");
+        app.close_thread();
+        // Rendered view: L2 is blank and has no row, so jumping to that
+        // thread leaves the cursor where it was.
+        app.view_mut().toggle_source_view();
+        app.view_mut().goto_source_line(7);
+        assert_eq!(app.file_thread_selected(), Some(1));
+        app.file_thread_click(0);
+        assert_eq!(app.thread_position(), Some((1, 2)));
+        assert_eq!(app.file_thread_selected(), Some(0));
+        app.thread_step(1);
+        assert_eq!(app.file_thread_selected(), Some(1));
         Ok(())
     }
 

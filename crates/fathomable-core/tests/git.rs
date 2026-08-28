@@ -376,6 +376,54 @@ fn symlinks_diff_by_target_path_not_followed_content() -> TestResult {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn directory_symlinks_list_as_files_and_are_not_descended() -> TestResult {
+    use fathomable_core::status::State;
+    use gix::objs::tree::EntryKind;
+
+    let dir = TempDir::new("dirlink")?;
+    init(&dir.0)?;
+    fs::create_dir(dir.0.join("real"))?;
+    fs::write(dir.0.join("real/inner.md"), "i\n")?;
+    std::os::unix::fs::symlink("real", dir.0.join("linkdir"))?;
+    // A cycle back to the root must not hang the walk.
+    std::os::unix::fs::symlink(".", dir.0.join("loop"))?;
+    commit_and_stage(&dir.0, &[("linkdir", "real", EntryKind::Link)])?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let listed: Vec<(String, bool)> = workspace
+        .list_dir("")?
+        .iter()
+        .map(|entry| (entry.name().to_owned(), entry.is_dir()))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![
+            ("real".to_owned(), true),
+            ("linkdir".to_owned(), false),
+            ("loop".to_owned(), false),
+        ],
+        "a symlink lists as a file even when it points at a directory"
+    );
+
+    let status = workspace.status()?;
+    let describe: Vec<(String, State)> = status
+        .entries()
+        .iter()
+        .map(|e| (e.path().display().to_string(), e.state()))
+        .collect();
+    assert_eq!(
+        describe,
+        vec![
+            ("loop".to_owned(), State::Untracked),
+            ("real/inner.md".to_owned(), State::Untracked),
+        ],
+        "the committed link is clean and nothing behind a link is walked"
+    );
+    Ok(())
+}
+
 /// Commit `files` on `reference` with `parent`, returning the new id.
 fn commit_on(
     root: &Path,

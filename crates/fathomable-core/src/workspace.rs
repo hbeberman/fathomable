@@ -47,7 +47,8 @@ impl Entry {
         &self.name
     }
 
-    /// Whether the entry is a directory (symlinks to directories count).
+    /// Whether the entry is a directory; a symlink never is, even one
+    /// pointing at a directory, matching how git tracks it.
     #[must_use]
     pub fn is_dir(&self) -> bool {
         self.is_dir
@@ -57,7 +58,7 @@ impl Entry {
 /// Whether a path is a file or a directory, for ignore evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntryKind {
-    /// A regular file or symlink to one.
+    /// A regular file or a symlink, wherever the symlink points.
     File,
     /// A directory.
     Dir,
@@ -490,7 +491,10 @@ impl Workspace {
             if name == ".git" {
                 continue;
             }
-            let is_dir = item.path().is_dir();
+            // The entry's own type, never the symlink target's: git
+            // tracks a symlink as a file-like entry even when it points
+            // at a directory, and descending one could loop forever.
+            let is_dir = item.file_type().is_ok_and(|kind| kind.is_dir());
             let kind = if is_dir {
                 EntryKind::Dir
             } else {

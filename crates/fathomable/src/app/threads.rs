@@ -639,6 +639,16 @@ impl App {
             store.resolve(id, author, when).map_err(|e| e.to_string())?;
         }
         tracing::info!(%id, resolve, "agent reply added");
+        // The toast a store reload would raise (ADR 0030), for the viewer
+        // the reply came through; a resolving reply says so (ADR 0032).
+        if let Some(thread) = store.thread(id) {
+            let place = format!("{}:{}", thread.path().display(), thread.range().start());
+            self.push_toast(if resolve {
+                format!("reply on {place}, resolved")
+            } else {
+                format!("reply on {place}")
+            });
+        }
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
@@ -1079,6 +1089,10 @@ mod tests {
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.mark_in(LineRange::new(5, 5)), Some(MarkKind::Detached));
+        // Placement and state are told apart (ADR 0032).
+        let rows = app.file_thread_rows();
+        assert_eq!(rows[0].words().placement(), Some(MarkKind::Detached));
+        assert_eq!(rows[0].words().state(), MarkKind::Open);
         Ok(())
     }
 
@@ -1590,6 +1604,10 @@ mod tests {
             resolve: true,
         });
         assert_eq!(reply, Response::Done);
+        assert_eq!(
+            app.toasts().last().map(crate::app::Toast::text),
+            Some("reply on README.md:3, resolved")
+        );
         let thread = app
             .thread(&id)
             .ok_or_else(|| anyhow::anyhow!("thread lost"))?;

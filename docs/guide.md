@@ -138,7 +138,10 @@ Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
-as *detached* when the lines are gone. Edits made while Fathomable was not
+as *detached* when the lines are gone. Where the lines went and what
+state the thread is in are separate: the thread pane's header reads
+`detached · auto-resolved` or `edited · waiting`, placement first, and
+a thread at its own lines shows the state alone. Edits made while Fathomable was not
 running are followed too, on the next start, through the file's last-seen
 snapshot (section 5); commenting snapshots the file so there is always
 one. Threads live
@@ -167,7 +170,8 @@ newest message; your reply, resolve, or reopen ends the wait. Waiting
 threads have their own colour (`annotation.waiting`) in the gutter
 bracket, the file-threads pane, and the thread list, the status line
 counts them (`2 waiting`), the tree tags their files `↩`, and a reply
-landing while you read raises a toast (`reply on src/lib.rs:42`). `]r`
+landing while you read raises a toast (`reply on src/lib.rs:42`, or
+`reply on src/lib.rs:42, resolved` when the agent resolved it). `]r`
 and `[r` step through them — this file first, then the others in path
 order, wrapping — and open each one's pane, so holding `]r` reads every
 reply that needs an answer.

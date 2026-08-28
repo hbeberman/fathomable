@@ -12,6 +12,7 @@ pub(crate) mod file_threads;
 mod hscroll;
 pub(crate) mod info;
 mod keys;
+pub(crate) mod mark_words;
 pub(crate) mod reanchor;
 mod sidebar;
 mod socket;
@@ -906,6 +907,7 @@ impl App {
         };
         match step {
             HunkStep::Moved => {}
+            HunkStep::NoBase if self.current.is_none() => self.notice("no file open"),
             HunkStep::NoBase => self.notice("no diff base: not in a git repository"),
             HunkStep::Wrapped | HunkStep::Clean => self.step_dirty(forward, true),
         }

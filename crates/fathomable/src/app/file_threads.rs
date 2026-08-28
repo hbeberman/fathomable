@@ -9,6 +9,7 @@
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
+use super::mark_words::Words;
 use super::threads::MarkKind;
 use super::{App, Focus};
 
@@ -22,6 +23,7 @@ const MIN_ROWS: usize = 3;
 pub struct FileRow {
     range: LineRange,
     kind: MarkKind,
+    words: Words,
     /// The first line of the comment.
     summary: String,
     replies: usize,
@@ -36,6 +38,11 @@ impl FileRow {
 
     pub fn kind(&self) -> MarkKind {
         self.kind
+    }
+
+    /// Placement and state words (ADR 0032).
+    pub fn words(&self) -> Words {
+        self.words
     }
 
     pub fn summary(&self) -> &str {
@@ -63,6 +70,7 @@ impl App {
                 Some(FileRow {
                     range: mark.range(),
                     kind: mark.kind(),
+                    words: Words::of(Some(mark.kind()), thread),
                     summary: thread.comment().lines().next().unwrap_or("").to_owned(),
                     replies: thread.replies().len(),
                     updated: thread.updated(),

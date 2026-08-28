@@ -874,7 +874,7 @@ impl Store {
     /// Apply an event in memory, then append it; the file is only written
     /// when the event is valid.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
-        let line = serde_json::to_string(&event).map_err(|error| StoreError {
+        let mut line = serde_json::to_string(&event).map_err(|error| StoreError {
             kind: ErrorKind::Parse(0, error.to_string()),
         })?;
         self.apply(event)?;
@@ -886,7 +886,12 @@ impl Store {
             .append(true)
             .open(&self.path)
             .map_err(|error| StoreError::io(&self.path, error))?;
-        writeln!(file, "{line}").map_err(|error| StoreError::io(&self.path, error))
+        // One `write` for line and newline together: with `O_APPEND` each
+        // call lands whole, so two writers (a second viewer, a headless
+        // `--mcp` reply) cannot interleave `{a}{b}\n\n` (ADR 0032).
+        line.push('\n');
+        file.write_all(line.as_bytes())
+            .map_err(|error| StoreError::io(&self.path, error))
     }
 
     fn apply(&mut self, event: Event) -> Result<(), StoreError> {
@@ -1246,6 +1251,31 @@ mod tests {
             client: Some("claude-code".to_owned()),
         };
         assert_eq!(same.to_string(), "claude-code");
+        Ok(())
+    }
+
+    #[test]
+    fn two_handles_appending_to_one_file_keep_every_line_whole() -> Result<(), StoreError> {
+        let file = TempFile::new("two-writers");
+        let mut first = Store::open(&file.0)?;
+        let id = first.annotate(
+            Draft::new(Path::new("README.md"), LineRange::new(3, 3), "one"),
+            TEXT,
+            100,
+        )?;
+        // A second viewer, or a headless `--mcp` reply, opens its own handle.
+        let mut second = Store::open(&file.0)?;
+        for turn in 0..20 {
+            first.reply(&id, Reply::new(Author::agent("a"), 200 + turn, "from a"))?;
+            second.reply(&id, Reply::new(Author::agent("b"), 300 + turn, "from b"))?;
+        }
+        let text = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+        assert!(
+            text.lines()
+                .all(|line| line.starts_with('{') && line.ends_with('}'))
+        );
+        let merged = Store::open(&file.0)?;
+        assert_eq!(merged.threads()[0].replies().len(), 40);
         Ok(())
     }
 

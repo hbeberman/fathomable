@@ -98,3 +98,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     navigates elsewhere, keeps still while the visible file's hunk is on
     screen, and prefers the file the agent says it is editing
     ([0031](decisions/0031-lazy-follow.md)).
+23. **Placement and state.** The thread pane and file-threads pane say
+    where a thread's lines went and what state it is in as two words, an
+    agent reply toasts in the viewer it came through, and the store
+    appends each event in one write
+    ([0032](decisions/0032-placement-and-state.md)).

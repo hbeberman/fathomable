@@ -10,11 +10,11 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use fathomable_core::annotations::Status;
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use super::info::Info;
+use super::mark_words::{Words, label};
 use super::thread_list::{Row, Rows};
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
@@ -708,7 +708,7 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
             }
         }
         let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
-        let resolved = matches!(row.kind(), MarkKind::Resolved | MarkKind::AutoResolved);
+        let resolved = row.words().is_resolved();
         let glyph = if resolved { "✓" } else { "●" };
         let lead = format!(" L{} ", row.range());
         let tail = format!(
@@ -1484,14 +1484,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             dim,
             ..
         } => {
-            let (status, status_style) = match kind {
-                MarkKind::Detached => ("detached", theme.annotation_detached),
-                MarkKind::Edited => ("edited", theme.annotation_edited),
-                MarkKind::Waiting => ("waiting", theme.annotation_waiting),
-                MarkKind::Open => ("open", theme.annotation_open),
-                MarkKind::Resolved => ("resolved", theme.annotation_resolved),
-                MarkKind::AutoResolved => ("auto-resolved", theme.annotation_auto),
-            };
+            let (status, status_style) = (label(*kind), mark_style(theme, *kind));
             let fold = if *folded { "  ▸" } else { "" };
             let mut spans = vec![
                 Span::styled(
@@ -1547,25 +1540,27 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = app.thread_position().unwrap_or((1, 1));
-    let (status, status_style) = match (mark.map(super::threads::Mark::kind), thread.status()) {
-        (Some(MarkKind::Detached), _) => ("detached", theme.annotation_detached),
-        (Some(MarkKind::Edited), _) => ("edited", theme.annotation_edited),
-        (Some(MarkKind::Waiting), _) => ("waiting", theme.annotation_waiting),
-        (_, Status::Open) => ("open", theme.annotation_open),
-        (_, Status::Resolved) => ("resolved", theme.annotation_resolved),
-        (_, Status::AutoResolved) => ("auto-resolved", theme.annotation_auto),
-    };
+    let words = Words::of(mark.map(super::threads::Mark::kind), thread);
     let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
     let which = if total > 1 {
         format!(" thread {index}/{total}")
     } else {
         " thread".to_owned()
     };
-    let left = vec![
+    let mut left = vec![
         Span::styled(which, theme.popup_key),
         Span::styled(format!("  L{range}  "), theme.info),
-        Span::styled(status.to_owned(), status_style),
     ];
+    // Placement first, then state, so a detached thread still says
+    // whether it waits or was resolved (ADR 0032).
+    if let Some(placement) = words.placement() {
+        left.push(Span::styled(label(placement), mark_style(theme, placement)));
+        left.push(Span::styled(" · ", theme.info));
+    }
+    left.push(Span::styled(
+        label(words.state()),
+        mark_style(theme, words.state()),
+    ));
     let hint = if app.focus() == Focus::Thread {
         "r reply · x resolve/reopen · n/p next/prev · j/k scroll · Esc close"
     } else {

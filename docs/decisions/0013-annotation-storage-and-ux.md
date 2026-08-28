@@ -130,7 +130,7 @@ were captured in a question round on 2026-08-26.
   scrolling stops at the end. `j`/`k` scroll, `n`/`p` switch
   between threads on the row (superseded by
   [0027](0027-revisiting-threads.md), 2026-08-28: they walk every thread
-  in the file, moving the cursor), `r` replies through the comment box, `x`
+  in the file, moving the cursor; `p` became `N` on 2026-08-28, matching search), `r` replies through the comment box, `x`
   resolves an open thread or reopens a resolved one, Esc closes.
 - While replying the pane stays on screen above the box, pushed up by
   the box's rows, so the thread can be read; Up/Down scroll it

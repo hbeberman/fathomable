@@ -329,7 +329,7 @@ fn thread(app: &mut App, key: KeyEvent) {
         KeyCode::Char('j') | KeyCode::Down => app.thread_scroll(1),
         KeyCode::Char('k') | KeyCode::Up => app.thread_scroll(-1),
         KeyCode::Char('n') => app.thread_step(1),
-        KeyCode::Char('p') => app.thread_step(-1),
+        KeyCode::Char('N') => app.thread_step(-1),
         KeyCode::Char('r') => app.thread_reply(),
         KeyCode::Char('x') => app.thread_toggle_resolved(),
         _ => {}

@@ -95,7 +95,7 @@ shows the full list inside the app.
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| thread pane `r` `x` `n` `p` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
+| thread pane `r` `x` `n` `N` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the one under the cursor highlighted |
 | file threads `j` `k` `Enter` `r` `x`, `Esc` | next / previous thread (the cursor follows), open its pane, reply, resolve or reopen; back to the text |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |

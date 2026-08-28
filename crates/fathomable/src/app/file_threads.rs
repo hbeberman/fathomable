@@ -10,7 +10,7 @@
 use fathomable_core::annotations::{LineRange, ThreadId};
 
 use super::mark_words::Words;
-use super::threads::MarkKind;
+use super::threads::{MarkKind, ThreadPanel};
 use super::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
@@ -105,17 +105,40 @@ impl App {
             .max(1)
     }
 
-    /// The highlighted entry: the first thread on the cursor row, else the
+    /// The highlighted entry: among the threads on the cursor row, the
+    /// open pane's, else the first (in line order) starting on the cursor
+    /// line, else the first in line order; with none on the row, the
     /// nearest thread starting above the cursor, else the first.
+    ///
+    /// Ranges overlap, so "first on the row" alone would highlight a long
+    /// earlier thread after a jump to the one starting under the cursor.
     pub fn file_thread_selected(&self) -> Option<usize> {
         let order = self.file_threads();
         if order.is_empty() {
             return None;
         }
-        if let Some(id) = self.threads_at_cursor().into_iter().next() {
-            return order.iter().position(|other| *other == id);
-        }
         let line = self.view().cursor_source_line().unwrap_or(0);
+        let at_cursor = self.threads_at_cursor();
+        let position = |id: &ThreadId| order.iter().position(|other| other == id);
+        if let Some(index) = self
+            .thread
+            .as_ref()
+            .map(ThreadPanel::id)
+            .filter(|open| at_cursor.contains(open))
+            .and_then(position)
+        {
+            return Some(index);
+        }
+        let mut candidates: Vec<usize> = at_cursor.iter().filter_map(position).collect();
+        candidates.sort_unstable();
+        let starts_here = candidates.iter().copied().find(|&index| {
+            self.marks()
+                .iter()
+                .any(|mark| *mark.id() == order[index] && mark.range().start() == line)
+        });
+        if let Some(index) = starts_here.or_else(|| candidates.first().copied()) {
+            return Some(index);
+        }
         let above = self
             .marks()
             .iter()
@@ -368,6 +391,40 @@ mod tests {
         app.focus_file_threads();
         assert!(app.tree().is_some());
         assert_eq!(app.focus(), Focus::FileThreads);
+        Ok(())
+    }
+
+    #[test]
+    fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
+        let dir = TempDir::new("overlap")?;
+        let mut app = dir.app()?;
+        app.show_sidebar();
+        // A long thread over L3-5, then a short one at L4 inside it.
+        app.view_mut().goto_source_line(3);
+        app.view_mut().select_lines();
+        app.view_mut().move_down(2);
+        app.start_comment();
+        app.compose_insert("long");
+        app.compose_submit();
+        app.close_thread();
+        annotate(&mut app, 4, "short");
+        app.close_thread();
+        assert_eq!(app.file_thread_rows().len(), 2);
+        assert_eq!(app.file_thread_rows()[1].range().start(), 4);
+
+        // Clicking the second entry highlights it, not the long thread
+        // that also covers L4.
+        app.file_thread_click(1);
+        assert_eq!(app.thread_position(), Some((2, 2)));
+        assert_eq!(app.file_thread_selected(), Some(1));
+        app.close_thread();
+        assert_eq!(
+            app.file_thread_selected(),
+            Some(1),
+            "L4 starts the short thread"
+        );
+        app.view_mut().goto_source_line(3);
+        assert_eq!(app.file_thread_selected(), Some(0));
         Ok(())
     }
 

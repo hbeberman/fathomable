@@ -1562,7 +1562,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         mark_style(theme, words.state()),
     ));
     let hint = if app.focus() == Focus::Thread {
-        "r reply · x resolve/reopen · n/p next/prev · j/k scroll · Esc close"
+        "r reply · x resolve/reopen · n/N next/prev · j/k scroll · Esc close"
     } else {
         "click or Space a to focus"
     };

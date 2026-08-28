@@ -703,7 +703,7 @@ impl App {
         self.thread.as_mut()
     }
 
-    /// `n` / `p`: the next or previous thread in the file, wrapping; the
+    /// `n` / `N`: the next or previous thread in the file, wrapping; the
     /// cursor moves to its first line (ADR 0027).
     pub fn thread_step(&mut self, delta: isize) {
         let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) else {

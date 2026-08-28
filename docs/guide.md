@@ -44,6 +44,17 @@ can drive all of them or one by name (`--name`, or `:name` later). The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
+The workspace is live too. A file the agent creates, deletes, or renames
+shows up in, leaves, or moves within the tree on its own (within
+`follow.hint-debounce`), so `R` is only for a listing you suspect is
+stale. If the file you are reading is deleted, the text stays put under a
+`deleted` banner and the pill reads `DELETED`: you can still scroll,
+search, and read its threads, but `c`, `C`, and replies are refused until
+the file comes back, at which point it reloads and the banner goes. If it
+is renamed, the view follows with your position and threads intact, the
+threads move to the new path in the store, and the status line says
+`renamed to NEW`.
+
 Markdown files (`.md`, `.markdown`, `.mdx`, and well-known extensionless
 prose such as `README` and `LICENSE`) open rendered; every other file,
 `justfile` and `Makefile` included, opens as syntax-highlighted source,
@@ -95,7 +106,7 @@ shows the full list inside the app.
 | comment box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
 | comment box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
-| tree `j` `k` `h` `l` `Enter`, `R`, `I` | move (the highlighted file is shown), collapse, expand or open and focus; re-read; show ignored |
+| tree `j` `k` `h` `l` `Enter`, `R`, `I` | move (the highlighted file is shown), collapse, expand or open and focus; re-read (new, deleted, and renamed files already show on their own); show ignored |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files; `Ctrl-n` `Ctrl-p` move |
 | `[o` `]o` | previous / next opened file |
 | `Esc`, `:q` | close or clear; quit |
@@ -196,7 +207,9 @@ many are pending. `]f` and `[f` step through the changed files, newest
 first; `Space j j` jumps straight to the newest. A jump lands on the first
 hunk against `HEAD` (or the range an agent passed to `open`; outside git,
 the first hunk against the last-seen snapshot), and a change is forgotten
-once its target is on screen.
+once its target is on screen. A file the agent says it is editing
+(`follow`) is revealed in the tree, its folders expanded, without moving
+your highlight unless the tree has focus.
 
 `Space j a` (or `:follow`) turns on **auto-jump**: the pill reads `AUTO`
 and the viewer opens the newest change by itself once writes have been

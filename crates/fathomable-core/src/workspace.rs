@@ -258,7 +258,7 @@ impl Workspace {
             tracing::debug!(path = %relative.display(), "not in HEAD; diff base is empty");
             return Ok(Some(String::new()));
         };
-        if !entry.mode().is_blob() {
+        if !entry.mode().is_blob_or_symlink() {
             return Err(fail(
                 "HEAD has a directory or submodule at this path".to_owned(),
             ));
@@ -300,7 +300,9 @@ impl Workspace {
         };
         if !matches!(
             entry.mode,
-            gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
+            gix::index::entry::Mode::FILE
+                | gix::index::entry::Mode::FILE_EXECUTABLE
+                | gix::index::entry::Mode::SYMLINK
         ) {
             return Ok(Some(String::new()));
         }
@@ -355,11 +357,13 @@ impl Workspace {
         let mut dirty: BTreeMap<BString, (State, bool)> = BTreeMap::new();
         let mut in_index: BTreeSet<BString> = BTreeSet::new();
         for entry in index.entries() {
+            let is_link = entry.mode == gix::index::entry::Mode::SYMLINK;
             if entry.stage() != gix::index::entry::Stage::Unconflicted
-                || !matches!(
-                    entry.mode,
-                    gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
-                )
+                || !(is_link
+                    || matches!(
+                        entry.mode,
+                        gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
+                    ))
             {
                 continue;
             }
@@ -371,27 +375,7 @@ impl Workspace {
                 None => Some(State::Added),
             };
             let absolute = self.root.join(gix::path::from_bstr(path.as_bstr()));
-            let worktree = match gix::index::fs::Metadata::from_path_no_follow(&absolute) {
-                Ok(meta) if meta.is_file() => {
-                    let fresh = gix::index::entry::Stat::from_fs(&meta)
-                        .ok()
-                        .is_some_and(|stat| {
-                            stat.size == entry.stat.size
-                                && stat.mtime == entry.stat.mtime
-                                && entry.stat.mtime.secs != 0
-                        });
-                    if fresh {
-                        None
-                    } else {
-                        let same = fs::read(&absolute).ok().is_some_and(|data| {
-                            gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &data)
-                                .is_ok_and(|id| id == entry.id)
-                        });
-                        (!same).then_some(State::Modified)
-                    }
-                }
-                _ => Some(State::Deleted),
-            };
+            let worktree = worktree_state(&absolute, entry, hash);
             if let Some(state) = worktree.or(staged) {
                 dirty.insert(path, (state, staged.is_some()));
             }
@@ -428,11 +412,23 @@ impl Workspace {
         };
         let worktree = match state {
             State::Deleted => Some(String::new()),
-            _ => fs::read_to_string(self.root.join(relative)).ok(),
+            _ => self.worktree_text(relative),
         };
         match (head, worktree) {
             (Some(old), Some(new)) => Diff::new(&old, &new).counts(),
             _ => (0, 0),
+        }
+    }
+
+    /// The diffable text of `relative` on disk: a symlink's target path,
+    /// matching the blob git stores for it, or the file's content.
+    fn worktree_text(&self, relative: &Path) -> Option<String> {
+        let absolute = self.root.join(relative);
+        match absolute.symlink_metadata() {
+            Ok(meta) if meta.is_symlink() => fs::read_link(&absolute)
+                .ok()
+                .map(|target| target.to_string_lossy().into_owned()),
+            _ => fs::read_to_string(&absolute).ok(),
         }
     }
 
@@ -625,6 +621,54 @@ pub fn open_options() -> gix::open::Options {
 }
 
 /// Every blob under `tree`, keyed by slash-separated path.
+/// How the working tree differs from index `entry` at `absolute`: `None`
+/// when they match, otherwise the [`State`] the entry is in.
+///
+/// A tracked file whose size and mtime match the index is taken as clean
+/// without reading it, as git does; anything else is hashed. A symlink's
+/// blob is its target path, so that is what gets hashed, never the file
+/// the link points at.
+fn worktree_state(
+    absolute: &Path,
+    entry: &gix::index::Entry,
+    hash: gix::hash::Kind,
+) -> Option<State> {
+    let is_link = entry.mode == gix::index::entry::Mode::SYMLINK;
+    match gix::index::fs::Metadata::from_path_no_follow(absolute) {
+        Ok(meta) if meta.is_file() && !is_link => {
+            let fresh = gix::index::entry::Stat::from_fs(&meta)
+                .ok()
+                .is_some_and(|stat| {
+                    stat.size == entry.stat.size
+                        && stat.mtime == entry.stat.mtime
+                        && entry.stat.mtime.secs != 0
+                });
+            if fresh {
+                None
+            } else {
+                let same = fs::read(absolute).ok().is_some_and(|data| {
+                    gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &data)
+                        .is_ok_and(|id| id == entry.id)
+                });
+                (!same).then_some(State::Modified)
+            }
+        }
+        Ok(meta) if meta.is_symlink() && is_link => {
+            let same = fs::read_link(absolute).ok().is_some_and(|target| {
+                let target = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(
+                    target.as_path(),
+                ));
+                gix::objs::compute_hash(hash, gix::objs::Kind::Blob, target.as_ref())
+                    .is_ok_and(|id| id == entry.id)
+            });
+            (!same).then_some(State::Modified)
+        }
+        // A file became a symlink or the other way around.
+        Ok(meta) if meta.is_file() || meta.is_symlink() => Some(State::Modified),
+        _ => Some(State::Deleted),
+    }
+}
+
 fn collect_blobs(
     tree: &gix::Tree<'_>,
     prefix: &mut BString,
@@ -638,7 +682,7 @@ fn collect_blobs(
             let subtree = entry.object()?.into_tree();
             prefix.push(b'/');
             collect_blobs(&subtree, prefix, out)?;
-        } else if entry.mode().is_blob() {
+        } else if entry.mode().is_blob_or_symlink() {
             out.insert(prefix.clone(), entry.object_id());
         }
         prefix.truncate(len);

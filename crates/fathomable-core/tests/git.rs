@@ -277,6 +277,105 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     Ok(())
 }
 
+/// Commit `files` (path, content, kind) as `HEAD` and stage the same tree.
+#[cfg(unix)]
+fn commit_and_stage(
+    root: &Path,
+    files: &[(&str, &str, gix::objs::tree::EntryKind)],
+) -> Result<(), Box<dyn Error>> {
+    let repo = gix::open_opts(root, open_options())?;
+    let mut entries = Vec::new();
+    for (name, content, kind) in files {
+        let oid = repo.write_blob(content.as_bytes())?.detach();
+        entries.push(gix::objs::tree::Entry {
+            mode: (*kind).into(),
+            filename: (*name).into(),
+            oid,
+        });
+    }
+    entries.sort();
+    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
+    let signature = gix::actor::SignatureRef {
+        name: "test".into(),
+        email: "test@example.com".into(),
+        time: "0 +0000",
+    };
+    let parent = repo.head_id().ok().map(gix::Id::detach);
+    repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
+    let state = gix::index::State::from_tree(
+        &tree,
+        &repo.objects,
+        gix::validate::path::component::Options::default(),
+    )
+    .map_err(|e| format!("from_tree: {e}"))?;
+    let mut file = gix::index::File::from_state(state, repo.index_path());
+    file.write(gix::index::write::Options::default())
+        .map_err(|e| format!("index write: {e}"))?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_diff_by_target_path_not_followed_content() -> TestResult {
+    use fathomable_core::status::State;
+    use gix::objs::tree::EntryKind;
+
+    let dir = TempDir::new("symlink")?;
+    init(&dir.0)?;
+    fs::write(dir.0.join("a.md"), "one\ntwo\n")?;
+    fs::write(dir.0.join("b.md"), "b\n")?;
+    std::os::unix::fs::symlink("a.md", dir.0.join("link.md"))?;
+    commit_and_stage(
+        &dir.0,
+        &[
+            ("a.md", "one\ntwo\n", EntryKind::Blob),
+            ("b.md", "b\n", EntryKind::Blob),
+            ("link.md", "a.md", EntryKind::Link),
+        ],
+    )?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    assert!(
+        workspace.status()?.is_empty(),
+        "an unchanged committed symlink is clean"
+    );
+    assert_eq!(
+        workspace.head_text(Path::new("link.md"))?.as_deref(),
+        Some("a.md"),
+        "a symlink's diff base is its committed target path"
+    );
+
+    // An untracked symlink counts its one-line target, not the file it
+    // points at.
+    std::os::unix::fs::symlink("a.md", dir.0.join("new-link.md"))?;
+    let status = workspace.status()?;
+    let entry = status
+        .get(Path::new("new-link.md"))
+        .ok_or("new-link.md missing")?;
+    assert_eq!(
+        (entry.state(), entry.added(), entry.removed()),
+        (State::Untracked, 1, 0)
+    );
+    fs::remove_file(dir.0.join("new-link.md"))?;
+
+    // Retargeting the committed symlink is an unstaged modification.
+    fs::remove_file(dir.0.join("link.md"))?;
+    std::os::unix::fs::symlink("b.md", dir.0.join("link.md"))?;
+    let status = workspace.status()?;
+    let entry = status.get(Path::new("link.md")).ok_or("link.md missing")?;
+    assert_eq!(
+        (
+            entry.state(),
+            entry.is_staged(),
+            entry.added(),
+            entry.removed()
+        ),
+        (State::Modified, false, 1, 1)
+    );
+    assert_eq!(status.len(), 1);
+    Ok(())
+}
+
 /// Commit `files` on `reference` with `parent`, returning the new id.
 fn commit_on(
     root: &Path,

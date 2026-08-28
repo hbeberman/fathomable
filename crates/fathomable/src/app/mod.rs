@@ -8,6 +8,7 @@
 mod autojump;
 mod clipboard;
 mod commands;
+pub(crate) mod delete;
 pub(crate) mod file_threads;
 mod hscroll;
 pub(crate) mod info;
@@ -43,7 +44,7 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::annotations::{Scope, Store};
+use fathomable_core::annotations::{self, Scope, Store};
 use fathomable_core::config::{FollowConfig, MarkdownConfig, ViewerConfig};
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -366,6 +367,8 @@ pub struct App {
     all_index: Option<Vec<String>>,
     message: Option<String>,
     pending: Option<char>,
+    /// The thread a first `d` armed for deletion (ADR 0034).
+    pending_delete: Option<annotations::ThreadId>,
     width: usize,
     height: usize,
     session: String,
@@ -445,6 +448,7 @@ impl App {
             all_index: None,
             message: None,
             pending: None,
+            pending_delete: None,
             width,
             height,
             session: record.id().to_string(),
@@ -523,7 +527,13 @@ impl App {
                     self.refresh_marks(index);
                 }
                 if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
-                    self.open_thread(id);
+                    // Deleted elsewhere (ADR 0034): the pane has nothing
+                    // to show.
+                    if self.thread(&id).is_some() {
+                        self.open_thread(id);
+                    } else {
+                        self.close_thread();
+                    }
                 }
             }
             Err(error) => tracing::warn!(%error, "cannot reload the thread store"),

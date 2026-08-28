@@ -7,6 +7,9 @@
 //! derived on every draw and key from the document's marks, so the pane
 //! can never disagree with the text or go stale on a reload. Its only
 //! state is the height a drag gave it.
+//!
+//! While the pane has focus the thread pane shows the highlight and
+//! follows `j`/`k` and clicks without taking the keys (ADR 0034).
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
@@ -158,7 +161,8 @@ impl App {
             .saturating_sub(body - 1)
     }
 
-    /// `Space t`: focus the pane, showing the tree first when it is hidden.
+    /// `Space t`: focus the pane, showing the tree first when it is
+    /// hidden, and open the thread pane on the highlight (ADR 0034).
     pub fn focus_file_threads(&mut self) {
         if self.marks().is_empty() {
             self.notice("no threads in this file");
@@ -169,20 +173,48 @@ impl App {
         }
         if self.tree().is_some() {
             self.focus = Focus::FileThreads;
+            self.file_thread_show();
         }
     }
 
-    /// Esc in the pane: the keys go back to the text.
+    /// Esc in the pane: the thread pane closes and the keys go back to
+    /// the text.
     pub fn leave_file_threads(&mut self) {
         if self.focus == Focus::FileThreads {
+            self.close_thread();
             self.focus = Focus::View;
         }
     }
 
-    /// `j` / `k`: the next or previous thread in the file, wrapping; the
-    /// highlight follows the cursor.
+    /// `j` / `k`: the next or previous entry, wrapping; the cursor and
+    /// the thread pane follow.
     pub fn file_thread_move(&mut self, delta: isize) {
-        self.jump_annotation(delta);
+        let order = self.file_threads();
+        if order.is_empty() {
+            self.notice("no threads in this file");
+            return;
+        }
+        let index = self.file_thread_selected().unwrap_or(0);
+        let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
+        let id = order[(index + step) % order.len()].clone();
+        self.goto_thread(&id);
+        self.open_thread_behind(id);
+    }
+
+    /// Show the highlighted thread in the thread pane, keys staying here.
+    fn file_thread_show(&mut self) {
+        if let Some(id) = self.file_thread_id() {
+            self.open_thread_behind(id);
+        }
+    }
+
+    /// A click on the pane's rule row or header: the keys come here and
+    /// the thread pane shows the highlight.
+    pub fn file_thread_focus(&mut self) {
+        self.focus_pane(Focus::FileThreads);
+        if self.focus == Focus::FileThreads {
+            self.file_thread_show();
+        }
     }
 
     fn file_thread_id(&self) -> Option<ThreadId> {
@@ -190,10 +222,18 @@ impl App {
         self.file_threads().into_iter().nth(index)
     }
 
-    /// `Enter`: open the thread pane on the highlighted thread.
+    /// `Enter` / `l`: the thread pane on the highlighted thread takes
+    /// the keys.
     pub fn file_thread_open(&mut self) {
         if let Some(id) = self.file_thread_id() {
             self.show_thread(id);
+        }
+    }
+
+    /// `d`: arm deletion of the highlighted thread (ADR 0034).
+    pub fn file_thread_arm_delete(&mut self) {
+        if let Some(id) = self.file_thread_id() {
+            self.arm_delete(id);
         }
     }
 
@@ -212,13 +252,18 @@ impl App {
     }
 
     /// A click on entry row `row` (counted from the first drawn entry):
-    /// open the thread pane on that thread, as `Enter` does; a click
-    /// past the entries only takes the keys.
+    /// the thread pane shows that thread, the cursor on it, and the keys
+    /// stay with this pane; a click past the entries acts as one on the
+    /// header.
     pub fn file_thread_click(&mut self, row: usize) {
         let index = self.file_thread_scroll() + row;
+        self.focus_pane(Focus::FileThreads);
         match self.file_threads().into_iter().nth(index) {
-            Some(id) => self.show_thread(id),
-            None => self.focus_pane(Focus::FileThreads),
+            Some(id) => {
+                self.goto_thread(&id);
+                self.open_thread_behind(id);
+            }
+            None => self.file_thread_focus(),
         }
     }
 
@@ -354,17 +399,52 @@ mod tests {
         );
         assert!(column[top + 4].contains("↩0 now"), "{:?}", column[top + 4]);
 
-        // `Space t` focuses; `j`/`k` move the cursor between threads.
+        // `Space t` focuses and opens the thread pane on the highlight;
+        // `j`/`k` step by entry, the cursor and the pane following, and
+        // the keys stay with the list (ADR 0034).
         app.space_menu_select('t');
         assert_eq!(app.focus(), Focus::FileThreads);
+        assert_eq!(app.thread_position(), Some((3, 3)));
         app.file_thread_move(1);
         assert_eq!(app.view().cursor_source_line(), Some(3), "wrapped");
+        assert_eq!(app.thread_position(), Some((1, 3)));
+        app.file_thread_move(1);
+        assert_eq!(
+            app.view().cursor_source_line(),
+            Some(3),
+            "two threads on L3"
+        );
+        assert_eq!(app.thread_position(), Some((2, 3)));
         app.file_thread_move(1);
         assert_eq!(app.view().cursor_source_line(), Some(7));
-        app.file_thread_move(-1);
+        app.file_thread_move(-2);
         assert_eq!(app.view().cursor_source_line(), Some(3));
+        assert_eq!(app.thread_position(), Some((1, 3)));
+        assert_eq!(app.focus(), Focus::FileThreads);
 
-        // `r` replies in place; `x` resolves; Enter opens the thread pane.
+        // Hiding the tree hides the pane; `Space t` brings both back.
+        app.hide_sidebar();
+        assert_eq!(app.file_thread_pane_rows(), 0);
+        app.focus_file_threads();
+        assert!(app.tree().is_some());
+        assert_eq!(app.focus(), Focus::FileThreads);
+        Ok(())
+    }
+
+    #[test]
+    fn the_keys_step_between_the_pane_and_the_list() -> anyhow::Result<()> {
+        let dir = TempDir::new("step")?;
+        let mut app = dir.app()?;
+        app.show_sidebar();
+        annotate(&mut app, 7, "seven");
+        annotate(&mut app, 3, "three");
+        annotate(&mut app, 3, "three again");
+        app.view_mut().goto_source_line(3);
+        app.space_menu_select('t');
+        assert_eq!(app.focus(), Focus::FileThreads);
+
+        // `r` replies in place; `x` resolves; `l` steps into the thread
+        // pane and `h` steps back; Esc closes the pane with the focus.
         app.file_thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
@@ -372,22 +452,22 @@ mod tests {
         app.compose_insert("ok");
         app.compose_submit();
         assert_eq!(app.focus(), Focus::FileThreads);
-        assert!(app.thread_panel().is_none());
+        assert!(app.thread_panel().is_some());
         assert_eq!(app.file_thread_rows()[0].replies(), 1);
         app.file_thread_toggle_resolved();
         assert_eq!(app.file_thread_rows()[0].kind(), MarkKind::Resolved);
         app.file_thread_open();
         assert_eq!(app.focus(), Focus::Thread);
         assert_eq!(app.thread_position(), Some((1, 3)));
-        app.close_thread();
-        app.focus_file_threads();
+        app.thread_to_file_threads();
+        assert_eq!(app.focus(), Focus::FileThreads);
         app.leave_file_threads();
         assert_eq!(app.focus(), Focus::View);
-
-        // Hiding the tree hides the pane; `Space t` brings both back.
+        assert!(app.thread_panel().is_none());
+        // `h` from the pane shows the tree when it was hidden.
         app.hide_sidebar();
-        assert_eq!(app.file_thread_pane_rows(), 0);
-        app.focus_file_threads();
+        app.file_thread_open();
+        app.thread_to_file_threads();
         assert!(app.tree().is_some());
         assert_eq!(app.focus(), Focus::FileThreads);
         Ok(())
@@ -466,15 +546,17 @@ mod tests {
         let top = app.sidebar_rows();
         assert_eq!(app.pane_rows() - top, 4);
 
-        // A click on an entry opens its thread pane, cursor on the thread.
+        // A click on an entry shows its thread in the thread pane, cursor
+        // on the thread, and the keys stay with this pane (ADR 0034).
         keys::handle_mouse(&mut app, mouse(down, 2, top + 3));
         assert_eq!(app.view().cursor_source_line(), Some(6));
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::FileThreads);
         assert_eq!(app.thread_position(), Some((2, 2)));
         app.close_thread();
-        // A click on the header only focuses the pane.
+        // A click on the header focuses the pane and shows the highlight.
         keys::handle_mouse(&mut app, mouse(down, 2, top + 1));
         assert_eq!(app.focus(), Focus::FileThreads);
+        assert_eq!(app.thread_position(), Some((2, 2)));
         // The wheel steps between threads.
         keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 2, top + 1));
         assert_eq!(app.view().cursor_source_line(), Some(2));

@@ -107,3 +107,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     in `annotation.focus`, and `thread_reply` takes `line`/`end_line` so
     an agent that rewrote the lines re-anchors the thread as it answers
     ([0033](decisions/0033-open-thread-lines.md)).
+25. **Deleting threads.** `d d` deletes a thread from the thread pane,
+    the file-threads pane, or the thread list, as a tombstone in the
+    store; the file-threads pane drives the thread pane without taking
+    its focus, and the pane opens at its end under a dim `END` row
+    ([0034](decisions/0034-deleting-threads.md)).

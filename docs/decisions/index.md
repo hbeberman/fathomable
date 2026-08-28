@@ -37,3 +37,4 @@ supersede rather than edit history.
 - [0031 Lazy follow](0031-lazy-follow.md)
 - [0032 Placement and state](0032-placement-and-state.md)
 - [0033 Open thread lines](0033-open-thread-lines.md)
+- [0034 Deleting threads and the list that drives the pane](0034-deleting-threads.md)

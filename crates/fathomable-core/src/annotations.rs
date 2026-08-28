@@ -651,6 +651,28 @@ enum Event {
         path: PathBuf,
         created: u64,
     },
+    /// The user deleted the thread (ADR 0034). A tombstone: the thread
+    /// is dropped on load and later events on it are ignored.
+    Delete {
+        v: u32,
+        thread: ThreadId,
+        created: u64,
+    },
+}
+
+impl Event {
+    /// The thread an event acts on; none for the one that creates it.
+    fn thread_id(&self) -> Option<&ThreadId> {
+        match self {
+            Self::Annotate { .. } => None,
+            Self::Reply { thread, .. }
+            | Self::Resolve { thread, .. }
+            | Self::Reopen { thread, .. }
+            | Self::Relocate { thread, .. }
+            | Self::Move { thread, .. }
+            | Self::Delete { thread, .. } => Some(thread),
+        }
+    }
 }
 
 /// The threads of one workspace, backed by an append-only JSONL file.
@@ -658,6 +680,9 @@ enum Event {
 pub struct Store {
     path: PathBuf,
     threads: Vec<Thread>,
+    /// Threads a tombstone removed, so an event that raced the deletion
+    /// (a headless reply) is skipped rather than rejected as unknown.
+    deleted: HashSet<ThreadId>,
 }
 
 impl Store {
@@ -672,6 +697,7 @@ impl Store {
         let mut store = Self {
             path,
             threads: Vec::new(),
+            deleted: HashSet::new(),
         };
         let text = match fs::read_to_string(&store.path) {
             Ok(text) => text,
@@ -854,6 +880,22 @@ impl Store {
         })
     }
 
+    /// Delete the thread `id` (ADR 0034): a tombstone is appended and the
+    /// thread is dropped from every reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn delete(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
+        self.thread_mut(id)?;
+        self.commit(Event::Delete {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            created: now,
+        })
+    }
+
     /// Move the thread `id` to `path`, the file's name after a rename
     /// (ADR 0028). Its range and anchor are untouched, so it locates in
     /// the renamed file exactly as it did before.
@@ -895,6 +937,11 @@ impl Store {
     }
 
     fn apply(&mut self, event: Event) -> Result<(), StoreError> {
+        if let Some(id) = event.thread_id()
+            && self.deleted.contains(id)
+        {
+            return Ok(());
+        }
         match event {
             Event::Annotate {
                 id,
@@ -977,6 +1024,11 @@ impl Store {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(created);
                 thread.path = path;
+            }
+            Event::Delete { thread, .. } => {
+                self.thread_mut(&thread)?;
+                self.threads.retain(|other| other.id != thread);
+                self.deleted.insert(thread);
             }
         }
         Ok(())
@@ -1062,8 +1114,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        Anchor, Author, Draft, LineRange, Placement, Reply, Scope, Status, Store, StoreError,
-        Thread, ThreadId, line_hash,
+        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, Placement, Reply, Scope, Status,
+        Store, StoreError, Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1123,6 +1175,42 @@ mod tests {
         store.reply(&id, Reply::new(Author::agent("claude"), 13, "done"))?;
         store.resolve(&id, Author::User, 14)?;
         assert!(!waiting(&store), "a resolved thread never waits");
+        Ok(())
+    }
+
+    #[test]
+    fn a_deleted_thread_is_gone_and_later_events_on_it_are_ignored() -> Result<(), StoreError> {
+        let file = TempFile::new("delete");
+        let mut store = Store::open(&file.0)?;
+        let keep = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "keep"),
+            TEXT,
+            10,
+        )?;
+        let gone = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "gone"),
+            TEXT,
+            11,
+        )?;
+        store.delete(&gone, 12)?;
+        assert!(store.thread(&gone).is_none());
+        assert!(store.delete(&gone, 13).is_err(), "already gone");
+        assert_eq!(store.threads().len(), 1);
+        // A headless reply that raced the deletion lands after the
+        // tombstone; the file still loads and the thread stays gone.
+        let raced = serde_json::to_string(&Event::Reply {
+            v: FORMAT_VERSION,
+            thread: gone.clone(),
+            reply: Reply::new(Author::agent("claude"), 14, "late"),
+        })
+        .map_err(|error| StoreError::parse(0, error.to_string()))?;
+        let mut text = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+        text.push_str(&raced);
+        text.push('\n');
+        fs::write(&file.0, text).map_err(|e| StoreError::io(&file.0, e))?;
+        let reloaded = Store::open(&file.0)?;
+        assert!(reloaded.thread(&gone).is_none());
+        assert!(reloaded.thread(&keep).is_some());
         Ok(())
     }
 

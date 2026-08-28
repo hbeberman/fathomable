@@ -25,6 +25,10 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     if app.popup().is_some() {
         return popup(app, key, ctrl);
     }
+    // An armed delete takes the next key whole (ADR 0034).
+    if app.delete_key(key.code) {
+        return Effect::None;
+    }
     if let Some(pending) = app.pending()
         && matches!(pending, '[' | ']')
     {
@@ -332,6 +336,8 @@ fn thread(app: &mut App, key: KeyEvent) {
         KeyCode::Char('N') => app.thread_step(-1),
         KeyCode::Char('r') => app.thread_reply(),
         KeyCode::Char('x') => app.thread_toggle_resolved(),
+        KeyCode::Char('d') => app.thread_arm_delete(),
+        KeyCode::Char('h') | KeyCode::Left => app.thread_to_file_threads(),
         _ => {}
     }
 }
@@ -369,15 +375,16 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     }
 }
 
-/// Keys in the file-threads pane (ADR 0027).
+/// Keys in the file-threads pane (ADR 0027, focus and `d` per ADR 0034).
 fn file_threads(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.leave_file_threads(),
         KeyCode::Char('j') | KeyCode::Down => app.file_thread_move(1),
         KeyCode::Char('k') | KeyCode::Up => app.file_thread_move(-1),
-        KeyCode::Enter => app.file_thread_open(),
+        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => app.file_thread_open(),
         KeyCode::Char('r') => app.file_thread_reply(),
         KeyCode::Char('x') => app.file_thread_toggle_resolved(),
+        KeyCode::Char('d') => app.file_thread_arm_delete(),
         KeyCode::Char(':') => app.view_mut().start_command(),
         _ => {}
     }
@@ -392,7 +399,7 @@ fn file_threads_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
         MouseEventKind::ScrollUp => app.file_thread_move(-1),
         MouseEventKind::Down(MouseButton::Left) if row == 0 => app.begin_drag(Border::FileThreads),
         MouseEventKind::Down(MouseButton::Left) if row >= 2 => app.file_thread_click(row - 2),
-        MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::FileThreads),
+        MouseEventKind::Down(MouseButton::Left) => app.file_thread_focus(),
         _ => {}
     }
 }
@@ -424,6 +431,7 @@ fn thread_list(app: &mut App, key: KeyEvent, ctrl: bool) {
         (KeyCode::Enter, _) => app.thread_list_open_entry(),
         (KeyCode::Char('r'), _) => app.thread_list_reply(),
         (KeyCode::Char('x'), _) => app.thread_list_toggle_resolved(),
+        (KeyCode::Char('d'), false) => app.thread_list_arm_delete(),
         (KeyCode::Char('z'), _) => app.thread_list_fold(),
         (KeyCode::Char('Z'), _) => app.thread_list_fold_resolved(),
         (KeyCode::Char('f'), _) => app.thread_list_toggle_file(),
@@ -458,6 +466,9 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         Some(Popup::Space | Popup::Jump | Popup::Help | Popup::Status | Popup::Picker(_))
     ) {
         return Effect::None;
+    }
+    if event.kind == MouseEventKind::Down(MouseButton::Left) {
+        app.cancel_delete();
     }
     let row = usize::from(event.row);
     let column = usize::from(event.column);

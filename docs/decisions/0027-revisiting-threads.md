@@ -120,7 +120,12 @@ question round on 2026-08-28; the choices are recorded below.
   `Esc` returns focus to the text. A click on a row opens the thread
   pane on that thread, as `Enter` does; a click on the header only
   focuses the pane. The tree's `j` never crosses into the pane: the two
-  are separate pages of the column.
+  are separate pages of the column. (Superseded in part by
+  [0034](0034-deleting-threads.md), 2026-08-28: the thread pane is open
+  on the highlight whenever this pane has focus, `j`/`k` step by entry
+  and, like a click on a row, change the thread pane without moving
+  focus to it; `Enter`/`l` do, `h` in the thread pane returns, and
+  `Esc` closes the thread pane along with the pane's focus.)
 
 ## Consequences
 

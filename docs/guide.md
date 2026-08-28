@@ -95,9 +95,10 @@ shows the full list inside the app.
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| thread pane `r` `x` `n` `N` `j` `k`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; close |
-| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the one under the cursor highlighted |
-| file threads `j` `k` `Enter` `r` `x`, `Esc` | next / previous thread (the cursor follows), open its pane, reply, resolve or reopen; back to the text |
+| thread pane `r` `x` `n` `N` `j` `k`, `h`, `Esc` | reply, resolve or reopen, next / previous thread in the file (the cursor follows), scroll; back to the file-threads pane; close |
+| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
+| file threads `j` `k` `l` `r` `x`, `Esc` | next / previous thread (the cursor and the thread pane follow), focus the thread pane, reply, resolve or reopen; close the pane, back to the text |
+| `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
 | list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
@@ -156,8 +157,11 @@ under it: one row per thread in line order — range, `●` open or `✓`
 resolved in the gutter colour, the first line of the comment, and the
 reply count and age at the edge. The highlighted row is the thread under
 the cursor, so reading the file walks the pane; `Space t` or a click on
-its header focuses it, a click on a row opens that thread, and `j`/`k`,
-`Enter`, `r`, and `x` act on the highlight.
+its header focuses it and opens the thread pane on the highlight, a
+click on a row or `j`/`k` shows that thread in the pane while the keys
+stay with the list, `l` steps into the pane (`h` steps back), and `r`
+and `x` act on the highlight. The thread pane opens at its end, where
+a dim `─── END ───` row follows the last message.
 
 `Space A` shows the whole review at once: every thread on the current
 work (the ones whose commit `HEAD` can reach), open ones first and then

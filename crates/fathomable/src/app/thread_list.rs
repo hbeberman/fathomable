@@ -456,6 +456,43 @@ impl App {
         rows.entries.get(index).cloned()
     }
 
+    /// `d`: arm deletion of the selected entry (ADR 0034).
+    pub fn thread_list_arm_delete(&mut self) {
+        if let Some(entry) = self.selected_entry() {
+            self.arm_delete(entry.id);
+        }
+    }
+
+    /// The selected entry's index, for a caller about to change the store.
+    pub(super) fn thread_list_selected_index(&self) -> Option<usize> {
+        if !self.list.is_open() {
+            return None;
+        }
+        self.selected_index(&self.thread_list_rows(self.column_width()))
+    }
+
+    /// Re-select after the store changed under the list: the entry with
+    /// the selected id, else the one now at `place` (the index before
+    /// the change), else the last, else nothing.
+    pub(super) fn thread_list_reselect(&mut self, place: Option<usize>) {
+        if !self.list.is_open() {
+            return;
+        }
+        let rows = self.thread_list_rows(self.column_width());
+        let index = self
+            .selected_index(&rows)
+            .filter(|_| {
+                self.list
+                    .selected
+                    .as_ref()
+                    .is_some_and(|id| rows.entries.iter().any(|entry| &entry.id == id))
+            })
+            .or_else(|| place.map(|place| place.min(rows.entries.len().saturating_sub(1))));
+        if let Some(index) = index {
+            self.select_entry(&rows, index);
+        }
+    }
+
     /// Enter: open the entry's file at the thread, open the pane on it,
     /// and close the list.
     pub fn thread_list_open_entry(&mut self) {
@@ -480,10 +517,7 @@ impl App {
     pub fn thread_list_toggle_resolved(&mut self) {
         if let Some(entry) = self.selected_entry() {
             self.toggle_resolved(&entry.id);
-            let rows = self.thread_list_rows(self.column_width());
-            if let Some(index) = self.selected_index(&rows) {
-                self.select_entry(&rows, index);
-            }
+            self.thread_list_reselect(None);
         }
     }
 }

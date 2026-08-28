@@ -1127,6 +1127,9 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     if let Some(pending) = app.pending() {
         left.push(Span::styled(format!("  {pending}"), theme.info));
     }
+    if app.delete_armed().is_some() {
+        left.push(Span::styled("  d", theme.info));
+    }
     if let Some(message) = app.message().or_else(|| view.message()) {
         left.push(Span::styled(format!("  {message}"), theme.info));
     } else if let Some(hint) = hint {
@@ -1569,7 +1572,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         mark_style(theme, words.state()),
     ));
     let hint = if app.focus() == Focus::Thread {
-        "r reply · x resolve/reopen · n/N next/prev · j/k scroll · Esc close"
+        "r reply · x resolve/reopen · d d delete · n/N next/prev · j/k scroll · h list · Esc close"
     } else {
         "click or Space a to focus"
     };
@@ -1618,6 +1621,12 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
             inner,
         ));
     }
+    // The end is marked so a fully scrolled pane reads as such (ADR 0034).
+    body.push(Line::from(Span::styled(
+        " ─── END ───",
+        theme.info.add_modifier(Modifier::DIM),
+    )));
+    debug_assert_eq!(body.len(), thread_body_rows(thread, width));
     let body_rows = rows - 2;
     let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
     let below = body.len().saturating_sub(scroll + body_rows);
@@ -1634,7 +1643,32 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-/// `author  time[tag]` then the wrapped body, indented one cell.
+/// Rows the thread pane's body takes at `width`, as `draw_thread` lays
+/// it out: the snippet, the messages wrapped, and the END row. The scroll
+/// limit is computed from this so the keys and the drawing agree.
+pub(super) fn thread_body_rows(
+    thread: &fathomable_core::annotations::Thread,
+    width: usize,
+) -> usize {
+    let inner = width.saturating_sub(2);
+    let snippet = thread.snippet().lines().count();
+    let snippet_rows = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS);
+    let message_rows = |body: &str| 1 + wrapped_rows(body, inner);
+    let replies: usize = thread
+        .replies()
+        .iter()
+        .map(|reply| 1 + message_rows(reply.body()))
+        .sum();
+    snippet_rows + 1 + message_rows(thread.comment()) + replies + 1
+}
+
+/// Rows a message body takes once wrapped under its author.
+fn wrapped_rows(body: &str, width: usize) -> usize {
+    body.lines()
+        .map(|paragraph| wrap_text(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)).len())
+        .sum()
+}
+
 /// A `thread` panel message: author, age and an optional badge on one
 /// row, the body indented beneath it.
 fn message_lines<'a>(

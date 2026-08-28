@@ -18,7 +18,6 @@ use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 use fathomable_core::reanchor::{Mapping, map_range};
 
-use super::ui::SNIPPET_ROWS;
 use super::{App, Focus, Popup};
 
 /// How a thread should be coloured in the gutter.
@@ -125,7 +124,14 @@ impl Compose {
 pub struct ThreadPanel {
     id: ThreadId,
     scroll: usize,
+    /// The thread's `updated` when the scroll was last set, so a new
+    /// reply sends the pane back to its end (ADR 0034).
+    seen: u64,
 }
+
+/// A scroll past any body: the drawing and `thread_scroll` clamp it to
+/// the last row, so the pane opens at its end (ADR 0034).
+const BOTTOM: usize = usize::MAX;
 
 impl ThreadPanel {
     pub fn id(&self) -> &ThreadId {
@@ -557,7 +563,9 @@ impl App {
     /// The box closed: the keys go back to the pane or the list it was
     /// opened from.
     fn refocus_after_compose(&mut self) {
-        if self.thread.is_some() {
+        if self.focus == Focus::FileThreads && self.file_thread_pane_rows() > 0 {
+            // A reply from the file-threads pane keeps its keys (ADR 0034).
+        } else if self.thread.is_some() {
             self.focus = Focus::Thread;
         } else if self.list.is_open() {
             self.focus = Focus::Threads;
@@ -675,14 +683,30 @@ impl App {
         self.open_thread(id);
     }
 
-    /// Show one thread, keeping the scroll when it is already shown.
+    /// Show one thread at its end, keeping the scroll only when the same
+    /// thread is already shown and nothing was added to it (ADR 0034).
     pub fn open_thread(&mut self, id: ThreadId) {
+        let updated = self.thread(&id).map_or(0, Thread::updated);
         let scroll = self
             .thread
             .as_ref()
-            .filter(|panel| panel.id() == &id)
-            .map_or(0, ThreadPanel::scroll);
-        self.show_panel(ThreadPanel { id, scroll });
+            .filter(|panel| panel.id() == &id && panel.seen == updated)
+            .map_or(BOTTOM, ThreadPanel::scroll);
+        self.show_panel(ThreadPanel {
+            id,
+            scroll,
+            seen: updated,
+        });
+        // Resolve `BOTTOM` to the real last row now the pane has a height.
+        self.thread_scroll(0);
+    }
+
+    /// Show `id` without taking the keys from the pane that asked: the
+    /// file-threads pane drives the thread pane (ADR 0034).
+    pub(super) fn open_thread_behind(&mut self, id: ThreadId) {
+        let focus = self.focus;
+        self.open_thread(id);
+        self.focus = focus;
     }
 
     /// The pane opens along the bottom of the text and takes the keys
@@ -721,10 +745,13 @@ impl App {
         let index = order.iter().position(|other| *other == id).unwrap_or(0);
         let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
         let next = order[(index + step) % order.len()].clone();
+        let updated = self.thread(&next).map_or(0, Thread::updated);
         if let Some(panel) = self.panel_mut() {
             panel.id = next.clone();
-            panel.scroll = 0;
+            panel.scroll = BOTTOM;
+            panel.seen = updated;
         }
+        self.thread_scroll(0);
         self.goto_thread(&next);
     }
 
@@ -740,26 +767,44 @@ impl App {
         }
     }
 
-    /// `j` / `k`: scroll the panel text.
+    /// `j` / `k`: scroll the panel text, stopping at the last row.
     pub fn thread_scroll(&mut self, delta: isize) {
         let Some(panel) = self.panel_mut() else {
             return;
         };
         let id = panel.id().clone();
-        let scroll = panel.scroll.saturating_add_signed(delta);
-        // The rendered height depends on wrapping, so the panel clamps to the
-        // unwrapped line count: `j` past the end never runs away, and the
-        // drawing code trims the remainder.
-        let limit = self.thread(&id).map_or(0, |thread| {
-            let replies: usize = thread
-                .replies()
-                .iter()
-                .map(|reply| reply.body().lines().count() + 2)
-                .sum();
-            SNIPPET_ROWS + 2 + thread.comment().lines().count() + replies
-        });
+        let scroll = panel.scroll;
+        // The limit is the body as drawn, wrapped at the column's width,
+        // so `k` from the end moves at once (ADR 0034).
+        let body_rows = self.thread_rows().saturating_sub(2);
+        let width = self.width.saturating_sub(self.sidebar_width()).max(1);
+        let limit = self
+            .thread(&id)
+            .map_or(0, |thread| super::ui::thread_body_rows(thread, width))
+            .saturating_sub(body_rows);
         if let Some(panel) = self.panel_mut() {
-            panel.scroll = scroll.min(limit);
+            panel.scroll = scroll.min(limit).saturating_add_signed(delta).min(limit);
+        }
+    }
+
+    /// `d` in the pane: arm deletion of the shown thread (ADR 0034).
+    pub fn thread_arm_delete(&mut self) {
+        if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
+            self.arm_delete(id);
+        }
+    }
+
+    /// `h` / Left in the pane: the keys go to the file-threads pane, the
+    /// tree shown first if it was hidden (ADR 0034).
+    pub fn thread_to_file_threads(&mut self) {
+        if self.marks().is_empty() {
+            return;
+        }
+        if self.tree().is_none() {
+            self.show_sidebar();
+        }
+        if self.file_thread_pane_rows() > 0 {
+            self.focus = Focus::FileThreads;
         }
     }
 
@@ -1148,11 +1193,28 @@ mod tests {
                 .collect())
         };
         app.resize(80, 36);
+        // The pane opens at its end, under the END row (ADR 0034).
+        let panel = render(&app)?;
+        let screen = panel.join("\n");
+        assert!(
+            panel.iter().any(|row| row.contains("─── END ───")),
+            "end marker:\n{screen}"
+        );
+        assert!(
+            !panel.iter().any(|row| row.contains("▼")),
+            "nothing below at the end:\n{screen}"
+        );
+        app.thread_scroll(-100);
+        assert_eq!(app.thread_panel().map(super::ThreadPanel::scroll), Some(0));
         let panel = render(&app)?;
         let screen = panel.join("\n");
         assert!(
             panel[0].contains("thread  L3-5  auto-resolved"),
             "header carries range and status:\n{screen}"
+        );
+        assert!(
+            !panel.iter().any(|row| row.contains("─── END ───")),
+            "the end is off screen at the top:\n{screen}"
         );
         assert!(
             panel.iter().any(|row| row.contains("3 │ alpha")),
@@ -1191,7 +1253,13 @@ mod tests {
         app.open_thread_at_cursor();
         assert_eq!(app.message(), Some("no thread on this line"));
         app.start_comment();
-        type_in(&mut app, "first");
+        type_in(
+            &mut app,
+            &(1..=20)
+                .map(|n| format!("first {n}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
         app.compose_submit();
         assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(MarkKind::Open));
 
@@ -1202,6 +1270,7 @@ mod tests {
         let id = panel.id().clone();
         assert_eq!(app.thread_position(), Some((1, 1)));
         assert_eq!(app.focus(), Focus::Thread);
+        app.thread_scroll(-100);
         app.thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if c.target() == &ComposeTarget::Reply(id.clone()))
@@ -1264,13 +1333,18 @@ mod tests {
         let dir = TempDir::new("mouse")?;
         let mut app = dir.app()?;
         app.start_comment();
-        type_in(&mut app, "first");
+        let long = (1..=20)
+            .map(|n| format!("row {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        type_in(&mut app, &long);
         app.compose_submit();
         app.open_thread_at_cursor();
         assert_eq!(app.focus(), Focus::Thread);
         let rows = app.pane_rows();
         let top = rows - app.thread_rows();
         assert_eq!(app.text_rows(), top, "the pane takes rows from the text");
+        app.thread_scroll(-100);
 
         // The wheel scrolls the pane under the pointer, focus aside.
         keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, top + 2));

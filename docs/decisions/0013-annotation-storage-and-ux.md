@@ -127,7 +127,9 @@ were captured in a question round on 2026-08-26.
   its age (`5m ago`, `yesterday 06:38`, then the UTC date), and a
   `[proposes resolving]` badge when set. Bodies are indented under their
   author. When the text overflows the last row reads `▼ N more`, and
-  scrolling stops at the end. `j`/`k` scroll, `n`/`p` switch
+  scrolling stops at the end (since [0034](0034-deleting-threads.md),
+  2026-08-28, the pane opens at its end under a dim `─── END ───` row).
+  `j`/`k` scroll, `n`/`p` switch
   between threads on the row (superseded by
   [0027](0027-revisiting-threads.md), 2026-08-28: they walk every thread
   in the file, moving the cursor; `p` became `N` on 2026-08-28, matching search), `r` replies through the comment box, `x`

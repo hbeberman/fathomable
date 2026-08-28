@@ -28,8 +28,10 @@ use std::path::{Path, PathBuf};
 
 use gix::ObjectId;
 use gix::bstr::{BString, ByteSlice};
+use gix::worktree::stack::state::attributes::Source as AttrSource;
 use gix::worktree::stack::state::ignore::Source;
 
+use crate::content::{self, Attr};
 use crate::diff::Diff;
 use crate::status::{self, State, Status};
 
@@ -89,7 +91,10 @@ pub struct Workspace {
 
 struct Ignore {
     repo: gix::Repository,
+    /// Ignore rules and attributes together, one stack for both queries.
     stack: gix::worktree::Stack,
+    /// Reused match scratch for the `diff` attribute (ADR 0026).
+    diff_attr: gix::attrs::search::Outcome,
 }
 
 impl fmt::Debug for Workspace {
@@ -236,6 +241,20 @@ impl Workspace {
     /// Returns [`WorkspaceError`] when `HEAD` or the blob cannot be read,
     /// or the blob is not UTF-8 text.
     pub fn head_text(&self, relative: &Path) -> Result<Option<String>, WorkspaceError> {
+        let Some(bytes) = self.head_blob(relative)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("HEAD blob is not UTF-8 text: {error}"),
+            })
+    }
+
+    /// The bytes of root-relative `relative` as committed in `HEAD`;
+    /// see [`Self::head_text`] for the `None` and empty cases.
+    fn head_blob(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let Some(git) = self.ignore.as_ref() else {
             return Ok(None);
         };
@@ -250,7 +269,7 @@ impl Workspace {
             .is_unborn();
         if unborn {
             tracing::debug!("HEAD is unborn; diff base is empty");
-            return Ok(Some(String::new()));
+            return Ok(Some(Vec::new()));
         }
         let tree = git
             .repo
@@ -264,7 +283,7 @@ impl Workspace {
         })?
         else {
             tracing::debug!(path = %relative.display(), "not in HEAD; diff base is empty");
-            return Ok(Some(String::new()));
+            return Ok(Some(Vec::new()));
         };
         if !entry.mode().is_blob_or_symlink() {
             return Err(fail(
@@ -274,9 +293,7 @@ impl Workspace {
         let object = entry
             .object()
             .map_err(|error| fail(format!("cannot read blob from HEAD: {error}")))?;
-        String::from_utf8(object.detach().data)
-            .map(Some)
-            .map_err(|error| fail(format!("HEAD blob is not UTF-8 text: {error}")))
+        Ok(Some(object.detach().data))
     }
 
     /// The text of root-relative `relative` as staged in the index, the
@@ -402,8 +419,12 @@ impl Workspace {
         let mut entries = Vec::with_capacity(dirty.len());
         for (path, (state, staged)) in dirty {
             let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
-            let (added, removed) = self.count_lines(&relative, state);
-            let entry = status::Entry::new(relative, state, added, removed);
+            let entry = match self.count_lines(&relative, state) {
+                Lines::Text { added, removed } => {
+                    status::Entry::new(relative, state, added, removed)
+                }
+                Lines::Binary => status::Entry::new(relative, state, 0, 0).binary(),
+            };
             entries.push(if staged { entry.staged() } else { entry });
         }
         let status = Status::from_entries(entries);
@@ -411,32 +432,52 @@ impl Workspace {
         Ok(status)
     }
 
-    /// `(added, removed)` lines of the working tree against `HEAD`, zero
-    /// for files that are not text.
-    fn count_lines(&self, relative: &Path, state: State) -> (usize, usize) {
+    /// Line counts of the working tree against `HEAD`, or that the file
+    /// is binary by git's rule (ADR 0026): the `diff` attribute, else a
+    /// `NUL` in the first bytes of whichever side exists.
+    fn count_lines(&mut self, relative: &Path, state: State) -> Lines {
+        let attr = self.diff_attr(relative);
         let head = match state {
-            State::Untracked => Some(String::new()),
-            _ => self.head_text(relative).ok().flatten(),
+            State::Untracked => Some(Vec::new()),
+            _ => self.head_blob(relative).ok().flatten(),
         };
         let worktree = match state {
-            State::Deleted => Some(String::new()),
-            _ => self.worktree_text(relative),
+            State::Deleted => Some(Vec::new()),
+            _ => self.worktree_bytes(relative),
         };
-        match (head, worktree) {
-            (Some(old), Some(new)) => Diff::new(&old, &new).counts(),
-            _ => (0, 0),
+        let (Some(old), Some(new)) = (head, worktree) else {
+            return Lines::Text {
+                added: 0,
+                removed: 0,
+            };
+        };
+        let binary = attr
+            .decided()
+            .unwrap_or_else(|| content::is_binary(&old) || content::is_binary(&new));
+        if binary {
+            return Lines::Binary;
+        }
+        match (String::from_utf8(old), String::from_utf8(new)) {
+            (Ok(old), Ok(new)) => {
+                let (added, removed) = Diff::new(&old, &new).counts();
+                Lines::Text { added, removed }
+            }
+            _ => Lines::Text {
+                added: 0,
+                removed: 0,
+            },
         }
     }
 
-    /// The diffable text of `relative` on disk: a symlink's target path,
+    /// The diffable bytes of `relative` on disk: a symlink's target path,
     /// matching the blob git stores for it, or the file's content.
-    fn worktree_text(&self, relative: &Path) -> Option<String> {
+    fn worktree_bytes(&self, relative: &Path) -> Option<Vec<u8>> {
         let absolute = self.root.join(relative);
         match absolute.symlink_metadata() {
             Ok(meta) if meta.is_symlink() => fs::read_link(&absolute)
                 .ok()
-                .map(|target| target.to_string_lossy().into_owned()),
-            _ => fs::read_to_string(&absolute).ok(),
+                .map(|target| target.to_string_lossy().into_owned().into_bytes()),
+            _ => fs::read(&absolute).ok(),
         }
     }
 
@@ -449,6 +490,64 @@ impl Workspace {
     }
 
     /// Whether git ignores the root-relative `relative`; never true outside git.
+    /// The `diff` attribute `.gitattributes` gives root-relative
+    /// `relative` (ADR 0026); [`Attr::Unspecified`] outside git.
+    pub fn diff_attr(&mut self, relative: &Path) -> Attr {
+        match self.ignore.as_mut() {
+            Some(ignore) => ignore.diff_attr(relative),
+            None => Attr::Unspecified,
+        }
+    }
+
+    /// The size in bytes of root-relative `relative` as committed in
+    /// `HEAD`, read from the object header without loading the blob
+    /// (ADR 0026).
+    ///
+    /// Returns `None` outside git, on an unborn branch, and when `HEAD`
+    /// has no blob at this path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD` or its tree cannot be read.
+    pub fn head_size(&self, relative: &Path) -> Result<Option<u64>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(None);
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        if git
+            .repo
+            .head()
+            .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
+            .is_unborn()
+        {
+            return Ok(None);
+        }
+        let tree = git
+            .repo
+            .head_tree()
+            .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+        let Some(entry) = tree.lookup_entry_by_path(relative).map_err(|error| {
+            fail(format!(
+                "cannot look up {} in HEAD: {error}",
+                relative.display()
+            ))
+        })?
+        else {
+            return Ok(None);
+        };
+        if !entry.mode().is_blob_or_symlink() {
+            return Ok(None);
+        }
+        let header = git
+            .repo
+            .find_header(entry.id())
+            .map_err(|error| fail(format!("cannot read blob header from HEAD: {error}")))?;
+        Ok(Some(header.size()))
+    }
+
     pub fn is_ignored(&mut self, relative: &Path, kind: EntryKind) -> bool {
         let Some(ignore) = self.ignore.as_mut() else {
             return false;
@@ -573,13 +672,47 @@ impl Ignore {
             .index_or_empty()
             .map_err(|error| format!("cannot read git index: {error}"))?;
         let stack = repo
-            .excludes(&index, None, Source::WorktreeThenIdMappingIfNotSkipped)
-            .map_err(|error| format!("cannot read git ignore rules: {error}"))?
+            .attributes(
+                &index,
+                AttrSource::WorktreeThenIdMapping,
+                Source::WorktreeThenIdMappingIfNotSkipped,
+                None,
+            )
+            .map_err(|error| format!("cannot read git ignore rules and attributes: {error}"))?
             .detach();
+        let diff_attr = stack.selected_attribute_matches(["diff"]);
         Ok(Self {
             repo: repo.clone(),
             stack,
+            diff_attr,
         })
+    }
+
+    /// The `diff` attribute of `relative` (ADR 0026).
+    fn diff_attr(&mut self, relative: &Path) -> Attr {
+        let platform = match self.stack.at_path(
+            relative,
+            Some(gix::index::entry::Mode::FILE),
+            &gix::objs::find::Never,
+        ) {
+            Ok(platform) => platform,
+            Err(error) => {
+                tracing::warn!(%error, path = %relative.display(), "attribute lookup failed");
+                return Attr::Unspecified;
+            }
+        };
+        self.diff_attr.reset();
+        platform.matching_attributes(&mut self.diff_attr);
+        let state = self
+            .diff_attr
+            .iter_selected()
+            .find(|m| m.assignment.name.as_str() == "diff")
+            .map(|m| m.assignment.state);
+        match state {
+            Some(gix::attrs::StateRef::Unset) => Attr::Binary,
+            Some(gix::attrs::StateRef::Set | gix::attrs::StateRef::Value(_)) => Attr::Text,
+            Some(gix::attrs::StateRef::Unspecified) | None => Attr::Unspecified,
+        }
     }
 
     fn is_ignored(&mut self, relative: &Path, kind: EntryKind) -> bool {
@@ -600,6 +733,12 @@ impl Ignore {
             }
         }
     }
+}
+
+/// What `count_lines` found for a dirty path.
+enum Lines {
+    Text { added: usize, removed: usize },
+    Binary,
 }
 
 /// Why the workspace could not be opened or read.

@@ -8,6 +8,7 @@
 
 pub mod annotations;
 pub mod config;
+pub mod content;
 pub mod diff;
 mod document;
 pub mod editor;

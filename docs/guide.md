@@ -52,6 +52,15 @@ coloured by their info string (` ```rust `). A language syntect does not
 bundle (TOML, KDL, Dockerfile among them) shows plain. `gs` still flips any
 file between the two views.
 
+A binary file — one git would diff as binary: `-diff` or `binary` in
+`.gitattributes`, else a `NUL` in its first 8000 bytes — opens as a
+**file-info pane** instead: the format its magic number gives away
+(WebAssembly, PNG, ELF, gzip, …), its size, mode, and modification time,
+and its git state with the `HEAD` size beside the size on disk. A text
+file over `viewer.max-file-size-mib` (64 MiB by default) gets the same
+pane with a notice saying which config line raises the limit. Neither can
+be annotated: `c` says so.
+
 ## 3. Keys
 
 Vim-style movement in the view; `Space` opens a Helix-style menu. `Space ?`
@@ -139,7 +148,8 @@ holding `]g` from the top of the tree visits every uncommitted change.
 shows every uncommitted file with a letter in its gutter column,
 `M`odified, `A`dded, `D`eleted, or `?` untracked, in one colour when the
 change is staged and another when it is not, and its `+added -removed`
-counts after the name; a collapsed folder shows the most advanced letter
+counts after the name (`bin` for a binary file, which has no lines to
+count); a collapsed folder shows the most advanced letter
 and the summed counts of everything beneath it, and the root header shows
 the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
 of this within a beat.
@@ -192,6 +202,10 @@ markdown {
     extensions "md" "markdown" "mdx"   // files rendered as Markdown
     names "README" "LICENSE" "LICENCE" "COPYING" "CHANGELOG" \
           "CONTRIBUTING" "AUTHORS" "NOTICE"   // extensionless prose
+}
+
+viewer {
+    max-file-size-mib 64    // larger text files show the file-info pane
 }
 ```
 

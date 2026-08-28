@@ -14,7 +14,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-gix = { version = "0.87", default-features = false, features = ["excludes", "index", "sha1"] }
+gix = { version = "0.87", default-features = false, features = ["attributes", "excludes", "index", "sha1"] }
 kdl = { version = "6", default-features = false, features = ["span"] }
 nucleo-matcher = "0.3"
 pulldown-cmark = { version = "0.13", default-features = false }

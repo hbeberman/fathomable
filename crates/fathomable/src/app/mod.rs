@@ -7,6 +7,7 @@
 
 mod clipboard;
 mod commands;
+pub(crate) mod info;
 mod keys;
 pub(crate) mod reanchor;
 mod sidebar;
@@ -36,7 +37,8 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use fathomable_core::annotations::{Scope, Store};
-use fathomable_core::config::{FollowConfig, MarkdownConfig};
+use fathomable_core::config::{FollowConfig, MarkdownConfig, ViewerConfig};
+use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
 use fathomable_core::follow::{Change, Delta, Ignore, Queue, Target};
@@ -335,6 +337,10 @@ pub struct App {
     highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
     markdown: MarkdownConfig,
+    /// How files are read (ADR 0026).
+    viewer: ViewerConfig,
+    /// The config file the over-limit notice names (ADR 0026).
+    config_path: PathBuf,
     auto: bool,
     ignore: Ignore,
     queue: Queue,
@@ -362,6 +368,8 @@ impl App {
             seen,
             highlighter,
             markdown,
+            viewer,
+            config_path,
         } = options;
         let ignore = match Ignore::new(&follow.ignore) {
             Ok(ignore) => ignore,
@@ -404,6 +412,8 @@ impl App {
             follow,
             highlighter,
             markdown,
+            viewer,
+            config_path,
             ignore,
             queue: Queue::default(),
             toasts: Vec::new(),
@@ -916,10 +926,10 @@ impl App {
             return;
         };
         doc.seen_dirty = false;
-        let Some(seen) = self.seen.as_mut() else {
+        let (Some(seen), Some(text)) = (self.seen.as_mut(), doc.document.text()) else {
             return;
         };
-        match seen.record(&doc.relative, doc.document.text()) {
+        match seen.record(&doc.relative, text) {
             Ok(true) => tracing::debug!(path = %doc.relative.display(), "snapshotted as seen"),
             Ok(false) => {}
             Err(error) => tracing::warn!(%error, "cannot snapshot as seen"),
@@ -1188,10 +1198,16 @@ impl App {
             index
         } else {
             let absolute = self.workspace.root().join(&relative);
-            match Document::load(&absolute) {
+            let policy = Policy {
+                attr: self.workspace.diff_attr(&relative),
+                max_bytes: self.viewer.max_file_bytes(),
+            };
+            match Document::load(&absolute, policy) {
                 Ok(document) => {
+                    // A binary or over-limit file has no text: the view is
+                    // empty and the file-info pane draws instead (ADR 0026).
                     let view = View::with_syntax(
-                        document.text().to_owned(),
+                        document.text().unwrap_or_default().to_owned(),
                         1,
                         1,
                         self.syntax_for(&relative),
@@ -1355,8 +1371,9 @@ impl App {
             Ok(true) => {
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
                 let old = doc.view.text().to_owned();
-                let delta = Delta::new(old, doc.document.text());
-                doc.view.reload(doc.document.text().to_owned());
+                let text = doc.document.text().unwrap_or_default();
+                let delta = Delta::new(old, text);
+                doc.view.reload(text.to_owned());
                 doc.deltas.push(delta.clone());
                 if doc.deltas.len() > MAX_DELTAS {
                     doc.deltas.remove(0);
@@ -1378,7 +1395,13 @@ impl App {
     /// snapshot (ADR 0015) and the `HEAD` text (ADR 0006). A `HEAD` read
     /// failure is reported once and leaves no base.
     fn refresh_base(&mut self, index: usize) {
-        let Some(relative) = self.docs.get(index).map(|doc| doc.relative.clone()) else {
+        // A binary or over-limit file has nothing to diff (ADR 0026).
+        let Some(relative) = self
+            .docs
+            .get(index)
+            .filter(|doc| doc.document.text().is_some())
+            .map(|doc| doc.relative.clone())
+        else {
             return;
         };
         let head = match self.workspace.head_text(&relative) {
@@ -1616,6 +1639,10 @@ pub struct Options {
     pub highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
     pub markdown: MarkdownConfig,
+    /// How files are read (ADR 0026).
+    pub viewer: ViewerConfig,
+    /// The config file in use, for the over-limit notice (ADR 0026).
+    pub config_path: PathBuf,
 }
 
 #[cfg(test)]
@@ -1631,6 +1658,8 @@ impl Options {
             seen: None,
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
+            viewer: ViewerConfig::default(),
+            config_path: PathBuf::from("config.kdl"),
         }
     }
 }
@@ -3069,6 +3098,67 @@ mod tests {
         assert_eq!(app.queue().len(), 1);
         app.settle();
         assert!(app.queue().is_empty(), "the opened range is on screen");
+        Ok(())
+    }
+
+    #[test]
+    fn binary_and_oversized_files_open_as_file_info() -> anyhow::Result<()> {
+        use fathomable_core::config::ViewerConfig;
+
+        let dir = TempDir::new("binary")?;
+        fs::write(dir.0.join("plugin.wasm"), b"\0asm\x01\0\0\0")?;
+        fs::write(dir.0.join("big.log"), "x".repeat(3 * 1024 * 1024))?;
+        let mut app = app_with(
+            &dir,
+            Options {
+                viewer: ViewerConfig {
+                    max_file_size_mib: 2,
+                },
+                config_path: PathBuf::from("/etc/fathomable/config.kdl"),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
+
+        app.open(Path::new("plugin.wasm"));
+        assert_eq!(app.current_path(), Path::new("plugin.wasm"));
+        let info = app
+            .info()
+            .ok_or_else(|| anyhow::anyhow!("a binary opens as file info"))?;
+        let rows: Vec<(&str, &str)> = info
+            .rows
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        assert_eq!(rows[0], ("format", "WebAssembly module"));
+        assert_eq!(rows[1], ("size", "8 B"));
+        assert_eq!(rows[2], ("mode", "regular file"));
+        assert_eq!(rows.last(), Some(&("git", "no repository")));
+        assert_eq!(app.view().text(), "");
+        app.start_comment();
+        assert_eq!(app.message(), Some("cannot annotate a binary file"));
+        assert!(app.popup().is_none());
+
+        app.open(Path::new("big.log"));
+        let info = app
+            .info()
+            .ok_or_else(|| anyhow::anyhow!("an oversized file opens as file info"))?;
+        assert_eq!(info.rows[0].1, "text, too large to view");
+        assert_eq!(
+            info.notice,
+            [
+                "Too large to view: 3 MiB, limit is 2 MiB.",
+                "Raise it with `viewer { max-file-size-mib 4 }` in /etc/fathomable/config.kdl",
+            ]
+        );
+        app.start_comment();
+        assert_eq!(app.message(), Some("cannot annotate a file this large"));
+
+        // Text files are unaffected and history spans both kinds.
+        app.open(Path::new("README.md"));
+        assert!(app.info().is_none());
+        app.history_back();
+        assert_eq!(app.current_path(), Path::new("big.log"));
+        assert!(app.info().is_some());
         Ok(())
     }
 }

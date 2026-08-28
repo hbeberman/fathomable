@@ -70,3 +70,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     each in full; `Enter` jumps to one, `r` and `x` act in place, and the
     file-scoped picker is gone
     ([0025](decisions/0025-thread-list.md)).
+17. **Binary files and the file-info pane.** A file is binary when git
+    would say so — the `diff` attribute, else a `NUL` in its first 8000
+    bytes; opening one, or a text file over `viewer.max-file-size-mib`,
+    shows a file-info pane with its format, sizes, and git state, and
+    the sidebar tags it `bin`
+    ([0026](decisions/0026-binary-files-and-file-info.md)).

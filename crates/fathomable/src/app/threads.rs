@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use fathomable_core::annotations::{
     Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
+use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 use fathomable_core::reanchor::{Mapping, map_range};
 
@@ -194,7 +195,7 @@ impl App {
         let Some(doc) = self.docs.get(index) else {
             return;
         };
-        let text = doc.document.text().to_owned();
+        let text = doc.document.text().unwrap_or_default().to_owned();
         let path = doc.relative.clone();
         let previous: Vec<(ThreadId, Placement)> = doc
             .marks
@@ -239,7 +240,7 @@ impl App {
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };
-        let text = doc.document.text();
+        let text = doc.document.text().unwrap_or_default();
         doc.marks = store
             .for_path(&doc.relative)
             .filter(|thread| self.scope.includes(thread))
@@ -289,9 +290,21 @@ impl App {
 
     /// `c`: open the comment box on the selection, or the cursor line.
     pub fn start_comment(&mut self) {
-        if self.current.is_none() {
+        let Some(doc) = self.current.and_then(|index| self.docs.get(index)) else {
             self.notice("open a file to annotate it");
             return;
+        };
+        // Threads anchor to lines, and these files have none (ADR 0026).
+        match doc.document.content() {
+            Content::Text(_) => {}
+            Content::Binary { .. } => {
+                self.notice("cannot annotate a binary file");
+                return;
+            }
+            Content::TooLarge { .. } => {
+                self.notice("cannot annotate a file this large");
+                return;
+            }
         }
         if self.store.is_none() {
             self.store_mut();
@@ -429,7 +442,11 @@ impl App {
             return;
         };
         let path = self.docs[index].relative.clone();
-        let text = self.docs[index].document.text().to_owned();
+        let text = self.docs[index]
+            .document
+            .text()
+            .unwrap_or_default()
+            .to_owned();
         // The thread belongs to the work it was written against (ADR 0024).
         let draft = Draft::new(&path, range, comment).at_commit(self.workspace.head_commit());
         let Some(store) = self.store_mut() else {

@@ -485,3 +485,72 @@ fn reachable_commits_are_head_and_its_ancestors() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn binary_files_follow_the_diff_attribute_then_the_nul_sniff() -> TestResult {
+    use fathomable_core::content::Attr;
+    use fathomable_core::status::State;
+
+    let dir = TempDir::new("binary")?;
+    init(&dir.0)?;
+    let head = [
+        (".gitattributes", "*.dat binary\n*.nul diff\n"),
+        ("plain.dat", "text by content\n"),
+        ("forced.nul", "a\0b\n"),
+        ("blob.bin", "\0asm\x01\0\0\0"),
+        ("notes.md", "one\n"),
+    ];
+    commit(&dir.0, &head)?;
+    stage(&dir.0, &head)?;
+    for (name, content) in head {
+        fs::write(dir.0.join(name), content)?;
+    }
+    let mut workspace = Workspace::discover(&dir.0)?;
+
+    // The attribute answers before any bytes are read.
+    assert_eq!(workspace.diff_attr(Path::new("plain.dat")), Attr::Binary);
+    assert_eq!(workspace.diff_attr(Path::new("forced.nul")), Attr::Text);
+    assert_eq!(
+        workspace.diff_attr(Path::new("blob.bin")),
+        Attr::Unspecified
+    );
+    assert_eq!(
+        workspace.diff_attr(Path::new("notes.md")),
+        Attr::Unspecified
+    );
+
+    // HEAD sizes come from the object headers.
+    assert_eq!(workspace.head_size(Path::new("blob.bin"))?, Some(8));
+    assert_eq!(workspace.head_size(Path::new("missing.bin"))?, None);
+
+    // Edit every file: the status flags the binaries and counts the rest.
+    fs::write(dir.0.join("plain.dat"), "text by content, edited\n")?;
+    fs::write(dir.0.join("forced.nul"), "a\0b\nc\n")?;
+    fs::write(dir.0.join("blob.bin"), "\0asm\x01\0\0\0more")?;
+    fs::write(dir.0.join("notes.md"), "one\ntwo\n")?;
+    fs::write(dir.0.join("new.png"), b"\x89PNG\r\n\x1a\n\0\0")?;
+    let status = workspace.status()?;
+    let flags: Vec<(String, State, bool, usize)> = status
+        .entries()
+        .iter()
+        .map(|e| {
+            (
+                e.path().display().to_string(),
+                e.state(),
+                e.is_binary(),
+                e.added(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        flags,
+        [
+            ("blob.bin".to_owned(), State::Modified, true, 0),
+            ("forced.nul".to_owned(), State::Modified, false, 1),
+            ("new.png".to_owned(), State::Untracked, true, 0),
+            ("notes.md".to_owned(), State::Modified, false, 1),
+            ("plain.dat".to_owned(), State::Modified, true, 0),
+        ]
+    );
+    Ok(())
+}

@@ -8,12 +8,13 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use fathomable_core::annotations::Status;
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
+use super::info::Info;
 use super::thread_list::{Row, Rows};
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
@@ -272,11 +273,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 }
 
 /// The text column: the thread list when it is open (ADR 0025), else the
+/// file-info pane for a binary or over-limit file (ADR 0026), else the
 /// document, else the welcome block.
 fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
     let text_rows = usize::from(text_area.height);
     if app.thread_list().is_open() {
         draw_thread_list(frame, app, theme, text_area);
+    } else if let Some(info) = app.info() {
+        draw_info(frame, app, theme, text_area, &info);
     } else if app.has_document() {
         frame.render_widget(
             Paragraph::new(text_lines(app, theme, gutter, text_rows)).style(theme.text),
@@ -362,7 +366,11 @@ fn place_cursor(
     if matches!(view.mode(), Mode::Command | Mode::Search { .. }) {
         let col = 1 + display_width(view.input());
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
-    } else if app.focus() != Focus::View || !app.has_document() || app.thread_list().is_open() {
+    } else if app.focus() != Focus::View
+        || !app.has_document()
+        || app.thread_list().is_open()
+        || app.info().is_some()
+    {
         // The highlighted row is the cursor; leaving the terminal cursor
         // unset keeps it hidden rather than parked on the divider.
     } else {
@@ -550,6 +558,7 @@ fn sidebar_marks<'a>(
             staged: entry.is_staged(),
             added: entry.added(),
             removed: entry.removed(),
+            binary: entry.is_binary(),
         })
     };
     let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
@@ -578,6 +587,10 @@ fn sidebar_marks<'a>(
                 format!(" -{}", git.removed),
                 on_bg(theme.diff_minus),
             ));
+        }
+        // A dirty binary file has no counts; the tag says why (ADR 0026).
+        if git.binary {
+            tail.push(Span::styled(" bin", on_bg(theme.info)));
         }
     }
     if badge {
@@ -1072,6 +1085,39 @@ fn draw_compose(
 /// replies. It is a pane, not a popup, so it draws on the text background.
 /// The thread list (ADR 0025) in place of the document: a header with
 /// the filter, the counts, and the keys, then the rows from the scroll.
+/// The file-info pane (ADR 0026): the path as a header, the labelled
+/// rows with their labels right-aligned, then the notice.
+fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: &Info) {
+    let width = usize::from(area.width);
+    let label_width = info
+        .rows
+        .iter()
+        .map(|(label, _)| display_width(label))
+        .max()
+        .unwrap_or(0);
+    let header = vec![Span::styled(
+        format!(" {}", app.current_path().display()),
+        theme.popup_key,
+    )];
+    let mut lines = vec![header_line(theme, header, "", width), Line::default()];
+    for (label, value) in &info.rows {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {label:>label_width$}"), theme.popup_key),
+            Span::raw(format!("  {value}")),
+        ]));
+    }
+    lines.push(Line::default());
+    for line in &info.notice {
+        lines.push(Line::from(Span::styled(format!("  {line}"), theme.info)));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme.text)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let width = usize::from(area.width);
     let rows = usize::from(area.height);
@@ -1358,7 +1404,7 @@ use super::thread_list::wrap;
 
 /// `YYYY-MM-DD HH:MM` in UTC from Unix seconds (Howard Hinnant's civil-date
 /// algorithm; no calendar crate needed for a timestamp label).
-fn format_time(secs: u64) -> String {
+pub(super) fn format_time(secs: u64) -> String {
     let days = i64::try_from(secs / 86_400).unwrap_or(0);
     let rem = secs % 86_400;
     let z = days + 719_468;

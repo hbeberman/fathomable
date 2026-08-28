@@ -178,6 +178,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             seen,
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
+            viewer: config.viewer().clone(),
+            config_path: config_path(cli, dirs),
         },
         &theme,
         open.as_deref(),
@@ -239,13 +241,7 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         .as_deref()
         .or_else(|| config.theme())
         .unwrap_or(DEFAULT_THEME);
-    println!(
-        "config {}",
-        cli.config
-            .clone()
-            .unwrap_or_else(|| dirs.config_dir().join("config.kdl"))
-            .display()
-    );
+    println!("config {}", config_path(cli, dirs).display());
     println!("theme \"{theme}\"");
     let follow = config.follow();
     println!("follow {{");
@@ -270,7 +266,20 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     let names: Vec<String> = markdown.names.iter().map(|n| format!("{n:?}")).collect();
     println!("    names {}", names.join(" "));
     println!("}}");
+    println!("viewer {{");
+    println!(
+        "    max-file-size-mib {}",
+        config.viewer().max_file_size_mib
+    );
+    println!("}}");
     ExitCode::SUCCESS
+}
+
+/// The config file in use: `--config`, else the XDG one.
+fn config_path(cli: &Cli, dirs: &XdgDirs) -> PathBuf {
+    cli.config
+        .clone()
+        .unwrap_or_else(|| dirs.config_dir().join("config.kdl"))
 }
 
 /// Pick the theme: `--theme`, then `config.kdl`, then the built-in default.

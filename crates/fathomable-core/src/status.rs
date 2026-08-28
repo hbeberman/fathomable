@@ -72,6 +72,7 @@ pub struct Entry {
     path: PathBuf,
     state: State,
     staged: bool,
+    binary: bool,
     added: usize,
     removed: usize,
 }
@@ -85,9 +86,18 @@ impl Entry {
             path,
             state,
             staged: false,
+            binary: false,
             added,
             removed,
         }
+    }
+
+    /// Mark the entry as binary (ADR 0026): it has no line counts, and
+    /// the sidebar tags it instead.
+    #[must_use]
+    pub fn binary(mut self) -> Self {
+        self.binary = true;
+        self
     }
 
     /// Mark the entry as staged: the index differs from `HEAD` for it.
@@ -116,6 +126,12 @@ impl Entry {
         self.staged
     }
 
+    /// Whether the file is binary by git's rule (ADR 0026).
+    #[must_use]
+    pub fn is_binary(&self) -> bool {
+        self.binary
+    }
+
     /// Lines added against `HEAD`.
     #[must_use]
     pub fn added(&self) -> usize {
@@ -140,6 +156,8 @@ pub struct Summary {
     pub added: usize,
     /// Summed removals.
     pub removed: usize,
+    /// Whether every dirty path beneath is binary (ADR 0026).
+    pub binary: bool,
 }
 
 /// The dirty set, sorted by path.
@@ -209,12 +227,14 @@ impl Status {
                     staged: entry.staged,
                     added: entry.added,
                     removed: entry.removed,
+                    binary: entry.binary,
                 },
                 Some(acc) => Summary {
                     state: acc.state.max(entry.state),
                     staged: acc.staged && entry.staged,
                     added: acc.added + entry.added,
                     removed: acc.removed + entry.removed,
+                    binary: acc.binary && entry.binary,
                 },
             });
         }
@@ -334,6 +354,7 @@ mod tests {
                 staged: false,
                 added: 4,
                 removed: 2,
+                binary: false,
             })
         );
         assert_eq!(

@@ -71,6 +71,10 @@ choices were captured in a question round on 2026-08-26.
 - The tree shows the directory name of the root at the top; entries are
   sorted directories first, then files, case-insensitively.
 - A file that is not valid UTF-8 is not opened; the status line says why.
+  Amended 2026-08-27: a binary file by git's rule, or a text file over the
+  configured size, opens as a file-info pane instead
+  ([0026](0026-binary-files-and-file-info.md)); only non-UTF-8 text is
+  still refused.
 
 ### Space menu
 

@@ -32,6 +32,31 @@ pub struct Config {
     theme: Option<String>,
     follow: FollowConfig,
     markdown: MarkdownConfig,
+    viewer: ViewerConfig,
+}
+
+/// The `viewer { ... }` block (ADR 0026): how files are read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ViewerConfig {
+    /// The largest text file the viewer reads, in MiB; larger ones show
+    /// the file-info pane instead.
+    pub max_file_size_mib: u64,
+}
+
+impl Default for ViewerConfig {
+    fn default() -> Self {
+        Self {
+            max_file_size_mib: crate::content::DEFAULT_MAX_MIB,
+        }
+    }
+}
+
+impl ViewerConfig {
+    /// The ceiling in bytes, saturating.
+    #[must_use]
+    pub fn max_file_bytes(&self) -> u64 {
+        self.max_file_size_mib.saturating_mul(crate::content::MIB)
+    }
 }
 
 /// The `markdown { ... }` block (ADR 0016): which files render as Markdown.
@@ -143,6 +168,7 @@ impl Config {
     ///
     /// Returns [`ConfigError`] for invalid KDL, an unknown node, or a value
     /// of the wrong shape.
+    #[expect(clippy::too_many_lines, reason = "one match arm per config block")]
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let line_of = |offset: usize| text.chars().take(offset).filter(|c| *c == '\n').count() + 1;
         let doc = KdlDocument::parse(text).map_err(|error| {
@@ -224,6 +250,30 @@ impl Config {
                         }
                     }
                 }
+                "viewer" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`viewer` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        match child.name().value() {
+                            "max-file-size-mib" => {
+                                config.viewer.max_file_size_mib = count(child, line, "MiB count")?;
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown viewer setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 other => {
                     return Err(ConfigError {
                         path: None,
@@ -246,6 +296,12 @@ impl Config {
     #[must_use]
     pub fn follow(&self) -> &FollowConfig {
         &self.follow
+    }
+
+    /// How files are read (ADR 0026).
+    #[must_use]
+    pub fn viewer(&self) -> &ViewerConfig {
+        &self.viewer
     }
 
     /// Which files render as Markdown (ADR 0016).
@@ -312,15 +368,19 @@ fn one_bool(node: &KdlNode, line: Option<usize>) -> Result<bool, ConfigError> {
 
 /// A non-negative millisecond count as a duration.
 fn millis(node: &KdlNode, line: Option<usize>) -> Result<Duration, ConfigError> {
-    one_arg(node, line, "millisecond count")?
+    count(node, line, "millisecond count").map(Duration::from_millis)
+}
+
+/// A non-negative integer, described as `what` in the error.
+fn count(node: &KdlNode, line: Option<usize>, what: &str) -> Result<u64, ConfigError> {
+    one_arg(node, line, what)?
         .as_integer()
         .and_then(|n| u64::try_from(n).ok())
-        .map(Duration::from_millis)
         .ok_or_else(|| ConfigError {
             path: None,
             line,
             message: format!(
-                "`{}` takes exactly one non-negative millisecond count",
+                "`{}` takes exactly one non-negative {what}",
                 node.name().value()
             ),
         })

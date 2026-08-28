@@ -77,3 +77,23 @@ fn missing_file_is_default_and_explicit_path_is_read() -> TestResult {
     std::fs::remove_dir_all(&dir)?;
     Ok(())
 }
+
+#[test]
+fn viewer_block_sets_the_size_ceiling_in_mib() -> TestResult {
+    use fathomable_core::content::MIB;
+
+    assert_eq!(Config::default().viewer().max_file_size_mib, 64);
+    let config = Config::parse("viewer {\n    max-file-size-mib 512\n}\n")?;
+    assert_eq!(config.viewer().max_file_size_mib, 512);
+    assert_eq!(config.viewer().max_file_bytes(), 512 * MIB);
+    let error = must_fail("viewer {\n    max-file-size-mib -1\n}\n")?;
+    assert_eq!(error.line(), Some(2));
+    let error = must_fail("viewer {\n    max-bytes 1\n}\n")?;
+    assert!(
+        error
+            .to_string()
+            .contains("unknown viewer setting `max-bytes`"),
+        "{error}"
+    );
+    Ok(())
+}

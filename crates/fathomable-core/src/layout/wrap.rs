@@ -194,6 +194,14 @@ pub(super) fn wrap_hard(chunk: &Chunk, width: usize) -> Vec<Line> {
     wrap_hard_chunks(std::slice::from_ref(chunk), width)
 }
 
+/// Join `chunks`, which together form one source line, into one line
+/// that is never wrapped (ADR 0029).
+pub(super) fn unwrapped(chunks: &[Chunk]) -> Line {
+    wrap_hard_chunks(chunks, usize::MAX)
+        .pop()
+        .unwrap_or_else(|| Line::from_spans(Vec::new()))
+}
+
 /// Hard-wrap `chunks`, which together form one source line, between
 /// grapheme clusters; a style change never forces a break.
 pub(super) fn wrap_hard_chunks(chunks: &[Chunk], width: usize) -> Vec<Line> {

@@ -200,13 +200,51 @@ fn blockquotes_prefix_every_line() {
 }
 
 #[test]
-fn source_view_is_verbatim_with_hard_wrap() -> TestResult {
+fn source_view_is_verbatim_and_never_wraps() -> TestResult {
     let src = "# Title\n\n- item with **bold**\n";
     let layout = Layout::source(src, 10);
-    assert_eq!(texts(&layout), ["# Title", "", "- item wit", "h **bold**"]);
-    assert_eq!(numbers(&layout), [Some(1), Some(2), Some(3), None]);
-    let range = layout.lines()[3].source().ok_or("no source")?;
-    assert_eq!(&src[range], "h **bold**");
+    assert_eq!(texts(&layout), ["# Title", "", "- item with **bold**"]);
+    assert_eq!(numbers(&layout), [Some(1), Some(2), Some(3)]);
+    let range = layout.lines()[2].source().ok_or("no source")?;
+    assert_eq!(&src[range], "- item with **bold**");
+    assert!(layout.lines().iter().all(Line::unwrapped));
+    assert_eq!(layout.unwrapped_width(), 20);
+    Ok(())
+}
+
+// ADR 0029: only unwrapped lines take part in horizontal scroll.
+#[test]
+fn code_blocks_and_wide_tables_are_unwrapped_but_prose_is_not() -> TestResult {
+    let src = "some prose that wraps around\n\n> ```\n> let x = 1234567890;\n> ```\n\n\
+               | a | b |\n| --- | --- |\n| 1 | 2 |\n";
+    let layout = Layout::render(src, 12);
+    let lines = layout.lines();
+    assert!(!lines[0].unwrapped(), "prose wraps");
+    let code = lines
+        .iter()
+        .find(|line| line.text().contains("let x"))
+        .ok_or("no code line")?;
+    assert!(code.unwrapped());
+    assert_eq!(code.fixed_cells(), 2, "the quote bar stays put");
+    assert_eq!(code.text(), "│ let x = 1234567890;");
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.text().starts_with('┃'))
+            .all(|line| !line.unwrapped()),
+        "a table that fits its pane wraps like prose"
+    );
+    // The widest shiftable width is the code line minus its prefix.
+    assert_eq!(layout.unwrapped_width(), 19);
+    assert_eq!(Layout::render("plain prose only\n", 8).unwrapped_width(), 0);
+
+    let wide = "| alpha | beta | gamma | delta |\n| --- | --- | --- | --- |\n| 1 | 2 | 3 | 4 |\n";
+    let squeezed = Layout::render(wide, 10);
+    assert!(
+        squeezed.lines().iter().all(Line::unwrapped),
+        "a table wider than the pane scrolls as a whole"
+    );
+    assert!(squeezed.unwrapped_width() > 10);
     Ok(())
 }
 
@@ -347,12 +385,8 @@ fn source_layout_colours_by_extension_and_keeps_line_ranges() -> TestResult {
     let text = "fn main() {\n\n    let long_name = 1;\n}\n";
     let plain = Layout::source(text, 12);
     let coloured = Layout::source_with(text, 12, "rs", &highlighter);
-    assert_eq!(
-        texts(&plain),
-        texts(&coloured),
-        "hard wrapping is unchanged"
-    );
-    assert!(coloured.lines().len() > 4, "the long line wraps");
+    assert_eq!(texts(&plain), texts(&coloured), "colouring changes no text");
+    assert_eq!(coloured.lines().len(), 4, "the long line does not wrap");
     for (a, b) in plain.lines().iter().zip(coloured.lines()) {
         assert_eq!(a.source(), b.source(), "source ranges match plain layout");
     }

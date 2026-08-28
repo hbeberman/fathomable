@@ -36,6 +36,21 @@ use blocks::{Align, Block, Inline, Item, Table};
 pub use text::{LineIndex, display_width};
 use wrap::{Chunk, wrap, wrap_hard};
 
+/// Word-wrap plain `text` to `width` cells, breaking at whitespace.
+///
+/// Words wider than the line are split between grapheme clusters, trailing
+/// whitespace is dropped, and a zero width counts as one cell. Always
+/// yields at least one line. The Markdown renderer wraps prose the same
+/// way, so chrome that shows comment text lines up with the document.
+#[must_use]
+pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
+    let chunk = Chunk::new(text, Style::default(), None);
+    wrap(std::slice::from_ref(&chunk), width)
+        .iter()
+        .map(Line::text)
+        .collect()
+}
+
 /// Unchanged lines shown around each hunk in the diff view, as `git diff`.
 const DIFF_CONTEXT: usize = 3;
 

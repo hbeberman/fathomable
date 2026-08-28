@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use fathomable_core::layout::{Face, Style as Face_, display_width};
+use fathomable_core::layout::{Face, Style as Face_, display_width, wrap_text};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -1231,7 +1231,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             Line::from(spans)
         }
         Row::Body { text, dim } => Line::from(Span::styled(
-            format!("  {text}"),
+            text.clone(),
             if *dim { theme.info } else { theme.text },
         )),
         Row::Blank => Line::from(""),
@@ -1356,7 +1356,7 @@ fn message_lines<'a>(
     }
     let mut out = vec![Line::from(header)];
     for paragraph in body.lines() {
-        for line in wrap(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)) {
+        for line in wrap_text(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)) {
             out.push(Line::from(Span::raw(format!(
                 "{}{line}",
                 " ".repeat(MESSAGE_INDENT)
@@ -1398,9 +1398,6 @@ fn format_age(created: u64, now: u64) -> String {
         _ => format_time(created),
     }
 }
-
-/// Greedy word wrap to `width` cells; words longer than a line are split.
-use super::thread_list::wrap;
 
 /// `YYYY-MM-DD HH:MM` in UTC from Unix seconds (Howard Hinnant's civil-date
 /// algorithm; no calendar crate needed for a timestamp label).

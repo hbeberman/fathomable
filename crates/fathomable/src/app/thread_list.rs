@@ -11,14 +11,17 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{LineRange, Status, Thread, ThreadId};
+use fathomable_core::layout::wrap_text;
 
 use super::threads::{ComposeTarget, MarkKind};
 use super::{App, Focus};
 
 /// Rows kept visible above and below the selected entry.
 const SCROLLOFF: usize = 2;
-/// Cells a message body is indented under its author, as in the pane.
-const MESSAGE_INDENT: usize = 3;
+/// Cells a message body is indented from the column edge: two deeper than
+/// its author row. Body rows carry the indent in their text, so the UI
+/// draws them verbatim and the wrap width already accounts for it.
+const MESSAGE_INDENT: usize = 5;
 
 /// The list's state; the rows are derived from the store.
 #[derive(Debug, Default)]
@@ -133,40 +136,6 @@ fn kind_of(thread: &Thread) -> MarkKind {
         Status::Resolved => MarkKind::Resolved,
         Status::AutoResolved => MarkKind::AutoResolved,
     }
-}
-
-/// Break `text` into lines no wider than `width`, splitting words that
-/// do not fit.
-pub(super) fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut lines = vec![String::new()];
-    for word in text.split_whitespace() {
-        let mut word = word.to_owned();
-        loop {
-            let current = lines
-                .last_mut()
-                .unwrap_or_else(|| unreachable!("always one line"));
-            let sep = usize::from(!current.is_empty());
-            let free = width.saturating_sub(current.chars().count() + sep);
-            if word.chars().count() <= free {
-                if sep == 1 {
-                    current.push(' ');
-                }
-                current.push_str(&word);
-                break;
-            }
-            if current.is_empty() {
-                let head: String = word.chars().take(width.max(1)).collect();
-                let rest: String = word.chars().skip(width.max(1)).collect();
-                current.push_str(&head);
-                word = rest;
-                if word.is_empty() {
-                    break;
-                }
-            }
-            lines.push(String::new());
-        }
-    }
-    lines
 }
 
 impl App {
@@ -346,7 +315,7 @@ impl App {
                 dim,
             });
             for paragraph in body.lines() {
-                for line in wrap(paragraph, body_width) {
+                for line in wrap_text(paragraph, body_width) {
                     out.rows.push(Row::Body {
                         text: format!("{}{line}", " ".repeat(MESSAGE_INDENT)),
                         dim,
@@ -510,17 +479,5 @@ impl App {
                 self.select_entry(&rows, index);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::wrap;
-
-    #[test]
-    fn wraps_words_and_splits_long_ones() {
-        assert_eq!(wrap("aa bb cc", 5), vec!["aa bb", "cc"]);
-        assert_eq!(wrap("abcdefgh", 3), vec!["abc", "def", "gh"]);
-        assert_eq!(wrap("", 3), vec![""]);
     }
 }

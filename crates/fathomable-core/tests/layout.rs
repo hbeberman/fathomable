@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use fathomable_core::layout::{Face, Layout, Line, LineIndex};
+use fathomable_core::layout::{Face, Layout, Line, LineIndex, wrap_text};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -373,4 +373,13 @@ fn source_layout_colours_by_extension_and_keeps_line_ranges() -> TestResult {
             .all(|s| s.style().fg.is_none())
     );
     Ok(())
+}
+
+#[test]
+fn wrap_text_breaks_at_words_and_splits_wide_ones() {
+    assert_eq!(wrap_text("aa bb cc", 5), vec!["aa bb", "cc"]);
+    assert_eq!(wrap_text("abcdefgh", 3), vec!["abc", "def", "gh"]);
+    assert_eq!(wrap_text("", 3), vec![""]);
+    // Width is display cells, not chars: two wide graphemes fill four.
+    assert_eq!(wrap_text("日本 語", 4), vec!["日本", "語"]);
 }

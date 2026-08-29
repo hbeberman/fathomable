@@ -95,7 +95,7 @@ shows the full list inside the app.
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| thread pane `r` `x` `n` `N` `f` `j` `k`, `h`, `Esc` | reply, resolve or reopen, next / previous thread (the cursor follows), widen `n` / `N` from this file to every file on the work and back (the header reads `thread 3/12 on work`), scroll; back to the file-threads pane; close |
+| thread pane `r` `x` `n` `N` `f` `j` `k`, `h`, `Esc` | reply, resolve or reopen, next / previous thread (the cursor follows), toggle the scope `n` / `N` walk between local (this file) and global (every file on the work); the header reads `thread 3/12 local` or `global`, scroll; back to the file-threads pane; close |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
 | file threads `j` `k` `l` `r` `x`, `Esc` | next / previous thread (the cursor and the thread pane follow), focus the thread pane, reply, resolve or reopen; close the pane, back to the text |
 | `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |

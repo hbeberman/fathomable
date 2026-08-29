@@ -1547,10 +1547,14 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let (index, total) = app.thread_position().unwrap_or((1, 1));
     let words = Words::of(mark.map(super::threads::Mark::placement), thread);
     let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
-    let which = match (app.thread_nav(), total > 1) {
-        (ThreadNav::Workspace, _) => format!(" thread {index}/{total} on work"),
-        (ThreadNav::File, true) => format!(" thread {index}/{total}"),
-        (ThreadNav::File, false) => " thread".to_owned(),
+    let scope = match app.thread_nav() {
+        ThreadNav::File => "local",
+        ThreadNav::Workspace => "global",
+    };
+    let which = if total > 1 {
+        format!(" thread {index}/{total} {scope}")
+    } else {
+        format!(" thread {scope}")
     };
     let mut left = vec![
         Span::styled(which, theme.popup_key),
@@ -1621,13 +1625,7 @@ fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<
     if several {
         hints.push(("n/N", "next/prev"));
     }
-    hints.push((
-        "f",
-        match app.thread_nav() {
-            ThreadNav::File => "all files",
-            ThreadNav::Workspace => "this file",
-        },
-    ));
+    hints.push(("f", "toggle scope"));
     if overflows {
         hints.push(("j/k", "scroll"));
     }

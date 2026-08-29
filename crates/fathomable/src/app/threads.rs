@@ -388,8 +388,8 @@ impl App {
     pub fn thread_toggle_nav(&mut self) {
         self.thread_nav = self.thread_nav.toggled();
         self.notice(match self.thread_nav {
-            ThreadNav::File => "n/N walk this file's threads",
-            ThreadNav::Workspace => "n/N walk every thread on this work",
+            ThreadNav::File => "thread scope: local",
+            ThreadNav::Workspace => "thread scope: global",
         });
     }
 
@@ -1285,7 +1285,7 @@ mod tests {
         let panel = render(&app)?;
         let screen = panel.join("\n");
         assert!(
-            panel[0].contains("thread  L3-5  auto-resolved"),
+            panel[0].contains("thread local  L3-5  auto-resolved"),
             "header carries range and status:\n{screen}"
         );
         assert!(

@@ -336,11 +336,11 @@ in the same repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `id` (the session id from the `hello` hook) and `type` (one of the configured `agents.types`) it also subscribes the session, so the stop hook and `threads_pending` hand it what others write; works without a viewer |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the stop hook and `threads_pending` hand it what others write; works without a viewer |
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`, at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer |
 | `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; the hookless way to read comments |
-| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name, and a subscribed connection signs with its id and type; works without a viewer |
+| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
 | `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot |
 
 Every tool accepts an optional `session`: a workspace root, or a viewer name
@@ -365,6 +365,17 @@ scope since it last looked, the turn continues with those threads as the
 prompt, once per message. A session that never called `follow` with an
 `id`, a subagent, or a directory Fathomable has not seen all get silence
 and exit 0 ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
+`hello` also notes which processes it ran under, so the `fathomable
+--mcp` the same harness started can tell the session it serves from its
+own process ancestry: a `follow` with only a `type`, and a `thread_reply`
+after a resume, are then signed with that session without the model
+repeating its id ([0041](decisions/0041-session-bonds.md)). Where that
+bond cannot be made — `/proc` denied, the server not under the harness,
+or two sessions under one recorded shell — the tools ask for the `id`
+instead, and `thread_reply` takes one. Only processes born within 30 s
+of the hook count, so a shell opened just before the harness can be
+recorded; a hand-run `fathomable --mcp` in that shell would then sign
+as that session.
 A directory is *seen* once a viewer has opened it or
 `fathomable --register [DIR]` has marked it; `scripts/demo-repo.sh`
 (`just demo`) builds a throwaway repository, registers it, and seeds

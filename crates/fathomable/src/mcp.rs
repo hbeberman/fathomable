@@ -25,6 +25,7 @@ use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, WatchWhen};
 use fathomable_core::annotations::{Author, LineRange, Reply, Scope, Store, Thread, ThreadId};
+use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
@@ -70,6 +71,9 @@ pub struct Server {
     pinned: Mutex<Option<PathBuf>>,
     /// The `(id, type, persona)` this connection subscribed with, if it did.
     subscriber: Mutex<Option<(String, String, Option<String>)>>,
+    /// This process's ancestors, nearest first, matched against the
+    /// session bonds the `hello` hook recorded (ADR 0041).
+    ancestors: Vec<Process>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -124,6 +128,8 @@ pub struct FollowParams {
     /// Your harness session id, as the `hello` hook told you. With
     /// `type`, subscribes this session: the stop hook and
     /// `threads_pending` then hand you what others write on these files.
+    /// Optional when Fathomable can tell your session from the harness
+    /// that started it; the reply says whether it could.
     #[serde(default)]
     id: Option<String>,
     /// Your agent type, one of the configured ones; fixed for the session.
@@ -234,6 +240,11 @@ pub struct ReplyParams {
     /// Name to sign as; the client name is recorded alongside it.
     #[serde(default)]
     persona: Option<String>,
+    /// Your session id, to sign the replies with your subscription when
+    /// this connection did not call `follow` and Fathomable cannot tell
+    /// your session from the harness that started it.
+    #[serde(default)]
+    id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
@@ -287,6 +298,7 @@ impl Server {
             agents,
             pinned: Mutex::new(None),
             subscriber: Mutex::new(None),
+            ancestors: bond::ancestors(),
             tool_router: Self::tool_router(),
         }
     }
@@ -425,7 +437,15 @@ impl Server {
             Err(error) => return failure(error),
         };
         let mut note = String::new();
-        match (&p.id, &p.kind) {
+        let bonded = match (&p.id, &p.kind) {
+            (None, Some(_)) => self
+                .register(&session.root, now())
+                .ok()
+                .and_then(|r| r.session_for(&self.ancestors).map(str::to_owned)),
+            _ => None,
+        };
+        let id = p.id.clone().or_else(|| bonded.clone());
+        match (&id, &p.kind) {
             (Some(id), Some(kind)) => {
                 if !self.agents.allows(kind) {
                     return failure(format!(
@@ -453,7 +473,11 @@ impl Server {
                 if let Ok(mut current) = self.subscriber.lock() {
                     *current = Some((id.clone(), kind.clone(), p.persona.clone()));
                 }
-                note = format!("subscribed {id} as {kind}; ");
+                note = if bonded.is_some() {
+                    format!("subscribed {id} (your session, found from the harness) as {kind}; ")
+                } else {
+                    format!("subscribed {id} as {kind}; ")
+                };
             }
             (Some(_), None) => {
                 return failure(format!(
@@ -462,7 +486,10 @@ impl Server {
                 ));
             }
             (None, Some(_)) => {
-                return failure("`type` needs the session `id` the hello hook gave you");
+                return failure(
+                    "`type` needs the session `id` the hello hook gave you; this session \
+                     could not be told from the harness",
+                );
             }
             (None, None) => {}
         }
@@ -586,15 +613,15 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
-        let Some(id) = p.id.or_else(|| self.subscriber_id()) else {
-            return failure(
-                "no subscriber id: pass `id`, or call follow with `id` and `type` first",
-            );
-        };
         let when = now();
         let mut register = match self.register(&session.root, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
+        };
+        let Some(id) = self.session_id(p.id, &register) else {
+            return failure(
+                "no subscriber id: pass `id`, or call follow with `id` and `type` first",
+            );
         };
         let Some(subscriber) = register.subscriber(&id).cloned() else {
             return failure(format!(
@@ -657,7 +684,8 @@ impl Server {
                        with `replies` for everything `threads_pending` handed you. If you \
                        rewrote the lines a thread is on, pass `line` and `end_line` so it \
                        follows them. Works with no viewer running; signs with your \
-                       subscription when this connection has one.",
+                       subscription when this connection has one or your session is known \
+                       from the harness, else pass your session `id`.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn thread_reply(
@@ -665,8 +693,12 @@ impl Server {
         Parameters(p): Parameters<ReplyParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
+        let session = match self.resolve(p.session.as_deref()) {
+            Ok(session) => session,
+            Err(error) => return failure(error),
+        };
         let client = context.client_info().map(|c| c.name);
-        let subscription = self.subscriber.lock().ok().and_then(|s| s.clone());
+        let subscription = self.signature(p.id, &session.root);
         let mut author = Author::Agent {
             name: p
                 .persona
@@ -695,10 +727,6 @@ impl Server {
             (None, None) if !items.is_empty() => {}
             _ => return failure("pass `thread` and `body`, or a non-empty `replies` list"),
         }
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
-            Err(error) => return failure(error),
-        };
         let mut lines = Vec::new();
         for item in items {
             match self.reply_one(&session, author.clone(), item).await {
@@ -793,6 +821,36 @@ impl Server {
             .and_then(|s| s.as_ref().map(|(id, ..)| id.clone()))
     }
 
+    /// The session a call speaks for: the `id` it passed, else the one
+    /// this connection subscribed with, else the one bonded to this
+    /// process's ancestors (ADR 0041).
+    fn session_id(&self, given: Option<String>, register: &Register) -> Option<String> {
+        given
+            .or_else(|| self.subscriber_id())
+            .or_else(|| register.session_for(&self.ancestors).map(str::to_owned))
+    }
+
+    /// The `(id, type, persona)` a reply from this connection is signed
+    /// with: its own `follow`, else the subscription of `given` or of
+    /// the bonded session, when there is one.
+    fn signature(
+        &self,
+        given: Option<String>,
+        root: &Path,
+    ) -> Option<(String, String, Option<String>)> {
+        if let Some(own) = self.subscriber.lock().ok().and_then(|s| s.clone()) {
+            return Some(own);
+        }
+        let register = self.register(root, now()).ok()?;
+        let id = self.session_id(given, &register)?;
+        let subscriber = register.subscriber(&id)?;
+        Some((
+            id,
+            subscriber.kind().to_owned(),
+            subscriber.name().map(str::to_owned),
+        ))
+    }
+
     /// The workspace's agent register at `now`.
     fn register(&self, root: &Path, now: u64) -> Result<Register, String> {
         Register::open(self.dirs.agents_file(root), now, self.agents.expire_after)
@@ -815,15 +873,15 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
-        let Some(id) = id.or_else(|| self.subscriber_id()) else {
-            return failure(
-                "no subscriber id: pass `id`, or call follow with `id` and `type` first",
-            );
-        };
         let when = now();
         let mut register = match self.register(&session.root, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
+        };
+        let Some(id) = self.session_id(id, &register) else {
+            return failure(
+                "no subscriber id: pass `id`, or call follow with `id` and `type` first",
+            );
         };
         match act(&mut register, &id, when) {
             Ok(message) => text(message),
@@ -1136,10 +1194,12 @@ impl ServerHandler for Server {
             .with_server_info(Implementation::new("fathomable", env!("CARGO_PKG_VERSION")))
             .with_instructions(
                 "Fathomable is the user's read-only viewer, where they leave review comments \
-                 on the lines you write. Start with `follow` naming the files you will edit; \
-                 pass the session `id` the hello hook gave you and a `type` to subscribe, so \
-                 `threads_pending` and the stop hook hand you each new comment once. Answer \
-                 with one `thread_reply` carrying `replies`. `annotations_list` reads any \
+                 on the lines you write. Start with `follow` naming the files you will edit \
+                 and a `type` to subscribe, so `threads_pending` and the stop hook hand you \
+                 each new comment once; add the session `id` the hello hook gave you when \
+                 asked for it, and pass it to `thread_reply` too if you never called \
+                 `follow` on this connection. Answer with one `thread_reply` carrying \
+                 `replies`. `annotations_list` reads any \
                  thread; `open` shows a file in the viewer. Everything but `open` works with \
                  no viewer running. `thread_watch` wakes you when another thread moves.",
             )

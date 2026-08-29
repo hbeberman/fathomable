@@ -22,6 +22,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::annotations::{Status, Thread, ThreadId};
+use crate::bond::{self, Bond, Process};
 
 /// File name of the register inside the workspace state directory.
 pub const AGENTS_FILE: &str = "agents.jsonl";
@@ -219,6 +220,13 @@ enum Event {
         on: ThreadId,
         created: u64,
     },
+    /// The `hello` hook for session `id` ran under `processes` (ADR 0041).
+    Bond {
+        v: u32,
+        id: String,
+        processes: Vec<Process>,
+        created: u64,
+    },
 }
 
 /// The subscribers of one workspace, backed by an append-only JSONL file.
@@ -228,6 +236,7 @@ pub struct Register {
     subscribers: Vec<Subscriber>,
     deliveries: HashMap<(String, ThreadId), u64>,
     watches: Vec<Watch>,
+    bonds: Vec<Bond>,
 }
 
 impl Register {
@@ -251,6 +260,7 @@ impl Register {
             subscribers: Vec::new(),
             deliveries: HashMap::new(),
             watches: Vec::new(),
+            bonds: Vec::new(),
         };
         let text = match fs::read_to_string(&register.path) {
             Ok(text) => text,
@@ -278,6 +288,7 @@ impl Register {
             tracing::info!(id, "subscription expired");
             register.forget(&id);
         }
+        register.bonds.retain(|b| b.created() >= cutoff);
         Ok(register)
     }
 
@@ -303,6 +314,39 @@ impl Register {
     #[must_use]
     pub fn watches(&self) -> &[Watch] {
         &self.watches
+    }
+
+    /// Every session bond still live, oldest first.
+    #[must_use]
+    pub fn bonds(&self) -> &[Bond] {
+        &self.bonds
+    }
+
+    /// The session id bonded to the nearest of `ancestors`, when exactly
+    /// one session recorded it ([`bond::session_for`]).
+    #[must_use]
+    pub fn session_for(&self, ancestors: &[Process]) -> Option<&str> {
+        bond::session_for(&self.bonds, ancestors)
+    }
+
+    /// Record that the `hello` hook for session `id` ran under
+    /// `processes`. The session need not be subscribed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegisterError`] when the file cannot be appended to.
+    pub fn bond(
+        &mut self,
+        id: &str,
+        processes: Vec<Process>,
+        now: u64,
+    ) -> Result<(), RegisterError> {
+        self.commit(Event::Bond {
+            v: FORMAT_VERSION,
+            id: id.to_owned(),
+            processes,
+            created: now,
+        })
     }
 
     /// The watches on `thread`.
@@ -661,6 +705,12 @@ impl Register {
                 self.known(&id)?;
                 self.watches.retain(|w| !(w.subscriber == id && w.on == on));
             }
+            Event::Bond {
+                id,
+                processes,
+                created,
+                ..
+            } => self.bonds.push(Bond::new(id, processes, created)),
         }
         Ok(())
     }
@@ -909,8 +959,27 @@ mod tests {
     use crate::annotations::{Author, Draft, LineRange, Reply, Store};
 
     use super::{Blob, Register, WatchWhen};
+    use crate::bond::Process;
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+    #[test]
+    fn a_bond_names_the_session_and_expires_with_the_register() -> TestResult {
+        let dir = TempDir::new("bond")?;
+        let path = dir.0.join("agents.jsonl");
+        let day = Duration::from_hours(24);
+        let mut register = Register::open(&path, 1_000, day)?;
+        register.bond("s-1", vec![Process::new(20, 5), Process::new(10, 1)], 1_000)?;
+        let mine = [Process::new(30, 9), Process::new(20, 5)];
+        assert_eq!(register.session_for(&mine), Some("s-1"));
+
+        let reopened = Register::open(&path, 2_000, day)?;
+        assert_eq!(reopened.bonds().len(), 1);
+        assert_eq!(reopened.session_for(&mine), Some("s-1"));
+        let later = Register::open(&path, 1_000 + day.as_secs() + 1, day)?;
+        assert_eq!(later.session_for(&mine), None);
+        Ok(())
+    }
 
     struct TempDir(PathBuf);
 

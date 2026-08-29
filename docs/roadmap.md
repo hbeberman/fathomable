@@ -141,3 +141,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     prompt, `thread_watch` wakes it when another thread moves, and an
     unsubscribed session never hears from Fathomable
     ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
+32. **Session bonds.** The `hello` hook records the young ancestors of
+    its process under the session id; the MCP server signs as the
+    session of the nearest unique one among its own ancestors, so
+    replies stay signed after a resume; `thread_reply` takes an `id`
+    as the fallback ([0041](decisions/0041-session-bonds.md)).

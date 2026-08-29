@@ -252,6 +252,11 @@ agents {
   `/hooks`; Copilot ignores repo hooks until the folder is trusted;
   VS Code reads the same `.github/hooks` file as Copilot).
 
+Note (2026-08-29): [0041](0041-session-bonds.md) lets `--mcp` learn the
+session id from the process tree, so a `thread_reply` after a resume is
+signed without a fresh `follow`; `hello` now appends bonds to the
+register, and `thread_reply` accepts an `id` as the fallback.
+
 ## Consequences
 
 - An agent's turn ends normally unless it registered, someone else

@@ -44,3 +44,4 @@ supersede rather than edit history.
 - [0038 Re-anchoring without a snapshot](0038-reanchoring-without-a-snapshot.md)
 - [0039 Gutter colour says status, detached threads get a row](0039-gutter-colour-and-detached-rows.md)
 - [0040 Agent subscriptions, pending threads, and harness hooks](0040-agent-subscriptions-and-hooks.md)
+- [0041 Session bonds between hooks and the MCP server](0041-session-bonds.md)

@@ -7,7 +7,8 @@
 //! expects. Both exit 0 with no output whenever there is nothing to say:
 //! no workspace here, no subscription for the session, a subagent, a
 //! continuation the hook itself caused, or nothing pending. Neither ever
-//! writes to the thread store; `pending` appends to the agent register.
+//! writes to the thread store; both append to the agent register —
+//! `hello` the session bond of ADR 0041, `pending` its deliveries.
 
 use std::env;
 use std::io::{self, IsTerminal, Read};
@@ -18,6 +19,7 @@ use clap::ValueEnum;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Blob, Register, Subscriber};
 use fathomable_core::annotations::{Scope, Store, Thread};
+use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config};
 use fathomable_core::session::Marker;
 use fathomable_core::workspace::Workspace;
@@ -121,13 +123,16 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
     let Some(root) = workspace_for(dirs, &cwd) else {
         return ExitCode::SUCCESS;
     };
-    let types = agents_config(dirs).types.join(", ");
+    let config = agents_config(dirs);
+    bond_session(dirs, &root, &id, &config);
+    let types = config.types.join(", ");
     let text = format!(
         "Fathomable is watching this workspace ({}): the user reads your work there and \
          leaves review comments on lines. Your session id is {id}. Before you edit, call \
          the fathomable `follow` tool with id \"{id}\", a type (one of: {types}), and the \
          paths you will edit. Fathomable then hands you unanswered comments when your turn \
-         ends; act on them and answer with `thread_reply`.",
+         ends; act on them and answer with `thread_reply` (pass id \"{id}\" to it if \
+         you did not call `follow` on this connection).",
         root.display()
     );
     match harness {
@@ -139,6 +144,21 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
         ),
     }
     ExitCode::SUCCESS
+}
+
+/// Record the young ancestors of this hook process under `id`, so the
+/// MCP server spawned by the same harness can sign as it (ADR 0041).
+fn bond_session(dirs: &XdgDirs, root: &Path, id: &str, config: &AgentsConfig) {
+    let processes = bond::ancestors_within(bond::BOND_WINDOW);
+    if processes.is_empty() {
+        return;
+    }
+    let when = now();
+    let outcome = Register::open(dirs.agents_file(root), when, config.expire_after)
+        .and_then(|mut register| register.bond(id, processes, when));
+    if let Err(error) = outcome {
+        tracing::warn!(%error, "cannot record the session bond");
+    }
 }
 
 /// `fathomable pending`: hand the subscriber what it has not seen.

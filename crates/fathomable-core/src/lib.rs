@@ -8,6 +8,7 @@
 
 pub mod agents;
 pub mod annotations;
+pub mod bond;
 pub mod config;
 pub mod content;
 pub mod context;

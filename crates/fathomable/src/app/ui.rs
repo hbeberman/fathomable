@@ -1353,7 +1353,7 @@ fn draw_compose(
         header_line(
             theme,
             vec![Span::styled(title, theme.popup_key)],
-            &hint.split(" · ").collect::<Vec<_>>(),
+            &hint.split(" · ").map(key_hint).collect::<Vec<_>>(),
             width,
         ),
     ];
@@ -1442,17 +1442,17 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         Span::styled(scope, theme.popup_key),
         Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
     ];
-    let hints: &[&str] = if app.focus() == Focus::Threads {
+    let hints: &[Hint] = if app.focus() == Focus::Threads {
         &[
-            "Enter open",
-            "r reply",
-            "x resolve",
-            "z/Z fold",
-            "f file",
-            "Esc",
+            ("Enter", "open"),
+            ("r", "reply"),
+            ("x", "resolve"),
+            ("z/Z", "fold"),
+            ("f", "file"),
+            ("Esc", ""),
         ]
     } else {
-        &["click or Space A to focus"]
+        &[("", "click or Space A to focus")]
     };
     let now = super::threads::now();
     let mut lines = vec![header_line(theme, left, hints, width)];
@@ -1601,45 +1601,87 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
 
 /// The keys that do something in the thread pane right now, most useful
 /// first so a narrow pane keeps the ones that matter (ADR 0007).
-fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<&'static str> {
+fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<Hint<'static>> {
     if app.focus() != Focus::Thread {
-        return vec!["click or Space a to focus"];
+        return vec![("", "click or Space a to focus")];
     }
     if app.delete_armed().is_some() {
-        return vec!["d delete", "other cancels"];
+        return vec![("d", "delete"), ("other", "cancels")];
     }
-    let mut hints = vec!["r reply"];
-    hints.push(if words.is_resolved() {
-        "x reopen"
-    } else {
-        "x resolve"
-    });
-    hints.push("d d delete");
+    let mut hints = vec![("r", "reply")];
+    hints.push((
+        "x",
+        if words.is_resolved() {
+            "reopen"
+        } else {
+            "resolve"
+        },
+    ));
+    hints.push(("dd", "delete"));
     if several {
-        hints.push("n/N next/prev");
+        hints.push(("n/N", "next/prev"));
     }
     if overflows {
-        hints.push("j/k scroll");
+        hints.push(("j/k", "scroll"));
     }
-    hints.extend(["h list", "Esc close"]);
+    hints.extend([("h", "list"), ("Esc", "close")]);
     hints
 }
 
+/// A header hint: the key, then what it does. Either may be empty.
+type Hint<'a> = (&'a str, &'a str);
+
+/// `"Esc close"` as a [`Hint`]: the first word is the key.
+fn key_hint(text: &str) -> Hint<'_> {
+    text.split_once(' ').unwrap_or((text, ""))
+}
+
+/// The columns a hint takes: key, action, and the space between when both
+/// are present.
+fn hint_width(&(key, what): &Hint<'_>) -> usize {
+    display_width(key) + display_width(what) + usize::from(!key.is_empty() && !what.is_empty())
+}
+
 /// A popup header: `left` spans, then `hints` right-aligned, joined by
-/// ` · `. When the row is too narrow the list loses items from its end
-/// until it fits, rather than vanishing whole.
-fn header_line<'a>(theme: &Theme, left: Vec<Span<'a>>, hints: &[&str], width: usize) -> Line<'a> {
+/// ` · `, the key dim and its action dimmer still. When the row is too
+/// narrow the list loses items from its end until it fits, rather than
+/// vanishing whole.
+fn header_line<'a>(
+    theme: &Theme,
+    left: Vec<Span<'a>>,
+    hints: &[Hint<'_>],
+    width: usize,
+) -> Line<'a> {
     let used: usize = left.iter().map(|s| display_width(&s.content)).sum();
     let mut spans = left;
     let free = width.saturating_sub(used);
-    let fitting = (1..=hints.len())
+    let width_of = |shown: &[Hint<'_>]| {
+        shown.iter().map(hint_width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
+    };
+    let Some(shown) = (1..=hints.len())
         .rev()
-        .map(|n| hints[..n].join(" · "))
-        .find(|hint| free >= display_width(hint) + 3);
-    if let Some(hint) = fitting {
-        spans.push(Span::raw(" ".repeat(free - display_width(&hint) - 1)));
-        spans.push(Span::styled(format!("{hint} "), theme.info));
+        .map(|n| &hints[..n])
+        .find(|shown| free >= width_of(shown) + 3)
+    else {
+        return Line::from(spans);
+    };
+    let faint = theme.info.add_modifier(Modifier::DIM);
+    spans.push(Span::raw(" ".repeat(free - width_of(shown) - 1)));
+    for (i, &(key, what)) in shown.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", faint));
+        }
+        if !key.is_empty() {
+            spans.push(Span::styled(key.to_owned(), theme.info));
+        }
+        if !key.is_empty() && !what.is_empty() {
+            spans.push(Span::styled(" ", faint));
+        }
+        if !what.is_empty() {
+            spans.push(Span::styled(what.to_owned(), faint));
+        }
     }
+    spans.push(Span::raw(" "));
     Line::from(spans)
 }
 

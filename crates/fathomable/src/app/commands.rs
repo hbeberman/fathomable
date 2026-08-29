@@ -29,6 +29,24 @@ impl App {
         }
     }
 
+    /// The `subscribers` row of `:status` (ADR 0040).
+    fn subscriber_row(&self) -> String {
+        match self.subscribers().as_slice() {
+            [] => "none".to_owned(),
+            all => all
+                .iter()
+                .map(|s| {
+                    let scope = match s.paths().len() {
+                        0 => "whole workspace".to_owned(),
+                        n => format!("{n} file(s)"),
+                    };
+                    format!("{} {}: {scope}", s.label(), s.id())
+                })
+                .collect::<Vec<_>>()
+                .join("; "),
+        }
+    }
+
     /// The rows of the `:status` overlay: label, value.
     pub fn status_lines(&self) -> Vec<(String, String)> {
         let unavailable = || "unavailable (see the log)".to_owned();
@@ -70,6 +88,7 @@ impl App {
         } else {
             "none (the welcome screen)".to_owned()
         };
+        let subscribers = self.subscriber_row();
         vec![
             ("document".to_owned(), document),
             (
@@ -115,6 +134,7 @@ impl App {
             ("pending changes".to_owned(), self.queue.len().to_string()),
             ("waiting".to_owned(), self.waiting_total().to_string()),
             ("agent follows".to_owned(), followed),
+            ("subscribers".to_owned(), subscribers),
         ]
     }
 }

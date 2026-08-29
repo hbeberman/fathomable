@@ -657,6 +657,7 @@ impl App {
     /// Show one thread at its end, keeping the scroll only when the same
     /// thread is already shown and nothing was added to it (ADR 0034).
     pub fn open_thread(&mut self, id: ThreadId) {
+        self.refresh_watchers();
         let updated = self.thread(&id).map_or(0, Thread::updated);
         let scroll = self
             .thread

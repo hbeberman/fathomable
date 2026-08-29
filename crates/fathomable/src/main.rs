@@ -230,6 +230,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),
+            agents: config.agents().clone(),
             config_path: config_path(cli, dirs),
         },
         &theme,

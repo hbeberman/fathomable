@@ -5,6 +5,7 @@ description: An agent subscribes to a workspace once with its harness session id
 resource: crates/fathomable-core/src/agents.rs
 related_resources:
   - crates/fathomable/src/hooks.rs
+  - crates/fathomable/src/app/wake.rs
 tags:
   - decision
   - sessions
@@ -124,9 +125,9 @@ design:
   one carries neither, as today. The wire form stays the untagged
   `AuthorWire`; the new fields are optional and older files load.
 - The thread pane, the file-threads pane, and the thread list label an
-  agent's message `name (type)` — `name (client)` when it has no type —
-  and the thread list's `/` search matches those labels, so the user
-  can read one agent's messages at a time.
+  agent's message `name (type)` — `name (client)` when it has no type.
+  (Filtering a list by author was considered and left for a later
+  record; nothing in the thread list searches yet.)
 
 ### Pending
 
@@ -193,10 +194,15 @@ design:
   them. Nothing beyond `agents.max-lines` lines: past it, the rest are
   listed as `id path:range` with "call `threads_pending`". The blob
   never carries file content beyond the snippet.
-- `Space w` in the viewer runs `agents.wake` — a command template with
-  `{id}` and `{prompt}` — for the subscriber chosen from a picker, with
-  the blob as `{prompt}`. It is the user's key, not an automatic wake;
-  Fathomable does not own the agent.
+- `app/wake.rs` is the viewer's side. `Space w` runs `agents.wake` — a
+  command template whose `{id}` and `{prompt}` become shell positional
+  parameters — for the one subscriber, or the one picked from a picker,
+  with the blob as `{prompt}`; the command runs detached with no
+  terminal, so it must be non-interactive (`codex queue`,
+  `claude -p -r`). A subscriber with nothing pending is left alone. It
+  is the user's key, not an automatic wake; Fathomable does not own the
+  agent. `:status` lists the subscribers; the thread pane header says
+  `watched by name (type)` under a watched thread.
 
 ### Tools
 

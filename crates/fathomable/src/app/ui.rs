@@ -1256,6 +1256,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Files => "files",
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
+        super::PickerKind::Wake => "wake",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
@@ -1558,6 +1559,13 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         label(words.state()),
         mark_style(theme, words.state()),
     ));
+    let watchers = app.watchers_of(thread.id());
+    if !watchers.is_empty() {
+        left.push(Span::styled(
+            format!(" · watched by {}", watchers.join(", ")),
+            theme.info,
+        ));
+    }
     let hint = if app.focus() == Focus::Thread {
         "r reply · x resolve/reopen · d d delete · n/N next/prev · j/k scroll · h list · Esc close"
     } else {

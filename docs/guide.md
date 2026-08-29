@@ -100,6 +100,7 @@ shows the full list inside the app.
 | file threads `j` `k` `l` `r` `x`, `Esc` | next / previous thread (the cursor and the thread pane follow), focus the thread pane, reply, resolve or reopen; close the pane, back to the text |
 | `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
+| `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
 | comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | submit, newline, cancel (twice on a draft), clear the draft (empty closes) |
@@ -375,6 +376,14 @@ Two subcommands, both reading the harness's hook JSON on stdin:
   `claude -r ID "$(fathomable pending --id ID --prompt)"` wakes an idle
   session by hand.
 
+In the viewer, an agent's messages are labelled `name (type)`, a thread
+an agent is watching says `watched by name (type)` in its pane header,
+and `:status` lists who is subscribed. `Space w` wakes a subscriber by
+hand with the same prompt the stop hook would give it, through the
+`agents.wake` command — which runs detached, so it must be
+non-interactive: `codex queue --thread {id} --message {prompt}` or
+`claude -p -r {id} {prompt}`.
+
 Install the hooks per user, not in the repository, so a clone does not
 opt anyone in. `<harness>` is `claude`, `codex`, `copilot`, or `vscode`.
 
@@ -425,7 +434,8 @@ fathomable --config-show   # effective configuration
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-`:status` inside the app shows the open document, the terminal size, the
+`:status` inside the app shows the subscribed agents (`name (type) id`
+and what each follows), the open document, the terminal size, the
 viewer name and id, the socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
 swept away by the next start.

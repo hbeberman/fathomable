@@ -27,6 +27,7 @@ pub(crate) mod threads;
 mod ui;
 mod view;
 mod waiting;
+pub(crate) mod wake;
 mod watch;
 
 use std::collections::HashSet;
@@ -48,8 +49,8 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::annotations::{self, Scope, Store};
-use fathomable_core::config::{FollowConfig, MarkdownConfig, ViewerConfig};
+use fathomable_core::annotations::{self, Scope, Store, ThreadId};
+use fathomable_core::config::{AgentsConfig, FollowConfig, MarkdownConfig, ViewerConfig};
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
@@ -136,6 +137,8 @@ pub enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
+    /// Subscribed agents to wake with `Space w` (ADR 0040).
+    Wake,
 }
 
 /// The open picker popup.
@@ -210,7 +213,7 @@ pub enum Popup {
 }
 
 /// One space-menu entry: key, label.
-pub const SPACE_MENU: [(char, &str); 10] = [
+pub const SPACE_MENU: [(char, &str); 11] = [
     ('e', "toggle tree focus"),
     ('E', "hide tree"),
     ('f', "open file"),
@@ -220,6 +223,7 @@ pub const SPACE_MENU: [(char, &str); 10] = [
     ('A', "thread list"),
     ('t', "file threads"),
     ('j', "follow / jump"),
+    ('w', "wake an agent"),
     ('?', "all keys"),
 ];
 
@@ -244,7 +248,7 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 45] = [
+pub const HELP: [(&str, &str); 46] = [
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
     ("gg / ge G", "top / bottom"),
@@ -276,6 +280,10 @@ pub const HELP: [(&str, &str); 45] = [
         "next / previous thread waiting on you, across files",
     ),
     ("Space t", "focus the file-threads pane under the tree"),
+    (
+        "Space w",
+        "wake a subscribed agent with its pending threads",
+    ),
     (
         "file j k Enter r x",
         "next / previous thread, open, reply, resolve",
@@ -393,6 +401,10 @@ pub struct App {
     markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
     viewer: ViewerConfig,
+    /// Subscriptions and the wake command (ADR 0040).
+    agents: AgentsConfig,
+    /// Who watches which thread, refreshed with the store (ADR 0040).
+    watchers: Vec<(ThreadId, String)>,
     /// The config file the over-limit notice names (ADR 0026).
     config_path: PathBuf,
     auto: bool,
@@ -423,6 +435,7 @@ impl App {
             highlighter,
             markdown,
             viewer,
+            agents,
             config_path,
         } = options;
         let ignore = match Ignore::new(&follow.ignore) {
@@ -469,6 +482,8 @@ impl App {
             highlighter,
             markdown,
             viewer,
+            agents,
+            watchers: Vec::new(),
             config_path,
             ignore,
             queue: Queue::default(),
@@ -537,6 +552,7 @@ impl App {
                     .unwrap_or_default();
                 self.store = Some(store);
                 self.toast_waiting(&before);
+                self.refresh_watchers();
                 self.refresh_scope();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
@@ -1830,6 +1846,7 @@ impl App {
             'A' => self.open_thread_list(),
             't' => self.focus_file_threads(),
             'j' => self.popup = Some(Popup::Jump),
+            'w' => self.wake(),
             '?' => self.open_help(),
             _ => {}
         }
@@ -1860,6 +1877,11 @@ impl App {
                 }
                 seen
             }
+            PickerKind::Wake => self
+                .subscribers()
+                .iter()
+                .map(|s| format!("{}  {}", s.label(), s.id()))
+                .collect(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
@@ -1917,6 +1939,11 @@ impl App {
             Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path)) => {
                 self.open(Path::new(&path));
             }
+            Some((PickerKind::Wake, item)) => {
+                if let Some(id) = item.rsplit("  ").next() {
+                    self.wake_subscriber(id);
+                }
+            }
             None => {}
         }
     }
@@ -1941,6 +1968,8 @@ pub struct Options {
     pub markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
     pub viewer: ViewerConfig,
+    /// Subscriptions and the wake command (ADR 0040).
+    pub agents: AgentsConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
     pub config_path: PathBuf,
 }
@@ -1959,6 +1988,7 @@ impl Options {
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
+            agents: AgentsConfig::default(),
             config_path: PathBuf::from("config.kdl"),
         }
     }

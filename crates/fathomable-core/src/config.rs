@@ -33,6 +33,44 @@ pub struct Config {
     follow: FollowConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
+    agents: AgentsConfig,
+}
+
+/// The `agents { ... }` block (ADR 0040): subscriptions and delivery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentsConfig {
+    /// The agent types `follow` may declare.
+    pub types: Vec<String>,
+    /// Stop-hook checks between reminders about delivered, unanswered
+    /// threads; zero never reminds.
+    pub nag_after: u32,
+    /// How long a subscription that is not heard from lives.
+    pub expire_after: Duration,
+    /// The longest hook prompt, in lines, before the rest is listed.
+    pub max_lines: usize,
+    /// The command `Space w` runs to wake a subscriber, with `{id}` and
+    /// `{prompt}` placeholders; `None` disables the key.
+    pub wake: Option<String>,
+}
+
+impl Default for AgentsConfig {
+    fn default() -> Self {
+        Self {
+            types: ["coder", "reviewer", "planner"].map(str::to_owned).to_vec(),
+            nag_after: 5,
+            expire_after: Duration::from_hours(24),
+            max_lines: 40,
+            wake: None,
+        }
+    }
+}
+
+impl AgentsConfig {
+    /// Whether `kind` is a declared agent type.
+    #[must_use]
+    pub fn allows(&self, kind: &str) -> bool {
+        self.types.iter().any(|t| t == kind)
+    }
 }
 
 /// The `viewer { ... }` block (ADR 0026): how files are read.
@@ -250,6 +288,47 @@ impl Config {
                         }
                     }
                 }
+                "agents" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`agents` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        let agents = &mut config.agents;
+                        match child.name().value() {
+                            "types" => agents.types = strings(child, line, "types")?,
+                            "nag-after" => {
+                                agents.nag_after =
+                                    u32::try_from(count(child, line, "count")?).unwrap_or(u32::MAX);
+                            }
+                            "expire-after" => {
+                                agents.expire_after = Duration::from_secs(
+                                    count(child, line, "hour count")?.saturating_mul(3600),
+                                );
+                            }
+                            "max-lines" => {
+                                agents.max_lines =
+                                    usize::try_from(count(child, line, "line count")?)
+                                        .unwrap_or(usize::MAX);
+                            }
+                            "wake" => {
+                                let command = one_string(child, line)?;
+                                agents.wake = (!command.is_empty()).then(|| command.to_owned());
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown agents setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 "viewer" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -308,6 +387,12 @@ impl Config {
     #[must_use]
     pub fn markdown(&self) -> &MarkdownConfig {
         &self.markdown
+    }
+
+    /// Subscriptions and delivery (ADR 0040).
+    #[must_use]
+    pub fn agents(&self) -> &AgentsConfig {
+        &self.agents
     }
 }
 
@@ -484,6 +569,37 @@ follow {
             ("markdown { nope 1 }", "unknown markdown setting"),
             ("markdown { extensions 1 }", "takes strings"),
             ("markdown \"x\"", "block"),
+        ] {
+            let error = Config::parse(text)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(error.contains(needle), "{text}: {error}");
+        }
+    }
+
+    #[test]
+    fn agents_block_parses_every_key() {
+        let config = Config::parse(
+            "agents {\n types \"coder\" \"qa\"\n nag-after 0\n expire-after 2\n max-lines 10\n wake \"claude -r {id} {prompt}\"\n}",
+        )
+        .unwrap_or_default();
+        let agents = config.agents();
+        assert_eq!(agents.types, ["coder", "qa"]);
+        assert!(agents.allows("qa") && !agents.allows("planner"));
+        assert_eq!(agents.nag_after, 0);
+        assert_eq!(agents.expire_after, Duration::from_hours(2));
+        assert_eq!(agents.max_lines, 10);
+        assert_eq!(agents.wake.as_deref(), Some("claude -r {id} {prompt}"));
+        let defaults = Config::parse("agents { wake \"\" }").unwrap_or_default();
+        assert_eq!(defaults.agents().wake, None);
+        assert!(defaults.agents().allows("planner"));
+        assert_eq!(defaults.agents().nag_after, 5);
+        for (text, needle) in [
+            ("agents { nope 1 }", "unknown agents setting"),
+            ("agents { types 1 }", "takes strings"),
+            ("agents { nag-after -1 }", "non-negative"),
+            ("agents \"x\"", "block"),
         ] {
             let error = Config::parse(text)
                 .err()

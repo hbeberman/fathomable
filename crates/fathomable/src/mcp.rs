@@ -326,6 +326,8 @@ impl Server {
                 .or_else(|| client.clone())
                 .unwrap_or_else(|| "agent".to_owned()),
             client,
+            id: None,
+            kind: None,
         };
         let thread: ThreadId = match serde_json::from_value(Value::String(p.thread.clone())) {
             Ok(id) => id,

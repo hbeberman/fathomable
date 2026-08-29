@@ -155,6 +155,8 @@ mod tests {
         let author = Author::Agent {
             name: "reviewer".to_owned(),
             client: None,
+            id: None,
+            kind: None,
         };
         let reply = app.handle_request(Request::ThreadReply {
             thread: id.clone(),

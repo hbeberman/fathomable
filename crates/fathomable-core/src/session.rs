@@ -611,6 +611,8 @@ mod tests {
                 author: Author::Agent {
                     name: "reviewer".to_owned(),
                     client: Some("claude-code".to_owned()),
+                    id: None,
+                    kind: None,
                 },
                 body: "done".to_owned(),
                 resolve: true,

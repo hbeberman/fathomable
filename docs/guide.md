@@ -287,6 +287,14 @@ markdown {
 viewer {
     max-file-size-mib 64    // larger text files show the file-info pane
 }
+
+agents {
+    types "coder" "reviewer" "planner"   // what an agent may subscribe as
+    nag-after 5             // stop-hook checks between reminders; 0 never
+    expire-after 24         // hours a silent subscription lives
+    max-lines 40            // longest hook prompt before the rest is listed
+    wake ""                 // command for Space w, e.g. "claude -r {id} {prompt}"
+}
 ```
 
 Every key is optional; the values above are the defaults and
@@ -340,6 +348,67 @@ or rebase that drops that commit does not lose an open thread: while its
 lines are still in the working tree it moves to the new `HEAD`
 ([0035](decisions/0035-threads-follow-head.md)). Details and the wire
 protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
+
+### Hooks: comments reach the agent
+
+Without a hook the agent only sees comments when it polls. With one, the
+harness runs `fathomable pending` when the agent tries to end its turn;
+if the session subscribed and someone else has spoken on a thread in its
+scope since it last looked, the turn continues with those threads as the
+prompt, once per message. A session that never called `follow` with an
+`id`, a subagent, or a directory Fathomable has not seen all get silence
+and exit 0 ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
+
+Two subcommands, both reading the harness's hook JSON on stdin:
+
+- `fathomable hello --hook <harness>` (session start) prints one paragraph
+  telling the model its session id and how to subscribe.
+- `fathomable pending --hook <harness>` (stop) blocks the stop with the
+  pending threads, or says nothing. `--prompt` prints them to stdout
+  instead, and `--id ID` names the session when no JSON is piped, so
+  `claude -r ID "$(fathomable pending --id ID --prompt)"` wakes an idle
+  session by hand.
+
+Install the hooks per user, not in the repository, so a clone does not
+opt anyone in. `<harness>` is `claude`, `codex`, `copilot`, or `vscode`.
+
+Claude Code, in `~/.claude/settings.json` or the project's
+`.claude/settings.local.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook claude", "timeout": 5 }] }],
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
+  }
+}
+```
+
+Codex CLI, in `~/.codex/hooks.json` (then trust it with `/hooks`):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook codex", "timeout": 5 }] }],
+    "Stop":         [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }]
+  }
+}
+```
+
+Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
+(or `.github/hooks/fathomable.json` once the folder is trusted); use
+`--hook copilot` in the CLI and `--hook vscode` under VS Code, whose
+`Stop` has no loop cap of its own:
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [{ "type": "command", "bash": "fathomable hello --hook copilot", "timeoutSec": 5 }],
+    "agentStop":    [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }]
+  }
+}
+```
 
 ## 9. When something is off
 

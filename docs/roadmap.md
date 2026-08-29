@@ -135,3 +135,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     detached thread draws on a blank row inserted where its lines were,
     and a bracket bridges the blank rows of rendered markdown
     ([0039](decisions/0039-gutter-colour-and-detached-rows.md)).
+31. **Agent subscriptions and hooks.** An agent registers once with
+    `follow(id, type)`, a harness stop hook delivers each thread whose
+    newest message is someone else's exactly once as a self-contained
+    prompt, `thread_watch` wakes it when another thread moves, and an
+    unsubscribed session never hears from Fathomable
+    ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).

@@ -270,6 +270,10 @@ pub enum Author {
         name: String,
         /// The MCP client that carried the reply, when known.
         client: Option<String>,
+        /// The harness session it subscribed as (ADR 0040), when it did.
+        id: Option<String>,
+        /// The agent type it subscribed with (ADR 0040), when it did.
+        kind: Option<String>,
     },
 }
 
@@ -280,6 +284,24 @@ impl Author {
         Self::Agent {
             name: name.into(),
             client: None,
+            id: None,
+            kind: None,
+        }
+    }
+
+    /// The same author signing as subscriber `id` of type `kind`.
+    ///
+    /// The user stays the user.
+    #[must_use]
+    pub fn subscribed(self, id: impl Into<String>, kind: impl Into<String>) -> Self {
+        match self {
+            Self::User => Self::User,
+            Self::Agent { name, client, .. } => Self::Agent {
+                name,
+                client,
+                id: Some(id.into()),
+                kind: Some(kind.into()),
+            },
         }
     }
 
@@ -297,16 +319,41 @@ impl Author {
             Self::Agent { name, .. } => name,
         }
     }
+
+    /// The subscriber id the message was signed with, if any.
+    #[must_use]
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            Self::User => None,
+            Self::Agent { id, .. } => id.as_deref(),
+        }
+    }
+
+    /// The agent type the message was signed with, if any.
+    #[must_use]
+    pub fn kind(&self) -> Option<&str> {
+        match self {
+            Self::User => None,
+            Self::Agent { kind, .. } => kind.as_deref(),
+        }
+    }
 }
 
 impl fmt::Display for Author {
-    /// `user`, the agent name, or `name (client)` when the two differ.
+    /// `user`, the agent name, `name (type)` for a subscribed agent, or
+    /// `name (client)` when the two differ.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::User => f.write_str("user"),
             Self::Agent {
                 name,
+                kind: Some(kind),
+                ..
+            } => write!(f, "{name} ({kind})"),
+            Self::Agent {
+                name,
                 client: Some(client),
+                ..
             } if client != name => write!(f, "{name} ({client})"),
             Self::Agent { name, .. } => f.write_str(name),
         }
@@ -321,6 +368,10 @@ enum AuthorWire {
         name: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<String>,
     },
 }
 
@@ -329,7 +380,17 @@ impl From<AuthorWire> for Author {
         match wire {
             AuthorWire::Name(name) if name == "user" => Self::User,
             AuthorWire::Name(name) => Self::agent(name),
-            AuthorWire::Full { name, client } => Self::Agent { name, client },
+            AuthorWire::Full {
+                name,
+                client,
+                id,
+                kind,
+            } => Self::Agent {
+                name,
+                client,
+                id,
+                kind,
+            },
         }
     }
 }
@@ -338,8 +399,23 @@ impl From<Author> for AuthorWire {
     fn from(author: Author) -> Self {
         match author {
             Author::User => Self::Name("user".to_owned()),
-            Author::Agent { name, client: None } => Self::Name(name),
-            Author::Agent { name, client } => Self::Full { name, client },
+            Author::Agent {
+                name,
+                client: None,
+                id: None,
+                kind: None,
+            } => Self::Name(name),
+            Author::Agent {
+                name,
+                client,
+                id,
+                kind,
+            } => Self::Full {
+                name,
+                client,
+                id,
+                kind,
+            },
         }
     }
 }
@@ -534,6 +610,35 @@ impl Thread {
                 .replies
                 .last()
                 .is_some_and(|reply| !reply.author().is_user())
+    }
+
+    /// The newest message: the last reply, or the comment when there
+    /// are none, as its author and `created` time.
+    #[must_use]
+    pub fn newest(&self) -> (&Author, u64) {
+        self.replies
+            .last()
+            .map_or((&Author::User, self.created), |reply| {
+                (reply.author(), reply.created())
+            })
+    }
+
+    /// Whether the thread is open and its newest message was not signed
+    /// by subscriber `id` (ADR 0040).
+    ///
+    /// The mirror of [`Self::awaits_user`] from an agent's chair: only
+    /// that agent's own reply, or a resolution, ends the pending state.
+    #[must_use]
+    pub fn pending_for(&self, id: &str) -> bool {
+        self.status == Status::Open && self.newest().0.id() != Some(id)
+    }
+
+    /// Whether subscriber `id` has posted in the thread.
+    #[must_use]
+    pub fn has_reply_from(&self, id: &str) -> bool {
+        self.replies
+            .iter()
+            .any(|reply| reply.author().id() == Some(id))
     }
 
     /// Where the thread sits in `text` now.
@@ -1434,6 +1539,8 @@ mod tests {
         let full = Author::Agent {
             name: "reviewer".to_owned(),
             client: Some("claude-code".to_owned()),
+            id: None,
+            kind: None,
         };
         let json = serde_json::to_string(&full)?;
         assert_eq!(json, r#"{"name":"reviewer","client":"claude-code"}"#);
@@ -1442,8 +1549,58 @@ mod tests {
         let same = Author::Agent {
             name: "claude-code".to_owned(),
             client: Some("claude-code".to_owned()),
+            id: None,
+            kind: None,
         };
         assert_eq!(same.to_string(), "claude-code");
+        let signed = full.subscribed("s-1", "coder");
+        let json = serde_json::to_string(&signed)?;
+        assert_eq!(
+            json,
+            r#"{"name":"reviewer","client":"claude-code","id":"s-1","kind":"coder"}"#
+        );
+        assert_eq!(serde_json::from_str::<Author>(&json)?, signed);
+        assert_eq!(signed.to_string(), "reviewer (coder)");
+        assert_eq!(signed.id(), Some("s-1"));
+        assert_eq!(Author::User.subscribed("s-1", "coder"), Author::User);
+        Ok(())
+    }
+
+    /// A thread is pending for a subscriber until that subscriber is the
+    /// newest voice on it (ADR 0040).
+    #[test]
+    fn pending_follows_the_newest_message() -> Result<(), StoreError> {
+        let file = TempFile::new("pending");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            TEXT,
+            10,
+        )?;
+        let thread = store
+            .thread(&id)
+            .ok_or(StoreError::parse(0, "gone".into()))?;
+        assert!(thread.pending_for("s-1"));
+        assert_eq!(thread.newest(), (&Author::User, 10));
+        let me = Author::agent("bot").subscribed("s-1", "coder");
+        store.reply(&id, Reply::new(me.clone(), 11, "because"))?;
+        let thread = store
+            .thread(&id)
+            .ok_or(StoreError::parse(0, "gone".into()))?;
+        assert!(!thread.pending_for("s-1"));
+        assert!(thread.pending_for("s-2"));
+        assert!(thread.has_reply_from("s-1"));
+        assert!(!thread.has_reply_from("s-2"));
+        store.reply(&id, Reply::new(Author::User, 12, "still"))?;
+        let thread = store
+            .thread(&id)
+            .ok_or(StoreError::parse(0, "gone".into()))?;
+        assert!(thread.pending_for("s-1"));
+        store.resolve(&id, Author::User, 13)?;
+        let thread = store
+            .thread(&id)
+            .ok_or(StoreError::parse(0, "gone".into()))?;
+        assert!(!thread.pending_for("s-1"));
         Ok(())
     }
 

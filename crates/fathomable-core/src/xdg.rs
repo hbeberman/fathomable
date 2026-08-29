@@ -89,6 +89,13 @@ impl XdgDirs {
             .join(crate::annotations::THREADS_FILE)
     }
 
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/agents.jsonl`, the
+    /// agent register (ADR 0040).
+    #[must_use]
+    pub fn agents_file(&self, root: &Path) -> PathBuf {
+        self.workspace_dir(root).join(crate::agents::AGENTS_FILE)
+    }
+
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, the
     /// marker that names the root behind the hash (ADR 0024).
     #[must_use]

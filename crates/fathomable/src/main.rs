@@ -5,6 +5,7 @@
 mod app;
 mod crash;
 mod doctor;
+mod hooks;
 mod logging;
 mod mcp;
 
@@ -13,7 +14,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
@@ -24,7 +25,12 @@ use fathomable_core::workspace::Workspace;
 
 /// Read-only terminal workspace viewer and annotation side-car.
 #[derive(Debug, Parser)]
-#[command(name = "fathomable", version, about)]
+#[command(
+    name = "fathomable",
+    version,
+    about,
+    args_conflicts_with_subcommands = true
+)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each admin flag is a distinct switch mandated by ADR 0009"
@@ -32,6 +38,9 @@ use fathomable_core::workspace::Workspace;
 struct Cli {
     /// File to view, or workspace directory (default: current directory).
     path: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Command>,
 
     /// Run the stdio MCP server instead of the TUI.
     #[arg(long)]
@@ -62,10 +71,44 @@ struct Cli {
     config_show: bool,
 }
 
+/// Harness-hook subcommands (ADR 0040). Silent unless there is something
+/// to say, so they cost nothing where Fathomable is not in use.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// The session-start hook: tell the agent its session id and how to subscribe.
+    Hello {
+        /// Which harness's hook JSON is on stdin and what shape to answer in.
+        #[arg(long, value_enum)]
+        hook: hooks::Harness,
+        /// Session id, when the hook JSON does not carry it.
+        #[arg(long)]
+        id: Option<String>,
+    },
+    /// The stop hook: hand a subscribed agent the threads it has not seen.
+    Pending {
+        /// Which harness's hook JSON is on stdin and what shape to answer in.
+        #[arg(long, value_enum)]
+        hook: Option<hooks::Harness>,
+        /// Session id, when the hook JSON does not carry it.
+        #[arg(long)]
+        id: Option<String>,
+        /// Print the prompt to stdout and exit 0 (for waking an idle session).
+        #[arg(long)]
+        prompt: bool,
+    },
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let dirs = XdgDirs::from_env();
 
+    match cli.command {
+        Some(Command::Hello { hook, id }) => return hooks::hello(&dirs, hook, id),
+        Some(Command::Pending { hook, id, prompt }) => {
+            return hooks::pending(&dirs, hook, id, prompt);
+        }
+        None => {}
+    }
     if cli.doctor {
         return doctor::run(&dirs);
     }
@@ -271,6 +314,15 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         "    max-file-size-mib {}",
         config.viewer().max_file_size_mib
     );
+    println!("}}");
+    let agents = config.agents();
+    let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();
+    println!("agents {{");
+    println!("    types {}", types.join(" "));
+    println!("    nag-after {}", agents.nag_after);
+    println!("    expire-after {}", agents.expire_after.as_secs() / 3600);
+    println!("    max-lines {}", agents.max_lines);
+    println!("    wake {:?}", agents.wake.as_deref().unwrap_or_default());
     println!("}}");
     ExitCode::SUCCESS
 }

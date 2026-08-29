@@ -64,10 +64,6 @@ rejected for good (record rejections in the [charter](charter.md)).
 
 ## Open investigations
 
-- **Server-side annotation cursor per agent.** Agents poll with `since`
-  ([0014](decisions/0014-mcp-server-and-socket-v1.md)); revisit if agents
-  prove bad at tracking timestamps.
-
 - **"Last seen" recency heuristic.** When a view counts as read, with
   hysteresis so brief glances and rapid agent edits do not churn snapshots.
   Origin: [0006](decisions/0006-git-access.md).

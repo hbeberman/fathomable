@@ -95,6 +95,12 @@ and the server stores none. This matches the stateless direction of the
 spec. A server-side per-agent cursor is parked until polling proves
 inadequate.
 
+(Amended 2026-08-29.) Polling proved inadequate: an agent mid-task does
+not poll. [0040](0040-agent-subscriptions-and-hooks.md) adds a per-
+subscriber delivery record keyed by message, a `threads_pending` tool,
+and harness stop hooks; `annotations_list since=` stays as the plain
+read and gains `limit`.
+
 ### Socket protocol v1
 
 - Line-delimited JSON as before, `"v":1`. Requests are a serde enum tagged

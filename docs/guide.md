@@ -140,8 +140,9 @@ thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
 as *detached* when the lines are gone. The lines of the thread open in
-the thread pane are tinted blue, distinct from the yellow of other annotated
-lines (`annotation.focus`). Where the lines went and what
+the thread pane are tinted in a cool colour (blue in the dark theme, teal in
+the light one), distinct from the yellow of other annotated lines
+(`annotation.focus`). Where the lines went and what
 state the thread is in are separate: the thread pane's header reads
 `detached · auto-resolved` or `edited · waiting`, placement first, and
 a thread at its own lines shows the state alone. Edits made while Fathomable was not

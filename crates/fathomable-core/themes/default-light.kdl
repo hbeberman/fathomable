@@ -57,7 +57,7 @@ colors {
     "annotation.edited"        fg="purple"
     "annotation.waiting"       fg="blue" mods="bold"
     "annotation.line"          bg="#fff6d6"
-    "annotation.focus"         bg="#dae6ff"
+    "annotation.focus"         bg="#d6f0ef"
 
     "markup.heading"       fg="purple" mods="bold"
     "markup.raw.inline"    fg="orange"

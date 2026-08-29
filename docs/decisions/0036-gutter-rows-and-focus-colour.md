@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Gutter brackets rendered rows, focus in a second colour
-description: The note cell decides its bracket from the neighbouring rendered rows, so a wrapped one-line thread is bracketed rather than dotted on every row; the open thread's lines take a blue tint instead of a stronger yellow.
+description: The note cell decides its bracket from the neighbouring rendered rows, so a wrapped one-line thread is bracketed rather than dotted on every row; the open thread's lines take a blue (dark) or teal (light) tint instead of a stronger yellow.
 resource: crates/fathomable/src/app/gutter.rs
 tags:
   - decision
@@ -60,8 +60,9 @@ taken:
   rendered row that no source line backs) does not continue a thread,
   so a bracket closes at it; that row draws no tint either, so the two
   agree.
-- `annotation.focus` in the bundled themes becomes a blue tint
-  (`#1c2a3f` dark, `#dae6ff` light). The theme key and its meaning in
+- `annotation.focus` in the bundled themes becomes a blue tint in the
+  dark theme (`#1c2a3f`) and a pale teal in the light one (`#d6f0ef`):
+  the light selection is already blue, and the two must not be confused. The theme key and its meaning in
   the [0011](0011-theme-schema.md) table are unchanged; a user theme
   keeps whatever it set.
 
@@ -70,8 +71,7 @@ taken:
 - A thread on one wrapped source line looks like a thread on several
   source lines: the bracket spans the text it is about. In the source
   view, where nothing wraps, nothing changes.
-- The selection colour of the light theme is also blue; the selection
-  is patched over the row style, so a selected row inside the open
-  thread shows the selection, as it did over the yellow.
+- The selection is patched over the row style, so a selected row inside
+  the open thread shows the selection, as it did over the yellow.
 - `note_in` gains two parameters; it is only called from `note_on_row`
   and the tests.

@@ -123,6 +123,28 @@ impl Compose {
 /// Its place among the file's threads is computed from the document's
 /// marks ([`App::thread_position`]), so a reload cannot strand it
 /// (ADR 0027).
+/// Where `n` / `N` in the thread pane walk: this file's threads or the
+/// whole work's, in path order (ADR 0027).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThreadNav {
+    /// Threads of the open file, by line.
+    #[default]
+    File,
+    /// Every thread on the work, by path then line.
+    Workspace,
+}
+
+impl ThreadNav {
+    /// The other scope.
+    #[must_use]
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::File => Self::Workspace,
+            Self::Workspace => Self::File,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ThreadPanel {
     id: ThreadId,
@@ -322,11 +344,60 @@ impl App {
         marks.into_iter().map(|mark| mark.id().clone()).collect()
     }
 
+    /// Every thread on the work in the pane's walking order: files by
+    /// path, threads by line. The open file contributes its marks, so
+    /// re-anchored ranges keep their place.
+    fn workspace_threads(&self) -> Vec<ThreadId> {
+        let current = self.current.map(|i| self.docs[i].relative.as_path());
+        let mut others: Vec<(&Path, usize, ThreadId)> = self
+            .store
+            .iter()
+            .flat_map(Store::threads)
+            .filter(|thread| self.scope.includes(thread) && Some(thread.path()) != current)
+            .map(|thread| (thread.path(), thread.range().start(), thread.id().clone()))
+            .collect();
+        others.sort();
+        let mut order = Vec::with_capacity(others.len() + self.marks().len());
+        let mut here = Some(self.file_threads());
+        for (path, _, id) in others {
+            if current.is_some_and(|cur| path > cur)
+                && let Some(here) = here.take()
+            {
+                order.extend(here);
+            }
+            order.push(id);
+        }
+        order.extend(here.into_iter().flatten());
+        order
+    }
+
+    /// The threads `n` / `N` walk, in order, per the pane's scope.
+    fn nav_threads(&self) -> Vec<ThreadId> {
+        match self.thread_nav {
+            ThreadNav::File => self.file_threads(),
+            ThreadNav::Workspace => self.workspace_threads(),
+        }
+    }
+
+    /// Where `n` / `N` in the thread pane walk.
+    pub fn thread_nav(&self) -> ThreadNav {
+        self.thread_nav
+    }
+
+    /// `f` in the pane: `n` / `N` walk this file, or the whole work.
+    pub fn thread_toggle_nav(&mut self) {
+        self.thread_nav = self.thread_nav.toggled();
+        self.notice(match self.thread_nav {
+            ThreadNav::File => "n/N walk this file's threads",
+            ThreadNav::Workspace => "n/N walk every thread on this work",
+        });
+    }
+
     /// `(current, total)`, 1-based, of the open pane's thread among the
-    /// file's threads, for the pane header.
+    /// threads `n` / `N` walk, for the pane header.
     pub fn thread_position(&self) -> Option<(usize, usize)> {
         let id = self.thread.as_ref()?.id();
-        let order = self.file_threads();
+        let order = self.nav_threads();
         let index = order.iter().position(|other| other == id)?;
         Some((index + 1, order.len()))
     }
@@ -704,19 +775,28 @@ impl App {
         self.thread.as_mut()
     }
 
-    /// `n` / `N`: the next or previous thread in the file, wrapping; the
-    /// cursor moves to its first line (ADR 0027).
+    /// `n` / `N`: the next or previous thread, wrapping, in the file or
+    /// across the work per [`ThreadNav`]; the cursor moves to its first
+    /// line, opening its file when it is elsewhere (ADR 0027).
     pub fn thread_step(&mut self, delta: isize) {
         let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) else {
             return;
         };
-        let order = self.file_threads();
+        let order = self.nav_threads();
         if order.is_empty() {
             return;
         }
         let index = order.iter().position(|other| *other == id).unwrap_or(0);
         let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
         let next = order[(index + step) % order.len()].clone();
+        let elsewhere = self
+            .thread(&next)
+            .is_some_and(|thread| self.current_path() != thread.path());
+        if elsewhere {
+            // Another file: open it and land on the thread there.
+            self.goto_thread_in_file(&next);
+            return;
+        }
         let updated = self.thread(&next).map_or(0, Thread::updated);
         if let Some(panel) = self.panel_mut() {
             panel.id = next.clone();
@@ -725,6 +805,22 @@ impl App {
         }
         self.thread_scroll(0);
         self.goto_thread(&next);
+    }
+
+    /// Open the file `id` lives in, move the cursor to its first line, and
+    /// show it in the pane. A deleted file is reported instead.
+    fn goto_thread_in_file(&mut self, id: &ThreadId) {
+        let Some(path) = self.thread(id).map(|thread| thread.path().to_path_buf()) else {
+            return;
+        };
+        if !self.workspace.root().join(&path).is_file() {
+            self.notice(format!("{} is deleted", path.display()));
+            return;
+        }
+        self.close_popup();
+        self.open(&path);
+        self.goto_thread(id);
+        self.open_thread(id.clone());
     }
 
     /// Move the cursor to the first line of `id`, when the document has it.

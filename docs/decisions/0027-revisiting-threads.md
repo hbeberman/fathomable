@@ -54,6 +54,12 @@ question round on 2026-08-28; the choices are recorded below.
 - The pane opens on the first thread of the cursor row when there are
   several; the rest are one `n` away. The `+1` badge considered for
   rows that start more than one thread is subsumed by the count.
+- `f` in the pane widens `n` / `N` to every thread on the work, files
+  in path order then lines, crossing into the next file and opening it
+  as `]r` does; the header reads `thread 3/12 on work`. `f` again
+  narrows back to the file. The scope is a viewer setting, not per
+  thread, and is the seed of a later filter-driven walk (by state,
+  author, or age) should one be wanted.
 
 ### The gutter brackets a range
 

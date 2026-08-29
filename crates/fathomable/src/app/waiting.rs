@@ -183,7 +183,7 @@ mod tests {
     use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Focus, Options};
+    use crate::app::{App, Focus, Options, ThreadNav};
 
     const README: &str = "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n";
     const NOTES: &str = "notes\n\nfirst\nsecond\nthird\n";
@@ -249,6 +249,50 @@ mod tests {
     fn open_line(app: &App) -> Option<usize> {
         let panel = app.thread_panel()?;
         Some(app.thread(panel.id())?.range().start())
+    }
+
+    /// `f` in the thread pane widens `n` / `N` from the file to the work:
+    /// the header counts every thread, `n` crosses into the next file,
+    /// and `f` again narrows back. Here for the two-file harness.
+    #[test]
+    fn f_in_the_pane_toggles_n_between_file_and_workspace() -> anyhow::Result<()> {
+        let dir = TempDir::new("nav")?;
+        let mut app = dir.app()?;
+        let mut other = Store::open(dir.store_path())?;
+        agent_thread(&mut other, "README.md", README, 3, true)?;
+        agent_thread(&mut other, "README.md", README, 5, true)?;
+        agent_thread(&mut other, "notes.md", NOTES, 4, true)?;
+        app.reload_store();
+
+        app.waiting_next();
+        assert_eq!(open_line(&app), Some(3));
+        assert_eq!(app.thread_nav(), ThreadNav::File);
+        assert_eq!(app.thread_position(), Some((1, 2)));
+        // In the file, n wraps within README.
+        app.thread_step(1);
+        app.thread_step(1);
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(open_line(&app), Some(3));
+
+        app.thread_toggle_nav();
+        assert_eq!(app.thread_nav(), ThreadNav::Workspace);
+        assert_eq!(app.thread_position(), Some((1, 3)));
+        app.thread_step(1);
+        app.thread_step(1);
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+        assert_eq!(open_line(&app), Some(4));
+        assert_eq!(app.thread_position(), Some((3, 3)));
+        // N from the first thread wraps to the last, whichever file.
+        app.thread_step(1);
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.thread_position(), Some((1, 3)));
+        app.thread_step(-1);
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+
+        app.thread_toggle_nav();
+        assert_eq!(app.thread_nav(), ThreadNav::File);
+        assert_eq!(app.thread_position(), Some((1, 1)));
+        Ok(())
     }
 
     #[test]

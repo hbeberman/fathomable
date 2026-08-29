@@ -17,7 +17,7 @@ use super::info::Info;
 use super::mark_words::{Words, label};
 use super::message::{thread_body_lines, thread_body_rows};
 use super::thread_list::{Row, Rows};
-use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
+use super::threads::{Compose, ComposeTarget, MarkKind, ThreadNav, ThreadPanel};
 use super::view::{Mode, View};
 
 use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_MENU};
@@ -1547,10 +1547,10 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let (index, total) = app.thread_position().unwrap_or((1, 1));
     let words = Words::of(mark.map(super::threads::Mark::placement), thread);
     let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
-    let which = if total > 1 {
-        format!(" thread {index}/{total}")
-    } else {
-        " thread".to_owned()
+    let which = match (app.thread_nav(), total > 1) {
+        (ThreadNav::Workspace, _) => format!(" thread {index}/{total} on work"),
+        (ThreadNav::File, true) => format!(" thread {index}/{total}"),
+        (ThreadNav::File, false) => " thread".to_owned(),
     };
     let mut left = vec![
         Span::styled(which, theme.popup_key),
@@ -1621,6 +1621,13 @@ fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<
     if several {
         hints.push(("n/N", "next/prev"));
     }
+    hints.push((
+        "f",
+        match app.thread_nav() {
+            ThreadNav::File => "all files",
+            ThreadNav::Workspace => "this file",
+        },
+    ));
     if overflows {
         hints.push(("j/k", "scroll"));
     }

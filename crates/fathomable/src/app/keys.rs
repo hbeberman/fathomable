@@ -337,6 +337,7 @@ fn thread(app: &mut App, key: KeyEvent) {
         KeyCode::Char('r') => app.thread_reply(),
         KeyCode::Char('x') => app.thread_toggle_resolved(),
         KeyCode::Char('d') => app.thread_arm_delete(),
+        KeyCode::Char('f') => app.thread_toggle_nav(),
         KeyCode::Char('h') | KeyCode::Left => app.thread_to_file_threads(),
         _ => {}
     }

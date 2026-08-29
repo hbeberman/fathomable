@@ -41,3 +41,4 @@ supersede rather than edit history.
 - [0035 Threads follow HEAD across a rewrite](0035-threads-follow-head.md)
 - [0036 Gutter brackets rendered rows, focus in a second colour](0036-gutter-rows-and-focus-colour.md)
 - [0037 Markdown in the thread pane](0037-markdown-in-threads.md)
+- [0038 Re-anchoring without a snapshot](0038-reanchoring-without-a-snapshot.md)

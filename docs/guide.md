@@ -151,7 +151,10 @@ state the thread is in are separate: the thread pane's header reads
 a thread at its own lines shows the state alone. Edits made while Fathomable was not
 running are followed too, on the next start, through the file's last-seen
 snapshot (section 5); commenting snapshots the file so there is always
-one. Threads live
+one. A file too large to snapshot, or whose snapshot was deleted, is
+followed through the thread itself: each thread keeps its lines and
+three lines either side, and an edit that stays inside that window is
+found. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.

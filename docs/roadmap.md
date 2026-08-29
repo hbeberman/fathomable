@@ -125,3 +125,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     Markdown with fenced code coloured by its language, and a newline in
     a comment stays a line break
     ([0037](decisions/0037-markdown-in-threads.md)).
+29. **Re-anchoring without a snapshot.** Each thread stores a window of
+    the text it was last placed in — its lines and three either side —
+    and a thread edited offline on a file with no last-seen snapshot is
+    followed through that window; older threads are backfilled on start
+    ([0038](decisions/0038-reanchoring-without-a-snapshot.md)).

@@ -72,9 +72,4 @@ rejected for good (record rejections in the [charter](charter.md)).
   hysteresis so brief glances and rapid agent edits do not churn snapshots.
   Origin: [0006](decisions/0006-git-access.md).
 
-- **Re-anchoring without a snapshot.** A thread on a file over 2 MiB, or
-  whose snapshot blob is missing, still detaches when edited offline
-  ([0020](decisions/0020-reanchoring-across-restarts.md) maps through the
-  last-seen snapshot only). Candidate: a snapshot of the annotated lines
-  in the thread store.
 - **Snapshot bounds** for "last seen" diff bases. Origin: 0006.

@@ -25,7 +25,7 @@ pub enum Mapping {
 
 /// Lines of context on each side of a range that an edit may reach and
 /// still count as an edit *of* the range rather than a rewrite around it.
-const LOCAL_CONTEXT: usize = 1;
+pub(crate) const LOCAL_CONTEXT: usize = 1;
 
 /// Follow `range` (1-based lines of `old`) into `new` through a line diff.
 ///

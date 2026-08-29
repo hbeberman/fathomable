@@ -6,7 +6,9 @@
 //! an [`Anchor`] records a short hash of every annotated line and of the
 //! lines immediately above and below, and [`Thread::locate`] finds the range
 //! again after the file changes. When the lines are gone the thread is
-//! [`Placement::Detached`] at its last known range rather than lost.
+//! [`Placement::Detached`] at its last known range rather than lost. Each
+//! thread also carries a [`Context`] window of the text it was last placed
+//! in, so an edit made while nothing runs can be followed (ADR 0038).
 //!
 //! Every change is one JSON line appended to `threads.jsonl` under the
 //! workspace's state directory (ADR 0013); [`Store::open`] folds the file
@@ -34,6 +36,8 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+
+use crate::context::Context;
 use sha2::{Digest, Sha256};
 
 /// The record format version written in every event line.
@@ -430,6 +434,10 @@ pub struct Thread {
     /// workspace had one (ADR 0024); `None` reads as unscoped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// The text the thread was last placed in (ADR 0038). Not sent over
+    /// the session socket, where the snippet already travels.
+    #[serde(skip)]
+    context: Option<Context>,
 }
 
 impl Thread {
@@ -461,6 +469,13 @@ impl Thread {
     #[must_use]
     pub fn anchor(&self) -> &Anchor {
         &self.anchor
+    }
+
+    /// The window of text the thread was last placed in (ADR 0038);
+    /// `None` for a thread recorded before windows were kept.
+    #[must_use]
+    pub fn context(&self) -> Option<&Context> {
+        self.context.as_ref()
     }
 
     /// When the annotation was made, in Unix seconds.
@@ -616,6 +631,10 @@ enum Event {
         /// Absent in version 1 records, which read as unscoped.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
+        /// The window the lines were placed in (ADR 0038); absent on
+        /// records written before it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<Context>,
     },
     Reply {
         v: u32,
@@ -641,6 +660,16 @@ enum Event {
         thread: ThreadId,
         range: LineRange,
         anchor: Anchor,
+        created: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        context: Option<Context>,
+    },
+    /// The window a thread's lines sit in, recorded for a thread that
+    /// had none (ADR 0038). Neither moves the thread nor updates it.
+    Context {
+        v: u32,
+        thread: ThreadId,
+        context: Context,
         created: u64,
     },
     /// The file was renamed and the thread now lives at `path`, range
@@ -679,7 +708,8 @@ impl Event {
             | Self::Relocate { thread, .. }
             | Self::Move { thread, .. }
             | Self::Delete { thread, .. }
-            | Self::Rescope { thread, .. } => Some(thread),
+            | Self::Rescope { thread, .. }
+            | Self::Context { thread, .. } => Some(thread),
         }
     }
 }
@@ -794,6 +824,7 @@ impl Store {
         let anchor = Anchor::capture(text, draft.range).ok_or(StoreError {
             kind: ErrorKind::BadRange(draft.range),
         })?;
+        let context = Context::capture(text, draft.range);
         let snippet = text
             .lines()
             .skip(draft.range.start - 1)
@@ -815,6 +846,7 @@ impl Store {
             created: now,
             comment: draft.comment,
             commit: draft.commit,
+            context,
         })?;
         Ok(id)
     }
@@ -885,6 +917,33 @@ impl Store {
             thread: id.clone(),
             range,
             anchor,
+            created: now,
+            context: Context::capture(text, range),
+        })
+    }
+
+    /// Record the window of `text` around `range` as where the thread `id`
+    /// sits (ADR 0038), for a thread stored before windows were kept. The
+    /// thread's range, anchor, and `updated` are untouched.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown, the range runs
+    /// past the end of `text`, or the file cannot be appended to.
+    pub fn record_context(
+        &mut self,
+        id: &ThreadId,
+        range: LineRange,
+        text: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let context = Context::capture(text, range).ok_or(StoreError {
+            kind: ErrorKind::BadRange(range),
+        })?;
+        self.commit(Event::Context {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            context,
             created: now,
         })
     }
@@ -979,6 +1038,7 @@ impl Store {
                 created,
                 comment,
                 commit,
+                context,
                 ..
             } => {
                 self.threads.push(Thread {
@@ -994,6 +1054,7 @@ impl Store {
                     status: Status::Open,
                     edited: None,
                     commit,
+                    context,
                 });
             }
             Event::Reply { thread, reply, .. } => {
@@ -1034,6 +1095,7 @@ impl Store {
                 range,
                 anchor,
                 created,
+                context,
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
@@ -1041,6 +1103,12 @@ impl Store {
                 thread.range = range;
                 thread.anchor = anchor;
                 thread.edited = Some(created);
+                thread.context = context;
+            }
+            Event::Context {
+                thread, context, ..
+            } => {
+                self.thread_mut(&thread)?.context = Some(context);
             }
             Event::Move {
                 thread,

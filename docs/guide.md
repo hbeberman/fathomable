@@ -139,9 +139,16 @@ Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
-as *detached* when the lines are gone. The lines of the thread open in
+as *detached* when the lines are gone: a blank row then appears where
+the lines were, carrying the thread's mark, and the lines now at that
+place are left alone. `c` on that row opens the thread; `C` is refused,
+as the row is not text. The colour of a mark is the thread's status
+alone: amber while open (`annotation.open`), a bold cool colour when it
+waits on you (`annotation.waiting`), grey once resolved
+(`annotation.resolved`); *edited* and *detached* are words in the pane
+header, not colours. The lines of the thread open in
 the thread pane are tinted in a cool colour (blue in the dark theme, teal in
-the light one), distinct from the yellow of other annotated lines
+the light one), distinct from the tint of other annotated lines
 (`annotation.focus`). Comment and reply bodies in the pane render as
 Markdown: lists, emphasis, `inline code`, and fenced blocks coloured by
 their language, with a newline kept as a line break as in a GitHub
@@ -199,7 +206,7 @@ sit at the far left of the gutter: a thread's rows are bracketed `╭`, `│`,
 `╰`, a thread on one row is `•`, and a thread nested inside another
 re-draws the corners on the outer one's line. The rows are the rendered
 ones, so a thread on a long markdown paragraph is bracketed across the rows
-it wraps to.
+it wraps to, and the blank rows between paragraphs inside a thread draw `│`.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
 for one that is staged; a new untracked file is all thin green. `gd` swaps
 the pane for a unified diff of the file against `HEAD` (`DIFF`), and the

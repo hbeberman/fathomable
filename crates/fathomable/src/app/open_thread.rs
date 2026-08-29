@@ -10,7 +10,7 @@ use std::path::Path;
 use fathomable_core::annotations::{LineRange, Store, ThreadId};
 
 use super::App;
-use super::threads::{MarkKind, overlaps};
+use super::threads::overlaps;
 
 impl App {
     /// Whether `lines` carries part of the open thread pane's thread.
@@ -20,10 +20,9 @@ impl App {
         let Some(panel) = self.thread.as_ref() else {
             return false;
         };
-        self.marks()
-            .iter()
+        self.placed_marks()
             .filter(|mark| mark.id() == panel.id())
-            .any(|mark| mark.kind() != MarkKind::Detached && overlaps(mark.range(), lines))
+            .any(|mark| overlaps(mark.range(), lines))
     }
 }
 
@@ -64,7 +63,6 @@ mod tests {
     use fathomable_core::session::{Request, Response};
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::threads::MarkKind;
     use crate::app::{App, Options};
 
     struct TempDir(PathBuf);
@@ -132,7 +130,7 @@ mod tests {
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         app.file_thread_open();
         assert!(app.thread_panel().is_some());
-        assert_eq!(app.marks()[0].kind(), MarkKind::Detached);
+        assert!(app.marks()[0].is_detached());
         assert!(!app.open_thread_in(line(3)));
         Ok(())
     }
@@ -153,7 +151,7 @@ mod tests {
             "# Readme\n\nfirst\nsecond\nthird\nfourth\n\n- one\n- two\n",
         )?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
-        assert_eq!(app.marks()[0].kind(), MarkKind::Detached);
+        assert!(app.marks()[0].is_detached());
         let author = Author::Agent {
             name: "reviewer".to_owned(),
             client: None,
@@ -167,7 +165,7 @@ mod tests {
         });
         assert_eq!(reply, Response::Done);
         assert_eq!(app.marks()[0].range(), LineRange::new(3, 6));
-        assert_eq!(app.marks()[0].kind(), MarkKind::Edited);
+        assert!(app.marks()[0].placement().is_edited());
         app.file_thread_open();
         assert!(app.open_thread_in(line(5)));
         assert!(!app.open_thread_in(line(7)));

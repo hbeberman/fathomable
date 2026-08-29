@@ -1,24 +1,60 @@
 // @okf-doc: /decisions/0036-gutter-rows-and-focus-colour.md
-//! The note cell of the gutter (ADR 0027, 0036): a thread's rows are
-//! bracketed `╭`, `│`, `╰`, and a thread that fits one row is `•`. The
-//! bracket is decided per rendered row from its neighbours, so a
-//! one-line thread that wraps over several rows is bracketed like any
-//! other range instead of dotting every row.
+//! The note cell of the gutter (ADR 0027, 0036, 0039): a thread's rows
+//! are bracketed `╭`, `│`, `╰`, and a thread that fits one row is `•`.
+//! The bracket is decided per rendered row from the nearest rows above
+//! and below that have source lines, so a one-line thread that wraps
+//! over several rows is bracketed like any other range, and a blank row
+//! of rendered markdown inside a thread's lines draws `│`.
 
 use fathomable_core::annotations::LineRange;
 
 use super::App;
-use super::threads::{MarkKind, overlaps};
+use super::threads::{Mark, MarkKind, overlaps};
 
 impl App {
     /// The note-cell glyph and colour of rendered row `row` of the
-    /// current view, or `None` when no thread touches it.
+    /// current view, or `None` when no thread touches it: the bracket
+    /// of the threads on its lines, `│` on a sourceless row a thread
+    /// spans, `•` on a detached thread's row (ADR 0039).
     pub fn note_on_row(&self, row: usize) -> Option<(&'static str, MarkKind)> {
         let view = self.view();
-        let lines = view.source_lines_of_row(row)?;
-        let above = row.checked_sub(1).and_then(|r| view.source_lines_of_row(r));
-        let below = view.source_lines_of_row(row + 1);
-        self.note_in(lines, above, below)
+        if let Some(anchor) = view.detached_anchor_of_row(row) {
+            return self.detached_note(anchor);
+        }
+        let (above, below) = self.sourced_neighbours(row);
+        match view.source_lines_of_row(row) {
+            Some(lines) => self.note_in(lines, above, below),
+            None => self.spanning_mark(above?, below?).map(|kind| ("│", kind)),
+        }
+    }
+
+    /// Whether the open thread pane's thread covers rendered row `row`:
+    /// its lines, or a sourceless row between two of them.
+    pub fn open_thread_on_row(&self, row: usize) -> bool {
+        if let Some(lines) = self.view().source_lines_of_row(row) {
+            return self.open_thread_in(lines);
+        }
+        let (above, below) = self.sourced_neighbours(row);
+        above.is_some_and(|above| self.open_thread_in(above))
+            && below.is_some_and(|below| self.open_thread_in(below))
+    }
+
+    /// The source lines of the nearest rows above and below `row` that
+    /// have any, `None` at the edges of the document.
+    fn sourced_neighbours(&self, row: usize) -> (Option<LineRange>, Option<LineRange>) {
+        let view = self.view();
+        let rows = view.layout().lines().len();
+        let above = (0..row).rev().find_map(|r| view.source_lines_of_row(r));
+        let below = (row + 1..rows).find_map(|r| view.source_lines_of_row(r));
+        (above, below)
+    }
+
+    /// The most urgent thread covering both `above` and `below`.
+    fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<MarkKind> {
+        self.placed_marks()
+            .filter(|mark| overlaps(mark.range(), above) && overlaps(mark.range(), below))
+            .map(Mark::kind)
+            .max()
     }
 
     /// The note-cell glyph and colour for a rendered row holding `lines`,
@@ -41,8 +77,7 @@ impl App {
         let mut bracket: Option<(usize, &'static str)> = None;
         let mut point = false;
         for mark in self
-            .marks()
-            .iter()
+            .placed_marks()
             .filter(|mark| overlaps(mark.range(), lines))
         {
             let range = mark.range();
@@ -173,6 +208,25 @@ mod tests {
         assert_eq!(glyphs, format!("╭{middle}╰"));
         assert_eq!(app.note_on_row(rows[0] - 1), None, "the row above is clear");
         assert_eq!(app.note_on_row(rows[rows.len() - 1] + 1), None);
+        Ok(())
+    }
+
+    /// ADR 0039: the blank rows rendered markdown puts between paragraphs
+    /// do not break a bracket; they draw `│` inside it.
+    #[test]
+    fn blank_rows_inside_a_range_are_bridged() -> anyhow::Result<()> {
+        let dir = TempDir::new("bridged", "# Title\n\none\n\ntwo\n\nthree\n\nfour\n")?;
+        let mut app = dir.app(60)?;
+        // Lines 3 to 7: `one`, `two`, `three`, with blank lines between.
+        annotate(&mut app, 3, 7, "range");
+        annotate(&mut app, 3, 3, "point on the start");
+        let view = app.view();
+        let rows = view.layout().lines().len();
+        let glyphs: String = (0..rows)
+            .map(|row| app.note_on_row(row).map_or(" ", |(glyph, _)| glyph))
+            .collect();
+        assert_eq!(glyphs.trim_end(), "  ╭│││╰", "{glyphs:?}");
+        assert!(!app.open_thread_on_row(2));
         Ok(())
     }
 }

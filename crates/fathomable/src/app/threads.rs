@@ -20,7 +20,10 @@ use fathomable_core::reanchor::{Mapping, map_range};
 
 use super::{App, Focus, Popup};
 
-/// How a thread should be coloured in the gutter.
+/// A thread's status, which is its colour in the gutter, the file-threads
+/// pane, and the thread list (ADR 0039); where the thread is placed is
+/// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
+/// on one row is their `max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MarkKind {
     Resolved,
@@ -28,21 +31,10 @@ pub enum MarkKind {
     Open,
     /// Open, and an agent wrote the newest message (ADR 0030).
     Waiting,
-    /// The lines under the comment were rewritten since the user last
-    /// answered (ADR 0019).
-    Edited,
-    /// The annotated lines are gone; shown at the last known range.
-    Detached,
 }
 
 impl MarkKind {
-    fn of(thread: &Thread, placement: Placement) -> Self {
-        if placement.is_detached() {
-            return Self::Detached;
-        }
-        if placement.is_edited() {
-            return Self::Edited;
-        }
+    pub(super) fn of(thread: &Thread) -> Self {
         if thread.awaits_user() {
             return Self::Waiting;
         }
@@ -73,6 +65,17 @@ impl Mark {
 
     pub fn kind(&self) -> MarkKind {
         self.kind
+    }
+
+    /// Where the thread sits in the current text.
+    pub fn placement(&self) -> Placement {
+        self.placement
+    }
+
+    /// Whether the annotated lines are gone: the thread is shown on a
+    /// row of its own (ADR 0039), not at its last known range.
+    pub fn is_detached(&self) -> bool {
+        self.placement.is_detached()
     }
 }
 
@@ -175,11 +178,16 @@ impl App {
             .map_or(&[], |doc| doc.marks.as_slice())
     }
 
+    /// The marks placed on lines, leaving out the detached ones, which
+    /// draw on rows of their own (ADR 0039).
+    pub(super) fn placed_marks(&self) -> impl Iterator<Item = &Mark> {
+        self.marks().iter().filter(|mark| !mark.is_detached())
+    }
+
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
     pub fn mark_in(&self, lines: LineRange) -> Option<MarkKind> {
-        self.marks()
-            .iter()
+        self.placed_marks()
             .filter(|mark| overlaps(mark.range(), lines))
             .map(Mark::kind)
             .max()
@@ -190,12 +198,7 @@ impl App {
         let open = self
             .marks()
             .iter()
-            .filter(|mark| {
-                matches!(
-                    mark.kind(),
-                    MarkKind::Open | MarkKind::Waiting | MarkKind::Detached
-                )
-            })
+            .filter(|mark| matches!(mark.kind(), MarkKind::Open | MarkKind::Waiting))
             .count();
         (open, self.marks().len())
     }
@@ -263,18 +266,16 @@ impl App {
                 Mark {
                     id: thread.id().clone(),
                     placement,
-                    kind: MarkKind::of(thread, placement),
+                    kind: MarkKind::of(thread),
                 }
             })
             .collect();
-        let detached = doc
-            .marks
-            .iter()
-            .filter(|m| m.kind() == MarkKind::Detached)
-            .count();
+        let detached = doc.marks.iter().filter(|m| m.is_detached()).count();
         tracing::debug!(path = %doc.relative.display(), marks = doc.marks.len(), detached, "marks refreshed");
-        // The file-threads pane's height follows the marks (ADR 0027).
+        // The file-threads pane's height follows the marks (ADR 0027), and
+        // the detached ones take rows of their own (ADR 0039).
         if self.current == Some(index) {
+            self.place_detached_rows();
             self.scroll_sidebar();
         }
     }
@@ -330,9 +331,16 @@ impl App {
         Some((index + 1, order.len()))
     }
 
-    /// Threads whose range touches the cursor's rendered row.
+    /// Threads whose range touches the cursor's rendered row, or the
+    /// detached threads standing on it (ADR 0039).
     pub fn threads_at_cursor(&self) -> Vec<ThreadId> {
         let view = self.view();
+        if let Some(anchor) = view.detached_anchor_of_row(view.cursor().row) {
+            return self
+                .detached_marks_at(anchor)
+                .map(|mark| mark.id().clone())
+                .collect();
+        }
         let lines = view.source_lines_of_row(view.cursor().row).or_else(|| {
             view.cursor_source_line()
                 .map(|line| LineRange::new(line, line))
@@ -340,8 +348,7 @@ impl App {
         let Some(lines) = lines else {
             return Vec::new();
         };
-        self.marks()
-            .iter()
+        self.placed_marks()
             .filter(|mark| overlaps(mark.range(), lines))
             .map(|mark| mark.id().clone())
             .collect()
@@ -384,12 +391,15 @@ impl App {
             return;
         }
         let view = self.view();
+        // A detached thread's row is not text (ADR 0039).
+        let on_detached_row = view.selected_lines().is_none()
+            && view.detached_anchor_of_row(view.cursor().row).is_some();
         let range = view.selected_lines().or_else(|| {
             view.cursor_source_line()
                 .map(|line| LineRange::new(line, line))
         });
-        let Some(range) = range else {
-            self.notice("nothing to annotate here");
+        let Some(range) = range.filter(|_| !on_detached_row) else {
+            self.notice("no lines here to annotate");
             return;
         };
         self.open_compose(ComposeTarget::New(range));
@@ -718,12 +728,14 @@ impl App {
 
     /// Move the cursor to the first line of `id`, when the document has it.
     pub(super) fn goto_thread(&mut self, id: &ThreadId) {
-        if let Some(line) = self
-            .marks()
-            .iter()
-            .find(|mark| mark.id() == id)
-            .map(|mark| mark.range().start())
-        {
+        let Some(mark) = self.marks().iter().find(|mark| mark.id() == id) else {
+            return;
+        };
+        if mark.is_detached() {
+            let anchor = self.detached_anchor(mark);
+            self.view_mut().goto_detached_row(anchor);
+        } else {
+            let line = mark.range().start();
             self.view_mut().goto_source_line(line);
         }
     }
@@ -1085,7 +1097,8 @@ mod tests {
         )?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
-        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Edited));
+        assert!(app.marks()[0].placement().is_edited());
+        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Open));
         let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
         assert!(reopened.threads()[0].edited().is_some());
         assert_eq!(reopened.threads()[0].range(), LineRange::new(5, 7));
@@ -1101,10 +1114,11 @@ mod tests {
         // Rewrite everything: the thread detaches at its last known range.
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
-        assert_eq!(app.mark_in(LineRange::new(5, 5)), Some(MarkKind::Detached));
+        assert!(app.marks()[0].is_detached());
+        assert_eq!(app.mark_in(LineRange::new(5, 5)), None);
         // Placement and state are told apart (ADR 0032).
         let rows = app.file_thread_rows();
-        assert_eq!(rows[0].words().placement(), Some(MarkKind::Detached));
+        assert_eq!(rows[0].words().placement(), Some("detached"));
         assert_eq!(rows[0].words().state(), MarkKind::Open);
         Ok(())
     }

@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, Status, Thread, ThreadId};
+use fathomable_core::annotations::{LineRange, Thread, ThreadId};
 use fathomable_core::layout::wrap_text;
 
 use super::threads::{ComposeTarget, MarkKind};
@@ -127,21 +127,7 @@ impl Rows {
 }
 
 fn is_open(kind: MarkKind) -> bool {
-    matches!(
-        kind,
-        MarkKind::Open | MarkKind::Waiting | MarkKind::Edited | MarkKind::Detached
-    )
-}
-
-fn kind_of(thread: &Thread) -> MarkKind {
-    if thread.awaits_user() {
-        return MarkKind::Waiting;
-    }
-    match thread.status() {
-        Status::Open => MarkKind::Open,
-        Status::Resolved => MarkKind::Resolved,
-        Status::AutoResolved => MarkKind::AutoResolved,
-    }
+    matches!(kind, MarkKind::Open | MarkKind::Waiting)
 }
 
 impl App {
@@ -233,7 +219,7 @@ impl App {
             .find(|doc| doc.relative == thread.path())
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()))
             .map_or_else(
-                || (thread.range(), kind_of(thread)),
+                || (thread.range(), MarkKind::of(thread)),
                 |mark| (mark.range(), mark.kind()),
             )
     }

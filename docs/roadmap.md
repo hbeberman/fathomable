@@ -130,3 +130,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     and a thread edited offline on a file with no last-seen snapshot is
     followed through that window; older threads are backfilled on start
     ([0038](decisions/0038-reanchoring-without-a-snapshot.md)).
+30. **Gutter colour and detached rows.** The note cell's colour is the
+    thread's status alone (amber open, teal waiting, grey resolved), a
+    detached thread draws on a blank row inserted where its lines were,
+    and a bracket bridges the blank rows of rendered markdown
+    ([0039](decisions/0039-gutter-colour-and-detached-rows.md)).

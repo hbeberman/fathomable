@@ -189,6 +189,9 @@ pub struct Line {
     unwrapped: bool,
     /// Leading cells of chrome that stay put when the line scrolls.
     fixed: usize,
+    /// A blank row inserted before this source line by
+    /// [`Layout::with_rows_before`] (ADR 0039).
+    before: Option<usize>,
 }
 
 impl Line {
@@ -200,6 +203,7 @@ impl Line {
             number: None,
             unwrapped: false,
             fixed: 0,
+            before: None,
         }
     }
 
@@ -242,6 +246,14 @@ impl Line {
     #[must_use]
     pub fn source(&self) -> Option<Range<usize>> {
         self.source.clone()
+    }
+
+    /// The 1-based source line this blank row was inserted before by
+    /// [`Layout::with_rows_before`], one past the last line for a row
+    /// appended at the end; `None` for a line of the document.
+    #[must_use]
+    pub fn stands_before(&self) -> Option<usize> {
+        self.before
     }
 
     /// The 1-based source line to show in the gutter.
@@ -472,6 +484,33 @@ impl Layout {
             width,
             index,
         }
+    }
+
+    /// The layout with one blank row inserted before each source line in
+    /// `lines` (ADR 0039): before the first rendered row whose source
+    /// begins at or after the line, or at the end when there is none.
+    /// Repeated lines share one row; [`Line::stands_before`] names it.
+    #[must_use]
+    pub fn with_rows_before(mut self, lines: &[usize]) -> Self {
+        let mut anchors: Vec<usize> = lines.to_vec();
+        anchors.sort_unstable();
+        anchors.dedup();
+        // Back to front, so earlier insertions do not shift later rows.
+        for anchor in anchors.into_iter().rev() {
+            let row = self
+                .lines
+                .iter()
+                .position(|line| {
+                    line.source
+                        .as_ref()
+                        .is_some_and(|range| self.index.line_of(range.start) >= anchor)
+                })
+                .unwrap_or(self.lines.len());
+            let mut blank = Line::blank();
+            blank.before = Some(anchor);
+            self.lines.insert(row, blank);
+        }
+        self
     }
 
     /// The rendered lines, top to bottom.

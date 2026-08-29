@@ -74,7 +74,7 @@ impl App {
                 Some(FileRow {
                     range: mark.range(),
                     kind: mark.kind(),
-                    words: Words::of(Some(mark.kind()), thread),
+                    words: Words::of(Some(mark.placement()), thread),
                     summary: thread.comment().lines().next().unwrap_or("").to_owned(),
                     replies: thread.replies().len(),
                     updated: thread.updated(),

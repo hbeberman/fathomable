@@ -51,11 +51,8 @@ colors {
     "git.staged"           fg="teal"
     "git.unstaged"         fg="orange"
 
-    "annotation.open"          fg="yellow"
-    "annotation.resolved"      fg="green"
-    "annotation.resolved.auto" fg="orange"
-    "annotation.detached"      fg="red"
-    "annotation.edited"        fg="purple"
+    "annotation.open"          fg="#e0a030"
+    "annotation.resolved"      fg="bright-black"
     "annotation.waiting"       fg="teal" mods="bold"
     "annotation.line"          bg="#2a2a1e"
     "annotation.focus"         bg="#1c2a3f"

@@ -9,6 +9,7 @@ mod autojump;
 mod clipboard;
 mod commands;
 pub(crate) mod delete;
+mod detached;
 pub(crate) mod file_threads;
 pub(crate) mod gutter;
 mod hscroll;

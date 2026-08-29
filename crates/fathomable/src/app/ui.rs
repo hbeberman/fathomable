@@ -57,9 +57,6 @@ pub struct Theme {
     pub picker_selected: Style,
     pub annotation_open: Style,
     pub annotation_resolved: Style,
-    pub annotation_auto: Style,
-    pub annotation_detached: Style,
-    pub annotation_edited: Style,
     pub annotation_waiting: Style,
     pub annotation_line: Style,
     pub annotation_focus: Style,
@@ -104,9 +101,6 @@ impl Theme {
             picker_selected: style(Key::UiPickerSelected),
             annotation_open: style(Key::AnnotationOpen),
             annotation_resolved: style(Key::AnnotationResolved),
-            annotation_auto: style(Key::AnnotationResolvedAuto),
-            annotation_detached: style(Key::AnnotationDetached),
-            annotation_edited: style(Key::AnnotationEdited),
             annotation_waiting: style(Key::AnnotationWaiting),
             annotation_line: style(Key::AnnotationLine),
             annotation_focus: style(Key::AnnotationFocus),
@@ -802,10 +796,7 @@ fn status_style(theme: &Theme, status: LineStatus) -> Style {
 fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
     match kind {
         MarkKind::Open => theme.annotation_open,
-        MarkKind::Resolved => theme.annotation_resolved,
-        MarkKind::AutoResolved => theme.annotation_auto,
-        MarkKind::Detached => theme.annotation_detached,
-        MarkKind::Edited => theme.annotation_edited,
+        MarkKind::Resolved | MarkKind::AutoResolved => theme.annotation_resolved,
         MarkKind::Waiting => theme.annotation_waiting,
     }
 }
@@ -820,14 +811,13 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
         let is_cursor = row == cursor.row;
         // The note cell brackets a thread's rows (ADR 0027).
-        let source = view.source_lines_of_row(row);
         let note = app.note_on_row(row);
         let mut row_style = Style::default();
         if note.is_some() {
             row_style = row_style.patch(theme.annotation_line);
         }
         // The open thread's own lines stand out from the rest (ADR 0033).
-        if source.is_some_and(|n| app.open_thread_in(n)) {
+        if app.open_thread_on_row(row) {
             row_style = row_style.patch(theme.annotation_focus);
         }
         if is_cursor {
@@ -1547,7 +1537,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = app.thread_position().unwrap_or((1, 1));
-    let words = Words::of(mark.map(super::threads::Mark::kind), thread);
+    let words = Words::of(mark.map(super::threads::Mark::placement), thread);
     let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
     let which = if total > 1 {
         format!(" thread {index}/{total}")
@@ -1561,7 +1551,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     // Placement first, then state, so a detached thread still says
     // whether it waits or was resolved (ADR 0032).
     if let Some(placement) = words.placement() {
-        left.push(Span::styled(label(placement), mark_style(theme, placement)));
+        left.push(Span::styled(placement, mark_style(theme, words.state())));
         left.push(Span::styled(" · ", theme.info));
     }
     left.push(Span::styled(

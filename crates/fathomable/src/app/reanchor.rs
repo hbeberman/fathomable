@@ -129,7 +129,6 @@ mod tests {
     use fathomable_core::seen;
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::threads::MarkKind;
     use crate::app::{App, Options};
 
     struct TempDir(PathBuf);
@@ -185,7 +184,7 @@ mod tests {
         let app = annotate_then_edit_offline(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
-        assert_eq!(mark.kind(), MarkKind::Edited);
+        assert!(mark.placement().is_edited());
         assert_eq!(
             app.thread(mark.id()).map(Thread::range),
             Some(LineRange::new(3, 3))
@@ -197,7 +196,7 @@ mod tests {
     fn thread_removed_offline_stays_detached() -> anyhow::Result<()> {
         let dir = TempDir::new("removed")?;
         let app = annotate_then_edit_offline(&dir, "one\nthree\nfour\n")?;
-        assert_eq!(app.marks()[0].kind(), MarkKind::Detached);
+        assert!(app.marks()[0].is_detached());
         Ok(())
     }
 
@@ -222,7 +221,7 @@ mod tests {
         let app = annotate_without_snapshot_then_edit(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
-        assert_eq!(mark.kind(), MarkKind::Edited);
+        assert!(mark.placement().is_edited());
         let thread = app
             .thread(mark.id())
             .ok_or_else(|| anyhow::anyhow!("thread"))?;
@@ -239,7 +238,7 @@ mod tests {
     fn without_a_snapshot_a_rewrite_around_the_lines_detaches() -> anyhow::Result<()> {
         let dir = TempDir::new("nosnap-rewrite")?;
         let app = annotate_without_snapshot_then_edit(&dir, "ONE\nTWO\nTHREE\nFOUR\n")?;
-        assert_eq!(app.marks()[0].kind(), MarkKind::Detached);
+        assert!(app.marks()[0].is_detached());
         Ok(())
     }
 
@@ -276,7 +275,7 @@ mod tests {
         fs::write(dir.0.join("ws/a.txt"), "one\nTWO\nthree\nfour\n")?;
         let mut app = dir.app()?;
         app.open(Path::new("a.txt"));
-        assert_eq!(app.marks()[0].kind(), MarkKind::Edited);
+        assert!(app.marks()[0].placement().is_edited());
         Ok(())
     }
 }

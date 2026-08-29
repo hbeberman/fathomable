@@ -1,14 +1,13 @@
 // @okf-doc: /decisions/0032-placement-and-state.md
 //! The two words that describe a thread (ADR 0032).
 //!
-//! A [`MarkKind`] ranks one colour for the gutter, and placement wins
-//! there: a detached thread is red whatever its state. The thread pane
-//! and the file-threads pane say more: the *placement* word (`detached`,
-//! `edited`) when the lines moved or went, then the *state* word
-//! (`waiting`, `open`, `resolved`, `auto-resolved`) always, so a reply or
-//! a resolution on a detached thread is never hidden behind its colour.
+//! A [`MarkKind`] is the *state* and the one colour a thread has (ADR
+//! 0039). The thread pane and the file-threads pane say more: the
+//! *placement* word (`detached`, `edited`) when the lines moved or went,
+//! then the state word (`waiting`, `open`, `resolved`, `auto-resolved`)
+//! always, so where a thread's lines are never hides what it needs.
 
-use fathomable_core::annotations::{Status, Thread};
+use fathomable_core::annotations::{Placement, Thread};
 
 use super::threads::MarkKind;
 
@@ -16,31 +15,28 @@ use super::threads::MarkKind;
 /// written, and the state word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Words {
-    placement: Option<MarkKind>,
+    placement: Option<&'static str>,
     state: MarkKind,
 }
 
 impl Words {
-    /// Words for `thread` shown with `kind`, its gutter kind when the
-    /// file is open.
+    /// Words for `thread` at `placement`, known when its file is open.
     #[must_use]
-    pub fn of(kind: Option<MarkKind>, thread: &Thread) -> Self {
-        let placement = kind.filter(|kind| matches!(kind, MarkKind::Detached | MarkKind::Edited));
-        let state = if thread.awaits_user() {
-            MarkKind::Waiting
-        } else {
-            match thread.status() {
-                Status::Open => MarkKind::Open,
-                Status::Resolved => MarkKind::Resolved,
-                Status::AutoResolved => MarkKind::AutoResolved,
-            }
-        };
-        Self { placement, state }
+    pub fn of(placement: Option<Placement>, thread: &Thread) -> Self {
+        let placement = placement.and_then(|placement| match placement {
+            Placement::Detached(_) => Some("detached"),
+            Placement::Edited(_) => Some("edited"),
+            Placement::Anchored(_) => None,
+        });
+        Self {
+            placement,
+            state: MarkKind::of(thread),
+        }
     }
 
     /// `detached` or `edited`, when the lines are not where they were.
     #[must_use]
-    pub fn placement(self) -> Option<MarkKind> {
+    pub fn placement(self) -> Option<&'static str> {
         self.placement
     }
 
@@ -61,8 +57,6 @@ impl Words {
 #[must_use]
 pub fn label(kind: MarkKind) -> &'static str {
     match kind {
-        MarkKind::Detached => "detached",
-        MarkKind::Edited => "edited",
         MarkKind::Waiting => "waiting",
         MarkKind::Open => "open",
         MarkKind::Resolved => "resolved",

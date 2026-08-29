@@ -188,6 +188,8 @@ pub struct View {
     hscroll: HScroll,
     /// Digits typed before a key, zero for none.
     count: usize,
+    /// Source lines a detached thread's row stands before (ADR 0039).
+    detached: Vec<usize>,
 }
 
 impl View {
@@ -236,6 +238,37 @@ impl View {
             pending: None,
             hscroll: HScroll::default(),
             count: 0,
+            detached: Vec::new(),
+        }
+    }
+
+    /// Lay the document out again with a blank row before each line in
+    /// `lines`, for the detached threads anchored there (ADR 0039); a
+    /// call that changes nothing keeps the layout.
+    pub fn set_detached_anchors(&mut self, mut lines: Vec<usize>) {
+        lines.sort_unstable();
+        lines.dedup();
+        if lines == self.detached {
+            return;
+        }
+        self.detached = lines;
+        self.relayout();
+    }
+
+    /// The source line the detached row `row` stands before, if it is one.
+    pub fn detached_anchor_of_row(&self, row: usize) -> Option<usize> {
+        self.layout.lines().get(row)?.stands_before()
+    }
+
+    /// Move to the detached row standing before source line `anchor`.
+    pub fn goto_detached_row(&mut self, anchor: usize) {
+        if let Some(row) = self
+            .layout
+            .lines()
+            .iter()
+            .position(|line| line.stands_before() == Some(anchor))
+        {
+            self.jump_to_row(row);
         }
     }
 
@@ -569,6 +602,8 @@ impl View {
         // Anchor by source line and column, not byte offset, so an insertion
         // above the cursor does not drag it onto unrelated text (ADR 0010).
         let (line, column) = self.source_position();
+        // A cursor on a detached row stays on it (ADR 0039).
+        let on_detached = self.detached_anchor_of_row(self.cursor.row);
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
         let base = match self.display {
             Display::Diff => self.head.as_deref(),
@@ -586,12 +621,19 @@ impl View {
                 Layout::diff(base, &self.text, self.width)
             }
             _ => Layout::render_with(&self.text, self.width, &self.syntax.highlighter),
-        };
+        }
+        .with_rows_before(&self.detached);
         let index = self.layout.index();
         let line = line.min(index.line_count());
         let offset = index.offset_at(&self.text, line, column);
-        let row = offset
-            .and_then(|offset| self.layout.line_at_offset(offset))
+        let row = on_detached
+            .and_then(|anchor| {
+                self.layout
+                    .lines()
+                    .iter()
+                    .position(|line| line.stands_before() == Some(anchor))
+            })
+            .or_else(|| offset.and_then(|offset| self.layout.line_at_offset(offset)))
             .unwrap_or(self.cursor.row);
         self.cursor.row = row.min(self.last_row());
         self.scroll = self.cursor.row.saturating_sub(screen_row);

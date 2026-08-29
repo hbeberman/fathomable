@@ -186,9 +186,6 @@ pub enum Key {
     GitUnstaged,
     AnnotationOpen,
     AnnotationResolved,
-    AnnotationResolvedAuto,
-    AnnotationDetached,
-    AnnotationEdited,
     AnnotationWaiting,
     AnnotationLine,
     AnnotationFocus,
@@ -203,7 +200,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 37] = [
+    const NAMED: [(&'static str, Self); 34] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -229,9 +226,6 @@ impl Key {
         ("git.unstaged", Self::GitUnstaged),
         ("annotation.open", Self::AnnotationOpen),
         ("annotation.resolved", Self::AnnotationResolved),
-        ("annotation.resolved.auto", Self::AnnotationResolvedAuto),
-        ("annotation.detached", Self::AnnotationDetached),
-        ("annotation.edited", Self::AnnotationEdited),
         ("annotation.waiting", Self::AnnotationWaiting),
         ("annotation.line", Self::AnnotationLine),
         ("annotation.focus", Self::AnnotationFocus),

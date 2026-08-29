@@ -98,8 +98,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.sidebar`, `ui.sidebar.selected`, `ui.sidebar.dir` | tree sidebar background, its cursor row, directory names ([0012](0012-workspace-mode.md)) |
 | `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
-| `annotation.open`, `annotation.resolved`, `annotation.resolved.auto`, `annotation.detached` | gutter note cell by thread state ([0013](0013-annotation-storage-and-ux.md)) |
-| `annotation.edited` | gutter note cell of a thread re-anchored onto rewritten lines ([0019](0019-reanchoring-edited-lines.md)) |
+| `annotation.open`, `annotation.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
 | `annotation.waiting` | gutter note cell, list rows, and sidebar tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
 | `annotation.line` | background of annotated rows (0013) |
 | `annotation.focus` | background of the rows of the thread open in the thread pane ([0033](0033-open-thread-lines.md)) |

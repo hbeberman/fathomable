@@ -42,3 +42,4 @@ supersede rather than edit history.
 - [0036 Gutter brackets rendered rows, focus in a second colour](0036-gutter-rows-and-focus-colour.md)
 - [0037 Markdown in the thread pane](0037-markdown-in-threads.md)
 - [0038 Re-anchoring without a snapshot](0038-reanchoring-without-a-snapshot.md)
+- [0039 Gutter colour says status, detached threads get a row](0039-gutter-colour-and-detached-rows.md)

@@ -322,15 +322,73 @@ stdio MCP server that, on every call, picks the known workspace containing
 the current directory and drives its viewers; reading and answering threads
 also works with no viewer running, straight from the store.
 
-Register it with your agent host once. For Claude Code:
+Register it with your agent host once. Every host runs the same stdio
+command, `fathomable --mcp`; only the file it is written to differs.
+Register it per user, not in the repository, so a clone does not opt
+anyone in.
+
+Claude Code:
 
 ```sh
 claude mcp add fathomable -- fathomable --mcp
 ```
 
-For any other host, add a stdio server whose command is
-`fathomable --mcp`. Then start Fathomable in the repository, start the agent
-in the same repository, and the tools are:
+Codex CLI, which writes `~/.codex/config.toml`:
+
+```sh
+codex mcp add fathomable -- fathomable --mcp
+```
+
+The equivalent block, if you would rather edit the file:
+
+```toml
+[mcp_servers.fathomable]
+command = "fathomable"
+args = ["--mcp"]
+```
+
+Copilot CLI, in `~/.copilot/mcp-config.json` — `/mcp add` in a session
+fills in the same file, and `COPILOT_HOME` moves the directory:
+
+```json
+{
+  "mcpServers": {
+    "fathomable": {
+      "type": "local",
+      "command": "fathomable",
+      "args": ["--mcp"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+`"stdio"` is accepted there as a synonym for `"local"`; `tools` takes
+`"*"` or the names to expose.
+
+VS Code, in the user `mcp.json` that the **MCP: Open User Configuration**
+command opens, or in `.vscode/mcp.json` for a single workspace
+(**MCP: Add Server** writes either):
+
+```json
+{
+  "servers": {
+    "fathomable": {
+      "type": "stdio",
+      "command": "fathomable",
+      "args": ["--mcp"]
+    }
+  }
+}
+```
+
+Any other host takes the same stdio command. Each host spawns
+`fathomable` itself, so it has to be on the PATH that host sees: a VS
+Code started from a desktop launcher may not have `~/.cargo/bin` on it,
+and wants the absolute path instead.
+
+Then start Fathomable in the repository, start the agent in the same
+repository, and the tools are:
 
 | Tool | Use |
 | --- | --- |

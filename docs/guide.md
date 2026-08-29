@@ -384,12 +384,25 @@ threads and a subscriber to try the loop against.
 Two subcommands, both reading the harness's hook JSON on stdin:
 
 - `fathomable hello --hook <harness>` (session start) prints one paragraph
-  telling the model its session id and how to subscribe.
+  telling the model its session id and how to subscribe. On a *resume* —
+  `source: "resume"` in the hook JSON — it prints the pending threads
+  after it, so a session that comes back after being stopped starts with
+  them in context instead of waiting for a turn to end. The other
+  sources are left to the stop hook: `startup` and `fork` have not
+  subscribed yet, and a `compact` happens mid-task, where the blob would
+  be consumed into context the model may never act on.
 - `fathomable pending --hook <harness>` (stop) blocks the stop with the
   pending threads, or says nothing. `--prompt` prints them to stdout
   instead, and `--id ID` names the session when no JSON is piped, so
   `claude -r ID "$(fathomable pending --id ID --prompt)"` wakes an idle
   session by hand.
+
+`agents.max-lines` bounds the newly pending threads only. Past it they
+are named by id and place under `N more; call threads_pending`, and are
+deliberately *not* recorded as delivered, so that call returns them in
+full. A fired watch and the threads it reminds of are always shown
+whole: the watch is spent when it fires and a reminded thread need not
+be pending, so neither could be fetched a second time.
 
 In the viewer, an agent's messages are labelled `name (type)`, a thread
 an agent is watching says `watched by name (type)` in its pane header,

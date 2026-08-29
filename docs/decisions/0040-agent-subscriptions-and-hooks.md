@@ -257,6 +257,40 @@ session id from the process tree, so a `thread_reply` after a resume is
 signed without a fresh `follow`; `hello` now appends bonds to the
 register, and `thread_reply` accepts an `id` as the fallback.
 
+Note (2026-08-29), three corrections from the first live session:
+
+- **The blob's overflow was recorded as delivered.** "Nothing beyond
+  `agents.max-lines` lines: past it, the rest are listed as
+  `id path:range` with 'call `threads_pending`'" was rendered but not
+  honoured: the hook marked every gathered thread delivered, so the
+  `threads_pending` the tail line names returned nothing and those
+  bodies were never shown — they survived only as the path-only nag.
+  The line budget now belongs to `Blob::fit`, which moves the overflow
+  to `Blob::listed` *before* rendering; a caller delivers `Blob::shown`
+  and nothing else, so a listed thread stays deliverable. `render` no
+  longer takes `max_lines`, so there is one accounting rather than two.
+  The `threads_pending` handler applies the same split to its summary
+  and folds what it lists into the `more` count.
+- **Fired watches outrank the budget.** `max-lines` now bounds the fresh
+  threads only: a fired watch and the threads it reminds of are always
+  shown in full. `Register::fire` unwatches as it fires, and a reminded
+  thread need not be pending, so neither could be fetched again — listing
+  either by id alone would lose it for good.
+- **Delivery gains a second, non-blocking channel.** `hello` prints the
+  blob after its paragraph when `SessionStart` says `source: "resume"`,
+  so a session that was stopped comes back with its threads in context
+  instead of waiting for a turn to end. Only `resume`: `startup` and
+  `fork` have not subscribed, and on `compact` the session is mid-task,
+  where consuming a delivery and firing a watch into context the model
+  may not act on would lose them with the stop hook then silent. This
+  weakens the guarantee for the resume case — context the model may
+  ignore, not a forced prompt — which the record's own "if the agent
+  ignores it that is the agent's problem" already contemplates. A
+  `SessionStart` is not a turn-end, so it does not count a check.
+
+The delivery-record-as-cursor, the opt-in silence, and the
+once-per-message idempotence are unchanged.
+
 ## Consequences
 
 - An agent's turn ends normally unless it registered, someone else

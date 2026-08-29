@@ -87,7 +87,15 @@ impl App {
             .find(|s| s.id() == id)
             .map_or_else(|| id.to_owned(), Subscriber::label);
         let root = self.workspace.root().to_path_buf();
-        let prompt = match hooks::compose(&self.dirs, &root, id, &self.agents) {
+        // `Space w` hands the blob over as the agent's next prompt, so it
+        // forces a turn exactly as the stop hook does.
+        let prompt = match hooks::compose(
+            &self.dirs,
+            &root,
+            id,
+            &self.agents,
+            hooks::Occasion::TurnEnd,
+        ) {
             Ok(Some(prompt)) => prompt,
             Ok(None) => {
                 self.notice(format!("nothing pending for {label}"));

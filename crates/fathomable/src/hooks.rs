@@ -9,6 +9,12 @@
 //! continuation the hook itself caused, or nothing pending. Neither ever
 //! writes to the thread store; both append to the agent register —
 //! `hello` the session bond of ADR 0041, `pending` its deliveries.
+//!
+//! `hello` delivers too when its `source` is `resume`, so a session that
+//! comes back after being stopped has its pending threads in context
+//! without waiting for a turn to end. That blob is context rather than a
+//! blocked stop, so it is composed as [`Occasion::Resume`] and does not
+//! count toward the nag; every other `source` is left to the stop hook.
 
 use std::env;
 use std::io::{self, IsTerminal, Read};
@@ -40,11 +46,26 @@ pub enum Harness {
     Vscode,
 }
 
+/// Why a blob is being composed, which decides how hard it lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Occasion {
+    /// A `Stop` hook or the viewer's `Space w`: the blob forces a turn,
+    /// and a delivered-but-unanswered thread counts toward the nag.
+    TurnEnd,
+    /// A `SessionStart` resume: the blob is only added to context, so it
+    /// does not count a check — the nag cadence of ADR 0040 is measured
+    /// in turn-ends, not in resumes.
+    Resume,
+}
+
 /// What a hook's stdin said, in the fields every harness shares.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Input {
     session: Option<String>,
     cwd: Option<PathBuf>,
+    /// `SessionStart`'s `source`: `startup`, `resume`, `clear`,
+    /// `compact`, or `fork`. Absent on the other events.
+    source: Option<String>,
     continuation: bool,
     subagent: bool,
 }
@@ -71,6 +92,7 @@ impl Input {
         Self {
             session,
             cwd: field("cwd").map(PathBuf::from),
+            source: field("source"),
             continuation: value
                 .get("stop_hook_active")
                 .and_then(Value::as_bool)
@@ -126,7 +148,7 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
     let config = agents_config(dirs);
     bond_session(dirs, &root, &id, &config);
     let types = config.types.join(", ");
-    let text = format!(
+    let mut text = format!(
         "Fathomable is watching this workspace ({}): the user reads your work there and \
          leaves review comments on lines. Your session id is {id}. Before you edit, call \
          the fathomable `follow` tool with id \"{id}\", a type (one of: {types}), and the \
@@ -135,6 +157,20 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
          you did not call `follow` on this connection).",
         root.display()
     );
+    // A resume comes back with the connection's memory gone and may have
+    // missed comments while the session was stopped, so it is handed them
+    // here rather than waiting for a turn to end (ADR 0040 note). The
+    // other sources are left alone: `startup` and `fork` have not
+    // subscribed yet, and `compact` is mid-task, where consuming a
+    // delivery — and firing a watch, which `Register::fire` removes —
+    // into context the model may not act on would lose it, with the stop
+    // hook then silent because it is recorded as delivered.
+    if input.source.as_deref() == Some("resume")
+        && let Ok(Some(blob)) = compose(dirs, &root, &id, &config, Occasion::Resume)
+    {
+        text.push_str("\n\n");
+        text.push_str(&blob);
+    }
     match harness {
         Harness::Claude | Harness::Codex => println!("{text}"),
         Harness::Copilot => println!("{}", json!({ "additionalContext": text })),
@@ -183,7 +219,7 @@ pub fn pending(
         return ExitCode::SUCCESS;
     };
     let config = agents_config(dirs);
-    let text = match compose(dirs, &root, &id, &config) {
+    let text = match compose(dirs, &root, &id, &config, Occasion::TurnEnd) {
         Ok(Some(text)) => text,
         Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
@@ -237,6 +273,7 @@ pub(crate) fn compose(
     root: &Path,
     id: &str,
     config: &AgentsConfig,
+    occasion: Occasion,
 ) -> Result<Option<String>, String> {
     let when = now();
     let mut register = Register::open(dirs.agents_file(root), when, config.expire_after)
@@ -245,18 +282,18 @@ pub(crate) fn compose(
         return Ok(None);
     };
     let threads = scoped_threads(dirs, root)?;
-    let blob = gather(&mut register, &subscriber, &threads, config.nag_after, when)
+    let mut blob = gather(&mut register, &subscriber, &threads, config, occasion, when)
         .map_err(|e| e.to_string())?;
     if blob.is_empty() {
         register.touch(id, when).map_err(|e| e.to_string())?;
         return Ok(None);
     }
-    let text = blob.render(&subscriber, config.max_lines);
-    for thread in blob.fresh.iter().chain(
-        blob.fired
-            .iter()
-            .flat_map(|(f, r)| std::iter::once(&f.thread).chain(r.iter())),
-    ) {
+    // Split the overflow off before rendering, so that only what the blob
+    // actually shows is recorded as delivered and the rest still comes
+    // back from `threads_pending`, as the blob's own tail line says.
+    blob.fit(&subscriber, config.max_lines);
+    let text = blob.render(&subscriber);
+    for thread in blob.shown() {
         register
             .deliver(id, thread, when)
             .map_err(|e| e.to_string())?;
@@ -269,7 +306,8 @@ pub(crate) fn gather<'a>(
     register: &mut Register,
     subscriber: &Subscriber,
     threads: &'a [Thread],
-    nag_after: u32,
+    config: &AgentsConfig,
+    occasion: Occasion,
     when: u64,
 ) -> Result<Blob<'a>, fathomable_core::agents::RegisterError> {
     let fired = register.fire(subscriber.id(), threads, when)?;
@@ -295,12 +333,10 @@ pub(crate) fn gather<'a>(
         .filter(|t| !already.iter().any(|r| r.id() == t.id()))
         .collect();
     let stale = register.stale(subscriber, threads);
-    let reminder = if !stale.is_empty() && fresh.is_empty() && fired.is_empty() {
-        if register.check(subscriber.id(), nag_after, when)? {
-            stale
-        } else {
-            Vec::new()
-        }
+    let due =
+        occasion == Occasion::TurnEnd && !stale.is_empty() && fresh.is_empty() && fired.is_empty();
+    let reminder = if due && register.check(subscriber.id(), config.nag_after, when)? {
+        stale
     } else {
         Vec::new()
     };
@@ -308,6 +344,7 @@ pub(crate) fn gather<'a>(
         fired,
         fresh,
         reminder,
+        listed: Vec::new(),
     })
 }
 
@@ -324,7 +361,7 @@ mod tests {
     use fathomable_core::session::Marker;
     use serde_json::json;
 
-    use super::{Harness, Input, compose, workspace_for};
+    use super::{Harness, Input, Occasion, compose, workspace_for};
     use crate::app::threads::now;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -373,30 +410,139 @@ mod tests {
             nag_after: 2,
             ..AgentsConfig::default()
         };
-        assert_eq!(compose(&dirs, &root, "ghost", &config)?, None);
+        assert_eq!(
+            compose(&dirs, &root, "ghost", &config, Occasion::TurnEnd)?,
+            None
+        );
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
         register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
-        let text = compose(&dirs, &root, "s-1", &config)?.ok_or("nothing delivered")?;
+        let text =
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
         assert!(text.contains("1 review thread needs your reply"), "{text}");
         assert!(text.contains("user: why?"), "{text}");
         assert_eq!(
-            compose(&dirs, &root, "s-1", &config)?,
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
             None,
             "first check is quiet"
         );
-        let nag = compose(&dirs, &root, "s-1", &config)?.ok_or("no reminder")?;
+        let nag = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("no reminder")?;
         assert!(
             nag.starts_with("FATHOMABLE reminder: 1 thread still unanswered: a.md:1"),
             "{nag}"
         );
-        assert_eq!(compose(&dirs, &root, "s-1", &config)?, None);
+        assert_eq!(
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            None
+        );
         let me = Author::agent("bot").subscribed("s-1", "coder");
         store.reply(&id, Reply::new(me, 7, "because"))?;
-        assert_eq!(compose(&dirs, &root, "s-1", &config)?, None, "own reply");
+        assert_eq!(
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            None,
+            "own reply"
+        );
         store.reply(&id, Reply::new(Author::User, 8, "hmm"))?;
-        let again = compose(&dirs, &root, "s-1", &config)?.ok_or("nothing")?;
+        let again = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing")?;
         assert!(again.contains("user: hmm"), "{again}");
+        Ok(())
+    }
+
+    /// A blob past `max-lines` lists the rest and tells the model to call
+    /// `threads_pending` — so the rest must still be deliverable there.
+    #[test]
+    fn overflow_threads_survive_for_threads_pending() -> TestResult {
+        let dir = TempDir::new("overflow")?;
+        let dirs = dir.dirs();
+        let root = dir.0.join("ws").canonicalize()?;
+        Marker::new(root.clone()).write(&dirs)?;
+        let mut store = Store::open(dirs.threads_file(&root))?;
+        let text = "one\ntwo\nthree\n";
+        let mut ids = Vec::new();
+        for n in 0..4 {
+            ids.push(store.annotate(
+                Draft::new(Path::new("a.md"), LineRange::new(1, 3), format!("why {n}?")),
+                text,
+                5,
+            )?);
+        }
+        let config = AgentsConfig {
+            max_lines: 20,
+            ..AgentsConfig::default()
+        };
+        let when = now();
+        let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        let blob =
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
+        assert!(blob.contains("more; call `threads_pending`"), "{blob}");
+        // A thread is shown in full only if it has a `── thread <id>`
+        // header; the overflow appears by id alone in the closing list.
+        let listed: Vec<_> = ids
+            .iter()
+            .filter(|id| !blob.contains(&format!("── thread {id} ")))
+            .collect();
+        assert!(!listed.is_empty(), "nothing overflowed: {blob}");
+
+        // The blob told the model to fetch the rest; they must be there.
+        let register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
+        let subscriber = register.subscriber("s-1").ok_or("gone")?;
+        let threads = super::scoped_threads(&dirs, &root)?;
+        let deliverable: Vec<_> = register
+            .deliverable(subscriber, &threads)
+            .into_iter()
+            .map(|t| t.id().clone())
+            .collect();
+        for id in &listed {
+            assert!(
+                deliverable.contains(id),
+                "{id} was listed as \"more; call threads_pending\" but is already \
+                 recorded as delivered, so threads_pending will not return it"
+            );
+        }
+        Ok(())
+    }
+
+    /// A resume hands the blob over as context, not as a forced turn, so
+    /// it must not spend the nag cadence that ADR 0040 counts in
+    /// turn-ends — otherwise resuming repeatedly would nag about threads
+    /// no turn ever refused to answer.
+    #[test]
+    fn a_resume_does_not_count_toward_the_nag() -> TestResult {
+        let dir = TempDir::new("resume")?;
+        let dirs = dir.dirs();
+        let root = dir.0.join("ws").canonicalize()?;
+        Marker::new(root.clone()).write(&dirs)?;
+        let mut store = Store::open(dirs.threads_file(&root))?;
+        store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            "one\n",
+            5,
+        )?;
+        let config = AgentsConfig {
+            nag_after: 2,
+            ..AgentsConfig::default()
+        };
+        let when = now();
+        let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        assert!(compose(&dirs, &root, "s-1", &config, Occasion::Resume)?.is_some());
+        for _ in 0..5 {
+            assert_eq!(
+                compose(&dirs, &root, "s-1", &config, Occasion::Resume)?,
+                None,
+                "a resume neither repeats the blob nor nags"
+            );
+        }
+        // The cadence is untouched, so it still takes `nag_after`
+        // turn-ends to earn the reminder.
+        assert_eq!(
+            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            None
+        );
+        let nag = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?
+            .ok_or("no reminder after two turn-ends")?;
+        assert!(nag.starts_with("FATHOMABLE reminder:"), "{nag}");
         Ok(())
     }
 
@@ -408,6 +554,12 @@ mod tests {
         );
         assert!(claude.subagent && claude.continuation);
         assert_eq!(claude.session.as_deref(), Some("s"));
+        assert_eq!(claude.source, None, "Stop carries no source");
+        let resumed = Input::parse(
+            Harness::Claude,
+            &json!({"session_id": "s", "cwd": "/w", "source": "resume"}),
+        );
+        assert_eq!(resumed.source.as_deref(), Some("resume"));
         let main = Input::parse(Harness::Codex, &json!({"session_id": "s", "cwd": "/w"}));
         assert!(!main.subagent && !main.continuation);
         let copilot_main = Input::parse(

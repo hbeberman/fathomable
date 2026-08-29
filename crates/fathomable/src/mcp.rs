@@ -641,21 +641,22 @@ impl Server {
             &mut register,
             &subscriber,
             &threads,
-            self.agents.nag_after,
+            &self.agents,
+            hooks::Occasion::TurnEnd,
             when,
         ) {
             Ok(blob) => blob,
             Err(error) => return failure(error.to_string()),
         };
         let limit = p.limit.unwrap_or(DEFAULT_PENDING_LIMIT).max(1);
-        let rest = blob.fresh.len().saturating_sub(limit);
+        let over = blob.fresh.len().saturating_sub(limit);
         blob.fresh.truncate(limit);
-        let shown: Vec<&Thread> = blob
-            .fired
-            .iter()
-            .flat_map(|(f, r)| std::iter::once(f.thread).chain(r.iter().copied()))
-            .chain(blob.fresh.iter().copied())
-            .collect();
+        // The summary is bounded the same way the hook's blob is, so what
+        // it lists by id alone is left undelivered and returned by the
+        // next call rather than serialized here and lost.
+        blob.fit(&subscriber, self.agents.max_lines);
+        let rest = over + blob.listed.len();
+        let shown: Vec<&Thread> = blob.shown().collect();
         for thread in &shown {
             if let Err(error) = register.deliver(&id, thread, when) {
                 return failure(error.to_string());
@@ -664,10 +665,13 @@ impl Server {
         let mut summary = if blob.is_empty() {
             "nothing pending".to_owned()
         } else {
-            blob.render(&subscriber, self.agents.max_lines)
+            blob.render(&subscriber)
         };
-        if rest > 0 {
-            let _ = write!(summary, "\n{rest} more; call threads_pending again");
+        // What `fit` held back is already named, by id, at the end of the
+        // rendered blob; only the threads dropped by `limit` still need
+        // announcing, though `more` counts both.
+        if over > 0 {
+            let _ = write!(summary, "\n{over} more; call threads_pending again");
         }
         match serde_json::to_value(&shown) {
             Ok(value) => with_summary(

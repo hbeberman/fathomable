@@ -93,3 +93,15 @@ that shell would then bond to whichever session had recorded the shell.
   same shell makes it ambiguous. Documented in the guide, not guarded.
 - Copilot's `COPILOT_AGENT_SESSION_ID` and VS Code parity are left to
   their acceptance tests; the fallback carries them until then.
+
+Note (2026-08-29): "`hello` … is the only writer of bonds; `pending`
+records nothing" still holds for bonds, but `hello` now writes more than
+bonds. On a `SessionStart` whose `source` is `resume` it also composes
+the pending blob ([0040](0040-agent-subscriptions-and-hooks.md) note of
+the same day), so it appends deliveries and fired-watch events too. The
+resume this record was written for — where the harness restarts `--mcp`
+and the model answers the stop hook — is therefore now answered twice
+over: the bond signs the reply, and `hello` hands the session what it
+missed while it was stopped. A `compose` error there stays silent and
+exits 0, so a damaged register cannot cost the session its
+`SessionStart`.

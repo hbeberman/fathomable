@@ -726,7 +726,7 @@ impl Register {
 }
 
 /// What a hook hands the model: fired watches, newly pending threads,
-/// and a reminder, rendered as plain text sized by `max_lines`.
+/// and a reminder, rendered as plain text.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Blob<'a> {
     /// Watches that fired, each with the threads it asked to be reminded of.
@@ -735,67 +735,91 @@ pub struct Blob<'a> {
     pub fresh: Vec<&'a Thread>,
     /// Threads already shown and still unanswered, named in a reminder.
     pub reminder: Vec<&'a Thread>,
+    /// Fresh threads past the line budget, named by id alone.
+    ///
+    /// [`Blob::fit`] fills this; a caller must not record these as
+    /// delivered, so that `threads_pending` still returns them.
+    pub listed: Vec<&'a Thread>,
 }
 
-impl Blob<'_> {
+impl<'a> Blob<'a> {
     /// Whether there is nothing to say.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.fired.is_empty() && self.fresh.is_empty() && self.reminder.is_empty()
     }
 
-    /// Render for `subscriber`, keeping the full form within `max_lines`
-    /// lines and listing the rest by id and place.
-    #[must_use]
-    pub fn render(&self, subscriber: &Subscriber, max_lines: usize) -> String {
-        let mut out = Vec::new();
-        let count = self.fired.iter().map(|(_, r)| r.len() + 1).sum::<usize>() + self.fresh.len();
-        if count > 0 {
-            out.push(format!(
-                "FATHOMABLE: {count} review thread{} need{} your reply (you are {}).",
-                if count == 1 { "" } else { "s" },
-                if count == 1 { "s" } else { "" },
-                subscriber.label()
-            ));
-            out.push(
-                "Act on each, then answer every thread in ONE `thread_reply` call with \
-                 `replies` (pass line/end_line if you moved the lines). Full history: \
-                 `annotations_list`; more pending: `threads_pending`."
-                    .to_owned(),
-            );
-        }
-        let mut full: Vec<(&Thread, Option<String>)> = Vec::new();
+    /// Every thread the blob shows in full, fired watches first.
+    ///
+    /// Exactly the threads a caller records as delivered. What
+    /// [`Self::fit`] moved to [`Self::listed`] is not among them, so it
+    /// stays deliverable through `threads_pending`.
+    pub fn shown(&self) -> impl Iterator<Item = &'a Thread> + '_ {
+        self.fired
+            .iter()
+            .flat_map(|(fired, remind)| std::iter::once(fired.thread).chain(remind.iter().copied()))
+            .chain(self.fresh.iter().copied())
+    }
+
+    /// Move the fresh threads past `max_lines` rendered lines to
+    /// [`Self::listed`], where [`Self::render`] names them by id alone.
+    ///
+    /// Once one thread is over budget every later one is listed too, so
+    /// the blob reads in order. Only fresh threads are moved: a fired
+    /// watch is consumed when it fires, and the threads it reminds of
+    /// need not be pending, so neither could be fetched again — they are
+    /// shown in full even when that overruns `max_lines`.
+    ///
+    /// The blob always shows something, overrunning `max_lines` when it
+    /// must: a blob that showed nothing would record no delivery, so the
+    /// same id-only list would come back every turn for good.
+    ///
+    /// Call before [`Self::render`], which renders whatever is left.
+    pub fn fit(&mut self, subscriber: &Subscriber, max_lines: usize) {
+        let mut used = self.header(subscriber).len();
         for (fired, remind) in &self.fired {
-            let head = format!(
-                "watch fired: {} {} ({})",
-                fired.thread.id(),
-                fired.watch.when(),
-                fired.thread.newest().0
-            );
-            full.push((fired.thread, Some(head)));
+            used += 1 + describe(fired.thread, Some(&watch_head(fired))).len();
             for thread in remind {
-                full.push((thread, None));
+                used += 1 + describe(thread, None).len();
+            }
+        }
+        let mut keep = 0;
+        for thread in &self.fresh {
+            used += 1 + describe(thread, None).len();
+            if used > max_lines {
+                break;
+            }
+            keep += 1;
+        }
+        if self.fired.is_empty() {
+            keep = keep.max(1).min(self.fresh.len());
+        }
+        self.listed = self.fresh.split_off(keep);
+    }
+
+    /// Render for `subscriber` everything [`Self::fit`] left in full.
+    #[must_use]
+    pub fn render(&self, subscriber: &Subscriber) -> String {
+        let mut out = self.header(subscriber);
+        for (fired, remind) in &self.fired {
+            out.push(String::new());
+            out.extend(describe(fired.thread, Some(&watch_head(fired))));
+            for thread in remind {
+                out.push(String::new());
+                out.extend(describe(thread, None));
             }
         }
         for thread in &self.fresh {
-            full.push((thread, None));
-        }
-        let mut listed: Vec<&Thread> = Vec::new();
-        for (thread, head) in full {
-            let block = describe(thread, head.as_deref());
-            if out.len() + block.len() + 1 > max_lines && !listed.is_empty()
-                || out.len() + block.len() + 1 > max_lines
-            {
-                listed.push(thread);
-                continue;
-            }
             out.push(String::new());
-            out.extend(block);
+            out.extend(describe(thread, None));
         }
-        if !listed.is_empty() {
+        if !self.listed.is_empty() {
             out.push(String::new());
-            out.push(format!("{} more; call `threads_pending`:", listed.len()));
-            for thread in listed {
+            out.push(format!(
+                "{} more; call `threads_pending`:",
+                self.listed.len()
+            ));
+            for thread in &self.listed {
                 out.push(format!(
                     "  {} {}:{}",
                     thread.id(),
@@ -822,6 +846,39 @@ impl Blob<'_> {
         }
         out.join("\n")
     }
+
+    /// The two opening lines, counting the listed threads too; empty when
+    /// the blob carries no thread to answer.
+    fn header(&self, subscriber: &Subscriber) -> Vec<String> {
+        let count = self.fired.iter().map(|(_, r)| r.len() + 1).sum::<usize>()
+            + self.fresh.len()
+            + self.listed.len();
+        if count == 0 {
+            return Vec::new();
+        }
+        vec![
+            format!(
+                "FATHOMABLE: {count} review thread{} need{} your reply (you are {}).",
+                if count == 1 { "" } else { "s" },
+                if count == 1 { "s" } else { "" },
+                subscriber.label()
+            ),
+            "Act on each, then answer every thread in ONE `thread_reply` call with \
+             `replies` (pass line/end_line if you moved the lines). Full history: \
+             `annotations_list`; more pending: `threads_pending`."
+                .to_owned(),
+        ]
+    }
+}
+
+/// The line introducing a thread that a watch fired on.
+fn watch_head(fired: &Fired<'_>) -> String {
+    format!(
+        "watch fired: {} {} ({})",
+        fired.thread.id(),
+        fired.watch.when(),
+        fired.thread.newest().0
+    )
 }
 
 /// One thread as the model sees it: a header, up to six snippet lines,
@@ -1118,6 +1175,71 @@ mod tests {
         Ok(())
     }
 
+    /// A fired watch and the threads it reminds of are shown in full
+    /// however tight the budget: the watch is spent when it fires, and a
+    /// reminded thread need not be pending, so `threads_pending` could
+    /// never hand either of them over a second time.
+    #[test]
+    fn a_fired_watch_outranks_the_line_budget() -> TestResult {
+        let dir = TempDir::new("mustshow")?;
+        let (mut store, id) = store_with_thread(&dir)?;
+        let other = store.annotate(
+            Draft::new(Path::new("b.md"), LineRange::new(1, 4), "remind me"),
+            TEXT,
+            160,
+        )?;
+        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        reg.watch("s-1", &id, WatchWhen::Resolved, vec![other.clone()], 201)?;
+        // The subscriber itself spoke last on the reminded thread, so it
+        // is not pending and `deliverable` would never return it.
+        store.reply(
+            &other,
+            Reply::new(Author::agent("bot").subscribed("s-1", "coder"), 202, "mine"),
+        )?;
+        store.resolve(&id, Author::User, 203)?;
+        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
+        let fired = reg.fire("s-1", store.threads(), 204)?;
+        assert_eq!(fired.len(), 1);
+        let remind: Vec<_> = store
+            .threads()
+            .iter()
+            .filter(|t| t.id() == &other)
+            .collect();
+        assert_eq!(remind.len(), 1);
+        let mut blob = Blob {
+            fired: fired.into_iter().map(|f| (f, remind.clone())).collect(),
+            ..Blob::default()
+        };
+        blob.fit(&sub, 1);
+        assert!(blob.listed.is_empty(), "a fired watch was listed away");
+        let text = blob.render(&sub);
+        assert!(text.contains("watch fired:"), "{text}");
+        assert!(text.contains(&format!("── thread {other} ")), "{text}");
+        assert!(!text.contains("more; call `threads_pending`"), "{text}");
+        Ok(())
+    }
+
+    /// A budget too small for even one thread still shows one. Listing
+    /// every thread would record no delivery, so the identical id-only
+    /// blob would come back at every turn-end for good.
+    #[test]
+    fn a_budget_smaller_than_one_thread_still_makes_progress() -> TestResult {
+        let dir = TempDir::new("tiny")?;
+        let (store, _) = store_with_thread(&dir)?;
+        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
+        let mut blob = Blob {
+            fresh: reg.deliverable(&sub, store.threads()),
+            ..Blob::default()
+        };
+        assert!(!blob.fresh.is_empty());
+        blob.fit(&sub, 1);
+        assert_eq!(blob.shown().count(), 1, "the blob showed nothing");
+        Ok(())
+    }
+
     #[test]
     fn the_blob_is_bounded_and_says_what_to_call() -> TestResult {
         let dir = TempDir::new("blob")?;
@@ -1141,11 +1263,14 @@ mod tests {
         reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
         let fresh = reg.deliverable(&sub, store.threads());
-        let blob = Blob {
+        let mut blob = Blob {
             fresh,
             ..Blob::default()
         };
-        let text = blob.render(&sub, 20);
+        blob.fit(&sub, 20);
+        // The header still counts every thread that needs a reply, the
+        // ones named by id alone included.
+        let text = blob.render(&sub);
         assert!(
             text.starts_with("FATHOMABLE: 6 review threads need your reply (you are bot (coder)).")
         );
@@ -1154,14 +1279,18 @@ mod tests {
         assert!(text.contains("     second line"));
         assert!(text.contains("more; call `threads_pending`"));
         assert!(text.lines().count() <= 20 + 6, "{text}");
+        assert!(
+            blob.shown().count() + blob.listed.len() == 6,
+            "every thread is either shown or listed"
+        );
         let empty = Blob::default();
         assert!(empty.is_empty());
-        assert_eq!(empty.render(&sub, 40), "");
+        assert_eq!(empty.render(&sub), "");
         let reminder = Blob {
             reminder: store.threads().iter().take(2).collect(),
             ..Blob::default()
         };
-        let text = reminder.render(&sub, 40);
+        let text = reminder.render(&sub);
         assert_eq!(text.lines().count(), 1);
         assert!(text.contains("2 threads still unanswered: a.md:2-3, b.md:1-4"));
         Ok(())

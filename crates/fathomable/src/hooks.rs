@@ -1,6 +1,6 @@
-// @okf-doc: /decisions/0040-agent-subscriptions-and-hooks.md
+// @okf-doc: /decisions/0042-turn-start-delivery.md
 //! `fathomable hello` and `fathomable pending`: the harness-hook side of
-//! agent subscriptions (ADR 0040).
+//! agent subscriptions (ADR 0040, 0042).
 //!
 //! Both read the harness's hook JSON on stdin, resolve the workspace from
 //! its `cwd`, and print in the shape the harness named by `--hook`
@@ -10,11 +10,15 @@
 //! writes to the thread store; both append to the agent register —
 //! `hello` the session bond of ADR 0041, `pending` its deliveries.
 //!
-//! `hello` delivers too when its `source` is `resume`, so a session that
-//! comes back after being stopped has its pending threads in context
-//! without waiting for a turn to end. That blob is context rather than a
-//! blocked stop, so it is composed as [`Occasion::Resume`] and does not
-//! count toward the nag; every other `source` is left to the stop hook.
+//! `pending` runs at both ends of a turn. From the stop hook it blocks
+//! the stop with the blob as the next prompt. From the prompt-submit
+//! hook — told apart by `hook_event_name`, or by the `prompt` field no
+//! stop payload carries — it adds the blob to context and exits 0, so a
+//! comment that lands while the agent waits is there on the wake that
+//! ends the wait (ADR 0042). `hello` delivers the same way when its
+//! `source` is `resume`. Context is composed as [`Occasion::Context`]:
+//! deliveries and fired watches are recorded, no check is counted, and
+//! no reminder is composed, so the nag stays measured in turn-ends.
 
 use std::env;
 use std::io::{self, IsTerminal, Read};
@@ -52,10 +56,10 @@ pub(crate) enum Occasion {
     /// A `Stop` hook or the viewer's `Space w`: the blob forces a turn,
     /// and a delivered-but-unanswered thread counts toward the nag.
     TurnEnd,
-    /// A `SessionStart` resume: the blob is only added to context, so it
-    /// does not count a check — the nag cadence of ADR 0040 is measured
-    /// in turn-ends, not in resumes.
-    Resume,
+    /// A `SessionStart` resume or a prompt-submit hook: the blob is only
+    /// added to context, so it does not count a check and never carries
+    /// a reminder — the nag cadence of ADR 0040 is measured in turn-ends.
+    Context,
 }
 
 /// What a hook's stdin said, in the fields every harness shares.
@@ -68,6 +72,9 @@ struct Input {
     source: Option<String>,
     continuation: bool,
     subagent: bool,
+    /// The prompt-submit event, where output is context and a non-zero
+    /// exit would erase the prompt (ADR 0042).
+    prompt: bool,
 }
 
 impl Input {
@@ -89,6 +96,12 @@ impl Input {
                 _ => false,
             },
         };
+        // Copilot's `userPromptSubmitted` names no event; every harness's
+        // prompt-submit payload carries `prompt`, and no stop payload does.
+        let prompt = matches!(
+            field("hook_event_name").as_deref(),
+            Some("UserPromptSubmit" | "userPromptSubmitted")
+        ) || value.get("prompt").is_some_and(Value::is_string);
         Self {
             session,
             cwd: field("cwd").map(PathBuf::from),
@@ -98,6 +111,7 @@ impl Input {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             subagent,
+            prompt,
         }
     }
 }
@@ -152,9 +166,10 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
         "Fathomable is watching this workspace ({}): the user reads your work there and \
          leaves review comments on lines. Your session id is {id}. Before you edit, call \
          the fathomable `follow` tool with id \"{id}\", a type (one of: {types}), and the \
-         paths you will edit. Fathomable then hands you unanswered comments when your turn \
-         ends; act on them and answer with `thread_reply` (pass id \"{id}\" to it if \
-         you did not call `follow` on this connection).",
+         paths you will edit. Fathomable then hands you unanswered comments as your turns \
+         start and end — never poll for them; after a wait, just end your turn. Act on \
+         them and answer with `thread_reply` (pass id \"{id}\" to it if you did not call \
+         `follow` on this connection).",
         root.display()
     );
     // A resume comes back with the connection's memory gone and may have
@@ -166,7 +181,7 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
     // into context the model may not act on would lose it, with the stop
     // hook then silent because it is recorded as delivered.
     if input.source.as_deref() == Some("resume")
-        && let Ok(Some(blob)) = compose(dirs, &root, &id, &config, Occasion::Resume)
+        && let Ok(Some(blob)) = compose(dirs, &root, &id, &config, Occasion::Context)
     {
         text.push_str("\n\n");
         text.push_str(&blob);
@@ -219,7 +234,12 @@ pub fn pending(
         return ExitCode::SUCCESS;
     };
     let config = agents_config(dirs);
-    let text = match compose(dirs, &root, &id, &config, Occasion::TurnEnd) {
+    let occasion = if input.prompt {
+        Occasion::Context
+    } else {
+        Occasion::TurnEnd
+    };
+    let text = match compose(dirs, &root, &id, &config, occasion) {
         Ok(Some(text)) => text,
         Ok(None) => return ExitCode::SUCCESS,
         Err(error) => {
@@ -229,6 +249,18 @@ pub fn pending(
     };
     if prompt {
         println!("{text}");
+        return ExitCode::SUCCESS;
+    }
+    if input.prompt {
+        // Context on a turn start; exit 2 here would erase the prompt.
+        match harness {
+            None | Some(Harness::Claude) => println!("{text}"),
+            Some(Harness::Copilot) => println!("{}", json!({ "additionalContext": text })),
+            Some(Harness::Codex | Harness::Vscode) => println!(
+                "{}",
+                json!({ "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": text } })
+            ),
+        }
         return ExitCode::SUCCESS;
     }
     match harness {
@@ -503,12 +535,13 @@ mod tests {
         Ok(())
     }
 
-    /// A resume hands the blob over as context, not as a forced turn, so
-    /// it must not spend the nag cadence that ADR 0040 counts in
-    /// turn-ends — otherwise resuming repeatedly would nag about threads
+    /// A resume or a turn start hands the blob over as context, not as a
+    /// forced turn, so it must not spend the nag cadence that ADR 0040
+    /// counts in turn-ends — otherwise a harness that runs its
+    /// prompt-submit hook on every continuation would nag about threads
     /// no turn ever refused to answer.
     #[test]
-    fn a_resume_does_not_count_toward_the_nag() -> TestResult {
+    fn context_does_not_count_toward_the_nag() -> TestResult {
         let dir = TempDir::new("resume")?;
         let dirs = dir.dirs();
         let root = dir.0.join("ws").canonicalize()?;
@@ -526,12 +559,12 @@ mod tests {
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
         register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
-        assert!(compose(&dirs, &root, "s-1", &config, Occasion::Resume)?.is_some());
+        assert!(compose(&dirs, &root, "s-1", &config, Occasion::Context)?.is_some());
         for _ in 0..5 {
             assert_eq!(
-                compose(&dirs, &root, "s-1", &config, Occasion::Resume)?,
+                compose(&dirs, &root, "s-1", &config, Occasion::Context)?,
                 None,
-                "a resume neither repeats the blob nor nags"
+                "context neither repeats the blob nor nags"
             );
         }
         // The cadence is untouched, so it still takes `nag_after`
@@ -560,6 +593,7 @@ mod tests {
             &json!({"session_id": "s", "cwd": "/w", "source": "resume"}),
         );
         assert_eq!(resumed.source.as_deref(), Some("resume"));
+        assert!(!resumed.prompt && !claude.prompt);
         let main = Input::parse(Harness::Codex, &json!({"session_id": "s", "cwd": "/w"}));
         assert!(!main.subagent && !main.continuation);
         let copilot_main = Input::parse(
@@ -580,5 +614,27 @@ mod tests {
         let copilot_none = Input::parse(Harness::Copilot, &json!({"sessionId": "c"}));
         assert!(!copilot_none.subagent);
         assert_eq!(Input::parse(Harness::Vscode, &json!({})), Input::default());
+    }
+
+    /// The prompt-submit event is known by name where the harness gives
+    /// one and by its `prompt` field where it does not (Copilot); a stop
+    /// payload has neither, and a wake's notification XML is still a prompt.
+    #[test]
+    fn prompt_submit_is_told_from_stop() {
+        let named = Input::parse(
+            Harness::Claude,
+            &json!({"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "<task-notification>x</task-notification>"}),
+        );
+        assert!(named.prompt);
+        let copilot = Input::parse(
+            Harness::Copilot,
+            &json!({"sessionId": "s", "cwd": "/w", "prompt": "hi"}),
+        );
+        assert!(copilot.prompt);
+        let stop = Input::parse(
+            Harness::Claude,
+            &json!({"session_id": "s", "hook_event_name": "Stop", "last_assistant_message": "waiting", "stop_hook_active": false}),
+        );
+        assert!(!stop.prompt);
     }
 }

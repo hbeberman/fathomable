@@ -146,3 +146,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     session of the nearest unique one among its own ancestors, so
     replies stay signed after a resume; `thread_reply` takes an `id`
     as the fallback ([0041](decisions/0041-session-bonds.md)).
+33. **Delivery at both ends of a turn.** `fathomable pending` also runs
+    from the prompt-submit hook, adding undelivered threads to context
+    and exiting 0, so a comment posted while an agent waits is there on
+    the wake and no agent polls for comments
+    ([0042](decisions/0042-turn-start-delivery.md)).

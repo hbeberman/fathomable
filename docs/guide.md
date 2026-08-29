@@ -336,10 +336,10 @@ in the same repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the stop hook and `threads_pending` hand it what others write; works without a viewer |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer |
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`, at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer |
-| `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; the hookless way to read comments |
+| `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |
 | `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
 | `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot |
 
@@ -358,13 +358,19 @@ protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
 
 ### Hooks: comments reach the agent
 
-Without a hook the agent only sees comments when it polls. With one, the
-harness runs `fathomable pending` when the agent tries to end its turn;
-if the session subscribed and someone else has spoken on a thread in its
-scope since it last looked, the turn continues with those threads as the
-prompt, once per message. A session that never called `follow` with an
-`id`, a subagent, or a directory Fathomable has not seen all get silence
-and exit 0 ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
+Without a hook the agent only sees comments when it polls. With the
+hooks, the harness runs `fathomable pending` at both ends of a turn.
+When the agent tries to end its turn and someone else has spoken on a
+thread in its scope since it last looked, the turn continues with those
+threads as the prompt, once per message. When a prompt is submitted —
+a typed one, or the synthetic one Claude Code wakes the model with when
+a background task finishes — the same threads are added to context
+instead, so a comment posted while the agent waited is there on the
+wake and the agent never has to poll for it
+([0042](decisions/0042-turn-start-delivery.md)). A session that never
+called `follow` with an `id`, a subagent, or a directory Fathomable has
+not seen all get silence and exit 0
+([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
 `hello` also notes which processes it ran under, so the `fathomable
 --mcp` the same harness started can tell the session it serves from its
 own process ancestry: a `follow` with only a `type`, and a `thread_reply`
@@ -391,9 +397,14 @@ Two subcommands, both reading the harness's hook JSON on stdin:
   sources are left to the stop hook: `startup` and `fork` have not
   subscribed yet, and a `compact` happens mid-task, where the blob would
   be consumed into context the model may never act on.
-- `fathomable pending --hook <harness>` (stop) blocks the stop with the
-  pending threads, or says nothing. `--prompt` prints them to stdout
-  instead, and `--id ID` names the session when no JSON is piped, so
+- `fathomable pending --hook <harness>` (stop and prompt-submit) blocks
+  the stop with the pending threads, or says nothing. Run from the
+  prompt-submit event — told apart by `hook_event_name`, or by the
+  `prompt` field no stop payload carries — it prints them as context
+  and exits 0, and never counts toward `nag-after`, so a harness that
+  runs it on every stop-block continuation (Copilot) spends nothing.
+  `--prompt` prints them to stdout instead, and `--id ID` names the
+  session when no JSON is piped, so
   `claude -r ID "$(fathomable pending --id ID --prompt)"` wakes an idle
   session by hand.
 
@@ -421,8 +432,9 @@ Claude Code, in `~/.claude/settings.json` or the project's
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook claude", "timeout": 5 }] }],
-    "Stop":         [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook claude", "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
   }
 }
 ```
@@ -432,8 +444,9 @@ Codex CLI, in `~/.codex/hooks.json` (then trust it with `/hooks`):
 ```json
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook codex", "timeout": 5 }] }],
-    "Stop":         [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook codex", "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }]
   }
 }
 ```
@@ -447,8 +460,9 @@ Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
 {
   "version": 1,
   "hooks": {
-    "sessionStart": [{ "type": "command", "bash": "fathomable hello --hook copilot", "timeoutSec": 5 }],
-    "agentStop":    [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }]
+    "sessionStart":        [{ "type": "command", "bash": "fathomable hello --hook copilot", "timeoutSec": 5 }],
+    "userPromptSubmitted": [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
+    "agentStop":           [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }]
   }
 }
 ```

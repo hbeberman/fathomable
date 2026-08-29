@@ -45,3 +45,4 @@ supersede rather than edit history.
 - [0039 Gutter colour says status, detached threads get a row](0039-gutter-colour-and-detached-rows.md)
 - [0040 Agent subscriptions, pending threads, and harness hooks](0040-agent-subscriptions-and-hooks.md)
 - [0041 Session bonds between hooks and the MCP server](0041-session-bonds.md)
+- [0042 Delivery at both ends of a turn](0042-turn-start-delivery.md)

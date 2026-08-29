@@ -4,7 +4,6 @@ title: Agent subscriptions, pending threads, and harness hooks
 description: An agent subscribes to a workspace once with its harness session id and a configured agent type; a thread is pending for it when the newest message is someone else's; a harness stop hook delivers each pending thread once as a self-contained prompt; watches wake an agent when another thread moves; and no unsubscribed session ever hears from Fathomable.
 resource: crates/fathomable-core/src/agents.rs
 related_resources:
-  - crates/fathomable/src/hooks.rs
   - crates/fathomable/src/app/wake.rs
 tags:
   - decision
@@ -290,6 +289,12 @@ Note (2026-08-29), three corrections from the first live session:
 
 The delivery-record-as-cursor, the opt-in silence, and the
 once-per-message idempotence are unchanged.
+
+Note (2026-08-29): [0042](0042-turn-start-delivery.md) runs `pending`
+from the prompt-submit hook as well, as context rather than a blocked
+stop, and takes over `hooks.rs` as its resource; a comment posted while
+an agent waits is in context on the wake, and the model no longer
+polls `threads_pending` for comments.
 
 ## Consequences
 

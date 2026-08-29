@@ -417,10 +417,10 @@ impl Server {
         description = "Say which files you are working on, replacing the previous list; the \
                        viewer marks them and follows your edits there. With `id` (your session \
                        id from the `hello` hook) and `type`, also subscribe this session: the \
-                       stop hook and `threads_pending` then hand you every thread on these \
-                       files, or that you posted in, whose newest message is someone else's, \
-                       once each. Call it once at the start and again when your files change; \
-                       works with no viewer running.",
+                       hooks then hand you every thread on these files, or that you posted \
+                       in, whose newest message is someone else's, once each, as your turns \
+                       start and end. Call it once at the start and again when your files \
+                       change; works with no viewer running.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -602,10 +602,12 @@ impl Server {
     #[tool(
         description = "The threads waiting on you: open threads on the files you follow, or \
                        that you posted in, whose newest message is not yours and has not been \
-                       shown to you yet, plus any watch that fired. Each is returned once; \
-                       call it when the hello hook or a stop hook tells you to, or before you \
-                       finish. Needs a subscription from `follow` with `id` and `type`. Answer \
-                       what it returns with one `thread_reply` call.",
+                       shown to you yet, plus any watch that fired. Each is returned once. \
+                       Do not poll it: the hooks deliver as your turns start and end, so after \
+                       a wait just end your turn. Call it only when a hook lists more threads \
+                       than it showed, or when no hook is installed. Needs a subscription from \
+                       `follow` with `id` and `type`. Answer what it returns with one \
+                       `thread_reply` call.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     fn threads_pending(&self, Parameters(p): Parameters<PendingParams>) -> CallToolResult {
@@ -1199,13 +1201,15 @@ impl ServerHandler for Server {
             .with_instructions(
                 "Fathomable is the user's read-only viewer, where they leave review comments \
                  on the lines you write. Start with `follow` naming the files you will edit \
-                 and a `type` to subscribe, so `threads_pending` and the stop hook hand you \
-                 each new comment once; add the session `id` the hello hook gave you when \
+                 and a `type` to subscribe; the hooks then hand you each new comment once, \
+                 as your turns start and end — never poll for comments, and after a wait \
+                 just end your turn. Add the session `id` the hello hook gave you when \
                  asked for it, and pass it to `thread_reply` too if you never called \
                  `follow` on this connection. Answer with one `thread_reply` carrying \
-                 `replies`. `annotations_list` reads any \
-                 thread; `open` shows a file in the viewer. Everything but `open` works with \
-                 no viewer running. `thread_watch` wakes you when another thread moves.",
+                 `replies`. `threads_pending` is for the overflow a hook lists by id, or \
+                 for a harness without hooks. `annotations_list` reads any thread; `open` \
+                 shows a file in the viewer. Everything but `open` works with no viewer \
+                 running. `thread_watch` wakes you when another thread moves.",
             )
     }
 }

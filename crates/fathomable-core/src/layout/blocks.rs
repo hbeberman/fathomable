@@ -6,7 +6,7 @@ use std::ops::Range;
 
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
-use super::{Face, Style};
+use super::{Breaks, Face, Style};
 
 /// Source-mapped inline content.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,8 +79,9 @@ pub(super) enum Block {
     },
 }
 
-/// Parse `text` into a block tree.
-pub(super) fn parse(text: &str) -> Vec<Block> {
+/// Parse `text` into a block tree, treating a single newline as `breaks`
+/// says.
+pub(super) fn parse(text: &str, breaks: Breaks) -> Vec<Block> {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_FOOTNOTES
@@ -89,12 +90,14 @@ pub(super) fn parse(text: &str) -> Vec<Block> {
     let events = Parser::new_ext(text, options).into_offset_iter();
     let mut parser = BlockParser {
         events: events.peekable(),
+        breaks,
     };
     parser.blocks()
 }
 
 struct BlockParser<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> {
     events: Peekable<I>,
+    breaks: Breaks,
 }
 
 impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
@@ -323,10 +326,13 @@ impl<'a, I: Iterator<Item = (Event<'a>, Range<usize>)>> BlockParser<'a, I> {
                     },
                     source: range,
                 }),
-                Event::SoftBreak => out.push(Inline::Text {
-                    text: " ".to_owned(),
-                    style,
-                    source: range,
+                Event::SoftBreak => out.push(match self.breaks {
+                    Breaks::Soft => Inline::Text {
+                        text: " ".to_owned(),
+                        style,
+                        source: range,
+                    },
+                    Breaks::Hard => Inline::HardBreak,
                 }),
                 Event::HardBreak => out.push(Inline::HardBreak),
                 Event::TaskListMarker(done) => out.push(Inline::Text {

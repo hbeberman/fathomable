@@ -142,7 +142,10 @@ agent changes the lines themselves (until you reply or resolve), and shows
 as *detached* when the lines are gone. The lines of the thread open in
 the thread pane are tinted in a cool colour (blue in the dark theme, teal in
 the light one), distinct from the yellow of other annotated lines
-(`annotation.focus`). Where the lines went and what
+(`annotation.focus`). Comment and reply bodies in the pane render as
+Markdown: lists, emphasis, `inline code`, and fenced blocks coloured by
+their language, with a newline kept as a line break as in a GitHub
+comment; the text in `threads.jsonl` is the source you typed. Where the lines went and what
 state the thread is in are separate: the thread pane's header reads
 `detached · auto-resolved` or `edited · waiting`, placement first, and
 a thread at its own lines shows the state alone. Edits made while Fathomable was not

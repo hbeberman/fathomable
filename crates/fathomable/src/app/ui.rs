@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use fathomable_core::layout::{Face, Style as Face_, display_width, wrap_text};
+use fathomable_core::layout::{Face, Style as Face_, display_width};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -15,6 +15,7 @@ use fathomable_core::status::Summary;
 
 use super::info::Info;
 use super::mark_words::{Words, label};
+use super::message::{thread_body_lines, thread_body_rows};
 use super::thread_list::{Row, Rows};
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
@@ -23,9 +24,6 @@ use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_M
 
 /// Snippet lines quoted at the top of the thread panel.
 pub(super) const SNIPPET_ROWS: usize = 3;
-/// Cells a message body is indented under its author row.
-const MESSAGE_INDENT: usize = 3;
-
 /// Ratatui styles for the chrome and Markdown faces.
 ///
 /// Built from a resolved [`fathomable_core::theme::Theme`] (ADR 0011) so the
@@ -747,7 +745,7 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
 }
 
 /// Pad or truncate `text` to exactly `width` cells.
-fn fit(text: &str, width: usize) -> String {
+pub(super) fn fit(text: &str, width: usize) -> String {
     let mut out = String::new();
     let mut used = 0;
     for ch in text.chars() {
@@ -764,7 +762,7 @@ fn fit(text: &str, width: usize) -> String {
     out
 }
 
-fn face_style(theme: &Theme, face: &Face_) -> Style {
+pub(super) fn face_style(theme: &Theme, face: &Face_) -> Style {
     let base = match &face.face {
         Face::Text => theme.text,
         Face::Heading(level) => theme.heading[usize::from(level.clamp(&1, &6) - 1)],
@@ -1546,7 +1544,6 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         return;
     }
     let width = usize::from(area.width);
-    let inner = width.saturating_sub(2);
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = app.thread_position().unwrap_or((1, 1));
@@ -1580,53 +1577,11 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         rule_line(theme, width),
         header_line(theme, left, hint, width),
     ];
-    let mut body: Vec<Line<'_>> = Vec::new();
-    let snippet: Vec<&str> = thread.snippet().lines().collect();
-    let number_width = (range.start() + snippet.len()).to_string().len();
-    for (offset, line) in snippet.iter().take(SNIPPET_ROWS).enumerate() {
-        body.push(Line::from(Span::styled(
-            fit(
-                &format!(" {:>number_width$} │ {line}", range.start() + offset),
-                width,
-            ),
-            theme.info,
-        )));
-    }
-    if snippet.len() > SNIPPET_ROWS {
-        body.push(Line::from(Span::styled(
-            format!(" {:>number_width$} │ …", ""),
-            theme.info,
-        )));
-    }
-    body.push(Line::from(""));
-    body.extend(message_lines(
-        theme,
-        "user",
-        thread.created(),
-        now,
-        thread.comment(),
-        None,
-        inner,
-    ));
-    for reply in thread.replies() {
-        body.push(Line::from(""));
-        let badge = reply.proposes_resolution().then_some("proposes resolving");
-        body.extend(message_lines(
-            theme,
-            reply.author().name(),
-            reply.created(),
-            now,
-            reply.body(),
-            badge,
-            inner,
-        ));
-    }
-    // The end is marked so a fully scrolled pane reads as such (ADR 0034).
-    body.push(Line::from(Span::styled(
-        " ─── END ───",
-        theme.info.add_modifier(Modifier::DIM),
-    )));
-    debug_assert_eq!(body.len(), thread_body_rows(thread, width));
+    let body = thread_body_lines(theme, app.highlighter(), thread, range.start(), now, width);
+    debug_assert_eq!(
+        body.len(),
+        thread_body_rows(thread, width, app.highlighter())
+    );
     let body_rows = rows - 2;
     let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
     let below = body.len().saturating_sub(scroll + body_rows);
@@ -1641,62 +1596,6 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     }
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
-}
-
-/// Rows the thread pane's body takes at `width`, as `draw_thread` lays
-/// it out: the snippet, the messages wrapped, and the END row. The scroll
-/// limit is computed from this so the keys and the drawing agree.
-pub(super) fn thread_body_rows(
-    thread: &fathomable_core::annotations::Thread,
-    width: usize,
-) -> usize {
-    let inner = width.saturating_sub(2);
-    let snippet = thread.snippet().lines().count();
-    let snippet_rows = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS);
-    let message_rows = |body: &str| 1 + wrapped_rows(body, inner);
-    let replies: usize = thread
-        .replies()
-        .iter()
-        .map(|reply| 1 + message_rows(reply.body()))
-        .sum();
-    snippet_rows + 1 + message_rows(thread.comment()) + replies + 1
-}
-
-/// Rows a message body takes once wrapped under its author.
-fn wrapped_rows(body: &str, width: usize) -> usize {
-    body.lines()
-        .map(|paragraph| wrap_text(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)).len())
-        .sum()
-}
-
-/// A `thread` panel message: author, age and an optional badge on one
-/// row, the body indented beneath it.
-fn message_lines<'a>(
-    theme: &Theme,
-    author: &str,
-    created: u64,
-    now: u64,
-    body: &str,
-    badge: Option<&str>,
-    width: usize,
-) -> Vec<Line<'a>> {
-    let mut header = vec![
-        Span::styled(format!(" {author}"), theme.popup_key),
-        Span::styled(format!("  {}", format_age(created, now)), theme.info),
-    ];
-    if let Some(badge) = badge {
-        header.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
-    }
-    let mut out = vec![Line::from(header)];
-    for paragraph in body.lines() {
-        for line in wrap_text(paragraph, width.saturating_sub(MESSAGE_INDENT).max(1)) {
-            out.push(Line::from(Span::raw(format!(
-                "{}{line}",
-                " ".repeat(MESSAGE_INDENT)
-            ))));
-        }
-    }
-    out
 }
 
 /// A popup header: `left` spans, then `hint` right-aligned when it fits.
@@ -1718,7 +1617,7 @@ fn rule_line<'a>(theme: &Theme, width: usize) -> Line<'a> {
 }
 
 /// `created` relative to `now` when recent, otherwise the UTC date.
-fn format_age(created: u64, now: u64) -> String {
+pub(super) fn format_age(created: u64, now: u64) -> String {
     let elapsed = now.saturating_sub(created);
     match elapsed {
         0..60 => "just now".to_owned(),

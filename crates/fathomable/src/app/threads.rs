@@ -741,7 +741,9 @@ impl App {
         let width = self.width.saturating_sub(self.sidebar_width()).max(1);
         let limit = self
             .thread(&id)
-            .map_or(0, |thread| super::ui::thread_body_rows(thread, width))
+            .map_or(0, |thread| {
+                super::message::thread_body_rows(thread, width, &self.highlighter)
+            })
             .saturating_sub(body_rows);
         if let Some(panel) = self.panel_mut() {
             panel.scroll = scroll.min(limit).saturating_add_signed(delta).min(limit);

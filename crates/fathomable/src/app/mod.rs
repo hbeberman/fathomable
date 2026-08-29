@@ -15,6 +15,7 @@ mod hscroll;
 pub(crate) mod info;
 mod keys;
 pub(crate) mod mark_words;
+pub(crate) mod message;
 pub(crate) mod open_thread;
 pub(crate) mod reanchor;
 pub(crate) mod rescope;
@@ -571,6 +572,11 @@ impl App {
     }
 
     /// How a root-relative `path` should be coloured and first displayed.
+    /// The code highlighter shared by every view and the thread pane.
+    pub fn highlighter(&self) -> &Highlighter {
+        &self.highlighter
+    }
+
     fn syntax_for(&self, path: &Path) -> Syntax {
         Syntax {
             highlighter: Arc::clone(&self.highlighter),

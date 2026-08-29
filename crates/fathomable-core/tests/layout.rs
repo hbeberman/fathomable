@@ -417,3 +417,21 @@ fn wrap_text_breaks_at_words_and_splits_wide_ones() {
     // Width is display cells, not chars: two wide graphemes fill four.
     assert_eq!(wrap_text("日本 語", 4), vec!["日本", "語"]);
 }
+
+/// A comment's newline is a line break; a file's is a space (ADR 0037).
+#[test]
+fn messages_keep_newlines_files_join_them() {
+    let text = "first\nsecond\n\nthird";
+    assert_eq!(
+        texts(&Layout::render_message(
+            text,
+            40,
+            &fathomable_core::highlight::Highlighter::plain()
+        )),
+        ["first", "second", "", "third"]
+    );
+    assert_eq!(
+        texts(&Layout::render(text, 40)),
+        ["first second", "", "third"]
+    );
+}

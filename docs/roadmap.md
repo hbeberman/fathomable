@@ -121,3 +121,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     and the open thread's lines take a blue tint distinct from the
     yellow of other annotated lines
     ([0036](decisions/0036-gutter-rows-and-focus-colour.md)).
+28. **Markdown in the thread pane.** Comment and reply bodies render as
+    Markdown with fenced code coloured by its language, and a newline in
+    a comment stays a line break
+    ([0037](decisions/0037-markdown-in-threads.md)).

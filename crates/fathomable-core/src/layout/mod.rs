@@ -54,6 +54,16 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
 /// Unchanged lines shown around each hunk in the diff view, as `git diff`.
 const DIFF_CONTEXT: usize = 3;
 
+/// What a single newline inside a paragraph means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Breaks {
+    /// A soft break as in the Markdown spec, laid out as a space.
+    #[default]
+    Soft,
+    /// A line break, as comments on a code host render them (ADR 0037).
+    Hard,
+}
+
 /// What a span is, for theming.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Face {
@@ -343,6 +353,17 @@ impl Layout {
     /// colouring fenced code blocks by their info string (ADR 0016).
     #[must_use]
     pub fn render_with(text: &str, width: usize, highlighter: &Highlighter) -> Self {
+        Self::render_breaks(text, width, highlighter, Breaks::Soft)
+    }
+
+    /// Lay `text` out as a comment: rendered Markdown in which a single
+    /// newline is a line break, as comments on GitHub read (ADR 0037).
+    #[must_use]
+    pub fn render_message(text: &str, width: usize, highlighter: &Highlighter) -> Self {
+        Self::render_breaks(text, width, highlighter, Breaks::Hard)
+    }
+
+    fn render_breaks(text: &str, width: usize, highlighter: &Highlighter, breaks: Breaks) -> Self {
         let index = LineIndex::new(text);
         let mut renderer = Renderer {
             text,
@@ -350,7 +371,7 @@ impl Layout {
             lines: Vec::new(),
             highlighter,
         };
-        renderer.blocks(&blocks::parse(text), "", "");
+        renderer.blocks(&blocks::parse(text, breaks), "", "");
         while renderer.lines.last().is_some_and(is_blank) {
             renderer.lines.pop();
         }

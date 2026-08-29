@@ -92,7 +92,8 @@ pub struct OpenParams {
     /// First source line to show, 1-based.
     #[serde(default)]
     line: Option<usize>,
-    /// Last line, when a range should be selected.
+    /// Last line of the range to bring on screen with `line`; nothing is
+    /// selected. Pass it for the lines you mean, not the whole file.
     #[serde(default)]
     end_line: Option<usize>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
@@ -246,7 +247,9 @@ impl Server {
     }
 
     #[tool(
-        description = "Open a workspace file in the viewer(s), optionally at a line or line range."
+        description = "Open a workspace file in the viewer(s), optionally at a line or line range. \
+                       The range is scrolled into view, not selected; give one only for the lines \
+                       you are pointing at."
     )]
     async fn open(&self, Parameters(p): Parameters<OpenParams>) -> CallToolResult {
         let request = Request::Open {

@@ -313,7 +313,7 @@ in the same repository, and the tools are:
 | Tool | Use |
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
-| `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range |
+| `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
 | `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`; works without a viewer |
 | `thread_reply` | answer a thread, optionally resolving it; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; works without a viewer |

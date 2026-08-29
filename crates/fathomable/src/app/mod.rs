@@ -1576,14 +1576,12 @@ impl App {
         };
         self.queue.push(Change::new(path.to_path_buf(), target));
         self.last_change = None;
+        // The range is shown, not selected: a selection would sit in the
+        // reader's way (ADR 0014, amended 2026-08-28).
         if let Some(line) = line {
             let view = self.view_mut();
             view.escape();
-            view.goto_source_line(line);
-            if let Some(end) = end_line.filter(|end| *end > line) {
-                view.select_lines();
-                view.goto_source_line(end);
-            }
+            view.reveal_source_range(line, end_line.unwrap_or(line).max(line));
         }
         Response::Done
     }
@@ -3513,6 +3511,44 @@ mod tests {
         assert_eq!(app.queue().len(), 1);
         app.settle();
         assert!(app.queue().is_empty(), "the opened range is on screen");
+        Ok(())
+    }
+
+    /// An agent's range is brought on screen, not selected: the reader
+    /// is left in normal mode at its first line (ADR 0014, amended).
+    #[test]
+    fn agent_open_range_shows_without_selecting() -> anyhow::Result<()> {
+        use fathomable_core::session::{Request, Response};
+
+        let dir = TempDir::new("agent-range")?;
+        let body = "line\n".repeat(60);
+        fs::write(dir.0.join("long.txt"), body)?;
+        let mut app = app(&dir)?;
+        app.resize(80, 12);
+        let response = app.handle_request(Request::Open {
+            path: PathBuf::from("long.txt"),
+            line: Some(30),
+            end_line: Some(36),
+        });
+        assert_eq!(response, Response::Done);
+        assert_eq!(app.view().mode(), super::view::Mode::Normal);
+        assert!(app.view().selection().is_none(), "nothing is selected");
+        assert_eq!(app.view().cursor_source_line(), Some(30));
+        assert!(app.view().line_on_screen(30));
+        assert!(
+            app.view().line_on_screen(36),
+            "the end of the range is on screen"
+        );
+
+        // A range longer than the screen keeps its start visible.
+        app.handle_request(Request::Open {
+            path: PathBuf::from("long.txt"),
+            line: Some(10),
+            end_line: Some(60),
+        });
+        assert_eq!(app.view().cursor_source_line(), Some(10));
+        assert!(app.view().line_on_screen(10));
+        assert!(app.view().selection().is_none());
         Ok(())
     }
 

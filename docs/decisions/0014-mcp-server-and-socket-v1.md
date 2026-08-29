@@ -63,7 +63,7 @@ over stdio. The choices below were captured in a question round on
 |---|---|---|
 | `session_list` | – | Live session records, marking the current default. |
 | `session_switch` | `session` | Sets the default session for later calls. |
-| `open` | `path`, optional `line`, `end_line`, `session` | Open a file in the TUI and scroll to the range. |
+| `open` | `path`, optional `line`, `end_line`, `session` | Open a file in the TUI and scroll to the range (shown, not selected; see the 2026-08-28 note). |
 | `follow` | `paths`, `session` | Record the files the agent is working on. |
 | `annotations_list` | optional `since` (Unix seconds), `path`, `session` | Threads and replies created or changed since `since`. |
 | `thread_reply` | `thread`, `body`, optional `resolve`, `persona`, `session` | Append a reply, optionally resolving. |
@@ -120,3 +120,10 @@ inadequate.
   the v0 compatibility arm can be dropped once no released binary speaks it.
 - The `annotations.rs` author schema changes shape; the JSONL stays
   readable by older builds only for replies without a `client` field.
+- (Amended 2026-08-28.) `open` with `end_line` used to select the range,
+  and an agent that "showed the file" by passing its full extent left
+  the whole file selected. The range is now brought on screen with the
+  cursor on `line` and nothing selected: `View::reveal_source_range`
+  scrolls so the end row is visible when the range fits the screen and
+  keeps the start visible when it does not. The tool description tells
+  the agent a range is for the lines it is pointing at.

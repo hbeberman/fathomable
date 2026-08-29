@@ -1073,6 +1073,24 @@ impl View {
         }
     }
 
+    /// An agent's `open` range: the cursor lands on `start`, and the
+    /// view scrolls so that `end` is on screen too when the range fits,
+    /// without selecting anything (ADR 0014, amended 2026-08-28).
+    pub fn reveal_source_range(&mut self, start: usize, end: usize) {
+        self.goto_source_line(start);
+        let Some(last) = self
+            .row_of_source_line(end)
+            .filter(|row| *row > self.cursor.row)
+        else {
+            return;
+        };
+        let bottom = self.scroll + self.height;
+        if last >= bottom {
+            let wanted = (last + 1).saturating_sub(self.height);
+            self.scroll = wanted.min(self.cursor.row).min(self.max_scroll());
+        }
+    }
+
     /// `n` / `N`: next match in the search direction, flipped by `reverse`.
     pub fn search_next(&mut self, reverse: bool) {
         if self.pattern.is_none() {

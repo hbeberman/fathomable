@@ -48,7 +48,12 @@ project cares about:
   the same `turn_id` and does not re-fire it. `additionalContext`
   lands as a `developer` message.
 - **Copilot CLI** runs `sleep` inside the turn too. A detached shell's
-  completion fires the `notification` hook, not a turn.
+  completion fires the `notification` hook, not a turn — but that
+  hook's `additionalContext` is queued as a `system`-sourced user
+  message that starts a turn of its own, on an idle agent as well
+  (verified on 1.0.82 with gpt-5-mini: a prompt that ended with
+  "started" was woken and answered the hook's context). It never
+  lands mid-turn; while a turn runs it waits for the turn to end.
   `userPromptSubmitted` re-fires on **every** `agentStop` block with
   no field to tell a continuation from a human prompt; a config-file
   command hook's `additionalContext` reaches the model, contrary to
@@ -82,7 +87,12 @@ before its next step of the same turn.
 - It recognises the **post-tool-use event** the same way —
   `PostToolUse`/`postToolUse`, or Copilot's `toolName` — and answers
   it as context too, `hookSpecificOutput.additionalContext` under the
-  event's own name (`additionalContext` for Copilot, unverified there).
+  event's own name (`additionalContext` for Copilot). Copilot's
+  **`notification`** event (`hook_event_name` `Notification`) is a
+  fourth, Copilot-only point answered as context the same way; the
+  harness queues it as a message that opens a turn, so it is the one
+  hook there that reaches an idle agent, gated on a detached shell of
+  the agent's own finishing.
   This hook is **optional**: it costs a process spawn and two small
   file reads per tool call, and buys delivery *within* a long turn,
   after the next tool result. The guide presents the three points as
@@ -128,6 +138,6 @@ before its next step of the same turn.
   may act on at once or after finishing its step; either way it is
   recorded and the stop hook will not repeat it. On a harness with no
   usable post-tool-use output the hook is silent and harmless.
-- Copilot's `notification` hook (`shell_detached_completed`) and a
-  VS Code run are left as acceptance tests; neither changes the shape
-  decided here.
+- Copilot's `notification` hook (`shell_detached_completed`) was
+  tested and adopted as a context point; a VS Code run is left as an
+  acceptance test and does not change the shape decided here.

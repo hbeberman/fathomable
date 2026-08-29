@@ -368,6 +368,7 @@ and each thread reaches the agent once, at whichever comes first
 | `Stop` · `agentStop` | the agent tries to end its turn | the turn continues with the threads as the prompt; the only forced channel, and the one that counts toward `nag-after` | one spawn per turn; **install this one** |
 | `UserPromptSubmit` · `userPromptSubmitted` | a prompt is submitted — typed, or the synthetic one Claude Code wakes the model with when a background task finishes | the threads as context at the start of the turn; a comment posted while the agent waited is there on the wake | one spawn per prompt (Copilot: per stop-block continuation too); silent unless something is new |
 | `PostToolUse` · `postToolUse` | every tool result | the threads as context before the agent's next step, so a comment posted mid-task lands within the turn | one spawn and two small file reads per tool call; silent unless something is new; optional, for long turns |
+| — · `notification` | a detached (`async`) shell the agent started finishes | the threads queued as a message that starts a turn, even if the agent was idle | one spawn per finished detached shell; silent unless something is new |
 
 A session that never called `follow` with an `id`, a subagent, or a
 directory Fathomable has not seen all get silence and exit 0 at every
@@ -469,6 +470,7 @@ Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
     "sessionStart":        [{ "type": "command", "bash": "fathomable hello --hook copilot", "timeoutSec": 5 }],
     "userPromptSubmitted": [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
     "postToolUse":         [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
+    "notification":        [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
     "agentStop":           [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }]
   }
 }

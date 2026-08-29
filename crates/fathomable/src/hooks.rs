@@ -17,7 +17,10 @@
 //! and from the post-tool-use hook it adds the blob to context and exits
 //! 0, so a comment that lands while the agent waits is there on the wake
 //! that ends the wait, and one that lands mid-task is there after the
-//! next tool result (ADR 0042). `hello` delivers the same way when its
+//! next tool result (ADR 0042). Copilot's `notification` hook, fired
+//! when a detached shell finishes, is answered the same way: its context
+//! is queued as a message that starts a turn even on an idle agent.
+//! `hello` delivers the same way when its
 //! `source` is `resume`. Context is composed as [`Occasion::Context`]:
 //! deliveries and fired watches are recorded, no check is counted, and
 //! no reminder is composed, so the nag stays measured in turn-ends.
@@ -75,6 +78,9 @@ enum Event {
     Prompt,
     /// The post-tool-use hook: the blob is context after the tool result.
     PostTool,
+    /// Copilot's `notification` hook (a detached shell finished): the
+    /// blob is queued as a message that starts a turn, idle or not.
+    Notification,
 }
 
 /// What a hook's stdin said, in the fields every harness shares.
@@ -115,6 +121,7 @@ impl Input {
         let event = match field("hook_event_name").as_deref() {
             Some("UserPromptSubmit" | "userPromptSubmitted") => Event::Prompt,
             Some("PostToolUse" | "postToolUse") => Event::PostTool,
+            Some("Notification" | "notification") => Event::Notification,
             None if value.get("prompt").is_some_and(Value::is_string) => Event::Prompt,
             None if value.get("toolName").is_some() => Event::PostTool,
             Some(_) | None => Event::Stop,
@@ -253,7 +260,7 @@ pub fn pending(
     let config = agents_config(dirs);
     let occasion = match input.event {
         Event::Stop => Occasion::TurnEnd,
-        Event::Prompt | Event::PostTool => Occasion::Context,
+        Event::Prompt | Event::PostTool | Event::Notification => Occasion::Context,
     };
     let text = match compose(dirs, &root, &id, &config, occasion) {
         Ok(Some(text)) => text,
@@ -273,6 +280,7 @@ pub fn pending(
         let event = match input.event {
             Event::Prompt => "UserPromptSubmit",
             Event::PostTool | Event::Stop => "PostToolUse",
+            Event::Notification => "Notification",
         };
         match harness {
             None | Some(Harness::Claude) if input.event == Event::Prompt => println!("{text}"),
@@ -685,6 +693,13 @@ mod tests {
                 json!({"sessionId": "s", "stopReason": "end_turn"})
             ),
             Event::Stop
+        );
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "hook_event_name": "Notification", "notification_type": "shell_detached_completed", "message": "done"})
+            ),
+            Event::Notification
         );
     }
 }

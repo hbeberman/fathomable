@@ -114,7 +114,12 @@ design:
   `agents.expire-after`. Expired records are dropped on load.
 - A subscriber's **scope** is: every thread on a path in its follow
   list (an empty list means the whole workspace), plus every thread it
-  has posted in. Nothing else is registered per thread.
+  has posted in. Nothing else is registered per thread. A follow path
+  is matched by path component, so it may name a directory and cover
+  every thread under it, including on files that do not exist when the
+  subscription is made; `follow` and the `annotations_list` filter
+  refuse a path that is neither a file nor a directory of the
+  workspace, rather than quietly covering nothing.
 
 ### Who wrote what
 

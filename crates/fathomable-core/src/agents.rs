@@ -96,11 +96,11 @@ impl Subscriber {
     }
 
     /// Whether `thread` is in this subscriber's scope: on a followed
-    /// path, or one it has posted in.
+    /// file, under a followed directory, or on a thread it has posted in.
     #[must_use]
     pub fn covers(&self, thread: &Thread) -> bool {
         self.paths.is_empty()
-            || self.paths.iter().any(|p| p == thread.path())
+            || self.paths.iter().any(|p| thread.path().starts_with(p))
             || thread.has_reply_from(&self.id)
     }
 }
@@ -1126,6 +1126,42 @@ mod tests {
                 .err()
                 .map(|e| e.to_string()),
             Some("session s-1 is subscribed as coder; a type cannot change".to_owned())
+        );
+        Ok(())
+    }
+
+    /// A followed directory covers every thread under it, so an agent
+    /// working in a subtree subscribes once and still hears about files
+    /// it has not written yet. Matching is by path component: a followed
+    /// name never covers a longer name beside it.
+    #[test]
+    fn a_followed_directory_covers_what_is_under_it() -> TestResult {
+        let dir = TempDir::new("under")?;
+        let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+        for path in [
+            "src/jokes.rs",
+            "src/deep/jokes.rs",
+            "srcs/other.rs",
+            "top.rs",
+        ] {
+            store.annotate(
+                Draft::new(Path::new(path), LineRange::new(1, 1), "look"),
+                TEXT,
+                100,
+            )?;
+        }
+        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
+        reg.subscribe("s-1", "coder", None, None, vec![PathBuf::from("src")], 200)?;
+        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
+        let mut covered: Vec<&Path> = reg
+            .deliverable(&sub, store.threads())
+            .iter()
+            .map(|t| t.path())
+            .collect();
+        covered.sort_unstable();
+        assert_eq!(
+            covered,
+            [Path::new("src/deep/jokes.rs"), Path::new("src/jokes.rs")]
         );
         Ok(())
     }

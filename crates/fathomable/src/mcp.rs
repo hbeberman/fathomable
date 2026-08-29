@@ -128,8 +128,9 @@ pub struct OpenParams {
 /// `follow` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct FollowParams {
-    /// Workspace-relative paths you are working on; replaces the last
-    /// list. Empty means the whole workspace.
+    /// Workspace-relative files you are working on, or directories to
+    /// take everything under them, including files not written yet;
+    /// replaces the last list. Empty means the whole workspace.
     paths: Vec<PathBuf>,
     /// Your harness session id, as the `hello` hook told you. With
     /// `type`, subscribes this session: the stop hook and
@@ -170,7 +171,8 @@ pub struct ListParams {
     /// Only threads changed at or after this Unix time in seconds.
     #[serde(default)]
     since: Option<u64>,
-    /// Only threads on this workspace-relative path.
+    /// Only threads on this workspace-relative file, or under this
+    /// directory.
     #[serde(default)]
     path: Option<PathBuf>,
     /// At most this many threads, oldest change first; default 50. The
@@ -426,9 +428,10 @@ impl Server {
                        hooks then hand you every thread on these files, or that you posted \
                        in, whose newest message is someone else's, once each, as your turns \
                        start and end. Call it once at the start and again when your files \
-                       change; works with no viewer running. Fails, following nothing new, \
-                       when a path is not a file in the workspace; the reply then names \
-                       same-named files elsewhere.",
+                       change; works with no viewer running. A path is a file, or a \
+                       directory to cover everything under it, including files not written \
+                       yet. Fails, following nothing new, when a path is in neither form; \
+                       the reply then names same-named paths elsewhere.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -444,9 +447,10 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
-        if let Err(error) = check_paths(&session.root, &p.paths) {
-            return failure(error);
-        }
+        let paths = match check_paths(&session.root, &p.paths) {
+            Ok(paths) => paths,
+            Err(error) => return failure(error),
+        };
         let mut note = String::new();
         let bonded = match (&p.id, &p.kind) {
             (None, Some(_)) => self
@@ -473,7 +477,7 @@ impl Server {
                             kind,
                             p.persona.as_deref(),
                             client.as_deref(),
-                            p.paths.clone(),
+                            paths.clone(),
                             when,
                         )
                         .map_err(|e| e.to_string())
@@ -504,11 +508,11 @@ impl Server {
             }
             (None, None) => {}
         }
-        let files = listed(&p.paths);
+        let files = listed(&session.root, &paths);
         if session.viewers.is_empty() && p.viewer.is_none() {
             return text(format!("{note}following {files}; no viewer is running"));
         }
-        let request = Request::Follow { paths: p.paths };
+        let request = Request::Follow { paths };
         match self
             .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
             .await
@@ -566,8 +570,8 @@ impl Server {
                        seconds, threads changed at or after it) and `path`; at most `limit` \
                        threads come back, oldest change first, and the summary says how to get \
                        the rest. Works with no viewer running. Does not return file content \
-                       beyond the annotated snippet. Fails when `path` is not a file in the \
-                       workspace.",
+                       beyond the annotated snippet. `path` is a file, or a directory to \
+                       read every thread under it; it fails when it is neither.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn annotations_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
@@ -575,16 +579,17 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
-        if let Err(error) = check_paths(&session.root, p.path.as_slice()) {
-            return failure(error);
-        }
+        let path = match check_paths(&session.root, p.path.as_slice()) {
+            Ok(paths) => paths.into_iter().next(),
+            Err(error) => return failure(error),
+        };
         let request = Request::AnnotationsList {
             since: p.since,
-            path: p.path.clone(),
+            path: path.clone(),
         };
         let outcome = match session.viewers.first() {
             Some(viewer) => call(viewer, &request).await,
-            None => headless_list(&self.dirs, &session.root, p.since, p.path.as_deref())
+            None => headless_list(&self.dirs, &session.root, p.since, path.as_deref())
                 .map(Response::Threads),
         };
         match outcome {
@@ -1093,22 +1098,36 @@ fn bind<'a>(sessions: &'a [Session], cwd: &Path) -> Option<&'a Session> {
 /// Open the workspace's store with no viewer running: threads edited
 /// offline are followed through their snapshots first (ADR 0020), and the
 /// scope of the current `HEAD` is computed (ADR 0024).
-/// The files a `follow` list names, for its reply.
-fn listed(paths: &[PathBuf]) -> String {
+/// The paths a `follow` list names, for its reply; a directory is shown
+/// with a trailing separator, since it covers what is under it.
+fn listed(root: &Path, paths: &[PathBuf]) -> String {
     if paths.is_empty() {
         return "the whole workspace".to_owned();
     }
-    let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-    format!("{} file(s): {}", paths.len(), names.join(", "))
+    let names: Vec<String> = paths
+        .iter()
+        .map(|p| {
+            if root.join(p).is_dir() {
+                format!("{}/", p.display())
+            } else {
+                p.display().to_string()
+            }
+        })
+        .collect();
+    format!("{} path(s): {}", paths.len(), names.join(", "))
 }
 
-/// Check that every path names a file in the workspace at `root`,
-/// naming each that does not. A path that exists nowhere is matched by
-/// file name against the workspace, so a wrong directory is answered
-/// with the right one.
-fn check_paths(root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+/// Check that every path names a file or directory in the workspace at
+/// `root`, naming each that does not, and answer with the paths to
+/// store: `.` segments dropped, and a path that names the root itself
+/// left out, since an empty list already means the whole workspace.
+///
+/// A path that exists nowhere is matched by its last component against
+/// the workspace, so a wrong directory is answered with the right one.
+fn check_paths(root: &Path, paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut problems = Vec::new();
-    let mut files: Option<Vec<PathBuf>> = None;
+    let mut clean = Vec::new();
+    let mut known: Option<Vec<PathBuf>> = None;
     for path in paths {
         let inside = path.is_relative()
             && path
@@ -1119,41 +1138,46 @@ fn check_paths(root: &Path, paths: &[PathBuf]) -> Result<(), String> {
             problems.push(format!("{shown} is not a workspace-relative path"));
             continue;
         }
-        let full = root.join(path);
-        if full.is_file() {
+        let path: PathBuf = path
+            .components()
+            .filter(|c| !matches!(c, Component::CurDir))
+            .collect();
+        if path.as_os_str().is_empty() {
             continue;
         }
-        if full.is_dir() {
-            problems.push(format!(
-                "{shown} is a directory, not a file; name its files"
-            ));
+        let full = root.join(&path);
+        if full.is_file() || full.is_dir() {
+            clean.push(path);
             continue;
         }
-        let files = files.get_or_insert_with(|| workspace_files(root));
-        let same: Vec<String> = files
+        let known = known.get_or_insert_with(|| workspace_paths(root));
+        let same: Vec<String> = known
             .iter()
-            .filter(|f| f.file_name() == path.file_name())
-            .map(|f| f.display().to_string())
+            .filter(|k| k.file_name() == path.file_name())
+            .map(|k| k.display().to_string())
             .collect();
         problems.push(if same.is_empty() {
-            format!("{shown} is not a file in the workspace")
+            format!(
+                "{shown} is nothing in the workspace; follow its directory to cover a file \
+                 you have not written yet"
+            )
         } else {
             format!(
-                "{shown} is not a file in the workspace; did you mean {}?",
+                "{shown} is nothing in the workspace; did you mean {}?",
                 same.join(", ")
             )
         });
     }
     if problems.is_empty() {
-        Ok(())
+        Ok(clean)
     } else {
         Err(problems.join("\n"))
     }
 }
 
-/// Every visible file under `root`, relative to it; empty when the
-/// workspace cannot be read.
-fn workspace_files(root: &Path) -> Vec<PathBuf> {
+/// Every visible file under `root` and the directories holding them,
+/// relative to `root`; empty when the workspace cannot be read.
+fn workspace_paths(root: &Path) -> Vec<PathBuf> {
     let Ok(mut workspace) = Workspace::discover(root) else {
         return Vec::new();
     };
@@ -1162,16 +1186,23 @@ fn workspace_files(root: &Path) -> Vec<PathBuf> {
         .strip_prefix(workspace.root())
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    workspace
-        .walk_files(Filter::Visible)
-        .into_iter()
-        .filter_map(|f| {
-            PathBuf::from(f)
-                .strip_prefix(&below)
-                .ok()
-                .map(Path::to_path_buf)
-        })
-        .collect()
+    let mut paths = Vec::new();
+    for file in workspace.walk_files(Filter::Visible) {
+        let Ok(file) = PathBuf::from(file)
+            .strip_prefix(&below)
+            .map(Path::to_path_buf)
+        else {
+            continue;
+        };
+        for dir in file.ancestors().skip(1) {
+            if dir.as_os_str().is_empty() || paths.contains(&dir.to_path_buf()) {
+                break;
+            }
+            paths.push(dir.to_path_buf());
+        }
+        paths.push(file);
+    }
+    paths
 }
 
 /// Check that every thread id names a thread in the store.
@@ -1237,7 +1268,7 @@ fn headless_list(
         .iter()
         .filter(|t| scope.includes(t))
         .filter(|t| since.is_none_or(|s| t.updated() >= s))
-        .filter(|t| path.is_none_or(|p| t.path() == p))
+        .filter(|t| path.is_none_or(|p| t.path().starts_with(p)))
         .cloned()
         .collect())
 }
@@ -1455,47 +1486,59 @@ mod tests {
     /// in the file the next viewer loads.
     /// A follow list is checked against the workspace: a path in the
     /// wrong directory is refused and answered with the right one, so a
-    /// subscription never silently covers nothing.
+    /// subscription never silently covers nothing. A directory is a
+    /// legal entry; `.` segments and the root itself drop out.
     #[test]
-    fn paths_outside_the_workspace_are_refused_with_the_right_name() -> std::io::Result<()> {
+    fn paths_are_checked_against_the_workspace() -> std::io::Result<()> {
         let dir = TempDir::new("paths")?;
         let root = dir.0.join("ws");
-        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(root.join("src/deep"))?;
         fs::write(root.join("src/jokes.rs"), "")?;
+        fs::write(root.join("src/deep/jokes.rs"), "")?;
         fs::write(root.join("lib.rs"), "")?;
-        assert_eq!(check_paths(&root, &[]), Ok(()));
+        assert_eq!(check_paths(&root, &[]), Ok(Vec::new()));
         assert_eq!(
             check_paths(
                 &root,
-                &[PathBuf::from("src/jokes.rs"), PathBuf::from("lib.rs")]
+                &[
+                    PathBuf::from("./src/jokes.rs"),
+                    PathBuf::from("src"),
+                    PathBuf::from("lib.rs"),
+                    PathBuf::from("."),
+                ]
             ),
-            Ok(())
-        );
-        let error = check_paths(
-            &root,
-            &[
-                PathBuf::from("jokes.rs"),
+            Ok(vec![
+                PathBuf::from("src/jokes.rs"),
                 PathBuf::from("src"),
-                PathBuf::from("../lib.rs"),
-                PathBuf::from("/etc/passwd"),
-                PathBuf::from("nope.rs"),
-            ],
+                PathBuf::from("lib.rs"),
+            ])
         );
         assert_eq!(
-            error,
+            check_paths(
+                &root,
+                &[
+                    PathBuf::from("jokes.rs"),
+                    PathBuf::from("deep"),
+                    PathBuf::from("../lib.rs"),
+                    PathBuf::from("/etc/passwd"),
+                    PathBuf::from("nope.rs"),
+                ]
+            ),
             Err([
-                "jokes.rs is not a file in the workspace; did you mean src/jokes.rs?",
-                "src is a directory, not a file; name its files",
+                "jokes.rs is nothing in the workspace; did you mean src/jokes.rs, \
+                 src/deep/jokes.rs?",
+                "deep is nothing in the workspace; did you mean src/deep?",
                 "../lib.rs is not a workspace-relative path",
                 "/etc/passwd is not a workspace-relative path",
-                "nope.rs is not a file in the workspace",
+                "nope.rs is nothing in the workspace; follow its directory to cover a file \
+                 you have not written yet",
             ]
             .join("\n"))
         );
-        assert_eq!(listed(&[]), "the whole workspace");
+        assert_eq!(listed(&root, &[]), "the whole workspace");
         assert_eq!(
-            listed(&[PathBuf::from("src/jokes.rs"), PathBuf::from("lib.rs")]),
-            "2 file(s): src/jokes.rs, lib.rs"
+            listed(&root, &[PathBuf::from("src"), PathBuf::from("lib.rs")]),
+            "2 path(s): src/, lib.rs"
         );
         Ok(())
     }
@@ -1548,6 +1591,20 @@ mod tests {
         let again = headless_list(&dirs, &root, None, Some(Path::new("a.md")))?;
         assert_eq!(again[0].replies().len(), 1);
         assert_eq!(again[0].status(), Status::AutoResolved);
+        // A directory filter reads every thread under it, and only those.
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/b.md"), "one\ntwo\n")?;
+        Store::open(dirs.threads_file(&root))?.annotate(
+            Draft::new(Path::new("src/b.md"), LineRange::new(1, 1), "and this?"),
+            "one\ntwo\n",
+            7,
+        )?;
+        let under = headless_list(&dirs, &root, None, Some(Path::new("src")))?;
+        assert_eq!(
+            under.iter().map(super::Thread::path).collect::<Vec<_>>(),
+            [Path::new("src/b.md")]
+        );
+        assert_eq!(headless_list(&dirs, &root, None, None)?.len(), 2);
         assert!(
             headless_reply(
                 &dirs,

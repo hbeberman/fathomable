@@ -54,7 +54,14 @@ impl App {
             [] => "none".to_owned(),
             paths => paths
                 .iter()
-                .map(|p| p.display().to_string())
+                .map(|p| {
+                    // A followed directory covers what is under it: say so.
+                    if self.workspace.root().join(p).is_dir() {
+                        format!("{}/", p.display())
+                    } else {
+                        p.display().to_string()
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
         };

@@ -394,16 +394,17 @@ repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer; fails, changing nothing, when a path is not a file in the workspace, naming same-named files elsewhere (a subscription matches thread paths exactly, so a bare file name never covers the same file in a subdirectory); the reply lists the files now followed |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer; a path is a file or a directory, and a directory covers every thread under it, including on files not written yet; fails, changing nothing, when a path is neither, naming same-named paths elsewhere (matching is by path component, so a bare file name never covers the same file in a subdirectory); the reply lists the paths now followed, a directory with a trailing slash |
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
-| `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`, at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer; fails when `path` is not a file in the workspace |
+| `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path` — a file, or a directory to read the whole subtree — at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer; fails when `path` is neither |
 | `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |
 | `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
 | `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; fails when a named thread does not exist |
 
 Every tool accepts an optional `session`: a workspace root, or a viewer name
-or id. A subscription's scope is the files it follows (none means all)
-plus every thread it has posted in; agent types are labels the viewer
+or id. A subscription's scope is what it follows (none means all): a
+followed file, or anything under a followed directory, plus every
+thread it has posted in; agent types are labels the viewer
 shows next to a message (`name (type)`), and the only rule they carry is
 that a session is never woken by its own messages. A thread belongs to the commit it was written against and is shown
 (here and in the viewer) only while that commit is `HEAD` or one of its

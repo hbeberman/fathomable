@@ -1544,7 +1544,7 @@ impl App {
                         .iter()
                         .filter(|t| self.scope.includes(t))
                         .filter(|t| since.is_none_or(|s| t.updated() >= s))
-                        .filter(|t| path.as_deref().is_none_or(|p| t.path() == p))
+                        .filter(|t| path.as_deref().is_none_or(|p| t.path().starts_with(p)))
                         .cloned()
                         .collect(),
                 ),

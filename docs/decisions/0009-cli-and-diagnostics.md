@@ -38,6 +38,12 @@ Command line:
   `--dump-state` (session and thread state as JSON), `--replay-log`
   (re-emit the log for a session in order), `--config-show` (effective
   configuration after defaults and overrides).
+- The hook subcommands `hello` and `pending` (0040, 0042) take
+  `--verbose`: an account of every lookup — stdin, workspace, viewers,
+  config, register, subscriber, bonds, thread counts — and why the hook
+  stayed silent, on stderr so the harness's hook log carries it and
+  stdout still means what it did; on stdout only when stderr is the
+  answer (a Claude or Codex stop block).
 
 Logging:
 

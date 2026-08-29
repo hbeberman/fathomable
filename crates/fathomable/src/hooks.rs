@@ -24,6 +24,13 @@
 //! `source` is `resume`. Context is composed as [`Occasion::Context`]:
 //! deliveries and fired watches are recorded, no check is counted, and
 //! no reminder is composed, so the nag stays measured in turn-ends.
+//!
+//! `--verbose` makes a silent hook explain itself: every lookup on the
+//! way — what stdin said, which workspace matched, the subscriber, its
+//! bonds and watches, the thread counts — goes to stderr, or to stdout
+//! when stderr is the answer (a Claude or Codex block), so the harness's
+//! hook log becomes a diagnostic channel without changing what the
+//! model sees.
 
 use std::env;
 use std::io::{self, IsTerminal, Read};
@@ -36,7 +43,7 @@ use fathomable_core::agents::{Blob, Register, Subscriber};
 use fathomable_core::annotations::{Scope, Store, Thread};
 use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config};
-use fathomable_core::session::Marker;
+use fathomable_core::session::{Marker, Record};
 use fathomable_core::workspace::Workspace;
 use serde_json::{Value, json};
 
@@ -140,18 +147,239 @@ impl Input {
     }
 }
 
+/// The `--verbose` account of a hook run: each lookup and what it found.
+#[derive(Debug, Default)]
+struct Diag {
+    on: bool,
+    lines: Vec<String>,
+    flushed: bool,
+}
+
+impl Diag {
+    fn new(on: bool, command: &str, harness: Option<Harness>) -> Self {
+        let mut diag = Self {
+            on,
+            lines: Vec::new(),
+            flushed: false,
+        };
+        let harness =
+            harness.map_or_else(|| "none".to_owned(), |h| format!("{h:?}").to_lowercase());
+        diag.note(format!(
+            "fathomable {} {command} --hook {harness}; pid {}",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id()
+        ));
+        diag
+    }
+
+    fn note(&mut self, line: impl Into<String>) {
+        if self.on {
+            self.lines.push(line.into());
+        }
+    }
+
+    /// Print to stderr, once; `to_stdout` when stderr carries the answer.
+    fn flush(&mut self, to_stdout: bool) {
+        if !self.on || self.flushed {
+            return;
+        }
+        self.flushed = true;
+        for line in &self.lines {
+            if to_stdout {
+                println!("fathomable: {line}");
+            } else {
+                eprintln!("fathomable: {line}");
+            }
+        }
+    }
+}
+
+impl Drop for Diag {
+    fn drop(&mut self) {
+        self.flush(false);
+    }
+}
+
+impl Input {
+    fn describe(&self, diag: &mut Diag) {
+        diag.note(format!(
+            "input: event {:?}, session {}, cwd {}, source {}, subagent {}, continuation {}",
+            self.event,
+            self.session.as_deref().unwrap_or("none"),
+            self.cwd
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |c| c.display().to_string()),
+            self.source.as_deref().unwrap_or("none"),
+            self.subagent,
+            self.continuation
+        ));
+    }
+}
+
 /// Read the hook JSON from stdin when something is piped in.
-fn read_input(harness: Harness) -> Input {
+fn read_input(harness: Harness, diag: &mut Diag) -> Input {
     let stdin = io::stdin();
     if stdin.is_terminal() {
+        diag.note("stdin: a terminal, no hook JSON");
         return Input::default();
     }
     let mut text = String::new();
     if stdin.lock().read_to_string(&mut text).is_err() || text.trim().is_empty() {
+        diag.note("stdin: empty or unreadable");
         return Input::default();
     }
-    serde_json::from_str::<Value>(&text)
-        .map_or_else(|_| Input::default(), |v| Input::parse(harness, &v))
+    match serde_json::from_str::<Value>(&text) {
+        Ok(value) => {
+            let keys = value.as_object().map_or_else(
+                || "not an object".to_owned(),
+                |o| o.keys().cloned().collect::<Vec<_>>().join(", "),
+            );
+            diag.note(format!("stdin: {} bytes of JSON, keys: {keys}", text.len()));
+            Input::parse(harness, &value)
+        }
+        Err(error) => {
+            diag.note(format!("stdin: {} bytes, not JSON: {error}", text.len()));
+            Input::default()
+        }
+    }
+}
+
+/// Seconds ago, for a diagnostic line.
+fn ago(when: u64, now: u64) -> String {
+    format!("{}s ago", now.saturating_sub(when))
+}
+
+/// Report the workspaces and viewers that could match `cwd`.
+fn describe_workspaces(dirs: &XdgDirs, cwd: &Path, root: Option<&Path>, diag: &mut Diag) {
+    if !diag.on {
+        return;
+    }
+    let known = Marker::list(dirs);
+    if let Some(root) = root {
+        diag.note(format!(
+            "workspace: {} (of {} known)",
+            root.display(),
+            known.len()
+        ));
+    } else {
+        let roots: Vec<_> = known
+            .iter()
+            .map(|m| m.root().display().to_string())
+            .collect();
+        diag.note(format!(
+            "workspace: none of {} known contains {}: [{}]; run `fathomable --register` there",
+            known.len(),
+            cwd.display(),
+            roots.join(", ")
+        ));
+    }
+    let viewers: Vec<_> = Record::live(dirs)
+        .into_iter()
+        .filter(|r| root.is_none_or(|root| r.root() == root))
+        .map(|r| {
+            format!(
+                "{}{} pid {} socket {}",
+                r.id().as_str(),
+                r.name().map_or_else(String::new, |n| format!(" ({n})")),
+                r.pid(),
+                r.socket()
+                    .map_or_else(|| "none".to_owned(), |s| s.display().to_string())
+            )
+        })
+        .collect();
+    diag.note(format!(
+        "viewers: {} live [{}]",
+        viewers.len(),
+        viewers.join("; ")
+    ));
+}
+
+/// Report the config, register, and thread store as they concern `id`.
+fn describe_state(dirs: &XdgDirs, root: &Path, id: &str, config: &AgentsConfig, diag: &mut Diag) {
+    if !diag.on {
+        return;
+    }
+    diag.note(format!(
+        "config: types [{}], nag-after {}, expire-after {}s, max-lines {}, wake {}",
+        config.types.join(", "),
+        config.nag_after,
+        config.expire_after.as_secs(),
+        config.max_lines,
+        config.wake.as_deref().unwrap_or("none")
+    ));
+    let when = now();
+    let path = dirs.agents_file(root);
+    let register = match Register::open(&path, when, config.expire_after) {
+        Ok(register) => register,
+        Err(error) => {
+            diag.note(format!("register: {} unreadable: {error}", path.display()));
+            return;
+        }
+    };
+    let subscribers: Vec<_> = register
+        .subscribers()
+        .iter()
+        .map(|s| {
+            format!(
+                "{} {} client {} paths {} seen {}",
+                s.id(),
+                s.label(),
+                s.client().unwrap_or("?"),
+                s.paths().len(),
+                ago(s.seen(), when)
+            )
+        })
+        .collect();
+    diag.note(format!(
+        "register: {} (exists {}), {} subscribers [{}]",
+        path.display(),
+        path.exists(),
+        subscribers.len(),
+        subscribers.join("; ")
+    ));
+    let bonds: Vec<_> = register
+        .bonds()
+        .iter()
+        .map(|b| {
+            let pids: Vec<_> = b.processes().iter().map(|p| p.pid().to_string()).collect();
+            format!(
+                "{} pids [{}] {}",
+                b.id(),
+                pids.join(", "),
+                ago(b.created(), when)
+            )
+        })
+        .collect();
+    diag.note(format!(
+        "bonds (MCP servers signing as a session): {} [{}]",
+        bonds.len(),
+        bonds.join("; ")
+    ));
+    let watches = register
+        .watches()
+        .iter()
+        .filter(|w| w.subscriber() == id)
+        .count();
+    match register.subscriber(id) {
+        None => diag.note(format!(
+            "subscriber {id}: not subscribed here (no `follow` with this id)"
+        )),
+        Some(subscriber) => {
+            diag.note(format!(
+                "subscriber {id}: {}, {watches} watches",
+                subscriber.label()
+            ));
+            match scoped_threads(dirs, root) {
+                Ok(threads) => diag.note(format!(
+                    "threads: {} in scope, {} deliverable, {} stale for {id}",
+                    threads.len(),
+                    register.deliverable(subscriber, &threads).len(),
+                    register.stale(subscriber, &threads).len()
+                )),
+                Err(error) => diag.note(format!("threads: {error}")),
+            }
+        }
+    }
 }
 
 /// The known workspace whose root is the longest prefix of `cwd`.
@@ -168,23 +396,32 @@ fn agents_config(dirs: &XdgDirs) -> AgentsConfig {
 }
 
 /// `fathomable hello`: tell the model its session id and how to subscribe.
-pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>) -> ExitCode {
-    let input = read_input(harness);
+pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>, verbose: bool) -> ExitCode {
+    let mut diag = Diag::new(verbose, "hello", Some(harness));
+    let input = read_input(harness, &mut diag);
+    input.describe(&mut diag);
     let Some(id) = id.or(input.session) else {
+        diag.note("silent: no session id on stdin or --id");
         return ExitCode::SUCCESS;
     };
     if input.subagent {
+        diag.note("silent: a subagent");
         return ExitCode::SUCCESS;
     }
     let cwd = input
         .cwd
         .or_else(|| env::current_dir().ok())
         .unwrap_or_default();
-    let Some(root) = workspace_for(dirs, &cwd) else {
+    let root = workspace_for(dirs, &cwd);
+    describe_workspaces(dirs, &cwd, root.as_deref(), &mut diag);
+    let Some(root) = root else {
+        diag.note("silent: no known workspace");
         return ExitCode::SUCCESS;
     };
     let config = agents_config(dirs);
     bond_session(dirs, &root, &id, &config);
+    describe_state(dirs, &root, &id, &config, &mut diag);
+    diag.note("answer: the hello text");
     let types = config.types.join(", ");
     let mut text = format!(
         "Fathomable is watching this workspace ({}): the user reads your work there and \
@@ -242,34 +479,49 @@ pub fn pending(
     harness: Option<Harness>,
     id: Option<String>,
     prompt: bool,
+    verbose: bool,
 ) -> ExitCode {
-    let input = harness.map(read_input).unwrap_or_default();
+    let mut diag = Diag::new(verbose, "pending", harness);
+    let input = harness.map_or_else(Input::default, |h| read_input(h, &mut diag));
+    input.describe(&mut diag);
     let Some(id) = id.or(input.session) else {
+        diag.note("silent: no session id on stdin or --id");
         return ExitCode::SUCCESS;
     };
     if input.continuation || input.subagent {
+        diag.note("silent: a stop-hook continuation or a subagent");
         return ExitCode::SUCCESS;
     }
     let cwd = input
         .cwd
         .or_else(|| env::current_dir().ok())
         .unwrap_or_default();
-    let Some(root) = workspace_for(dirs, &cwd) else {
+    let root = workspace_for(dirs, &cwd);
+    describe_workspaces(dirs, &cwd, root.as_deref(), &mut diag);
+    let Some(root) = root else {
+        diag.note("silent: no known workspace");
         return ExitCode::SUCCESS;
     };
     let config = agents_config(dirs);
+    describe_state(dirs, &root, &id, &config, &mut diag);
     let occasion = match input.event {
         Event::Stop => Occasion::TurnEnd,
         Event::Prompt | Event::PostTool | Event::Notification => Occasion::Context,
     };
+    diag.note(format!("occasion: {occasion:?}"));
     let text = match compose(dirs, &root, &id, &config, occasion) {
         Ok(Some(text)) => text,
-        Ok(None) => return ExitCode::SUCCESS,
+        Ok(None) => {
+            diag.note("silent: nothing to deliver");
+            return ExitCode::SUCCESS;
+        }
         Err(error) => {
             eprintln!("fathomable: {error}");
+            diag.note("silent: the error above");
             return ExitCode::SUCCESS;
         }
     };
+    diag.note(format!("answer: {} lines of threads", text.lines().count()));
     if prompt {
         println!("{text}");
         return ExitCode::SUCCESS;
@@ -294,6 +546,9 @@ pub fn pending(
     }
     match harness {
         None | Some(Harness::Claude | Harness::Codex) => {
+            // stderr is the block reason here, so the account goes to
+            // stdout, which these harnesses keep in their hook log.
+            diag.flush(true);
             eprintln!("{text}");
             ExitCode::from(2)
         }
@@ -422,7 +677,7 @@ mod tests {
     use fathomable_core::session::Marker;
     use serde_json::json;
 
-    use super::{Event, Harness, Input, Occasion, compose, workspace_for};
+    use super::{Diag, Event, Harness, Input, Occasion, compose, workspace_for};
     use crate::app::threads::now;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -643,6 +898,19 @@ mod tests {
         let copilot_none = Input::parse(Harness::Copilot, &json!({"sessionId": "c"}));
         assert!(!copilot_none.subagent);
         assert_eq!(Input::parse(Harness::Vscode, &json!({})), Input::default());
+    }
+
+    /// `--verbose` off records nothing; on, it keeps what it is told.
+    #[test]
+    fn diag_records_only_when_on() {
+        let mut quiet = Diag::new(false, "pending", None);
+        quiet.note("lookup");
+        assert!(quiet.lines.is_empty());
+        let mut loud = Diag::new(true, "pending", Some(Harness::Copilot));
+        loud.note("lookup");
+        assert_eq!(loud.lines.len(), 2);
+        assert!(loud.lines[0].contains("pending --hook copilot"));
+        loud.flushed = true;
     }
 
     /// The context events are known by name where the harness gives one

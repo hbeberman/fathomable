@@ -88,6 +88,9 @@ enum Command {
         /// Session id, when the hook JSON does not carry it.
         #[arg(long)]
         id: Option<String>,
+        /// Explain every lookup on stderr, even when there is nothing to say.
+        #[arg(long)]
+        verbose: bool,
     },
     /// The stop hook: hand a subscribed agent the threads it has not seen.
     Pending {
@@ -100,6 +103,9 @@ enum Command {
         /// Print the prompt to stdout and exit 0 (for waking an idle session).
         #[arg(long)]
         prompt: bool,
+        /// Explain every lookup on stderr, even when there is nothing to say.
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -108,9 +114,16 @@ fn main() -> ExitCode {
     let dirs = XdgDirs::from_env();
 
     match cli.command {
-        Some(Command::Hello { hook, id }) => return hooks::hello(&dirs, hook, id),
-        Some(Command::Pending { hook, id, prompt }) => {
-            return hooks::pending(&dirs, hook, id, prompt);
+        Some(Command::Hello { hook, id, verbose }) => {
+            return hooks::hello(&dirs, hook, id, verbose);
+        }
+        Some(Command::Pending {
+            hook,
+            id,
+            prompt,
+            verbose,
+        }) => {
+            return hooks::pending(&dirs, hook, id, prompt, verbose);
         }
         None => {}
     }

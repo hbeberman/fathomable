@@ -412,6 +412,13 @@ Two subcommands, both reading the harness's hook JSON on stdin:
   session when no JSON is piped, so
   `claude -r ID "$(fathomable pending --id ID --prompt)"` wakes an idle
   session by hand.
+- `--verbose` on `hello` or `pending` explains a silent hook: every
+  lookup and what it found (stdin, workspace, live viewers, config,
+  subscribers, MCP bonds, watches, thread counts) and the reason for
+  silence, one `fathomable:` line each on stderr — stdout when stderr
+  is the block reason. Add it to a hook command and read the harness's
+  hook log (`claude --debug`, `Ctrl-O`) to see why an agent is not
+  hearing you.
 
 `agents.max-lines` bounds the newly pending threads only. Past it they
 are named by id and place under `N more; call threads_pending`, and are
@@ -483,6 +490,8 @@ fathomable --doctor        # terminal, directories, config, log locations
 fathomable --sessions      # known workspaces and their viewer records
 fathomable --config-show   # effective configuration
 fathomable --register [DIR] # mark a workspace known without starting a viewer
+echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --verbose
+                           # why a hook is silent for session ID
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;

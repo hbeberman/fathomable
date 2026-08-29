@@ -394,7 +394,7 @@ repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer |
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`, at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer |
 | `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |
@@ -451,8 +451,15 @@ threads and a subscriber to try the loop against.
 
 Two subcommands, both reading the harness's hook JSON on stdin:
 
-- `fathomable hello --hook <harness>` (session start) prints one paragraph
-  telling the model its session id and how to subscribe. On a *resume* —
+- `fathomable hello --hook <harness>` (session start) tells the model what
+  Fathomable is and that it is already connected as an MCP server, then
+  its workspace, session id, and the whole `agents.types` list as
+  labelled fields, and the `follow`, `thread_reply`, and `thread_watch`
+  calls to make. The tools are spelled as the harness shows them —
+  `mcp__fathomable__follow` under Claude Code, `fathomable.follow` under
+  Codex, the bare name elsewhere — and Copilot's text adds that a
+  detached shell finishing brings comments too
+  ([0043](decisions/0043-agent-vocabulary.md)). On a *resume* —
   `source: "resume"` in the hook JSON — it prints the pending threads
   after it, so a session that comes back after being stopped starts with
   them in context instead of waiting for a turn to end. The other

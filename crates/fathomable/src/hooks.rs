@@ -44,6 +44,7 @@ use fathomable_core::annotations::{Scope, Store, Thread};
 use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config};
 use fathomable_core::session::{Marker, Record};
+use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use serde_json::{Value, json};
 
@@ -60,6 +61,74 @@ pub enum Harness {
     Copilot,
     /// VS Code agent mode: `SessionStart` and `Stop` in `.github/hooks`.
     Vscode,
+}
+
+impl Harness {
+    /// The name the harness shows the model for a Fathomable tool.
+    ///
+    /// Claude Code and Codex prefix MCP tools with the server name in
+    /// their own ways; Copilot and VS Code have not been verified, so
+    /// the bare name is used there rather than a guess (ADR 0043).
+    pub(crate) fn tool(self, tool: vocab::Tool) -> String {
+        match self {
+            Self::Claude => format!("mcp__fathomable__{}", tool.name),
+            Self::Codex => format!("fathomable.{}", tool.name),
+            Self::Copilot | Self::Vscode => tool.name.to_owned(),
+        }
+    }
+
+    /// One line of the hello text that only this harness needs.
+    pub(crate) const fn extra(self) -> Option<&'static str> {
+        match self {
+            Self::Copilot => {
+                Some("A detached shell of yours finishing also brings any new comments with it.")
+            }
+            Self::Claude | Self::Codex | Self::Vscode => None,
+        }
+    }
+}
+
+/// The hello text: what Fathomable is, the session's facts as labelled
+/// fields, and the calls to make, spelled as `harness` shows them.
+pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[String]) -> String {
+    let first = types.first().map_or("coder", String::as_str);
+    let extra = harness
+        .extra()
+        .map_or_else(String::new, |line| format!(" {line}"));
+    format!(
+        "Fathomable is the user's read-only viewer on this workspace. They watch the files \
+         you touch and leave review comments anchored to lines; you answer them in place.\n\
+         It is already connected to you as the MCP server `fathomable` — everything below \
+         is a tool call on it, not a shell command, a file to grep for, or something to \
+         look up.\n\
+         \n  workspace  {root}\
+         \n  session    {id}\
+         \n  types      {types}   ← the whole list; do not look elsewhere\n\
+         \nSubscribe before you edit:\
+         \n  {follow} {{ {paths}: [\"<files you will edit>\"], {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
+         \nComments then reach you as your turns start and end. Never poll; after a wait, \
+         just end your turn.{extra}\
+         \nAnswer one thread, or several in one call:\
+         \n  {reply} {{ {thread}: \"<thread id>\", {body}: \"…\", {resolve}: true }}\
+         \n  {reply} {{ {replies}: [ {{ {thread}, {body}, {resolve} }}, … ] }}\
+         \nBe woken when a thread you are not following moves:\
+         \n  {watch} {{ {on}: \"<thread id>\", {when}: \"{message}\" }}",
+        root = root.display(),
+        types = types.join(", "),
+        follow = harness.tool(vocab::FOLLOW),
+        paths = vocab::PATHS,
+        kind = vocab::TYPE,
+        id_key = vocab::ID,
+        reply = harness.tool(vocab::THREAD_REPLY),
+        thread = vocab::THREAD,
+        body = vocab::BODY,
+        resolve = vocab::RESOLVE,
+        replies = vocab::REPLIES,
+        watch = harness.tool(vocab::THREAD_WATCH),
+        on = vocab::ON,
+        when = vocab::WHEN,
+        message = vocab::WHEN_MESSAGE,
+    )
 }
 
 /// Why a blob is being composed, which decides how hard it lands.
@@ -422,17 +491,7 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>, verbose: bool
     bond_session(dirs, &root, &id, &config);
     describe_state(dirs, &root, &id, &config, &mut diag);
     diag.note("answer: the hello text");
-    let types = config.types.join(", ");
-    let mut text = format!(
-        "Fathomable is watching this workspace ({}): the user reads your work there and \
-         leaves review comments on lines. Your session id is {id}. Before you edit, call \
-         the fathomable `follow` tool with id \"{id}\", a type (one of: {types}), and the \
-         paths you will edit. Fathomable then hands you unanswered comments as your turns \
-         start and end — never poll for them; after a wait, just end your turn. Act on \
-         them and answer with `thread_reply` (pass id \"{id}\" to it if you did not call \
-         `follow` on this connection).",
-        root.display()
-    );
+    let mut text = hello_text(harness, &root, &id, &config.types);
     // A resume comes back with the connection's memory gone and may have
     // missed comments while the session was stopped, so it is handed them
     // here rather than waiting for a turn to end (ADR 0040 note). The
@@ -675,9 +734,10 @@ mod tests {
     use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
     use fathomable_core::config::AgentsConfig;
     use fathomable_core::session::Marker;
+    use fathomable_core::vocabulary as vocab;
     use serde_json::json;
 
-    use super::{Diag, Event, Harness, Input, Occasion, compose, workspace_for};
+    use super::{Diag, Event, Harness, Input, Occasion, compose, hello_text, workspace_for};
     use crate::app::threads::now;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -969,5 +1029,50 @@ mod tests {
             ),
             Event::Notification
         );
+    }
+
+    /// Every harness's hello names only tools and parameters the
+    /// vocabulary knows — the call shapes after the harness's prefix is
+    /// stripped, and anything backticked — and lists every type.
+    #[test]
+    fn hello_names_only_known_tools() {
+        let types = ["coder".to_owned(), "qa".to_owned()];
+        for harness in [
+            Harness::Claude,
+            Harness::Codex,
+            Harness::Copilot,
+            Harness::Vscode,
+        ] {
+            let text = hello_text(harness, Path::new("/ws"), "s-1", &types);
+            assert!(text.contains("types      coder, qa"), "{text}");
+            assert!(text.contains("session    s-1"), "{text}");
+            let mut shapes = 0;
+            for line in text.lines() {
+                let Some(rest) = line.strip_prefix("  ") else {
+                    continue;
+                };
+                let Some((call, _)) = rest.split_once(" { ") else {
+                    continue;
+                };
+                shapes += 1;
+                let bare = call
+                    .strip_prefix("mcp__fathomable__")
+                    .or_else(|| call.strip_prefix("fathomable."))
+                    .unwrap_or(call);
+                assert!(
+                    vocab::is_known(bare),
+                    "{harness:?} hello calls unknown `{call}`"
+                );
+            }
+            assert_eq!(shapes, 4, "{harness:?}: {text}");
+            for ident in vocab::idents(&text) {
+                assert!(
+                    ident == "fathomable" || vocab::is_known(ident),
+                    "{harness:?} hello names unknown `{ident}`"
+                );
+            }
+        }
+        assert!(hello_text(Harness::Copilot, Path::new("/ws"), "s", &types).contains("detached"));
+        assert!(!hello_text(Harness::Claude, Path::new("/ws"), "s", &types).contains("detached"));
     }
 }

@@ -151,3 +151,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     and exiting 0, so a comment posted while an agent waits is there on
     the wake and no agent polls for comments
     ([0042](decisions/0042-turn-start-delivery.md)).
+34. **One vocabulary for the agent-facing text.** Tool and parameter
+    names live in one core table that every hook string, the server
+    instructions, and the guide are checked against; the hello body is
+    shared with a per-harness spelling of tool names; the `follow`
+    schema lists the configured types
+    ([0043](decisions/0043-agent-vocabulary.md)).

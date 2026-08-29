@@ -19,7 +19,7 @@
 use std::env;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use fathomable_core::XdgDirs;
@@ -29,12 +29,18 @@ use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
+use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerInfo};
+use rmcp::model::{
+    CacheScope, CallToolResult, ContentBlock, Implementation, ListToolsResult,
+    PaginatedRequestParams, ProtocolVersion, ResultType, ServerCapabilities, ServerInfo, Tool,
+};
 use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router};
+use rmcp::{
+    ErrorData, RoleServer, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1193,24 +1199,74 @@ fn unexpected(outcome: Result<Response, String>) -> CallToolResult {
     }
 }
 
+/// The server instructions every client is handed on connect.
+fn instructions() -> String {
+    format!(
+        "Fathomable is the user's read-only viewer, where they leave review comments \
+         on the lines you write. Start with `{follow}` naming the files you will edit \
+         and a `{kind}` to subscribe; the hooks then hand you each new comment once, \
+         as your turns start and end — never poll for comments, and after a wait \
+         just end your turn. Add the session `{id}` the hello hook gave you when \
+         asked for it, and pass it to `{reply}` too if you never called \
+         `{follow}` on this connection. Answer with one `{reply}` carrying \
+         `{replies}`. `{pending}` is for the overflow a hook lists by id, or \
+         for a harness without hooks. `{list}` reads any thread; `{open}` \
+         shows a file in the viewer. Everything but `{open}` works with no viewer \
+         running. `{watch}` wakes you when another thread moves.",
+        follow = vocab::FOLLOW.name,
+        kind = vocab::TYPE,
+        id = vocab::ID,
+        reply = vocab::THREAD_REPLY.name,
+        replies = vocab::REPLIES,
+        pending = vocab::THREADS_PENDING.name,
+        list = vocab::ANNOTATIONS_LIST.name,
+        open = vocab::OPEN.name,
+        watch = vocab::THREAD_WATCH.name,
+    )
+}
+
+/// The tools as listed to a client: `follow`'s `type` carries the
+/// configured agent types as an `enum`, so a model that never saw the
+/// hello hook still knows the valid values (ADR 0043).
+fn with_types(mut tools: Vec<Tool>, types: &[String]) -> Vec<Tool> {
+    if let Some(follow) = tools.iter_mut().find(|t| t.name == vocab::FOLLOW.name) {
+        let schema = Arc::make_mut(&mut follow.input_schema);
+        if let Some(kind) = schema
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+            .and_then(|p| p.get_mut(vocab::TYPE))
+            .and_then(Value::as_object_mut)
+        {
+            kind.insert("enum".to_owned(), json!(types));
+        }
+    }
+    tools
+}
+
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("fathomable", env!("CARGO_PKG_VERSION")))
-            .with_instructions(
-                "Fathomable is the user's read-only viewer, where they leave review comments \
-                 on the lines you write. Start with `follow` naming the files you will edit \
-                 and a `type` to subscribe; the hooks then hand you each new comment once, \
-                 as your turns start and end — never poll for comments, and after a wait \
-                 just end your turn. Add the session `id` the hello hook gave you when \
-                 asked for it, and pass it to `thread_reply` too if you never called \
-                 `follow` on this connection. Answer with one `thread_reply` carrying \
-                 `replies`. `threads_pending` is for the overflow a hook lists by id, or \
-                 for a harness without hooks. `annotations_list` reads any thread; `open` \
-                 shows a file in the viewer. Everything but `open` works with no viewer \
-                 running. `thread_watch` wakes you when another thread moves.",
-            )
+            .with_instructions(instructions())
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, ErrorData> {
+        let cache_hints = context
+            .protocol_version()
+            .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult {
+            result_type: Some(ResultType::COMPLETE),
+            tools: with_types(self.tool_router.list_all(), &self.agents.types),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: cache_hints.then_some(0),
+            cache_scope: cache_hints.then_some(CacheScope::Public),
+        })
     }
 }
 
@@ -1223,7 +1279,11 @@ mod tests {
     use fathomable_core::annotations::{Author, Draft, LineRange, Status, Store, ThreadId};
     use fathomable_core::session::{Id, Record};
 
-    use super::{Session, bind, headless_list, headless_reply};
+    use serde_json::Value;
+
+    use super::{
+        Server, Session, bind, headless_list, headless_reply, instructions, vocab, with_types,
+    };
 
     fn session(root: &str, viewers: usize) -> Session {
         Session {
@@ -1314,6 +1374,116 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    /// Words the agent-facing text may backtick that are not tools or
+    /// parameters: the hook, and the config node the guide names.
+    const ALLOWED: [&str; 3] = ["hello", "fathomable", "agents.types"];
+
+    fn assert_known(text: &str, site: &str) {
+        for ident in vocab::idents(text) {
+            assert!(
+                ALLOWED.contains(&ident) || vocab::is_known(ident),
+                "{site} names unknown `{ident}`"
+            );
+        }
+    }
+
+    /// The vocabulary is the live schema, both ways: every tool and
+    /// top-level parameter it lists exists, and nothing exists it does
+    /// not list. This is what makes every other check mean something.
+    #[test]
+    fn vocabulary_matches_the_tool_schema() -> Result<(), String> {
+        let live = Server::tool_router().list_all();
+        assert_eq!(live.len(), vocab::ALL.len());
+        for tool in vocab::ALL {
+            let found = live
+                .iter()
+                .find(|t| t.name == tool.name)
+                .ok_or_else(|| format!("`{}` is not a registered tool", tool.name))?;
+            let mut props: Vec<&str> = found
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .map(|p| p.keys().map(String::as_str).collect())
+                .unwrap_or_default();
+            props.sort_unstable();
+            let mut listed = tool.params.to_vec();
+            listed.sort_unstable();
+            assert_eq!(props, listed, "`{}` parameters", tool.name);
+            assert_known(found.description.as_deref().unwrap_or_default(), tool.name);
+            for (name, prop) in found
+                .input_schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                let doc = prop
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                assert_known(doc, &format!("{}.{name}", tool.name));
+            }
+        }
+        assert_known(&instructions(), "the server instructions");
+        Ok(())
+    }
+
+    #[test]
+    fn follow_schema_lists_the_configured_types() -> Result<(), String> {
+        let types = ["coder".to_owned(), "qa".to_owned()];
+        let tools = with_types(Server::tool_router().list_all(), &types);
+        let follow = tools
+            .iter()
+            .find(|t| t.name == "follow")
+            .ok_or("no follow tool")?;
+        assert_eq!(
+            follow.input_schema["properties"]["type"]["enum"],
+            serde_json::json!(["coder", "qa"])
+        );
+        assert!(
+            tools
+                .iter()
+                .all(|t| t.name == "follow" || t.input_schema["properties"].get("type").is_none())
+        );
+        Ok(())
+    }
+
+    /// The guide's tool table names every tool, nothing else in its
+    /// first column, and only known words in its second.
+    #[test]
+    fn guide_tool_table_matches_the_vocabulary() -> std::io::Result<()> {
+        let guide = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md");
+        let text = fs::read_to_string(&guide)?;
+        let mut rows = text
+            .lines()
+            .skip_while(|l| !l.starts_with("| Tool | Use |"))
+            .skip(2)
+            .take_while(|l| l.starts_with("| `"));
+        let mut named = Vec::new();
+        for row in &mut rows {
+            let mut cells = row.trim_matches('|').splitn(2, " | ");
+            let tools = cells.next().unwrap_or_default();
+            let usage = cells.next().unwrap_or_default();
+            for ident in vocab::idents(tools) {
+                assert!(
+                    vocab::ALL.iter().any(|t| t.name == ident),
+                    "guide table row names `{ident}`, not a tool"
+                );
+                named.push(ident);
+            }
+            assert_known(usage, "the guide table");
+        }
+        for tool in vocab::ALL {
+            assert!(
+                named.contains(&tool.name),
+                "guide table lacks `{}`",
+                tool.name
+            );
+        }
+        assert_eq!(named.len(), vocab::ALL.len(), "a tool is listed twice");
         Ok(())
     }
 }

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::annotations::{Status, Thread, ThreadId};
 use crate::bond::{self, Bond, Process};
+use crate::vocabulary as vocab;
 
 /// File name of the register inside the workspace state directory.
 pub const AGENTS_FILE: &str = "agents.jsonl";
@@ -816,8 +817,9 @@ impl<'a> Blob<'a> {
         if !self.listed.is_empty() {
             out.push(String::new());
             out.push(format!(
-                "{} more; call `threads_pending`:",
-                self.listed.len()
+                "{} more; call `{}`:",
+                self.listed.len(),
+                vocab::THREADS_PENDING.name
             ));
             for thread in &self.listed {
                 out.push(format!(
@@ -863,10 +865,17 @@ impl<'a> Blob<'a> {
                 if count == 1 { "s" } else { "" },
                 subscriber.label()
             ),
-            "Act on each, then answer every thread in ONE `thread_reply` call with \
-             `replies` (pass line/end_line if you moved the lines). Full history: \
-             `annotations_list`; more pending: `threads_pending`."
-                .to_owned(),
+            format!(
+                "Act on each, then answer every thread in ONE `{reply}` call with \
+                 `{replies}` (pass `{line}`/`{end_line}` if you moved the lines). Full \
+                 history: `{list}`; more pending: `{pending}`.",
+                reply = vocab::THREAD_REPLY.name,
+                replies = vocab::REPLIES,
+                line = vocab::LINE,
+                end_line = vocab::END_LINE,
+                list = vocab::ANNOTATIONS_LIST.name,
+                pending = vocab::THREADS_PENDING.name,
+            ),
         ]
     }
 }
@@ -1279,6 +1288,14 @@ mod tests {
         assert!(text.contains("     second line"));
         assert!(text.contains("more; call `threads_pending`"));
         assert!(text.lines().count() <= 20 + 6, "{text}");
+        // Every tool or parameter the blob names is one the vocabulary
+        // knows, which the fathomable crate checks against the schema.
+        for ident in crate::vocabulary::idents(&text) {
+            assert!(
+                crate::vocabulary::is_known(ident),
+                "blob names unknown `{ident}`"
+            );
+        }
         assert!(
             blob.shown().count() + blob.listed.len() == 6,
             "every thread is either shown or listed"

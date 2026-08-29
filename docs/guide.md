@@ -335,12 +335,18 @@ in the same repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`) |
-| `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`; works without a viewer |
-| `thread_reply` | answer a thread, optionally resolving it; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; works without a viewer |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `id` (the session id from the `hello` hook) and `type` (one of the configured `agents.types`) it also subscribes the session, so the stop hook and `threads_pending` hand it what others write; works without a viewer |
+| `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
+| `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path`, at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer |
+| `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; the hookless way to read comments |
+| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name, and a subscribed connection signs with its id and type; works without a viewer |
+| `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot |
 
 Every tool accepts an optional `session`: a workspace root, or a viewer name
-or id. A thread belongs to the commit it was written against and is shown
+or id. A subscription's scope is the files it follows (none means all)
+plus every thread it has posted in; agent types are labels the viewer
+shows next to a message (`name (type)`), and the only rule they carry is
+that a session is never woken by its own messages. A thread belongs to the commit it was written against and is shown
 (here and in the viewer) only while that commit is `HEAD` or one of its
 ancestors, so switching to unrelated work hides it and merging brings it
 along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,

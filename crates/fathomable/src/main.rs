@@ -130,7 +130,15 @@ fn main() -> ExitCode {
     tracing::info!(session = %id, "starting");
 
     if cli.mcp {
-        return match mcp::run(&dirs) {
+        let agents = match Config::load(&dirs, cli.config.as_deref()) {
+            Ok(config) => config.agents().clone(),
+            Err(error) => {
+                tracing::error!(%error, "config failed");
+                eprintln!("fathomable: {error}");
+                return ExitCode::FAILURE;
+            }
+        };
+        return match mcp::run(&dirs, agents) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 tracing::error!(error = format!("{error:#}"), "mcp failed");

@@ -141,3 +141,12 @@ before its next step of the same turn.
 - Copilot's `notification` hook (`shell_detached_completed`) was
   tested and adopted as a context point; a VS Code run is left as an
   acceptance test and does not change the shape decided here.
+- The gate on `shell_detached_completed` is load-bearing. Copilot fires
+  the same hook for `permission_prompt` mid-turn, with no
+  `hook_event_name` and the type under `notificationType`; a live
+  session on 2026-08-29 (Copilot 1.0.82, gpt-5.6-sol) had that payload
+  fall through as a stop, and its blob was queued as a user message
+  that opened a turn *after* the agent had already answered every
+  thread from `follow` — so it answered them all a second time. Any
+  notification type but a detached shell finishing now exits 0 with
+  nothing, before the register is touched.

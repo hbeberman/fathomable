@@ -19,7 +19,10 @@
 //! that ends the wait, and one that lands mid-task is there after the
 //! next tool result (ADR 0042). Copilot's `notification` hook, fired
 //! when a detached shell finishes, is answered the same way: its context
-//! is queued as a message that starts a turn even on an idle agent.
+//! is queued as a message that starts a turn even on an idle agent. Its
+//! other notifications (permission prompts) get silence: they fire
+//! mid-turn and their context is queued until the turn ends, by which
+//! time the threads are answered and the blob would only be stale.
 //! `hello` delivers the same way when its
 //! `source` is `resume`. Context is composed as [`Occasion::Context`]:
 //! deliveries and fired watches are recorded, no check is counted, and
@@ -172,6 +175,11 @@ enum Event {
     /// Copilot's `notification` hook (a detached shell finished): the
     /// blob is queued as a message that starts a turn, idle or not.
     Notification,
+    /// Any other Copilot notification — a permission prompt, mostly —
+    /// fires mid-turn, and its context is queued until the turn ends,
+    /// by which time the agent has answered the threads from the stop
+    /// hook or its own reading and would answer them again. Silence.
+    Other,
 }
 
 /// What a hook's stdin said, in the fields every harness shares.
@@ -208,14 +216,19 @@ impl Input {
         };
         // Copilot names no event on `userPromptSubmitted`; every harness's
         // prompt-submit payload carries `prompt`, and no stop payload does.
-        // Its `postToolUse` payload is known by `toolName`.
-        let event = match field("hook_event_name").as_deref() {
-            Some("UserPromptSubmit" | "userPromptSubmitted") => Event::Prompt,
-            Some("PostToolUse" | "postToolUse") => Event::PostTool,
-            Some("Notification" | "notification") => Event::Notification,
-            None if value.get("prompt").is_some_and(Value::is_string) => Event::Prompt,
-            None if value.get("toolName").is_some() => Event::PostTool,
-            Some(_) | None => Event::Stop,
+        // Its `postToolUse` payload is known by `toolName`, and its
+        // `notification` by `notificationType`, of which only a detached
+        // shell finishing is worth answering.
+        let notification = field("notificationType").or_else(|| field("notification_type"));
+        let event = match (field("hook_event_name").as_deref(), notification.as_deref()) {
+            (Some("UserPromptSubmit" | "userPromptSubmitted"), _) => Event::Prompt,
+            (Some("PostToolUse" | "postToolUse"), _) => Event::PostTool,
+            (_, Some("shell_detached_completed"))
+            | (Some("Notification" | "notification"), None) => Event::Notification,
+            (_, Some(_)) => Event::Other,
+            (None, None) if value.get("prompt").is_some_and(Value::is_string) => Event::Prompt,
+            (None, None) if value.get("toolName").is_some() => Event::PostTool,
+            _ => Event::Stop,
         };
         Self {
             session,
@@ -577,6 +590,10 @@ pub fn pending(
         diag.note("silent: a stop-hook continuation or a subagent");
         return ExitCode::SUCCESS;
     }
+    if input.event == Event::Other {
+        diag.note("silent: a notification that is not a detached shell finishing");
+        return ExitCode::SUCCESS;
+    }
     let cwd = input
         .cwd
         .or_else(|| env::current_dir().ok())
@@ -591,7 +608,7 @@ pub fn pending(
     describe_state(dirs, &root, &id, &config, &mut diag);
     let occasion = match input.event {
         Event::Stop => Occasion::TurnEnd,
-        Event::Prompt | Event::PostTool | Event::Notification => Occasion::Context,
+        Event::Prompt | Event::PostTool | Event::Notification | Event::Other => Occasion::Context,
     };
     diag.note(format!("occasion: {occasion:?}"));
     let text = match compose(dirs, &root, &id, &config, occasion) {
@@ -617,7 +634,7 @@ pub fn pending(
         let event = match input.event {
             Event::Prompt => "UserPromptSubmit",
             Event::PostTool | Event::Stop => "PostToolUse",
-            Event::Notification => "Notification",
+            Event::Notification | Event::Other => "Notification",
         };
         match harness {
             None | Some(Harness::Claude) if input.event == Event::Prompt => println!("{text}"),
@@ -1056,6 +1073,21 @@ mod tests {
                 json!({"sessionId": "s", "hook_event_name": "Notification", "notification_type": "shell_detached_completed", "message": "done"})
             ),
             Event::Notification
+        );
+        // What Copilot 1.0.82 actually sends: no event name, camel case.
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "notificationType": "shell_detached_completed", "message": "done", "title": "Shell finished"})
+            ),
+            Event::Notification
+        );
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "notificationType": "permission_prompt", "message": "Use MCP tool: fathomable/thread_reply", "title": "Permission needed"})
+            ),
+            Event::Other
         );
     }
 

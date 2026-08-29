@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Delivery at both ends of a turn
-description: The pending hook also runs from the harness's prompt-submit event, where it adds the subscriber's undelivered threads to context and exits 0 instead of blocking; a comment that lands while an agent waits reaches it on the wake itself, and no agent needs to poll for comments on any harness.
+description: The pending hook also runs from the harness's prompt-submit event and, optionally, after every tool call, where it adds the subscriber's undelivered threads to context and exits 0 instead of blocking; a comment that lands while an agent waits reaches it on the wake itself, one that lands mid-task reaches it after the next tool result, and no agent needs to poll for comments on any harness.
 resource: crates/fathomable/src/hooks.rs
 tags:
   - decision
@@ -56,10 +56,17 @@ project cares about:
 - **VS Code** could not be run; its `Stop` is documented as per
   session, its `UserPromptSubmit` injection as unclear.
 
-Two properties of 0040 make a second delivery point safe: a delivery
-is recorded per message, so a thread handed over at one end of a turn
-is silent at the other; and the nag is counted in *checks*, which only
-a turn-end records.
+Two properties of 0040 make more delivery points safe: a delivery is
+recorded per message, so a thread handed over at one point is silent
+at every other; and the nag is counted in *checks*, which only a
+turn-end records. The same ledger answers 0040's reason for rejecting
+per-tool-call hooks — "they fire inside subagents and on every edit,
+which is the spam this record exists to avoid": a subagent is silent
+by `agent_id`, and a hook that says nothing unless a *new* message
+exists is not spam, only a process spawn. Verified on Claude Code
+2.1.251 the same day: a `PostToolUse` hook's
+`hookSpecificOutput.additionalContext` is in the model's context
+before its next step of the same turn.
 
 ## Decision
 
@@ -72,12 +79,21 @@ a turn-end records.
   and VS Code, `additionalContext` for Copilot, exit 0 in every case,
   and exit 0 with nothing whenever there is nothing deliverable. The
   same silences as before apply: no subscriber, a subagent, no store.
+- It recognises the **post-tool-use event** the same way —
+  `PostToolUse`/`postToolUse`, or Copilot's `toolName` — and answers
+  it as context too, `hookSpecificOutput.additionalContext` under the
+  event's own name (`additionalContext` for Copilot, unverified there).
+  This hook is **optional**: it costs a process spawn and two small
+  file reads per tool call, and buys delivery *within* a long turn,
+  after the next tool result. The guide presents the three points as
+  a cadence the user picks from; the stop hook is the one that must be
+  installed, the other two refine it.
 - The occasion is the one `hello` uses on a resume, now named
   `Occasion::Context`: fired watches and fresh deliveries are recorded,
   **no check is counted and no reminder is ever composed** — the nag
   cadence stays measured in turn-ends, so a harness that runs its
-  prompt-submit hook on every stop-block continuation (Copilot) spends
-  nothing on it.
+  prompt-submit hook on every stop-block continuation (Copilot), or a
+  post-tool-use hook on every call, spends nothing on it.
 - The blob is the same text at both ends. The instruction line stays
   "act on each, then answer every thread in one `thread_reply`"; a
   wake is a turn the model is about to take, so it needs no different
@@ -89,7 +105,8 @@ a turn-end records.
   lists by id and for harnesses without hooks. After a wait, the right
   move is to end the turn.
 - The guide's snippets for all four harnesses gain the prompt-submit
-  line; `scripts/demo-repo.sh` installs it for Claude.
+  and post-tool-use lines; `scripts/demo-repo.sh` installs all three
+  for Claude.
 
 ## Consequences
 
@@ -103,8 +120,14 @@ a turn-end records.
   its reminder. A thread shown at a turn start and ignored counts as
   *stale* at the turn's end like any other.
 - `hooks.rs` now backs this record; 0040 keeps `agents.rs` and
-  `wake.rs`. `--prompt` is unchanged and still composes as a turn-end,
-  since `Space w` and a hand wake are forced turns.
+  `wake.rs`, and its "no per-tool-call nudges" is superseded by the
+  optional post-tool-use hook. `--prompt` is unchanged and still
+  composes as a turn-end, since `Space w` and a hand wake are forced
+  turns.
+- A thread delivered after a tool result mid-turn is context the model
+  may act on at once or after finishing its step; either way it is
+  recorded and the stop hook will not repeat it. On a harness with no
+  usable post-tool-use output the hook is silent and harmless.
 - Copilot's `notification` hook (`shell_detached_completed`) and a
   VS Code run are left as acceptance tests; neither changes the shape
   decided here.

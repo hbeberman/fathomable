@@ -10,12 +10,14 @@
 //! writes to the thread store; both append to the agent register —
 //! `hello` the session bond of ADR 0041, `pending` its deliveries.
 //!
-//! `pending` runs at both ends of a turn. From the stop hook it blocks
-//! the stop with the blob as the next prompt. From the prompt-submit
-//! hook — told apart by `hook_event_name`, or by the `prompt` field no
-//! stop payload carries — it adds the blob to context and exits 0, so a
-//! comment that lands while the agent waits is there on the wake that
-//! ends the wait (ADR 0042). `hello` delivers the same way when its
+//! `pending` runs at both ends of a turn and, optionally, after every
+//! tool call. From the stop hook it blocks the stop with the blob as the
+//! next prompt. From the prompt-submit hook — told apart by
+//! `hook_event_name`, or by the `prompt` field no stop payload carries —
+//! and from the post-tool-use hook it adds the blob to context and exits
+//! 0, so a comment that lands while the agent waits is there on the wake
+//! that ends the wait, and one that lands mid-task is there after the
+//! next tool result (ADR 0042). `hello` delivers the same way when its
 //! `source` is `resume`. Context is composed as [`Occasion::Context`]:
 //! deliveries and fired watches are recorded, no check is counted, and
 //! no reminder is composed, so the nag stays measured in turn-ends.
@@ -62,6 +64,19 @@ pub(crate) enum Occasion {
     Context,
 }
 
+/// Which hook event is calling, as far as `pending` cares.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Event {
+    /// The stop hook, or anything unrecognised: the blob blocks the stop.
+    #[default]
+    Stop,
+    /// The prompt-submit hook: the blob is context, and a non-zero exit
+    /// would erase the prompt (ADR 0042).
+    Prompt,
+    /// The post-tool-use hook: the blob is context after the tool result.
+    PostTool,
+}
+
 /// What a hook's stdin said, in the fields every harness shares.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Input {
@@ -72,9 +87,7 @@ struct Input {
     source: Option<String>,
     continuation: bool,
     subagent: bool,
-    /// The prompt-submit event, where output is context and a non-zero
-    /// exit would erase the prompt (ADR 0042).
-    prompt: bool,
+    event: Event,
 }
 
 impl Input {
@@ -96,12 +109,16 @@ impl Input {
                 _ => false,
             },
         };
-        // Copilot's `userPromptSubmitted` names no event; every harness's
+        // Copilot names no event on `userPromptSubmitted`; every harness's
         // prompt-submit payload carries `prompt`, and no stop payload does.
-        let prompt = matches!(
-            field("hook_event_name").as_deref(),
-            Some("UserPromptSubmit" | "userPromptSubmitted")
-        ) || value.get("prompt").is_some_and(Value::is_string);
+        // Its `postToolUse` payload is known by `toolName`.
+        let event = match field("hook_event_name").as_deref() {
+            Some("UserPromptSubmit" | "userPromptSubmitted") => Event::Prompt,
+            Some("PostToolUse" | "postToolUse") => Event::PostTool,
+            None if value.get("prompt").is_some_and(Value::is_string) => Event::Prompt,
+            None if value.get("toolName").is_some() => Event::PostTool,
+            Some(_) | None => Event::Stop,
+        };
         Self {
             session,
             cwd: field("cwd").map(PathBuf::from),
@@ -111,7 +128,7 @@ impl Input {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             subagent,
-            prompt,
+            event,
         }
     }
 }
@@ -234,10 +251,9 @@ pub fn pending(
         return ExitCode::SUCCESS;
     };
     let config = agents_config(dirs);
-    let occasion = if input.prompt {
-        Occasion::Context
-    } else {
-        Occasion::TurnEnd
+    let occasion = match input.event {
+        Event::Stop => Occasion::TurnEnd,
+        Event::Prompt | Event::PostTool => Occasion::Context,
     };
     let text = match compose(dirs, &root, &id, &config, occasion) {
         Ok(Some(text)) => text,
@@ -251,14 +267,19 @@ pub fn pending(
         println!("{text}");
         return ExitCode::SUCCESS;
     }
-    if input.prompt {
-        // Context on a turn start; exit 2 here would erase the prompt.
+    if input.event != Event::Stop {
+        // Context, not a block: exit 2 on a prompt-submit would erase the
+        // prompt, and on a post-tool-use would read as a tool error.
+        let event = match input.event {
+            Event::Prompt => "UserPromptSubmit",
+            Event::PostTool | Event::Stop => "PostToolUse",
+        };
         match harness {
-            None | Some(Harness::Claude) => println!("{text}"),
+            None | Some(Harness::Claude) if input.event == Event::Prompt => println!("{text}"),
             Some(Harness::Copilot) => println!("{}", json!({ "additionalContext": text })),
-            Some(Harness::Codex | Harness::Vscode) => println!(
+            None | Some(Harness::Claude | Harness::Codex | Harness::Vscode) => println!(
                 "{}",
-                json!({ "hookSpecificOutput": { "hookEventName": "UserPromptSubmit", "additionalContext": text } })
+                json!({ "hookSpecificOutput": { "hookEventName": event, "additionalContext": text } })
             ),
         }
         return ExitCode::SUCCESS;
@@ -393,7 +414,7 @@ mod tests {
     use fathomable_core::session::Marker;
     use serde_json::json;
 
-    use super::{Harness, Input, Occasion, compose, workspace_for};
+    use super::{Event, Harness, Input, Occasion, compose, workspace_for};
     use crate::app::threads::now;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -593,7 +614,7 @@ mod tests {
             &json!({"session_id": "s", "cwd": "/w", "source": "resume"}),
         );
         assert_eq!(resumed.source.as_deref(), Some("resume"));
-        assert!(!resumed.prompt && !claude.prompt);
+        assert_eq!((resumed.event, claude.event), (Event::Stop, Event::Stop));
         let main = Input::parse(Harness::Codex, &json!({"session_id": "s", "cwd": "/w"}));
         assert!(!main.subagent && !main.continuation);
         let copilot_main = Input::parse(
@@ -616,25 +637,54 @@ mod tests {
         assert_eq!(Input::parse(Harness::Vscode, &json!({})), Input::default());
     }
 
-    /// The prompt-submit event is known by name where the harness gives
-    /// one and by its `prompt` field where it does not (Copilot); a stop
-    /// payload has neither, and a wake's notification XML is still a prompt.
+    /// The context events are known by name where the harness gives one
+    /// and by their own fields where it does not (Copilot): `prompt` on a
+    /// prompt-submit, `toolName` after a tool. A stop payload has neither,
+    /// and a wake's notification XML is still a prompt.
     #[test]
-    fn prompt_submit_is_told_from_stop() {
-        let named = Input::parse(
-            Harness::Claude,
-            &json!({"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "<task-notification>x</task-notification>"}),
+    fn context_events_are_told_from_stop() {
+        let parse = |h, v| Input::parse(h, &v).event;
+        assert_eq!(
+            parse(
+                Harness::Claude,
+                json!({"session_id": "s", "hook_event_name": "UserPromptSubmit", "prompt": "<task-notification>x</task-notification>"})
+            ),
+            Event::Prompt
         );
-        assert!(named.prompt);
-        let copilot = Input::parse(
-            Harness::Copilot,
-            &json!({"sessionId": "s", "cwd": "/w", "prompt": "hi"}),
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "cwd": "/w", "prompt": "hi"})
+            ),
+            Event::Prompt
         );
-        assert!(copilot.prompt);
-        let stop = Input::parse(
-            Harness::Claude,
-            &json!({"session_id": "s", "hook_event_name": "Stop", "last_assistant_message": "waiting", "stop_hook_active": false}),
+        assert_eq!(
+            parse(
+                Harness::Claude,
+                json!({"session_id": "s", "hook_event_name": "PostToolUse", "tool_name": "Bash", "tool_response": {}})
+            ),
+            Event::PostTool
         );
-        assert!(!stop.prompt);
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "toolName": "bash", "toolResult": {}})
+            ),
+            Event::PostTool
+        );
+        assert_eq!(
+            parse(
+                Harness::Claude,
+                json!({"session_id": "s", "hook_event_name": "Stop", "last_assistant_message": "waiting", "stop_hook_active": false})
+            ),
+            Event::Stop
+        );
+        assert_eq!(
+            parse(
+                Harness::Copilot,
+                json!({"sessionId": "s", "stopReason": "end_turn"})
+            ),
+            Event::Stop
+        );
     }
 }

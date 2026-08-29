@@ -292,9 +292,12 @@ once-per-message idempotence are unchanged.
 
 Note (2026-08-29): [0042](0042-turn-start-delivery.md) runs `pending`
 from the prompt-submit hook as well, as context rather than a blocked
-stop, and takes over `hooks.rs` as its resource; a comment posted while
-an agent waits is in context on the wake, and the model no longer
-polls `threads_pending` for comments.
+stop, and optionally from the post-tool-use hook, and takes over
+`hooks.rs` as its resource; a comment posted while an agent waits is in
+context on the wake, one posted mid-task after the next tool result,
+and the model no longer polls `threads_pending` for comments. The
+"no per-tool-call nudges" above is superseded: the delivery ledger
+makes such a hook silent unless a new message exists.
 
 ## Consequences
 

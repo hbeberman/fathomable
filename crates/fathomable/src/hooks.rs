@@ -131,6 +131,21 @@ pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[Strin
     )
 }
 
+/// The warning `hello` appends when `root` contains `cwd` only by prefix:
+/// it is neither the cwd nor the cwd's git root, so nothing is registered
+/// where the agent actually works and comments left there go unseen —
+/// the shape of the 2026-08-29 incident behind ADR 0043.
+pub(crate) fn prefix_warning(root: &Path, cwd: &Path, git_root: Option<&Path>) -> Option<String> {
+    if root == cwd || git_root == Some(root) {
+        return None;
+    }
+    Some(format!(
+        "\n\nWARNING: matched by prefix — nothing is registered at your cwd ({}). Comments \
+         left there will not reach you. Open Fathomable there, or run `fathomable --register`.",
+        cwd.display()
+    ))
+}
+
 /// Why a blob is being composed, which decides how hard it lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Occasion {
@@ -492,6 +507,17 @@ pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>, verbose: bool
     describe_state(dirs, &root, &id, &config, &mut diag);
     diag.note("answer: the hello text");
     let mut text = hello_text(harness, &root, &id, &config.types);
+    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
+    let git_root = Workspace::discover(&cwd)
+        .ok()
+        .map(|w| w.root().to_path_buf());
+    if let Some(warning) = prefix_warning(&root, &canonical, git_root.as_deref()) {
+        diag.note(format!(
+            "prefix match: {} is neither the cwd nor its git root",
+            root.display()
+        ));
+        text.push_str(&warning);
+    }
     // A resume comes back with the connection's memory gone and may have
     // missed comments while the session was stopped, so it is handed them
     // here rather than waiting for a turn to end (ADR 0040 note). The
@@ -737,7 +763,9 @@ mod tests {
     use fathomable_core::vocabulary as vocab;
     use serde_json::json;
 
-    use super::{Diag, Event, Harness, Input, Occasion, compose, hello_text, workspace_for};
+    use super::{
+        Diag, Event, Harness, Input, Occasion, compose, hello_text, prefix_warning, workspace_for,
+    };
     use crate::app::threads::now;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -1074,5 +1102,22 @@ mod tests {
         }
         assert!(hello_text(Harness::Copilot, Path::new("/ws"), "s", &types).contains("detached"));
         assert!(!hello_text(Harness::Claude, Path::new("/ws"), "s", &types).contains("detached"));
+    }
+
+    /// A workspace that contains the cwd only by prefix — neither the
+    /// cwd itself nor its git root — is called out; the two honest
+    /// matches are not.
+    #[test]
+    fn hello_warns_on_a_prefix_match() {
+        let home = Path::new("/home/h");
+        let repo = Path::new("/home/h/repos/demo");
+        let sub = Path::new("/home/h/repos/demo/src");
+        assert!(prefix_warning(repo, repo, None).is_none());
+        assert!(prefix_warning(repo, sub, Some(repo)).is_none());
+        let warning = prefix_warning(home, sub, Some(repo)).unwrap_or_default();
+        assert!(warning.contains("matched by prefix"), "{warning}");
+        assert!(warning.contains("/home/h/repos/demo/src"), "{warning}");
+        assert!(warning.contains("fathomable --register"), "{warning}");
+        assert!(prefix_warning(home, sub, None).is_some());
     }
 }

@@ -459,7 +459,12 @@ Two subcommands, both reading the harness's hook JSON on stdin:
   `mcp__fathomable__follow` under Claude Code, `fathomable.follow` under
   Codex, the bare name elsewhere — and Copilot's text adds that a
   detached shell finishing brings comments too
-  ([0043](decisions/0043-agent-vocabulary.md)). On a *resume* —
+  ([0043](decisions/0043-agent-vocabulary.md)). When the workspace it
+  resolved contains the cwd only by prefix — it is neither the cwd nor
+  the cwd's git root, as when a parent directory was registered and the
+  repository was not — it adds a warning that comments left at the cwd
+  will not reach the session, and names `fathomable --register`; with
+  `--verbose` the same is one line on stderr. On a *resume* —
   `source: "resume"` in the hook JSON — it prints the pending threads
   after it, so a session that comes back after being stopped starts with
   them in context instead of waiting for a turn to end. The other

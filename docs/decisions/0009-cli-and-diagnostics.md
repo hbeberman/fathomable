@@ -46,6 +46,14 @@ Logging:
 - Log lines are structured (JSON) so an agent can grep and parse them; the
   session id appears in the TUI status so the user can name it.
 
+Note (2026-08-29): `--register [PATH]` writes the workspace marker of
+[0024](0024-workspace-sessions.md) for the root around `PATH` without
+starting a viewer, and prints the root and its state directory. It exists
+so scripts and tests (`scripts/demo-repo.sh`) can make a directory known
+to headless `--mcp` and the hooks of
+[0040](0040-agent-subscriptions-and-hooks.md) without mirroring the
+marker format.
+
 ## Consequences
 
 - Every subsystem is expected to emit enough tracing to reconstruct a bug

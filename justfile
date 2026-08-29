@@ -81,6 +81,9 @@ web-build:
 web-lock:
     make web-lock
 
+demo *ARGS:
+    scripts/demo-repo.sh {{ARGS}}
+
 install-commit-hooks:
     make install-commit-hooks
 

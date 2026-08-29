@@ -365,6 +365,10 @@ scope since it last looked, the turn continues with those threads as the
 prompt, once per message. A session that never called `follow` with an
 `id`, a subagent, or a directory Fathomable has not seen all get silence
 and exit 0 ([0040](decisions/0040-agent-subscriptions-and-hooks.md)).
+A directory is *seen* once a viewer has opened it or
+`fathomable --register [DIR]` has marked it; `scripts/demo-repo.sh`
+(`just demo`) builds a throwaway repository, registers it, and seeds
+threads and a subscriber to try the loop against.
 
 Two subcommands, both reading the harness's hook JSON on stdin:
 
@@ -431,6 +435,7 @@ Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
 fathomable --doctor        # terminal, directories, config, log locations
 fathomable --sessions      # known workspaces and their viewer records
 fathomable --config-show   # effective configuration
+fathomable --register [DIR] # mark a workspace known without starting a viewer
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;

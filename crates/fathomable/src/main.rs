@@ -69,6 +69,11 @@ struct Cli {
     /// Print the effective configuration after defaults and overrides.
     #[arg(long)]
     config_show: bool,
+
+    /// Mark the workspace around PATH (default: current directory) as
+    /// known, so headless `--mcp` and hooks find it without a viewer.
+    #[arg(long)]
+    register: bool,
 }
 
 /// Harness-hook subcommands (ADR 0040). Silent unless there is something
@@ -117,6 +122,9 @@ fn main() -> ExitCode {
     }
     if cli.config_show {
         return config_show(&cli, &dirs);
+    }
+    if cli.register {
+        return register(&cli, &dirs);
     }
 
     let id = Id::mint();
@@ -240,6 +248,27 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
         tracing::warn!(%error, "cannot remove session record");
     }
     result
+}
+
+/// `--register`: write the workspace marker for the root around `PATH`
+/// and print it (ADR 0009).
+fn register(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
+    let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let workspace = match Workspace::discover(&path) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            eprintln!("fathomable: {error:#}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let marker = Marker::new(workspace.root().to_path_buf());
+    if let Err(error) = marker.write(dirs) {
+        eprintln!("fathomable: cannot write the workspace marker: {error}");
+        return ExitCode::FAILURE;
+    }
+    println!("{}", workspace.root().display());
+    println!("{}", dirs.workspace_dir(workspace.root()).display());
+    ExitCode::SUCCESS
 }
 
 /// `--sessions`: one block per known workspace, then its viewer records,

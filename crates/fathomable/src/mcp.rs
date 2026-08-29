@@ -18,7 +18,7 @@
 
 use std::env;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
@@ -30,7 +30,7 @@ use fathomable_core::config::AgentsConfig;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
 use fathomable_core::vocabulary as vocab;
-use fathomable_core::workspace::Workspace;
+use fathomable_core::workspace::{Filter, Workspace};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -426,7 +426,9 @@ impl Server {
                        hooks then hand you every thread on these files, or that you posted \
                        in, whose newest message is someone else's, once each, as your turns \
                        start and end. Call it once at the start and again when your files \
-                       change; works with no viewer running.",
+                       change; works with no viewer running. Fails, following nothing new, \
+                       when a path is not a file in the workspace; the reply then names \
+                       same-named files elsewhere.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -442,6 +444,9 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
+        if let Err(error) = check_paths(&session.root, &p.paths) {
+            return failure(error);
+        }
         let mut note = String::new();
         let bonded = match (&p.id, &p.kind) {
             (None, Some(_)) => self
@@ -499,20 +504,16 @@ impl Server {
             }
             (None, None) => {}
         }
-        let files = p.paths.len();
+        let files = listed(&p.paths);
         if session.viewers.is_empty() && p.viewer.is_none() {
-            return text(format!(
-                "{note}following {files} file(s); no viewer is running"
-            ));
+            return text(format!("{note}following {files}; no viewer is running"));
         }
         let request = Request::Follow { paths: p.paths };
         match self
             .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
             .await
         {
-            Ok(count) => text(format!(
-                "{note}following {files} file(s) in {count} viewer(s)"
-            )),
+            Ok(count) => text(format!("{note}following {files} in {count} viewer(s)")),
             Err(error) => failure(error),
         }
     }
@@ -565,7 +566,8 @@ impl Server {
                        seconds, threads changed at or after it) and `path`; at most `limit` \
                        threads come back, oldest change first, and the summary says how to get \
                        the rest. Works with no viewer running. Does not return file content \
-                       beyond the annotated snippet.",
+                       beyond the annotated snippet. Fails when `path` is not a file in the \
+                       workspace.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     async fn annotations_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
@@ -573,6 +575,9 @@ impl Server {
             Ok(session) => session,
             Err(error) => return failure(error),
         };
+        if let Err(error) = check_paths(&session.root, p.path.as_slice()) {
+            return failure(error);
+        }
         let request = Request::AnnotationsList {
             since: p.since,
             path: p.path.clone(),
@@ -757,7 +762,8 @@ impl Server {
                        (someone else posts on it) or `resolved`. When it fires, the stop hook \
                        or `threads_pending` says so and hands you the `remind` threads again \
                        in full, then the watch is gone. Use it to park a thread that depends \
-                       on a discussion elsewhere. Needs a subscription.",
+                       on a discussion elsewhere. Needs a subscription; fails when `on` or a \
+                       `remind` thread does not exist.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -783,6 +789,17 @@ impl Server {
             Ok(ids) => ids,
             Err(error) => return failure(error),
         };
+        let session = match self.resolve(p.session.as_deref()) {
+            Ok(session) => session,
+            Err(error) => return failure(error),
+        };
+        if let Err(error) = known_threads(
+            &self.dirs,
+            &session.root,
+            std::iter::once(&on).chain(&remind),
+        ) {
+            return failure(error);
+        }
         self.with_subscriber(p.session.as_deref(), p.id, |register, id, now| {
             register
                 .watch(id, &on, when, remind.clone(), now)
@@ -1076,6 +1093,106 @@ fn bind<'a>(sessions: &'a [Session], cwd: &Path) -> Option<&'a Session> {
 /// Open the workspace's store with no viewer running: threads edited
 /// offline are followed through their snapshots first (ADR 0020), and the
 /// scope of the current `HEAD` is computed (ADR 0024).
+/// The files a `follow` list names, for its reply.
+fn listed(paths: &[PathBuf]) -> String {
+    if paths.is_empty() {
+        return "the whole workspace".to_owned();
+    }
+    let names: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    format!("{} file(s): {}", paths.len(), names.join(", "))
+}
+
+/// Check that every path names a file in the workspace at `root`,
+/// naming each that does not. A path that exists nowhere is matched by
+/// file name against the workspace, so a wrong directory is answered
+/// with the right one.
+fn check_paths(root: &Path, paths: &[PathBuf]) -> Result<(), String> {
+    let mut problems = Vec::new();
+    let mut files: Option<Vec<PathBuf>> = None;
+    for path in paths {
+        let inside = path.is_relative()
+            && path
+                .components()
+                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
+        let shown = path.display();
+        if !inside {
+            problems.push(format!("{shown} is not a workspace-relative path"));
+            continue;
+        }
+        let full = root.join(path);
+        if full.is_file() {
+            continue;
+        }
+        if full.is_dir() {
+            problems.push(format!(
+                "{shown} is a directory, not a file; name its files"
+            ));
+            continue;
+        }
+        let files = files.get_or_insert_with(|| workspace_files(root));
+        let same: Vec<String> = files
+            .iter()
+            .filter(|f| f.file_name() == path.file_name())
+            .map(|f| f.display().to_string())
+            .collect();
+        problems.push(if same.is_empty() {
+            format!("{shown} is not a file in the workspace")
+        } else {
+            format!(
+                "{shown} is not a file in the workspace; did you mean {}?",
+                same.join(", ")
+            )
+        });
+    }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems.join("\n"))
+    }
+}
+
+/// Every visible file under `root`, relative to it; empty when the
+/// workspace cannot be read.
+fn workspace_files(root: &Path) -> Vec<PathBuf> {
+    let Ok(mut workspace) = Workspace::discover(root) else {
+        return Vec::new();
+    };
+    let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let below = canonical
+        .strip_prefix(workspace.root())
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    workspace
+        .walk_files(Filter::Visible)
+        .into_iter()
+        .filter_map(|f| {
+            PathBuf::from(f)
+                .strip_prefix(&below)
+                .ok()
+                .map(Path::to_path_buf)
+        })
+        .collect()
+}
+
+/// Check that every thread id names a thread in the store.
+fn known_threads<'a>(
+    dirs: &XdgDirs,
+    root: &Path,
+    ids: impl IntoIterator<Item = &'a ThreadId>,
+) -> Result<(), String> {
+    let store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+    let unknown: Vec<String> = ids
+        .into_iter()
+        .filter(|id| store.thread(id).is_none())
+        .map(ToString::to_string)
+        .collect();
+    if unknown.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("unknown thread(s) {}", unknown.join(", ")))
+    }
+}
+
 fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Scope), String> {
     let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
     let pinned: Vec<PathBuf> = store.open_paths().map(Path::to_path_buf).collect();
@@ -1282,7 +1399,8 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        Server, Session, bind, headless_list, headless_reply, instructions, vocab, with_types,
+        Server, Session, bind, check_paths, headless_list, headless_reply, instructions,
+        known_threads, listed, thread_id, vocab, with_types,
     };
 
     fn session(root: &str, viewers: usize) -> Session {
@@ -1335,6 +1453,74 @@ mod tests {
 
     /// With no viewer, an agent still reads the store and its reply lands
     /// in the file the next viewer loads.
+    /// A follow list is checked against the workspace: a path in the
+    /// wrong directory is refused and answered with the right one, so a
+    /// subscription never silently covers nothing.
+    #[test]
+    fn paths_outside_the_workspace_are_refused_with_the_right_name() -> std::io::Result<()> {
+        let dir = TempDir::new("paths")?;
+        let root = dir.0.join("ws");
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(root.join("src/jokes.rs"), "")?;
+        fs::write(root.join("lib.rs"), "")?;
+        assert_eq!(check_paths(&root, &[]), Ok(()));
+        assert_eq!(
+            check_paths(
+                &root,
+                &[PathBuf::from("src/jokes.rs"), PathBuf::from("lib.rs")]
+            ),
+            Ok(())
+        );
+        let error = check_paths(
+            &root,
+            &[
+                PathBuf::from("jokes.rs"),
+                PathBuf::from("src"),
+                PathBuf::from("../lib.rs"),
+                PathBuf::from("/etc/passwd"),
+                PathBuf::from("nope.rs"),
+            ],
+        );
+        assert_eq!(
+            error,
+            Err([
+                "jokes.rs is not a file in the workspace; did you mean src/jokes.rs?",
+                "src is a directory, not a file; name its files",
+                "../lib.rs is not a workspace-relative path",
+                "/etc/passwd is not a workspace-relative path",
+                "nope.rs is not a file in the workspace",
+            ]
+            .join("\n"))
+        );
+        assert_eq!(listed(&[]), "the whole workspace");
+        assert_eq!(
+            listed(&[PathBuf::from("src/jokes.rs"), PathBuf::from("lib.rs")]),
+            "2 file(s): src/jokes.rs, lib.rs"
+        );
+        Ok(())
+    }
+
+    /// A watch on a thread that does not exist would never fire, so the
+    /// ids are checked against the store first.
+    #[test]
+    fn watches_name_only_stored_threads() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("watch")?;
+        let root = dir.0.join("ws");
+        let dirs = dir.dirs();
+        let id = Store::open(dirs.threads_file(&root))?.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            "one\n",
+            5,
+        )?;
+        let other = thread_id("00000000-0000-4000-8000-000000000000")?;
+        assert_eq!(known_threads(&dirs, &root, [&id]), Ok(()));
+        assert_eq!(
+            known_threads(&dirs, &root, [&id, &other]),
+            Err(format!("unknown thread(s) {other}"))
+        );
+        Ok(())
+    }
+
     #[test]
     fn headless_reads_and_answers_the_store() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new("headless")?;

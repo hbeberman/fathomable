@@ -49,8 +49,8 @@ question round on 2026-08-28; the choices are recorded below.
   in line order (start line, then the order the store holds them),
   not just the threads on the cursor row. Each step moves the view
   cursor to the thread's first line, so the pane and the text agree.
-  The header reads `thread 3/7` for the file; a file with one thread
-  reads `thread` as before.
+  The header reads `thread 3/7 local`, the count always shown, the
+  scope word faint.
 - The pane opens on the first thread of the cursor row when there are
   several; the rest are one `n` away. The `+1` badge considered for
   rows that start more than one thread is subsumed by the count.

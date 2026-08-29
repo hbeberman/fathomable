@@ -1285,7 +1285,7 @@ mod tests {
         let panel = render(&app)?;
         let screen = panel.join("\n");
         assert!(
-            panel[0].contains("thread local  L3-5  auto-resolved"),
+            panel[0].contains("thread 1/1 local  L3-5  auto-resolved"),
             "header carries range and status:\n{screen}"
         );
         assert!(

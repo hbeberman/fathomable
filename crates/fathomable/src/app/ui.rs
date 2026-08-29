@@ -1551,13 +1551,9 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         ThreadNav::File => "local",
         ThreadNav::Workspace => "global",
     };
-    let which = if total > 1 {
-        format!(" thread {index}/{total} {scope}")
-    } else {
-        format!(" thread {scope}")
-    };
     let mut left = vec![
-        Span::styled(which, theme.popup_key),
+        Span::styled(format!(" thread {index}/{total} "), theme.popup_key),
+        Span::styled(scope, theme.info.add_modifier(Modifier::DIM)),
         Span::styled(format!("  L{range}  "), theme.info),
     ];
     // Placement first, then state, so a detached thread still says
@@ -1625,7 +1621,7 @@ fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<
     if several {
         hints.push(("n/N", "next/prev"));
     }
-    hints.push(("f", "toggle scope"));
+    hints.push(("f", "scope"));
     if overflows {
         hints.push(("j/k", "scroll"));
     }

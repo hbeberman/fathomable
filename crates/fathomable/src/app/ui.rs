@@ -823,7 +823,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         let is_cursor = row == cursor.row;
         // The note cell brackets a thread's rows (ADR 0027).
         let source = view.source_lines_of_row(row);
-        let note = source.and_then(|n| app.note_in(n));
+        let note = app.note_on_row(row);
         let mut row_style = Style::default();
         if note.is_some() {
             row_style = row_style.patch(theme.annotation_line);

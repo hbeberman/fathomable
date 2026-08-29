@@ -185,45 +185,6 @@ impl App {
             .max()
     }
 
-    /// The note-cell glyph and colour for a rendered row holding `lines`
-    /// (ADR 0027): `╭` where a thread starts, `╰` where one ends, `•` for
-    /// a thread within the row, `│` between. The thread that starts or
-    /// ends here with the shortest range decides the bracket, so a nested
-    /// thread's corners sit on the outer thread's line; a bracket beats a
-    /// dot. The colour is the most urgent state on the row.
-    pub fn note_in(&self, lines: LineRange) -> Option<(&'static str, MarkKind)> {
-        let kind = self.mark_in(lines)?;
-        let mut bracket: Option<(usize, &'static str)> = None;
-        let mut point = false;
-        for mark in self
-            .marks()
-            .iter()
-            .filter(|mark| overlaps(mark.range(), lines))
-        {
-            let range = mark.range();
-            let starts = lines.contains(range.start());
-            let ends = lines.contains(range.end());
-            let glyph = match (starts, ends) {
-                (true, true) => {
-                    point = true;
-                    continue;
-                }
-                (true, false) => "╭",
-                (false, true) => "╰",
-                (false, false) => continue,
-            };
-            if bracket.is_none_or(|(len, _)| range.len() < len) {
-                bracket = Some((range.len(), glyph));
-            }
-        }
-        let glyph = match bracket {
-            Some((_, glyph)) => glyph,
-            None if point => "•",
-            None => "│",
-        };
-        Some((glyph, kind))
-    }
-
     /// `(open, total)` threads on the current document.
     pub fn thread_counts(&self) -> (usize, usize) {
         let open = self
@@ -1476,40 +1437,6 @@ mod tests {
         assert_eq!(app.view().cursor_source_line(), Some(1));
         app.thread_step(-1);
         assert_eq!(app.view().cursor_source_line(), bottom);
-        Ok(())
-    }
-
-    /// ADR 0027: the gutter brackets a range, dots a one-row thread, and
-    /// re-draws the corners for a nested thread on the outer's line.
-    #[test]
-    fn the_gutter_brackets_ranges_and_nests_corners() -> anyhow::Result<()> {
-        let dir = TempDir::new("gutter")?;
-        let mut app = dir.app()?;
-        // Source view: one row per line, eight lines.
-        app.view_mut().toggle_source_view();
-        let annotate = |app: &mut App, from: usize, to: usize, text: &str| {
-            app.view_mut().goto_source_line(from);
-            app.view_mut().select_lines();
-            app.view_mut().move_down(to - from);
-            app.start_new_comment();
-            type_in(app, text);
-            app.compose_submit();
-        };
-        annotate(&mut app, 1, 8, "outer");
-        annotate(&mut app, 3, 5, "inner");
-        annotate(&mut app, 7, 7, "point");
-        assert_eq!(app.thread_counts(), (3, 3));
-        let row = |line: usize| LineRange::new(line, line);
-        let glyphs: String = (1..=8)
-            .map(|line| app.note_in(row(line)).map_or(" ", |(glyph, _)| glyph))
-            .collect();
-        assert_eq!(glyphs, "╭│╭│╰│•╰");
-        assert_eq!(app.note_in(row(9)), None);
-        // A one-row thread on a range's first row: the bracket wins.
-        annotate(&mut app, 1, 1, "on the start");
-        assert_eq!(app.note_in(row(1)).map(|(g, _)| g), Some("╭"));
-        // A wrapped row holding the whole inner thread shows it as a dot.
-        assert_eq!(app.note_in(LineRange::new(3, 5)).map(|(g, _)| g), Some("•"));
         Ok(())
     }
 

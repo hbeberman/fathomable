@@ -39,3 +39,4 @@ supersede rather than edit history.
 - [0033 Open thread lines](0033-open-thread-lines.md)
 - [0034 Deleting threads and the list that drives the pane](0034-deleting-threads.md)
 - [0035 Threads follow HEAD across a rewrite](0035-threads-follow-head.md)
+- [0036 Gutter brackets rendered rows, focus in a second colour](0036-gutter-rows-and-focus-colour.md)

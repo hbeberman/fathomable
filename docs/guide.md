@@ -140,8 +140,8 @@ thread anchored to the content, so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
 as *detached* when the lines are gone. The lines of the thread open in
-the thread pane are tinted more strongly than other annotated lines
-(`annotation.focus`). Where the lines went and what
+the thread pane are tinted blue, distinct from the yellow of other annotated
+lines (`annotation.focus`). Where the lines went and what
 state the thread is in are separate: the thread pane's header reads
 `detached · auto-resolved` or `edited · waiting`, placement first, and
 a thread at its own lines shows the state alone. Edits made while Fathomable was not
@@ -190,7 +190,9 @@ ones, and a thin red rule along the top of the line that follows a removal
 (the removed text itself is only shown in the diff view). Annotation marks
 sit at the far left of the gutter: a thread's rows are bracketed `╭`, `│`,
 `╰`, a thread on one row is `•`, and a thread nested inside another
-re-draws the corners on the outer one's line.
+re-draws the corners on the outer one's line. The rows are the rendered
+ones, so a thread on a long markdown paragraph is bracketed across the rows
+it wraps to.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
 for one that is staged; a new untracked file is all thin green. `gd` swaps
 the pane for a unified diff of the file against `HEAD` (`DIFF`), and the

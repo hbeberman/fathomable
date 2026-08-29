@@ -116,3 +116,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     squash, or rebase dropped is rescoped to the new `HEAD` while its
     lines are still in the working tree, so committing as you go keeps
     the review ([0035](decisions/0035-threads-follow-head.md)).
+27. **Gutter rows and focus colour.** The note cell brackets a thread
+    across the rendered rows of a wrapped line instead of dotting each,
+    and the open thread's lines take a blue tint distinct from the
+    yellow of other annotated lines
+    ([0036](decisions/0036-gutter-rows-and-focus-colour.md)).

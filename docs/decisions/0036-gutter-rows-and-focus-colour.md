@@ -1,0 +1,77 @@
+---
+type: Decision
+title: Gutter brackets rendered rows, focus in a second colour
+description: The note cell decides its bracket from the neighbouring rendered rows, so a wrapped one-line thread is bracketed rather than dotted on every row; the open thread's lines take a blue tint instead of a stronger yellow.
+resource: crates/fathomable/src/app/gutter.rs
+tags:
+  - decision
+  - annotations
+  - rendering
+---
+
+# 0036 Gutter brackets rendered rows, focus in a second colour
+
+Status: accepted (2026-08-28)
+
+## Context
+
+Two things the reader noticed on 2026-08-28 while reviewing a rendered
+markdown file with the thread pane open.
+
+The note cell of [0027](0027-revisiting-threads.md)
+decided its glyph from the source lines a rendered row holds: a thread
+that starts and ends in the row's lines is a dot. A markdown paragraph
+is one source line, and a thread on it wraps over several rows, each
+holding that same line; every row said "starts and ends here" and drew
+`•`, one over the other, where a bracket would show the extent.
+
+[0033](0033-open-thread-lines.md) tinted the open thread's rows in
+`annotation.focus`, but chose it as a stronger version of
+`annotation.line`: the same yellow, a little brighter. Beside the other
+annotated rows it read as the same tint, so the reader still could not
+see which rows the pane was about.
+
+Settled in a question round on 2026-08-28; the recommended options were
+taken:
+
+- *The colour.* A different hue, blue, not a wider gap within yellow.
+  A distinct hue reads at a glance under any syntax colouring; a wider
+  gap in one hue depends on the terminal's palette. Drawing the gutter
+  glyph in the focus colour as well was offered and not taken: the
+  tint is enough, and the glyph's colour already says the thread's
+  state.
+- *The wrapped rows.* Bracket rendered rows: `╭` on the first, `│`
+  between, `╰` on the last, `•` only when the thread fits one rendered
+  row. Dotting the first row and leaving the rest empty was rejected
+  because the range's extent is what the bracket is for.
+
+## Decision
+
+- `app/gutter.rs`, which this record backs, takes over the note cell
+  from `threads.rs`. `App::note_on_row(row)` reads the source lines of
+  the row and of the rows above and below it, and `App::note_in(lines,
+  above, below)` decides the glyph: a thread *starts* on the row when it
+  does not overlap the row above, *ends* when it does not overlap the
+  row below, and is a dot when both hold. The shortest-range and
+  bracket-beats-dot rules of 0027 are unchanged; only the question they
+  are asked about moved from "the row's lines" to "the neighbouring
+  rows".
+- A neighbouring row with no source (the edge of the document, or a
+  rendered row that no source line backs) does not continue a thread,
+  so a bracket closes at it; that row draws no tint either, so the two
+  agree.
+- `annotation.focus` in the bundled themes becomes a blue tint
+  (`#1c2a3f` dark, `#dae6ff` light). The theme key and its meaning in
+  the [0011](0011-theme-schema.md) table are unchanged; a user theme
+  keeps whatever it set.
+
+## Consequences
+
+- A thread on one wrapped source line looks like a thread on several
+  source lines: the bracket spans the text it is about. In the source
+  view, where nothing wraps, nothing changes.
+- The selection colour of the light theme is also blue; the selection
+  is patched over the row style, so a selected row inside the open
+  thread shows the selection, as it did over the yellow.
+- `note_in` gains two parameters; it is only called from `note_on_row`
+  and the tests.

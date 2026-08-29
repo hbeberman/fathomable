@@ -10,6 +10,7 @@ mod clipboard;
 mod commands;
 pub(crate) mod delete;
 pub(crate) mod file_threads;
+pub(crate) mod gutter;
 mod hscroll;
 pub(crate) mod info;
 mod keys;

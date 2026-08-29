@@ -77,3 +77,6 @@ choices:
   one on the old range. An agent that does not pass them gets 0019's
   behaviour unchanged.
 - One more theme key; a theme file that lacks it draws no extra tint.
+  (Amended by [0036](0036-gutter-rows-and-focus-colour.md), 2026-08-28:
+  the bundled value is a blue tint, not a stronger yellow, so the rows
+  read as a different colour.)

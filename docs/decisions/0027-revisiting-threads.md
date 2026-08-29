@@ -87,6 +87,11 @@ question round on 2026-08-28; the choices are recorded below.
    12 ╰ }                   both end
   ```
 
+(Amended by [0036](0036-gutter-rows-and-focus-colour.md), 2026-08-28: the
+rows are rendered rows, decided from their neighbours, so a one-line
+thread that wraps is bracketed across its rows rather than dotted on
+each; the logic moved to `app/gutter.rs`.)
+
 ### The file-threads pane
 
 - A pane along the bottom of the tree column lists every thread of the

@@ -112,3 +112,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     store; the file-threads pane drives the thread pane without taking
     its focus, and the pane opens at its end under a dim `END` row
     ([0034](decisions/0034-deleting-threads.md)).
+26. **Threads follow HEAD.** An open thread whose commit an amend,
+    squash, or rebase dropped is rescoped to the new `HEAD` while its
+    lines are still in the working tree, so committing as you go keeps
+    the review ([0035](decisions/0035-threads-follow-head.md)).

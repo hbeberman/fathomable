@@ -658,6 +658,14 @@ enum Event {
         thread: ThreadId,
         created: u64,
     },
+    /// A history rewrite dropped the thread's commit while its lines
+    /// stayed; it now belongs to `commit` (ADR 0035).
+    Rescope {
+        v: u32,
+        thread: ThreadId,
+        commit: String,
+        created: u64,
+    },
 }
 
 impl Event {
@@ -670,7 +678,8 @@ impl Event {
             | Self::Reopen { thread, .. }
             | Self::Relocate { thread, .. }
             | Self::Move { thread, .. }
-            | Self::Delete { thread, .. } => Some(thread),
+            | Self::Delete { thread, .. }
+            | Self::Rescope { thread, .. } => Some(thread),
         }
     }
 }
@@ -913,6 +922,23 @@ impl Store {
         })
     }
 
+    /// Record that the thread `id` now belongs to `commit` (ADR 0035):
+    /// a rewrite dropped the commit it was written against while its
+    /// lines stayed in the working tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the file cannot
+    /// be appended to.
+    pub fn rescope(&mut self, id: &ThreadId, commit: &str, now: u64) -> Result<(), StoreError> {
+        self.commit(Event::Rescope {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            commit: commit.to_owned(),
+            created: now,
+        })
+    }
+
     /// Apply an event in memory, then append it; the file is only written
     /// when the event is valid.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
@@ -936,6 +962,7 @@ impl Store {
             .map_err(|error| StoreError::io(&self.path, error))
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per event kind")]
     fn apply(&mut self, event: Event) -> Result<(), StoreError> {
         if let Some(id) = event.thread_id()
             && self.deleted.contains(id)
@@ -1029,6 +1056,16 @@ impl Store {
                 self.thread_mut(&thread)?;
                 self.threads.retain(|other| other.id != thread);
                 self.deleted.insert(thread);
+            }
+            Event::Rescope {
+                thread,
+                commit,
+                created,
+                ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                thread.updated = thread.updated.max(created);
+                thread.commit = Some(commit);
             }
         }
         Ok(())
@@ -1460,6 +1497,30 @@ mod tests {
         assert_eq!(visible(&everywhere), [&legacy, &scoped]);
         assert_eq!(visible(&on_branch), [&legacy, &scoped]);
         assert_eq!(visible(&elsewhere), [&legacy]);
+        Ok(())
+    }
+
+    /// A rescope moves the thread to another commit and bumps `updated`,
+    /// and survives a reload (ADR 0035).
+    #[test]
+    fn a_rescope_moves_the_thread_to_the_new_commit() -> Result<(), StoreError> {
+        let file = TempFile::new("rescope");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "hm")
+                .at_commit(Some("old".to_owned())),
+            TEXT,
+            10,
+        )?;
+        store.rescope(&id, "new", 20)?;
+        let again = Store::open(&file.0)?;
+        let thread = again.thread(&id).ok_or(StoreError {
+            kind: super::ErrorKind::UnknownThread(id.clone()),
+        })?;
+        assert_eq!(thread.commit(), Some("new"));
+        assert_eq!(thread.updated(), 20);
+        assert_eq!(thread.status(), Status::Open);
+        assert!(Scope::reachable(HashSet::from(["new".to_owned()])).includes(thread));
         Ok(())
     }
 

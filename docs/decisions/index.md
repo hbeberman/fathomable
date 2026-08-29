@@ -38,3 +38,4 @@ supersede rather than edit history.
 - [0032 Placement and state](0032-placement-and-state.md)
 - [0033 Open thread lines](0033-open-thread-lines.md)
 - [0034 Deleting threads and the list that drives the pane](0034-deleting-threads.md)
+- [0035 Threads follow HEAD across a rewrite](0035-threads-follow-head.md)

@@ -35,6 +35,7 @@ use tokio::net::UnixStream;
 
 use crate::app::open_thread::follow_reply_lines;
 use crate::app::reanchor::follow_snapshots;
+use crate::app::rescope;
 use crate::app::threads::now;
 
 /// Run the server on stdin/stdout until the client disconnects.
@@ -514,9 +515,17 @@ fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Scope), String>
         Err(error) => tracing::warn!(%error, "cannot open snapshots; reporting stored ranges"),
     }
     let scope = match Workspace::discover(root) {
-        Ok(workspace) => workspace
-            .reachable(store.commits())
-            .map_or_else(Scope::unscoped, Scope::reachable),
+        Ok(workspace) => match workspace.reachable(store.commits()) {
+            Some(mut reachable) => {
+                let moved = rescope::follow_head(&mut store, &workspace, &reachable);
+                if moved > 0 {
+                    tracing::info!(moved, "threads rescoped headlessly");
+                    reachable.extend(workspace.head_commit());
+                }
+                Scope::reachable(reachable)
+            }
+            None => Scope::unscoped(),
+        },
         Err(error) => {
             tracing::warn!(%error, "cannot open the workspace; threads unscoped");
             Scope::unscoped()

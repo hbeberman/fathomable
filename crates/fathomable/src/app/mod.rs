@@ -16,6 +16,7 @@ mod keys;
 pub(crate) mod mark_words;
 pub(crate) mod open_thread;
 pub(crate) mod reanchor;
+pub(crate) mod rescope;
 mod sidebar;
 mod socket;
 pub(crate) mod thread_list;
@@ -476,20 +477,28 @@ impl App {
         };
         app.relayout();
         app.refresh_status();
-        app.refresh_scope();
+        // Snapshots first: a thread edited offline must locate before the
+        // scope refresh can keep it across a rewrite (ADR 0035).
         app.reanchor_from_snapshots();
+        app.refresh_scope();
         app
     }
 
     /// Recompute which threads `HEAD` shows (ADR 0024): one history walk
-    /// for the commits the store mentions. Marks are refreshed when the
-    /// answer changed.
+    /// for the commits the store mentions. Open threads a rewrite
+    /// stranded follow `HEAD` first (ADR 0035). Marks are refreshed when
+    /// the answer changed.
     pub(super) fn refresh_scope(&mut self) {
-        let scope = match self.store.as_ref() {
-            Some(store) => self
-                .workspace
-                .reachable(store.commits())
-                .map_or_else(Scope::unscoped, Scope::reachable),
+        let scope = match self.store.as_mut() {
+            Some(store) => match self.workspace.reachable(store.commits()) {
+                Some(mut reachable) => {
+                    if rescope::follow_head(store, &self.workspace, &reachable) > 0 {
+                        reachable.extend(self.workspace.head_commit());
+                    }
+                    Scope::reachable(reachable)
+                }
+                None => Scope::unscoped(),
+            },
             None => Scope::unscoped(),
         };
         if scope != self.scope {
@@ -2769,6 +2778,9 @@ mod tests {
             text,
             1,
         )?;
+        // Written on lines this checkout does not have, as a thread from
+        // another branch is; one whose lines are here would follow HEAD
+        // (ADR 0035).
         store.annotate(
             Draft::new(
                 Path::new("README.md"),
@@ -2776,7 +2788,7 @@ mod tests {
                 "on other work",
             )
             .at_commit(Some("0123456789abcdef0123456789abcdef01234567".to_owned())),
-            text,
+            "# Readme\nelsewhere\nhello\n",
             2,
         )?;
         let legacy = store.annotate(
@@ -2813,6 +2825,107 @@ mod tests {
         let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
         assert_eq!(ids, [here, legacy, late]);
         Ok(())
+    }
+
+    /// An amend replaces `HEAD` with a commit that does not descend from
+    /// it. An open thread whose lines are still in the working tree moves
+    /// to the new commit and stays visible; one whose lines are gone, and
+    /// a resolved one, stay scoped to the dropped commit (ADR 0035).
+    #[test]
+    fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
+        use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+
+        let dir = TempDir::new("rescope")?;
+        gix::ThreadSafeRepository::init_opts(
+            &dir.0,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            open_options(),
+        )?;
+        let text = "# Readme\n\nhello\n";
+        commit_and_stage(&dir.0, &[("README.md", text)])?;
+        fs::write(dir.0.join("README.md"), text)?;
+        let workspace = Workspace::discover(&dir.0)?;
+        let first = workspace
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+        let store_path = dir.0.join(".state/threads.jsonl");
+        let mut store = Store::open(&store_path)?;
+        let at = |line: usize, comment: &str| {
+            Draft::new(Path::new("README.md"), LineRange::new(line, line), comment)
+                .at_commit(Some(first.clone()))
+        };
+        let kept = store.annotate(at(1, "kept"), text, 1)?;
+        let gone = store.annotate(at(3, "lines gone"), text, 2)?;
+        let done = store.annotate(at(1, "resolved"), text, 3)?;
+        store.resolve(&done, Author::User, 4)?;
+
+        let mut app = app_with(
+            &dir,
+            Options {
+                store: Some(Store::open(&store_path)?),
+                ..Options::for_test(dir.0.clone())
+            },
+        )?;
+        app.open(Path::new("README.md"));
+        assert_eq!(app.marks().len(), 3);
+
+        // Amend: an orphan commit with the third line dropped.
+        let amended = "# Readme\n\n";
+        amend(&dir.0, &[("README.md", amended)])?;
+        changed(&mut app, &dir, "README.md", amended)?;
+        app.on_changes(vec![dir.0.join(".git/HEAD")]);
+        let second = app
+            .workspace
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+        assert_ne!(first, second);
+
+        let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
+        assert_eq!(ids, std::slice::from_ref(&kept));
+        let again = Store::open(&store_path)?;
+        assert_eq!(
+            again.thread(&kept).and_then(Thread::commit),
+            Some(second.as_str())
+        );
+        assert_eq!(
+            again.thread(&gone).and_then(Thread::commit),
+            Some(first.as_str())
+        );
+        assert_eq!(
+            again.thread(&done).and_then(Thread::commit),
+            Some(first.as_str())
+        );
+        Ok(())
+    }
+
+    /// Replace `HEAD` with a commit of `files` that has no parent, as an
+    /// amend of the root commit does.
+    fn amend(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
+        let repo = gix::open_opts(root, open_options())?;
+        let tree = write_tree(&repo, files)?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "1 +0000",
+        };
+        let commit = gix::objs::Commit {
+            message: "amended".into(),
+            tree,
+            author: signature.into(),
+            committer: signature.into(),
+            encoding: None,
+            parents: std::iter::empty().collect(),
+            extra_headers: Vec::default(),
+        };
+        let id = repo.write_object(&commit)?;
+        repo.reference(
+            "refs/heads/main",
+            id,
+            gix::refs::transaction::PreviousValue::Any,
+            "amend",
+        )?;
+        stage(root, files)
     }
 
     fn changed(app: &mut App, dir: &TempDir, relative: &str, text: &str) -> std::io::Result<()> {

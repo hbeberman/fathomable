@@ -319,7 +319,10 @@ Every tool accepts an optional `session`: a workspace root, or a viewer name
 or id. A thread belongs to the commit it was written against and is shown
 (here and in the viewer) only while that commit is `HEAD` or one of its
 ancestors, so switching to unrelated work hides it and merging brings it
-along ([0024](decisions/0024-workspace-sessions.md)). Details and the wire
+along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
+or rebase that drops that commit does not lose an open thread: while its
+lines are still in the working tree it moves to the new `HEAD`
+([0035](decisions/0035-threads-follow-head.md)). Details and the wire
 protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
 
 ## 9. When something is off

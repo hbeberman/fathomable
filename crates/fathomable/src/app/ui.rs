@@ -1353,7 +1353,7 @@ fn draw_compose(
         header_line(
             theme,
             vec![Span::styled(title, theme.popup_key)],
-            hint,
+            &hint.split(" · ").collect::<Vec<_>>(),
             width,
         ),
     ];
@@ -1393,7 +1393,7 @@ fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: 
         format!(" {}", app.current_path().display()),
         theme.popup_key,
     )];
-    let mut lines = vec![header_line(theme, header, "", width), Line::default()];
+    let mut lines = vec![header_line(theme, header, &[], width), Line::default()];
     for (label, value) in &info.rows {
         lines.push(Line::from(vec![
             Span::styled(format!("  {label:>label_width$}"), theme.popup_key),
@@ -1442,13 +1442,20 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         Span::styled(scope, theme.popup_key),
         Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
     ];
-    let hint = if app.focus() == Focus::Threads {
-        "Enter open · r reply · x resolve · z/Z fold · f file · Esc"
+    let hints: &[&str] = if app.focus() == Focus::Threads {
+        &[
+            "Enter open",
+            "r reply",
+            "x resolve",
+            "z/Z fold",
+            "f file",
+            "Esc",
+        ]
     } else {
-        "click or Space A to focus"
+        &["click or Space A to focus"]
     };
     let now = super::threads::now();
-    let mut lines = vec![header_line(theme, left, hint, width)];
+    let mut lines = vec![header_line(theme, left, hints, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
     for row in all.iter().skip(scroll).take(rows - 1) {
         lines.push(list_row(theme, row, now, width));
@@ -1566,21 +1573,17 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
             theme.info,
         ));
     }
-    let hint = if app.focus() == Focus::Thread {
-        "r reply · x resolve/reopen · d d delete · n/N next/prev · j/k scroll · h list · Esc close"
-    } else {
-        "click or Space a to focus"
-    };
-    let mut lines = vec![
-        rule_line(theme, width),
-        header_line(theme, left, hint, width),
-    ];
     let body = thread_body_lines(theme, app.highlighter(), thread, range.start(), now, width);
     debug_assert_eq!(
         body.len(),
         thread_body_rows(thread, width, app.highlighter())
     );
     let body_rows = rows - 2;
+    let hints = thread_hints(app, words, total > 1, body.len() > body_rows);
+    let mut lines = vec![
+        rule_line(theme, width),
+        header_line(theme, left, &hints, width),
+    ];
     let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
     let below = body.len().saturating_sub(scroll + body_rows);
     let shown = if below > 0 { body_rows - 1 } else { body_rows };
@@ -1596,14 +1599,45 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-/// A popup header: `left` spans, then `hint` right-aligned when it fits.
-fn header_line<'a>(theme: &Theme, left: Vec<Span<'a>>, hint: &str, width: usize) -> Line<'a> {
+/// The keys that do something in the thread pane right now, most useful
+/// first so a narrow pane keeps the ones that matter (ADR 0007).
+fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<&'static str> {
+    if app.focus() != Focus::Thread {
+        return vec!["click or Space a to focus"];
+    }
+    if app.delete_armed().is_some() {
+        return vec!["d delete", "other cancels"];
+    }
+    let mut hints = vec!["r reply"];
+    hints.push(if words.is_resolved() {
+        "x reopen"
+    } else {
+        "x resolve"
+    });
+    hints.push("d d delete");
+    if several {
+        hints.push("n/N next/prev");
+    }
+    if overflows {
+        hints.push("j/k scroll");
+    }
+    hints.extend(["h list", "Esc close"]);
+    hints
+}
+
+/// A popup header: `left` spans, then `hints` right-aligned, joined by
+/// ` · `. When the row is too narrow the list loses items from its end
+/// until it fits, rather than vanishing whole.
+fn header_line<'a>(theme: &Theme, left: Vec<Span<'a>>, hints: &[&str], width: usize) -> Line<'a> {
     let used: usize = left.iter().map(|s| display_width(&s.content)).sum();
     let mut spans = left;
     let free = width.saturating_sub(used);
-    let hint_width = display_width(hint) + 1;
-    if free >= hint_width + 2 {
-        spans.push(Span::raw(" ".repeat(free - hint_width)));
+    let fitting = (1..=hints.len())
+        .rev()
+        .map(|n| hints[..n].join(" · "))
+        .find(|hint| free >= display_width(hint) + 3);
+    if let Some(hint) = fitting {
+        spans.push(Span::raw(" ".repeat(free - display_width(&hint) - 1)));
         spans.push(Span::styled(format!("{hint} "), theme.info));
     }
     Line::from(spans)

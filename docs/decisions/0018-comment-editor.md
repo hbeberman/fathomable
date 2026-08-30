@@ -71,10 +71,11 @@ These choices were settled in a question round on 2026-08-27.
   user still presses Enter. With neither variable set the key says so and
   does nothing.
 - The same buffer edits existing messages (amended 2026-08-30): `e` in
-  the thread pane opens the selected user-authored message, seeded with
-  its current body; Enter saves it as an append-only annotation event.
-  Esc closes an unchanged edit at once and asks twice only after the body
-  changes. Agent-authored messages cannot enter the editor.
+  the thread pane or workspace thread list opens the selected
+  user-authored message, seeded with its current body; Enter saves it as
+  an append-only annotation event. Esc closes an unchanged edit at once
+  and asks twice only after the body changes. Agent-authored messages
+  cannot enter the editor.
 
 ### Paste
 

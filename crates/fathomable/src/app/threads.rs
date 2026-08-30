@@ -222,6 +222,15 @@ pub(crate) fn now() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
+/// Convert a zero-based message position into its storage target.
+pub(super) fn message_target(message: usize) -> MessageTarget {
+    if message == 0 {
+        MessageTarget::Comment
+    } else {
+        MessageTarget::Reply(message - 1)
+    }
+}
+
 impl App {
     /// The store, or a status-line notice explaining why there is none.
     pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
@@ -770,7 +779,9 @@ impl App {
                 self.refresh_all_marks();
                 // The list and the file-threads pane reply in place; a
                 // reply from the text opens the thread it answered.
-                if !self.list.is_open() && self.focus != Focus::FileThreads {
+                if self.list.is_open() {
+                    self.thread_list_select_newest_message(id);
+                } else if self.focus != Focus::FileThreads {
                     self.open_thread(id.clone());
                 }
             }
@@ -792,6 +803,7 @@ impl App {
                     panel.seen = updated;
                 }
                 self.thread_message_into_view();
+                self.thread_list_reselect(None);
                 self.notice("message edited");
             }
             Err(error) => self.notice(format!("cannot edit message: {error}")),
@@ -1111,11 +1123,7 @@ impl App {
             return;
         };
         let id = panel.id().clone();
-        let target = if panel.selected_message == 0 {
-            MessageTarget::Comment
-        } else {
-            MessageTarget::Reply(panel.selected_message - 1)
-        };
+        let target = message_target(panel.selected_message);
         self.open_compose(ComposeTarget::Edit {
             thread: id,
             message: target,
@@ -1127,16 +1135,12 @@ impl App {
         let Some(panel) = self.thread.as_ref() else {
             return false;
         };
-        let target = if panel.selected_message == 0 {
-            MessageTarget::Comment
-        } else {
-            MessageTarget::Reply(panel.selected_message - 1)
-        };
+        let target = message_target(panel.selected_message);
         self.message_for(panel.id(), target)
             .is_some_and(|(_, editable)| editable)
     }
 
-    fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
+    pub(super) fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
         let thread = self.thread(id)?;
         match target {
             MessageTarget::Comment => Some((thread.comment(), true)),
@@ -1224,6 +1228,18 @@ impl App {
         self.goto_thread(&id);
         self.open_thread(id);
     }
+
+    /// The list's Enter: open `id` with its selected message carried over.
+    pub(super) fn show_thread_message(&mut self, id: &ThreadId, message: usize) {
+        self.show_thread(id.clone());
+        let count = self
+            .thread(id)
+            .map_or(0, |thread| thread.replies().len() + 1);
+        if let Some(panel) = self.thread.as_mut().filter(|panel| panel.id() == id) {
+            panel.selected_message = message.min(count.saturating_sub(1));
+        }
+        self.thread_message_into_view();
+    }
 }
 
 #[cfg(test)]
@@ -1300,6 +1316,39 @@ mod tests {
         app.compose_submit();
         anyhow::ensure!(app.thread_counts().1 == 1, "thread not created");
         Ok(())
+    }
+
+    fn app_with_thread_list_messages(
+        name: &str,
+    ) -> anyhow::Result<(TempDir, App, fathomable_core::annotations::ThreadId)> {
+        let dir = TempDir::new(name)?;
+        let mut app = dir.app()?;
+        let opening = (1..=30)
+            .map(|line| format!("opening line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        annotate(&mut app, &opening)?;
+        let id = app.marks()[0].id().clone();
+        app.agent_reply(
+            &id,
+            Author::agent("reviewer"),
+            "agent answer".to_owned(),
+            false,
+            None,
+        )
+        .map_err(anyhow::Error::msg)?;
+        app.open_thread(id.clone());
+        app.thread_reply();
+        type_in(&mut app, "user follow-up");
+        app.compose_submit();
+        app.close_thread();
+        app.view_mut().goto_bottom();
+        app.start_comment();
+        type_in(&mut app, "bottom");
+        app.compose_submit();
+        app.view_mut().goto_top();
+        app.open_thread_list();
+        Ok((dir, app, id))
     }
 
     #[test]
@@ -1714,7 +1763,7 @@ mod tests {
             Some(Popup::Compose(compose))
                 if compose.target()
                     == &ComposeTarget::Edit {
-                        thread: id,
+                        thread: id.clone(),
                         message: MessageTarget::Reply(1),
                     }
         ));
@@ -1738,6 +1787,156 @@ mod tests {
             app.thread_panel().map(super::ThreadPanel::selected_message),
             Some(1),
             "global restores its selected message"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn thread_list_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use crate::app::keys;
+
+        let (_dir, mut app, id) = app_with_thread_list_messages("list-message-nav")?;
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        assert_eq!(
+            app.thread_list().selected_message(),
+            2,
+            "the newest message starts selected"
+        );
+        let rows = app.thread_list_rows(60);
+        let selected_row = rows
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Message { selected: true, .. }))
+            .context("no selected message row")?;
+        let visible = app.text_rows().saturating_sub(1).max(1);
+        assert!(
+            (app.thread_list().scroll()..app.thread_list().scroll() + visible)
+                .contains(&selected_row),
+            "the selected message is visible"
+        );
+
+        keys::handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.thread_list().selected_message(), 1);
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(app.popup().is_none());
+        assert_eq!(app.message(), Some("only your messages can be edited"));
+
+        keys::handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.thread_list().selected_message(), 0);
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if compose.target()
+                    == &ComposeTarget::Edit {
+                        thread: id.clone(),
+                        message: MessageTarget::Comment,
+                    }
+        ));
+        app.set_compose_text("revised opening");
+        app.compose_submit();
+        assert_eq!(app.focus(), Focus::Threads);
+        assert!(app.thread_list().is_open());
+        assert_eq!(
+            app.thread(&id).map(Thread::comment),
+            Some("revised opening")
+        );
+
+        keys::handle_key(&mut app, key(KeyCode::Char('l')));
+        assert_eq!(app.thread_list().selected_message(), 0);
+        keys::handle_key(&mut app, key(KeyCode::Char('h')));
+        assert_eq!(
+            app.thread_list().selected_message(),
+            2,
+            "changing threads selects the newest message"
+        );
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if compose.target()
+                    == &ComposeTarget::Edit {
+                        thread: id.clone(),
+                        message: MessageTarget::Reply(1),
+                    }
+        ));
+        assert_eq!(app.compose_draft(), Some("user follow-up"));
+        app.compose_cancel();
+        assert_eq!(app.focus(), Focus::Threads);
+        Ok(())
+    }
+
+    #[test]
+    fn thread_list_mouse_selects_messages_and_reply_selects_itself() -> anyhow::Result<()> {
+        let (_dir, mut app, id) = app_with_thread_list_messages("list-message-mouse")?;
+        let rows = app.thread_list_rows(100);
+        let agent_row = rows
+            .rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    Row::Message {
+                        entry: 0,
+                        message: 1,
+                        ..
+                    }
+                )
+            })
+            .context("no agent message row")?;
+        let scroll = app.thread_list().scroll();
+        anyhow::ensure!(agent_row >= scroll, "agent message is above the viewport");
+        app.thread_list_click(agent_row - scroll);
+        assert_eq!(
+            app.thread_list().selected_message(),
+            1,
+            "a click selects its message"
+        );
+        app.thread_list_reply();
+        type_in(&mut app, "reply from the list");
+        app.compose_submit();
+        assert_eq!(
+            app.thread_list().selected_message(),
+            3,
+            "a reply sent from the list becomes selected"
+        );
+        app.thread_list_edit_message();
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if compose.target()
+                    == &ComposeTarget::Edit {
+                        thread: id.clone(),
+                        message: MessageTarget::Reply(2),
+                    }
+        ));
+        assert_eq!(app.compose_draft(), Some("reply from the list"));
+        app.compose_cancel();
+
+        let rows = app.thread_list_rows(100);
+        let agent_row = rows
+            .rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    Row::Message {
+                        entry: 0,
+                        message: 1,
+                        ..
+                    }
+                )
+            })
+            .context("no agent message row after reply")?;
+        app.thread_list_click(agent_row - app.thread_list().scroll());
+        app.thread_list_open_entry();
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(1),
+            "Enter carries the selected message into the pane"
         );
         Ok(())
     }
@@ -1943,7 +2142,7 @@ mod tests {
                 .iter()
                 .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "top"))
         );
-        app.thread_list_move(1);
+        app.thread_list_step(1);
         app.thread_list_open_entry();
         assert!(!app.thread_list().is_open());
         assert_eq!(app.focus(), Focus::Thread);

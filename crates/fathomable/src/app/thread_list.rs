@@ -3,20 +3,20 @@
 //! resolved, grouped by file, drawn in place of the document.
 //!
 //! The list keeps only its own state — whether it is open, the file
-//! filter, the selected thread, the scroll, and the folds. Its rows are
+//! filter, the selected thread and message, the scroll, and the folds. Its rows are
 //! computed from the store on every draw and key by [`App::thread_list_rows`],
 //! so a reload or a scope change needs nothing invalidated.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, Thread, ThreadId};
+use fathomable_core::annotations::{LineRange, MessageTarget, Thread, ThreadId};
 use fathomable_core::layout::wrap_text;
 
-use super::threads::{ComposeTarget, MarkKind};
+use super::threads::{ComposeTarget, MarkKind, message_target};
 use super::{App, Focus};
 
-/// Rows kept visible above and below the selected entry.
+/// Rows kept visible above and below the selected message.
 const SCROLLOFF: usize = 2;
 /// Cells a message body is indented from the column edge: two deeper than
 /// its author row. Body rows carry the indent in their text, so the UI
@@ -30,6 +30,7 @@ pub struct ThreadList {
     /// Only the current document's threads.
     file_only: bool,
     selected: Option<ThreadId>,
+    selected_message: usize,
     scroll: usize,
     folded: HashSet<ThreadId>,
     resolved_folded: bool,
@@ -42,6 +43,11 @@ impl ThreadList {
 
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// The selected message: zero for the opening comment, then replies.
+    pub fn selected_message(&self) -> usize {
+        self.selected_message
     }
 
     /// Whether the list is narrowed to the current document.
@@ -86,15 +92,21 @@ pub enum Row {
     },
     /// `author  age  [badge]`.
     Message {
+        entry: usize,
+        message: usize,
         author: String,
         created: u64,
         badge: Option<&'static str>,
         dim: bool,
+        selected: bool,
     },
     /// One wrapped line of a comment or reply, already indented.
     Body {
+        entry: usize,
+        message: usize,
         text: String,
         dim: bool,
+        selected: bool,
     },
     Blank,
 }
@@ -114,15 +126,34 @@ impl Rows {
             .position(|row| matches!(row, Row::Header { entry: e, .. } if *e == entry))
     }
 
-    /// The entry whose rows include `row`.
-    pub fn entry_at(&self, row: usize) -> Option<usize> {
-        self.rows[..self.rows.len().min(row + 1)]
+    /// The entry and optional message under `row`.
+    pub fn selection_at(&self, row: usize) -> Option<(usize, Option<usize>)> {
+        match self.rows.get(row)? {
+            Row::Header { entry, .. } => Some((*entry, None)),
+            Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
+                Some((*entry, Some(*message)))
+            }
+            Row::Section { .. } | Row::File(_) | Row::Blank => None,
+        }
+    }
+
+    /// The row range occupied by one message.
+    fn message_range(&self, entry: usize, message: usize) -> Option<std::ops::Range<usize>> {
+        let start = self.rows.iter().position(
+            |row| matches!(row, Row::Message { entry: e, message: m, .. } if *e == entry && *m == message),
+        )?;
+        let len = self.rows[start..]
             .iter()
-            .rev()
-            .find_map(|r| match r {
-                Row::Header { entry, .. } => Some(*entry),
-                _ => None,
+            .take_while(|row| {
+                matches!(
+                    row,
+                    Row::Message { entry: e, message: m, .. }
+                        | Row::Body { entry: e, message: m, .. }
+                        if *e == entry && *m == message
+                )
             })
+            .count();
+        Some(start..start + len)
     }
 }
 
@@ -143,6 +174,12 @@ impl App {
             self.store_mut();
             return;
         }
+        if self.list.selected.is_none()
+            && let Some(panel) = self.thread.as_ref()
+        {
+            self.list.selected = Some(panel.id().clone());
+            self.list.selected_message = panel.selected_message();
+        }
         self.thread = None;
         self.list.open = true;
         self.focus = Focus::Threads;
@@ -153,6 +190,8 @@ impl App {
             } else {
                 "no threads on this work"
             });
+        } else if let Some(index) = self.selected_index(&rows) {
+            self.select_entry(&rows, index);
         }
         self.relayout();
     }
@@ -292,33 +331,52 @@ impl App {
             range: entry.range,
             kind: entry.kind,
             updated: thread.updated(),
-            selected,
+            selected: selected && folded,
             folded,
             dim,
         });
         if folded {
             return;
         }
-        let mut message = |author: &str, created: u64, body: &str, badge: Option<&'static str>| {
+        let selected_message =
+            selected.then(|| self.list.selected_message.min(thread.replies().len()));
+        let mut message = |message: usize,
+                           author: &str,
+                           created: u64,
+                           body: &str,
+                           badge: Option<&'static str>| {
+            let message_selected = selected_message == Some(message);
             out.rows.push(Row::Message {
+                entry: index,
+                message,
                 author: author.to_owned(),
                 created,
                 badge,
                 dim,
+                selected: message_selected,
             });
             for paragraph in body.lines() {
                 for line in wrap_text(paragraph, body_width) {
                     out.rows.push(Row::Body {
+                        entry: index,
+                        message,
                         text: format!("{}{line}", " ".repeat(MESSAGE_INDENT)),
                         dim,
+                        selected: message_selected,
                     });
                 }
             }
         };
-        message("user", thread.created(), thread.comment(), None);
-        for reply in thread.replies() {
+        message(0, "user", thread.created(), thread.comment(), None);
+        for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
-            message(reply.author().name(), reply.created(), reply.body(), badge);
+            message(
+                reply_index + 1,
+                reply.author().name(),
+                reply.created(),
+                reply.body(),
+                badge,
+            );
         }
         out.rows.push(Row::Blank);
     }
@@ -339,27 +397,55 @@ impl App {
         by_id.or_else(|| (!rows.entries.is_empty()).then_some(0))
     }
 
-    /// Select entry `index` and scroll so its header is on screen.
+    /// Select entry `index`, defaulting a new thread to its newest message.
     fn select_entry(&mut self, rows: &Rows, index: usize) {
         let Some(entry) = rows.entries.get(index) else {
             return;
         };
-        self.list.selected = Some(entry.id.clone());
-        let Some(header) = rows.header_row(index) else {
+        let id = entry.id.clone();
+        if self.list.selected.as_ref() != Some(&id) {
+            self.list.selected_message =
+                self.thread(&id).map_or(0, |thread| thread.replies().len());
+        }
+        self.list.selected = Some(id);
+        self.scroll_to_selection(rows, index);
+    }
+
+    fn select_message(&mut self, rows: &Rows, entry: usize, message: usize) {
+        self.select_entry(rows, entry);
+        let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
+            return;
+        };
+        self.list.selected_message = self
+            .thread(&id)
+            .map_or(0, |thread| message.min(thread.replies().len()));
+        self.scroll_to_selection(rows, entry);
+    }
+
+    /// Scroll enough to keep the selected message, or a folded header, visible.
+    fn scroll_to_selection(&mut self, rows: &Rows, entry: usize) {
+        let range = rows
+            .message_range(entry, self.list.selected_message)
+            .or_else(|| rows.header_row(entry).map(|row| row..row + 1));
+        let Some(range) = range else {
             return;
         };
         let visible = self.list_rows();
-        let top = header.saturating_sub(SCROLLOFF);
-        let bottom = (header + SCROLLOFF + 1).min(rows.rows.len());
+        let top = range.start.saturating_sub(SCROLLOFF);
+        let bottom = (range.end + SCROLLOFF).min(rows.rows.len());
         if top < self.list.scroll {
             self.list.scroll = top;
         } else if bottom > self.list.scroll + visible {
-            self.list.scroll = bottom.saturating_sub(visible);
+            self.list.scroll = if range.len() > visible {
+                range.start
+            } else {
+                bottom.saturating_sub(visible)
+            };
         }
     }
 
-    /// `j`/`k` and the half-page keys: move the selection by `delta`.
-    pub fn thread_list_move(&mut self, delta: isize) {
+    /// `h`/`l` and the half-page keys: move between threads by `delta`.
+    pub fn thread_list_step(&mut self, delta: isize) {
         let rows = self.thread_list_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;
@@ -367,6 +453,29 @@ impl App {
         let last = rows.entries.len().saturating_sub(1);
         let target = index.saturating_add_signed(delta).min(last);
         self.select_entry(&rows, target);
+    }
+
+    /// `j`/`k`: move between messages in the selected thread.
+    pub fn thread_list_message_move(&mut self, delta: isize) {
+        let rows = self.thread_list_rows(self.column_width());
+        let Some(entry) = self.selected_index(&rows) else {
+            return;
+        };
+        let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
+            return;
+        };
+        let count = self
+            .thread(&id)
+            .map_or(0, |thread| thread.replies().len() + 1);
+        if count == 0 {
+            return;
+        }
+        let target = self
+            .list
+            .selected_message
+            .saturating_add_signed(delta)
+            .min(count - 1);
+        self.select_message(&rows, entry, target);
     }
 
     /// `gg` / `G`.
@@ -390,11 +499,15 @@ impl App {
         self.list.scroll = self.list.scroll.saturating_add_signed(delta).min(max);
     }
 
-    /// A click on list row `row` (below the header) selects its entry.
+    /// A click on list row `row` (below the header) selects its message.
     pub fn thread_list_click(&mut self, row: usize) {
         let rows = self.thread_list_rows(self.column_width());
-        if let Some(index) = rows.entry_at(self.list.scroll + row) {
-            self.select_entry(&rows, index);
+        if let Some((entry, message)) = rows.selection_at(self.list.scroll + row) {
+            if let Some(message) = message {
+                self.select_message(&rows, entry, message);
+            } else {
+                self.select_entry(&rows, entry);
+            }
         }
         self.focus = Focus::Threads;
     }
@@ -410,6 +523,8 @@ impl App {
             } else {
                 "no threads on this work"
             });
+        } else if let Some(index) = self.selected_index(&rows) {
+            self.select_entry(&rows, index);
         }
     }
 
@@ -424,6 +539,10 @@ impl App {
             self.list.folded.insert(id.clone());
         }
         self.list.selected = Some(id);
+        let rows = self.thread_list_rows(self.column_width());
+        if let Some(index) = self.selected_index(&rows) {
+            self.select_entry(&rows, index);
+        }
     }
 
     /// `Z`: fold or unfold the resolved section.
@@ -440,6 +559,31 @@ impl App {
         let rows = self.thread_list_rows(self.column_width());
         let index = self.selected_index(&rows)?;
         rows.entries.get(index).cloned()
+    }
+
+    fn selected_message_target(&self) -> Option<(Entry, MessageTarget)> {
+        let entry = self.selected_entry()?;
+        let thread = self.thread(&entry.id)?;
+        let message = if self.list.selected.as_ref() == Some(&entry.id) {
+            self.list.selected_message().min(thread.replies().len())
+        } else {
+            thread.replies().len()
+        };
+        Some((entry, message_target(message)))
+    }
+
+    /// Number of messages in the selected thread.
+    pub fn thread_list_message_count(&self) -> usize {
+        self.selected_entry()
+            .and_then(|entry| self.thread(&entry.id))
+            .map_or(0, |thread| thread.replies().len() + 1)
+    }
+
+    /// Whether the selected list message belongs to the user.
+    pub fn thread_list_message_editable(&self) -> bool {
+        self.selected_message_target()
+            .and_then(|(entry, target)| self.message_for(&entry.id, target))
+            .is_some_and(|(_, editable)| editable)
     }
 
     /// `d`: arm deletion of the selected entry (ADR 0034).
@@ -479,16 +623,33 @@ impl App {
         }
     }
 
+    /// A reply sent from the list becomes its selected message.
+    pub(super) fn thread_list_select_newest_message(&mut self, id: &ThreadId) {
+        if !self.list.is_open() || self.list.selected.as_ref() != Some(id) {
+            return;
+        }
+        let rows = self.thread_list_rows(self.column_width());
+        let Some(entry) = rows.entries.iter().position(|entry| &entry.id == id) else {
+            return;
+        };
+        let message = self.thread(id).map_or(0, |thread| thread.replies().len());
+        self.select_message(&rows, entry, message);
+    }
+
     /// Enter: open the entry's file at the thread, open the pane on it,
     /// and close the list.
     pub fn thread_list_open_entry(&mut self) {
-        let Some(entry) = self.selected_entry() else {
+        let Some((entry, message)) = self.selected_message_target() else {
             return;
+        };
+        let message = match message {
+            MessageTarget::Comment => 0,
+            MessageTarget::Reply(index) => index + 1,
         };
         self.close_thread_list();
         self.open(Path::new(&entry.path));
         if self.current_path() == entry.path {
-            self.show_thread(entry.id);
+            self.show_thread_message(&entry.id, message);
         }
     }
 
@@ -496,6 +657,16 @@ impl App {
     pub fn thread_list_reply(&mut self) {
         if let Some(entry) = self.selected_entry() {
             self.open_compose(ComposeTarget::Reply(entry.id));
+        }
+    }
+
+    /// `e`: edit the selected message when the user wrote it.
+    pub fn thread_list_edit_message(&mut self) {
+        if let Some((entry, message)) = self.selected_message_target() {
+            self.open_compose(ComposeTarget::Edit {
+                thread: entry.id,
+                message,
+            });
         }
     }
 

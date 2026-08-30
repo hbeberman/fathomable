@@ -1429,7 +1429,7 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         return;
     }
     let list = app.thread_list();
-    let Rows { rows: all, .. } = app.thread_list_rows(width);
+    let Rows { rows: all, entries } = app.thread_list_rows(width);
     let (open, resolved) = all.iter().fold((0, 0), |(o, r), row| match row {
         Row::Section {
             resolved: false,
@@ -1452,20 +1452,25 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         Span::styled(scope, theme.popup_key),
         Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
     ];
-    let hints: &[Hint] = if app.focus() == Focus::Threads {
-        &[
-            ("Enter", "open"),
-            ("r", "reply"),
-            ("x", "resolve"),
-            ("z/Z", "fold"),
-            ("f", "file"),
-            ("Esc", ""),
-        ]
+    let hints = if app.focus() == Focus::Threads {
+        let mut hints = vec![("Enter", "open"), ("r", "reply")];
+        if app.thread_list_message_editable() {
+            hints.push(("e", "edit"));
+        }
+        hints.push(("x", "resolve"));
+        if entries.len() > 1 {
+            hints.push(("h/l", "threads"));
+        }
+        if app.thread_list_message_count() > 1 {
+            hints.push(("j/k", "messages"));
+        }
+        hints.extend([("z/Z", "fold"), ("f", "file"), ("Esc", "")]);
+        hints
     } else {
-        &[("", "click or Space A to focus")]
+        vec![("", "click or Space A to focus")]
     };
     let now = super::threads::now();
-    let mut lines = vec![header_line(theme, left, hints, width)];
+    let mut lines = vec![header_line(theme, left, &hints, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
     for row in all.iter().skip(scroll).take(rows - 1) {
         lines.push(list_row(theme, row, now, width));
@@ -1502,7 +1507,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         } => {
             let (status, status_style) = (label(*kind), mark_style(theme, *kind));
             let fold = if *folded { "  ▸" } else { "" };
-            let mut spans = vec![
+            let spans = vec![
                 Span::styled(
                     format!("   L{range}  "),
                     if *dim { theme.info } else { theme.text },
@@ -1510,18 +1515,15 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 Span::styled(status.to_owned(), status_style),
                 Span::styled(format!("  {}{fold}", format_age(*updated, now)), theme.info),
             ];
-            if *selected {
-                let used: usize = spans.iter().map(|s| display_width(&s.content)).sum();
-                spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
-                return Line::from(spans).style(theme.picker_selected);
-            }
-            Line::from(spans)
+            list_selection_line(theme, spans, width, *selected)
         }
         Row::Message {
             author,
             created,
             badge,
             dim,
+            selected,
+            ..
         } => {
             let mut spans = vec![
                 Span::styled(
@@ -1533,13 +1535,38 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             if let Some(badge) = badge {
                 spans.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
             }
-            Line::from(spans)
+            list_selection_line(theme, spans, width, *selected)
         }
-        Row::Body { text, dim } => Line::from(Span::styled(
-            text.clone(),
-            if *dim { theme.info } else { theme.text },
-        )),
+        Row::Body {
+            text,
+            dim,
+            selected,
+            ..
+        } => list_selection_line(
+            theme,
+            vec![Span::styled(
+                text.clone(),
+                if *dim { theme.info } else { theme.text },
+            )],
+            width,
+            *selected,
+        ),
         Row::Blank => Line::from(""),
+    }
+}
+
+fn list_selection_line<'a>(
+    theme: &Theme,
+    mut spans: Vec<Span<'a>>,
+    width: usize,
+    selected: bool,
+) -> Line<'a> {
+    if selected {
+        let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
+        spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+        Line::from(spans).style(theme.picker_selected)
+    } else {
+        Line::from(spans)
     }
 }
 
@@ -1789,9 +1816,14 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_core::layout::display_width;
     use ratatui::style::Style;
 
-    use super::{Window, format_age, format_age_short, format_time, grapheme_cells};
+    use crate::app::thread_list::Row;
+
+    use super::{
+        Theme, Window, format_age, format_age_short, format_time, grapheme_cells, list_row,
+    };
 
     /// The visible text of a window, cell by cell.
     fn render(window: Window<'_>) -> String {
@@ -1800,6 +1832,41 @@ mod tests {
             .iter()
             .map(|span| span.content.to_string())
             .collect()
+    }
+
+    #[test]
+    fn selected_thread_list_messages_fill_the_row() -> anyhow::Result<()> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let rows = [
+            Row::Message {
+                entry: 0,
+                message: 1,
+                author: "user".to_owned(),
+                created: 0,
+                badge: None,
+                dim: false,
+                selected: true,
+            },
+            Row::Body {
+                entry: 0,
+                message: 1,
+                text: "     revised answer".to_owned(),
+                dim: false,
+                selected: true,
+            },
+        ];
+        for row in rows {
+            let line = list_row(&theme, &row, 0, 30);
+            let width: usize = line
+                .spans
+                .iter()
+                .map(|span| display_width(&span.content))
+                .sum();
+            assert_eq!(line.style, theme.picker_selected);
+            assert_eq!(width, 30);
+        }
+        Ok(())
     }
 
     // ADR 0029: rows slice by display cells and mark their cut edges.

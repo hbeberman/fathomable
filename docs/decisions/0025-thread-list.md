@@ -67,19 +67,27 @@ round on 2026-08-27; the choices are recorded below.
 
 ### Keys and mouse
 
-- `j`/`k` move between entries, `gg`/`G` jump, `Ctrl-d`/`Ctrl-u` move by
-  half a page. The selected entry's header is drawn in
-  `ui.picker.selected`; the list scrolls to keep it on screen.
+- `h`/`l` move between entries and select the newest message in each;
+  `j`/`k` move between the selected thread's messages (amended
+  2026-08-30). `gg`/`G` jump between entries, and `Ctrl-d`/`Ctrl-u` move
+  by half a page. The selected message's author and body rows are drawn
+  in `ui.picker.selected`; a folded thread highlights its header instead.
+  The list scrolls to keep the whole selected message visible when it
+  fits, or its first row visible when it does not.
 - `Enter` opens the entry's file at the thread's first line, opens the
-  thread pane on it, and closes the list. `Space A` again reopens the
-  list on the same entry, with the same filter and folds, for the rest of
-  the session.
-- `r` replies through the comment box; the list stays on screen above
-  the box, as the thread pane does, and focus returns to the list when
-  the box closes. `x` resolves an open entry or reopens a resolved one;
-  the entry moves to the other section and stays selected.
+  thread pane on the selected message, and closes the list. `Space A`
+  again reopens the list on the same entry and message, with the same
+  filter and folds, for the rest of the session.
+- `e` opens the selected user-authored message in the comment editor;
+  agent-authored messages are read-only (amended 2026-08-30). `r` replies
+  through the same box; the list stays on screen above it, as the thread
+  pane does, the submitted reply becomes the selected message, and focus
+  returns to the list when the box closes. `x` resolves an open entry or
+  reopens a resolved one; the entry moves to the other section and stays
+  selected.
 - The wheel scrolls the list three rows per tick; a click selects the
-  entry under the pointer. The list takes no border drag.
+  message under the pointer, or the entry when its header was clicked.
+  The list takes no border drag.
 - The list follows the store: a reply from another viewer or a headless
   `--mcp` (0024's watcher) redraws it with the selection kept by thread
   id; a `HEAD` change re-applies the scope.
@@ -94,8 +102,9 @@ round on 2026-08-27; the choices are recorded below.
 ## Consequences
 
 - `Focus` gains a `Threads` variant; the pill, the key dispatch, and the
-  mouse routing branch on it. The list's state and row model live in
-  `app/thread_list.rs`, which this record backs; `ui` draws the rows.
+  mouse routing branch on it. The list's state includes the selected
+  thread and message; its state and row model live in
+  `app/thread_list.rs`, which this record backs, and `ui` draws the rows.
 - The list's rows are computed from the store on every draw and key, not
   cached, so there is no list state to invalidate on reload. The cost is
   one pass over the store's threads, which the picker already paid.

@@ -102,8 +102,8 @@ shows the full list inside the app.
 | `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |
 | `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
-| list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
-| list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
+| list `h` `l`, `j` `k`, `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | previous / next thread, previous / next message, jump / page between threads; open the file at the selected thread and message |
+| list `e` `r` `x` `z` `Z` `f`, `Esc` | edit your selected message, reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
 | comment/edit box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | submit or save, newline, cancel (twice after a change), clear the draft (empty closes) |
 | comment/edit box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
 | comment/edit box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
@@ -192,9 +192,12 @@ file-threads pane.
 work (the ones whose commit `HEAD` can reach), open ones first and then
 resolved ones dimmed, grouped by file, each with its comment and replies
 in full. It takes the text column the way a document does; the tree
-stays beside it. `Enter` opens the file at the selected thread with its
-pane, `r` and `x` reply and resolve in place, `f` narrows the list to the
-file you were reading, and `Esc` goes back to it.
+stays beside it. The newest message in the selected thread starts
+highlighted; `h`/`l` move between threads, `j`/`k` move between their
+messages, and `e` edits a highlighted message you wrote. `Enter` opens
+the file and thread pane on that message, `r` and `x` reply and resolve
+in place, `f` narrows the list to the file you were reading, and `Esc`
+goes back to it.
 
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting

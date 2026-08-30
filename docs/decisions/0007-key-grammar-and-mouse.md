@@ -22,11 +22,12 @@ the mouse.
 
 - Vim grammar: `hjkl`, `gg`/`G`, `Ctrl-d/u`, `/` and `?` search with `n`/`N`,
   `:` command line, visual line mode for selecting annotation ranges, marks.
-- The thread pane is its own lateral context (amended 2026-08-30):
-  `h`/`l` page threads, `j`/`k` select messages within the thread, `Tab`
-  switches local/global scope, and `e` edits a selected user-authored
-  message. `PageUp`/`PageDown` retain explicit body scrolling, while
-  `Left` returns to the file-threads pane.
+- The thread pane and workspace thread list are lateral contexts (amended
+  2026-08-30): `h`/`l` page threads, `j`/`k` select messages within the
+  thread, and `e` edits a selected user-authored message. In the pane,
+  `Tab` switches local/global scope, `PageUp`/`PageDown` scroll the body,
+  and `Left` returns to the file-threads pane. In the workspace list,
+  the page keys and `Ctrl-d`/`Ctrl-u` retain half-page thread movement.
 - Mouse is enabled always: click to focus and place the cursor, drag to select
   lines, scroll wheel to scroll, click on tree entries and links. Mouse and
   keyboard share one selection model.

@@ -8,10 +8,11 @@
 //! events go into a [`Batch`], which waits out the hint debounce and then
 //! folds a burst into one [`Event`] per path: a plain [`Event::Change`],
 //! a [`Event::Created`] or [`Event::Removed`] entry, or a
-//! [`Event::Renamed`] pair. Renames are paired from the platform's own
-//! pairing first; an unpaired remove-then-create in one batch is paired
-//! when the created file's size and content hash match what the removed
-//! path last held.
+//! [`Event::Renamed`] pair. [`Event::Rescan`] preserves the platform's
+//! warning that events were lost. Renames are paired from the platform's
+//! own pairing first; an unpaired remove-then-create in one batch is
+//! paired when the created file's size and content hash match what the
+//! removed path last held.
 
 use std::collections::HashMap;
 use std::fs;
@@ -27,6 +28,8 @@ use tokio::sync::mpsc;
 /// What a settled batch says happened to one path. Paths are absolute.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
+    /// The platform lost events; reconcile from the filesystem.
+    Rescan,
     /// The file's content may have changed.
     Change(PathBuf),
     /// A file or directory appeared.
@@ -38,12 +41,14 @@ pub enum Event {
 }
 
 impl Event {
-    /// The path the event lands on: the new name for a rename.
+    /// The path the event lands on: the new name for a rename, or no path
+    /// when the whole workspace needs a rescan.
     #[must_use]
-    pub fn path(&self) -> &Path {
+    pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::Change(path) | Self::Created(path) | Self::Removed(path) => path,
-            Self::Renamed { to, .. } => to,
+            Self::Rescan => None,
+            Self::Change(path) | Self::Created(path) | Self::Removed(path) => Some(path),
+            Self::Renamed { to, .. } => Some(to),
         }
     }
 }
@@ -79,6 +84,8 @@ impl Fingerprint {
 /// One raw watcher notification, before debouncing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Raw {
+    /// The platform lost events; all remembered state may be stale.
+    Rescan,
     /// A file or directory appeared.
     Create(PathBuf),
     /// A file's content or metadata changed.
@@ -97,6 +104,9 @@ impl Raw {
     /// Translate a `notify` event; `None` for events that change neither
     /// content nor existence (opens and other accesses).
     fn from_notify(event: notify::Event) -> Vec<Self> {
+        if event.need_rescan() {
+            return vec![Self::Rescan];
+        }
         let notify::Event { kind, paths, .. } = event;
         match kind {
             EventKind::Create(_) => paths.into_iter().map(Self::Create).collect(),
@@ -312,6 +322,9 @@ impl Batch {
 /// a removed path whose last-seen fingerprint matches a created file is
 /// a rename after all.
 fn classify(raw: &[Raw], last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Vec<Event> {
+    if raw.contains(&Raw::Rescan) {
+        return vec![Event::Rescan];
+    }
     let mut renames: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut pending_from: Option<PathBuf> = None;
     let mut order: Vec<PathBuf> = Vec::new();
@@ -326,6 +339,7 @@ fn classify(raw: &[Raw], last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Ve
     };
     for event in raw {
         match event {
+            Raw::Rescan => unreachable!("rescan events return before path classification"),
             Raw::Rename { from, to } => {
                 pending_from.take();
                 renames.push((from.clone(), to.clone()));
@@ -435,7 +449,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use notify::EventKind;
-    use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind, RemoveKind, RenameMode};
+    use notify::event::{
+        AccessKind, AccessMode, CreateKind, Flag, ModifyKind, RemoveKind, RenameMode,
+    };
 
     use super::{Event, Fingerprint, Raw, classify, is_git_metadata};
 
@@ -467,6 +483,8 @@ mod tests {
                 .is_empty()
         );
         assert!(Raw::from_notify(event(EventKind::Any)).is_empty());
+        let rescan = notify::Event::new(EventKind::Other).set_flag(Flag::Rescan);
+        assert_eq!(Raw::from_notify(rescan), [Raw::Rescan]);
         let both = notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
             .add_path(p("/w/a"))
             .add_path(p("/w/b"));
@@ -517,6 +535,19 @@ mod tests {
                 Event::Created(p("/w/back")),
             ]
         );
+    }
+
+    #[test]
+    fn a_rescan_notice_supersedes_an_unreliable_batch() {
+        let events = classify(
+            &[
+                Raw::Create(p("/w/new")),
+                Raw::Rescan,
+                Raw::Modify(p("/w/old")),
+            ],
+            no_snapshot,
+        );
+        assert_eq!(events, [Event::Rescan]);
     }
 
     #[test]

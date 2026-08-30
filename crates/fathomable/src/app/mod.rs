@@ -729,11 +729,19 @@ impl App {
     /// reload, follow their rename, or keep their content under a
     /// `deleted` banner; changes that pass the source and ignore rules
     /// join the queue; the directories whose listings changed are
-    /// re-read in the tree.
+    /// re-read in the tree. A platform event-loss notice reconciles the
+    /// whole remembered workspace from disk.
     pub fn on_events(&mut self, events: Vec<watch::Event>) {
+        if events
+            .iter()
+            .any(|event| matches!(event, watch::Event::Rescan))
+        {
+            self.rescan_workspace();
+            return;
+        }
         // The store lives outside the root; another writer's append lands
         // here through the store watch (ADR 0024).
-        if events.iter().any(|e| Some(e.path()) == self.store_path()) {
+        if events.iter().any(|e| e.path() == self.store_path()) {
             self.reload_store();
         }
         let root = self.workspace.root().to_path_buf();
@@ -757,7 +765,10 @@ impl App {
                 }
                 other => other,
             };
-            let Ok(relative) = event.path().strip_prefix(&root).map(Path::to_path_buf) else {
+            let Some(path) = event.path() else {
+                continue;
+            };
+            let Ok(relative) = path.strip_prefix(&root).map(Path::to_path_buf) else {
                 continue;
             };
             if relative.starts_with(".git") {
@@ -791,6 +802,7 @@ impl App {
                     self.note_dir(&relative, &mut dirs);
                     self.on_renamed(&from, &relative);
                 }
+                watch::Event::Rescan => {}
             }
         }
         if git_changed {
@@ -818,6 +830,33 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Reconcile state after the platform reports that watcher events were
+    /// lost. The tree, loaded documents, repository bases, status, and
+    /// annotation store may all have changed during the gap.
+    fn rescan_workspace(&mut self) {
+        tracing::warn!("file watcher lost events; rescanning workspace");
+        self.reload_store();
+        for index in 0..self.docs.len() {
+            self.refresh_base(index);
+        }
+        self.refresh_scope();
+
+        let root = self.workspace.root().to_path_buf();
+        let loaded: Vec<PathBuf> = self.docs.iter().map(|doc| doc.relative.clone()).collect();
+        for relative in loaded {
+            let absolute = root.join(&relative);
+            if absolute.is_file() {
+                self.on_change(&relative, &absolute);
+            } else {
+                self.on_removed(&relative);
+            }
+        }
+        self.refresh_status();
+        self.file_index = None;
+        self.all_index = None;
+        self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
     }
 
     /// Note that the listing holding root-relative `path` changed, unless
@@ -2297,7 +2336,7 @@ async fn run_async(
             }
             () = batch.settled() => {
                 let mut events = batch.take(|path| app.last_seen_fingerprint(path));
-                events.retain(|event| doc_watcher.is_target(event.path()));
+                events.retain(|event| event.path().is_none_or(|path| doc_watcher.is_target(path)));
                 app.on_events(events);
                 Effect::None
             }
@@ -3247,6 +3286,15 @@ mod tests {
         assert_eq!(app.tree().map(Tree::cursor), Some(0), "cursor stays");
         app.open_picker(PickerKind::Files);
         assert!(picker_items(&app).iter().any(|p| p == "NEW.md"));
+        app.close_popup();
+
+        // If the platform says it lost events, a full rescan discovers a
+        // creation whose individual event never arrived.
+        fs::write(dir.0.join("MISSED.md"), "# Missed\n")?;
+        app.on_events(vec![Event::Rescan]);
+        assert!(has(&app, "MISSED.md"));
+        app.open_picker(PickerKind::Files);
+        assert!(picker_items(&app).iter().any(|p| p == "MISSED.md"));
         app.close_popup();
 
         // A collapsed directory is not re-read until it is expanded.

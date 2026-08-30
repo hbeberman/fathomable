@@ -44,16 +44,17 @@ can drive all of them or one by name (`--name`, or `:name` later). The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
-The workspace is live too. A file the agent creates, deletes, or renames
-shows up in, leaves, or moves within the tree on its own (within
-`follow.hint-debounce`), so `R` is only for a listing you suspect is
-stale. If the file you are reading is deleted, the text stays put under a
-`deleted` banner and the pill reads `DELETED`: you can still scroll,
-search, and read its threads, but `c`, `C`, and replies are refused until
-the file comes back, at which point it reloads and the banner goes. If it
-is renamed, the view follows with your position and threads intact, the
-threads move to the new path in the store, and the status line says
-`renamed to NEW`.
+The workspace is live too. A file or directory the agent creates,
+deletes, or renames shows up in, leaves, or moves within the tree on its
+own (within `follow.hint-debounce`) — a whole new directory arrives
+collapsed, and is listed when you expand it — so `R` is only for a
+listing you suspect is stale. If the file you are reading is deleted,
+the text stays put under a `deleted` banner and the pill reads
+`DELETED`: you can still scroll, search, and read its threads, but `c`,
+`C`, and replies are refused until the file comes back, at which point it
+reloads and the banner goes. If it is renamed, the view follows with
+your position and threads intact, the threads move to the new path in the
+store, and the status line says `renamed to NEW`.
 
 Markdown files (`.md`, `.markdown`, `.mdx`, and well-known extensionless
 prose such as `README` and `LICENSE`) open rendered; every other file,

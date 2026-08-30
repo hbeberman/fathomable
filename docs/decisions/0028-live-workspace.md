@@ -39,9 +39,15 @@ Settled in a question round on 2026-08-28; the choices are below.
 - A create, remove, or rename event under the root re-reads the
   affected directory after the hint debounce (`follow.hint-debounce`,
   300 ms by default), so a burst of writes costs one rebuild. Only
-  directories the tree has expanded are re-read; a change inside a
-  collapsed directory is seen when it is expanded, as today. The
-  cursor and expanded set survive as they do for `R`.
+  directories the tree has already read are re-read, expanded or
+  collapsed; one it has never read is read when it is expanded. An
+  event on a path the tree has no listing for — the agent made a
+  directory and wrote into it in the same burst — re-reads the nearest
+  listing above it, which is what brings the new directory into view
+  (amended 2026-08-29; only expanded directories were re-read, so a
+  collapsed listing kept its stale entries when it was re-expanded and
+  a new directory never appeared at all). The cursor and expanded set
+  survive as they do for `R`.
 - Events on paths the tree would not show — the ignore rules of the
   workspace plus `follow.ignore` — never trigger a rebuild, so build
   output churning under `target/` is free. With `I` showing ignored

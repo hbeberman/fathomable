@@ -168,11 +168,18 @@ impl Tree {
         Ok(())
     }
 
-    /// Re-read one directory after a file appeared, vanished, or was
-    /// renamed in it (ADR 0028). Only an expanded directory is re-read;
-    /// a collapsed or unread one is seen when it is expanded. Expansion
-    /// state of surviving subdirectories and the cursor path are kept.
-    /// Returns whether anything was re-read.
+    /// Re-read the listing that holds `dir` after a file appeared,
+    /// vanished, or was renamed in it (ADR 0028).
+    ///
+    /// A directory the tree has read is re-read whether it is expanded or
+    /// collapsed, so a collapsed listing cannot go stale behind the
+    /// reader's back. One the tree has never read is left alone: it is
+    /// read when it is expanded. When `dir` itself is not in the tree —
+    /// the agent made a directory and wrote into it in one burst — the
+    /// nearest listing above it is re-read instead, which is what brings
+    /// the new directory into view. Expansion state of surviving
+    /// subdirectories and the cursor path are kept. Returns whether
+    /// anything was re-read.
     ///
     /// # Errors
     ///
@@ -184,12 +191,13 @@ impl Tree {
         dir: &Path,
     ) -> Result<bool, WorkspaceError> {
         let filter = self.filter;
+        let Some(dir) = listing_of(&self.root, dir) else {
+            return Ok(false);
+        };
+        let dir = dir.as_path();
         let Some(node) = find_node(&mut self.root, dir) else {
             return Ok(false);
         };
-        if !node.is_dir || !node.expanded || node.children.is_none() {
-            return Ok(false);
-        }
         let fresh = match read_children(workspace, dir, filter) {
             Ok(fresh) => fresh,
             Err(error) if !workspace.root().join(dir).is_dir() => {
@@ -430,6 +438,31 @@ fn read_children(
             children: None,
         })
         .collect())
+}
+
+/// The listing to re-read so the tree reflects a change at `dir`: `dir`
+/// itself when the tree has read it, or the deepest read directory above
+/// it when `dir` is not in the tree. `None` when the tree has read no
+/// listing that would show `dir`, which is one it has never expanded.
+fn listing_of(root: &Node, dir: &Path) -> Option<PathBuf> {
+    let mut node = root;
+    let mut prefix = PathBuf::new();
+    for component in dir.components() {
+        let Component::Normal(name) = component else {
+            return None;
+        };
+        let name = name.to_str()?;
+        // An unread directory on the way holds no listing to update.
+        let children = node.children.as_ref()?;
+        let Some(child) = children.iter().find(|c| c.name == name && c.is_dir) else {
+            // `dir` is not in the tree, but the listing that would name
+            // it is the one this change belongs to.
+            return Some(prefix);
+        };
+        node = child;
+        prefix.push(name);
+    }
+    node.children.is_some().then_some(prefix)
 }
 
 fn find_node<'a>(root: &'a mut Node, path: &Path) -> Option<&'a mut Node> {

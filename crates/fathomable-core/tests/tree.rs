@@ -173,6 +173,40 @@ fn refresh_dir_rereads_one_expanded_directory() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[test]
+fn refresh_dir_brings_a_new_directory_into_view() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("refresh-new-dir")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    assert!(tree.reveal(&mut workspace, Path::new("src/main.rs"))?);
+
+    // An agent makes a directory and writes into it in one burst: the
+    // event lands on a directory the tree has never listed, and the
+    // listing that names it is re-read instead.
+    fs::create_dir_all(dir.0.join("src/fresh/deeper"))?;
+    fs::write(dir.0.join("src/fresh/deeper/new.rs"), "")?;
+    assert!(tree.refresh_dir(&mut workspace, Path::new("src/fresh/deeper"))?);
+    assert!(tree.contains(Path::new("src/fresh")));
+    assert!(!tree.contains(Path::new("src/fresh/deeper")), "still lazy");
+    assert_eq!(
+        tree.current().map(Row::name),
+        Some("main.rs"),
+        "cursor stays"
+    );
+
+    // A collapsed directory the tree has read keeps its listing current,
+    // so re-expanding it shows what arrived while it was shut.
+    tree.reveal(&mut workspace, Path::new("src"))?;
+    tree.collapse();
+    assert!(!tree.contains(Path::new("src/main.rs")));
+    fs::write(dir.0.join("src/late.rs"), "")?;
+    assert!(tree.refresh_dir(&mut workspace, Path::new("src"))?);
+    tree.expand(&mut workspace)?;
+    assert!(tree.contains(Path::new("src/late.rs")));
+    assert!(tree.contains(Path::new("src/nested")), "subdirectory kept");
+    Ok(())
+}
+
 /// A minimal repository gix can discover: HEAD, config, and empty
 /// object and ref stores, so the test never depends on host git.
 fn init_git(dir: &Path) -> std::io::Result<()> {

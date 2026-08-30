@@ -3216,7 +3216,7 @@ mod tests {
     }
 
     #[test]
-    fn watcher_events_refresh_expanded_directories_only() -> anyhow::Result<()> {
+    fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
         use super::watch::Event;
         let dir = TempDir::new("tree-events")?;
         let follow = FollowConfig {
@@ -3251,6 +3251,16 @@ mod tests {
         assert!(!has(&app, "docs/deep.md"));
         app.with_tree_result(Tree::activate);
         assert!(has(&app, "docs/deep.md"));
+
+        // A file written into a directory the tree has never listed —
+        // an agent making a crate and filling it in one burst — brings
+        // that directory into view; what is inside it waits for the
+        // expansion.
+        fs::create_dir_all(dir.0.join("crates/pipe/src"))?;
+        fs::write(dir.0.join("crates/pipe/Cargo.toml"), "[package]\n")?;
+        app.on_events(vec![Event::Created(dir.0.join("crates/pipe/Cargo.toml"))]);
+        assert!(has(&app, "crates"));
+        assert!(!has(&app, "crates/pipe"), "the new listing stays lazy");
 
         // A path `follow.ignore` hides never triggers a re-read.
         fs::create_dir_all(dir.0.join("build"))?;

@@ -78,9 +78,9 @@ below.
   one line are two steps, where 0027's line-based step collapsed them.
   The cursor still moves to each thread's first line.
 - `Enter`, `l`, and `Right` in the file-threads pane hand focus to the
-  thread pane. `h` and `Left` in the thread pane hand it back, showing
+  thread pane. `Left` in the thread pane hands it back, showing
   the tree first when it was hidden; with no threads pane to go to they
-  do nothing.
+  do nothing. (`h` became previous-thread paging on 2026-08-30.)
 - `Esc` in the file-threads pane closes the thread pane and returns
   the keys to the text, so the two surfaces the list opened go away
   together. A reply from the file-threads pane keeps the thread pane
@@ -88,7 +88,8 @@ below.
 
 ### The pane opens at its end
 
-- The thread pane opens scrolled so its last row is visible, and
+- The thread pane opens scrolled so its last row and newest selected
+  message are visible, and
   returns there when the shown thread gains a reply. The scroll is kept
   only while the same thread is shown and nothing was added.
 - The body ends with a dim `─── END ───` row after the last message,

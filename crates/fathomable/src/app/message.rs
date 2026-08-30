@@ -8,7 +8,7 @@
 
 use fathomable_core::annotations::Thread;
 use fathomable_core::highlight::Highlighter;
-use fathomable_core::layout::Layout;
+use fathomable_core::layout::{Layout, display_width};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
@@ -35,6 +35,7 @@ pub(super) fn thread_body_lines<'a>(
     first: usize,
     now: u64,
     width: usize,
+    selected: usize,
 ) -> Vec<Line<'a>> {
     let inner = width.saturating_sub(2);
     let mut body: Vec<Line<'_>> = Vec::new();
@@ -62,8 +63,15 @@ pub(super) fn thread_body_lines<'a>(
         body: thread.comment(),
         badge: None,
     };
-    body.extend(message_lines(theme, highlighter, &comment, now, inner));
-    for reply in thread.replies() {
+    body.extend(message_lines(
+        theme,
+        highlighter,
+        &comment,
+        now,
+        inner,
+        selected == 0,
+    ));
+    for (index, reply) in thread.replies().iter().enumerate() {
         body.push(Line::from(""));
         let message = Message {
             author: reply.author().name(),
@@ -71,7 +79,14 @@ pub(super) fn thread_body_lines<'a>(
             body: reply.body(),
             badge: reply.proposes_resolution().then_some("proposes resolving"),
         };
-        body.extend(message_lines(theme, highlighter, &message, now, inner));
+        body.extend(message_lines(
+            theme,
+            highlighter,
+            &message,
+            now,
+            inner,
+            selected == index + 1,
+        ));
     }
     body.push(Line::from(Span::styled(
         " ─── END ───",
@@ -88,6 +103,7 @@ fn message_lines<'a>(
     message: &Message<'_>,
     now: u64,
     width: usize,
+    selected: bool,
 ) -> Vec<Line<'a>> {
     let mut header = vec![
         Span::styled(format!(" {}", message.author), theme.popup_key),
@@ -99,7 +115,7 @@ fn message_lines<'a>(
     if let Some(badge) = message.badge {
         header.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
     }
-    let mut out = vec![Line::from(header)];
+    let mut out = vec![message_line(theme, header, width, selected)];
     let indent = " ".repeat(MESSAGE_INDENT);
     for line in body_layout(message.body, width, highlighter).lines() {
         let mut spans = vec![Span::raw(indent.clone())];
@@ -108,9 +124,27 @@ fn message_lines<'a>(
                 .iter()
                 .map(|span| Span::styled(span.text().to_owned(), face_style(theme, span.style()))),
         );
-        out.push(Line::from(spans));
+        out.push(message_line(theme, spans, width, selected));
     }
     out
+}
+
+fn message_line<'a>(
+    theme: &Theme,
+    mut spans: Vec<Span<'a>>,
+    width: usize,
+    selected: bool,
+) -> Line<'a> {
+    if selected {
+        let used = spans
+            .iter()
+            .map(|span| display_width(&span.content))
+            .sum::<usize>();
+        spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+        Line::from(spans).style(theme.picker_selected)
+    } else {
+        Line::from(spans)
+    }
 }
 
 /// Rows the pane's body takes for `thread` at `width`: snippet, blank,
@@ -126,6 +160,33 @@ pub(super) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &High
         .map(|reply| 1 + message_rows(reply.body()))
         .sum();
     snippet_rows + 1 + message_rows(thread.comment()) + replies + 1
+}
+
+/// The body rows occupied by message `selected`, zero for the comment.
+pub(super) fn thread_message_range(
+    thread: &Thread,
+    selected: usize,
+    width: usize,
+    highlighter: &Highlighter,
+) -> Option<std::ops::Range<usize>> {
+    let inner = width.saturating_sub(2);
+    let snippet = thread.snippet().lines().count();
+    let mut start = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS) + 1;
+    let rows = |body: &str| 1 + body_layout(body, inner, highlighter).lines().len();
+    let comment_rows = rows(thread.comment());
+    if selected == 0 {
+        return Some(start..start + comment_rows);
+    }
+    start += comment_rows;
+    for (index, reply) in thread.replies().iter().enumerate() {
+        start += 1;
+        let reply_rows = rows(reply.body());
+        if selected == index + 1 {
+            return Some(start..start + reply_rows);
+        }
+        start += reply_rows;
+    }
+    None
 }
 
 /// The body laid out as Markdown in the cells left of `width` after the
@@ -173,6 +234,7 @@ mod tests {
             &message,
             0,
             width,
+            false,
         ))
     }
 
@@ -211,6 +273,21 @@ mod tests {
         let wrapped = render(&long, None, 30)?;
         assert!(wrapped.len() > 3, "wrapped: {}", wrapped.len());
         assert!(texts(&wrapped).iter().all(|t| t.chars().count() <= 30));
+        Ok(())
+    }
+
+    #[test]
+    fn a_selected_message_fills_each_row_with_the_selection_style() -> anyhow::Result<()> {
+        let theme = theme()?;
+        let message = Message {
+            author: "user",
+            created: 0,
+            body: "selected",
+            badge: None,
+        };
+        let lines = message_lines(&theme, &Highlighter::plain(), &message, 0, 24, true);
+        assert!(lines.iter().all(|line| line.style == theme.picker_selected));
+        assert!(texts(&lines).iter().all(|line| display_width(line) == 24));
         Ok(())
     }
 }

@@ -53,6 +53,11 @@ were captured in a question round on 2026-08-26.
 - Thread ids are `<unix-seconds>-<pid>-<n>`; authors are the string `user`
   or an agent-supplied name; timestamps are Unix seconds supplied by the
   caller so the store stays pure.
+- Editing a message (amended 2026-08-30) appends an `edit` event naming
+  the opening comment or a zero-based reply, its replacement body, and
+  the edit time. Only the opening comment and replies authored by the
+  user are editable; an agent message or an unknown reply is rejected
+  before anything is appended.
 
 ### Anchor
 
@@ -129,11 +134,15 @@ were captured in a question round on 2026-08-26.
   author. When the text overflows the last row reads `▼ N more`, and
   scrolling stops at the end (since [0034](0034-deleting-threads.md),
   2026-08-28, the pane opens at its end under a dim `─── END ───` row).
-  `j`/`k` scroll, `n`/`p` switch
-  between threads on the row (superseded by
-  [0027](0027-revisiting-threads.md), 2026-08-28: they walk every thread
-  in the file, moving the cursor; `p` became `N` on 2026-08-28, matching search), `r` replies through the comment box, `x`
-  resolves an open thread or reopens a resolved one, Esc closes.
+  The newest message starts highlighted (amended 2026-08-30):
+  `j`/`k` move that highlight between the comment and replies and keep it
+  visible; `e` opens a user-authored selection in the comment editor,
+  seeded with its body, and Enter appends the edit. `h`/`l` page every
+  thread in the selected scope, moving the cursor; `Tab` switches between
+  local (this file) and global (the work), with each scope remembering
+  its selected thread and message. `PageUp`/`PageDown` scroll long
+  content, `Left` returns to the file-threads pane, `r` replies through
+  the comment box, `x` resolves or reopens, and Esc closes.
 - While replying the pane stays on screen above the box, pushed up by
   the box's rows, so the thread can be read; Up/Down scroll it
   (superseded by [0018](0018-comment-editor.md), 2026-08-27: Up/Down
@@ -159,5 +168,4 @@ were captured in a question round on 2026-08-26.
   a detached bool.
 - Agents get their MCP entry points (`annotations_list`, `thread_reply`) in
   milestone 4; until then a thread file is plain JSONL an agent can read.
-- Editing a thread in `$EDITOR` and discouraging agent force-resolve stay
-  parked.
+- Discouraging agent force-resolve stays parked.

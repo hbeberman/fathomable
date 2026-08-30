@@ -1331,9 +1331,19 @@ fn draw_compose(
                 .map_or_else(String::new, |m| format!(" on L{}", m.range()));
             format!(" reply{range}")
         }
+        ComposeTarget::Edit { thread, .. } => {
+            let range = app
+                .marks()
+                .iter()
+                .find(|mark| mark.id() == thread)
+                .map_or_else(String::new, |mark| format!(" on L{}", mark.range()));
+            format!(" edit message{range}")
+        }
     };
     let hint = if compose.confirming_discard() {
         "Esc again to discard · any key keeps the draft"
+    } else if matches!(compose.target(), ComposeTarget::Edit { .. }) {
+        "Enter save · Alt-Enter newline · Ctrl-e $EDITOR · Esc"
     } else if app.thread_panel().is_some() {
         "Enter submit · Alt-Enter newline · PgUp/PgDn thread · Ctrl-e $EDITOR · Esc"
     } else {
@@ -1573,13 +1583,28 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
             theme.info,
         ));
     }
-    let body = thread_body_lines(theme, app.highlighter(), thread, range.start(), now, width);
+    let body = thread_body_lines(
+        theme,
+        app.highlighter(),
+        thread,
+        range.start(),
+        now,
+        width,
+        panel.selected_message(),
+    );
     debug_assert_eq!(
         body.len(),
         thread_body_rows(thread, width, app.highlighter())
     );
     let body_rows = rows - 2;
-    let hints = thread_hints(app, words, total > 1, body.len() > body_rows);
+    let hints = thread_hints(
+        app,
+        words,
+        total,
+        thread.replies().len() + 1,
+        body.len(),
+        body_rows,
+    );
     let mut lines = vec![
         rule_line(theme, width),
         header_line(theme, left, &hints, width),
@@ -1601,7 +1626,14 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
 
 /// The keys that do something in the thread pane right now, most useful
 /// first so a narrow pane keeps the ones that matter (ADR 0007).
-fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<Hint<'static>> {
+fn thread_hints(
+    app: &App,
+    words: Words,
+    total: usize,
+    messages: usize,
+    body_len: usize,
+    body_rows: usize,
+) -> Vec<Hint<'static>> {
     if app.focus() != Focus::Thread {
         return vec![("", "click or Space a to focus")];
     }
@@ -1609,6 +1641,9 @@ fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<
         return vec![("d", "delete"), ("other", "cancels")];
     }
     let mut hints = vec![("r", "reply")];
+    if app.thread_message_editable() {
+        hints.push(("e", "edit"));
+    }
     hints.push((
         "x",
         if words.is_resolved() {
@@ -1618,14 +1653,17 @@ fn thread_hints(app: &App, words: Words, several: bool, overflows: bool) -> Vec<
         },
     ));
     hints.push(("dd", "delete"));
-    if several {
-        hints.push(("n/N", "next/prev"));
+    if total > 1 {
+        hints.push(("h/l", "threads"));
     }
-    hints.push(("f", "scope"));
-    if overflows {
-        hints.push(("j/k", "scroll"));
+    hints.push(("Tab", "scope"));
+    if messages > 1 {
+        hints.push(("j/k", "messages"));
     }
-    hints.extend([("h", "list"), ("Esc", "close")]);
+    if body_len > body_rows {
+        hints.push(("PgUp/PgDn", "scroll"));
+    }
+    hints.extend([("Left", "list"), ("Esc", "close")]);
     hints
 }
 

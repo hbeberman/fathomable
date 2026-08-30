@@ -71,6 +71,7 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 use crate::crash;
+use threads::ThreadSelections;
 pub use threads::{Compose, Mark, ThreadNav, ThreadPanel};
 use view::{Effect, HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
@@ -365,8 +366,10 @@ pub struct App {
     sidebar_cols: Option<usize>,
     /// The thread pane along the bottom of the text (ADR 0013).
     thread: Option<ThreadPanel>,
-    /// Where the pane's `n` / `N` walk (ADR 0027).
+    /// Where the pane's `h` / `l` paging walks (ADR 0027).
     thread_nav: ThreadNav,
+    /// The thread and message last selected in each pane scope.
+    thread_selections: ThreadSelections,
     /// The thread list shown in place of the document (ADR 0025).
     list: ThreadList,
     /// Thread pane height once dragged; the default follows the terminal.
@@ -460,6 +463,7 @@ impl App {
             sidebar_cols: None,
             thread: None,
             thread_nav: ThreadNav::default(),
+            thread_selections: ThreadSelections::default(),
             list: ThreadList::default(),
             thread_rows: None,
             file_rows: None,

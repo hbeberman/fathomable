@@ -96,7 +96,7 @@ shows the full list inside the app.
 | `C` | always start a new thread, on the selection or the cursor line |
 | `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| thread pane `r` `x` `n` `N` `f` `j` `k`, `h`, `Esc` | reply, resolve or reopen, next / previous thread (the cursor follows), toggle the scope `n` / `N` walk between local (this file) and global (every file on the work); the header reads `thread 3/12 local` or `global`, scroll; back to the file-threads pane; close |
+| thread pane `h` `l`, `j` `k`, `Tab`, `e` `r` `x`, `PgUp` `PgDn`, `Left`, `Esc` | previous / next thread (the cursor follows), previous / next message, switch local/global scope, edit your selected message, reply, resolve or reopen, scroll; back to the file-threads pane; close |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
 | file threads `j` `k` `l` `r` `x`, `Esc` | next / previous thread (the cursor and the thread pane follow), focus the thread pane, reply, resolve or reopen; close the pane, back to the text |
 | `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |
@@ -104,11 +104,11 @@ shows the full list inside the app.
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | list `j` `k` `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | move between threads; open the file at the thread and its pane |
 | list `r` `x` `z` `Z` `f`, `Esc` | reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
-| comment box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | submit, newline, cancel (twice on a draft), clear the draft (empty closes) |
-| comment box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
-| comment box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
-| comment box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
-| comment box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
+| comment/edit box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | submit or save, newline, cancel (twice after a change), clear the draft (empty closes) |
+| comment/edit box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
+| comment/edit box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
+| comment/edit box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
+| comment/edit box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
 | tree `j` `k` `h` `l` `Enter`, `R`, `I` | move (the highlighted file is shown), collapse, expand or open and focus; re-read (new, deleted, and renamed files already show on their own); show ignored |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files; `Ctrl-n` `Ctrl-p` move |
@@ -175,9 +175,18 @@ reply count and age at the edge. The highlighted row is the thread under
 the cursor, so reading the file walks the pane; `Space t` or a click on
 its header focuses it and opens the thread pane on the highlight, a
 click on a row or `j`/`k` shows that thread in the pane while the keys
-stay with the list, `l` steps into the pane (`h` steps back), and `r`
+stay with the list, `l` steps into the pane (`Left` steps back), and `r`
 and `x` act on the highlight. The thread pane opens at its end, where
 a dim `─── END ───` row follows the last message.
+
+In the thread pane the newest message starts highlighted. `j`/`k` move
+the highlight between the opening comment and its replies, keeping it on
+screen; `e` opens the highlighted message in the same editor when the
+user wrote it, while agent messages cannot be edited. `h`/`l` page
+threads and `Tab` switches their scope between `local` (this file) and
+`global` (the work). Each scope remembers its own selected thread and
+message. `PgUp`/`PgDn` scroll long messages, and `Left` returns to the
+file-threads pane.
 
 `Space A` shows the whole review at once: every thread on the current
 work (the ones whose commit `HEAD` can reach), open ones first and then

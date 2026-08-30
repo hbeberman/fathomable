@@ -330,15 +330,18 @@ fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
 fn thread(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.close_thread(),
-        KeyCode::Char('j') | KeyCode::Down => app.thread_scroll(1),
-        KeyCode::Char('k') | KeyCode::Up => app.thread_scroll(-1),
-        KeyCode::Char('n') => app.thread_step(1),
-        KeyCode::Char('N') => app.thread_step(-1),
+        KeyCode::Tab => app.thread_toggle_nav(),
+        KeyCode::Char('j') | KeyCode::Down => app.thread_message_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.thread_message_move(-1),
+        KeyCode::Char('h') => app.thread_step(-1),
+        KeyCode::Char('l') => app.thread_step(1),
+        KeyCode::PageUp => app.thread_scroll(-WHEEL_LINES),
+        KeyCode::PageDown => app.thread_scroll(WHEEL_LINES),
         KeyCode::Char('r') => app.thread_reply(),
+        KeyCode::Char('e') => app.thread_edit_message(),
         KeyCode::Char('x') => app.thread_toggle_resolved(),
         KeyCode::Char('d') => app.thread_arm_delete(),
-        KeyCode::Char('f') => app.thread_toggle_nav(),
-        KeyCode::Char('h') | KeyCode::Left => app.thread_to_file_threads(),
+        KeyCode::Left => app.thread_to_file_threads(),
         _ => {}
     }
 }

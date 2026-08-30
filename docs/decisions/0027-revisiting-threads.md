@@ -61,6 +61,10 @@ question round on 2026-08-28; the choices are recorded below.
   thread, and is the seed of a later filter-driven walk (by state,
   author, or age) should one be wanted.
 
+(Amended 2026-08-30: `h`/`l` replace `N`/`n` for previous/next
+thread, and `Tab` replaces `f`. Local and global each retain their own
+selected thread and selected message.)
+
 ### The gutter brackets a range
 
 - The note cell draws a thread's rows as a rounded bracket: `╭` on its
@@ -135,7 +139,7 @@ each; the logic moved to `app/gutter.rs`.)
   [0034](0034-deleting-threads.md), 2026-08-28: the thread pane is open
   on the highlight whenever this pane has focus, `j`/`k` step by entry
   and, like a click on a row, change the thread pane without moving
-  focus to it; `Enter`/`l` do, `h` in the thread pane returns, and
+  focus to it; `Enter`/`l` do, `Left` in the thread pane returns, and
   `Esc` closes the thread pane along with the pane's focus.)
 
 ## Consequences

@@ -77,11 +77,13 @@ Milestones are ordered; each is usable on its own. Details live in the
     the sidebar tags it `bin`
     ([0026](decisions/0026-binary-files-and-file-info.md)).
 18. **Revisiting threads.** `c` on a thread opens it and `C` always
-    starts one; the thread pane's `n`/`p` walk every thread in the
-    file; the gutter brackets a thread's rows with `╭ │ ╰` and dots a
-    one-row thread; and a file-threads pane under the tree lists the
-    file's threads, open and resolved, highlighting the one under the
-    cursor ([0027](decisions/0027-revisiting-threads.md)).
+    starts one; the thread pane's `h`/`l` page threads, `j`/`k` select
+    messages, `Tab` switches independently remembered local/global
+    selections, and `e` edits a user message; the gutter brackets a
+    thread's rows with `╭ │ ╰` and dots a one-row thread; and a
+    file-threads pane under the tree lists the file's threads, open and
+    resolved, highlighting the one under the cursor
+    ([0027](decisions/0027-revisiting-threads.md)).
 19. **Live workspace.** The tree follows the agent creating, deleting,
     and renaming files; a deleted open file keeps its content under a
     banner; a rename carries the file's threads and is recorded in the

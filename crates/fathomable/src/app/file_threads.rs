@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(app.focus(), Focus::FileThreads);
 
         // `r` replies in place; `x` resolves; `l` steps into the thread
-        // pane and `h` steps back; Esc closes the pane with the focus.
+        // pane and Left steps back; Esc closes the pane with the focus.
         app.file_thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
@@ -464,7 +464,7 @@ mod tests {
         app.leave_file_threads();
         assert_eq!(app.focus(), Focus::View);
         assert!(app.thread_panel().is_none());
-        // `h` from the pane shows the tree when it was hidden.
+        // Left from the pane shows the tree when it was hidden.
         app.hide_sidebar();
         app.file_thread_open();
         app.thread_to_file_threads();

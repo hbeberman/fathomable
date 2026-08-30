@@ -251,13 +251,19 @@ mod tests {
         Some(app.thread(panel.id())?.range().start())
     }
 
-    /// `f` in the thread pane widens `n` / `N` from the file to the work:
-    /// the header counts every thread, `n` crosses into the next file,
-    /// and `f` again narrows back. Here for the two-file harness.
+    /// Tab widens the thread pane from the file to the work and restores
+    /// each scope's own selected thread when toggled back.
     #[test]
-    fn f_in_the_pane_toggles_n_between_file_and_workspace() -> anyhow::Result<()> {
+    fn tab_in_the_pane_preserves_file_and_workspace_selections() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use crate::app::keys;
+
         let dir = TempDir::new("nav")?;
         let mut app = dir.app()?;
+        let press = |app: &mut App, code| {
+            keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+        };
         let mut other = Store::open(dir.store_path())?;
         agent_thread(&mut other, "README.md", README, 3, true)?;
         agent_thread(&mut other, "README.md", README, 5, true)?;
@@ -268,30 +274,40 @@ mod tests {
         assert_eq!(open_line(&app), Some(3));
         assert_eq!(app.thread_nav(), ThreadNav::File);
         assert_eq!(app.thread_position(), Some((1, 2)));
-        // In the file, n wraps within README.
-        app.thread_step(1);
-        app.thread_step(1);
+        // In the file, paging wraps within README.
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.current_path(), Path::new("README.md"));
         assert_eq!(open_line(&app), Some(3));
 
-        app.thread_toggle_nav();
+        press(&mut app, KeyCode::Tab);
         assert_eq!(app.thread_nav(), ThreadNav::Workspace);
         assert_eq!(app.thread_position(), Some((1, 3)));
-        app.thread_step(1);
-        app.thread_step(1);
+        press(&mut app, KeyCode::Char('l'));
+        press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.current_path(), Path::new("notes.md"));
         assert_eq!(open_line(&app), Some(4));
         assert_eq!(app.thread_position(), Some((3, 3)));
-        // N from the first thread wraps to the last, whichever file.
-        app.thread_step(1);
+        // Previous from the first thread wraps to the last, whichever file.
+        press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.current_path(), Path::new("README.md"));
         assert_eq!(app.thread_position(), Some((1, 3)));
-        app.thread_step(-1);
+        press(&mut app, KeyCode::Char('h'));
         assert_eq!(app.current_path(), Path::new("notes.md"));
 
-        app.thread_toggle_nav();
+        press(&mut app, KeyCode::Tab);
         assert_eq!(app.thread_nav(), ThreadNav::File);
-        assert_eq!(app.thread_position(), Some((1, 1)));
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(open_line(&app), Some(3));
+        assert_eq!(app.thread_position(), Some((1, 2)));
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(open_line(&app), Some(5));
+
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.thread_nav(), ThreadNav::Workspace);
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+        assert_eq!(open_line(&app), Some(4));
+        assert_eq!(app.thread_position(), Some((3, 3)));
         Ok(())
     }
 

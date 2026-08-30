@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fathomable_core::annotations::{
-    Author, Draft, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
@@ -86,6 +86,11 @@ pub enum ComposeTarget {
     New(LineRange),
     /// A reply to an existing thread.
     Reply(ThreadId),
+    /// A replacement for one user-authored message.
+    Edit {
+        thread: ThreadId,
+        message: MessageTarget,
+    },
 }
 
 /// The multi-line comment box (ADR 0005).
@@ -93,6 +98,8 @@ pub enum ComposeTarget {
 pub struct Compose {
     target: ComposeTarget,
     buffer: Buffer,
+    /// The text the box opened with, empty for a new comment or reply.
+    original: String,
     /// Esc was pressed on a non-empty draft; the next Esc discards it.
     confirm_discard: bool,
 }
@@ -123,7 +130,7 @@ impl Compose {
 /// Its place among the file's threads is computed from the document's
 /// marks ([`App::thread_position`]), so a reload cannot strand it
 /// (ADR 0027).
-/// Where `n` / `N` in the thread pane walk: this file's threads or the
+/// Where `h` / `l` in the thread pane walk: this file's threads or the
 /// whole work's, in path order (ADR 0027).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThreadNav {
@@ -145,10 +152,41 @@ impl ThreadNav {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ThreadSelection {
+    id: ThreadId,
+    message: usize,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ThreadSelections {
+    file: Option<ThreadSelection>,
+    workspace: Option<ThreadSelection>,
+}
+
+impl ThreadSelections {
+    fn get(&self, nav: ThreadNav) -> Option<ThreadSelection> {
+        match nav {
+            ThreadNav::File => self.file.clone(),
+            ThreadNav::Workspace => self.workspace.clone(),
+        }
+    }
+
+    fn set(&mut self, nav: ThreadNav, selection: ThreadSelection) {
+        match nav {
+            ThreadNav::File => self.file = Some(selection),
+            ThreadNav::Workspace => self.workspace = Some(selection),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ThreadPanel {
     id: ThreadId,
     scroll: usize,
+    selected_message: usize,
+    /// Number of messages when the scroll and selection were last set.
+    seen_messages: usize,
     /// The thread's `updated` when the scroll was last set, so a new
     /// reply sends the pane back to its end (ADR 0034).
     seen: u64,
@@ -165,6 +203,11 @@ impl ThreadPanel {
 
     pub fn scroll(&self) -> usize {
         self.scroll
+    }
+
+    /// The selected message: zero for the opening comment, then replies.
+    pub fn selected_message(&self) -> usize {
+        self.selected_message
     }
 }
 
@@ -371,7 +414,7 @@ impl App {
         order
     }
 
-    /// The threads `n` / `N` walk, in order, per the pane's scope.
+    /// The threads `h` / `l` walk, in order, per the pane's scope.
     fn nav_threads(&self) -> Vec<ThreadId> {
         match self.thread_nav {
             ThreadNav::File => self.file_threads(),
@@ -379,14 +422,42 @@ impl App {
         }
     }
 
-    /// Where `n` / `N` in the thread pane walk.
+    /// Where `h` / `l` in the thread pane walk.
     pub fn thread_nav(&self) -> ThreadNav {
         self.thread_nav
     }
 
-    /// `f` in the pane: `n` / `N` walk this file, or the whole work.
+    /// Tab in the pane: switch between this file and the whole work,
+    /// restoring the thread and message last selected in each.
     pub fn thread_toggle_nav(&mut self) {
+        let current = self.thread.as_ref().map(|panel| ThreadSelection {
+            id: panel.id.clone(),
+            message: panel.selected_message,
+        });
+        if let Some(selection) = current.clone() {
+            self.thread_selections.set(self.thread_nav, selection);
+        }
         self.thread_nav = self.thread_nav.toggled();
+        let order = self.nav_threads();
+        let selection = self
+            .thread_selections
+            .get(self.thread_nav)
+            .filter(|selection| {
+                self.thread(&selection.id).is_some_and(|thread| {
+                    self.scope.includes(thread)
+                        && self.workspace.root().join(thread.path()).is_file()
+                })
+            })
+            .or_else(|| current.filter(|selection| order.contains(&selection.id)))
+            .or_else(|| {
+                order.first().map(|id| ThreadSelection {
+                    id: id.clone(),
+                    message: self.thread(id).map_or(0, |thread| thread.replies().len()),
+                })
+            });
+        if let Some(selection) = selection {
+            self.show_thread_selection(&selection);
+        }
         self.notice(match self.thread_nav {
             ThreadNav::File => "thread scope: local",
             ThreadNav::Workspace => "thread scope: global",
@@ -394,7 +465,7 @@ impl App {
     }
 
     /// `(current, total)`, 1-based, of the open pane's thread among the
-    /// threads `n` / `N` walk, for the pane header.
+    /// threads `h` / `l` walk, for the pane header.
     pub fn thread_position(&self) -> Option<(usize, usize)> {
         let id = self.thread.as_ref()?.id();
         let order = self.nav_threads();
@@ -485,7 +556,7 @@ impl App {
                 .and_then(|index| self.docs.get(index))
                 .filter(|doc| doc.deleted.is_some())
                 .map(|doc| doc.relative.clone()),
-            ComposeTarget::Reply(id) => self
+            ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } => self
                 .thread(id)
                 .map(|thread| thread.path().to_path_buf())
                 .filter(|path| {
@@ -498,9 +569,25 @@ impl App {
             self.notice(format!("{} was deleted; cannot comment", path.display()));
             return;
         }
+        let original = match &target {
+            ComposeTarget::Edit { thread, message } => {
+                let Some((body, editable)) = self.message_for(thread, *message) else {
+                    self.notice("message no longer exists");
+                    return;
+                };
+                if !editable {
+                    self.notice("only your messages can be edited");
+                    return;
+                }
+                body.to_owned()
+            }
+            ComposeTarget::New(_) | ComposeTarget::Reply(_) => String::new(),
+        };
+        let buffer = Buffer::from_text(&original);
         self.popup = Some(Popup::Compose(Compose {
             target,
-            buffer: Buffer::new(),
+            buffer,
+            original,
             confirm_discard: false,
         }));
     }
@@ -555,19 +642,33 @@ impl App {
     }
 
     /// Esc: drop the comment box; a reply returns to its thread pane. A
-    /// non-empty draft asks for a second Esc first.
+    /// changed draft or edit asks for a second Esc first.
     pub fn compose_cancel(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
             return;
         };
-        if !compose.confirm_discard && !compose.buffer.text().trim().is_empty() {
+        let editing = matches!(compose.target, ComposeTarget::Edit { .. });
+        let changed = if editing {
+            compose.buffer.text() != compose.original
+        } else {
+            !compose.buffer.text().trim().is_empty()
+        };
+        if !compose.confirm_discard && changed {
             compose.confirm_discard = true;
-            self.notice("Esc again to discard the comment");
+            self.notice(if editing {
+                "Esc again to discard the edit"
+            } else {
+                "Esc again to discard the comment"
+            });
             return;
         }
         self.popup = None;
         self.refocus_after_compose();
-        self.notice("comment cancelled");
+        self.notice(if editing {
+            "edit cancelled"
+        } else {
+            "comment cancelled"
+        });
     }
 
     /// Ctrl-C: wipe a non-empty draft in place; an empty box closes.
@@ -575,29 +676,45 @@ impl App {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
             return;
         };
+        let editing = matches!(compose.target, ComposeTarget::Edit { .. });
         if compose.buffer.text().trim().is_empty() {
             self.popup = None;
             self.refocus_after_compose();
-            self.notice("comment cancelled");
+            self.notice(if editing {
+                "edit cancelled"
+            } else {
+                "comment cancelled"
+            });
             return;
         }
         compose.buffer = Buffer::new();
         compose.confirm_discard = false;
     }
 
-    /// Enter: write the comment to the store.
+    /// Enter: write the comment, reply, or edit to the store.
     pub fn compose_submit(&mut self) {
-        let Some(Popup::Compose(compose)) = self.popup.take() else {
+        let Some(Popup::Compose(compose)) = self.popup.as_ref() else {
             return;
         };
         let text = compose.buffer.text().trim().to_owned();
         if text.is_empty() {
+            if matches!(compose.target, ComposeTarget::Edit { .. }) {
+                self.notice("a message cannot be empty");
+                return;
+            }
+            self.popup = None;
             self.notice("empty comment discarded");
             return;
         }
+        let Some(Popup::Compose(compose)) = self.popup.take() else {
+            return;
+        };
         match compose.target {
             ComposeTarget::New(range) => self.submit_annotation(range, text),
             ComposeTarget::Reply(id) => self.submit_reply(&id, text),
+            ComposeTarget::Edit { thread, message } => {
+                self.submit_message_edit(&thread, message, text);
+            }
         }
         self.refocus_after_compose();
     }
@@ -658,6 +775,26 @@ impl App {
                 }
             }
             Err(error) => self.notice(format!("cannot save reply: {error}")),
+        }
+    }
+
+    fn submit_message_edit(&mut self, id: &ThreadId, target: MessageTarget, body: String) {
+        let Some(store) = self.store_mut() else {
+            return;
+        };
+        match store.edit(id, target, body, now()) {
+            Ok(()) => {
+                tracing::info!(%id, ?target, "thread message edited");
+                self.refresh_all_marks();
+                if let Some(updated) = self.thread(id).map(Thread::updated)
+                    && let Some(panel) = self.thread.as_mut().filter(|panel| panel.id() == id)
+                {
+                    panel.seen = updated;
+                }
+                self.thread_message_into_view();
+                self.notice("message edited");
+            }
+            Err(error) => self.notice(format!("cannot edit message: {error}")),
         }
     }
 
@@ -730,14 +867,27 @@ impl App {
     pub fn open_thread(&mut self, id: ThreadId) {
         self.refresh_watchers();
         let updated = self.thread(&id).map_or(0, Thread::updated);
-        let scroll = self
+        let messages = self
+            .thread(&id)
+            .map_or(0, |thread| thread.replies().len() + 1);
+        let kept = self
             .thread
             .as_ref()
-            .filter(|panel| panel.id() == &id && panel.seen == updated)
-            .map_or(BOTTOM, ThreadPanel::scroll);
+            .filter(|panel| {
+                panel.id() == &id && panel.seen == updated && panel.seen_messages == messages
+            })
+            .map(|panel| (panel.scroll, panel.selected_message));
+        let (scroll, selected_message) = kept.unwrap_or_else(|| {
+            (
+                BOTTOM,
+                self.thread(&id).map_or(0, |thread| thread.replies().len()),
+            )
+        });
         self.show_panel(ThreadPanel {
             id,
             scroll,
+            selected_message,
+            seen_messages: messages,
             seen: updated,
         });
         // Resolve `BOTTOM` to the real last row now the pane has a height.
@@ -775,7 +925,7 @@ impl App {
         self.thread.as_mut()
     }
 
-    /// `n` / `N`: the next or previous thread, wrapping, in the file or
+    /// `h` / `l`: the previous or next thread, wrapping, in the file or
     /// across the work per [`ThreadNav`]; the cursor moves to its first
     /// line, opening its file when it is elsewhere (ADR 0027).
     pub fn thread_step(&mut self, delta: isize) {
@@ -789,22 +939,33 @@ impl App {
         let index = order.iter().position(|other| *other == id).unwrap_or(0);
         let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
         let next = order[(index + step) % order.len()].clone();
-        let elsewhere = self
+        let message = self
             .thread(&next)
+            .map_or(0, |thread| thread.replies().len());
+        self.show_thread_selection(&ThreadSelection { id: next, message });
+    }
+
+    fn show_thread_selection(&mut self, selection: &ThreadSelection) {
+        let elsewhere = self
+            .thread(&selection.id)
             .is_some_and(|thread| self.current_path() != thread.path());
         if elsewhere {
-            // Another file: open it and land on the thread there.
-            self.goto_thread_in_file(&next);
-            return;
+            self.goto_thread_in_file(&selection.id);
+        } else {
+            self.goto_thread(&selection.id);
+            self.open_thread(selection.id.clone());
         }
-        let updated = self.thread(&next).map_or(0, Thread::updated);
-        if let Some(panel) = self.panel_mut() {
-            panel.id = next.clone();
-            panel.scroll = BOTTOM;
-            panel.seen = updated;
+        let count = self
+            .thread(&selection.id)
+            .map_or(0, |thread| thread.replies().len() + 1);
+        if let Some(panel) = self
+            .thread
+            .as_mut()
+            .filter(|panel| panel.id() == &selection.id)
+        {
+            panel.selected_message = selection.message.min(count.saturating_sub(1));
         }
-        self.thread_scroll(0);
-        self.goto_thread(&next);
+        self.thread_message_into_view();
     }
 
     /// Open the file `id` lives in, move the cursor to its first line, and
@@ -837,7 +998,7 @@ impl App {
         }
     }
 
-    /// `j` / `k`: scroll the panel text, stopping at the last row.
+    /// Scroll the panel text, stopping at the last row.
     pub fn thread_scroll(&mut self, delta: isize) {
         let Some(panel) = self.panel_mut() else {
             return;
@@ -845,7 +1006,7 @@ impl App {
         let id = panel.id().clone();
         let scroll = panel.scroll;
         // The limit is the body as drawn, wrapped at the column's width,
-        // so `k` from the end moves at once (ADR 0034).
+        // so PageUp from the end moves at once (ADR 0034).
         let body_rows = self.thread_rows().saturating_sub(2);
         let width = self.width.saturating_sub(self.sidebar_width()).max(1);
         let limit = self
@@ -859,6 +1020,62 @@ impl App {
         }
     }
 
+    /// `j` / `k`: highlight the next or previous message without wrapping.
+    pub fn thread_message_move(&mut self, delta: isize) {
+        let Some(panel) = self.thread.as_ref() else {
+            return;
+        };
+        let count = self
+            .thread(panel.id())
+            .map_or(0, |thread| thread.replies().len() + 1);
+        if count == 0 {
+            return;
+        }
+        let selected = panel
+            .selected_message
+            .saturating_add_signed(delta)
+            .min(count - 1);
+        if let Some(panel) = self.panel_mut() {
+            panel.selected_message = selected;
+        }
+        self.thread_message_into_view();
+    }
+
+    fn thread_message_into_view(&mut self) {
+        let Some(panel) = self.thread.as_ref() else {
+            return;
+        };
+        let id = panel.id().clone();
+        let selected = panel.selected_message;
+        let scroll = panel.scroll;
+        let body_rows = self.thread_rows().saturating_sub(2).max(1);
+        let width = self.width.saturating_sub(self.sidebar_width()).max(1);
+        let Some(thread) = self.thread(&id) else {
+            return;
+        };
+        let total = super::message::thread_body_rows(thread, width, &self.highlighter);
+        let Some(range) =
+            super::message::thread_message_range(thread, selected, width, &self.highlighter)
+        else {
+            return;
+        };
+        let limit = total.saturating_sub(body_rows);
+        let next = if range.start < scroll {
+            range.start
+        } else if range.end > scroll.saturating_add(body_rows) {
+            if range.len() > body_rows {
+                range.start
+            } else {
+                range.end.saturating_sub(body_rows)
+            }
+        } else {
+            scroll
+        };
+        if let Some(panel) = self.panel_mut() {
+            panel.scroll = next.min(limit);
+        }
+    }
+
     /// `d` in the pane: arm deletion of the shown thread (ADR 0034).
     pub fn thread_arm_delete(&mut self) {
         if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
@@ -866,7 +1083,7 @@ impl App {
         }
     }
 
-    /// `h` / Left in the pane: the keys go to the file-threads pane, the
+    /// Left in the pane: the keys go to the file-threads pane, the
     /// tree shown first if it was hidden (ADR 0034).
     pub fn thread_to_file_threads(&mut self) {
         if self.marks().is_empty() {
@@ -885,6 +1102,48 @@ impl App {
     pub fn thread_reply(&mut self) {
         if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
             self.open_compose(ComposeTarget::Reply(id));
+        }
+    }
+
+    /// `e`: edit the selected message when the user wrote it.
+    pub fn thread_edit_message(&mut self) {
+        let Some(panel) = self.thread.as_ref() else {
+            return;
+        };
+        let id = panel.id().clone();
+        let target = if panel.selected_message == 0 {
+            MessageTarget::Comment
+        } else {
+            MessageTarget::Reply(panel.selected_message - 1)
+        };
+        self.open_compose(ComposeTarget::Edit {
+            thread: id,
+            message: target,
+        });
+    }
+
+    /// Whether the selected message belongs to the user.
+    pub fn thread_message_editable(&self) -> bool {
+        let Some(panel) = self.thread.as_ref() else {
+            return false;
+        };
+        let target = if panel.selected_message == 0 {
+            MessageTarget::Comment
+        } else {
+            MessageTarget::Reply(panel.selected_message - 1)
+        };
+        self.message_for(panel.id(), target)
+            .is_some_and(|(_, editable)| editable)
+    }
+
+    fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
+        let thread = self.thread(id)?;
+        match target {
+            MessageTarget::Comment => Some((thread.comment(), true)),
+            MessageTarget::Reply(index) => thread
+                .replies()
+                .get(index)
+                .map(|reply| (reply.body(), reply.author().is_user())),
         }
     }
 
@@ -972,7 +1231,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use fathomable_core::annotations::{LineRange, Status, Store, Thread};
+    use fathomable_core::annotations::{LineRange, MessageTarget, Status, Store, Thread};
     use fathomable_core::workspace::Workspace;
 
     use fathomable_core::annotations::Author;
@@ -1386,6 +1645,100 @@ mod tests {
         let again = Store::open(dir.0.join("state/threads.jsonl"))?;
         assert_eq!(again.threads().len(), 1);
         assert_eq!(again.threads()[0].replies()[0].body(), "second thoughts");
+        Ok(())
+    }
+
+    #[test]
+    fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use crate::app::keys;
+
+        let dir = TempDir::new("message-nav")?;
+        let mut app = dir.app()?;
+        annotate(&mut app, "opening")?;
+        let id = app.marks()[0].id().clone();
+        app.agent_reply(
+            &id,
+            Author::agent("reviewer"),
+            "agent answer".to_owned(),
+            false,
+            None,
+        )
+        .map_err(anyhow::Error::msg)?;
+        app.open_thread(id.clone());
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(1),
+            "the newest message starts selected"
+        );
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(app.popup().is_none());
+        assert_eq!(app.message(), Some("only your messages can be edited"));
+
+        keys::handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(0)
+        );
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if compose.target()
+                    == &ComposeTarget::Edit {
+                        thread: id.clone(),
+                        message: MessageTarget::Comment,
+                    }
+        ));
+        assert_eq!(app.compose_draft(), Some("opening"));
+        app.set_compose_text("revised opening");
+        app.compose_submit();
+        assert_eq!(
+            app.thread(&id).map(Thread::comment),
+            Some("revised opening")
+        );
+
+        app.thread_reply();
+        type_in(&mut app, "user follow-up");
+        app.compose_submit();
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(2)
+        );
+        keys::handle_key(&mut app, key(KeyCode::Char('e')));
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if compose.target()
+                    == &ComposeTarget::Edit {
+                        thread: id,
+                        message: MessageTarget::Reply(1),
+                    }
+        ));
+        assert_eq!(app.compose_draft(), Some("user follow-up"));
+        app.compose_cancel();
+        assert!(app.popup().is_none(), "an unchanged edit closes at once");
+        keys::handle_key(&mut app, key(KeyCode::Tab));
+        keys::handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(1)
+        );
+        keys::handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(2),
+            "local restores its selected message"
+        );
+        keys::handle_key(&mut app, key(KeyCode::Tab));
+        assert_eq!(
+            app.thread_panel().map(super::ThreadPanel::selected_message),
+            Some(1),
+            "global restores its selected message"
+        );
         Ok(())
     }
 

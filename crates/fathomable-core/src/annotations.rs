@@ -474,6 +474,16 @@ impl Reply {
     }
 }
 
+/// A message within a thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "index", rename_all = "snake_case")]
+pub enum MessageTarget {
+    /// The comment that opened the thread.
+    Comment,
+    /// A reply by its zero-based position.
+    Reply(usize),
+}
+
 /// Whether a thread is open or how it was closed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -747,6 +757,14 @@ enum Event {
         #[serde(flatten)]
         reply: Reply,
     },
+    /// The user replaced one of their messages (ADR 0013).
+    Edit {
+        v: u32,
+        thread: ThreadId,
+        target: MessageTarget,
+        body: String,
+        created: u64,
+    },
     Resolve {
         v: u32,
         thread: ThreadId,
@@ -808,6 +826,7 @@ impl Event {
         match self {
             Self::Annotate { .. } => None,
             Self::Reply { thread, .. }
+            | Self::Edit { thread, .. }
             | Self::Resolve { thread, .. }
             | Self::Reopen { thread, .. }
             | Self::Relocate { thread, .. }
@@ -967,6 +986,29 @@ impl Store {
             v: FORMAT_VERSION,
             thread: id.clone(),
             reply,
+        })
+    }
+
+    /// Replace a user-authored message in thread `id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread or message is unknown, the
+    /// selected reply was not written by the user, or the file cannot be
+    /// appended to.
+    pub fn edit(
+        &mut self,
+        id: &ThreadId,
+        target: MessageTarget,
+        body: impl Into<String>,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        self.commit(Event::Edit {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            target,
+            body: body.into(),
+            created: now,
         })
     }
 
@@ -1170,6 +1212,32 @@ impl Store {
                 }
                 thread.replies.push(reply);
             }
+            Event::Edit {
+                thread,
+                target,
+                body,
+                created,
+                ..
+            } => {
+                let id = thread.clone();
+                let thread = self.thread_mut(&thread)?;
+                let message = match target {
+                    MessageTarget::Comment => &mut thread.comment,
+                    MessageTarget::Reply(index) => {
+                        let reply = thread.replies.get_mut(index).ok_or_else(|| StoreError {
+                            kind: ErrorKind::UnknownMessage(id.clone(), target),
+                        })?;
+                        if !reply.author.is_user() {
+                            return Err(StoreError {
+                                kind: ErrorKind::MessageNotEditable(id, target),
+                            });
+                        }
+                        &mut reply.body
+                    }
+                };
+                *message = body;
+                thread.updated = thread.updated.max(created);
+            }
             Event::Resolve {
                 thread,
                 by,
@@ -1259,6 +1327,8 @@ enum ErrorKind {
     Io(PathBuf, io::Error),
     Parse(usize, String),
     UnknownThread(ThreadId),
+    UnknownMessage(ThreadId, MessageTarget),
+    MessageNotEditable(ThreadId, MessageTarget),
     BadRange(LineRange),
 }
 
@@ -1303,6 +1373,15 @@ impl fmt::Display for StoreError {
             ErrorKind::Io(path, error) => write!(f, "{}: {error}", path.display()),
             ErrorKind::Parse(line, message) => write!(f, "threads.jsonl line {line}: {message}"),
             ErrorKind::UnknownThread(id) => write!(f, "unknown thread {id}"),
+            ErrorKind::UnknownMessage(id, target) => {
+                write!(f, "unknown message {target:?} in thread {id}")
+            }
+            ErrorKind::MessageNotEditable(id, target) => {
+                write!(
+                    f,
+                    "message {target:?} in thread {id} was not written by the user"
+                )
+            }
             ErrorKind::BadRange(range) => write!(f, "lines {range} are past the end of the file"),
         }
     }
@@ -1324,8 +1403,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, Placement, Reply, Scope, Status,
-        Store, StoreError, Thread, ThreadId, line_hash,
+        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Placement, Reply,
+        Scope, Status, Store, StoreError, Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1385,6 +1464,49 @@ mod tests {
         store.reply(&id, Reply::new(Author::agent("claude"), 13, "done"))?;
         store.resolve(&id, Author::User, 14)?;
         assert!(!waiting(&store), "a resolved thread never waits");
+        Ok(())
+    }
+
+    #[test]
+    fn user_messages_can_be_edited_and_other_messages_cannot() -> Result<(), StoreError> {
+        let file = TempFile::new("edit");
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            TEXT,
+            10,
+        )?;
+        store.reply(&id, Reply::new(Author::agent("claude"), 11, "because"))?;
+        store.reply(&id, Reply::new(Author::User, 12, "okay"))?;
+
+        store.edit(&id, MessageTarget::Comment, "why exactly?", 13)?;
+        store.edit(&id, MessageTarget::Reply(1), "understood", 14)?;
+        let before_invalid =
+            fs::read_to_string(&file.0).map_err(|error| StoreError::io(&file.0, error))?;
+        assert!(
+            store
+                .edit(&id, MessageTarget::Reply(0), "not mine", 15)
+                .is_err()
+        );
+        assert!(
+            store
+                .edit(&id, MessageTarget::Reply(2), "missing", 15)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(&file.0).map_err(|error| StoreError::io(&file.0, error))?,
+            before_invalid,
+            "invalid edits are not appended"
+        );
+
+        let reloaded = Store::open(&file.0)?;
+        let thread = reloaded.thread(&id).ok_or_else(|| StoreError {
+            kind: super::ErrorKind::UnknownThread(id.clone()),
+        })?;
+        assert_eq!(thread.comment(), "why exactly?");
+        assert_eq!(thread.replies()[0].body(), "because");
+        assert_eq!(thread.replies()[1].body(), "understood");
+        assert_eq!(thread.updated(), 14);
         Ok(())
     }
 

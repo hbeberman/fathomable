@@ -68,9 +68,13 @@ These choices were settled in a question round on 2026-08-27.
   terminal, runs the editor on a temporary file seeded with the draft,
   and on a successful exit loads the file back into the buffer with the
   cursor at the end. The comment is never submitted by the editor; the
-  user still presses `Ctrl-Enter`. With neither variable set the key
-  says so and does nothing. The parked "edit a thread in `$EDITOR`" idea
-  stays parked; this edits the draft only.
+  user still presses Enter. With neither variable set the key says so and
+  does nothing.
+- The same buffer edits existing messages (amended 2026-08-30): `e` in
+  the thread pane opens the selected user-authored message, seeded with
+  its current body; Enter saves it as an append-only annotation event.
+  Esc closes an unchanged edit at once and asks twice only after the body
+  changes. Agent-authored messages cannot enter the editor.
 
 ### Paste
 
@@ -100,6 +104,6 @@ These choices were settled in a question round on 2026-08-27.
 - The input thread polls with a timeout and honours a pause flag rather
   than blocking in `read` forever, so the editor hatch can hand the
   terminal over without a stray keystroke landing in the wrong process.
-- The key table in the [guide](../guide.md) grows by the motion, deletion,
-  paste, and editor entries. 0013's "Up/Down scroll it" for a reply is
+- The key table in the [guide](../guide.md) covers both new comments and
+  seeded message edits. 0013's "Up/Down scroll it" for a reply is
   superseded by this record.

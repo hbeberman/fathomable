@@ -2,7 +2,6 @@
 type: Decision
 title: Horizontal scroll for long lines
 description: Unwrapped code lines scroll sideways with zl zh zL zH and the horizontal wheel; the offset is per document, clamped to the widest line, edge markers show what is cut, and search keeps its match in view.
-resource: crates/fathomable/src/app/hscroll.rs
 tags:
   - decision
   - input
@@ -11,7 +10,7 @@ tags:
 
 # 0029 Horizontal scroll for long lines
 
-Status: accepted (2026-08-28)
+Status: superseded by [0044](0044-wrap-all-lines.md) (2026-09-02)
 
 ## Context
 

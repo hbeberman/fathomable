@@ -34,7 +34,7 @@ use crate::theme::Color;
 
 use blocks::{Align, Block, Inline, Item, Table};
 pub use text::{LineIndex, display_width};
-use wrap::{Chunk, unwrapped, wrap, wrap_hard};
+use wrap::{Chunk, wrap, wrap_hard, wrap_hard_chunks};
 
 /// Word-wrap plain `text` to `width` cells, breaking at whitespace.
 ///
@@ -124,14 +124,6 @@ pub struct Span {
 }
 
 impl Span {
-    fn from_chunk(chunk: Chunk) -> Self {
-        Self {
-            text: chunk.text,
-            style: chunk.style,
-            source: chunk.source,
-        }
-    }
-
     /// The rendered text.
     #[must_use]
     pub fn text(&self) -> &str {
@@ -185,10 +177,6 @@ pub struct Line {
     spans: Vec<Span>,
     source: Option<Range<usize>>,
     number: Option<usize>,
-    /// Never wrapped, so it scrolls sideways instead (ADR 0029).
-    unwrapped: bool,
-    /// Leading cells of chrome that stay put when the line scrolls.
-    fixed: usize,
     /// A blank row inserted before this source line by
     /// [`Layout::with_rows_before`] (ADR 0039).
     before: Option<usize>,
@@ -201,18 +189,8 @@ impl Line {
             spans,
             source,
             number: None,
-            unwrapped: false,
-            fixed: 0,
             before: None,
         }
-    }
-
-    /// Mark the line as one that is never wrapped, with `fixed` leading
-    /// cells of chrome that do not scroll with it.
-    fn nowrap(mut self, fixed: usize) -> Self {
-        self.unwrapped = true;
-        self.fixed = fixed;
-        self
     }
 
     fn blank() -> Self {
@@ -221,9 +199,6 @@ impl Line {
 
     fn prefixed(mut self, prefix: &str) -> Self {
         if !prefix.is_empty() {
-            if self.unwrapped {
-                self.fixed += display_width(prefix);
-            }
             self.spans.insert(
                 0,
                 Span {
@@ -262,22 +237,6 @@ impl Line {
     #[must_use]
     pub fn source_line(&self) -> Option<usize> {
         self.number
-    }
-
-    /// Whether the line is never wrapped and so scrolls sideways instead
-    /// (ADR 0029): a code block line, a source or diff line, or a row of
-    /// a table wider than the pane.
-    #[must_use]
-    pub fn is_unwrapped(&self) -> bool {
-        self.unwrapped
-    }
-
-    /// Leading cells that stay put when an unwrapped line scrolls: the
-    /// prefix a nested code block carries, or a diff sign. Zero for a
-    /// wrapped line.
-    #[must_use]
-    pub fn fixed_cells(&self) -> usize {
-        self.fixed
     }
 
     /// The plain text of the line.
@@ -390,10 +349,7 @@ impl Layout {
         Self::finish(renderer.lines, width, index)
     }
 
-    /// Lay `text` out verbatim, one source line per rendered line.
-    ///
-    /// Source lines are never wrapped; the frontend scrolls them sideways
-    /// (ADR 0029) and [`Self::unwrapped_width`] bounds that scroll.
+    /// Lay `text` out verbatim, wrapping long source lines to `width`.
     #[must_use]
     pub fn source(text: &str, width: usize) -> Self {
         Self::source_with(text, width, "", &Highlighter::plain())
@@ -414,7 +370,7 @@ impl Layout {
             let source = &text[range.clone()];
             let line_runs = runs.as_ref().and_then(|runs| runs.get(line - 1));
             let chunks = coloured_chunks(source, range.start, &Style::default(), line_runs);
-            lines.push(unwrapped(&chunks).nowrap(0));
+            lines.extend(wrap_hard_chunks(&chunks, width));
         }
         Self::finish(lines, width, index)
     }
@@ -424,10 +380,9 @@ impl Layout {
     ///
     /// Context and added lines carry the source range of the line in
     /// `new`, so the gutter numbers, the cursor, and annotation marks keep
-    /// working; removed lines and hunk headers have no source. Diff lines
-    /// are never wrapped: they scroll sideways under their sign (ADR
-    /// 0029). When the texts are identical the layout is one sourceless
-    /// notice line.
+    /// working; removed lines and hunk headers have no source. Long lines
+    /// wrap under a blank diff-sign cell. When the texts are identical the
+    /// layout is one sourceless notice line.
     #[must_use]
     pub fn diff(old: &str, new: &str, width: usize) -> Self {
         let index = LineIndex::new(new);
@@ -450,22 +405,22 @@ impl Layout {
                 ..Style::default()
             };
             let source = entry.new_line().and_then(|line| index.range_of(line));
-            // The sign is chrome, but it wears the line's face so the eye
-            // reads the whole row as one change; it stays put when the
-            // line scrolls sideways.
             let chunk = Chunk::new(entry.text(), style.clone(), source);
-            let mut line = unwrapped(std::slice::from_ref(&chunk)).nowrap(sign.len());
-            if !sign.is_empty() {
-                line.spans.insert(
-                    0,
-                    Span {
-                        text: sign.to_owned(),
-                        style: style.clone(),
-                        source: None,
-                    },
-                );
+            let content_width = width.saturating_sub(display_width(sign)).max(1);
+            for (part, mut line) in wrap_hard(&chunk, content_width).into_iter().enumerate() {
+                if !sign.is_empty() {
+                    let prefix = if part == 0 { sign } else { " " };
+                    line.spans.insert(
+                        0,
+                        Span {
+                            text: prefix.to_owned(),
+                            style: style.clone(),
+                            source: None,
+                        },
+                    );
+                }
+                lines.push(line);
             }
-            lines.push(line);
         }
         Self::finish(lines, width, index)
     }
@@ -523,19 +478,6 @@ impl Layout {
     #[must_use]
     pub fn width(&self) -> usize {
         self.width
-    }
-
-    /// The widest unwrapped line, not counting its fixed chrome (ADR 0029).
-    ///
-    /// Horizontal scroll clamps to this; zero when nothing is unwrapped.
-    #[must_use]
-    pub fn unwrapped_width(&self) -> usize {
-        self.lines
-            .iter()
-            .filter(|line| line.unwrapped)
-            .map(|line| line.width().saturating_sub(line.fixed))
-            .max()
-            .unwrap_or(0)
     }
 
     /// The source line index of the laid-out text.
@@ -664,8 +606,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Code lines are never wrapped; the frontend truncates or scrolls them.
-    /// A non-empty `lang` colours the block through the highlighter.
+    /// Code lines hard-wrap to the pane; a non-empty `lang` colours them.
     fn code(&mut self, text: &str, source: Range<usize>, lang: &str, first: &str, rest: &str) {
         let style = Style {
             face: Face::CodeBlock,
@@ -689,25 +630,18 @@ impl Renderer<'_> {
                 start..start + line.len()
             });
             let line_runs = runs.as_ref().and_then(|runs| runs.get(index));
-            let spans = match (&range, line_runs) {
+            let chunks = match (&range, line_runs) {
                 (Some(range), Some(line_runs)) if !line_runs.is_empty() => {
                     coloured_chunks(line, range.start, &style, Some(line_runs))
-                        .into_iter()
-                        .map(Span::from_chunk)
-                        .collect()
                 }
-                _ if line.is_empty() => Vec::new(),
-                _ => vec![Span {
-                    text: line.to_owned(),
-                    style: style.clone(),
-                    source: range.clone(),
-                }],
+                _ => vec![Chunk::new(
+                    line,
+                    style.clone(),
+                    range.clone().or_else(|| Some(source.clone())),
+                )],
             };
-            let mut rendered = Line::from_spans(spans).nowrap(0);
-            if rendered.source.is_none() {
-                rendered.source = range.or_else(|| Some(source.clone()));
-            }
-            self.push(rendered.prefixed(prefix));
+            let lines = wrap_hard_chunks(&chunks, self.avail(prefix));
+            self.emit(lines, prefix, rest);
             prefix = rest;
         }
     }
@@ -757,7 +691,7 @@ impl Renderer<'_> {
         let cell = |row: &'_ Vec<Vec<Inline>>, col: usize| -> Vec<Inline> {
             row.get(col).unwrap_or(&empty).clone()
         };
-        // Natural width of each column: the widest unwrapped cell.
+        // Natural width of each column before cell wrapping.
         let mut widths: Vec<usize> = (0..columns)
             .map(|col| {
                 rows.iter()
@@ -772,8 +706,8 @@ impl Renderer<'_> {
         let chrome = columns * 3 + 1;
         let avail = self.avail(first).saturating_sub(chrome).max(columns);
         shrink(&mut widths, avail);
-        // A table its columns cannot shrink into scrolls sideways as a
-        // whole (ADR 0029).
+        // A table whose minimum columns still exceed the pane is hard-wrapped
+        // row by row so every rendered line remains reachable.
         let overflows = widths.iter().sum::<usize>() + chrome > self.avail(first);
 
         let border = |left, fill, mid, right| table_border(&widths, left, fill, mid, right);
@@ -841,10 +775,25 @@ impl Renderer<'_> {
         }
         out.push(border("┗", "━", "┷", "┛"));
         if overflows {
-            out = out.into_iter().map(|line| line.nowrap(0)).collect();
+            out = out
+                .into_iter()
+                .flat_map(|line| hard_wrap_line(line, self.avail(first)))
+                .collect();
         }
         self.emit(out, first, rest);
     }
+}
+
+fn hard_wrap_line(line: Line, width: usize) -> Vec<Line> {
+    if line.width() <= width {
+        return vec![line];
+    }
+    let chunks: Vec<Chunk> = line
+        .spans
+        .into_iter()
+        .map(|span| Chunk::new(span.text, span.style, span.source))
+        .collect();
+    wrap_hard_chunks(&chunks, width)
 }
 
 /// A horizontal table rule: heavy lines frame the table and underline the

@@ -159,3 +159,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     shared with a per-harness spelling of tool names; the `follow`
     schema lists the configured types
     ([0043](decisions/0043-agent-vocabulary.md)).
+35. **Width-bounded wrapping.** Prose wraps at words and code, source,
+    diff, and narrow table lines hard-wrap to the pane; horizontal-scroll
+    state, keys, wheel handling, edge markers, and status are removed
+    ([0044](decisions/0044-wrap-all-lines.md)).

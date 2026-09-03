@@ -5,7 +5,6 @@ description: Own the Markdown layout engine on top of pulldown-cmark so rendered
 resource: crates/fathomable-core/src/layout/mod.rs
 related_resources:
   - crates/fathomable-core/src/layout/blocks.rs
-  - crates/fathomable-core/src/layout/wrap.rs
   - crates/fathomable-core/src/layout/text.rs
 tags:
   - decision
@@ -52,3 +51,6 @@ projects outside the dependency policy.
   pure data in, data out.
 - Rendering is deterministic for a given width, which the anchoring logic
   relies on.
+
+The code-block exception above was superseded by
+[0044](0044-wrap-all-lines.md): every display mode now wraps to the pane.

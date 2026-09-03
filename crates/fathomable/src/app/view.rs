@@ -14,8 +14,6 @@ use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, LineIndex, display_width};
 use regex::Regex;
 
-use super::hscroll::HScroll;
-
 /// Rendered lines kept visible above and below the cursor.
 const SCROLLOFF: usize = 3;
 
@@ -184,10 +182,6 @@ pub struct View {
     message: Option<String>,
     changed: bool,
     pending: Option<char>,
-    /// The column offset of unwrapped lines (ADR 0029).
-    hscroll: HScroll,
-    /// Digits typed before a key, zero for none.
-    count: usize,
     /// Source lines a detached thread's row stands before (ADR 0039).
     detached: Vec<usize>,
 }
@@ -236,8 +230,6 @@ impl View {
             message: None,
             changed: false,
             pending: None,
-            hscroll: HScroll::default(),
-            count: 0,
             detached: Vec::new(),
         }
     }
@@ -365,59 +357,6 @@ impl View {
 
     pub fn pending(&self) -> Option<char> {
         self.pending
-    }
-
-    /// The count typed so far, zero for none.
-    pub fn count(&self) -> usize {
-        self.count
-    }
-
-    /// Append a digit to the count; it saturates rather than overflows.
-    pub fn push_count(&mut self, digit: u32) {
-        self.count = self
-            .count
-            .saturating_mul(10)
-            .saturating_add(usize::try_from(digit).unwrap_or(0));
-    }
-
-    /// Take the count for the key it applies to, zero for none.
-    pub fn take_count(&mut self) -> usize {
-        std::mem::take(&mut self.count)
-    }
-
-    /// How many columns the unwrapped lines are scrolled by (ADR 0029).
-    pub fn column_offset(&self) -> usize {
-        self.hscroll.offset(&self.layout)
-    }
-
-    /// `zl` and friends: scroll the unwrapped lines by `delta` columns,
-    /// clamped to the widest of them.
-    pub fn scroll_columns(&mut self, delta: isize) {
-        self.hscroll.scroll_by(delta, &self.layout);
-    }
-
-    /// The screen column of line column `col` on rendered `row`, or
-    /// `None` when the horizontal scroll has moved it out of view.
-    pub fn screen_col(&self, row: usize, col: usize) -> Option<usize> {
-        let Some(line) = self.layout.lines().get(row) else {
-            return Some(col);
-        };
-        if !line.is_unwrapped() || col < line.fixed_cells() {
-            return Some(col);
-        }
-        (col - line.fixed_cells())
-            .checked_sub(self.column_offset())
-            .map(|shifted| shifted + line.fixed_cells())
-    }
-
-    /// The line column shown at screen column `col` on rendered `row`.
-    fn line_col(&self, row: usize, col: usize) -> usize {
-        match self.layout.lines().get(row) {
-            Some(line) if line.is_unwrapped() && col >= line.fixed_cells() => {
-                col + self.column_offset()
-            }
-            _ => col,
-        }
     }
 
     pub fn changed(&self) -> bool {
@@ -797,7 +736,7 @@ impl View {
         self.selection = None;
         self.mode = Mode::Normal;
         self.cursor.row = (self.scroll + screen_row).min(self.last_row());
-        self.want_col = self.line_col(self.cursor.row, col);
+        self.want_col = col;
         self.clamp_col();
     }
 
@@ -805,7 +744,6 @@ impl View {
     pub fn drag(&mut self, screen_row: usize, col: usize) {
         let anchor = self.cursor;
         let row = (self.scroll + screen_row).min(self.last_row());
-        let col = self.line_col(row, col);
         let col = self
             .columns(row)
             .iter()
@@ -987,7 +925,6 @@ impl View {
     /// Esc: clear input, pending keys, selection, then search highlights.
     pub fn escape(&mut self) {
         self.message = None;
-        self.count = 0;
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             self.mode = Mode::Normal;
             self.input.clear();
@@ -1194,26 +1131,7 @@ impl View {
             self.cursor = at(&target);
             self.want_col = self.cursor.col;
             self.ensure_visible();
-            self.reveal_column();
         }
-    }
-
-    /// Scroll sideways the least amount that shows the cursor's cell when
-    /// it sits on an unwrapped line (ADR 0029); a wrapped line never moves.
-    fn reveal_column(&mut self) {
-        let Some(line) = self.layout.lines().get(self.cursor.row) else {
-            return;
-        };
-        if !line.is_unwrapped() || self.cursor.col < line.fixed_cells() {
-            return;
-        }
-        let avail = self
-            .layout
-            .width()
-            .saturating_sub(line.fixed_cells())
-            .max(1);
-        self.hscroll
-            .reveal(self.cursor.col - line.fixed_cells(), avail, &self.layout);
     }
 }
 
@@ -1675,69 +1593,5 @@ mod tests {
         assert_eq!(v.cursor().row, 3);
         v.scroll_by(-10);
         assert_eq!(v.scroll(), 0);
-    }
-
-    // ADR 0029: horizontal scroll.
-    const WIDE: &str =
-        "intro\n\n```\nabcdefghij_klmnopqrst_uvwxyz_needle_end\n```\n\nneedle in prose\n";
-
-    #[test]
-    fn search_reveals_a_match_on_an_unwrapped_line_but_goto_leaves_it() {
-        let mut v = View::new(WIDE.to_owned(), 20, 10);
-        v.start_search(false);
-        for ch in "needle".chars() {
-            v.input_char(ch);
-        }
-        v.confirm();
-        assert_eq!(v.cursor().row, 2, "the code line holds the first match");
-        // Column 29 shows with four cells to spare at the right edge.
-        assert_eq!(v.column_offset(), 14);
-        assert_eq!(v.screen_col(2, 29), Some(15));
-        assert_eq!(v.screen_col(2, 3), None, "scrolled out of view");
-        v.search_next(false);
-        assert_eq!(v.cursor().row, 4, "the prose match");
-        assert_eq!(v.column_offset(), 14, "a wrapped line never moves it");
-        v.goto_source_line(4);
-        assert_eq!(v.column_offset(), 14, ":N leaves the offset alone");
-        assert_eq!(v.screen_col(4, 7), Some(7), "prose columns are unshifted");
-    }
-
-    #[test]
-    fn column_offset_survives_reload_and_toggles_and_keeps_full_copies() {
-        let mut v = View::new(WIDE.to_owned(), 20, 10);
-        v.scroll_columns(10);
-        assert_eq!(v.column_offset(), 10);
-        v.reload(WIDE.replace("intro", "changed intro"));
-        assert_eq!(v.column_offset(), 10, "a reload keeps the offset");
-        v.toggle_source_view();
-        assert_eq!(v.column_offset(), 10, "the source view keeps the offset");
-        v.toggle_source_view();
-        assert_eq!(v.column_offset(), 10);
-        v.set_bases(None, None, Some("intro\n".to_owned()));
-        v.toggle_diff_view();
-        assert!(v.diff_view());
-        assert_eq!(v.column_offset(), 10, "the diff view keeps the offset");
-        v.scroll_columns(-100);
-        assert_eq!(v.column_offset(), 0, "zh at the left edge stops");
-
-        // A click on a shifted row lands on the source column it shows,
-        // and a copy reads the whole source line.
-        v.toggle_diff_view();
-        v.scroll_columns(5);
-        v.click(2, 0);
-        assert_eq!(v.cursor().col, 5);
-        v.select_lines();
-        assert_eq!(
-            v.selected_source().as_deref(),
-            Some("abcdefghij_klmnopqrst_uvwxyz_needle_end")
-        );
-    }
-
-    #[test]
-    fn a_document_that_fits_ignores_horizontal_scroll() {
-        let mut v = view();
-        v.scroll_columns(5);
-        assert_eq!(v.column_offset(), 0);
-        assert_eq!(v.screen_col(0, 3), Some(3));
     }
 }

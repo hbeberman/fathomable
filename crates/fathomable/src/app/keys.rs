@@ -6,7 +6,7 @@ use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::tree::Tree;
 
 use super::view::{Effect, Mode, View};
-use super::{App, Border, Focus, Popup, hscroll};
+use super::{App, Border, Focus, Popup};
 
 /// Lines moved per scroll-wheel notch.
 const WHEEL_LINES: isize = 3;
@@ -266,41 +266,19 @@ fn input_line(view: &mut View, key: KeyEvent) -> Effect {
 fn normal(view: &mut View, key: KeyEvent, ctrl: bool) -> Effect {
     if let Some(pending) = view.pending() {
         view.set_pending(None);
-        let count = view.take_count();
-        match pending {
-            'g' => match key.code {
+        if pending == 'g' {
+            match key.code {
                 KeyCode::Char('g') => view.goto_top(),
                 KeyCode::Char('e') => view.goto_bottom(),
                 KeyCode::Char('s') => view.toggle_source_view(),
                 KeyCode::Char('d') => view.toggle_diff_view(),
                 KeyCode::Char('D') => view.toggle_seen_diff_view(),
                 _ => {}
-            },
-            // `zl` `zh` `zL` `zH` scroll long lines sideways (ADR 0029).
-            'z' => {
-                hscroll::key(view, key.code, count);
             }
-            _ => {}
         }
         return Effect::None;
     }
-    // Digits before a key are its count (`10zl`); a leading `0` is still
-    // line start.
-    if let KeyCode::Char(digit) = key.code
-        && !ctrl
-        && let Some(value) = digit.to_digit(10)
-        && (value != 0 || view.count() > 0)
-    {
-        view.push_count(value);
-        return Effect::None;
-    }
-    // Only the `z` prefix carries a count on to its second key; every
-    // other key drops it.
-    if key.code != KeyCode::Char('z') {
-        view.take_count();
-    }
     match (key.code, ctrl) {
-        (KeyCode::Char('z'), false) => view.set_pending(Some('z')),
         (KeyCode::Char('d'), true) => view.half_page_down(),
         (KeyCode::Char('u'), true) => view.half_page_up(),
         (KeyCode::Char('j') | KeyCode::Down, _) => view.move_down(1),
@@ -539,9 +517,6 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     let view = app.view_mut();
     view.touch();
-    if hscroll::mouse(view, event.kind) {
-        return Effect::None;
-    }
     match event.kind {
         MouseEventKind::ScrollDown => view.scroll_by(WHEEL_LINES),
         MouseEventKind::ScrollUp => view.scroll_by(-WHEEL_LINES),

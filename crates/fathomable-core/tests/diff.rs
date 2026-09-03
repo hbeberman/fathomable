@@ -226,14 +226,17 @@ fn diff_layout_carries_faces_and_new_text_sources() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn diff_layout_keeps_long_lines_whole_with_a_fixed_sign() {
+fn diff_layout_wraps_long_lines_under_their_sign() {
     let old = "";
     let new = "abcdefghijklmnopqrstuvwxyz\n";
     let layout = Layout::diff(old, new, 15);
     let texts: Vec<String> = layout.lines().iter().map(Line::text).collect();
-    assert_eq!(texts, ["@@ -0,0 +1 @@", "+abcdefghijklmnopqrstuvwxyz"]);
-    // ADR 0029: the line scrolls sideways under its sign.
-    assert!(layout.lines()[1].is_unwrapped());
-    assert_eq!(layout.lines()[1].fixed_cells(), 1);
-    assert_eq!(layout.unwrapped_width(), 26);
+    assert_eq!(texts, ["@@ -0,0 +1 @@", "+abcdefghijklmn", " opqrstuvwxyz"]);
+    assert!(layout.lines().iter().all(|line| line.width() <= 15));
+    assert_eq!(
+        layout.lines()[1].source_line(),
+        Some(1),
+        "only the first visual row gets a gutter number"
+    );
+    assert_eq!(layout.lines()[2].source_line(), None);
 }

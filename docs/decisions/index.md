@@ -47,3 +47,4 @@ supersede rather than edit history.
 - [0041 Session bonds between hooks and the MCP server](0041-session-bonds.md)
 - [0042 Delivery at both ends of a turn](0042-turn-start-delivery.md)
 - [0043 One vocabulary for the agent-facing text](0043-agent-vocabulary.md)
+- [0044 Width-bounded wrapping in every display mode](0044-wrap-all-lines.md)

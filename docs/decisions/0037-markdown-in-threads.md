@@ -70,3 +70,6 @@ Settled in a question round on 2026-08-28:
   `#` becomes a heading, `*` a bullet. The source text is unchanged in
   `threads.jsonl`; only the drawing differs.
 - The compose box still shows what is typed, not a rendering.
+
+The unwrapped code-block consequence above was superseded by
+[0044](0044-wrap-all-lines.md): code blocks wrap in both files and messages.

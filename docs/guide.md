@@ -75,44 +75,104 @@ be annotated: `c` says so.
 
 ## 3. Keys
 
-Vim-style movement in the view; `Space` opens a Helix-style menu. `Space ?`
-shows the full list inside the app.
+Vim-style movement in the text; `Space` opens a Helix-style menu, and any
+prefix (`g`, `[`, `]`, `Space`, `d`) shows the keys that continue it.
+`Space ?` lists every binding inside the app. Every key below is checked
+against the binding table by a test, so what is written here exists.
+
+Text:
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` `h` `l`, `gg`, `ge` / `G`, `Ctrl-d` `Ctrl-u` | move, top, bottom, half page |
-| `h` at column 0 | focus the tree (a selection wraps to the line above instead) |
-| `/` `?`, `n` `N`, `:noh` | search, next match, clear highlight |
+| `j` `k` `h` `l`, arrows | move; `h` or `Left` at column 0 focuses the tree (a selection wraps to the line above instead) |
+| `0` `$`, `Home` `End` | line start / end |
+| `gg`, `ge` / `G` | top / bottom |
+| `Ctrl-d` `Ctrl-u` | half page down / up |
+| `/` `?`, `n` `N`, `:noh` | search, next / previous match, clear highlight |
 | `:N` | go to source line N |
-| `gs` | toggle raw source view |
+| `gs` / `:source` | toggle raw source view |
 | `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
-| `]f` `[f`, `Space j` | next / previous changed file; follow menu: jump, auto, clear |
-| `:follow`, `:status` | toggle auto-jump; viewer and path overlay |
-| `:name NAME` | name this viewer so an agent can target it; `:name` alone clears it |
+| `]f` `[f` | next / previous changed file |
+| `[o` `]o` | previous / next opened file |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
 | `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
 | `C` | always start a new thread, on the selection or the cursor line |
-| `Space a`, `]c` `[c` | thread at cursor, next/previous thread |
+| `]c` `[c` | next / previous thread in the file |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| thread pane `h` `l`, `j` `k`, `Tab`, `e` `r` `x`, `PgUp` `PgDn`, `Left`, `Esc` | previous / next thread (the cursor follows), previous / next message, switch local/global scope, edit your selected message, reply, resolve or reopen, scroll; back to the file-threads pane; close |
-| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
-| file threads `j` `k` `l` `r` `x`, `Esc` | next / previous thread (the cursor and the thread pane follow), focus the thread pane, reply, resolve or reopen; close the pane, back to the text |
-| `d` `d` in the thread pane, file threads, or list | delete the thread; the second `d` confirms, any other key cancels |
-| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
-| `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
-| list `h` `l`, `j` `k`, `gg` `ge` `G` `Ctrl-d` `Ctrl-u`, `Enter` | previous / next thread, previous / next message, jump / page between threads; open the file at the selected thread and message |
-| list `e` `r` `x` `z` `Z` `f`, `Esc` | edit your selected message, reply, resolve or reopen, fold the entry, fold resolved, only this file; back to the document |
-| comment/edit box `Enter`, `Ctrl-Enter` / `Alt-Enter`, `Esc`, `Ctrl-c` | submit or save, newline, cancel (twice after a change), clear the draft (empty closes) |
-| comment/edit box arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
-| comment/edit box `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
-| comment/edit box paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread |
-| comment/edit box `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
+| `:follow`, `:status`, `:name NAME` | toggle auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
+| `Esc`, `:q` | clear the input, prefix, selection, or highlight; quit |
+
+The `Space` menu, from any pane:
+
+| Keys | Action |
+| --- | --- |
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
-| tree `j` `k` `h` `l` `Enter`, `R`, `I` | move (the highlighted file is shown), collapse, expand or open and focus; re-read (new, deleted, and renamed files already show on their own); show ignored |
-| `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files; `Ctrl-n` `Ctrl-p` move |
-| `[o` `]o` | previous / next opened file |
-| `Esc`, `:q` | close or clear; quit |
+| `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
+| `Space a` | the thread at the cursor, in the thread pane |
+| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
+| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
+| `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
+| `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
+| `Space ?` | all keys |
+| `:` | the command line, from any pane |
+
+Thread pane:
+
+| Keys | Action |
+| --- | --- |
+| `j` `k` | previous / next message (the highlight stays on screen) |
+| `h` `l` | previous / next thread; the cursor follows |
+| `Tab` | switch between the file's threads and the work's |
+| `PgUp` `PgDn` | scroll |
+| `r` `e` `x`, `dd` | reply, edit your highlighted message, resolve or reopen, delete (the second `d` confirms, any other key cancels) |
+| `Left` | back to the file-threads pane |
+| `Esc` | close |
+
+File-threads pane:
+
+| Keys | Action |
+| --- | --- |
+| `j` `k` | next / previous thread; the cursor and the thread pane follow |
+| `l` / `Right` / `Enter` | focus the thread pane |
+| `r` `x`, `dd` | reply, resolve or reopen, delete |
+| `Esc` | close the thread pane, back to the text |
+
+Thread list:
+
+| Keys | Action |
+| --- | --- |
+| `j` `k` | previous / next message |
+| `h` `l` | previous / next thread |
+| `gg` `ge` `G` | first / last thread |
+| `Ctrl-d` `Ctrl-u`, `PgUp` `PgDn` | half a page of threads |
+| `Enter` | open the file and thread pane on the highlighted message |
+| `r` `e` `x`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
+| `z` `Z` `f` | fold the entry, fold resolved, only this file |
+| `Esc` | back to the document |
+
+Comment and edit box:
+
+| Keys | Action |
+| --- | --- |
+| `Enter` | submit, or save an edit |
+| `Alt-Enter` / `Ctrl-Enter` | newline |
+| arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
+| `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
+| paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread above |
+| `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
+| `Ctrl-c` | clear the draft (empty closes) |
+| `Esc` | cancel (twice after a change) |
+
+Tree and picker:
+
+| Keys | Action |
+| --- | --- |
+| `j` `k` `h` `l` `Enter` | move (the highlighted file is shown), collapse, expand or open and focus |
+| `gg` `ge` `G` | top / bottom |
+| `R`, `I` | re-read (new, deleted, and renamed files already show on their own); show ignored |
+| `Esc` | back to the text; the tree stays |
+| picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
 
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.

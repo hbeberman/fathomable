@@ -13,7 +13,7 @@ mod detached;
 pub(crate) mod file_threads;
 pub(crate) mod gutter;
 pub(crate) mod info;
-mod keys;
+pub(crate) mod input;
 pub(crate) mod mark_words;
 pub(crate) mod message;
 pub(crate) mod open_thread;
@@ -63,6 +63,7 @@ use fathomable_core::theme::Theme;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 use fathomable_core::{Document, XdgDirs};
+use input::bindings::Chord;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use thread_list::ThreadList;
@@ -79,6 +80,19 @@ use watch::{Fingerprint, is_git_metadata};
 /// editor's write-then-rename lands as one reload.
 /// Toasts visible at once.
 pub const MAX_TOASTS: usize = 3;
+
+/// A transient one-line notice about a change (ADR 0015).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toast {
+    text: String,
+    until: Instant,
+}
+
+impl Toast {
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
 
 /// Sidebar width in columns before clamping to a third of the terminal.
 const SIDEBAR_WIDTH: usize = 32;
@@ -195,149 +209,15 @@ impl PickerState {
 /// A popup layered over the panes.
 #[derive(Debug)]
 pub enum Popup {
-    /// The Helix-style `Space` menu.
-    Space,
     /// Every key binding.
     Help,
     /// A file, recent-document, or thread picker.
     Picker(PickerState),
     /// The comment box (ADR 0013).
     Compose(Compose),
-    /// The `Space j` follow submenu (ADR 0015).
-    Jump,
     /// The `:status` overlay (ADR 0021).
     Status,
 }
-
-/// One space-menu entry: key, label.
-pub const SPACE_MENU: [(char, &str); 11] = [
-    ('e', "toggle tree focus"),
-    ('E', "hide tree"),
-    ('f', "open file"),
-    ('F', "open file (incl. ignored)"),
-    ('o', "recent files"),
-    ('a', "thread at cursor"),
-    ('A', "thread list"),
-    ('t', "file threads"),
-    ('j', "follow / jump"),
-    ('w', "wake an agent"),
-    ('?', "all keys"),
-];
-
-/// The `Space j` submenu: key, label.
-pub const JUMP_MENU: [(char, &str); 3] = [
-    ('j', "jump to newest change"),
-    ('a', "toggle auto-jump"),
-    ('c', "clear changes"),
-];
-
-/// A transient one-line notice about a change (ADR 0015).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Toast {
-    text: String,
-    until: Instant,
-}
-
-impl Toast {
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-}
-
-/// Every binding, for `Space ?`.
-pub const HELP: &[(&str, &str)] = &[
-    ("j / k", "move down / up"),
-    ("h / l", "move left / right"),
-    ("0 / $ Home End", "line start / end"),
-    ("gg / ge G", "top / bottom"),
-    ("Ctrl-d / Ctrl-u", "half page down / up"),
-    ("/ ?", "search forward / backward"),
-    ("n / N", "next / previous match"),
-    ("v / V / mouse drag", "select text / lines / cells"),
-    ("x", "select the line; again, one more below"),
-    ("y (selected)", "copy source to clipboard"),
-    (
-        "c",
-        "open the thread here, else comment on the selection or line",
-    ),
-    ("C", "always start a new thread"),
-    ("Space a", "read thread at cursor"),
-    ("Space A", "list every thread on this work"),
-    ("]c / [c", "next / previous thread"),
-    (
-        "]r / [r",
-        "next / previous thread waiting on you, across files",
-    ),
-    ("Space t", "focus the file-threads pane under the tree"),
-    (
-        "Space w",
-        "wake a subscribed agent with its pending threads",
-    ),
-    (
-        "thread h l j k Tab",
-        "previous / next thread, previous / next message, local / global",
-    ),
-    (
-        "thread r e x d d",
-        "reply, edit your message, resolve or reopen, delete",
-    ),
-    (
-        "thread PgUp PgDn Left Esc",
-        "scroll, back to the file-threads pane, close",
-    ),
-    (
-        "file j k l Enter r x d d",
-        "previous / next thread, focus the thread pane, reply, resolve, delete",
-    ),
-    (
-        "list h l j k gg ge G",
-        "previous / next thread, previous / next message, first / last",
-    ),
-    (
-        "list Ctrl-d Ctrl-u PgUp PgDn Enter",
-        "half a page of threads, open the file on the thread",
-    ),
-    (
-        "list r e x d d z Z f",
-        "reply, edit, resolve or reopen, delete, fold, fold resolved, file only",
-    ),
-    (
-        "comment Enter",
-        "submit; Ctrl-Enter or Alt-Enter adds a newline",
-    ),
-    ("comment Ctrl-c", "clear the draft; empty closes"),
-    ("comment Ctrl-e", "edit the draft in $EDITOR"),
-    (
-        "comment PgUp PgDn Alt-Up Alt-Down",
-        "scroll the thread above",
-    ),
-    ("gs / :source", "toggle source view"),
-    ("gd / :diff", "toggle the diff against HEAD"),
-    ("gD / :diff seen", "toggle the diff against last seen"),
-    ("]g / [g", "next / previous hunk, across files"),
-    ("]G / [G", "next / previous uncommitted file"),
-    ("]f / [f", "next / previous changed file"),
-    ("Space j", "follow: jump, auto, clear"),
-    (":follow on|off", "toggle or set auto-jump"),
-    (":status", "viewer, paths, follow state"),
-    (":name NAME", "name this viewer for agents"),
-    ("[o / ]o", "previous / next opened file"),
-    (":N", "go to source line N"),
-    (":noh", "clear search highlight"),
-    (":q", "quit"),
-    ("Space e", "tree: open and focus, or return focus"),
-    ("Space E", "tree: hide"),
-    ("Space f / F", "file picker / including ignored"),
-    ("Space o", "recent files"),
-    (
-        "tree j k h l Enter",
-        "move (showing files), collapse, expand or open",
-    ),
-    ("tree R", "re-read directories"),
-    ("tree I", "show ignored entries"),
-    ("picker Up Down Ctrl-n Ctrl-p", "move selection"),
-    ("Esc", "close / clear"),
-];
 
 #[derive(Debug)]
 struct Doc {
@@ -398,7 +278,8 @@ pub struct App {
     file_index: Option<Vec<String>>,
     all_index: Option<Vec<String>>,
     message: Option<String>,
-    pending: Option<char>,
+    /// The keys typed so far of a longer binding (ADR 0045).
+    prefix: Vec<Chord>,
     /// The thread a first `d` armed for deletion (ADR 0034).
     pending_delete: Option<annotations::ThreadId>,
     width: usize,
@@ -486,7 +367,7 @@ impl App {
             file_index: None,
             all_index: None,
             message: None,
-            pending: None,
+            prefix: Vec::new(),
             pending_delete: None,
             width,
             height,
@@ -1333,8 +1214,19 @@ impl App {
         self.message.as_deref()
     }
 
-    pub fn pending(&self) -> Option<char> {
-        self.pending.or_else(|| self.view().pending())
+    /// The keys typed so far of a binding that is not complete.
+    pub fn prefix(&self) -> &[Chord] {
+        &self.prefix
+    }
+
+    /// Remember `typed` as the start of a longer binding.
+    pub fn set_prefix(&mut self, typed: Vec<Chord>) {
+        self.prefix = typed;
+    }
+
+    /// Take the pending keys, leaving none.
+    pub fn take_prefix(&mut self) -> Vec<Chord> {
+        std::mem::take(&mut self.prefix)
     }
 
     /// The visible view: the current document's or the welcome text.
@@ -1777,10 +1669,6 @@ impl App {
         }
     }
 
-    pub fn set_pending(&mut self, key: Option<char>) {
-        self.pending = key;
-    }
-
     // ----- sidebar -----
 
     fn ensure_tree(&mut self) -> bool {
@@ -1870,10 +1758,6 @@ impl App {
 
     // ----- popups -----
 
-    pub fn open_space_menu(&mut self) {
-        self.popup = Some(Popup::Space);
-    }
-
     pub fn open_help(&mut self) {
         self.popup = Some(Popup::Help);
     }
@@ -1885,36 +1769,6 @@ impl App {
 
     pub fn close_popup(&mut self) {
         self.popup = None;
-    }
-
-    /// Run a space-menu entry; unknown keys just close the menu.
-    pub fn space_menu_select(&mut self, key: char) {
-        self.popup = None;
-        match key {
-            'e' => self.toggle_sidebar_focus(),
-            'E' => self.hide_sidebar(),
-            'f' => self.open_picker(PickerKind::Files),
-            'F' => self.open_picker(PickerKind::AllFiles),
-            'o' => self.open_picker(PickerKind::Recent),
-            'a' => self.open_thread_at_cursor(),
-            'A' => self.open_thread_list(),
-            't' => self.focus_file_threads(),
-            'j' => self.popup = Some(Popup::Jump),
-            'w' => self.wake(),
-            '?' => self.open_help(),
-            _ => {}
-        }
-    }
-
-    /// Run a `Space j` entry; unknown keys just close the menu.
-    pub fn jump_menu_select(&mut self, key: char) {
-        self.popup = None;
-        match key {
-            'j' => self.jump_newest(),
-            'a' => self.toggle_auto_jump(),
-            'c' => self.clear_queue(),
-            _ => {}
-        }
     }
 
     pub fn open_picker(&mut self, kind: PickerKind) {
@@ -2387,9 +2241,9 @@ async fn run_async(
 fn handle_event(app: &mut App, event: &Event) -> Effect {
     match event {
         Event::Key(key) if key.kind != crossterm::event::KeyEventKind::Release => {
-            keys::handle_key(app, *key)
+            input::keys::handle_key(app, *key)
         }
-        Event::Mouse(mouse) => keys::handle_mouse(app, *mouse),
+        Event::Mouse(mouse) => input::mouse::handle_mouse(app, *mouse),
         Event::Paste(text) => {
             app.paste(text);
             Effect::None
@@ -2414,6 +2268,7 @@ mod tests {
     use fathomable_core::tree::Tree;
     use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
 
+    use super::input::bindings::Action;
     use super::{App, Focus, Options, PickerKind, Popup};
 
     struct TempDir(PathBuf);
@@ -2624,7 +2479,7 @@ mod tests {
     fn ge_goes_to_the_end_like_g_in_the_tree_and_the_view() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        use super::{Tree, keys};
+        use super::{Tree, input::keys};
         let dir = TempDir::new("ge")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
@@ -2697,7 +2552,7 @@ mod tests {
             KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
         };
 
-        use super::keys;
+        use super::input::keys;
         let dir = TempDir::new("paging")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
@@ -2717,7 +2572,7 @@ mod tests {
 
         // The wheel steps one row per tick: guide.md to notes.md, not three
         // rows down.
-        keys::handle_mouse(
+        crate::app::input::mouse::handle_mouse(
             &mut app,
             MouseEvent {
                 kind: MouseEventKind::ScrollDown,
@@ -2735,7 +2590,7 @@ mod tests {
 
         // A click pages too: it shows the row it lands on and stays in
         // the tree. Row 0 is the root header, so screen row 4 is README.
-        keys::handle_mouse(
+        crate::app::input::mouse::handle_mouse(
             &mut app,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
@@ -2757,7 +2612,7 @@ mod tests {
     fn left_at_column_zero_hands_focus_to_the_tree() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        use super::keys;
+        use super::input::keys;
         let dir = TempDir::new("left")?;
         let mut app = app(&dir)?;
         app.open(Path::new("docs/notes.md"));
@@ -2786,8 +2641,7 @@ mod tests {
     fn picker_filters_and_opens() -> anyhow::Result<()> {
         let dir = TempDir::new("picker")?;
         let mut app = app(&dir)?;
-        app.open_space_menu();
-        app.space_menu_select('f');
+        app.act(Action::PickFile);
         assert_eq!(picker_items(&app).len(), 3);
         for ch in "guide".chars() {
             app.picker_char(ch);
@@ -3564,12 +3418,18 @@ mod tests {
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
         assert!(app.queue().is_empty());
 
-        app.open_space_menu();
-        app.space_menu_select('j');
-        assert!(matches!(app.popup(), Some(Popup::Jump)));
-        app.jump_menu_select('a');
+        let key = |c| {
+            crossterm::event::KeyEvent::new(
+                crossterm::event::KeyCode::Char(c),
+                crossterm::event::KeyModifiers::NONE,
+            )
+        };
+        super::input::keys::handle_key(&mut app, key(' '));
+        super::input::keys::handle_key(&mut app, key('j'));
+        assert_eq!(super::input::bindings::spell(app.prefix()), "Space j");
+        super::input::keys::handle_key(&mut app, key('a'));
         assert!(!app.auto_jump());
-        assert!(app.popup().is_none());
+        assert!(app.prefix().is_empty());
         Ok(())
     }
 

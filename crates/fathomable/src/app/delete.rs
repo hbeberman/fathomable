@@ -2,11 +2,11 @@
 //! Deleting a thread with `d d` (ADR 0034): the first `d` arms, the
 //! second deletes, any other key cancels and is swallowed.
 //!
-//! The arming is one field holding the thread id, not a mode: a store
-//! reload that removes the thread between the two keys makes the second
-//! `d` a no-op, and the three surfaces that offer `d` share one step.
+//! The arming is one field holding the thread id beside the key prefix,
+//! not a mode: a store reload that removes the thread between the two
+//! keys makes the second `d` a no-op, and the three surfaces that offer
+//! `d` share one step.
 
-use crossterm::event::KeyCode;
 use fathomable_core::annotations::ThreadId;
 
 use super::threads::now;
@@ -26,18 +26,21 @@ impl App {
         self.notice(ARMED);
     }
 
-    /// A key while armed: `d` deletes, anything else cancels. Returns
-    /// whether the key was consumed, so the caller drops it.
-    pub fn delete_key(&mut self, key: KeyCode) -> bool {
-        let Some(id) = self.pending_delete.take() else {
-            return false;
-        };
-        if key == KeyCode::Char('d') {
-            self.delete_thread(&id);
-        } else {
-            self.notice("delete cancelled");
+    /// The first `d` on whichever thread surface has focus.
+    pub fn arm_delete_here(&mut self) {
+        match self.focus() {
+            Focus::Thread => self.thread_arm_delete(),
+            Focus::FileThreads => self.file_thread_arm_delete(),
+            Focus::Threads => self.thread_list_arm_delete(),
+            Focus::View | Focus::Sidebar => {}
         }
-        true
+    }
+
+    /// The second `d`: delete the armed thread, if one still is.
+    pub fn delete_armed_thread(&mut self) {
+        if let Some(id) = self.pending_delete.take() {
+            self.delete_thread(&id);
+        }
     }
 
     /// A click while armed cancels; the click is then handled.
@@ -100,7 +103,8 @@ mod tests {
     use fathomable_core::annotations::Store;
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Focus, Options, keys};
+    use crate::app::input::keys;
+    use crate::app::{App, Focus, Options};
 
     struct TempDir(PathBuf);
 
@@ -181,7 +185,7 @@ mod tests {
         app.close_thread();
         app.focus_file_threads();
         press(&mut app, KeyCode::Char('d'));
-        keys::handle_mouse(
+        crate::app::input::mouse::handle_mouse(
             &mut app,
             MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

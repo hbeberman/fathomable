@@ -1701,7 +1701,7 @@ mod tests {
     fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        use crate::app::keys;
+        use crate::app::input::keys;
 
         let dir = TempDir::new("message-nav")?;
         let mut app = dir.app()?;
@@ -1795,7 +1795,7 @@ mod tests {
     fn thread_list_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        use crate::app::keys;
+        use crate::app::input::keys;
 
         let (_dir, mut app, id) = app_with_thread_list_messages("list-message-nav")?;
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
@@ -1946,7 +1946,7 @@ mod tests {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
         use super::ThreadPanel;
-        use crate::app::{Border, keys};
+        use crate::app::Border;
 
         let mouse = |kind, column: usize, row: usize| MouseEvent {
             kind,
@@ -1975,38 +1975,44 @@ mod tests {
         app.thread_scroll(-100);
 
         // The wheel scrolls the pane under the pointer, focus aside.
-        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, top + 2));
+        crate::app::input::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::ScrollDown, 20, top + 2),
+        );
         assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
         assert_eq!(app.view().scroll(), 0);
-        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert_eq!(app.focus(), Focus::View, "a click on the text focuses it");
         assert!(app.thread_panel().is_some(), "the pane stays open");
-        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 20, top + 2));
+        crate::app::input::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::ScrollUp, 20, top + 2),
+        );
         assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(0));
-        keys::handle_mouse(&mut app, mouse(down, 20, top + 2));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, top + 2));
         assert_eq!(app.focus(), Focus::Thread, "a click on the pane focuses it");
 
         // Dragging the rule resizes the pane.
-        keys::handle_mouse(&mut app, mouse(down, 20, top));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, top));
         assert_eq!(app.dragging(), Some(Border::Thread));
-        keys::handle_mouse(&mut app, mouse(drag, 20, top - 4));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 20, top - 4));
         assert_eq!(app.thread_rows(), rows - top + 4);
         assert_eq!(app.text_rows(), top - 4);
-        keys::handle_mouse(&mut app, mouse(up, 20, top - 4));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 20, top - 4));
         assert_eq!(app.dragging(), None);
         assert_eq!(app.view().selection(), None, "a border drag never selects");
 
         // Dragging the tree's divider resizes the tree.
         app.toggle_sidebar_focus();
         let width = app.sidebar_width();
-        keys::handle_mouse(&mut app, mouse(down, width - 1, 3));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, width - 1, 3));
         assert_eq!(app.dragging(), Some(Border::Sidebar));
-        keys::handle_mouse(&mut app, mouse(drag, 44, 3));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 44, 3));
         assert_eq!(app.sidebar_width(), 45);
-        keys::handle_mouse(&mut app, mouse(drag, 2, 3));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 2, 3));
         assert_eq!(app.sidebar_width(), 8, "no narrower than the minimum");
-        keys::handle_mouse(&mut app, mouse(up, 2, 3));
-        keys::handle_mouse(&mut app, mouse(down, 3, 0));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 2, 3));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 3, 0));
         assert_eq!(
             app.focus(),
             Focus::Sidebar,
@@ -2014,13 +2020,16 @@ mod tests {
         );
 
         // The comment box keeps the keys but lets the mouse through.
-        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         app.thread_reply();
         assert!(matches!(app.popup(), Some(Popup::Compose(_))));
         let top = rows - app.thread_rows();
-        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, top + 2));
+        crate::app::input::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::ScrollDown, 20, top + 2),
+        );
         assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
-        keys::handle_mouse(&mut app, mouse(down, 20, 0));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert!(
             matches!(app.popup(), Some(Popup::Compose(_))),
             "a click away leaves the box open"

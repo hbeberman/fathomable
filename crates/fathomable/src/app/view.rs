@@ -181,7 +181,6 @@ pub struct View {
     matches: Vec<Match>,
     message: Option<String>,
     changed: bool,
-    pending: Option<char>,
     /// Source lines a detached thread's row stands before (ADR 0039).
     detached: Vec<usize>,
 }
@@ -229,7 +228,6 @@ impl View {
             matches: Vec::new(),
             message: None,
             changed: false,
-            pending: None,
             detached: Vec::new(),
         }
     }
@@ -353,10 +351,6 @@ impl View {
 
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
-    }
-
-    pub fn pending(&self) -> Option<char> {
-        self.pending
     }
 
     pub fn changed(&self) -> bool {
@@ -928,8 +922,6 @@ impl View {
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             self.mode = Mode::Normal;
             self.input.clear();
-        } else if self.pending.is_some() {
-            self.pending = None;
         } else if self.selection.is_some() {
             self.selection = None;
             self.mode = Mode::Normal;
@@ -941,10 +933,6 @@ impl View {
     pub fn clear_highlight(&mut self) {
         self.pattern = None;
         self.matches.clear();
-    }
-
-    pub fn set_pending(&mut self, key: Option<char>) {
-        self.pending = key;
     }
 
     pub fn clear_message(&mut self) {
@@ -1448,10 +1436,6 @@ mod tests {
         v.confirm();
         assert!(!v.matches().is_empty());
         v.select_lines();
-        v.set_pending(Some('g'));
-        v.escape();
-        assert_eq!(v.pending(), None);
-        assert!(v.selection().is_some());
         v.escape();
         assert!(v.selection().is_none());
         assert!(!v.matches().is_empty());

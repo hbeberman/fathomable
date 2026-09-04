@@ -283,7 +283,7 @@ mod tests {
     use fathomable_core::workspace::Workspace;
 
     use crate::app::threads::{ComposeTarget, MarkKind};
-    use crate::app::{App, Border, Focus, Options, Popup, keys};
+    use crate::app::{App, Border, Focus, Options, Popup};
 
     struct TempDir(PathBuf);
 
@@ -402,7 +402,7 @@ mod tests {
         // `Space t` focuses and opens the thread pane on the highlight;
         // `j`/`k` step by entry, the cursor and the pane following, and
         // the keys stay with the list (ADR 0034).
-        app.space_menu_select('t');
+        app.focus_file_threads();
         assert_eq!(app.focus(), Focus::FileThreads);
         assert_eq!(app.thread_position(), Some((3, 3)));
         app.file_thread_move(1);
@@ -440,7 +440,7 @@ mod tests {
         annotate(&mut app, 3, "three");
         annotate(&mut app, 3, "three again");
         app.view_mut().goto_source_line(3);
-        app.space_menu_select('t');
+        app.focus_file_threads();
         assert_eq!(app.focus(), Focus::FileThreads);
 
         // `r` replies in place; `x` resolves; `l` steps into the thread
@@ -548,29 +548,32 @@ mod tests {
 
         // A click on an entry shows its thread in the thread pane, cursor
         // on the thread, and the keys stay with this pane (ADR 0034).
-        keys::handle_mouse(&mut app, mouse(down, 2, top + 3));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 3));
         assert_eq!(app.view().cursor_source_line(), Some(6));
         assert_eq!(app.focus(), Focus::FileThreads);
         assert_eq!(app.thread_position(), Some((2, 2)));
         app.close_thread();
         // A click on the header focuses the pane and shows the highlight.
-        keys::handle_mouse(&mut app, mouse(down, 2, top + 1));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 1));
         assert_eq!(app.focus(), Focus::FileThreads);
         assert_eq!(app.thread_position(), Some((2, 2)));
         // The wheel steps between threads.
-        keys::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 2, top + 1));
+        crate::app::input::mouse::handle_mouse(
+            &mut app,
+            mouse(MouseEventKind::ScrollUp, 2, top + 1),
+        );
         assert_eq!(app.view().cursor_source_line(), Some(2));
         // A click on the tree above leaves the pane.
-        keys::handle_mouse(&mut app, mouse(down, 2, 1));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, 1));
         assert_eq!(app.focus(), Focus::Sidebar);
         // Dragging the rule resizes the pane and shrinks the tree.
-        keys::handle_mouse(&mut app, mouse(down, 2, top));
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top));
         assert_eq!(app.dragging(), Some(Border::FileThreads));
-        keys::handle_mouse(
+        crate::app::input::mouse::handle_mouse(
             &mut app,
             mouse(MouseEventKind::Drag(MouseButton::Left), 2, top - 3),
         );
-        keys::handle_mouse(
+        crate::app::input::mouse::handle_mouse(
             &mut app,
             mouse(MouseEventKind::Up(MouseButton::Left), 2, top - 3),
         );

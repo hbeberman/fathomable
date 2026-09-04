@@ -70,6 +70,8 @@ had asked for. Each cut below was put as a question and answered:
 - `x` in the view, `Ctrl-b`, and the picker's `Ctrl-j`/`Ctrl-k` are
   removed. Selection is `v`, `V`, and the mouse; the tree is `Space e`
   and `h` at column 0; the picker moves on arrows and `Ctrl-n`/`Ctrl-p`.
+  (Amended 2026-09-03 by [0045](0045-bindings-are-data.md): the picker
+  moves on `Ctrl-j`/`Ctrl-k`; `Ctrl-n`/`Ctrl-p` are zellij lock chords.)
 
 ### Command routing
 

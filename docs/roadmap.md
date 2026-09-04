@@ -163,3 +163,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     diff, and narrow table lines hard-wrap to the pane; horizontal-scroll
     state, keys, wheel handling, edge markers, and status are removed
     ([0044](decisions/0044-wrap-all-lines.md)).
+36. **Bindings are data.** Every key is a row of one table that dispatch,
+    the prefix menus, `Space ?`, the pane hints, and the guide's key
+    section are read from or checked against; the picker moves on
+    `Ctrl-j`/`Ctrl-k` ([0045](decisions/0045-bindings-are-data.md)).

@@ -20,7 +20,9 @@ use super::thread_list::{Row, Rows};
 use super::threads::{Compose, ComposeTarget, MarkKind, ThreadNav, ThreadPanel};
 use super::view::{Mode, View};
 
-use super::{App, Focus, HELP, JUMP_MENU, MAX_TOASTS, PickerState, Popup, SPACE_MENU};
+use super::input::bindings::{self, Action, Where};
+use super::input::keys::place;
+use super::{App, Focus, MAX_TOASTS, PickerState, Popup};
 
 /// Snippet lines quoted at the top of the thread panel.
 pub(super) const SNIPPET_ROWS: usize = 3;
@@ -228,14 +230,14 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_toasts(frame, app, theme, text_area);
     match app.popup() {
-        Some(Popup::Space) => draw_menu(frame, theme, column, &space_entries(&SPACE_MENU)),
-        Some(Popup::Jump) => draw_menu(frame, theme, column, &space_entries(&JUMP_MENU)),
         Some(Popup::Help) => {
-            let rows: Vec<(String, String)> = HELP
-                .iter()
-                .map(|(k, l)| ((*k).to_owned(), (*l).to_owned()))
-                .collect();
-            draw_table(frame, theme, area, " Keys (any key closes)", &rows);
+            draw_table(
+                frame,
+                theme,
+                area,
+                " Keys (any key closes)",
+                &bindings::help(),
+            );
         }
         Some(Popup::Status) => {
             draw_table(
@@ -253,14 +255,9 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             draw_compose(frame, app, theme, column, compose, box_rows);
         }
         None => {
-            if view.pending() == Some('g') {
-                let entries = vec![
-                    ("g".to_owned(), "go to top".to_owned()),
-                    ("s".to_owned(), "toggle source view".to_owned()),
-                    ("d".to_owned(), "toggle diff against HEAD".to_owned()),
-                    ("D".to_owned(), "toggle diff against last seen".to_owned()),
-                ];
-                draw_menu(frame, theme, column, &entries);
+            // A which-key menu for the keys typed so far (ADR 0045).
+            if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
+                draw_menu(frame, theme, column, &bindings::menu(place, app.prefix()));
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
@@ -396,12 +393,6 @@ fn place_cursor(
             text_area.y + u16_of(screen_row),
         ));
     }
-}
-
-fn space_entries(menu: &[(char, &str)]) -> Vec<(String, String)> {
-    menu.iter()
-        .map(|(key, label)| (key.to_string(), (*label).to_owned()))
-        .collect()
 }
 
 /// Change toasts, bottom-right above the status line, newest at the
@@ -973,11 +964,11 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     if view.changed() {
         left.push(Span::styled(" [+]", theme.info));
     }
-    if let Some(pending) = app.pending() {
-        left.push(Span::styled(format!("  {pending}"), theme.info));
-    }
-    if app.delete_armed().is_some() {
-        left.push(Span::styled("  d", theme.info));
+    if !app.prefix().is_empty() {
+        left.push(Span::styled(
+            format!("  {}", bindings::spell(app.prefix())),
+            theme.info,
+        ));
     }
     if let Some(message) = app.message().or_else(|| view.message()) {
         left.push(Span::styled(format!("  {message}"), theme.info));
@@ -1084,14 +1075,32 @@ fn draw_table(
         .map(|(k, _)| display_width(k))
         .max()
         .unwrap_or(1);
-    let lines: Vec<Line<'_>> = std::iter::once(Line::from(Span::styled(title, theme.popup_key)))
-        .chain(rows.iter().map(|(key, label)| {
-            Line::from(vec![
-                Span::styled(format!(" {key:<key_width$}"), theme.popup_key),
-                Span::raw(format!("  {label}")),
-            ])
-        }))
-        .collect();
+    let label_width = rows
+        .iter()
+        .map(|(_, l)| display_width(l))
+        .max()
+        .unwrap_or(1);
+    // Rows that do not fit under the title flow into further columns, so
+    // a long table (`Space ?`) is read like a menu, not cut off.
+    let per_column = usize::from(area.height.saturating_sub(2)).max(1);
+    let columns = rows.len().div_ceil(per_column).max(1);
+    let per_column = rows.len().div_ceil(columns).max(1);
+    let mut lines: Vec<Line<'_>> = vec![Line::from(Span::styled(title, theme.popup_key))];
+    for r in 0..per_column.min(rows.len()) {
+        let mut spans = Vec::new();
+        for col in 0..columns {
+            let Some((key, label)) = rows.get(col * per_column + r) else {
+                break;
+            };
+            let gap = if col == 0 { " " } else { "   " };
+            spans.push(Span::styled(
+                format!("{gap}{key:<key_width$}"),
+                theme.popup_key,
+            ));
+            spans.push(Span::raw(format!("  {label:<label_width$}")));
+        }
+        lines.push(Line::from(spans));
+    }
     let height = u16_of(lines.len()).min(area.height.saturating_sub(1));
     let width = u16_of(
         lines
@@ -1201,14 +1210,35 @@ fn draw_compose(
             format!(" edit message{range}")
         }
     };
+    let key = |action| key_of(Where::Box, action);
     let hint = if compose.confirming_discard() {
-        "Esc again to discard · any key keeps the draft"
-    } else if matches!(compose.target(), ComposeTarget::Edit { .. }) {
-        "Enter save · Alt-Enter newline · Ctrl-e $EDITOR · Esc"
-    } else if app.thread_panel().is_some() {
-        "Enter submit · Alt-Enter newline · PgUp/PgDn thread · Ctrl-e $EDITOR · Esc"
+        format!(
+            "{} again to discard · any key keeps the draft",
+            key(Action::Escape)
+        )
     } else {
-        "Enter submit · Alt-Enter newline · Ctrl-e $EDITOR · Esc"
+        let mut parts = vec![
+            format!(
+                "{} {}",
+                key(Action::Confirm),
+                if matches!(compose.target(), ComposeTarget::Edit { .. }) {
+                    "save"
+                } else {
+                    "submit"
+                }
+            ),
+            format!("{} newline", key(Action::Newline)),
+        ];
+        if app.thread_panel().is_some() && !matches!(compose.target(), ComposeTarget::Edit { .. }) {
+            parts.push(format!(
+                "{}/{} thread",
+                key(Action::ScrollUp),
+                key(Action::ScrollDown)
+            ));
+        }
+        parts.push(format!("{} $EDITOR", key(Action::EditDraft)));
+        parts.push(key(Action::Escape));
+        parts.join(" · ")
     };
     let width = usize::from(pane.width);
     if rows < 3 {
@@ -1313,23 +1343,41 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         Span::styled(scope, theme.popup_key),
         Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
     ];
-    let hints = if app.focus() == Focus::Threads {
-        let mut hints = vec![("Enter", "open"), ("r", "reply")];
+    let key = |action| key_of(Where::List, action);
+    let hints: Vec<(String, &str)> = if app.focus() == Focus::Threads {
+        let mut hints = vec![
+            (key(Action::Confirm), "open"),
+            (key(Action::Reply), "reply"),
+        ];
         if app.thread_list_message_editable() {
-            hints.push(("e", "edit"));
+            hints.push((key(Action::EditMessage), "edit"));
         }
-        hints.push(("x", "resolve"));
+        hints.push((key(Action::ToggleResolved), "resolve"));
         if entries.len() > 1 {
-            hints.push(("h/l", "threads"));
+            hints.push((
+                pair(Where::List, Action::ThreadPrev, Action::ThreadNext),
+                "threads",
+            ));
         }
         if app.thread_list_message_count() > 1 {
-            hints.push(("j/k", "messages"));
+            hints.push((
+                pair(Where::List, Action::MoveDown, Action::MoveUp),
+                "messages",
+            ));
         }
-        hints.extend([("z/Z", "fold"), ("f", "file"), ("Esc", "")]);
+        hints.extend([
+            (
+                pair(Where::List, Action::Fold, Action::FoldResolved),
+                "fold",
+            ),
+            (key(Action::FileOnly), "file"),
+            (key(Action::Escape), ""),
+        ]);
         hints
     } else {
-        vec![("", "click or Space A to focus")]
+        vec![(String::new(), "click or Space A to focus")]
     };
+    let hints: Vec<Hint<'_>> = hints.iter().map(|(k, l)| (k.as_str(), *l)).collect();
     let now = super::threads::now();
     let mut lines = vec![header_line(theme, left, &hints, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
@@ -1493,6 +1541,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         body.len(),
         body_rows,
     );
+    let hints: Vec<Hint<'_>> = hints.iter().map(|(k, l)| (k.as_str(), *l)).collect();
     let mut lines = vec![
         rule_line(theme, width),
         header_line(theme, left, &hints, width),
@@ -1521,38 +1570,62 @@ fn thread_hints(
     messages: usize,
     body_len: usize,
     body_rows: usize,
-) -> Vec<Hint<'static>> {
+) -> Vec<(String, &'static str)> {
     if app.focus() != Focus::Thread {
-        return vec![("", "click or Space a to focus")];
+        return vec![(String::new(), "click or Space a to focus")];
     }
     if app.delete_armed().is_some() {
-        return vec![("d", "delete"), ("other", "cancels")];
+        return vec![("d".to_owned(), "delete"), ("other".to_owned(), "cancels")];
     }
-    let mut hints = vec![("r", "reply")];
+    let key = |action| key_of(Where::ThreadPane, action);
+    let mut hints = vec![(key(Action::Reply), "reply")];
     if app.thread_message_editable() {
-        hints.push(("e", "edit"));
+        hints.push((key(Action::EditMessage), "edit"));
     }
     hints.push((
-        "x",
+        key(Action::ToggleResolved),
         if words.is_resolved() {
             "reopen"
         } else {
             "resolve"
         },
     ));
-    hints.push(("dd", "delete"));
+    hints.push((key(Action::Delete), "delete"));
     if total > 1 {
-        hints.push(("h/l", "threads"));
+        hints.push((
+            pair(Where::ThreadPane, Action::ThreadPrev, Action::ThreadNext),
+            "threads",
+        ));
     }
-    hints.push(("Tab", "scope"));
+    hints.push((key(Action::ScopeToggle), "scope"));
     if messages > 1 {
-        hints.push(("j/k", "messages"));
+        hints.push((
+            pair(Where::ThreadPane, Action::MoveDown, Action::MoveUp),
+            "messages",
+        ));
     }
     if body_len > body_rows {
-        hints.push(("PgUp/PgDn", "scroll"));
+        hints.push((
+            pair(Where::ThreadPane, Action::ScrollUp, Action::ScrollDown),
+            "scroll",
+        ));
     }
-    hints.extend([("Left", "list"), ("Esc", "close")]);
+    hints.extend([
+        (key(Action::ToFileThreads), "list"),
+        (key(Action::Escape), "close"),
+    ]);
     hints
+}
+
+/// How `action` is spelled on `place`, for a hint; a binding the table
+/// lacks shows as nothing rather than a made-up key.
+fn key_of(place: Where, action: Action) -> String {
+    bindings::hint(place, action).unwrap_or_default()
+}
+
+/// Two actions' keys as `a/b`, the way paired hints read.
+fn pair(place: Where, a: Action, b: Action) -> String {
+    format!("{}/{}", key_of(place, a), key_of(place, b))
 }
 
 /// A header hint: the key, then what it does. Either may be empty.

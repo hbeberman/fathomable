@@ -257,7 +257,7 @@ mod tests {
     fn tab_in_the_pane_preserves_file_and_workspace_selections() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        use crate::app::keys;
+        use crate::app::input::keys;
 
         let dir = TempDir::new("nav")?;
         let mut app = dir.app()?;

@@ -25,7 +25,9 @@ rejected for good (record rejections in the [charter](charter.md)).
   [0016](decisions/0016-syntax-highlighting.md).
 - **Helix-style selection-first key grammar** as a config switch. Origin:
   [0007](decisions/0007-key-grammar-and-mouse.md).
-- **Keymap remapping** through KDL config. Origin: 0007.
+- **Keymap remapping** through KDL config. Origin: 0007. Since
+  [0045](decisions/0045-bindings-are-data.md) the binding table is the
+  input; remapping is a KDL overlay on it.
 - **Relative line numbers** (`rnu`) as a config option. Origin:
   [0010](decisions/0010-viewer-ux.md); absolute source lines in v1.
 - **Multiple panes inside Fathomable.** Origin: initial planning; the layout

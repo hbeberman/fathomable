@@ -2,7 +2,7 @@
 type: Decision
 title: Key grammar and mouse
 description: Vim grammar by default with first-class mouse support; Helix mode deferred.
-resource: crates/fathomable/src/app/keys.rs
+resource: crates/fathomable/src/app/input/keys.rs
 tags:
   - decision
   - input
@@ -42,7 +42,10 @@ the mouse.
   starts a drag that resizes it; the tree keeps at least 8 columns and
   leaves the text 20, the thread pane keeps at least 3 rows and leaves
   the text one. Sizes last for the session.
-- A which-key style hint bar shows pending key sequences.
+- A which-key style hint bar shows pending key sequences. (Amended
+  2026-09-03: the bindings are one table, [0045](0045-bindings-are-data.md);
+  the hint bar, the `Space` menu, and `Space ?` render from it, and the
+  picker moves on `Ctrl-j`/`Ctrl-k`.)
 - Keymap is fixed in v1; remapping through KDL config comes later.
 - Helix selection-first grammar is deferred and would be a config switch.
 - Cursor model, gutter, status line, clipboard, search, and Esc/quit details

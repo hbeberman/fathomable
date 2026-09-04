@@ -150,7 +150,8 @@ mod tests {
     use fathomable_core::workspace::Workspace;
 
     use super::RECENT_ACTIVITY;
-    use crate::app::{App, Options, keys};
+    use crate::app::input::keys;
+    use crate::app::{App, Options};
 
     /// Sixty paragraphs: more rows than the 30-row test terminal shows.
     fn readme() -> String {

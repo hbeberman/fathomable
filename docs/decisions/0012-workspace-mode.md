@@ -93,6 +93,7 @@ choices were captured in a question round on 2026-08-26.
 
 - `Space f` opens a centred popup: an input line on top, the ranked list
   below, the best match selected. Typing filters immediately; `Ctrl-n`/`Ctrl-p`
+  (since 2026-09-03 `Ctrl-j`/`Ctrl-k`, [0045](0045-bindings-are-data.md))
   are taken by zellij, so `Up`/`Down` and `Ctrl-j`/`Ctrl-k` move, `Enter`
   opens, `Esc` closes.
 - Matching uses `nucleo-matcher` (Helix's matcher; helix-editor org,

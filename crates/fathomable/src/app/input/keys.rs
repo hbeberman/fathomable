@@ -41,7 +41,7 @@ pub fn place(app: &App) -> Option<Where> {
             Focus::Sidebar => Where::Tree,
             Focus::Thread => Where::ThreadPane,
             Focus::Threads => Where::List,
-            Focus::FileThreads => Where::FileThreads,
+            Focus::ThreadsPane => Where::ThreadsPane,
         }),
     }
 }
@@ -178,7 +178,8 @@ impl App {
             Action::PickRecent => self.open_picker(PickerKind::Recent),
             Action::ThreadAtCursor => self.toggle_thread_pane(),
             Action::ThreadList => self.toggle_thread_list(),
-            Action::FileThreadsFocus => self.toggle_file_threads(),
+            Action::ThreadsPaneFocus => self.toggle_threads_pane(),
+            Action::ThreadsPaneHide => self.hide_threads_pane(),
             Action::JumpNewest => self.jump_newest(),
             Action::AutoJumpToggle => self.toggle_auto_jump(),
             Action::ClearChanges => self.clear_queue(),
@@ -210,7 +211,7 @@ impl App {
                     Where::View => self.act_view(action),
                     Where::Tree => self.act_tree(action),
                     Where::ThreadPane => self.act_thread_pane(action),
-                    Where::FileThreads => self.act_file_threads(action),
+                    Where::ThreadsPane => self.act_threads_pane(action),
                     Where::List => self.act_list(action),
                     Where::Box => self.act_box(action),
                     Where::Picker => self.act_picker(action),
@@ -324,10 +325,10 @@ impl App {
             Action::Escape => self.leave_thread_pane(),
             Action::MoveDown => self.message_step(1),
             Action::MoveUp => self.message_step(-1),
-            // `h` on the file's first thread hops to the file-threads pane,
+            // `h` on the file's first thread hops to the threads pane,
             // as `h` at column 0 hops to the tree.
             Action::ThreadPrev if self.cursor_on_first_in_file() => {
-                self.thread_to_file_threads();
+                self.thread_to_threads_pane();
             }
             Action::ThreadPrev => self.thread_step_in_file(-1),
             Action::ThreadNext => self.thread_step_in_file(1),
@@ -344,13 +345,16 @@ impl App {
         Effect::None
     }
 
-    /// Keys in the file-threads pane (ADR 0027, focus and `d` per ADR 0034).
-    fn act_file_threads(&mut self, action: Action) -> Effect {
+    /// Keys in the threads pane (ADR 0027, `d` per ADR 0034, scope and
+    /// resolved toggles per ADR 0049).
+    fn act_threads_pane(&mut self, action: Action) -> Effect {
         match action {
-            Action::Escape => self.leave_file_threads(),
-            Action::MoveDown => self.file_thread_move(1),
-            Action::MoveUp => self.file_thread_move(-1),
+            Action::Escape => self.leave_threads_pane(),
+            Action::MoveDown => self.threads_pane_move(1),
+            Action::MoveUp => self.threads_pane_move(-1),
             Action::Confirm => self.focus_thread_pane(),
+            Action::PaneScope => self.threads_pane_toggle_scope(),
+            Action::PaneResolved => self.threads_pane_toggle_resolved(),
             _ => return self.act_on_cursor(action),
         }
         Effect::None

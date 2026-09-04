@@ -284,10 +284,7 @@ async fn run_async(
     );
     app.set_watching_root(watching);
     doc_watcher.watch_store(app.store_path());
-    match open {
-        Some(path) => app.open(path),
-        None => app.show_sidebar(),
-    }
+    app.start_on(open);
 
     let mut batch = watch::Batch::default();
     loop {

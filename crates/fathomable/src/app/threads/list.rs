@@ -23,6 +23,14 @@ const SCROLLOFF: usize = 2;
 /// draws them verbatim and the wrap width already accounts for it.
 const MESSAGE_INDENT: usize = 5;
 
+/// What the review shows (ADR 0049), shared by the review list and the
+/// rail's threads pane.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewState {
+    /// Resolved threads are listed too; hidden by default.
+    pub resolved: bool,
+}
+
 /// The list's state; the rows are derived from the store.
 #[derive(Debug, Default)]
 pub struct ThreadList {
@@ -215,7 +223,7 @@ impl App {
 
     /// Columns the list has: the text column without the tree.
     fn column_width(&self) -> usize {
-        self.width.saturating_sub(self.sidebar_width()).max(1)
+        self.width.saturating_sub(self.rail_width()).max(1)
     }
 
     /// The rows and entries for a list `width` cells wide: threads the
@@ -257,7 +265,7 @@ impl App {
 
     /// Range and status of `thread`: from the loaded document's mark when
     /// its file is open this session, else as stored.
-    fn placement_of(&self, thread: &Thread) -> (LineRange, ThreadState) {
+    pub(super) fn placement_of(&self, thread: &Thread) -> (LineRange, ThreadState) {
         self.docs
             .iter()
             .find(|doc| doc.relative == thread.path())

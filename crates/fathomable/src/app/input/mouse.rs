@@ -15,12 +15,12 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     app.with_navigation_watch(|app| mouse_event(app, event))
 }
 
-/// The mouse over the tree column: the file-threads pane along its bottom
-/// (ADR 0027) takes what lands on it; the tree above pages the viewer.
+/// The mouse over the rail: the threads pane along its bottom (ADR 0027,
+/// ADR 0049) takes what lands on it; the tree above pages the viewer.
 fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
-    let tree_rows = app.sidebar_rows();
-    if row >= tree_rows && row < app.pane_rows() {
-        file_threads_mouse(app, kind, row - tree_rows);
+    let tree_rows = app.tree_rows();
+    if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
+        threads_pane_mouse(app, kind, row - tree_rows);
         return;
     }
     match kind {
@@ -48,16 +48,16 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     }
 }
 
-/// The mouse over the file-threads pane (ADR 0027): the wheel steps
-/// between threads, a click on an entry goes to it, and the rule drags.
-/// Row 0 is the rule, row 1 the header.
-fn file_threads_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+/// The mouse over the threads pane (ADR 0027): the wheel steps between
+/// threads, a click on an entry goes to it, and the rule drags. Row 0 is
+/// the rule, row 1 the header.
+fn threads_pane_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     match kind {
-        MouseEventKind::ScrollDown => app.file_thread_move(1),
-        MouseEventKind::ScrollUp => app.file_thread_move(-1),
-        MouseEventKind::Down(MouseButton::Left) if row == 0 => app.begin_drag(Border::FileThreads),
-        MouseEventKind::Down(MouseButton::Left) if row >= 2 => app.file_thread_click(row - 2),
-        MouseEventKind::Down(MouseButton::Left) => app.file_thread_focus(),
+        MouseEventKind::ScrollDown => app.threads_pane_move(1),
+        MouseEventKind::ScrollUp => app.threads_pane_move(-1),
+        MouseEventKind::Down(MouseButton::Left) if row == 0 => app.begin_drag(Border::ThreadsPane),
+        MouseEventKind::Down(MouseButton::Left) if row >= 2 => app.threads_pane_click(row - 2),
+        MouseEventKind::Down(MouseButton::Left) => app.threads_pane_focus(),
         _ => {}
     }
 }
@@ -90,7 +90,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let row = usize::from(event.row);
     let column = usize::from(event.column);
     let rows = app.pane_rows();
-    let sidebar = app.sidebar_width();
+    let sidebar = app.rail_width();
     // The box sits under the thread pane and pushes it up (ADR 0013).
     let box_rows = app.compose_rows();
     let box_top = rows.saturating_sub(box_rows);

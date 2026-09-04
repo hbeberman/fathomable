@@ -284,9 +284,9 @@ mod tests {
         press(&mut app, KeyCode::Char('H'));
         assert_eq!(app.current_path(), Path::new("notes.md"));
 
-        // `h` on the file's only thread hops to the file-threads pane.
+        // `h` on the file's only thread hops to the threads pane.
         press(&mut app, KeyCode::Char('h'));
-        assert_eq!(app.focus(), Focus::FileThreads);
+        assert_eq!(app.focus(), Focus::ThreadsPane);
         assert_eq!(app.current_path(), Path::new("notes.md"));
 
         // From the text with the pane closed, `]C` and `[C` step from the

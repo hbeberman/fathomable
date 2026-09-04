@@ -252,6 +252,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),
+            rail: config.rail().clone(),
             agents: config.agents().clone(),
             config_path: config_path(cli, dirs),
         },
@@ -368,6 +369,11 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         "    max-file-size-mib {}",
         config.viewer().max_file_size_mib
     );
+    println!("}}");
+    let rail = config.rail();
+    println!("rail {{");
+    println!("    width {}", rail.width);
+    println!("    split {}", rail.split);
     println!("}}");
     let agents = config.agents();
     let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();

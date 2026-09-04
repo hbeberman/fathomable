@@ -171,8 +171,8 @@ pub enum Where {
     Tree,
     /// The thread pane under the text.
     ThreadPane,
-    /// The file-threads pane under the tree.
-    FileThreads,
+    /// The rail's threads pane.
+    ThreadsPane,
     /// The workspace thread list.
     List,
     /// The comment box.
@@ -262,7 +262,10 @@ actions! {
     PickRecent,
     ThreadAtCursor,
     ThreadList,
-    FileThreadsFocus,
+    ThreadsPaneFocus,
+    ThreadsPaneHide,
+    PaneScope,
+    PaneResolved,
     Wake,
     Help,
     ThreadNext,
@@ -631,9 +634,16 @@ pub const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('t')]],
-        A::FileThreadsFocus,
+        A::ThreadsPaneFocus,
         "Space menu",
-        "file-threads pane: focus, or close",
+        "threads pane: focus, or return",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('T')]],
+        A::ThreadsPaneHide,
+        "Space menu",
+        "threads pane: hide",
     ),
     bind(
         W::Any,
@@ -839,7 +849,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c('h')], &[k(K::Left)]],
         A::ThreadPrev,
         "Thread pane",
-        "previous thread in the file; on the first, the file-threads pane",
+        "previous thread in the file; on the first, the threads pane",
     ),
     bind(
         W::ThreadPane,
@@ -918,55 +928,69 @@ pub const BINDINGS: &[Binding] = &[
         "Thread pane",
         "back to the text; the pane stays",
     ),
-    // ----- the file-threads pane -----
+    // ----- the threads pane -----
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
         &[&[c('j')], &[k(K::Down)]],
         A::MoveDown,
-        "File threads",
-        "next thread",
+        "Threads pane",
+        "next thread; the text follows",
     ),
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
         &[&[c('k')], &[k(K::Up)]],
         A::MoveUp,
-        "File threads",
-        "previous thread",
+        "Threads pane",
+        "previous thread; the text follows",
     ),
     bind(
-        W::FileThreads,
-        &[&[c('l')], &[k(K::Right)], &[k(K::Enter)]],
+        W::ThreadsPane,
+        &[&[k(K::Enter)], &[c('l')], &[k(K::Right)]],
         A::Confirm,
-        "File threads",
-        "focus the thread pane",
+        "Threads pane",
+        "open the thread pane on the highlight",
     ),
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
+        &[&[c('s')]],
+        A::PaneScope,
+        "Threads pane",
+        "this file, or the workspace",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('x')]],
+        A::PaneResolved,
+        "Threads pane",
+        "show or hide resolved threads",
+    ),
+    bind(
+        W::ThreadsPane,
         &[&[c('r')]],
         A::Reply,
-        "File threads",
+        "Threads pane",
         "reply",
     ),
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
         &[&[c('o')]],
         A::ToggleResolved,
-        "File threads",
+        "Threads pane",
         "resolve or reopen",
     ),
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
         &[&[c('d'), c('d')]],
         A::Delete,
-        "File threads",
+        "Threads pane",
         "delete the thread",
     ),
     bind(
-        W::FileThreads,
+        W::ThreadsPane,
         &[&[k(K::Esc)]],
         A::Escape,
-        "File threads",
-        "back to the text; the panes stay",
+        "Threads pane",
+        "back to the text; the pane stays",
     ),
     // ----- the thread list -----
     bind(
@@ -1407,7 +1431,7 @@ mod tests {
         Where::View,
         Where::Tree,
         Where::ThreadPane,
-        Where::FileThreads,
+        Where::ThreadsPane,
         Where::List,
     ];
 
@@ -1430,7 +1454,7 @@ mod tests {
             Where::View,
             Where::Tree,
             Where::ThreadPane,
-            Where::FileThreads,
+            Where::ThreadsPane,
             Where::List,
             Where::Box,
             Where::Picker,

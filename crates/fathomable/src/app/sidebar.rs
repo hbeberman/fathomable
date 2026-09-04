@@ -53,11 +53,11 @@ impl App {
     /// `Space r .`: show the tree when it is hidden and put its highlight
     /// on the current file, keeping focus where it is (ADR 0049).
     pub fn reveal_in_tree(&mut self) {
-        if !self.sidebar_visible {
+        if !self.rail.tree {
             if !self.ensure_tree() {
                 return;
             }
-            self.sidebar_visible = true;
+            self.rail.tree = true;
             self.relayout();
         }
         self.reveal_current();
@@ -90,8 +90,8 @@ impl App {
     }
 
     pub(super) fn scroll_sidebar(&mut self) {
-        // The file-threads pane (ADR 0027) takes rows from the tree.
-        let rows = self.sidebar_rows().saturating_sub(1).max(1);
+        // The threads pane (ADR 0027) takes rows from the tree.
+        let rows = self.tree_rows().saturating_sub(1).max(1);
         let Some(tree) = self.tree.as_ref() else {
             return;
         };

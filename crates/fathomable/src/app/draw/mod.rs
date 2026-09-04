@@ -186,7 +186,7 @@ fn u16_of(value: usize) -> u16 {
 pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = frame.area();
     let rows = app.pane_rows();
-    let sidebar = app.sidebar_width();
+    let sidebar = app.rail_width();
     let view = app.view();
     let gutter = gutter_width(view);
     let pane_height = u16_of(rows).min(area.height);
@@ -224,7 +224,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         ..area
     };
 
-    draw_sidebar(frame, app, theme, sidebar_area);
+    draw_rail(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     if let Some(panel) = app.thread_panel() {
@@ -622,52 +622,56 @@ fn sidebar_marks<'a>(
     (letter, tail)
 }
 
-/// The tree column: the tree on top, the file-threads pane along the
-/// bottom (ADR 0027).
-fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
-    let Some(tree) = app.tree() else {
+/// The rail (ADR 0049): the tree pane on top, the threads pane along
+/// the bottom, either one alone when the other is hidden.
+fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if area.width == 0 {
         return;
-    };
+    }
     let width = usize::from(area.width);
     let tree_area = Rect {
-        height: u16_of(app.sidebar_rows()).min(area.height),
+        height: u16_of(app.tree_rows()).min(area.height),
         ..area
     };
-    let file_area = Rect {
+    let pane_area = Rect {
         y: tree_area.y + tree_area.height,
         height: area.height.saturating_sub(tree_area.height),
         ..area
     };
-    frame.render_widget(
-        Paragraph::new(sidebar_lines(
-            app,
-            tree,
-            theme,
-            width,
-            usize::from(tree_area.height),
-        ))
-        .style(theme.sidebar),
-        tree_area,
-    );
-    if file_area.height > 0 {
+    if let Some(tree) = app.tree()
+        && tree_area.height > 0
+    {
         frame.render_widget(
-            Paragraph::new(file_thread_lines(
+            Paragraph::new(sidebar_lines(
+                app,
+                tree,
+                theme,
+                width,
+                usize::from(tree_area.height),
+            ))
+            .style(theme.sidebar),
+            tree_area,
+        );
+    }
+    if pane_area.height > 0 && app.threads_pane_shown() {
+        frame.render_widget(
+            Paragraph::new(threads_pane_lines(
                 app,
                 theme,
                 width,
-                usize::from(file_area.height),
+                usize::from(pane_area.height),
             ))
             .style(theme.sidebar),
-            file_area,
+            pane_area,
         );
     }
 }
 
-/// The file-threads pane (ADR 0027) under the tree: a rule, a header with
-/// the open and total counts, then one row per thread — range, status
-/// glyph, first line of the comment, and the reply count and age at the
-/// right edge when the column has room.
-fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -> Vec<Line<'a>> {
+/// The threads pane (ADR 0027, ADR 0049): a rule, a header with the
+/// scope and count and the `s x` keys at the edge, then one row per
+/// thread — status glyph, place, first line of the newest message, and
+/// the reply count and age at the right edge when the column has room.
+fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -> Vec<Line<'a>> {
     let inner = width.saturating_sub(1);
     let divider = Span::styled("│", theme.marker);
     let with_divider = |spans: Vec<Span<'a>>| {
@@ -680,20 +684,39 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
         "─".repeat(inner),
         theme.info,
     )]));
-    let (open, total) = app.thread_counts();
+    let scope = app.rail_scope();
+    let entries = app.threads_pane_rows();
     let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
-    out.push(with_divider(vec![Span::styled(
-        fit(&format!(" threads {open}/{total}"), inner),
-        header_style,
-    )]));
-    let focused = app.focus() == Focus::FileThreads;
-    let selected = app.file_thread_selected();
+    let title = format!(" threads · {} {}", scope.word(), entries.len());
+    let keys = "s x ";
+    let mut header = Vec::new();
+    if inner > display_width(&title) + display_width(keys) {
+        header.push(Span::styled(
+            fit(&title, inner - display_width(keys)),
+            header_style,
+        ));
+        header.push(Span::styled(keys.to_owned(), theme.info));
+    } else {
+        header.push(Span::styled(fit(&title, inner), header_style));
+    }
+    out.push(with_divider(header));
+    if entries.is_empty() {
+        let empty = match scope {
+            crate::app::threads::pane::PaneScope::File => " no threads in this file",
+            crate::app::threads::pane::PaneScope::Workspace => " no threads in the workspace",
+        };
+        out.push(with_divider(vec![Span::styled(
+            fit(empty, inner),
+            theme.info,
+        )]));
+    }
+    let focused = app.focus() == Focus::ThreadsPane;
+    let selected = app.threads_pane_selected();
     let now = crate::app::threads::now();
-    for (index, row) in app
-        .file_thread_rows()
+    for (index, row) in entries
         .iter()
         .enumerate()
-        .skip(app.file_thread_scroll())
+        .skip(app.threads_pane_scroll())
         .take(rows.saturating_sub(2))
     {
         let mut style = theme.sidebar;
@@ -706,13 +729,14 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
         let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
         let resolved = row.words().is_resolved();
         let glyph = if resolved { "✓" } else { "●" };
-        let lead = format!(" L{} ", row.range());
-        let tail = format!(
-            " ↩{} {}",
-            row.replies(),
-            format_age_short(row.updated(), now)
-        );
-        let lead_width = display_width(&lead) + 1;
+        let place = format!(" {} ", row.place(scope));
+        let age = format_age_short(row.updated(), now);
+        let tail = if row.replies() > 0 {
+            format!(" ↩{} {age}", row.replies())
+        } else {
+            format!(" {age}")
+        };
+        let lead_width = 1 + display_width(glyph) + display_width(&place);
         // The tail goes first when the column is narrow; the summary
         // takes what is left, however little.
         let tail_width = display_width(&tail);
@@ -720,10 +744,11 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
         let summary_width = inner
             .saturating_sub(lead_width)
             .saturating_sub(if keep_tail { tail_width } else { 0 });
-        let summary = fit(&format!(" {}", row.summary()), summary_width);
+        let summary = fit(row.summary(), summary_width);
         let mut spans = vec![
-            Span::styled(fit(&lead, lead_width - 1), style),
+            Span::styled(" ", style),
             Span::styled(glyph, on_bg(mark_style(theme, row.kind())).patch(style)),
+            Span::styled(place, style),
             Span::styled(summary, if resolved { on_bg(theme.info) } else { style }),
         ];
         if keep_tail {
@@ -978,7 +1003,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         Focus::Sidebar => "TREE",
         Focus::Thread => "THREAD",
         Focus::Threads => "LIST",
-        Focus::FileThreads => "FILE THREADS",
+        Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
             Mode::Normal => "NOR",
             Mode::Select => "SEL",

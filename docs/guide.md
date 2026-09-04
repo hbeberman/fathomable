@@ -108,11 +108,11 @@ The `Space` menu, from any pane:
 
 | Keys | Action |
 | --- | --- |
-| `Space e`, `Space E` | tree: open and focus or return focus; hide |
+| `Space e`, `Space E` | tree pane: show and focus or return focus; hide (the threads pane keeps the rail) |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
 | `Space a` | the thread pane on the thread at the cursor; on the focused pane, close it |
 | `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
-| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane; on the focused pane, close the thread pane and return to the text |
+| `Space t`, `Space T` | threads pane: show and focus or return focus; hide |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
@@ -126,21 +126,23 @@ Thread pane (its header reads `thread 2/5 in file · 7/40 overall`):
 | Keys | Action |
 | --- | --- |
 | `j` `k` | previous / next message (the highlight stays on screen) |
-| `h` `l` / `Left` `Right` | previous / next thread in this file; `h` on the first hops to the file-threads pane |
+| `h` `l` / `Left` `Right` | previous / next thread in this file; `h` on the first hops to the threads pane |
 | `H` `L` | previous / next thread across the workspace, opening its file |
 | `gg`, `ge` / `G` | first / last message |
 | `Ctrl-d` `Ctrl-u` | scroll half the pane |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete (the second `d` confirms, any other key cancels) |
 | `Esc` | back to the text; the pane stays (`Space a` closes it) |
 
-File-threads pane:
+Threads pane (the rail's lower pane; its header reads `threads · file 3`
+or `threads · workspace 12`):
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` | next / previous thread; the cursor and the thread pane follow |
-| `l` / `Right` / `Enter` | focus the thread pane |
+| `j` `k` | next / previous thread, wrapping; the text follows, and in workspace scope the file opens |
+| `Enter` / `l` / `Right` | open the thread pane on the highlight |
+| `s`, `x` | list this file or the workspace; show or hide resolved threads (the review list shares the flag) |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
-| `Esc` | back to the text; the panes stay (`Space t` closes the thread pane) |
+| `Esc` | back to the text; the pane stays (`Space T` hides it) |
 
 Thread list:
 
@@ -191,8 +193,8 @@ or the thread pane under the pointer — over the tree it steps one row per
 tick, showing each file it lands on — and a click focuses the pane. A
 click in the tree stays in the tree: it expands a directory or shows a
 file like the wheel does, and only `Enter` moves focus to the view.
-Drag the tree's divider, the thread pane's top rule, or the file-threads
-pane's top rule to resize them.
+Drag the rail's divider, the thread pane's top rule, or the threads
+pane's rule to resize them.
 Starting on a directory opens the tree; starting on a file opens the file.
 
 ## 4. Annotations
@@ -228,18 +230,23 @@ outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
 
-While the tree is shown, a file with threads gets a **file-threads pane**
-under it: one row per thread in line order — range, `●` open or `✓`
-resolved in the gutter colour, the first line of the comment, and the
-reply count and age at the edge. The highlighted row is the thread under
-the cursor, so reading the file walks the pane; `Space t` or a click on
-its header focuses it and opens the thread pane on the highlight, a
-click on a row or `j`/`k` shows that thread in the pane while the keys
-stay with the list, `l` steps into the pane (`h` on the first thread
-steps back), and `r` and `o` act on the highlight. The thread pane
-opens at its end, where a dim `─── END ───` row follows the last message.
+The left column is the **rail**: the tree pane above the **threads
+pane**, each shown or hidden on its own (`Space e`/`E`, `Space t`/`T`),
+the rail drawn while either is. The threads pane lists this file's
+threads in line order or, after `s`, the whole workspace's by file and
+line, resolved ones hidden until `x` shows them: `●` open or `✓`
+resolved in the gutter colour, `L3-5` or `guide.md:3`, the first line of
+the newest message, `↩n` when replied, and the age at the edge. Beside
+the tree it keeps `rail.split` rows (8 by default; drag its rule to
+change that for the session), and alone it takes the whole column. The
+highlighted row is the thread under the cursor, so reading the file
+walks the pane; `j`/`k` step the cursor and the text follows, another
+file opening in workspace scope, `Enter` opens the thread pane on the
+highlight (`h` on the file's first thread steps back), and `r` and `o`
+act on the highlight. The thread pane opens at its end, where a dim
+`─── END ───` row follows the last message.
 
-The thread pane, the file-threads pane, and the thread list show one
+The thread pane, the threads pane, and the thread list show one
 **thread cursor**: a thread and a message in it. Whichever surface you
 move it from, the others follow, and `r`, `e`, `o`, and `dd` act on it
 wherever the keys came from. While the thread pane or the list is open
@@ -273,7 +280,7 @@ the list to the file you were reading, and `Esc` goes back to it.
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting
 threads have their own colour (`thread.waiting`) in the gutter
-bracket, the file-threads pane, and the thread list, the status line
+bracket, the threads pane, and the thread list, the status line
 counts them (`2 waiting`), the tree tags their files `↩`, and a reply
 landing while you read raises a toast (`reply on src/lib.rs:42`, or
 `reply on src/lib.rs:42, resolved` when the agent resolved it). `]r`
@@ -374,6 +381,11 @@ markdown {
 viewer {
     max-file-size-mib 64    // larger text files show the file-info pane
     seen-idle 5000          // ms alone with a file before it counts as seen
+}
+
+rail {
+    width 32                // columns for the tree and threads panes
+    split 8                 // rows the threads pane keeps under the tree
 }
 
 agents {

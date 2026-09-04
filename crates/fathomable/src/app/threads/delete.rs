@@ -29,7 +29,7 @@ impl App {
     /// The first `d` on a thread surface: arm the cursor's thread.
     pub fn arm_delete_here(&mut self) {
         match self.focus() {
-            Focus::Thread | Focus::FileThreads | Focus::Threads => self.thread_arm_delete(),
+            Focus::Thread | Focus::ThreadsPane | Focus::Threads => self.thread_arm_delete(),
             Focus::View | Focus::Sidebar => {}
         }
     }
@@ -90,7 +90,7 @@ impl App {
                 None => self.close_thread(),
             }
         }
-        if self.focus == Focus::FileThreads && self.file_thread_pane_rows() == 0 {
+        if self.focus == Focus::ThreadsPane && self.threads_pane_height() == 0 {
             self.focus = Focus::View;
         }
         self.thread_list_reselect(place);
@@ -176,9 +176,9 @@ mod tests {
         assert_eq!(app.view().cursor_source_line(), Some(5));
         assert_eq!(app.message(), Some("deleted"));
 
-        // The file-threads pane: `d d` on the highlight; a click cancels.
+        // The threads pane: `d d` on the highlight; a click cancels.
         app.close_thread();
-        app.focus_file_threads();
+        app.focus_threads_pane();
         press(&mut app, KeyCode::Char('d'));
         crate::app::input::mouse::handle_mouse(
             &mut app,
@@ -191,14 +191,18 @@ mod tests {
         );
         assert!(app.delete_armed().is_none());
         assert_eq!(app.marks().len(), 2);
-        app.focus_file_threads();
+        // The click left the text cursor on L4, between the threads, so
+        // `j` in the pane lands on the next one (ADR 0046).
+        app.focus_threads_pane();
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.view().cursor_source_line(), Some(5));
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.view().cursor_source_line(), Some(7));
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 1);
         assert_eq!(app.marks()[0].range().start(), 5);
-        assert_eq!(app.focus(), Focus::FileThreads, "one thread left");
+        assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
 
         // The thread list: the entry under the selection goes.
         app.close_thread();

@@ -2,7 +2,7 @@
 //! The two words that describe a thread (ADR 0032).
 //!
 //! A [`ThreadState`] is the *state* and the one colour a thread has (ADR
-//! 0039). The thread pane and the file-threads pane say more: the
+//! 0039). The thread pane and the threads pane say more: the
 //! *placement* word (`detached`, `edited`) when the lines moved or went,
 //! then the state word (`waiting`, `open`, `resolved`, `auto-resolved`)
 //! always, so where a thread's lines are never hides what it needs.

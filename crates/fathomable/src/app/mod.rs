@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use crate::app::threads::list::ThreadList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig,
+    AgentsConfig, JumpConfig, MarkdownConfig, RailConfig, ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -72,9 +72,6 @@ impl Toast {
     }
 }
 
-/// Sidebar width in columns before clamping to a third of the terminal.
-const SIDEBAR_WIDTH: usize = 32;
-
 /// Narrowest the tree can be dragged.
 const SIDEBAR_MIN_WIDTH: usize = 8;
 
@@ -100,8 +97,8 @@ pub enum Focus {
     Thread,
     /// The thread list (ADR 0025).
     Threads,
-    /// The file-threads pane under the tree (ADR 0027).
-    FileThreads,
+    /// The rail's threads pane (ADR 0027, ADR 0049).
+    ThreadsPane,
 }
 
 /// A pane border the mouse is dragging.
@@ -113,8 +110,8 @@ pub enum Border {
     Thread,
     /// The rule along the top of the comment box (ADR 0018).
     Compose,
-    /// The rule along the top of the file-threads pane (ADR 0027).
-    FileThreads,
+    /// The rule along the top of the threads pane (ADR 0027).
+    ThreadsPane,
 }
 
 /// What the file picker lists.
@@ -234,7 +231,10 @@ pub struct App {
     search_origin: Option<jumplist::Position>,
     welcome: View,
     tree: Option<Tree>,
-    sidebar_visible: bool,
+    /// The rail's panes, scope, split, and sizes (ADR 0049).
+    rail: threads::pane::Rail,
+    /// What the review shows, shared by the list and the threads pane.
+    review: threads::list::ReviewState,
     sidebar_scroll: usize,
     /// Tree width once dragged; the default follows the terminal.
     sidebar_cols: Option<usize>,
@@ -252,8 +252,6 @@ pub struct App {
     /// Thread pane height once dragged; the default follows the terminal.
     thread_rows: Option<usize>,
     /// File-threads pane height once dragged; the default follows its
-    /// entries (ADR 0027).
-    file_rows: Option<usize>,
     /// Comment box height once dragged; the default follows its text.
     compose_rows: Option<usize>,
     /// The border a mouse drag is moving.
@@ -319,6 +317,7 @@ impl App {
             highlighter,
             markdown,
             viewer,
+            rail,
             agents,
             config_path,
         } = options;
@@ -338,7 +337,8 @@ impl App {
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             tree: None,
-            sidebar_visible: false,
+            rail: threads::pane::Rail::new(rail),
+            review: threads::list::ReviewState::default(),
             sidebar_scroll: 0,
             sidebar_cols: None,
             thread: None,
@@ -346,7 +346,6 @@ impl App {
             thread_cursor_anchor: None,
             list: ThreadList::default(),
             thread_rows: None,
-            file_rows: None,
             compose_rows: None,
             drag: None,
             focus: Focus::View,
@@ -1138,7 +1137,7 @@ impl App {
             Focus::Sidebar => self.tree().is_some(),
             Focus::Thread => self.thread.is_some(),
             Focus::Threads => self.list.is_open(),
-            Focus::FileThreads => self.file_thread_pane_rows() > 0,
+            Focus::ThreadsPane => self.threads_pane_height() > 0,
         };
         if present {
             self.focus = focus;
@@ -1178,7 +1177,7 @@ impl App {
                 );
             }
             Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
-            Some(Border::FileThreads) => self.drag_file_threads_to(row),
+            Some(Border::ThreadsPane) => self.drag_threads_pane_to(row),
             None => return,
         }
         self.relayout();
@@ -1193,7 +1192,7 @@ impl App {
     }
 
     pub fn tree(&self) -> Option<&Tree> {
-        self.tree.as_ref().filter(|_| self.sidebar_visible)
+        self.tree.as_ref().filter(|_| self.rail.tree)
     }
 
     pub fn sidebar_scroll(&self) -> usize {
@@ -1274,15 +1273,16 @@ impl App {
             .is_some_and(|doc| doc.deleted == Some(Deleted::Info))
     }
 
-    /// Sidebar width in columns, 0 when hidden.
-    pub fn sidebar_width(&self) -> usize {
-        if !self.sidebar_visible {
+    /// The rail's width in columns, 0 when neither of its panes is shown
+    /// (ADR 0049).
+    pub fn rail_width(&self) -> usize {
+        if !self.rail.tree && !self.rail.threads {
             return 0;
         }
         let widest = self.width.saturating_sub(TEXT_MIN_WIDTH);
         self.sidebar_cols
             .map_or_else(
-                || SIDEBAR_WIDTH.min(self.width / 3),
+                || self.rail.config.width.min(self.width / 3),
                 |cols| cols.min(widest),
             )
             .max(SIDEBAR_MIN_WIDTH)
@@ -1323,7 +1323,7 @@ impl App {
     /// one-space margin.
     pub fn compose_width(&self) -> usize {
         self.width
-            .saturating_sub(self.sidebar_width())
+            .saturating_sub(self.rail_width())
             .saturating_sub(1)
             .max(1)
     }
@@ -1381,7 +1381,7 @@ impl App {
 
     fn relayout(&mut self) {
         let rows = self.text_rows();
-        let sidebar = self.sidebar_width();
+        let sidebar = self.rail_width();
         let text_width = self
             .width
             .saturating_sub(sidebar)
@@ -1719,20 +1719,31 @@ impl App {
         }
     }
 
+    /// What a start shows: the file named, else the rail with both panes
+    /// and the tree focused (ADR 0012, ADR 0049).
+    pub fn start_on(&mut self, open: Option<&Path>) {
+        if let Some(path) = open {
+            self.open(path);
+        } else {
+            self.show_sidebar();
+            self.show_threads_pane();
+        }
+    }
+
     /// Show and focus the tree, as a workspace start does (ADR 0012).
     pub fn show_sidebar(&mut self) {
-        if !self.sidebar_visible {
+        if !self.rail.tree {
             self.toggle_sidebar_focus();
         }
     }
 
     /// `Space e`: open and focus the tree, or hand focus back.
     pub fn toggle_sidebar_focus(&mut self) {
-        if !self.sidebar_visible {
+        if !self.rail.tree {
             if !self.ensure_tree() {
                 return;
             }
-            self.sidebar_visible = true;
+            self.rail.tree = true;
             self.reveal_current();
             self.focus = Focus::Sidebar;
         } else if self.focus == Focus::Sidebar {
@@ -1744,10 +1755,12 @@ impl App {
         self.relayout();
     }
 
-    /// `Space E`: hide the tree.
+    /// `Space E`: hide the tree pane; the threads pane keeps the rail.
     pub fn hide_sidebar(&mut self) {
-        self.sidebar_visible = false;
-        self.focus = Focus::View;
+        self.rail.tree = false;
+        if self.focus == Focus::Sidebar {
+            self.focus = Focus::View;
+        }
         self.relayout();
     }
 
@@ -1905,6 +1918,8 @@ pub struct Options {
     pub markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
     pub viewer: ViewerConfig,
+    /// The rail's width and split (ADR 0049).
+    pub rail: RailConfig,
     /// Subscriptions and the wake command (ADR 0040).
     pub agents: AgentsConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
@@ -1926,6 +1941,7 @@ impl Options {
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
+            rail: RailConfig::default(),
             agents: AgentsConfig::default(),
             config_path: PathBuf::from("config.kdl"),
         }
@@ -2096,7 +2112,7 @@ mod tests {
             let mut terminal = Terminal::new(TestBackend::new(width, 12))?;
             terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
             let buffer = terminal.backend().buffer().clone();
-            let divider = u16::try_from(app.sidebar_width())?.saturating_sub(1);
+            let divider = u16::try_from(app.rail_width())?.saturating_sub(1);
             if divider >= width {
                 continue;
             }
@@ -2115,11 +2131,11 @@ mod tests {
     fn sidebar_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
         let dir = fixture("sidebar")?;
         let mut app = app(&dir)?;
-        assert_eq!(app.sidebar_width(), 0);
+        assert_eq!(app.rail_width(), 0);
         app.open(Path::new("docs/notes.md"));
         app.toggle_sidebar_focus();
         assert_eq!(app.focus(), Focus::Sidebar);
-        assert_eq!(app.sidebar_width(), 32);
+        assert_eq!(app.rail_width(), 32);
         let selected = app
             .tree()
             .and_then(|tree| tree.current())

@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0046-one-thread-cursor.md
 //! The thread cursor: the one thread and message the reader is on, which
-//! the thread pane, the file-threads pane, and the thread list all show
+//! the thread pane, the threads pane, and the thread list all show
 //! and all move.
 //!
 //! While the thread pane or the thread list is open the cursor is what
@@ -9,7 +9,7 @@
 //! reader moves in the text with both closed, the cursor rides the text
 //! cursor: the thread starting on the cursor line, else the first on its
 //! row, else the nearest starting above, at its newest message, so
-//! reading a file walks the file-threads pane. Every motion resolves the
+//! reading a file walks the threads pane. Every motion resolves the
 //! cursor with [`App::thread_cursor`] and steps from it, so a step from
 //! any surface is a step from the same place, and two threads folded
 //! into one rendered row are still told apart.
@@ -215,7 +215,7 @@ impl App {
 
     /// The thread `delta` steps from the cursor in `order`, wrapping, with
     /// a notice when it wrapped.
-    fn step_in(&mut self, order: &[ThreadId], delta: isize) -> Option<ThreadId> {
+    pub(super) fn step_in(&mut self, order: &[ThreadId], delta: isize) -> Option<ThreadId> {
         let len = order.len().cast_signed();
         if len == 0 {
             return None;
@@ -234,8 +234,8 @@ impl App {
         Some(order[from.rem_euclid(len).cast_unsigned()].clone())
     }
 
-    /// `]c` / `[c` in the text, `l` / `h` in the pane, `j` / `k` in the
-    /// file-threads pane: the next or previous thread of this file.
+    /// `]c` / `[c` in the text, `l` / `h` in the pane: the next or
+    /// previous thread of this file.
     pub fn thread_step_in_file(&mut self, delta: isize) {
         let order = self.file_threads();
         if order.is_empty() {
@@ -261,7 +261,7 @@ impl App {
     }
 
     /// Whether the cursor is on the first thread of the file, where `h`
-    /// in the pane hops to the file-threads pane instead of wrapping.
+    /// in the pane hops to the threads pane instead of wrapping.
     pub(crate) fn cursor_on_first_in_file(&self) -> bool {
         let order = self.file_threads();
         self.anchor_in(&order) == Ok(0)
@@ -427,7 +427,7 @@ impl App {
         }
     }
 
-    /// Enter or `l` in the file-threads pane: the pane on the cursor's
+    /// Enter or `l` in the threads pane: the pane on the cursor's
     /// thread takes the keys.
     pub fn focus_thread_pane(&mut self) {
         if let Some(id) = self.thread_cursor().thread().cloned() {

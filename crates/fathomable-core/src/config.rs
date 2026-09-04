@@ -36,7 +36,27 @@ pub struct Config {
     watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
+    rail: RailConfig,
     agents: AgentsConfig,
+}
+
+/// The `rail { ... }` block (ADR 0049): the left column that holds the
+/// tree pane and the threads pane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RailConfig {
+    /// Columns the rail takes, clamped to a third of the terminal.
+    pub width: usize,
+    /// Rows the threads pane takes under the tree.
+    pub split: usize,
+}
+
+impl Default for RailConfig {
+    fn default() -> Self {
+        Self {
+            width: 32,
+            split: 8,
+        }
+    }
 }
 
 /// The `agents { ... }` block (ADR 0040): subscriptions and delivery.
@@ -407,6 +427,29 @@ impl Config {
                         }
                     }
                 }
+                "rail" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`rail` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        match child.name().value() {
+                            "width" => config.rail.width = cells(child, line, "column count")?,
+                            "split" => config.rail.split = cells(child, line, "row count")?,
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown rail setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 "viewer" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -466,6 +509,12 @@ impl Config {
     #[must_use]
     pub fn viewer(&self) -> &ViewerConfig {
         &self.viewer
+    }
+
+    /// The rail's width and split (ADR 0049).
+    #[must_use]
+    pub fn rail(&self) -> &RailConfig {
+        &self.rail
     }
 
     /// Which files render as Markdown (ADR 0016).
@@ -541,6 +590,16 @@ fn millis(node: &KdlNode, line: Option<usize>) -> Result<Duration, ConfigError> 
     count(node, line, "millisecond count").map(Duration::from_millis)
 }
 
+/// A cell count that fits `usize`, described as `what` in the error.
+fn cells(node: &KdlNode, line: Option<usize>, what: &str) -> Result<usize, ConfigError> {
+    let n = count(node, line, what)?;
+    usize::try_from(n).map_err(|_overflow| ConfigError {
+        path: None,
+        line,
+        message: format!("`{}` is too large a {what}", node.name().value()),
+    })
+}
+
 /// A non-negative integer, described as `what` in the error.
 fn count(node: &KdlNode, line: Option<usize>, what: &str) -> Result<u64, ConfigError> {
     one_arg(node, line, what)?
@@ -605,6 +664,10 @@ watch {
 viewer {
     seen-idle 10
 }
+rail {
+    width 40
+    split 12
+}
 "#,
         )
         .map_err(|e| e.to_string());
@@ -615,6 +678,9 @@ viewer {
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
         assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
+        assert_eq!(config.rail().width, 40);
+        assert_eq!(config.rail().split, 12);
+        assert_eq!(Config::default().rail(), &RailConfig::default());
     }
 
     /// A `follow` block from before ADR 0047 is refused with the new home

@@ -6,7 +6,7 @@
 //! carries the [`Mark`]s of its threads, re-located whenever the text
 //! changes. The comment box ([`Compose`]) starts a thread or replies to
 //! one; the [`ThreadPane`] reads a thread and resolves it. The submodules
-//! are the thread cursor (`cursor`), the file-threads pane (`file_pane`),
+//! are the thread cursor (`cursor`), the threads pane (`pane`),
 //! the thread list (`list`), deletion, detached rows, the open thread's
 //! lines (`open`), git reach, re-anchoring, waiting threads, and the
 //! placement and state words. All of it is plain state, tested without a
@@ -15,9 +15,9 @@
 pub(crate) mod cursor;
 pub(crate) mod delete;
 pub(crate) mod detached;
-pub(crate) mod file_pane;
 pub(crate) mod list;
 pub(crate) mod open;
+pub(crate) mod pane;
 pub(crate) mod reach;
 pub(crate) mod reanchor;
 pub(crate) mod waiting;
@@ -301,7 +301,7 @@ impl App {
             .collect();
         let detached = doc.marks.iter().filter(|m| m.is_detached()).count();
         tracing::debug!(path = %doc.relative.display(), marks = doc.marks.len(), detached, "marks refreshed");
-        // The file-threads pane's height follows the marks (ADR 0027), and
+        // The threads pane's height follows the marks (ADR 0027), and
         // the detached ones take rows of their own (ADR 0039).
         if self.current == Some(index) {
             self.place_detached_rows();
@@ -344,7 +344,7 @@ impl App {
 
     /// The document's threads in line order: by first line, then the
     /// order the store holds them (ADR 0027). This is the order `l` / `h`
-    /// in the thread pane and `j` / `k` in the file-threads pane walk.
+    /// in the thread pane and `j` / `k` in the threads pane walk.
     pub fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
         marks.sort_by_key(|mark| mark.range().start());
@@ -647,8 +647,8 @@ impl App {
     /// The box closed: the keys go back to the pane or the list it was
     /// opened from.
     fn refocus_after_compose(&mut self) {
-        if self.focus == Focus::FileThreads && self.file_thread_pane_rows() > 0 {
-            // A reply from the file-threads pane keeps its keys (ADR 0034).
+        if self.focus == Focus::ThreadsPane && self.threads_pane_height() > 0 {
+            // A reply from the threads pane keeps its keys (ADR 0034).
         } else if self.thread.is_some() {
             self.focus = Focus::Thread;
         } else if self.list.is_open() {
@@ -694,13 +694,13 @@ impl App {
                 tracing::info!(%id, "reply added");
                 self.refresh_all_marks();
                 // The reply becomes the highlighted message. The list and
-                // the file-threads pane reply in place; a reply from the
-                // text opens the thread it answered.
+                // the threads pane reply in place; a reply from the text
+                // opens the thread it answered.
                 if self.list.is_open() {
                     let newest = self.newest_message(id);
                     self.set_thread_cursor_message(id.clone(), newest);
                     self.thread_list_follow_cursor();
-                } else if self.focus != Focus::FileThreads {
+                } else if self.focus != Focus::ThreadsPane {
                     self.open_thread(id.clone());
                 }
             }
@@ -836,7 +836,7 @@ impl App {
     }
 
     /// Show `id` without taking the keys from the pane that asked: the
-    /// file-threads pane drives the thread pane (ADR 0034).
+    /// threads pane drives the thread pane (ADR 0034).
     pub(super) fn open_thread_behind(&mut self, id: ThreadId) {
         let focus = self.focus;
         self.open_thread(id);
@@ -901,7 +901,7 @@ impl App {
         // The limit is the body as drawn, wrapped at the column's width,
         // so a half page from the end moves at once (ADR 0034).
         let body_rows = self.thread_rows().saturating_sub(2);
-        let width = self.width.saturating_sub(self.sidebar_width()).max(1);
+        let width = self.width.saturating_sub(self.rail_width()).max(1);
         let limit = self
             .thread(&id)
             .map_or(0, |thread| {
@@ -932,7 +932,7 @@ impl App {
         let selected = cursor.message();
         let scroll = panel.scroll;
         let body_rows = self.thread_rows().saturating_sub(2).max(1);
-        let width = self.width.saturating_sub(self.sidebar_width()).max(1);
+        let width = self.width.saturating_sub(self.rail_width()).max(1);
         let Some(thread) = self.thread(&id) else {
             return;
         };
@@ -962,18 +962,13 @@ impl App {
         }
     }
 
-    /// `h` on the file's first thread: the keys go to the file-threads
-    /// pane, the tree shown first if it was hidden (ADR 0034).
-    pub fn thread_to_file_threads(&mut self) {
+    /// `h` on the file's first thread: the keys go to the threads pane,
+    /// shown first if it was hidden (ADR 0034, ADR 0049).
+    pub fn thread_to_threads_pane(&mut self) {
         if self.marks().is_empty() {
             return;
         }
-        if self.tree().is_none() {
-            self.show_sidebar();
-        }
-        if self.file_thread_pane_rows() > 0 {
-            self.focus = Focus::FileThreads;
-        }
+        self.focus_threads_pane();
     }
 
     pub(super) fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
@@ -1279,7 +1274,7 @@ mod tests {
         assert!(app.marks()[0].is_detached());
         assert_eq!(app.mark_in(LineRange::new(5, 5)), None);
         // Placement and state are told apart (ADR 0032).
-        let rows = app.file_thread_rows();
+        let rows = app.threads_pane_rows();
         assert_eq!(rows[0].words().placement(), Some("detached"));
         assert_eq!(rows[0].words().state(), ThreadState::Open);
         Ok(())
@@ -1751,13 +1746,13 @@ mod tests {
 
         // Dragging the tree's divider resizes the tree.
         app.toggle_sidebar_focus();
-        let width = app.sidebar_width();
+        let width = app.rail_width();
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, width - 1, 3));
         assert_eq!(app.dragging(), Some(Border::Sidebar));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 44, 3));
-        assert_eq!(app.sidebar_width(), 45);
+        assert_eq!(app.rail_width(), 45);
         crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 2, 3));
-        assert_eq!(app.sidebar_width(), 8, "no narrower than the minimum");
+        assert_eq!(app.rail_width(), 8, "no narrower than the minimum");
         crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 2, 3));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 3, 0));
         assert_eq!(

@@ -2,7 +2,7 @@
 type: Decision
 title: Revisiting threads
 description: c on a thread opens it and C always starts one; the thread pane walks every thread in the file; the gutter brackets a thread's range with rounded corners; and a file-threads pane under the tree lists the file's threads, open and resolved, in step with the cursor.
-resource: crates/fathomable/src/app/threads/file_pane.rs
+resource: crates/fathomable/src/app/threads/pane.rs
 tags:
   - decision
   - annotations

@@ -95,7 +95,7 @@ Text:
 | `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
-| `[o` `]o` | previous / next opened file |
+| `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
 | `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
 | `C` | always start a new thread, on the selection or the cursor line |
@@ -343,8 +343,8 @@ and it switches itself off — toast `auto-jump off`, badge gone — the
 moment you go somewhere else: another file, a thread, the thread list,
 the diff view, a selection. Scrolling and searching in the file it
 landed on keep it on. When the change is in the file you are reading it
-only scrolls if the hunk is off screen. `[o` takes you back; `Space j a`
-turns it on again.
+only scrolls if the hunk is off screen. `Alt-Left` takes you back;
+`Space j a` turns it on again.
 
 ## 7. Configuration and themes
 

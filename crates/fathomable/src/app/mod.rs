@@ -16,6 +16,7 @@ mod commands;
 mod draw;
 pub(crate) mod input;
 mod jump;
+mod jumplist;
 pub(crate) mod run;
 mod sidebar;
 mod socket;
@@ -225,8 +226,12 @@ pub struct App {
     workspace: Workspace,
     docs: Vec<Doc>,
     current: Option<usize>,
-    history: Vec<usize>,
-    history_pos: usize,
+    /// Documents by index, most recently shown first (`Space o`).
+    recent: Vec<usize>,
+    jumplist: jumplist::Jumplist,
+    /// Where a search started, recorded on the jumplist when it lands
+    /// somewhere else (ADR 0049).
+    search_origin: Option<jumplist::Position>,
     welcome: View,
     tree: Option<Tree>,
     sidebar_visible: bool,
@@ -328,8 +333,9 @@ impl App {
             workspace,
             docs: Vec::new(),
             current: None,
-            history: Vec::new(),
-            history_pos: 0,
+            recent: Vec::new(),
+            jumplist: jumplist::Jumplist::default(),
+            search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             tree: None,
             sidebar_visible: false,
@@ -564,6 +570,7 @@ impl App {
     fn jump_to(&mut self, change: &Change) {
         self.close_popup();
         self.focus = Focus::View;
+        self.record_jump_from_here();
         self.open(&change.path);
         if self.current_path() != change.path {
             return;
@@ -1446,9 +1453,8 @@ impl App {
                 }
             }
         };
-        self.history.truncate(self.history_pos);
-        self.history.push(index);
-        self.history_pos = self.history.len();
+        self.recent.retain(|&recent| recent != index);
+        self.recent.insert(0, index);
         self.show(index);
     }
 
@@ -1518,6 +1524,7 @@ impl App {
         }
         self.close_popup();
         self.focus = Focus::View;
+        self.record_jump_from_here();
         self.open(path);
         if self.current_path() != path {
             return Response::Error(
@@ -1569,24 +1576,63 @@ impl App {
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
 
-    /// `[o`: the previously opened document.
-    pub fn history_back(&mut self) {
-        if self.history_pos > 1 {
-            self.history_pos -= 1;
-            self.show(self.history[self.history_pos - 1]);
-        } else {
-            self.notice("at oldest file");
+    /// Where the reader is: the current file and the cursor's source
+    /// line, or `None` before any file is open.
+    fn position(&self) -> Option<jumplist::Position> {
+        let path = self.current_path().to_path_buf();
+        if path.as_os_str().is_empty() {
+            return None;
+        }
+        let line = self.view().cursor_source_line().unwrap_or(1);
+        Some(jumplist::Position { path, line })
+    }
+
+    /// A far move is leaving `from` (ADR 0049).
+    pub(crate) fn record_jump(&mut self, from: jumplist::Position) {
+        self.jumplist.record(from);
+    }
+
+    /// A far move that does not come through a key — auto-jump, an
+    /// agent's `open` — records where it is leaving from.
+    fn record_jump_from_here(&mut self) {
+        if let Some(from) = self.position() {
+            self.record_jump(from);
         }
     }
 
-    /// `]o`: the next document in history.
-    pub fn history_forward(&mut self) {
-        if self.history_pos < self.history.len() {
-            self.history_pos += 1;
-            self.show(self.history[self.history_pos - 1]);
-        } else {
-            self.notice("at newest file");
+    /// The position a far move would record now.
+    pub(crate) fn jump_origin(&self) -> Option<jumplist::Position> {
+        self.position()
+    }
+
+    /// `Alt-Left`: the previous position in the jumplist.
+    pub fn jump_back(&mut self) {
+        let Some(here) = self.position() else {
+            return;
+        };
+        match self.jumplist.back(here).cloned() {
+            Some(target) => self.go_to_position(&target),
+            None => self.notice("at oldest position"),
         }
+    }
+
+    /// `Alt-Right`: the next position in the jumplist.
+    pub fn jump_forward(&mut self) {
+        match self.jumplist.forward().cloned() {
+            Some(target) => self.go_to_position(&target),
+            None => self.notice("at newest position"),
+        }
+    }
+
+    fn go_to_position(&mut self, target: &jumplist::Position) {
+        if self.current_path() != target.path {
+            self.close_popup();
+            self.open(&target.path);
+            if self.current_path() != target.path {
+                return;
+            }
+        }
+        self.view_mut().goto_source_line(target.line);
     }
 
     /// Re-read the document at `index`; the diff from the text that was
@@ -1761,16 +1807,11 @@ impl App {
         let items = match kind {
             PickerKind::Files => self.index(Filter::Visible),
             PickerKind::AllFiles => self.index(Filter::All),
-            PickerKind::Recent => {
-                let mut seen = Vec::new();
-                for &index in self.history[..self.history_pos].iter().rev() {
-                    let path = self.docs[index].relative.to_string_lossy().into_owned();
-                    if !seen.contains(&path) {
-                        seen.push(path);
-                    }
-                }
-                seen
-            }
+            PickerKind::Recent => self
+                .recent
+                .iter()
+                .map(|&index| self.docs[index].relative.to_string_lossy().into_owned())
+                .collect(),
             PickerKind::Wake => self
                 .subscribers()
                 .iter()
@@ -1989,18 +2030,16 @@ mod tests {
     }
 
     #[test]
-    fn opening_files_builds_history_and_recent_list() -> anyhow::Result<()> {
+    fn opening_files_builds_the_recent_list() -> anyhow::Result<()> {
         let dir = fixture("history")?;
         let mut app = app(&dir)?;
         assert_eq!(app.current_path(), Path::new(""));
+        assert!(
+            app.position().is_none(),
+            "no position before a file is open"
+        );
         app.open(Path::new("README.md"));
         app.open(Path::new("docs/guide.md"));
-        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
-        app.history_back();
-        assert_eq!(app.current_path(), Path::new("README.md"));
-        app.history_back();
-        assert_eq!(app.message(), Some("at oldest file"));
-        app.history_forward();
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
         app.open(Path::new("missing.md"));
         assert!(app.message().is_some_and(|m| m.contains("missing.md")));
@@ -2203,9 +2242,10 @@ mod tests {
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
         assert_eq!(app.focus(), Focus::Sidebar);
 
-        // Paged-through files are history, so `[o` walks back through them.
-        app.history_back();
-        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+        // Paging is browsing, not a far move: the jumplist has nothing.
+        app.jump_back();
+        assert_eq!(app.message(), Some("at oldest position"));
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
 
         // A click pages too: it shows the row it lands on and stays in
         // the tree. Row 0 is the root header, so screen row 4 is README.
@@ -3073,10 +3113,11 @@ mod tests {
         app.start_comment();
         assert_eq!(app.message(), Some("cannot annotate a file this large"));
 
-        // Text files are unaffected and history spans both kinds.
+        // Text files are unaffected and the jumplist spans both kinds.
+        app.record_jump_from_here();
         app.open(Path::new("README.md"));
         assert!(app.info().is_none());
-        app.history_back();
+        app.jump_back();
         assert_eq!(app.current_path(), Path::new("big.log"));
         assert!(app.info().is_some());
         Ok(())

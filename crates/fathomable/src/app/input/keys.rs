@@ -110,11 +110,63 @@ pub(super) fn tree_highlight(app: &App) -> Option<std::path::PathBuf> {
         .map(|row| row.path().to_path_buf())
 }
 
+/// The actions that are far moves (ADR 0049): when one of these moves the
+/// reader, the position it left goes on the jumplist. `Confirm` covers
+/// the search line, `:N`, and every Enter that opens a file.
+fn is_far_move(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Confirm
+            | Action::SearchNext
+            | Action::SearchPrev
+            | Action::Top
+            | Action::Bottom
+            | Action::ThreadNext
+            | Action::ThreadPrev
+            | Action::ThreadNextAcross
+            | Action::ThreadPrevAcross
+            | Action::WaitingNext
+            | Action::WaitingPrev
+            | Action::HunkNext
+            | Action::HunkPrev
+            | Action::DirtyNext
+            | Action::DirtyPrev
+            | Action::ChangeNext
+            | Action::ChangePrev
+    )
+}
+
 impl App {
-    /// Run `action` as the focused surface means it. The Space menu and
-    /// the command line mean the same thing everywhere; the rest is
-    /// looked up per surface.
+    /// Run `action` as the focused surface means it, recording the
+    /// position a far move leaves. A search moves the cursor as it is
+    /// typed, so its origin is kept from `/` to Enter.
     pub fn act(&mut self, action: Action) -> Effect {
+        let input = place(self) == Some(Where::Input);
+        let from = match action {
+            Action::SearchForward | Action::SearchBackward => {
+                self.search_origin = self.jump_origin();
+                None
+            }
+            Action::Confirm if input => self.search_origin.take().or_else(|| self.jump_origin()),
+            Action::Escape if input => {
+                self.search_origin = None;
+                None
+            }
+            _ => self.jump_origin(),
+        };
+        let effect = self.act_placed(action);
+        if is_far_move(action)
+            && let Some(from) = from
+            && self.jump_origin().as_ref() != Some(&from)
+        {
+            self.record_jump(from);
+        }
+        effect
+    }
+
+    /// The Space menu and the command line mean the same thing
+    /// everywhere; the rest is looked up per surface.
+    fn act_placed(&mut self, action: Action) -> Effect {
         let Some(place) = place(self) else {
             return Effect::None;
         };
@@ -132,6 +184,8 @@ impl App {
             Action::ClearChanges => self.clear_queue(),
             Action::Wake => self.wake(),
             Action::Help => self.open_help(),
+            Action::JumpBack => self.jump_back(),
+            Action::JumpForward => self.jump_forward(),
             // The rail, threads, and view submenus (ADR 0049) mean the
             // same thing everywhere, as do the tree keys they alias.
             Action::TreeRefresh => self.refresh_tree(),
@@ -195,8 +249,6 @@ impl App {
             Action::DirtyPrev => self.dirty_prev(),
             Action::ChangeNext => self.jump_next(),
             Action::ChangePrev => self.jump_prev(),
-            Action::HistoryBack => self.history_back(),
-            Action::HistoryForward => self.history_forward(),
             _ => {
                 let view = self.view_mut();
                 match action {
@@ -443,6 +495,17 @@ mod tests {
         }
     }
 
+    fn alt(app: &mut App, code: KeyCode) {
+        handle_key(app, KeyEvent::new(code, KeyModifiers::ALT));
+    }
+
+    fn here(app: &App) -> (String, Option<usize>) {
+        (
+            app.current_path().to_string_lossy().into_owned(),
+            app.view().cursor_source_line(),
+        )
+    }
+
     fn compose_target(app: &App) -> Option<ComposeTarget> {
         match app.popup() {
             Some(Popup::Compose(compose)) => Some(compose.target().clone()),
@@ -551,6 +614,59 @@ mod tests {
         assert_ne!(app.view().source_view(), before);
         press(&mut app, " rr");
         assert_eq!(app.message(), Some("tree refreshed"));
+        Ok(())
+    }
+
+    /// Far moves leave positions behind: `]C` across files, `gg`, and a
+    /// search jump; `Alt-Left` walks back through them and `Alt-Right`
+    /// forward, a new far move dropping the forward part; `j` and the
+    /// tree's paging leave nothing (ADR 0049).
+    #[test]
+    fn alt_left_and_right_walk_the_positions_far_moves_left() -> anyhow::Result<()> {
+        let dir = fixture("jumplist")?;
+        let mut app = app(&dir)?;
+        annotate(&mut app, 3, "readme");
+        app.open(Path::new("docs/guide.md"));
+        annotate(&mut app, 1, "guide");
+        app.open(Path::new("README.md"));
+        app.view_mut().goto_source_line(5);
+        app.close_thread();
+
+        press(&mut app, "]C");
+        assert_eq!(here(&app), ("docs/guide.md".to_owned(), Some(1)));
+        alt(&mut app, KeyCode::Left);
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(5)));
+        alt(&mut app, KeyCode::Right);
+        assert_eq!(here(&app), ("docs/guide.md".to_owned(), Some(1)));
+        alt(&mut app, KeyCode::Right);
+        assert_eq!(app.message(), Some("at newest position"));
+
+        // Back, then a new far move: the forward part is gone.
+        alt(&mut app, KeyCode::Left);
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(5)));
+        press(&mut app, "jj");
+        press(&mut app, "gg");
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(1)));
+        alt(&mut app, KeyCode::Right);
+        assert_eq!(app.message(), Some("at newest position"));
+        alt(&mut app, KeyCode::Left);
+        assert_eq!(
+            here(&app),
+            ("README.md".to_owned(), Some(7)),
+            "gg left line 7"
+        );
+
+        // A search jump records where it left; `j` records nothing, so
+        // back from the line below the match returns to the search's
+        // origin and forward to where back started.
+        press(&mut app, "/beta");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(4)));
+        press(&mut app, "j");
+        alt(&mut app, KeyCode::Left);
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(7)));
+        alt(&mut app, KeyCode::Right);
+        assert_eq!(here(&app), ("README.md".to_owned(), Some(5)));
         Ok(())
     }
 

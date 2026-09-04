@@ -13,6 +13,7 @@ related_resources:
   - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/app/jump.rs
+  - crates/fathomable/src/app/jumplist.rs
   - crates/fathomable-core/src/config.rs
   - crates/fathomable-core/src/theme.rs
 tags:

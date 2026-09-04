@@ -1211,7 +1211,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
     let pill = match app.focus() {
         Focus::Sidebar => "TREE",
-        Focus::Threads => "LIST",
+        Focus::Review => "REVIEW",
         Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
             Mode::Normal => "NOR",
@@ -1602,31 +1602,41 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
     }
     let list = app.thread_list();
     let Rows { rows: all, entries } = app.thread_list_rows(width);
-    let (open, resolved) = all.iter().fold((0, 0), |(o, r), row| match row {
-        Row::Section {
-            resolved: false,
-            count,
-            ..
-        } => (*count, r),
-        Row::Section {
-            resolved: true,
-            count,
-            ..
-        } => (o, *count),
-        _ => (o, r),
-    });
-    let heading = if list.file_only() {
-        format!(" threads: {}", app.current_path().display())
-    } else {
-        " threads: workspace".to_owned()
-    };
-    let left = vec![
-        Span::styled(heading, theme.popup_key),
-        Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
+    let review = app.review();
+    let open = entries
+        .iter()
+        .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
+        .count();
+    let resolved = entries.len() - open;
+    let mut left = vec![
+        Span::styled(" review ", theme.popup_key),
+        Span::styled(format!(" {open} open"), theme.info),
     ];
-    let key = |action| key_of(Where::List, action);
-    let hints: Vec<(String, &str)> = if app.focus() == Focus::Threads {
+    left.push(Span::styled(
+        if review.resolved {
+            format!("  {resolved} resolved")
+        } else {
+            "  resolved hidden".to_owned()
+        },
+        theme.info,
+    ));
+    if review.file_only {
+        left.push(Span::styled(
+            format!("  {}", app.current_path().display()),
+            theme.info,
+        ));
+    }
+    left.push(Span::styled(
+        format!("  {}", review.sort.label()),
+        theme.info,
+    ));
+    let key = |action| key_of(Where::Review, action);
+    let hints: Vec<(String, &str)> = if app.focus() == Focus::Review {
         let mut hints = vec![
+            (key(Action::ReviewSort), "sort"),
+            (key(Action::ReviewResolved), "resolved"),
+            (key(Action::FileOnly), "file"),
+            (key(Action::Fold), "fold"),
             (key(Action::Confirm), "open"),
             (key(Action::Reply), "reply"),
         ];
@@ -1636,24 +1646,17 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         hints.push((key(Action::ToggleResolved), "resolve"));
         if entries.len() > 1 {
             hints.push((
-                pair(Where::List, Action::ThreadPrev, Action::ThreadNext),
+                pair(Where::Review, Action::ThreadPrev, Action::ThreadNext),
                 "threads",
             ));
         }
         if app.cursor_message_count() > 1 {
             hints.push((
-                pair(Where::List, Action::MoveDown, Action::MoveUp),
+                pair(Where::Review, Action::MoveDown, Action::MoveUp),
                 "messages",
             ));
         }
-        hints.extend([
-            (
-                pair(Where::List, Action::Fold, Action::FoldResolved),
-                "fold",
-            ),
-            (key(Action::FileOnly), "file"),
-            (key(Action::Escape), ""),
-        ]);
+        hints.push((key(Action::Escape), ""));
         hints
     } else {
         vec![(String::new(), "click or Space A to focus")]
@@ -1670,23 +1673,8 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
 
 fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
-        Row::Section {
-            resolved,
-            count,
-            folded,
-        } => {
-            let label = if *resolved { "resolved" } else { "open" };
-            let fold = if *folded { " ▸" } else { "" };
-            Line::from(Span::styled(
-                format!(" {label} {count}{fold}"),
-                theme.popup_key,
-            ))
-        }
-        Row::File(path) => Line::from(Span::styled(
-            fit(&format!(" {}", path.display()), width),
-            theme.heading[2],
-        )),
         Row::Header {
+            path,
             range,
             kind,
             updated,
@@ -1697,9 +1685,15 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         } => {
             let (status, status_style) = (label(*kind), mark_style(theme, *kind));
             let fold = if *folded { "  ▸" } else { "" };
+            // Every header carries the path (ADR 0049), so either order
+            // reads on its own.
             let spans = vec![
                 Span::styled(
-                    format!("   L{range}  "),
+                    format!(" {}", path.display()),
+                    if *dim { theme.info } else { theme.heading[2] },
+                ),
+                Span::styled(
+                    format!("  L{range}  "),
                     if *dim { theme.info } else { theme.text },
                 ),
                 Span::styled(status.to_owned(), status_style),

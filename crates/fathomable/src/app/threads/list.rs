@@ -1,13 +1,16 @@
 // @okf-doc: /decisions/0025-thread-list.md
-//! The thread list (ADR 0025): every thread on the current work, open then
-//! resolved, grouped by file, drawn in place of the document.
+//! The review list (ADR 0025, reshaped by ADR 0049): every thread on the
+//! current work, newest agent reply first or by file and line, resolved
+//! ones hidden until asked for, drawn in place of the document.
 //!
-//! The list keeps only its own state — whether it is open, the file
-//! filter, the selected thread and message, the scroll, and the folds. Its rows are
-//! computed from the store on every draw and key by [`App::thread_list_rows`],
-//! so a reload or a scope change needs nothing invalidated.
+//! The list keeps only its own state — whether it is open, the scroll,
+//! and the folds; the sort, the resolved flag, and the file filter are
+//! the [`ReviewState`] the rail's threads pane shares. Its rows are
+//! computed from the store on every draw and key by
+//! [`App::thread_list_rows`], so a reload or a change of state needs
+//! nothing invalidated.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use fathomable_core::annotations::{LineRange, Thread, ThreadId};
@@ -23,23 +26,45 @@ const SCROLLOFF: usize = 2;
 /// draws them verbatim and the wrap width already accounts for it.
 const MESSAGE_INDENT: usize = 5;
 
+/// How the review is ordered (ADR 0049).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewSort {
+    /// Threads whose newest message is not the user's first, newest
+    /// first; then the rest by their newest message.
+    #[default]
+    Recency,
+    /// Files in path order, threads in line order.
+    File,
+}
+
+impl ReviewSort {
+    /// The words the header shows.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Recency => "by newest agent reply",
+            Self::File => "by file",
+        }
+    }
+}
+
 /// What the review shows (ADR 0049), shared by the review list and the
 /// rail's threads pane.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ReviewState {
+    pub sort: ReviewSort,
     /// Resolved threads are listed too; hidden by default.
     pub resolved: bool,
+    /// Only the current document's threads (the list's `f`).
+    pub file_only: bool,
 }
 
 /// The list's state; the rows are derived from the store.
 #[derive(Debug, Default)]
 pub struct ThreadList {
     open: bool,
-    /// Only the current document's threads.
-    file_only: bool,
     scroll: usize,
     folded: HashSet<ThreadId>,
-    resolved_folded: bool,
 }
 
 impl ThreadList {
@@ -49,11 +74,6 @@ impl ThreadList {
 
     pub fn scroll(&self) -> usize {
         self.scroll
-    }
-
-    /// Whether the list is narrowed to the current document.
-    pub fn file_only(&self) -> bool {
-        self.file_only
     }
 
     /// A document took the column back.
@@ -71,19 +91,23 @@ pub struct Entry {
     kind: ThreadState,
 }
 
+impl Entry {
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
+    pub fn kind(&self) -> ThreadState {
+        self.kind
+    }
+}
+
 /// One drawn row of the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Row {
-    /// `open 4` / `resolved 7`.
-    Section {
-        resolved: bool,
-        count: usize,
-        folded: bool,
-    },
-    File(PathBuf),
-    /// The first row of an entry: range, status, age.
+    /// The first row of an entry: path, range, status, age.
     Header {
         entry: usize,
+        path: PathBuf,
         range: LineRange,
         kind: ThreadState,
         updated: u64,
@@ -134,7 +158,7 @@ impl Rows {
             Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
                 Some((*entry, Some(*message)))
             }
-            Row::Section { .. } | Row::File(_) | Row::Blank => None,
+            Row::Blank => None,
         }
     }
 
@@ -171,10 +195,10 @@ impl App {
     /// `Space A`: show the list in place of the document, or focus it
     /// when it is open, or close it when it is open and focused.
     pub fn toggle_thread_list(&mut self) {
-        if self.list.is_open() && self.focus == Focus::Threads {
+        if self.list.is_open() && self.focus == Focus::Review {
             self.close_thread_list();
         } else if self.list.is_open() {
-            self.focus = Focus::Threads;
+            self.focus = Focus::Review;
         } else {
             self.open_thread_list();
         }
@@ -194,18 +218,75 @@ impl App {
             self.set_thread_cursor_message(id, cursor.message());
         }
         self.list.open = true;
-        self.focus = Focus::Threads;
+        self.focus = Focus::Review;
         let rows = self.thread_list_rows(self.column_width());
         if rows.entries.is_empty() {
-            self.notice(if self.list.file_only {
-                "no threads in this file"
-            } else {
-                "no threads in the workspace"
-            });
+            self.notice(self.empty_review_notice());
         } else if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
         }
         self.relayout();
+    }
+
+    fn empty_review_notice(&self) -> &'static str {
+        if self.review.file_only {
+            "no threads in this file"
+        } else {
+            "no threads in the workspace"
+        }
+    }
+
+    /// What the review shows.
+    pub fn review(&self) -> ReviewState {
+        self.review
+    }
+
+    /// The threads the review lists, in its order (ADR 0049): resolved
+    /// ones only when asked for, narrowed to the current file when
+    /// `file_only`; newest agent reply first, or files by path and
+    /// threads by line.
+    pub(crate) fn review_entries(&self, file_only: bool) -> Vec<Entry> {
+        let Some(store) = self.store.as_ref() else {
+            return Vec::new();
+        };
+        let current = self.current_path();
+        let mut entries: Vec<(Entry, bool, u64)> = store
+            .threads()
+            .iter()
+            .filter(|thread| self.reach.includes(thread))
+            .filter(|thread| !file_only || thread.path() == current)
+            .filter_map(|thread| {
+                let (range, kind) = self.placement_of(thread);
+                if !self.review.resolved && !is_open(kind) {
+                    return None;
+                }
+                let theirs = thread
+                    .replies()
+                    .last()
+                    .is_some_and(|reply| !reply.author().is_user());
+                let entry = Entry {
+                    id: thread.id().clone(),
+                    path: thread.path().to_path_buf(),
+                    range,
+                    kind,
+                };
+                Some((entry, theirs, thread.updated()))
+            })
+            .collect();
+        match self.review.sort {
+            ReviewSort::Recency => entries.sort_by(|a, b| {
+                b.1.cmp(&a.1)
+                    .then(b.2.cmp(&a.2))
+                    .then(a.0.path.cmp(&b.0.path))
+                    .then(a.0.range.start().cmp(&b.0.range.start()))
+            }),
+            ReviewSort::File => entries.sort_by(|a, b| {
+                a.0.path
+                    .cmp(&b.0.path)
+                    .then(a.0.range.start().cmp(&b.0.range.start()))
+            }),
+        }
+        entries.into_iter().map(|(entry, _, _)| entry).collect()
     }
 
     /// Esc: back to the document that was showing.
@@ -214,7 +295,7 @@ impl App {
             return;
         }
         self.list.open = false;
-        if self.focus == Focus::Threads {
+        if self.focus == Focus::Review {
             self.focus = Focus::View;
         }
         self.relayout();
@@ -225,40 +306,28 @@ impl App {
         self.width.saturating_sub(self.rail_width()).max(1)
     }
 
-    /// The rows and entries for a list `width` cells wide: threads the
-    /// scope shows (or the current file's), open before resolved, files
-    /// in path order, threads in line order.
+    /// The rows and entries for a list `width` cells wide, in review
+    /// order: every entry with its header, then its messages unless
+    /// folded, a blank row between entries.
     pub fn thread_list_rows(&self, width: usize) -> Rows {
-        let Some(store) = self.store.as_ref() else {
-            return Rows::default();
-        };
-        let current = self.current_path();
-        let mut open: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
-        let mut resolved: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
-        for thread in store.threads() {
-            if !self.reach.includes(thread) {
-                continue;
-            }
-            if self.list.file_only && thread.path() != current {
-                continue;
-            }
-            let (range, kind) = self.placement_of(thread);
-            let entry = Entry {
-                id: thread.id().clone(),
-                path: thread.path().to_path_buf(),
-                range,
-                kind,
-            };
-            let section = if is_open(kind) {
-                &mut open
-            } else {
-                &mut resolved
-            };
-            section.entry(entry.path.clone()).or_default().push(entry);
-        }
         let mut out = Rows::default();
-        self.push_section(&mut out, open, width, false);
-        self.push_section(&mut out, resolved, width, true);
+        let body_width = width.saturating_sub(MESSAGE_INDENT).max(1);
+        let cursor = self.thread_cursor();
+        for entry in self.review_entries(self.review.file_only) {
+            let index = out.entries.len();
+            let selected = cursor.thread() == Some(&entry.id);
+            let folded = self.list.folded.contains(&entry.id);
+            self.push_entry(
+                &mut out,
+                &entry,
+                index,
+                selected,
+                folded,
+                !is_open(entry.kind),
+                body_width,
+            );
+            out.entries.push(entry);
+        }
         out
     }
 
@@ -273,53 +342,6 @@ impl App {
                 || (thread.range(), ThreadState::of(thread)),
                 |mark| (mark.range(), mark.kind()),
             )
-    }
-
-    fn push_section(
-        &self,
-        out: &mut Rows,
-        files: BTreeMap<PathBuf, Vec<Entry>>,
-        width: usize,
-        resolved: bool,
-    ) {
-        let count: usize = files.values().map(Vec::len).sum();
-        if count == 0 {
-            return;
-        }
-        let folded = resolved && self.list.resolved_folded;
-        let cursor = self.thread_cursor();
-        if !out.rows.is_empty() {
-            out.rows.push(Row::Blank);
-        }
-        out.rows.push(Row::Section {
-            resolved,
-            count,
-            folded,
-        });
-        let body_width = width.saturating_sub(MESSAGE_INDENT).max(1);
-        for (path, mut entries) in files {
-            entries.sort_by_key(|entry| entry.range.start());
-            if !folded {
-                out.rows.push(Row::File(path));
-            }
-            for entry in entries {
-                let index = out.entries.len();
-                let selected = cursor.thread() == Some(&entry.id);
-                let entry_folded = self.list.folded.contains(&entry.id);
-                if !folded {
-                    self.push_entry(
-                        out,
-                        &entry,
-                        index,
-                        selected,
-                        entry_folded,
-                        resolved,
-                        body_width,
-                    );
-                }
-                out.entries.push(entry);
-            }
-        }
     }
 
     #[expect(
@@ -341,6 +363,7 @@ impl App {
         };
         out.rows.push(Row::Header {
             entry: index,
+            path: entry.path.clone(),
             range: entry.range,
             kind: entry.kind,
             updated: thread.updated(),
@@ -532,20 +555,47 @@ impl App {
                 self.select_entry(&rows, entry);
             }
         }
-        self.focus = Focus::Threads;
+        self.focus = Focus::Review;
     }
 
     /// `f`: narrow to the current file, or widen again.
     pub fn thread_list_toggle_file(&mut self) {
-        self.list.file_only = !self.list.file_only;
+        self.review.file_only = !self.review.file_only;
+        self.reshow_review();
+    }
+
+    /// `s` in the list: newest agent reply first, or by file and line.
+    pub fn review_toggle_sort(&mut self) {
+        self.review.sort = match self.review.sort {
+            ReviewSort::Recency => ReviewSort::File,
+            ReviewSort::File => ReviewSort::Recency,
+        };
+        self.notice(format!("review {}", self.review.sort.label()));
+        self.reshow_review();
+    }
+
+    /// `x` in the list or the threads pane: list resolved threads too,
+    /// or hide them again (ADR 0049).
+    pub fn review_toggle_resolved(&mut self) {
+        self.review.resolved = !self.review.resolved;
+        self.notice(if self.review.resolved {
+            "resolved shown"
+        } else {
+            "resolved hidden"
+        });
+        self.reshow_review();
+    }
+
+    /// The rows changed under the list: keep the cursor's entry in view,
+    /// or say why the list is empty.
+    fn reshow_review(&mut self) {
+        if !self.list.is_open() {
+            return;
+        }
         self.list.scroll = 0;
         let rows = self.thread_list_rows(self.column_width());
         if rows.entries.is_empty() {
-            self.notice(if self.list.file_only {
-                "no threads in this file"
-            } else {
-                "no threads in the workspace"
-            });
+            self.notice(self.empty_review_notice());
         } else if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
         }
@@ -562,15 +612,6 @@ impl App {
             self.list.folded.insert(id.clone());
         }
         self.set_thread_cursor(id);
-        let rows = self.thread_list_rows(self.column_width());
-        if let Some(index) = self.selected_index(&rows) {
-            self.select_entry(&rows, index);
-        }
-    }
-
-    /// `Z`: fold or unfold the resolved section.
-    pub fn thread_list_fold_resolved(&mut self) {
-        self.list.resolved_folded = !self.list.resolved_folded;
         let rows = self.thread_list_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);

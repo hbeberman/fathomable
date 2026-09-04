@@ -39,7 +39,7 @@ pub fn place(app: &App) -> Option<Where> {
             }
             Focus::View => Where::View,
             Focus::Sidebar => Where::Tree,
-            Focus::Threads => Where::List,
+            Focus::Review => Where::Review,
             Focus::ThreadsPane => Where::ThreadsPane,
         }),
     }
@@ -212,7 +212,7 @@ impl App {
                     Where::View => self.act_view(action),
                     Where::Tree => self.act_tree(action),
                     Where::ThreadsPane => self.act_threads_pane(action),
-                    Where::List => self.act_list(action),
+                    Where::Review => self.act_list(action),
                     Where::Box => self.act_box(action),
                     Where::Picker => self.act_picker(action),
                     Where::Input => self.act_input(action),
@@ -331,13 +331,13 @@ impl App {
             Action::MoveUp => self.threads_pane_move(-1),
             Action::Confirm => self.threads_pane_open(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
-            Action::PaneResolved => self.threads_pane_toggle_resolved(),
+            Action::ReviewResolved => self.review_toggle_resolved(),
             _ => return self.act_on_cursor(action),
         }
         Effect::None
     }
 
-    /// Keys in the thread list (ADR 0025).
+    /// Keys in the review list (ADR 0025, ADR 0049).
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => self.close_thread_list(),
@@ -351,7 +351,8 @@ impl App {
             Action::Bottom => self.thread_list_goto(true),
             Action::Confirm => self.thread_open_in_file(),
             Action::Fold => self.thread_list_fold(),
-            Action::FoldResolved => self.thread_list_fold_resolved(),
+            Action::ReviewSort => self.review_toggle_sort(),
+            Action::ReviewResolved => self.review_toggle_resolved(),
             Action::FileOnly => self.thread_list_toggle_file(),
             _ => return self.act_on_cursor(action),
         }

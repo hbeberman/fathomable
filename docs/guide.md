@@ -111,7 +111,7 @@ The `Space` menu, from any pane:
 | --- | --- |
 | `Space e`, `Space E` | tree pane: show and focus or return focus; hide (the threads pane keeps the rail) |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
-| `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
+| `Space A` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
 | `Space t`, `Space T` | threads pane: show and focus or return focus; hide |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
 | `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
@@ -133,7 +133,8 @@ or `threads · workspace 12`):
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space T` hides it) |
 
-Thread list:
+Review list (`Space A`; its header reads `review  4 open  resolved hidden
+by newest agent reply`):
 
 | Keys | Action |
 | --- | --- |
@@ -143,7 +144,7 @@ Thread list:
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
-| `z` `Z` `f` | fold the entry, fold resolved, only this file |
+| `s`, `x`, `f`, `z` | sort by newest agent reply or by file and line; show or hide resolved threads (the threads pane shares the flag); only this file; fold the entry |
 | `Esc` | close the list, back to the document (`Space A` does too) |
 
 Comment and edit box:
@@ -271,16 +272,21 @@ uppercase crosses files: `]c`/`[c` step to the previous or next thread
 of this file, wrapping, and `]C`/`[C` across the workspace, files in
 path order, opening the file they land in.
 
-`Space A` shows the whole review at once: every thread on the current
-work (the ones whose commit `HEAD` can reach), open ones first and then
-resolved ones dimmed, grouped by file, each with its comment and replies
-in full. It takes the text column the way a document does; the tree
-stays beside it. The newest message in the selected thread starts
-highlighted; `h`/`l` move between threads, `j`/`k` move between their
-messages, `Ctrl-d`/`Ctrl-u` move by half a page of rows, and `e` edits
-a highlighted message you wrote. `Enter` opens the file with the thread
-expanded and the cursor on that message, `r` and `o` reply and resolve in place, `f` narrows
-the list to the file you were reading, and `Esc` goes back to it.
+`Space A` shows the whole review at once as an inbox: every thread on
+the current work (the ones whose commit `HEAD` can reach), the ones an
+agent spoke in last at the top, newest first, then the rest by their
+newest message; `s` sorts by file and line instead. Resolved threads
+are hidden until `x` shows them dimmed (the threads pane shares the
+flag). Every entry header carries the path, the lines, the state, and
+the age, then the comment and replies in full. It takes the text column
+the way a document does; the rail stays beside it. The newest message
+in the selected thread starts highlighted; `h`/`l` move between
+threads, `j`/`k` move between their messages, `Ctrl-d`/`Ctrl-u` move by
+half a page of rows, `z` folds an entry, and `e` edits a highlighted
+message you wrote. `Enter` opens the file with the thread expanded and
+the cursor on that message, `r` and `o` reply and resolve in place, `f`
+narrows the list to the file you were reading, and `Esc` goes back to
+it.
 
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting

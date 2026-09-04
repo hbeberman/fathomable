@@ -171,8 +171,8 @@ pub enum Where {
     Tree,
     /// The rail's threads pane.
     ThreadsPane,
-    /// The workspace thread list.
-    List,
+    /// The review list.
+    Review,
     /// The comment box.
     Box,
     /// The file, recent, or wake picker.
@@ -262,7 +262,8 @@ actions! {
     ThreadsPaneFocus,
     ThreadsPaneHide,
     PaneScope,
-    PaneResolved,
+    ReviewResolved,
+    ReviewSort,
     Wake,
     Help,
     ThreadNext,
@@ -279,7 +280,6 @@ actions! {
     Delete,
     DeleteThread,
     Fold,
-    FoldResolved,
     FileOnly,
     Newline,
     Backspace,
@@ -650,7 +650,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('A')]],
         A::ThreadList,
         "Space menu",
-        "thread list: open, or close",
+        "review list: open, or close",
     ),
     bind(
         W::Any,
@@ -896,7 +896,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(
         W::ThreadsPane,
         &[&[c('x')]],
-        A::PaneResolved,
+        A::ReviewResolved,
         "Threads pane",
         "show or hide resolved threads",
     ),
@@ -930,116 +930,123 @@ pub const BINDINGS: &[Binding] = &[
     ),
     // ----- the thread list -----
     bind(
-        W::List,
+        W::Review,
         &[&[c('j')], &[k(K::Down)]],
         A::MoveDown,
-        "Thread list",
+        "Review list",
         "next message",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('k')], &[k(K::Up)]],
         A::MoveUp,
-        "Thread list",
+        "Review list",
         "previous message",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('l')], &[k(K::Right)]],
         A::ThreadNext,
-        "Thread list",
+        "Review list",
         "next thread",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('h')], &[k(K::Left)]],
         A::ThreadPrev,
-        "Thread list",
+        "Review list",
         "previous thread",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('g'), c('g')]],
         A::Top,
-        "Thread list",
+        "Review list",
         "first thread",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('g'), c('e')], &[c('G')]],
         A::Bottom,
-        "Thread list",
+        "Review list",
         "last thread",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[ctrl('d')]],
         A::HalfPageDown,
-        "Thread list",
+        "Review list",
         "half a page down",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[ctrl('u')]],
         A::HalfPageUp,
-        "Thread list",
+        "Review list",
         "half a page up",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[k(K::Enter)]],
         A::Confirm,
-        "Thread list",
-        "open the file and thread pane on this message",
+        "Review list",
+        "open the file with the thread expanded on this message",
     ),
-    bind(W::List, &[&[c('r')]], A::Reply, "Thread list", "reply"),
+    bind(W::Review, &[&[c('r')]], A::Reply, "Review list", "reply"),
     bind(
-        W::List,
+        W::Review,
         &[&[c('e')]],
         A::EditMessage,
-        "Thread list",
+        "Review list",
         "edit your message",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('o')]],
         A::ToggleResolved,
-        "Thread list",
+        "Review list",
         "resolve or reopen",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('d'), c('d')]],
         A::Delete,
-        "Thread list",
+        "Review list",
         "delete the thread",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[c('z')]],
         A::Fold,
-        "Thread list",
+        "Review list",
         "fold the entry",
     ),
     bind(
-        W::List,
-        &[&[c('Z')]],
-        A::FoldResolved,
-        "Thread list",
-        "fold resolved threads",
+        W::Review,
+        &[&[c('s')]],
+        A::ReviewSort,
+        "Review list",
+        "newest agent reply first, or by file",
     ),
     bind(
-        W::List,
+        W::Review,
+        &[&[c('x')]],
+        A::ReviewResolved,
+        "Review list",
+        "show or hide resolved threads",
+    ),
+    bind(
+        W::Review,
         &[&[c('f')]],
         A::FileOnly,
-        "Thread list",
+        "Review list",
         "only this file",
     ),
     bind(
-        W::List,
+        W::Review,
         &[&[k(K::Esc)]],
         A::Escape,
-        "Thread list",
+        "Review list",
         "back to the text",
     ),
     // ----- the comment box -----
@@ -1363,7 +1370,7 @@ mod tests {
         spell,
     };
 
-    const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::List];
+    const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
 
     /// An action nobody can press is dead code the table would hide.
     #[test]
@@ -1384,7 +1391,7 @@ mod tests {
             Where::View,
             Where::Tree,
             Where::ThreadsPane,
-            Where::List,
+            Where::Review,
             Where::Box,
             Where::Picker,
             Where::Input,
@@ -1491,7 +1498,7 @@ mod tests {
             keys(Where::View, &[c(' '), c('c')]),
             ["c", "z", "x", "n", "r", "o", "e", "d"]
         );
-        assert_eq!(keys(Where::List, &[c(' '), c('v')]), ["s", "d", "D"]);
+        assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "d", "D"]);
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
         assert!(menu(Where::Box, &[c(' ')]).is_empty());
     }
@@ -1572,10 +1579,13 @@ mod tests {
         assert_eq!(spell(&[c(' '), c('j'), c('a')]), "Space j a");
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
-        assert_eq!(hint(Where::List, Action::Reply).as_deref(), Some("r"));
+        assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("r"));
         assert_eq!(hint(Where::Tree, Action::TreeRefresh).as_deref(), Some("R"));
         assert_eq!(hint(Where::View, Action::Reply).as_deref(), Some("r"));
-        assert_eq!(hint(Where::List, Action::CommandLine).as_deref(), Some(":"));
+        assert_eq!(
+            hint(Where::Review, Action::CommandLine).as_deref(),
+            Some(":")
+        );
         assert_eq!(hint(Where::Box, Action::CommandLine), None);
         assert!(help().iter().any(|(keys, _)| keys == "j / Down"));
     }

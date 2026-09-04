@@ -146,24 +146,32 @@ impl App {
     /// The threads the pane lists, in its order, resolved ones only when
     /// the review shows them.
     pub fn threads_pane_ids(&self) -> Vec<ThreadId> {
-        let order = match self.rail.scope {
-            PaneScope::File => self.file_threads(),
-            PaneScope::Workspace => self.workspace_threads(),
-        };
-        if self.review.resolved {
-            return order;
+        match self.rail.scope {
+            // Line order, resolved ones when the review shows them.
+            PaneScope::File => {
+                let order = self.file_threads();
+                if self.review.resolved {
+                    return order;
+                }
+                order
+                    .into_iter()
+                    .filter(|id| {
+                        self.thread(id).is_some_and(|thread| {
+                            matches!(
+                                self.placement_of(thread).1,
+                                ThreadState::Open | ThreadState::Waiting
+                            )
+                        })
+                    })
+                    .collect()
+            }
+            // The review's order (ADR 0049).
+            PaneScope::Workspace => self
+                .review_entries(false)
+                .into_iter()
+                .map(|entry| entry.id().clone())
+                .collect(),
         }
-        order
-            .into_iter()
-            .filter(|id| {
-                self.thread(id).is_some_and(|thread| {
-                    matches!(
-                        self.placement_of(thread).1,
-                        ThreadState::Open | ThreadState::Waiting
-                    )
-                })
-            })
-            .collect()
     }
 
     /// The pane's entries, ready to draw.
@@ -305,17 +313,6 @@ impl App {
             PaneScope::Workspace => PaneScope::File,
         };
         self.notice(format!("threads: {}", self.rail.scope.word()));
-    }
-
-    /// `x`: list resolved threads too, or hide them again; the review
-    /// list shares the flag (ADR 0049).
-    pub fn threads_pane_toggle_resolved(&mut self) {
-        self.review.resolved = !self.review.resolved;
-        self.notice(if self.review.resolved {
-            "resolved shown"
-        } else {
-            "resolved hidden"
-        });
     }
 
     /// A click on the pane's rule row or header: the keys come here.

@@ -666,7 +666,7 @@ impl App {
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() > 0 {
             // A reply from the threads pane keeps its keys (ADR 0034).
         } else if self.list.is_open() {
-            self.focus = Focus::Threads;
+            self.focus = Focus::Review;
         }
     }
 
@@ -1375,7 +1375,7 @@ mod tests {
         ));
         app.set_compose_text("revised opening");
         app.compose_submit();
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         assert!(app.thread_list().is_open());
         assert_eq!(
             app.thread(&id).map(Thread::comment),
@@ -1402,7 +1402,7 @@ mod tests {
         ));
         assert_eq!(app.compose_draft(), Some("user follow-up"));
         app.compose_cancel();
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         Ok(())
     }
 
@@ -1606,7 +1606,7 @@ mod tests {
 
         space(&mut app, 'A');
         assert!(app.thread_list().is_open());
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         space(&mut app, 'A');
         assert!(
             !app.thread_list().is_open(),
@@ -1719,22 +1719,18 @@ mod tests {
         let bottom = app.view().cursor_source_line();
         app.view_mut().goto_top();
 
-        // The list (ADR 0025) takes the column: both threads, open first,
-        // under the file; Enter jumps to the selected one and opens the pane.
+        // The list (ADR 0025, ADR 0049) takes the column: both threads,
+        // every header carrying the path; Enter opens the file with the
+        // thread expanded.
         app.open_thread_list();
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         assert!(!app.shows_thread());
         let rows = app.thread_list_rows(60);
         assert_eq!(rows.entries.len(), 2);
         assert!(matches!(
             rows.rows.first(),
-            Some(Row::Section {
-                resolved: false,
-                count: 2,
-                ..
-            })
+            Some(Row::Header { path, .. }) if path == Path::new("README.md")
         ));
-        assert!(matches!(&rows.rows[1], Row::File(path) if path == Path::new("README.md")));
         assert!(
             rows.rows
                 .iter()
@@ -1747,41 +1743,23 @@ mod tests {
         assert!(app.shows_thread());
         assert_eq!(app.view().cursor_source_line(), bottom);
 
-        // `x` moves an entry to the resolved section; `f` narrows to the
-        // file; `Z` folds the resolved section; reopening keeps the entry.
+        // `o` resolves an entry, which leaves the list until `x` shows
+        // it dimmed; `f` narrows to the file; reopening keeps the entry.
         app.open_thread_list();
         app.thread_toggle_resolved();
-        let rows = app.thread_list_rows(60);
-        assert!(matches!(
-            rows.rows.first(),
-            Some(Row::Section {
-                resolved: false,
-                count: 1,
-                ..
-            })
-        ));
-        assert!(rows.rows.iter().any(|row| matches!(
-            row,
-            Row::Section {
-                resolved: true,
-                count: 1,
-                ..
-            }
-        )));
         assert_eq!(app.message(), Some("resolved"));
-        app.thread_list_fold_resolved();
+        assert_eq!(app.thread_list_rows(60).entries.len(), 1, "resolved hidden");
+        app.review_toggle_resolved();
         let rows = app.thread_list_rows(60);
         assert_eq!(rows.entries.len(), 2);
-        assert_eq!(
+        assert!(
             rows.rows
                 .iter()
-                .filter(|row| matches!(row, Row::File(_)))
-                .count(),
-            1
+                .any(|row| matches!(row, Row::Header { dim: true, .. }))
         );
-        app.thread_list_fold_resolved();
+        app.review_toggle_resolved();
         app.thread_list_toggle_file();
-        assert_eq!(app.thread_list_rows(60).entries.len(), 2);
+        assert_eq!(app.thread_list_rows(60).entries.len(), 1);
         app.thread_list_toggle_file();
         app.close_thread_list();
         assert_eq!(app.focus(), Focus::View);
@@ -1789,7 +1767,7 @@ mod tests {
         app.thread_reply();
         type_in(&mut app, "still here");
         app.compose_submit();
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         assert!(app.thread_list().is_open());
         assert!(
             app.thread_list_rows(60)
@@ -1802,6 +1780,75 @@ mod tests {
         assert!(!app.thread_list().is_open());
         assert_eq!(app.focus(), Focus::View);
 
+        Ok(())
+    }
+
+    /// The review is an inbox (ADR 0049): threads an agent spoke in last
+    /// come first, newest first, then the rest; `s` orders by file and
+    /// line instead, and the rail's threads pane follows the same order
+    /// in workspace scope.
+    #[test]
+    fn the_review_orders_by_newest_agent_reply_then_by_file() -> anyhow::Result<()> {
+        let dir = fixture("inbox")?;
+        let mut app = app(&dir)?;
+        app.start_comment();
+        type_in(&mut app, "top");
+        app.compose_submit();
+        app.view_mut().goto_bottom();
+        app.start_comment();
+        type_in(&mut app, "bottom");
+        app.compose_submit();
+        let top = app.file_threads()[0].clone();
+        let bottom = app.file_threads()[1].clone();
+        app.agent_reply(
+            &top,
+            Author::agent("reviewer"),
+            "answered".to_owned(),
+            false,
+            None,
+        )
+        .map_err(anyhow::Error::msg)?;
+        let order = |app: &App| -> Vec<fathomable_core::annotations::ThreadId> {
+            app.thread_list_rows(60)
+                .entries
+                .iter()
+                .map(|entry| entry.id().clone())
+                .collect()
+        };
+        app.open_thread_list();
+        assert_eq!(order(&app), [top.clone(), bottom.clone()], "answered first");
+        app.review_toggle_sort();
+        assert_eq!(app.message(), Some("review by file"));
+        assert_eq!(order(&app), [top.clone(), bottom.clone()], "L1 before L8");
+        // A later reply, a minute on so the second does not tie.
+        let later = app.thread(&top).map_or(0, Thread::updated) + 60;
+        app.store_mut().context("store")?.reply(
+            &bottom,
+            fathomable_core::annotations::Reply::new(
+                Author::agent("reviewer"),
+                later,
+                "answered later".to_owned(),
+            ),
+        )?;
+        assert_eq!(
+            order(&app),
+            [top.clone(), bottom.clone()],
+            "file order holds"
+        );
+        app.review_toggle_sort();
+        assert_eq!(
+            order(&app),
+            [bottom.clone(), top.clone()],
+            "newest reply first"
+        );
+        app.close_thread_list();
+
+        // The threads pane's workspace scope reads the same order.
+        app.show_threads_pane();
+        app.threads_pane_toggle_scope();
+        assert_eq!(app.threads_pane_ids(), [bottom.clone(), top.clone()]);
+        app.review_toggle_sort();
+        assert_eq!(app.threads_pane_ids(), [top, bottom]);
         Ok(())
     }
 

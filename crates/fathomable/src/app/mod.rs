@@ -91,8 +91,8 @@ const SIDEBAR_SCROLLOFF: usize = 2;
 pub enum Focus {
     View,
     Sidebar,
-    /// The thread list (ADR 0025).
-    Threads,
+    /// The review list (ADR 0025, ADR 0049).
+    Review,
     /// The rail's threads pane (ADR 0027, ADR 0049).
     ThreadsPane,
 }
@@ -1131,7 +1131,7 @@ impl App {
         let present = match focus {
             Focus::View => true,
             Focus::Sidebar => self.tree().is_some(),
-            Focus::Threads => self.list.is_open(),
+            Focus::Review => self.list.is_open(),
             Focus::ThreadsPane => self.threads_pane_height() > 0,
         };
         if present {

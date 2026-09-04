@@ -30,7 +30,7 @@ impl App {
     /// The first `d` on a thread surface: arm the cursor's thread.
     pub fn arm_delete_here(&mut self) {
         match self.focus() {
-            Focus::ThreadsPane | Focus::Threads => self.thread_arm_delete(),
+            Focus::ThreadsPane | Focus::Review => self.thread_arm_delete(),
             // In the text, only a thread covering the cursor row is armed
             // (ADR 0049), never one further up the file.
             Focus::View if !self.threads_at_cursor().is_empty() => self.thread_arm_delete(),
@@ -198,7 +198,7 @@ mod tests {
 
         // The thread list: the entry under the selection goes.
         app.open_thread_list();
-        assert_eq!(app.focus(), Focus::Threads);
+        assert_eq!(app.focus(), Focus::Review);
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('d'));
         assert!(app.marks().is_empty());

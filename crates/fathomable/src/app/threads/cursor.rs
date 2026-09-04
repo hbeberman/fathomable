@@ -343,8 +343,9 @@ impl App {
 
     /// `r`: reply to the cursor's thread through the comment box.
     pub fn thread_reply(&mut self) {
-        if let Some(id) = self.thread_cursor().thread().cloned() {
-            self.open_compose(ComposeTarget::Reply(id));
+        match self.thread_cursor().thread().cloned() {
+            Some(id) => self.open_compose(ComposeTarget::Reply(id)),
+            None => self.notice("no thread here"),
         }
     }
 
@@ -359,6 +360,29 @@ impl App {
         }
     }
 
+    /// `Space c e`: edit the newest message of the cursor's thread that
+    /// the user wrote, wherever the highlight is (ADR 0049). The comment
+    /// is always the user's.
+    pub fn thread_edit_newest_own(&mut self) {
+        let Some(id) = self.thread_cursor().thread().cloned() else {
+            self.notice("no thread here");
+            return;
+        };
+        let Some(thread) = self.thread(&id) else {
+            return;
+        };
+        let newest = thread
+            .replies()
+            .iter()
+            .rposition(|reply| reply.author().is_user())
+            .map_or(0, |index| index + 1);
+        self.set_thread_cursor_message(id.clone(), newest);
+        self.open_compose(ComposeTarget::Edit {
+            thread: id,
+            message: message_target(newest),
+        });
+    }
+
     /// Whether the highlighted message belongs to the user.
     #[must_use]
     pub fn thread_message_editable(&self) -> bool {
@@ -371,11 +395,13 @@ impl App {
 
     /// `o`: resolve the cursor's thread, or reopen it.
     pub fn thread_toggle_resolved(&mut self) {
-        if let Some(id) = self.thread_cursor().thread().cloned() {
-            self.toggle_resolved(&id);
-            if self.list.is_open() {
-                self.thread_list_follow_cursor();
-            }
+        let Some(id) = self.thread_cursor().thread().cloned() else {
+            self.notice("no thread here");
+            return;
+        };
+        self.toggle_resolved(&id);
+        if self.list.is_open() {
+            self.thread_list_follow_cursor();
         }
     }
 

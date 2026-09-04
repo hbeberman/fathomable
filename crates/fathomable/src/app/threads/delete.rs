@@ -41,6 +41,14 @@ impl App {
         }
     }
 
+    /// `Space c d`: delete the cursor's thread outright (ADR 0049).
+    pub fn thread_delete_here(&mut self) {
+        match self.thread_cursor().thread().cloned() {
+            Some(id) => self.delete_thread(&id),
+            None => self.notice("no thread here"),
+        }
+    }
+
     /// A click while armed cancels; the click is then handled.
     pub fn cancel_delete(&mut self) {
         if self.pending_delete.take().is_some() {

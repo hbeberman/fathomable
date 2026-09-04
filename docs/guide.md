@@ -76,7 +76,8 @@ be annotated: `c` says so.
 ## 3. Keys
 
 Vim-style movement in the text; `Space` opens a Helix-style menu, and any
-prefix (`g`, `[`, `]`, `Space`, `d`) shows the keys that continue it.
+prefix (`g`, `[`, `]`, `Space`, `d`) shows the keys that continue it under
+a row naming the prefix (`Space c · threads`).
 `Space ?` lists every binding inside the app. Every key below is checked
 against the binding table by a test, so what is written here exists.
 
@@ -112,6 +113,9 @@ The `Space` menu, from any pane:
 | `Space a` | the thread pane on the thread at the cursor; on the focused pane, close it |
 | `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane; on the focused pane, close the thread pane and return to the text |
+| `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
+| `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
+| `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |

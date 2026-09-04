@@ -132,6 +132,19 @@ impl App {
             Action::ClearChanges => self.clear_queue(),
             Action::Wake => self.wake(),
             Action::Help => self.open_help(),
+            // The rail, threads, and view submenus (ADR 0049) mean the
+            // same thing everywhere, as do the tree keys they alias.
+            Action::TreeRefresh => self.refresh_tree(),
+            Action::TreeIgnored => self.toggle_ignored(),
+            Action::TreeReveal => self.reveal_in_tree(),
+            Action::NewThread => self.start_new_comment(),
+            Action::Reply => self.thread_reply(),
+            Action::ToggleResolved => self.thread_toggle_resolved(),
+            Action::EditNewestOwn => self.thread_edit_newest_own(),
+            Action::DeleteThread => self.thread_delete_here(),
+            Action::SourceView => self.view_mut().toggle_source_view(),
+            Action::DiffHead => self.view_mut().toggle_diff_view(),
+            Action::DiffSeen => self.view_mut().toggle_seen_diff_view(),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_sidebar_focus();
@@ -170,7 +183,6 @@ impl App {
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),
-            Action::NewThread => self.start_new_comment(),
             Action::ThreadNext => self.thread_step_in_file(1),
             Action::ThreadPrev => self.thread_step_in_file(-1),
             Action::ThreadNextAcross => self.thread_step_across(1),
@@ -206,9 +218,6 @@ impl App {
                     Action::SelectLines => view.select_lines(),
                     Action::ExtendLine => view.extend_line_below(),
                     Action::Yank => return view.yank(),
-                    Action::SourceView => view.toggle_source_view(),
-                    Action::DiffHead => view.toggle_diff_view(),
-                    Action::DiffSeen => view.toggle_seen_diff_view(),
                     Action::Escape => view.escape(),
                     _ => {}
                 }
@@ -244,8 +253,6 @@ impl App {
                 tree.goto_bottom();
                 None
             }),
-            Action::TreeRefresh => self.refresh_tree(),
-            Action::TreeIgnored => self.toggle_ignored(),
             Action::Escape => self.toggle_sidebar_focus(),
             _ => {}
         }
@@ -318,13 +325,12 @@ impl App {
         Effect::None
     }
 
-    /// The keys every thread surface shares: they act on the cursor's
-    /// thread and message (ADR 0046).
+    /// The keys the thread surfaces keep for themselves: `e` on the
+    /// highlighted message and the second `d` (ADR 0046); reply and
+    /// resolve are the same from everywhere.
     fn act_on_cursor(&mut self, action: Action) -> Effect {
         match action {
-            Action::Reply => self.thread_reply(),
             Action::EditMessage => self.thread_edit_message(),
-            Action::ToggleResolved => self.thread_toggle_resolved(),
             Action::Delete => self.delete_armed_thread(),
             _ => {}
         }
@@ -381,5 +387,189 @@ impl App {
             _ => {}
         }
         Effect::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use fathomable_core::annotations::{MessageTarget, Store};
+    use fathomable_core::workspace::Workspace;
+    use fathomable_testing::TempDir;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::handle_key;
+    use crate::app::threads::{ComposeTarget, ThreadState};
+    use crate::app::{App, Focus, Options, Popup};
+
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("keys-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws/docs"))?;
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n")?;
+        Ok(dir)
+    }
+
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        app.view_mut().toggle_source_view();
+        Ok(app)
+    }
+
+    fn annotate(app: &mut App, line: usize, text: &str) {
+        app.view_mut().goto_source_line(line);
+        app.start_new_comment();
+        app.compose_insert(text);
+        app.compose_submit();
+    }
+
+    fn press(app: &mut App, keys: &str) {
+        for ch in keys.chars() {
+            handle_key(app, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+    }
+
+    fn compose_target(app: &App) -> Option<ComposeTarget> {
+        match app.popup() {
+            Some(Popup::Compose(compose)) => Some(compose.target().clone()),
+            _ => None,
+        }
+    }
+
+    fn screen(app: &App) -> anyhow::Result<String> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::draw::Theme::from_core(&core);
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
+        let buffer = terminal.backend().buffer().clone();
+        let mut text = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                text.push_str(buffer[(x, y)].symbol());
+            }
+            text.push('\n');
+        }
+        Ok(text)
+    }
+
+    /// `Space c` acts on the thread at the cursor from the text and from
+    /// the tree: reply, resolve, edit the newest own message, delete
+    /// (ADR 0049).
+    #[test]
+    fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
+        let dir = fixture("threads")?;
+        let mut app = app(&dir)?;
+        annotate(&mut app, 3, "three");
+        annotate(&mut app, 5, "five");
+        app.view_mut().goto_source_line(3);
+        let id = app.marks()[0].id().clone();
+
+        press(&mut app, " cr");
+        assert_eq!(compose_target(&app), Some(ComposeTarget::Reply(id.clone())));
+        app.compose_insert("answer");
+        app.compose_submit();
+        assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
+        // A reply still opens the thread pane (ADR 0046) until stubs
+        // replace it; close it to keep acting from the text.
+        app.close_thread();
+        assert_eq!(app.focus(), Focus::View);
+
+        press(&mut app, " ce");
+        assert_eq!(
+            compose_target(&app),
+            Some(ComposeTarget::Edit {
+                thread: id.clone(),
+                message: MessageTarget::Reply(0),
+            }),
+            "the newest own message is the reply"
+        );
+        let draft = match app.popup() {
+            Some(Popup::Compose(compose)) => compose.buffer().text().to_owned(),
+            _ => String::new(),
+        };
+        assert_eq!(draft, "answer", "the box is seeded with the reply");
+        app.close_popup();
+
+        // From the tree the same keys reach the same thread.
+        app.show_sidebar();
+        assert_eq!(app.focus(), Focus::Sidebar);
+        press(&mut app, " co");
+        assert_eq!(app.marks()[0].kind(), ThreadState::Resolved);
+        press(&mut app, " co");
+        assert_eq!(app.marks()[0].kind(), ThreadState::Open);
+        press(&mut app, " cd");
+        assert_eq!(app.marks().len(), 1);
+        assert_eq!(app.marks()[0].range().start(), 5);
+        assert_eq!(app.focus(), Focus::Sidebar, "focus stays where it was");
+
+        // `Space c n` starts a new thread on the cursor line.
+        app.toggle_sidebar_focus();
+        app.view_mut().goto_source_line(4);
+        press(&mut app, " cn");
+        assert!(matches!(
+            compose_target(&app),
+            Some(ComposeTarget::New(range)) if range.start() == 4
+        ));
+        Ok(())
+    }
+
+    /// `Space r .` shows a hidden tree with its highlight on the current
+    /// file and leaves focus in the text; `Space v s` toggles the view
+    /// from the tree.
+    #[test]
+    fn space_r_reveals_and_space_v_toggles_from_any_pane() -> anyhow::Result<()> {
+        let dir = fixture("rail")?;
+        let mut app = app(&dir)?;
+        app.open(Path::new("docs/guide.md"));
+        assert!(app.tree().is_none());
+        press(&mut app, " r.");
+        assert_eq!(app.focus(), Focus::View);
+        let highlighted = app
+            .tree()
+            .and_then(|tree| tree.current())
+            .map(|row| row.path().to_path_buf());
+        assert_eq!(highlighted.as_deref(), Some(Path::new("docs/guide.md")));
+
+        app.toggle_sidebar_focus();
+        assert_eq!(app.focus(), Focus::Sidebar);
+        let before = app.view().source_view();
+        press(&mut app, " vs");
+        assert_ne!(app.view().source_view(), before);
+        press(&mut app, " rr");
+        assert_eq!(app.message(), Some("tree refreshed"));
+        Ok(())
+    }
+
+    /// The which-key box leads with the prefix and the submenu's word,
+    /// and re-renders at every level.
+    #[test]
+    fn the_menu_shows_a_breadcrumb_for_the_prefix() -> anyhow::Result<()> {
+        let dir = fixture("menu")?;
+        let mut app = app(&dir)?;
+        press(&mut app, " ");
+        let text = screen(&app)?;
+        assert!(text.contains(" Space "), "the Space menu names its prefix");
+        assert!(text.contains("threads…"), "the submenu entry is named");
+        press(&mut app, "c");
+        let text = screen(&app)?;
+        assert!(text.contains(" Space c · threads "), "{text}");
+        assert!(text.contains("reply to the thread here"));
+        press(&mut app, "r");
+        assert!(matches!(app.popup(), Some(Popup::Compose(_))) || app.message().is_some());
+        Ok(())
     }
 }

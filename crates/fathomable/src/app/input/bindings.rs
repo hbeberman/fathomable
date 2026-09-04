@@ -256,6 +256,7 @@ actions! {
     TreeHide,
     TreeRefresh,
     TreeIgnored,
+    TreeReveal,
     PickFile,
     PickAnyFile,
     PickRecent,
@@ -270,8 +271,10 @@ actions! {
     ThreadPrevAcross,
     Reply,
     EditMessage,
+    EditNewestOwn,
     ToggleResolved,
     Delete,
+    DeleteThread,
     Fold,
     FoldResolved,
     FileOnly,
@@ -295,14 +298,6 @@ pub struct Binding {
     pub action: Action,
     pub label: &'static str,
     pub group: &'static str,
-}
-
-impl Binding {
-    /// The word a submenu leading to this binding is named by: the first
-    /// word of its label.
-    fn group_word(&self) -> &'static str {
-        self.label.split(' ').next().unwrap_or(self.label)
-    }
 }
 
 const fn bind(
@@ -639,6 +634,83 @@ pub const BINDINGS: &[Binding] = &[
         A::FileThreadsFocus,
         "Space menu",
         "file-threads pane: focus, or close",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('r'), c('r')]],
+        A::TreeRefresh,
+        "Space menu",
+        "rail: re-read the tree",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('r'), c('i')]],
+        A::TreeIgnored,
+        "Space menu",
+        "rail: toggle ignored entries",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('r'), c('.')]],
+        A::TreeReveal,
+        "Space menu",
+        "rail: reveal this file in the tree",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('n')]],
+        A::NewThread,
+        "Space menu",
+        "threads: new thread on the cursor line",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('r')]],
+        A::Reply,
+        "Space menu",
+        "threads: reply to the thread here",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('o')]],
+        A::ToggleResolved,
+        "Space menu",
+        "threads: resolve or reopen the thread here",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('e')]],
+        A::EditNewestOwn,
+        "Space menu",
+        "threads: edit your newest message in the thread here",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('d')]],
+        A::DeleteThread,
+        "Space menu",
+        "threads: delete the thread here",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('s')]],
+        A::SourceView,
+        "Space menu",
+        "view: toggle source view",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('d')]],
+        A::DiffHead,
+        "Space menu",
+        "view: toggle the diff against HEAD",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('D')]],
+        A::DiffSeen,
+        "Space menu",
+        "view: toggle the diff against last seen",
     ),
     bind(
         W::Any,
@@ -1188,6 +1260,33 @@ pub const BINDINGS: &[Binding] = &[
     ),
 ];
 
+/// The prefixes that are submenus, with the word the parent menu and the
+/// breadcrumb row name them by (ADR 0049).
+const SUBMENUS: &[(Keys, &str)] = &[
+    (&[c(' '), c('r')], "rail"),
+    (&[c(' '), c('c')], "threads"),
+    (&[c(' '), c('v')], "view"),
+    (&[c(' '), c('j')], "jump"),
+];
+
+/// The word `typed` is a submenu for, when it is one.
+fn submenu_word(typed: &[Chord]) -> Option<&'static str> {
+    SUBMENUS
+        .iter()
+        .find(|(keys, _)| *keys == typed)
+        .map(|(_, word)| *word)
+}
+
+/// The breadcrumb row of the which-key menu: the prefix as it is
+/// spelled, then the submenu's word (`Space c · threads`).
+#[must_use]
+pub fn menu_title(typed: &[Chord]) -> String {
+    match submenu_word(typed) {
+        Some(word) => format!("{} · {word}", spell(typed)),
+        None => spell(typed),
+    }
+}
+
 /// `Ctrl` letters zellij's lock mode owns; the viewer never binds them.
 #[cfg(test)]
 pub const ZELLIJ_LOCKS: [char; 9] = ['g', 'p', 't', 'n', 'h', 's', 'o', 'q', 'b'];
@@ -1242,7 +1341,8 @@ pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
                         binding.label.to_owned()
                     } else {
                         // A submenu is named after where it leads.
-                        format!("{}…", binding.group_word())
+                        let word = submenu_word(&keys[..=typed.len()]).unwrap_or("more");
+                        format!("{word}…")
                     };
                     entries.push((next, label));
                 }
@@ -1256,8 +1356,20 @@ pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
 /// sequence there, else its first `Any` sequence.
 #[must_use]
 pub fn hint(place: Where, action: Action) -> Option<String> {
-    applicable(place)
-        .find(|b| b.action == action)
+    let own = BINDINGS
+        .iter()
+        .find(|b| b.place == place && b.action == action);
+    let any = || {
+        place
+            .takes_any()
+            .then(|| {
+                BINDINGS
+                    .iter()
+                    .find(|b| b.place == Where::Any && b.action == action)
+            })
+            .flatten()
+    };
+    own.or_else(any)
         .and_then(|b| b.keys.first())
         .map(|keys| spell(keys))
 }
@@ -1393,7 +1505,7 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and `Space j` opens the jump submenu.
+    /// and the submenus open under `j`, `c`, `v`, and `r` (ADR 0049).
     #[test]
     fn menus_come_from_the_table() {
         let space = menu(Where::View, &[c(' ')]);
@@ -1402,17 +1514,53 @@ mod tests {
                 .iter()
                 .any(|(key, label)| key == "?" && label == "all keys")
         );
+        for (key, word) in [
+            ("j", "jump…"),
+            ("c", "threads…"),
+            ("v", "view…"),
+            ("r", "rail…"),
+        ] {
+            let entries: Vec<&str> = space
+                .iter()
+                .filter(|(k, _)| k == key)
+                .map(|(_, label)| label.as_str())
+                .collect();
+            assert_eq!(entries, [word], "Space {key} is one submenu entry");
+        }
+        let keys = |place, typed: &[Chord]| {
+            menu(place, typed)
+                .into_iter()
+                .map(|(key, _)| key)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
-            space.iter().filter(|(key, _)| key == "j").count(),
-            1,
-            "the jump submenu is one entry"
+            keys(Where::View, &[c(' '), c('c')]),
+            ["n", "r", "o", "e", "d"]
         );
-        let jump = menu(Where::Tree, &[c(' '), c('j')]);
-        assert_eq!(
-            jump.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>(),
-            ["j", "a", "c"]
-        );
+        assert_eq!(keys(Where::List, &[c(' '), c('v')]), ["s", "d", "D"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
         assert!(menu(Where::Box, &[c(' ')]).is_empty());
+    }
+
+    /// Every prefix under `Space` that leads further is a named submenu,
+    /// so the parent entry and the breadcrumb never fall back to "more".
+    #[test]
+    fn every_space_submenu_is_named() {
+        for binding in BINDINGS {
+            for keys in binding.keys {
+                if keys.len() > 2 && keys[0] == c(' ') {
+                    assert!(
+                        super::submenu_word(&keys[..2]).is_some(),
+                        "{} has no submenu name",
+                        spell(&keys[..2])
+                    );
+                }
+            }
+        }
+        assert_eq!(super::menu_title(&[c(' ')]), "Space");
+        assert_eq!(super::menu_title(&[c(' '), c('c')]), "Space c · threads");
+        assert_eq!(super::menu_title(&[c('g')]), "g");
     }
 
     /// The guide's key section names only keys the table binds: every
@@ -1472,6 +1620,11 @@ mod tests {
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::List, Action::Reply).as_deref(), Some("r"));
+        assert_eq!(hint(Where::Tree, Action::TreeRefresh).as_deref(), Some("R"));
+        assert_eq!(
+            hint(Where::View, Action::Reply).as_deref(),
+            Some("Space c r")
+        );
         assert_eq!(hint(Where::List, Action::CommandLine).as_deref(), Some(":"));
         assert_eq!(hint(Where::Box, Action::CommandLine), None);
         assert!(help().iter().any(|(keys, _)| keys == "j / Down"));

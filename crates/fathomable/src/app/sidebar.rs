@@ -50,6 +50,19 @@ impl App {
         self.notice("tree refreshed");
     }
 
+    /// `Space r .`: show the tree when it is hidden and put its highlight
+    /// on the current file, keeping focus where it is (ADR 0049).
+    pub fn reveal_in_tree(&mut self) {
+        if !self.sidebar_visible {
+            if !self.ensure_tree() {
+                return;
+            }
+            self.sidebar_visible = true;
+            self.relayout();
+        }
+        self.reveal_current();
+    }
+
     /// `I` in the tree: toggle ignored entries.
     pub fn toggle_ignored(&mut self) {
         let filter = match self.tree.as_ref().map(Tree::filter) {

@@ -264,7 +264,13 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
-                draw_menu(frame, theme, column, &bindings::menu(place, app.prefix()));
+                draw_menu(
+                    frame,
+                    theme,
+                    column,
+                    &bindings::menu_title(app.prefix()),
+                    &bindings::menu(place, app.prefix()),
+                );
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
@@ -1049,10 +1055,17 @@ fn truncate_left(text: &str, max: usize) -> String {
     format!("…{}", chars.into_iter().collect::<String>())
 }
 
-/// A Helix-style key menu anchored to the bottom of `pane`, laid out in
-/// columns when the entries do not fit in the rows available.
-fn draw_menu(frame: &mut Frame<'_>, theme: &Theme, pane: Rect, entries: &[(String, String)]) {
-    if pane.height < 2 || entries.is_empty() {
+/// A Helix-style key menu anchored to the bottom of `pane`, under a
+/// breadcrumb row naming the prefix (ADR 0049), laid out in columns when
+/// the entries do not fit in the rows available.
+fn draw_menu(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    pane: Rect,
+    title: &str,
+    entries: &[(String, String)],
+) {
+    if pane.height < 3 || entries.is_empty() {
         return;
     }
     let key_width = entries
@@ -1066,10 +1079,14 @@ fn draw_menu(frame: &mut Frame<'_>, theme: &Theme, pane: Rect, entries: &[(Strin
         .max()
         .unwrap_or(1);
     let column_width = key_width + 2 + label_width + 3;
-    let max_rows = usize::from(pane.height.saturating_sub(1)).clamp(1, 8);
+    let max_rows = usize::from(pane.height.saturating_sub(2)).clamp(1, 8);
     let columns = entries.len().div_ceil(max_rows);
     let rows = entries.len().div_ceil(columns);
-    let mut lines = Vec::with_capacity(rows);
+    let mut lines = Vec::with_capacity(rows + 1);
+    lines.push(Line::from(Span::styled(
+        format!(" {title} "),
+        theme.mode_normal,
+    )));
     for r in 0..rows {
         let mut spans = vec![Span::raw(" ")];
         for c in 0..columns {
@@ -1081,12 +1098,13 @@ fn draw_menu(frame: &mut Frame<'_>, theme: &Theme, pane: Rect, entries: &[(Strin
         }
         lines.push(Line::from(spans));
     }
-    let width = u16_of(columns * column_width + 1).min(pane.width);
+    let width = u16_of((columns * column_width + 1).max(display_width(title) + 2)).min(pane.width);
+    let height = u16_of(rows + 1);
     let area = Rect {
         x: pane.x,
-        y: pane.y + pane.height - u16_of(rows),
+        y: pane.y + pane.height - height,
         width,
-        height: u16_of(rows),
+        height,
     };
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), area);

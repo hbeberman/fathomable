@@ -105,6 +105,11 @@ shipping the animation:
   toast counts and target. An animation later adds a tick timer and a
   per-row intensity from hunk age; no change to `Diff` or the delta store.
 
+(Amended 2026-09-03: the per-document delta window (`Doc.deltas`,
+`follow::Delta`) was never read and is removed; a reload yields one
+`Diff` that the change hint consumes. The window returns with the
+animation, noted in [parked](../parked.md).)
+
 ### Hints, badges, and toasts
 
 - The **change queue** holds one entry per changed file, newest first, with

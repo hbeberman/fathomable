@@ -1,14 +1,11 @@
 // @okf-doc: /decisions/0015-follow-mode.md
-//! Follow mode: which changes the viewer reacts to, the queue of changed
-//! files a jump key walks, and the delta each reload leaves behind.
+//! Follow mode: which changes the viewer reacts to and the queue of
+//! changed files a jump key walks.
 //!
 //! [`Ignore`] is the `follow.ignore` glob list. [`Queue`] keeps one
-//! [`Change`] per file,
-//! newest first; a later change to a queued file moves it to the front.
-//! Stepping newest-first and oldest-first is what `]f` and `[f` do.
-//! [`Delta`] is the diff between the text that was on screen and the text
-//! that replaced it, stamped with when it landed, so a later animation can
-//! fade hunks by age.
+//! [`Change`] per file, newest first; a later change to a queued file
+//! moves it to the front. Stepping newest-first and oldest-first is what
+//! `]f` and `[f` do.
 //!
 //! # Examples
 //!
@@ -29,13 +26,10 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use gix::bstr::BStr;
 use gix::glob::pattern::Case;
 use gix::glob::wildmatch;
-
-use crate::diff::Diff;
 
 /// The `follow.ignore` globs, matched against root-relative paths with
 /// gitignore syntax (`*` does not cross `/`, `**` does, a trailing `/`
@@ -104,61 +98,6 @@ impl fmt::Display for UnknownGlob {
 }
 
 impl std::error::Error for UnknownGlob {}
-
-/// What one reload changed: the previous text, its diff against the new
-/// text, and when it landed (ADR 0015 edit deltas).
-#[derive(Debug, Clone)]
-pub struct Delta {
-    old: String,
-    diff: Diff,
-    at: Instant,
-}
-
-impl Delta {
-    /// Diff `old` (what was on screen) against `new` (what replaced it).
-    #[must_use]
-    pub fn new(old: String, new: &str) -> Self {
-        let diff = Diff::new(&old, new);
-        Self {
-            old,
-            diff,
-            at: Instant::now(),
-        }
-    }
-
-    /// The text before the reload, so removed lines can be shown in place.
-    #[must_use]
-    pub fn old(&self) -> &str {
-        &self.old
-    }
-
-    /// Hunks in the new text's line space.
-    #[must_use]
-    pub fn diff(&self) -> &Diff {
-        &self.diff
-    }
-
-    /// When the reload landed.
-    #[must_use]
-    pub fn at(&self) -> Instant {
-        self.at
-    }
-
-    /// Whether the reload changed nothing.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.diff.is_empty()
-    }
-
-    /// The 1-based line of the first hunk, if any.
-    #[must_use]
-    pub fn first_line(&self) -> Option<usize> {
-        self.diff
-            .hunks()
-            .first()
-            .map(|hunk| hunk.target_line(self.diff.new_lines()))
-    }
-}
 
 /// Where a jump lands in a changed file (1-based lines).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,17 +329,6 @@ mod tests {
             Some(UnknownGlob("!x".to_owned()))
         );
         assert!(!Ignore::default().is_ignored(Path::new("anything")));
-    }
-
-    #[test]
-    fn delta_reports_first_hunk() {
-        let delta = Delta::new("a\nb\nc\n".to_owned(), "a\nB\nc\nd\n");
-        assert!(!delta.is_empty());
-        assert_eq!(delta.first_line(), Some(2));
-        assert_eq!(delta.old(), "a\nb\nc\n");
-        assert_eq!(delta.diff().counts(), (2, 1));
-        assert!(Delta::new("x\n".to_owned(), "x\n").is_empty());
-        assert_eq!(Delta::new("x\n".to_owned(), "x\n").first_line(), None);
     }
 
     #[test]

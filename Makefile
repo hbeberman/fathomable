@@ -11,8 +11,7 @@ export PERF_PATH
 
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
 	docs-check boundaries public-api audit deny features udeps mutants mutants-file \
-	perf install-commit-hooks build-deps clean web-install web-dev web-check \
-	web-build web-lock web-toolchain install
+	perf install-commit-hooks build-deps clean install
 
 help:
 	@printf '%s\n' \
@@ -36,12 +35,6 @@ help:
 		'mutants           Run mutation testing' \
 		'mutants-file      Mutate FILE=<path>' \
 		'perf              Profile fathomable [PERF_PATH] until it exits' \
-		'web-install       Install locked web dependencies (when configured)' \
-		'web-dev           Start Vite (when configured)' \
-		'web-toolchain     Verify supported Node and npm versions' \
-		'web-check         Run Biome and TypeScript checks (when configured)' \
-		'web-build         Build with Vite/Rolldown (when configured)' \
-		'web-lock          Reject npm lock drift (when configured)' \
 		'install-commit-hooks Install or refresh the local commit hook' \
 		'install           Install fathomable into ~/.cargo/bin' \
 		'build-deps        Install optional Cargo tooling' \
@@ -109,35 +102,6 @@ perf:
 	if [[ -n "$${PERF_BIN}" ]]; then args+=(--bin "$${PERF_BIN}"); fi; \
 	args+=(-- "$${PERF_PATH}"); \
 	scripts/perf-record.sh "$${args[@]}"
-
-web-install:
-	@test -f web/package-lock.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-	npm --prefix web ci --ignore-scripts --no-audit --no-fund
-
-web-dev:
-	@test -f web/package.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-	npm --prefix web run dev
-
-web-toolchain:
-	@test -f web/package.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-
-web-check:
-	@test -f web/package.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-	npm --prefix web run check
-
-web-build:
-	@test -f web/package.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-	npm --prefix web run build
-
-web-lock:
-	@test -f web/package-lock.json || { echo 'web stack is not configured' >&2; exit 2; }
-	scripts/check-node-toolchain.sh
-	npm --prefix web ci --dry-run --ignore-scripts
 
 install-commit-hooks:
 	scripts/install-commit-hooks.sh

@@ -53,7 +53,7 @@ use fathomable_core::config::{AgentsConfig, FollowConfig, MarkdownConfig, Viewer
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
-use fathomable_core::follow::{Change, Delta, Ignore, Queue, Target};
+use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
@@ -77,9 +77,6 @@ use watch::{Fingerprint, is_git_metadata};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
-/// How many edit deltas a document keeps.
-const MAX_DELTAS: usize = 8;
-
 /// Toasts visible at once.
 pub const MAX_TOASTS: usize = 3;
 
@@ -348,8 +345,6 @@ struct Doc {
     relative: PathBuf,
     view: View,
     marks: Vec<Mark>,
-    /// What recent reloads changed, newest last (ADR 0015 edit deltas).
-    deltas: Vec<Delta>,
     /// Whether the text has changed or been read since it was last
     /// snapshotted as seen.
     seen_dirty: bool,
@@ -1105,8 +1100,8 @@ impl App {
                 self.notice(format!("{} is back", relative.display()));
             }
         }
-        let delta = loaded.and_then(|index| self.reload_doc(index));
-        if loaded.is_some() && delta.is_none() {
+        let diff = loaded.and_then(|index| self.reload_doc(index));
+        if loaded.is_some() && diff.is_none() {
             // The event did not change the text (a touch, or our own
             // write); nothing to hint about.
             return;
@@ -1115,12 +1110,13 @@ impl App {
         {
             return;
         }
-        let (line, counts) = match (loaded, delta) {
-            (Some(index), Some(delta)) => (
-                delta
-                    .first_line()
+        let (line, counts) = match (loaded, diff) {
+            (Some(index), Some(diff)) => (
+                diff.hunks()
+                    .first()
+                    .map(|hunk| hunk.target_line(diff.new_lines()))
                     .or_else(|| self.docs[index].view.first_hunk_line()),
-                delta.diff().counts(),
+                diff.counts(),
             ),
             _ => self.unloaded_change(relative, absolute),
         };
@@ -1561,7 +1557,6 @@ impl App {
                         relative: relative.clone(),
                         view,
                         marks: Vec::new(),
-                        deltas: Vec::new(),
                         seen_dirty: true,
                         deleted: None,
                     });
@@ -1716,25 +1711,21 @@ impl App {
         }
     }
 
-    /// Re-read the document at `index`; the delta of what changed, if the
-    /// text differs.
-    fn reload_doc(&mut self, index: usize) -> Option<Delta> {
+    /// Re-read the document at `index`; the diff from the text that was
+    /// on screen to the text that replaced it, if they differ.
+    fn reload_doc(&mut self, index: usize) -> Option<Diff> {
         let doc = &mut self.docs[index];
         match doc.document.reload() {
             Ok(true) => {
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
                 let old = doc.view.text().to_owned();
                 let text = doc.document.text().unwrap_or_default();
-                let delta = Delta::new(old, text);
+                let diff = Diff::new(&old, text);
                 doc.view.reload(text.to_owned());
-                doc.deltas.push(delta.clone());
-                if doc.deltas.len() > MAX_DELTAS {
-                    doc.deltas.remove(0);
-                }
                 doc.seen_dirty = true;
                 self.refresh_base(index);
-                self.remap_marks(index, delta.old());
-                Some(delta)
+                self.remap_marks(index, &old);
+                Some(diff)
             }
             Ok(false) => None,
             Err(error) => {

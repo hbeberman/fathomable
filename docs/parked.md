@@ -43,7 +43,11 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Diff-view animation** to show an agent's edits as they land: hunks lit
   in the diff faces and fading by age. Origin: initial planning; the edit
   deltas it needs are specified in
-  [0015](decisions/0015-follow-mode.md).
+  [0015](decisions/0015-follow-mode.md). The per-document delta store
+  that record described was computed on every reload and never read, so
+  it was removed on 2026-09-03; a reload now yields one `Diff` for the
+  change hint and nothing is kept. The timestamped delta window comes
+  back with the animation.
 - **macOS / Windows support.** Origin: charter; Linux only for now.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
@@ -59,8 +63,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   it; only unified shipped. The last-seen base, changed-file jumping, and
   base refresh on commit moved to
   [0015](decisions/0015-follow-mode.md).
-
-## Milestone 1 scaffolding follow-ups
 
 ## Open investigations
 

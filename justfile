@@ -63,24 +63,6 @@ mutants-file:
 perf path=".":
     make perf PERF_PATH="{{path}}"
 
-web-install:
-    make web-install
-
-web-dev:
-    make web-dev
-
-web-toolchain:
-    make web-toolchain
-
-web-check:
-    make web-check
-
-web-build:
-    make web-build
-
-web-lock:
-    make web-lock
-
 demo *ARGS:
     scripts/demo-repo.sh {{ARGS}}
 

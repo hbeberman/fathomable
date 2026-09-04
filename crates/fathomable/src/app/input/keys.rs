@@ -124,9 +124,9 @@ impl App {
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
-            Action::ThreadAtCursor => self.open_thread_at_cursor(),
-            Action::ThreadList => self.open_thread_list(),
-            Action::FileThreadsFocus => self.focus_file_threads(),
+            Action::ThreadAtCursor => self.toggle_thread_pane(),
+            Action::ThreadList => self.toggle_thread_list(),
+            Action::FileThreadsFocus => self.toggle_file_threads(),
             Action::JumpNewest => self.jump_newest(),
             Action::AutoJumpToggle => self.toggle_auto_jump(),
             Action::ClearChanges => self.clear_queue(),
@@ -262,7 +262,7 @@ impl App {
     /// message keys move the one cursor (ADR 0046).
     fn act_thread_pane(&mut self, action: Action) -> Effect {
         match action {
-            Action::Escape => self.close_thread(),
+            Action::Escape => self.leave_thread_pane(),
             Action::MoveDown => self.message_step(1),
             Action::MoveUp => self.message_step(-1),
             // `h` on the file's first thread hops to the file-threads pane,

@@ -160,9 +160,21 @@ impl App {
         &self.list
     }
 
-    /// `Space A`: show the list in place of the document. The pane closes;
-    /// the filter and folds are whatever they were last time, and the
-    /// cursor is where the reader was (ADR 0046).
+    /// `Space A`: show the list in place of the document, or focus it
+    /// when it is open, or close it when it is open and focused.
+    pub fn toggle_thread_list(&mut self) {
+        if self.list.is_open() && self.focus == Focus::Threads {
+            self.close_thread_list();
+        } else if self.list.is_open() {
+            self.focus = Focus::Threads;
+        } else {
+            self.open_thread_list();
+        }
+    }
+
+    /// Show the list in place of the document. The pane closes; the
+    /// filter and folds are whatever they were last time, and the cursor
+    /// is where the reader was (ADR 0046).
     pub fn open_thread_list(&mut self) {
         if self.store.is_none() {
             self.store_mut();

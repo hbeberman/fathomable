@@ -767,8 +767,18 @@ impl App {
 
     // ----- thread pane -----
 
-    /// `Space a`: show the first thread under the cursor; the others on
-    /// the row are one `n` away.
+    /// `Space a`: the pane on the first thread under the cursor, the
+    /// others one `l` away; on the focused pane, close it instead.
+    pub fn toggle_thread_pane(&mut self) {
+        if self.thread.is_some() && self.focus == Focus::Thread {
+            self.close_thread();
+        } else {
+            self.open_thread_at_cursor();
+        }
+    }
+
+    /// Show the first thread under the cursor; the others on the row are
+    /// one `l` away.
     pub fn open_thread_at_cursor(&mut self) {
         let Some(id) = self.threads_at_cursor().into_iter().next() else {
             self.notice("no thread on this line");
@@ -827,7 +837,16 @@ impl App {
         self.relayout();
     }
 
-    /// Esc in the pane: close it and hand the keys back to the text.
+    /// Esc in the pane: the keys go back to the text and the pane stays
+    /// (ADR 0010, amended 2026-09-03); `Space a` closes it.
+    pub fn leave_thread_pane(&mut self) {
+        if self.focus == Focus::Thread {
+            self.focus = Focus::View;
+        }
+    }
+
+    /// `Space a` on the focused pane, the list taking the column, or a
+    /// deleted thread: close the pane and hand the keys back to the text.
     pub fn close_thread(&mut self) {
         self.thread = None;
         if self.focus == Focus::Thread {
@@ -1768,6 +1787,61 @@ mod tests {
         let parts = crate::app::ui::status_parts(&app);
         assert_eq!(parts.pill, "THREAD");
         assert_eq!(parts.badges, ["SRC"], "the badge outlives the focus change");
+        Ok(())
+    }
+
+    /// Esc leaves a pane where it is; the Space key that opened it
+    /// closes it (ADR 0010, amended 2026-09-03).
+    #[test]
+    fn esc_leaves_a_pane_and_its_space_key_closes_it() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use crate::app::input::keys;
+
+        let dir = TempDir::new("toggle")?;
+        let mut app = dir.app()?;
+        annotate(&mut app, "one")?;
+        let press = |app: &mut App, code| {
+            keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+        };
+        let space = |app: &mut App, ch| {
+            press(app, KeyCode::Char(' '));
+            press(app, KeyCode::Char(ch));
+        };
+
+        space(&mut app, 'a');
+        assert_eq!(app.focus(), Focus::Thread);
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.focus(), Focus::View);
+        assert!(app.thread_panel().is_some(), "Esc leaves the pane open");
+        space(&mut app, 'a');
+        assert_eq!(
+            app.focus(),
+            Focus::Thread,
+            "Space a returns to the open pane"
+        );
+        space(&mut app, 'a');
+        assert!(
+            app.thread_panel().is_none(),
+            "Space a on the focused pane closes it"
+        );
+        assert_eq!(app.focus(), Focus::View);
+
+        space(&mut app, 'A');
+        assert!(app.thread_list().is_open());
+        assert_eq!(app.focus(), Focus::Threads);
+        space(&mut app, 'A');
+        assert!(
+            !app.thread_list().is_open(),
+            "Space A on the focused list closes it"
+        );
+        space(&mut app, 'A');
+        press(&mut app, KeyCode::Esc);
+        assert!(
+            !app.thread_list().is_open(),
+            "Esc closes the list: it is the column"
+        );
+        assert_eq!(app.focus(), Focus::View);
         Ok(())
     }
 

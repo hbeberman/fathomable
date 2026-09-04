@@ -130,7 +130,20 @@ impl App {
     }
 
     /// `Space t`: focus the pane, showing the tree first when it is
-    /// hidden, and open the thread pane on the highlight (ADR 0034).
+    /// hidden, and open the thread pane on the highlight (ADR 0034); on
+    /// the focused pane, close the thread pane it drives and return the
+    /// keys to the text.
+    pub fn toggle_file_threads(&mut self) {
+        if self.focus == Focus::FileThreads {
+            self.close_thread();
+            self.focus = Focus::View;
+        } else {
+            self.focus_file_threads();
+        }
+    }
+
+    /// Focus the pane, showing the tree first when it is hidden, and open
+    /// the thread pane on the highlight.
     pub fn focus_file_threads(&mut self) {
         if self.marks().is_empty() {
             self.notice("no threads in this file");
@@ -145,11 +158,10 @@ impl App {
         }
     }
 
-    /// Esc in the pane: the thread pane closes and the keys go back to
-    /// the text.
+    /// Esc in the pane: the keys go back to the text; the thread pane it
+    /// drives stays (ADR 0010, amended 2026-09-03), `Space t` closes it.
     pub fn leave_file_threads(&mut self) {
         if self.focus == Focus::FileThreads {
-            self.close_thread();
             self.focus = Focus::View;
         }
     }
@@ -463,8 +475,15 @@ mod tests {
         assert_eq!(app.focus(), Focus::FileThreads);
         app.leave_file_threads();
         assert_eq!(app.focus(), Focus::View);
-        assert!(app.thread_panel().is_none());
-        // Left from the pane shows the tree when it was hidden.
+        assert!(
+            app.thread_panel().is_some(),
+            "Esc leaves, it does not close"
+        );
+        app.focus_file_threads();
+        app.toggle_file_threads();
+        assert_eq!(app.focus(), Focus::View);
+        assert!(app.thread_panel().is_none(), "Space t on the pane closes");
+        // `h` from the pane shows the tree when it was hidden.
         app.hide_sidebar();
         app.focus_thread_pane();
         app.thread_to_file_threads();

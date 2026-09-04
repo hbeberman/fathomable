@@ -109,9 +109,9 @@ The `Space` menu, from any pane:
 | --- | --- |
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
-| `Space a` | the thread at the cursor, in the thread pane |
-| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file |
-| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane |
+| `Space a` | the thread pane on the thread at the cursor; on the focused pane, close it |
+| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file; on the focused list, close it |
+| `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane; on the focused pane, close the thread pane and return to the text |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -127,7 +127,7 @@ Thread pane (its header reads `thread 2/5 in file · 7/40 overall`):
 | `gg`, `ge` / `G` | first / last message |
 | `Ctrl-d` `Ctrl-u` | scroll half the pane |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete (the second `d` confirms, any other key cancels) |
-| `Esc` | close |
+| `Esc` | back to the text; the pane stays (`Space a` closes it) |
 
 File-threads pane:
 
@@ -136,7 +136,7 @@ File-threads pane:
 | `j` `k` | next / previous thread; the cursor and the thread pane follow |
 | `l` / `Right` / `Enter` | focus the thread pane |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
-| `Esc` | close the thread pane, back to the text |
+| `Esc` | back to the text; the panes stay (`Space t` closes the thread pane) |
 
 Thread list:
 
@@ -149,7 +149,7 @@ Thread list:
 | `Enter` | open the file and thread pane on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `z` `Z` `f` | fold the entry, fold resolved, only this file |
-| `Esc` | back to the document |
+| `Esc` | close the list, back to the document (`Space A` does too) |
 
 Comment and edit box:
 

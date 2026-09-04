@@ -624,21 +624,21 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('a')]],
         A::ThreadAtCursor,
         "Space menu",
-        "thread at cursor",
+        "thread pane: open on the thread here, or close",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('A')]],
         A::ThreadList,
         "Space menu",
-        "thread list",
+        "thread list: open, or close",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('t')]],
         A::FileThreadsFocus,
         "Space menu",
-        "file threads",
+        "file-threads pane: focus, or close",
     ),
     bind(
         W::Any,
@@ -844,7 +844,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[k(K::Esc)]],
         A::Escape,
         "Thread pane",
-        "close",
+        "back to the text; the pane stays",
     ),
     // ----- the file-threads pane -----
     bind(
@@ -894,7 +894,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[k(K::Esc)]],
         A::Escape,
         "File threads",
-        "back to the text",
+        "back to the text; the panes stay",
     ),
     // ----- the thread list -----
     bind(

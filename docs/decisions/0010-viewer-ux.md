@@ -145,6 +145,14 @@ viewer, the layout engine, and later themes agree.
 - Only `:q` quits, as in vim/helix; `Ctrl-c` does nothing (dropped 2026-08-26). `q` is reserved. Esc clears, in order, the
   active input line, a pending key sequence, the selection, and search
   highlights; it never quits.
+- Amended 2026-09-03: **Esc leaves, toggles close.** Esc in the thread
+  pane or the file-threads pane hands the keys back to the text and
+  leaves the pane where it is; the `Space` key that opened a pane closes
+  it when the pane has focus (`Space a`, `Space t`), and focuses it when
+  it is open without focus. The thread list is the text column's
+  replacement, not a side pane, so Esc closes it and `Space A` toggles
+  it. `Left` and `Right` mean `h` and `l` on every surface
+  ([0046](0046-one-thread-cursor.md)).
 
 ## Consequences
 

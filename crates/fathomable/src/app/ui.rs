@@ -1635,7 +1635,7 @@ fn thread_hints(
             "scroll",
         ));
     }
-    hints.push((key(Action::Escape), "close"));
+    hints.push((key(Action::Escape), "text"));
     hints
 }
 

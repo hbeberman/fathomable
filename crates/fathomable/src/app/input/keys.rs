@@ -171,13 +171,13 @@ impl App {
         };
         match action {
             Action::TreeToggleFocus => self.toggle_tree_focus(),
-            Action::TreeHide => self.hide_tree(),
+            Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
             Action::Review => self.toggle_review(),
             Action::ThreadsPaneFocus => self.toggle_threads_pane(),
-            Action::ThreadsPaneHide => self.hide_threads_pane(),
+            Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
             Action::JumpNewest => self.jump_newest(),
             Action::AutoJumpToggle => self.toggle_auto_jump(),
             Action::ClearChanges => self.clear_queue(),

@@ -257,7 +257,7 @@ actions! {
     Escape,
     Confirm,
     TreeToggleFocus,
-    TreeHide,
+    TreeToggle,
     TreeRefresh,
     TreeIgnored,
     TreeReveal,
@@ -266,7 +266,7 @@ actions! {
     PickRecent,
     Review,
     ThreadsPaneFocus,
-    ThreadsPaneHide,
+    ThreadsPaneToggle,
     PaneScope,
     ReviewResolved,
     ReviewSort,
@@ -640,9 +640,9 @@ pub const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('E')]],
-        A::TreeHide,
+        A::TreeToggle,
         "Space menu",
-        "tree pane: hide",
+        "tree pane: hide, or show again",
     ),
     bind(
         W::Any,
@@ -682,9 +682,9 @@ pub const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('T')]],
-        A::ThreadsPaneHide,
+        A::ThreadsPaneToggle,
         "Space menu",
-        "threads pane: hide",
+        "threads pane: hide, or show again",
     ),
     bind(
         W::Any,

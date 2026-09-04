@@ -262,8 +262,13 @@ impl App {
         }
     }
 
-    /// `Space T`: hide the pane; the tree keeps the rail if it is shown.
-    pub fn hide_threads_pane(&mut self) {
+    /// `Space T`: hide the pane, or show it again without taking the
+    /// keys; the tree keeps the rail if it is shown.
+    pub fn toggle_threads_pane_shown(&mut self) {
+        if !self.rail.threads {
+            self.show_threads_pane();
+            return;
+        }
         self.rail.threads = false;
         if self.focus == Focus::ThreadsPane {
             self.focus = Focus::View;
@@ -615,7 +620,8 @@ mod tests {
         assert_eq!(app.tree_rows(), top - 4);
 
         // `Space E` hides the tree and leaves the pane; `Space T` hides
-        // the pane, and with both gone the rail goes.
+        // the pane, and with both gone the rail goes. Both keys show
+        // their pane again without taking the keys.
         app.focus_threads_pane();
         press(&mut app, " E");
         assert!(app.tree().is_none());
@@ -630,6 +636,12 @@ mod tests {
         assert!(!app.threads_pane_shown());
         assert_eq!(app.focus(), Focus::View);
         assert_eq!(app.rail_width(), 0);
+        press(&mut app, " T");
+        assert!(app.threads_pane_shown(), "the same key shows it again");
+        assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
+        press(&mut app, " E");
+        assert!(app.tree().is_some(), "the same key shows it again");
+        assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
         Ok(())
     }
 

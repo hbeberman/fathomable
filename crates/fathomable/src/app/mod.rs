@@ -1750,11 +1750,20 @@ impl App {
         self.relayout();
     }
 
-    /// `Space E`: hide the tree pane; the threads pane keeps the rail.
-    pub fn hide_tree(&mut self) {
-        self.rail.tree = false;
-        if self.focus == Focus::Tree {
-            self.focus = Focus::View;
+    /// `Space E`: hide the tree pane, or show it again without taking
+    /// the keys; the threads pane keeps the rail either way.
+    pub fn toggle_tree_shown(&mut self) {
+        if self.rail.tree {
+            self.rail.tree = false;
+            if self.focus == Focus::Tree {
+                self.focus = Focus::View;
+            }
+        } else {
+            if !self.ensure_tree() {
+                return;
+            }
+            self.rail.tree = true;
+            self.reveal_current();
         }
         self.relayout();
     }
@@ -2149,8 +2158,11 @@ mod tests {
         app.toggle_tree_focus();
         assert_eq!(app.focus(), Focus::View);
         assert!(app.tree().is_some(), "tree stays visible");
-        app.hide_tree();
+        app.toggle_tree_shown();
         assert!(app.tree().is_none());
+        app.toggle_tree_shown();
+        assert!(app.tree().is_some(), "the same key shows it again");
+        assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
         Ok(())
     }
 

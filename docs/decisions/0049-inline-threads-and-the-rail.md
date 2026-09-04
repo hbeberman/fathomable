@@ -175,8 +175,9 @@ result.
   pane exists whether or not the tree pane is shown; the rail is drawn
   when either pane is shown.
 - `Space e` shows and focuses the tree pane, or returns focus when it
-  is focused; `Space E` hides it and leaves the threads pane. `Space t`
-  / `Space T` do the same for the threads pane. `Space r` opens the rail
+  is focused; `Space E` hides it and leaves the threads pane, and shows
+  it again without taking the keys. `Space t` / `Space T` do the same
+  for the threads pane. `Space r` opens the rail
   submenu: `r` re-reads the directories, `i` toggles ignored entries,
   `.` reveals the current file in the tree, expanding to it and moving
   the tree highlight. `R` and `I` in the tree pane stay as aliases.

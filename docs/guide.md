@@ -110,10 +110,10 @@ The `Space` menu, from any pane:
 
 | Keys | Action |
 | --- | --- |
-| `Space e`, `Space E` | tree pane: show and focus or return focus; hide (the threads pane keeps the rail) |
+| `Space e`, `Space E` | tree pane: show and focus or return focus; hide or show again without taking the keys (the threads pane keeps the rail) |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
 | `Space A` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
-| `Space t`, `Space T` | threads pane: show and focus or return focus; hide |
+| `Space t`, `Space T` | threads pane: show and focus or return focus; hide or show again without taking the keys |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
 | `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
@@ -134,7 +134,7 @@ or `threads · workspace 12`):
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads (the review list shares the flag) |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
-| `Esc` | back to the text; the pane stays (`Space T` hides it) |
+| `Esc` | back to the text; the pane stays (`Space T` hides and shows it) |
 
 Review list (`Space A`; its header reads `review  4 open  resolved hidden
 by newest agent reply`):

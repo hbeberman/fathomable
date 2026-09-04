@@ -2,7 +2,7 @@
 type: Decision
 title: Threads follow HEAD across a rewrite
 description: An open thread whose commit a history rewrite dropped, but whose lines are still in the working tree, is rescoped to the new HEAD and stays visible; recorded as a rescope event.
-resource: crates/fathomable/src/app/rescope.rs
+resource: crates/fathomable/src/app/reach.rs
 tags:
   - decision
   - annotations
@@ -49,7 +49,7 @@ Settled in a question round on 2026-08-28. The choices:
   thread's commit and bumps `updated`; `Store::rescope` appends it.
   The format version stays 2: an older reader rejects it as it does
   any unknown event.
-- `app/rescope.rs`, which this record backs, holds `follow_head`: with
+- `app/reach.rs`, which this record backs, holds `follow_head`: with
   the reachable set of 0024 in hand, every open thread whose commit is
   set and not reachable, and whose anchor locates in the file as it is
   on disk, is rescoped to the current `HEAD`. Outside git, or before

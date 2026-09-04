@@ -174,3 +174,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     workspace; `o` resolves; `Ctrl-d`/`Ctrl-u`, `gg`/`G`, and
     `Alt-j`/`Alt-k` page without `PgUp`/`PgDn`
     ([0046](decisions/0046-one-thread-cursor.md)).
+38. **One vocabulary for the viewer.** Workspace, viewer, agent session,
+    thread, `ThreadState`, reach, coverage, follow versus auto-jump, and
+    subscribe are the words everywhere; the code, screen, config, CLI,
+    wire, theme, and docs are renamed to match, with one release of
+    compatibility for the flag, the record directory, and the theme keys
+    ([0047](decisions/0047-one-vocabulary.md)).

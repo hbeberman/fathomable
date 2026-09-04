@@ -18,7 +18,7 @@ use super::info::Info;
 use super::mark_words::{Words, label};
 use super::message::{thread_body_lines, thread_body_rows};
 use super::thread_list::{Row, Rows};
-use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
+use super::threads::{Compose, ComposeTarget, ThreadPane, ThreadState};
 use super::view::{Mode, View};
 
 use super::input::bindings::{self, Action, Where};
@@ -783,11 +783,11 @@ fn status_style(theme: &Theme, status: LineStatus) -> Style {
     }
 }
 
-fn mark_style(theme: &Theme, kind: MarkKind) -> Style {
+fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
     match kind {
-        MarkKind::Open => theme.annotation_open,
-        MarkKind::Resolved | MarkKind::AutoResolved => theme.annotation_resolved,
-        MarkKind::Waiting => theme.annotation_waiting,
+        ThreadState::Open => theme.annotation_open,
+        ThreadState::Resolved | ThreadState::AutoResolved => theme.annotation_resolved,
+        ThreadState::Waiting => theme.annotation_waiting,
     }
 }
 
@@ -1504,7 +1504,7 @@ fn list_selection_line<'a>(
     }
 }
 
-fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPanel) {
+fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPane) {
     let cursor = app.thread_cursor();
     let Some(thread) = cursor.thread().and_then(|id| app.thread(id)) else {
         return;

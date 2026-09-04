@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0032-placement-and-state.md
 //! The two words that describe a thread (ADR 0032).
 //!
-//! A [`MarkKind`] is the *state* and the one colour a thread has (ADR
+//! A [`ThreadState`] is the *state* and the one colour a thread has (ADR
 //! 0039). The thread pane and the file-threads pane say more: the
 //! *placement* word (`detached`, `edited`) when the lines moved or went,
 //! then the state word (`waiting`, `open`, `resolved`, `auto-resolved`)
@@ -9,14 +9,14 @@
 
 use fathomable_core::annotations::{Placement, Thread};
 
-use super::threads::MarkKind;
+use super::threads::ThreadState;
 
 /// The placement word, when the lines are not where the comment was
 /// written, and the state word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Words {
     placement: Option<&'static str>,
-    state: MarkKind,
+    state: ThreadState,
 }
 
 impl Words {
@@ -30,7 +30,7 @@ impl Words {
         });
         Self {
             placement,
-            state: MarkKind::of(thread),
+            state: ThreadState::of(thread),
         }
     }
 
@@ -42,24 +42,27 @@ impl Words {
 
     /// The state word's kind: waiting, open, resolved, or auto-resolved.
     #[must_use]
-    pub fn state(self) -> MarkKind {
+    pub fn state(self) -> ThreadState {
         self.state
     }
 
     /// Whether the thread is resolved, however it is placed.
     #[must_use]
     pub fn is_resolved(self) -> bool {
-        matches!(self.state, MarkKind::Resolved | MarkKind::AutoResolved)
+        matches!(
+            self.state,
+            ThreadState::Resolved | ThreadState::AutoResolved
+        )
     }
 }
 
 /// The status word for a kind.
 #[must_use]
-pub fn label(kind: MarkKind) -> &'static str {
+pub fn label(kind: ThreadState) -> &'static str {
     match kind {
-        MarkKind::Waiting => "waiting",
-        MarkKind::Open => "open",
-        MarkKind::Resolved => "resolved",
-        MarkKind::AutoResolved => "auto-resolved",
+        ThreadState::Waiting => "waiting",
+        ThreadState::Open => "open",
+        ThreadState::Resolved => "resolved",
+        ThreadState::AutoResolved => "auto-resolved",
     }
 }

@@ -14,7 +14,7 @@
 use fathomable_core::annotations::{LineRange, ThreadId};
 
 use super::mark_words::Words;
-use super::threads::MarkKind;
+use super::threads::ThreadState;
 use super::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
@@ -26,7 +26,7 @@ const MIN_ROWS: usize = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRow {
     range: LineRange,
-    kind: MarkKind,
+    kind: ThreadState,
     words: Words,
     /// The first line of the comment.
     summary: String,
@@ -40,7 +40,7 @@ impl FileRow {
         self.range
     }
 
-    pub fn kind(&self) -> MarkKind {
+    pub fn kind(&self) -> ThreadState {
         self.kind
     }
 
@@ -230,7 +230,7 @@ mod tests {
     use fathomable_core::annotations::Store;
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::threads::{ComposeTarget, MarkKind};
+    use crate::app::threads::{ComposeTarget, ThreadState};
     use crate::app::{App, Border, Focus, Options, Popup};
 
     struct TempDir(PathBuf);
@@ -467,7 +467,7 @@ mod tests {
         assert!(app.thread_panel().is_some());
         assert_eq!(app.file_thread_rows()[0].replies(), 1);
         app.thread_toggle_resolved();
-        assert_eq!(app.file_thread_rows()[0].kind(), MarkKind::Resolved);
+        assert_eq!(app.file_thread_rows()[0].kind(), ThreadState::Resolved);
         app.focus_thread_pane();
         assert_eq!(app.focus(), Focus::Thread);
         assert_eq!(app.thread_position(), Some((1, 3)));

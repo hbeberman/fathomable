@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use fathomable_core::annotations::{LineRange, Thread, ThreadId};
 use fathomable_core::layout::wrap_text;
 
-use super::threads::MarkKind;
+use super::threads::ThreadState;
 use super::{App, Focus};
 
 /// Rows kept visible above and below the selected message.
@@ -60,7 +60,7 @@ pub struct Entry {
     id: ThreadId,
     path: PathBuf,
     range: LineRange,
-    kind: MarkKind,
+    kind: ThreadState,
 }
 
 /// One drawn row of the list.
@@ -77,7 +77,7 @@ pub enum Row {
     Header {
         entry: usize,
         range: LineRange,
-        kind: MarkKind,
+        kind: ThreadState,
         updated: u64,
         selected: bool,
         folded: bool,
@@ -150,8 +150,8 @@ impl Rows {
     }
 }
 
-fn is_open(kind: MarkKind) -> bool {
-    matches!(kind, MarkKind::Open | MarkKind::Waiting)
+fn is_open(kind: ThreadState) -> bool {
+    matches!(kind, ThreadState::Open | ThreadState::Waiting)
 }
 
 impl App {
@@ -229,7 +229,7 @@ impl App {
         let mut open: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
         let mut resolved: BTreeMap<PathBuf, Vec<Entry>> = BTreeMap::new();
         for thread in store.threads() {
-            if !self.scope.includes(thread) {
+            if !self.reach.includes(thread) {
                 continue;
             }
             if self.list.file_only && thread.path() != current {
@@ -257,13 +257,13 @@ impl App {
 
     /// Range and status of `thread`: from the loaded document's mark when
     /// its file is open this session, else as stored.
-    fn placement_of(&self, thread: &Thread) -> (LineRange, MarkKind) {
+    fn placement_of(&self, thread: &Thread) -> (LineRange, ThreadState) {
         self.docs
             .iter()
             .find(|doc| doc.relative == thread.path())
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()))
             .map_or_else(
-                || (thread.range(), MarkKind::of(thread)),
+                || (thread.range(), ThreadState::of(thread)),
                 |mark| (mark.range(), mark.kind()),
             )
     }

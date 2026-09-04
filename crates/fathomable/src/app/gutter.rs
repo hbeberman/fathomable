@@ -9,14 +9,14 @@
 use fathomable_core::annotations::LineRange;
 
 use super::App;
-use super::threads::{Mark, MarkKind, overlaps};
+use super::threads::{Mark, ThreadState, overlaps};
 
 impl App {
     /// The note-cell glyph and colour of rendered row `row` of the
     /// current view, or `None` when no thread touches it: the bracket
     /// of the threads on its lines, `│` on a sourceless row a thread
     /// spans, `•` on a detached thread's row (ADR 0039).
-    pub fn note_on_row(&self, row: usize) -> Option<(&'static str, MarkKind)> {
+    pub fn note_on_row(&self, row: usize) -> Option<(&'static str, ThreadState)> {
         let view = self.view();
         if let Some(anchor) = view.detached_anchor_of_row(row) {
             return self.detached_note(anchor);
@@ -50,7 +50,7 @@ impl App {
     }
 
     /// The most urgent thread covering both `above` and `below`.
-    fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<MarkKind> {
+    fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<ThreadState> {
         self.placed_marks()
             .filter(|mark| overlaps(mark.range(), above) && overlaps(mark.range(), below))
             .map(Mark::kind)
@@ -72,7 +72,7 @@ impl App {
         lines: LineRange,
         above: Option<LineRange>,
         below: Option<LineRange>,
-    ) -> Option<(&'static str, MarkKind)> {
+    ) -> Option<(&'static str, ThreadState)> {
         let kind = self.mark_in(lines)?;
         let mut bracket: Option<(usize, &'static str)> = None;
         let mut point = false;

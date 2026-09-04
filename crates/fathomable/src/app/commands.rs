@@ -24,8 +24,8 @@ impl App {
     /// The viewer as agents see it: its name when set, then the id.
     pub fn viewer_label(&self) -> String {
         match self.record.name() {
-            Some(name) => format!("{name} ({})", self.session),
-            None => format!("unnamed ({}); set one with :name", self.session),
+            Some(name) => format!("{name} ({})", self.viewer_id),
+            None => format!("unnamed ({}); set one with :name", self.viewer_id),
         }
     }
 

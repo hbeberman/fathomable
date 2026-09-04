@@ -2,7 +2,7 @@
 //! Threads waiting on the user (ADR 0030).
 //!
 //! A thread *waits* when it is open and an agent wrote its newest message
-//! ([`Thread::awaits_user`]); the user's reply, resolve, or reopen ends
+//! ([`Thread::awaits`]); the user's reply, resolve, or reopen ends
 //! the wait, so nothing is tracked per viewer. This module counts the
 //! waiting threads for the status line and the sidebar, raises a toast
 //! when a store reload turns a thread waiting, and walks them with
@@ -12,17 +12,17 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{Store, Thread, ThreadId};
+use fathomable_core::annotations::{Party, Store, Thread, ThreadId};
 
 use super::App;
-use super::threads::MarkKind;
+use super::threads::ThreadState;
 
 impl App {
     /// Waiting threads on the current document.
     pub fn waiting_count(&self) -> usize {
         self.marks()
             .iter()
-            .filter(|mark| mark.kind() == MarkKind::Waiting)
+            .filter(|mark| mark.kind() == ThreadState::Waiting)
             .count()
     }
 
@@ -40,7 +40,7 @@ impl App {
         self.store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.scope.includes(thread) && thread.awaits_user())
+            .filter(|thread| self.reach.includes(thread) && thread.awaits(Party::User))
     }
 
     /// The ids of the store's waiting threads, for the reload diff.
@@ -48,7 +48,7 @@ impl App {
         store
             .threads()
             .iter()
-            .filter(|thread| thread.awaits_user())
+            .filter(|thread| thread.awaits(Party::User))
             .map(|thread| thread.id().clone())
             .collect()
     }
@@ -62,7 +62,7 @@ impl App {
         let arrived: Vec<String> = store
             .threads()
             .iter()
-            .filter(|thread| thread.awaits_user() && !before.contains(thread.id()))
+            .filter(|thread| thread.awaits(Party::User) && !before.contains(thread.id()))
             .map(|thread| format!("{}:{}", thread.path().display(), thread.range().start()))
             .collect();
         let text = match arrived.as_slice() {
@@ -163,7 +163,7 @@ impl App {
         let mut marks: Vec<(usize, ThreadId)> = self
             .marks()
             .iter()
-            .filter(|mark| mark.kind() == MarkKind::Waiting)
+            .filter(|mark| mark.kind() == ThreadState::Waiting)
             .map(|mark| (mark.range().start(), mark.id().clone()))
             .collect();
         marks.sort();

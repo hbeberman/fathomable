@@ -608,18 +608,26 @@ impl Thread {
         self.commit.as_deref()
     }
 
-    /// Whether the thread is open and its newest message is not the user's.
+    /// Whether the thread is open and its newest message is someone
+    /// else's, seen from `party`'s chair.
     ///
-    /// Such a thread is *waiting* on the user (ADR 0030): an agent replied
-    /// last, and only the user's reply, resolve, or reopen ends the wait.
-    /// A resolved thread never waits.
+    /// From the user's chair such a thread is *waiting* (ADR 0030): an
+    /// agent replied last, and only the user's reply, resolve, or reopen
+    /// ends the wait. From a subscriber's chair it is *pending* (ADR
+    /// 0040): only that agent's own reply, or a resolution, ends it. A
+    /// resolved thread never waits on anyone.
     #[must_use]
-    pub fn awaits_user(&self) -> bool {
-        self.status == Status::Open
-            && self
+    pub fn awaits(&self, party: Party<'_>) -> bool {
+        if self.status != Status::Open {
+            return false;
+        }
+        match party {
+            Party::User => self
                 .replies
                 .last()
-                .is_some_and(|reply| !reply.author().is_user())
+                .is_some_and(|reply| !reply.author().is_user()),
+            Party::Subscriber(id) => self.newest().0.id() != Some(id),
+        }
     }
 
     /// The newest message: the last reply, or the comment when there
@@ -631,16 +639,6 @@ impl Thread {
             .map_or((&Author::User, self.created), |reply| {
                 (reply.author(), reply.created())
             })
-    }
-
-    /// Whether the thread is open and its newest message was not signed
-    /// by subscriber `id` (ADR 0040).
-    ///
-    /// The mirror of [`Self::awaits_user`] from an agent's chair: only
-    /// that agent's own reply, or a resolution, ends the pending state.
-    #[must_use]
-    pub fn pending_for(&self, id: &str) -> bool {
-        self.status == Status::Open && self.newest().0.id() != Some(id)
     }
 
     /// Whether subscriber `id` has posted in the thread.
@@ -693,20 +691,30 @@ impl Draft {
     }
 }
 
+/// Whose chair a thread is looked at from: the user's, or a subscriber's
+/// by its agent session id. See [`Thread::awaits`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Party<'a> {
+    /// The person at the viewer.
+    User,
+    /// A subscribed agent, by the `id` it signs with.
+    Subscriber(&'a str),
+}
+
 /// Which threads the current `HEAD` shows (ADR 0024).
 ///
 /// A thread written against a commit is visible only while that commit is
 /// `HEAD` or one of its ancestors; a thread without a commit, or any thread
 /// when the workspace has no `HEAD`, is always visible.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Scope {
+pub struct Reach {
     reachable: Option<HashSet<String>>,
 }
 
-impl Scope {
-    /// A scope that shows every thread: no git, or no `HEAD` yet.
+impl Reach {
+    /// A reach that shows every thread: no git, or no `HEAD` yet.
     #[must_use]
-    pub fn unscoped() -> Self {
+    pub fn everything() -> Self {
         Self { reachable: None }
     }
 
@@ -1403,8 +1411,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Placement, Reply,
-        Scope, Status, Store, StoreError, Thread, ThreadId, line_hash,
+        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Party, Placement,
+        Reach, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1455,7 +1463,7 @@ mod tests {
             TEXT,
             10,
         )?;
-        let waiting = |store: &Store| store.thread(&id).is_some_and(Thread::awaits_user);
+        let waiting = |store: &Store| store.thread(&id).is_some_and(|t| t.awaits(Party::User));
         assert!(!waiting(&store), "a fresh comment is the user's own");
         store.reply(&id, Reply::new(Author::agent("claude"), 11, "because"))?;
         assert!(waiting(&store));
@@ -1702,27 +1710,27 @@ mod tests {
         let thread = store
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(thread.pending_for("s-1"));
+        assert!(thread.awaits(Party::Subscriber("s-1")));
         assert_eq!(thread.newest(), (&Author::User, 10));
         let me = Author::agent("bot").subscribed("s-1", "coder");
         store.reply(&id, Reply::new(me.clone(), 11, "because"))?;
         let thread = store
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(!thread.pending_for("s-1"));
-        assert!(thread.pending_for("s-2"));
+        assert!(!thread.awaits(Party::Subscriber("s-1")));
+        assert!(thread.awaits(Party::Subscriber("s-2")));
         assert!(thread.has_reply_from("s-1"));
         assert!(!thread.has_reply_from("s-2"));
         store.reply(&id, Reply::new(Author::User, 12, "still"))?;
         let thread = store
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(thread.pending_for("s-1"));
+        assert!(thread.awaits(Party::Subscriber("s-1")));
         store.resolve(&id, Author::User, 13)?;
         let thread = store
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(!thread.pending_for("s-1"));
+        assert!(!thread.awaits(Party::Subscriber("s-1")));
         Ok(())
     }
 
@@ -1830,10 +1838,10 @@ mod tests {
             Some("abc123")
         );
 
-        let everywhere = Scope::unscoped();
-        let on_branch = Scope::reachable(HashSet::from(["abc123".to_owned()]));
-        let elsewhere = Scope::reachable(HashSet::new());
-        let visible = |scope: &Scope| -> Vec<&ThreadId> {
+        let everywhere = Reach::everything();
+        let on_branch = Reach::reachable(HashSet::from(["abc123".to_owned()]));
+        let elsewhere = Reach::reachable(HashSet::new());
+        let visible = |scope: &Reach| -> Vec<&ThreadId> {
             again
                 .threads()
                 .iter()
@@ -1867,7 +1875,7 @@ mod tests {
         assert_eq!(thread.commit(), Some("new"));
         assert_eq!(thread.updated(), 20);
         assert_eq!(thread.status(), Status::Open);
-        assert!(Scope::reachable(HashSet::from(["new".to_owned()])).includes(thread));
+        assert!(Reach::reachable(HashSet::from(["new".to_owned()])).includes(thread));
         Ok(())
     }
 

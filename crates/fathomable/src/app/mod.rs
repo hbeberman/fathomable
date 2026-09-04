@@ -17,8 +17,8 @@ pub(crate) mod input;
 pub(crate) mod mark_words;
 pub(crate) mod message;
 pub(crate) mod open_thread;
+pub(crate) mod reach;
 pub(crate) mod reanchor;
-pub(crate) mod rescope;
 mod sidebar;
 mod socket;
 pub(crate) mod thread_cursor;
@@ -49,7 +49,7 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::annotations::{self, Scope, Store, ThreadId};
+use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{AgentsConfig, FollowConfig, MarkdownConfig, ViewerConfig};
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -73,7 +73,7 @@ use tokio::sync::mpsc;
 
 use crate::crash;
 pub use thread_cursor::ThreadCursor;
-pub use threads::{Compose, Mark, ThreadPanel};
+pub use threads::{Compose, Mark, ThreadPane};
 use view::{Effect, HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
@@ -258,7 +258,7 @@ pub struct App {
     /// Tree width once dragged; the default follows the terminal.
     sidebar_cols: Option<usize>,
     /// The thread pane along the bottom of the text (ADR 0013).
-    thread: Option<ThreadPanel>,
+    thread: Option<ThreadPane>,
     /// The thread and message the thread surfaces show; authoritative
     /// while the pane or the list is open, or the text cursor rests
     /// where `thread_cursor_anchor` says it was set (ADR 0046).
@@ -288,10 +288,10 @@ pub struct App {
     pending_delete: Option<annotations::ThreadId>,
     width: usize,
     height: usize,
-    session: String,
+    viewer_id: String,
     store: Option<Store>,
     /// Which threads the current `HEAD` shows (ADR 0024).
-    scope: Scope,
+    reach: Reach,
     /// Files an agent said it is working on (ADR 0014 `follow`).
     followed: Vec<PathBuf>,
     record: Record,
@@ -375,9 +375,9 @@ impl App {
             pending_delete: None,
             width,
             height,
-            session: record.id().to_string(),
+            viewer_id: record.id().to_string(),
             store,
-            scope: Scope::unscoped(),
+            reach: Reach::everything(),
             followed: Vec::new(),
             record,
             dirs,
@@ -402,7 +402,7 @@ impl App {
         // Snapshots first: a thread edited offline must locate before the
         // scope refresh can keep it across a rewrite (ADR 0035).
         app.reanchor_from_snapshots();
-        app.refresh_scope();
+        app.refresh_reach();
         app
     }
 
@@ -410,22 +410,22 @@ impl App {
     /// for the commits the store mentions. Open threads a rewrite
     /// stranded follow `HEAD` first (ADR 0035). Marks are refreshed when
     /// the answer changed.
-    pub(super) fn refresh_scope(&mut self) {
+    pub(super) fn refresh_reach(&mut self) {
         let scope = match self.store.as_mut() {
             Some(store) => match self.workspace.reachable(store.commits()) {
                 Some(mut reachable) => {
-                    if rescope::follow_head(store, &self.workspace, &reachable) > 0 {
+                    if reach::follow_head(store, &self.workspace, &reachable) > 0 {
                         reachable.extend(self.workspace.head_commit());
                     }
-                    Scope::reachable(reachable)
+                    Reach::reachable(reachable)
                 }
-                None => Scope::unscoped(),
+                None => Reach::everything(),
             },
-            None => Scope::unscoped(),
+            None => Reach::everything(),
         };
-        if scope != self.scope {
+        if scope != self.reach {
             tracing::info!(head = ?self.workspace.head_commit(), "thread scope changed");
-            self.scope = scope;
+            self.reach = scope;
             for index in 0..self.docs.len() {
                 self.refresh_marks(index);
             }
@@ -457,7 +457,7 @@ impl App {
                 self.store = Some(store);
                 self.toast_waiting(&before);
                 self.refresh_watchers();
-                self.refresh_scope();
+                self.refresh_reach();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
                 }
@@ -707,7 +707,7 @@ impl App {
             for index in 0..self.docs.len() {
                 self.refresh_base(index);
             }
-            self.refresh_scope();
+            self.refresh_reach();
         }
         if git_changed || touched {
             self.refresh_status();
@@ -738,7 +738,7 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_base(index);
         }
-        self.refresh_scope();
+        self.refresh_reach();
 
         let root = self.workspace.root().to_path_buf();
         let loaded: Vec<PathBuf> = self.docs.iter().map(|doc| doc.relative.clone()).collect();
@@ -1165,7 +1165,7 @@ impl App {
     }
 
     /// The open thread pane.
-    pub fn thread_panel(&self) -> Option<&ThreadPanel> {
+    pub fn thread_panel(&self) -> Option<&ThreadPane> {
         self.thread.as_ref()
     }
 
@@ -1496,7 +1496,7 @@ impl App {
                     store
                         .threads()
                         .iter()
-                        .filter(|t| self.scope.includes(t))
+                        .filter(|t| self.reach.includes(t))
                         .filter(|t| since.is_none_or(|s| t.updated() >= s))
                         .filter(|t| path.as_deref().is_none_or(|p| t.path().starts_with(p)))
                         .cloned()

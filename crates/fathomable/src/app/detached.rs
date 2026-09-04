@@ -5,7 +5,7 @@
 //! and the thread's mark, `c`, and the thread motions find it there.
 
 use super::App;
-use super::threads::{Mark, MarkKind};
+use super::threads::{Mark, ThreadState};
 
 impl App {
     /// The source line a detached `mark` stands before: the start of its
@@ -43,7 +43,7 @@ impl App {
     /// The note cell of the detached row before `anchor`: a dot in the
     /// colour of the most urgent thread there, or `None` when no thread
     /// stands there any more.
-    pub(super) fn detached_note(&self, anchor: usize) -> Option<(&'static str, MarkKind)> {
+    pub(super) fn detached_note(&self, anchor: usize) -> Option<(&'static str, ThreadState)> {
         self.detached_marks_at(anchor)
             .map(Mark::kind)
             .max()
@@ -59,7 +59,7 @@ mod tests {
     use fathomable_core::annotations::{LineRange, Store};
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::threads::MarkKind;
+    use crate::app::threads::ThreadState;
     use crate::app::{App, Options, Popup};
 
     struct TempDir(PathBuf);
@@ -144,7 +144,7 @@ mod tests {
         assert_eq!(rows[2], (2, None, Some("•")), "{rows:?}");
         assert_eq!(app.view().detached_anchor_of_row(2), Some(3));
         assert_eq!(rows[3], (3, Some(3), None), "the real line 3 is not marked");
-        assert_eq!(app.marks()[0].kind(), MarkKind::Open);
+        assert_eq!(app.marks()[0].kind(), ThreadState::Open);
         assert_eq!(app.mark_in(LineRange::new(3, 3)), None);
         Ok(())
     }

@@ -50,3 +50,4 @@ supersede rather than edit history.
 - [0044 Width-bounded wrapping in every display mode](0044-wrap-all-lines.md)
 - [0045 Bindings are data](0045-bindings-are-data.md)
 - [0046 One thread cursor](0046-one-thread-cursor.md)
+- [0047 One vocabulary for the viewer](0047-one-vocabulary.md)

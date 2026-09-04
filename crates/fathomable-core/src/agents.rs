@@ -8,7 +8,7 @@
 //! forgets every subscription and nothing else.
 //!
 //! A thread is *pending* for a subscriber when it is open and its newest
-//! message is someone else's ([`Thread::pending_for`]); it is
+//! message is someone else's ([`Thread::awaits`]); it is
 //! *deliverable* when that message has not been shown to the subscriber
 //! yet. [`Blob::render`] renders what a hook hands the model.
 
@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::annotations::{Status, Thread, ThreadId};
+use crate::annotations::{Party, Status, Thread, ThreadId};
 use crate::bond::{self, Bond, Process};
 use crate::vocabulary as vocab;
 
@@ -428,7 +428,7 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| subscriber.covers(t) && t.pending_for(&subscriber.id))
+            .filter(|t| subscriber.covers(t) && t.awaits(Party::Subscriber(&subscriber.id)))
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
                 self.deliveries.get(&key) != Some(&t.newest().1)
@@ -445,7 +445,7 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| subscriber.covers(t) && t.pending_for(&subscriber.id))
+            .filter(|t| subscriber.covers(t) && t.awaits(Party::Subscriber(&subscriber.id)))
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
                 self.deliveries.get(&key) == Some(&t.newest().1)

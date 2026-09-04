@@ -43,7 +43,7 @@ use std::process::ExitCode;
 use clap::ValueEnum;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Blob, Register, Subscriber};
-use fathomable_core::annotations::{Scope, Store, Thread};
+use fathomable_core::annotations::{Reach, Store, Thread};
 use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config};
 use fathomable_core::session::{Marker, Record};
@@ -675,7 +675,7 @@ fn scoped_threads(dirs: &XdgDirs, root: &Path) -> Result<Vec<Thread>, String> {
     let scope = Workspace::discover(root)
         .ok()
         .and_then(|w| w.reachable(store.commits()))
-        .map_or_else(Scope::unscoped, Scope::reachable);
+        .map_or_else(Reach::everything, Reach::reachable);
     Ok(store
         .threads()
         .iter()

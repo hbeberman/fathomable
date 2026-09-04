@@ -1,4 +1,4 @@
-// @okf-doc: /decisions/0043-agent-vocabulary.md
+// @okf-doc: /decisions/0047-one-vocabulary.md
 //! The tool and parameter names the agent-facing text may use.
 //!
 //! Every string a model reads — the `hello` hook, the pending blob, the

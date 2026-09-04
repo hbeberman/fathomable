@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, WatchWhen};
-use fathomable_core::annotations::{Author, LineRange, Reply, Scope, Store, Thread, ThreadId};
+use fathomable_core::annotations::{Author, LineRange, Reach, Reply, Store, Thread, ThreadId};
 use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
 use fathomable_core::seen;
@@ -47,8 +47,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use crate::app::open_thread::follow_reply_lines;
+use crate::app::reach;
 use crate::app::reanchor::follow_snapshots;
-use crate::app::rescope;
 use crate::app::threads::now;
 use crate::hooks;
 
@@ -91,7 +91,7 @@ impl std::fmt::Debug for Server {
 
 /// A workspace an agent can address: its root and the viewers showing it.
 #[derive(Debug, Clone)]
-struct Session {
+struct Target {
     root: PathBuf,
     viewers: Vec<Record>,
 }
@@ -296,7 +296,7 @@ pub struct UnwatchParams {
 impl Server {
     fn new(dirs: XdgDirs, agents: AgentsConfig) -> Self {
         let cwd = env::current_dir().unwrap_or_default();
-        if let Some(session) = bind(&sessions(&dirs), &cwd) {
+        if let Some(session) = bind(&targets(&dirs), &cwd) {
             tracing::info!(root = %session.root.display(), viewers = session.viewers.len(), "workspace contains the cwd");
         } else {
             tracing::warn!(cwd = %cwd.display(), "no known workspace contains the cwd");
@@ -319,7 +319,7 @@ impl Server {
         annotations(read_only_hint = true, open_world_hint = false)
     )]
     fn session_list(&self) -> CallToolResult {
-        let all = sessions(&self.dirs);
+        let all = targets(&self.dirs);
         let default = self.resolve(None).ok().map(|s| s.root);
         let sessions: Vec<Value> = all
             .iter()
@@ -967,7 +967,7 @@ impl Server {
     /// One reply of a `thread_reply` call, through a viewer or the store.
     async fn reply_one(
         &self,
-        session: &Session,
+        session: &Target,
         author: Author,
         item: ReplyItem,
     ) -> Result<String, String> {
@@ -1010,8 +1010,8 @@ impl Server {
 
     /// The workspace a call addresses: `session` when given (a root, or a
     /// viewer name or id), else the pin, else the one containing the cwd.
-    fn resolve(&self, session: Option<&str>) -> Result<Session, String> {
-        let all = sessions(&self.dirs);
+    fn resolve(&self, session: Option<&str>) -> Result<Target, String> {
+        let all = targets(&self.dirs);
         if let Some(key) = session {
             if let Some(found) = all
                 .iter()
@@ -1108,18 +1108,18 @@ async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
 /// Every known workspace with its live viewers: marked workspaces first
 /// (most recently seen first), then any a live viewer names without a
 /// marker.
-fn sessions(dirs: &XdgDirs) -> Vec<Session> {
-    let mut all: Vec<Session> = Marker::list(dirs)
+fn targets(dirs: &XdgDirs) -> Vec<Target> {
+    let mut all: Vec<Target> = Marker::list(dirs)
         .into_iter()
-        .map(|marker| Session {
+        .map(|marker| Target {
             root: marker.root().to_path_buf(),
             viewers: Vec::new(),
         })
         .collect();
     for record in Record::live(dirs) {
         match all.iter_mut().find(|s| s.root == record.root()) {
-            Some(session) => session.viewers.push(record),
-            None => all.push(Session {
+            Some(target) => target.viewers.push(record),
+            None => all.push(Target {
                 root: record.root().to_path_buf(),
                 viewers: vec![record],
             }),
@@ -1129,8 +1129,8 @@ fn sessions(dirs: &XdgDirs) -> Vec<Session> {
 }
 
 /// The workspace whose root is the longest prefix of `cwd`.
-fn bind<'a>(sessions: &'a [Session], cwd: &Path) -> Option<&'a Session> {
-    sessions
+fn bind<'a>(targets: &'a [Target], cwd: &Path) -> Option<&'a Target> {
+    targets
         .iter()
         .filter(|s| cwd.starts_with(&s.root))
         .max_by_key(|s| s.root.as_os_str().len())
@@ -1265,7 +1265,7 @@ fn known_threads<'a>(
     }
 }
 
-fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Scope), String> {
+fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Reach), String> {
     let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
     let pinned: Vec<PathBuf> = store.open_paths().map(Path::to_path_buf).collect();
     match seen::Store::open_pinned(&dirs.seen_dir(root), pinned.iter().map(PathBuf::as_path)) {
@@ -1280,18 +1280,18 @@ fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Scope), String>
     let scope = match Workspace::discover(root) {
         Ok(workspace) => match workspace.reachable(store.commits()) {
             Some(mut reachable) => {
-                let moved = rescope::follow_head(&mut store, &workspace, &reachable);
+                let moved = reach::follow_head(&mut store, &workspace, &reachable);
                 if moved > 0 {
                     tracing::info!(moved, "threads rescoped headlessly");
                     reachable.extend(workspace.head_commit());
                 }
-                Scope::reachable(reachable)
+                Reach::reachable(reachable)
             }
-            None => Scope::unscoped(),
+            None => Reach::everything(),
         },
         Err(error) => {
             tracing::warn!(%error, "cannot open the workspace; threads unscoped");
-            Scope::unscoped()
+            Reach::everything()
         }
     };
     Ok((store, scope))
@@ -1473,12 +1473,12 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        Server, Session, bind, check_paths, headless_list, headless_reply, instructions,
+        Server, Target, bind, check_paths, headless_list, headless_reply, instructions,
         known_threads, listed, thread_id, vocab, with_types,
     };
 
-    fn session(root: &str, viewers: usize) -> Session {
-        Session {
+    fn session(root: &str, viewers: usize) -> Target {
+        Target {
             root: PathBuf::from(root),
             viewers: (0..viewers)
                 .map(|_| Record::new(Id::mint(), PathBuf::from(root), None))

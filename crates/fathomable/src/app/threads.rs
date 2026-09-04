@@ -5,14 +5,15 @@
 //! [`App`] keeps the [`Store`] for the workspace; every open document
 //! carries the [`Mark`]s of its threads, re-located whenever the text
 //! changes. The comment box ([`Compose`]) starts a thread or replies to
-//! one; the [`ThreadPanel`] reads a thread and resolves it. All of it is
+//! one; the [`ThreadPane`] reads a thread and resolves it. All of it is
 //! plain state so ADR 0013 behaviour is tested without a terminal.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fathomable_core::annotations::{
-    Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, Draft, LineRange, MessageTarget, Party, Placement, Reply, Status, Store, Thread,
+    ThreadId,
 };
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
@@ -25,7 +26,7 @@ use super::{App, Focus, Popup};
 /// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
 /// on one row is their `max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum MarkKind {
+pub enum ThreadState {
     Resolved,
     AutoResolved,
     Open,
@@ -33,9 +34,9 @@ pub enum MarkKind {
     Waiting,
 }
 
-impl MarkKind {
+impl ThreadState {
     pub(super) fn of(thread: &Thread) -> Self {
-        if thread.awaits_user() {
+        if thread.awaits(Party::User) {
             return Self::Waiting;
         }
         match thread.status() {
@@ -51,7 +52,7 @@ impl MarkKind {
 pub struct Mark {
     id: ThreadId,
     placement: Placement,
-    kind: MarkKind,
+    kind: ThreadState,
 }
 
 impl Mark {
@@ -63,7 +64,7 @@ impl Mark {
         self.placement.range()
     }
 
-    pub fn kind(&self) -> MarkKind {
+    pub fn kind(&self) -> ThreadState {
         self.kind
     }
 
@@ -131,7 +132,7 @@ impl Compose {
 /// file's threads is computed from the document's marks
 /// ([`App::thread_position`]), so a reload cannot strand it (ADR 0027).
 #[derive(Debug)]
-pub struct ThreadPanel {
+pub struct ThreadPane {
     scroll: usize,
     /// Number of messages when the scroll was last set.
     seen_messages: usize,
@@ -144,7 +145,7 @@ pub struct ThreadPanel {
 /// the last row, so the pane opens at its end (ADR 0034).
 const BOTTOM: usize = usize::MAX;
 
-impl ThreadPanel {
+impl ThreadPane {
     pub fn scroll(&self) -> usize {
         self.scroll
     }
@@ -199,7 +200,7 @@ impl App {
 
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
-    pub fn mark_in(&self, lines: LineRange) -> Option<MarkKind> {
+    pub fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
         self.placed_marks()
             .filter(|mark| overlaps(mark.range(), lines))
             .map(Mark::kind)
@@ -211,7 +212,7 @@ impl App {
         let open = self
             .marks()
             .iter()
-            .filter(|mark| matches!(mark.kind(), MarkKind::Open | MarkKind::Waiting))
+            .filter(|mark| matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting))
             .count();
         (open, self.marks().len())
     }
@@ -273,13 +274,13 @@ impl App {
         let text = doc.document.text().unwrap_or_default();
         doc.marks = store
             .for_path(&doc.relative)
-            .filter(|thread| self.scope.includes(thread))
+            .filter(|thread| self.reach.includes(thread))
             .map(|thread| {
                 let placement = thread.locate(text);
                 Mark {
                     id: thread.id().clone(),
                     placement,
-                    kind: MarkKind::of(thread),
+                    kind: ThreadState::of(thread),
                 }
             })
             .collect();
@@ -344,7 +345,7 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.scope.includes(thread) && Some(thread.path()) != current)
+            .filter(|thread| self.reach.includes(thread) && Some(thread.path()) != current)
             .map(|thread| (thread.path(), thread.range().start(), thread.id().clone()))
             .collect();
         others.sort();
@@ -658,7 +659,7 @@ impl App {
         match store.annotate(draft, &text, now()) {
             Ok(id) => {
                 tracing::info!(%id, path = %path.display(), %range, "thread started");
-                self.refresh_scope();
+                self.refresh_reach();
                 self.refresh_marks(index);
                 // Commenting on lines means they were read (ADR 0020).
                 self.mark_seen(index);
@@ -810,7 +811,7 @@ impl App {
             None => self.newest_message(&id),
         };
         self.set_thread_cursor_message(id, message);
-        self.show_panel(ThreadPanel {
+        self.show_panel(ThreadPane {
             scroll: kept.unwrap_or(BOTTOM),
             seen_messages: messages,
             seen: updated,
@@ -829,7 +830,7 @@ impl App {
 
     /// The pane opens along the bottom of the text and takes the keys
     /// unless the comment box is up.
-    fn show_panel(&mut self, panel: ThreadPanel) {
+    fn show_panel(&mut self, panel: ThreadPane) {
         self.thread = Some(panel);
         if self.popup.is_none() {
             self.focus = Focus::Thread;
@@ -855,7 +856,7 @@ impl App {
         self.relayout();
     }
 
-    fn panel_mut(&mut self) -> Option<&mut ThreadPanel> {
+    fn panel_mut(&mut self) -> Option<&mut ThreadPane> {
         self.thread.as_mut()
     }
 
@@ -1008,7 +1009,7 @@ mod tests {
 
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
-    use super::{ComposeTarget, MarkKind};
+    use super::{ComposeTarget, ThreadState};
     use crate::app::thread_list::Row;
     use crate::app::{App, Border, Options, Popup};
 
@@ -1122,7 +1123,7 @@ mod tests {
         assert_eq!(app.message(), Some("renamed to docs/GUIDE.md"));
         assert_eq!(app.view().cursor(), cursor);
         assert_eq!(app.marks()[0].range(), LineRange::new(3, 5));
-        assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(MarkKind::Open));
+        assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
         assert_eq!(
             app.thread(&id).map(Thread::path),
             Some(Path::new("docs/GUIDE.md"))
@@ -1227,7 +1228,7 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.message(), Some("annotated L3-5"));
         assert_eq!(app.thread_counts(), (1, 1));
-        assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(MarkKind::Open));
+        assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
         assert_eq!(app.mark_in(LineRange::new(1, 1)), None);
         assert!(
             app.view().selection().is_none(),
@@ -1252,7 +1253,7 @@ mod tests {
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
         assert!(app.marks()[0].placement().is_edited());
-        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Open));
+        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Open));
         let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
         assert!(reopened.threads()[0].edited().is_some());
         assert_eq!(reopened.threads()[0].range(), LineRange::new(5, 7));
@@ -1263,7 +1264,7 @@ mod tests {
         app.thread_reply();
         type_in(&mut app, "still fine");
         app.compose_submit();
-        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(MarkKind::Open));
+        assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Open));
 
         // Rewrite everything: the thread detaches at its last known range.
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
@@ -1273,7 +1274,7 @@ mod tests {
         // Placement and state are told apart (ADR 0032).
         let rows = app.file_thread_rows();
         assert_eq!(rows[0].words().placement(), Some("detached"));
-        assert_eq!(rows[0].words().state(), MarkKind::Open);
+        assert_eq!(rows[0].words().state(), ThreadState::Open);
         Ok(())
     }
 
@@ -1338,7 +1339,7 @@ mod tests {
             "nothing below at the end:\n{screen}"
         );
         app.thread_scroll(-100);
-        assert_eq!(app.thread_panel().map(super::ThreadPanel::scroll), Some(0));
+        assert_eq!(app.thread_panel().map(super::ThreadPane::scroll), Some(0));
         let panel = render(&app)?;
         let screen = panel.join("\n");
         assert!(
@@ -1394,7 +1395,7 @@ mod tests {
                 .join("\n"),
         );
         app.compose_submit();
-        assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(MarkKind::Open));
+        assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(ThreadState::Open));
 
         app.open_thread_at_cursor();
         anyhow::ensure!(app.thread_panel().is_some(), "panel did not open");
@@ -1432,7 +1433,10 @@ mod tests {
 
         app.thread_toggle_resolved();
         assert_eq!(app.thread(&id).map(Thread::status), Some(Status::Resolved));
-        assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(MarkKind::Resolved));
+        assert_eq!(
+            app.mark_in(LineRange::new(1, 1)),
+            Some(ThreadState::Resolved)
+        );
         assert_eq!(app.thread_counts(), (0, 1));
         app.thread_toggle_resolved();
         assert_eq!(app.thread(&id).map(Thread::status), Some(Status::Open));
@@ -1681,7 +1685,7 @@ mod tests {
     fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-        use super::ThreadPanel;
+        use super::ThreadPane;
         use crate::app::Border;
 
         let mouse = |kind, column: usize, row: usize| MouseEvent {
@@ -1715,7 +1719,7 @@ mod tests {
             &mut app,
             mouse(MouseEventKind::ScrollDown, 20, top + 2),
         );
-        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
+        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(3));
         assert_eq!(app.view().scroll(), 0);
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert_eq!(app.focus(), Focus::View, "a click on the text focuses it");
@@ -1724,7 +1728,7 @@ mod tests {
             &mut app,
             mouse(MouseEventKind::ScrollUp, 20, top + 2),
         );
-        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(0));
+        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(0));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, top + 2));
         assert_eq!(app.focus(), Focus::Thread, "a click on the pane focuses it");
 
@@ -1764,7 +1768,7 @@ mod tests {
             &mut app,
             mouse(MouseEventKind::ScrollDown, 20, top + 2),
         );
-        assert_eq!(app.thread_panel().map(ThreadPanel::scroll), Some(3));
+        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(3));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert!(
             matches!(app.popup(), Some(Popup::Compose(_))),

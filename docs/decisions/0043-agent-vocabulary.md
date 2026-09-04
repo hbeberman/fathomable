@@ -2,7 +2,6 @@
 type: Decision
 title: One vocabulary for the agent-facing text
 description: The MCP tool and parameter names that hook output, the pending blob, the server instructions, and the guide may name live in one table in the core crate; every such string is composed from it and tested against the live tool schema; the hello text is one shared body with a per-harness spelling of tool names and an optional harness line; and the follow tool's schema carries the configured agent types.
-resource: crates/fathomable-core/src/vocabulary.rs
 tags:
   - decision
   - sessions
@@ -12,7 +11,8 @@ tags:
 
 # 0043 One vocabulary for the agent-facing text
 
-Status: accepted (2026-08-29)
+Status: accepted (2026-08-29); the table in `vocabulary.rs` is backed by
+[0047](0047-one-vocabulary.md) since 2026-09-03, which renamed its entries.
 
 ## Context
 

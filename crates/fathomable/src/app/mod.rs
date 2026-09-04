@@ -50,7 +50,9 @@ use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
-use fathomable_core::config::{AgentsConfig, FollowConfig, MarkdownConfig, ViewerConfig};
+use fathomable_core::config::{
+    AgentsConfig, JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig,
+};
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
 use fathomable_core::editor::Cell;
@@ -296,7 +298,7 @@ pub struct App {
     followed: Vec<PathBuf>,
     record: Record,
     dirs: XdgDirs,
-    follow: FollowConfig,
+    jump: JumpConfig,
     /// Code highlighting shared by every view (ADR 0016).
     highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
@@ -332,7 +334,8 @@ impl App {
             record,
             dirs,
             store,
-            follow,
+            jump,
+            watch,
             seen,
             highlighter,
             markdown,
@@ -340,10 +343,10 @@ impl App {
             agents,
             config_path,
         } = options;
-        let ignore = match Ignore::new(&follow.ignore) {
+        let ignore = match Ignore::new(&watch.ignore) {
             Ok(ignore) => ignore,
             Err(error) => {
-                tracing::warn!(%error, "ignoring follow.ignore");
+                tracing::warn!(%error, "ignoring watch.ignore");
                 Ignore::default()
             }
         };
@@ -381,8 +384,8 @@ impl App {
             followed: Vec::new(),
             record,
             dirs,
-            auto: follow.auto,
-            follow,
+            auto: jump.auto,
+            jump,
             highlighter,
             markdown,
             viewer,
@@ -1034,7 +1037,7 @@ impl App {
 
     fn push_change(&mut self, change: Change, counts: (usize, usize)) {
         tracing::info!(path = %change.path.display(), line = change.target.line(), "change queued");
-        if self.follow.toast > Duration::ZERO {
+        if self.jump.toast > Duration::ZERO {
             let (added, removed) = counts;
             let text = if added == 0 && removed == 0 {
                 change.path.display().to_string()
@@ -1072,7 +1075,7 @@ impl App {
         self.toasts.retain(|toast| toast.until > now);
         if let Some(index) = self.current
             && self.docs[index].seen_dirty
-            && self.docs[index].view.idle() >= self.follow.seen_idle
+            && self.docs[index].view.idle() >= self.viewer.seen_idle
         {
             self.mark_seen(index);
         }
@@ -1094,7 +1097,7 @@ impl App {
             && self.docs[index].seen_dirty
         {
             let idle = self.docs[index].view.idle();
-            consider(self.follow.seen_idle.saturating_sub(idle));
+            consider(self.viewer.seen_idle.saturating_sub(idle));
         }
         if let Some(wait) = self.auto_jump_in() {
             consider(wait);
@@ -1411,12 +1414,12 @@ impl App {
 
     /// Raise a toast for `follow.toast`, dropping the oldest past the cap.
     pub(super) fn push_toast(&mut self, text: String) {
-        if self.follow.toast == Duration::ZERO {
+        if self.jump.toast == Duration::ZERO {
             return;
         }
         self.toasts.push(Toast {
             text,
-            until: Instant::now() + self.follow.toast,
+            until: Instant::now() + self.jump.toast,
         });
         if self.toasts.len() > MAX_TOASTS {
             self.toasts.remove(0);
@@ -1873,8 +1876,10 @@ pub struct Options {
     pub dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub store: Option<Store>,
-    /// Follow-mode settings (ADR 0015).
-    pub follow: FollowConfig,
+    /// Auto-jump settings (ADR 0015).
+    pub jump: JumpConfig,
+    /// File-watcher settings (ADR 0015).
+    pub watch: WatchConfig,
     /// The last-seen snapshot store, or `None` when it could not be opened.
     pub seen: Option<seen::Store>,
     /// Code highlighting for fences and source files (ADR 0016).
@@ -1898,7 +1903,8 @@ impl Options {
             record: Record::new(Id::mint(), root, None),
             dirs: XdgDirs::resolve(|_| None),
             store: None,
-            follow: FollowConfig::default(),
+            jump: JumpConfig::default(),
+            watch: WatchConfig::default(),
             seen: None,
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
@@ -2146,7 +2152,7 @@ async fn run_async(
         Terminal::new(CrosstermBackend::new(io::stdout())).context("cannot initialise terminal")?;
     let theme = ui::Theme::from_core(theme);
     let size = terminal.size().context("cannot read terminal size")?;
-    let hint_debounce = options.follow.hint_debounce;
+    let hint_debounce = options.watch.debounce;
     let watching = doc_watcher.watch_root(workspace.root());
     let mut app = App::new(
         workspace,
@@ -2270,7 +2276,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use fathomable_core::config::{FollowConfig, MarkdownConfig};
+    use fathomable_core::config::{JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig};
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::tree::Tree;
     use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
@@ -3106,14 +3112,14 @@ mod tests {
     fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
         use super::watch::Event;
         let dir = TempDir::new("tree-events")?;
-        let follow = FollowConfig {
+        let watch = WatchConfig {
             ignore: vec!["build/**".to_owned()],
-            ..FollowConfig::default()
+            ..WatchConfig::default()
         };
         let mut app = app_with(
             &dir,
             Options {
-                follow,
+                watch,
                 ..Options::for_test(dir.0.clone())
             },
         )?;
@@ -3262,15 +3268,19 @@ mod tests {
             "and the open file reloads"
         );
 
-        let follow = FollowConfig {
+        let watch = WatchConfig {
             ignore: vec!["docs/**".to_owned()],
+            ..WatchConfig::default()
+        };
+        let jump = JumpConfig {
             toast: std::time::Duration::ZERO,
-            ..FollowConfig::default()
+            ..JumpConfig::default()
         };
         let mut app = app_with(
             &dir,
             Options {
-                follow,
+                jump,
+                watch,
                 ..Options::for_test(dir.0.clone())
             },
         )?;
@@ -3354,14 +3364,14 @@ mod tests {
             "target on screen settles the change"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
-        let idle = FollowConfig {
+        let idle = ViewerConfig {
             seen_idle: std::time::Duration::from_millis(1),
-            ..FollowConfig::default()
+            ..ViewerConfig::default()
         };
         let mut app2 = app_with(
             &dir,
             Options {
-                follow: idle,
+                viewer: idle,
                 seen: Some(seen_store()?),
                 ..Options::for_test(dir.0.clone())
             },
@@ -3385,15 +3395,15 @@ mod tests {
     #[test]
     fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
         let dir = TempDir::new("auto")?;
-        let follow = FollowConfig {
+        let jump = JumpConfig {
             auto: true,
-            jump_debounce: std::time::Duration::ZERO,
-            ..FollowConfig::default()
+            debounce: std::time::Duration::ZERO,
+            ..JumpConfig::default()
         };
         let mut app = app_with(
             &dir,
             Options {
-                follow,
+                jump,
                 ..Options::for_test(dir.0.clone())
             },
         )?;
@@ -3408,15 +3418,15 @@ mod tests {
         );
 
         // No activity in the welcome view: nothing open, so the jump goes.
-        let follow = FollowConfig {
+        let jump = JumpConfig {
             auto: true,
-            jump_debounce: std::time::Duration::ZERO,
-            ..FollowConfig::default()
+            debounce: std::time::Duration::ZERO,
+            ..JumpConfig::default()
         };
         let mut app = app_with(
             &dir,
             Options {
-                follow,
+                jump,
                 ..Options::for_test(dir.0.clone())
             },
         )?;
@@ -3516,6 +3526,7 @@ mod tests {
             Options {
                 viewer: ViewerConfig {
                     max_file_size_mib: 2,
+                    ..ViewerConfig::default()
                 },
                 config_path: PathBuf::from("/etc/fathomable/config.kdl"),
                 ..Options::for_test(dir.0.clone())

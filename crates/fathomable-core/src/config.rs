@@ -3,9 +3,11 @@
 //!
 //! A missing file is valid and yields [`Config::default`]. Every node the
 //! file may contain is known; an unknown node is an error with a location
-//! rather than being ignored, so typos surface immediately. `theme` and the
-//! `follow` block (ADR 0015) and the `markdown` block (ADR 0016) are
-//! understood.
+//! rather than being ignored, so typos surface immediately. `theme`, the
+//! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
+//! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
+//! `agents` block (ADR 0040) are understood; a `follow` block from before
+//! the rename is an error that names where each setting went.
 //!
 //! # Examples
 //!
@@ -30,7 +32,8 @@ use crate::XdgDirs;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
     theme: Option<String>,
-    follow: FollowConfig,
+    jump: JumpConfig,
+    watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
     agents: AgentsConfig,
@@ -79,12 +82,15 @@ pub struct ViewerConfig {
     /// The largest text file the viewer reads, in MiB; larger ones show
     /// the file-info pane instead.
     pub max_file_size_mib: u64,
+    /// Idle time in a file before it counts as seen (ADR 0015).
+    pub seen_idle: Duration,
 }
 
 impl Default for ViewerConfig {
     fn default() -> Self {
         Self {
             max_file_size_mib: crate::content::DEFAULT_MAX_MIB,
+            seen_idle: Duration::from_secs(5),
         }
     }
 }
@@ -145,35 +151,54 @@ impl MarkdownConfig {
     }
 }
 
-/// The `follow { ... }` block (ADR 0015).
+/// The `jump { ... }` block (ADR 0015): auto-jump and its toasts.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FollowConfig {
+pub struct JumpConfig {
     /// Whether auto-jump starts enabled.
     pub auto: bool,
-    /// Extra ignore globs, root-relative, on top of the tree's rules.
-    pub ignore: Vec<String>,
-    /// Quiet period before a burst of writes becomes one change.
-    pub hint_debounce: Duration,
     /// Quiet period before auto-jump moves.
-    pub jump_debounce: Duration,
-    /// Idle time in a file before it counts as seen.
-    pub seen_idle: Duration,
+    pub debounce: Duration,
     /// How long a toast stays; zero disables toasts.
     pub toast: Duration,
 }
 
-impl Default for FollowConfig {
+impl Default for JumpConfig {
     fn default() -> Self {
         Self {
             auto: false,
-            ignore: Vec::new(),
-            hint_debounce: Duration::from_millis(300),
-            jump_debounce: Duration::from_secs(1),
-            seen_idle: Duration::from_secs(5),
+            debounce: Duration::from_secs(1),
             toast: Duration::from_secs(4),
         }
     }
 }
+
+/// The `watch { ... }` block (ADR 0015): what the file watcher reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WatchConfig {
+    /// Extra ignore globs, root-relative, on top of the tree's rules.
+    pub ignore: Vec<String>,
+    /// Quiet period before a burst of writes becomes one change.
+    pub debounce: Duration,
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            ignore: Vec::new(),
+            debounce: Duration::from_millis(300),
+        }
+    }
+}
+
+/// Where each setting of the retired `follow` block lives now (ADR 0047).
+const FOLLOW_MOVED: [(&str, &str); 6] = [
+    ("auto", "jump.auto"),
+    ("jump-debounce", "jump.debounce"),
+    ("toast", "jump.toast"),
+    ("ignore", "watch.ignore"),
+    ("hint-debounce", "watch.debounce"),
+    ("seen-idle", "viewer.seen-idle"),
+];
 
 impl Config {
     /// Read `$XDG_CONFIG_HOME/fathomable/config.kdl`, or `path` if given.
@@ -226,33 +251,86 @@ impl Config {
                 "theme" => {
                     config.theme = Some(one_string(node, line)?.to_owned());
                 }
-                "follow" => {
+                "jump" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
                             path: None,
                             line,
-                            message: "`follow` takes a block of settings".to_owned(),
+                            message: "`jump` takes a block of settings".to_owned(),
                         });
                     };
                     for child in children.nodes() {
                         let line = Some(line_of(child.span().offset()));
-                        let follow = &mut config.follow;
+                        let jump = &mut config.jump;
                         match child.name().value() {
-                            "auto" => follow.auto = one_bool(child, line)?,
-                            "ignore" => follow.ignore = strings(child, line, "ignore")?,
-                            "hint-debounce" => follow.hint_debounce = millis(child, line)?,
-                            "jump-debounce" => follow.jump_debounce = millis(child, line)?,
-                            "seen-idle" => follow.seen_idle = millis(child, line)?,
-                            "toast" => follow.toast = millis(child, line)?,
+                            "auto" => jump.auto = one_bool(child, line)?,
+                            "debounce" => jump.debounce = millis(child, line)?,
+                            "toast" => jump.toast = millis(child, line)?,
                             other => {
                                 return Err(ConfigError {
                                     path: None,
                                     line,
-                                    message: format!("unknown follow setting `{other}`"),
+                                    message: format!("unknown jump setting `{other}`"),
                                 });
                             }
                         }
                     }
+                }
+                "watch" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`watch` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        let watch = &mut config.watch;
+                        match child.name().value() {
+                            "ignore" => watch.ignore = strings(child, line, "ignore")?,
+                            "debounce" => watch.debounce = millis(child, line)?,
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown watch setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
+                "follow" => {
+                    // The block before ADR 0047: say where each setting went.
+                    let moved: Vec<String> = node
+                        .children()
+                        .map(|children| {
+                            children
+                                .nodes()
+                                .iter()
+                                .map(|child| {
+                                    let name = child.name().value();
+                                    FOLLOW_MOVED
+                                        .iter()
+                                        .find(|(old, _)| *old == name)
+                                        .map_or_else(
+                                            || format!("`{name}` is unknown"),
+                                            |(_, new)| format!("`{name}` is now `{new}`"),
+                                        )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let detail = if moved.is_empty() {
+                        "its settings are now `jump`, `watch`, and `viewer.seen-idle`".to_owned()
+                    } else {
+                        moved.join(", ")
+                    };
+                    return Err(ConfigError {
+                        path: None,
+                        line,
+                        message: format!("`follow` moved: {detail}"),
+                    });
                 }
                 "markdown" => {
                     let Some(children) = node.children() else {
@@ -343,6 +421,7 @@ impl Config {
                             "max-file-size-mib" => {
                                 config.viewer.max_file_size_mib = count(child, line, "MiB count")?;
                             }
+                            "seen-idle" => config.viewer.seen_idle = millis(child, line)?,
                             other => {
                                 return Err(ConfigError {
                                     path: None,
@@ -371,10 +450,16 @@ impl Config {
         self.theme.as_deref()
     }
 
-    /// The follow-mode settings (ADR 0015).
+    /// Auto-jump settings, the `jump` block (ADR 0015).
     #[must_use]
-    pub fn follow(&self) -> &FollowConfig {
-        &self.follow
+    pub fn jump(&self) -> &JumpConfig {
+        &self.jump
+    }
+
+    /// File-watcher settings, the `watch` block (ADR 0015).
+    #[must_use]
+    pub fn watch(&self) -> &WatchConfig {
+        &self.watch
     }
 
     /// How files are read (ADR 0026).
@@ -505,28 +590,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn follow_block_parses_every_key() {
+    fn jump_watch_and_viewer_blocks_parse_every_key() {
         let config = Config::parse(
             r#"
-follow {
+jump {
     auto #true
-    ignore "target/**" "*.lock"
-    hint-debounce 50
-    jump-debounce 2000
-    seen-idle 10
+    debounce 2000
     toast 0
+}
+watch {
+    ignore "target/**" "*.lock"
+    debounce 50
+}
+viewer {
+    seen-idle 10
 }
 "#,
         )
         .map_err(|e| e.to_string());
         let config = config.unwrap_or_default();
-        let follow = config.follow();
-        assert!(follow.auto);
-        assert_eq!(follow.ignore, ["target/**", "*.lock"]);
-        assert_eq!(follow.hint_debounce, Duration::from_millis(50));
-        assert_eq!(follow.jump_debounce, Duration::from_secs(2));
-        assert_eq!(follow.seen_idle, Duration::from_millis(10));
-        assert_eq!(follow.toast, Duration::ZERO);
+        assert!(config.jump().auto);
+        assert_eq!(config.jump().debounce, Duration::from_secs(2));
+        assert_eq!(config.jump().toast, Duration::ZERO);
+        assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
+        assert_eq!(config.watch().debounce, Duration::from_millis(50));
+        assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
+    }
+
+    /// A `follow` block from before ADR 0047 is refused with the new home
+    /// of each setting it holds.
+    #[test]
+    fn a_follow_block_names_where_each_setting_went() {
+        let error = Config::parse(
+            "follow {
+    auto #true
+    hint-debounce 50
+    bogus 1
+}",
+        )
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+        assert_eq!(
+            error,
+            "config line 1: `follow` moved: `auto` is now `jump.auto`, `hint-debounce` is now `watch.debounce`, `bogus` is unknown"
+        );
     }
 
     #[test]
@@ -610,19 +718,20 @@ follow {
     }
 
     #[test]
-    fn follow_defaults_apply_per_key() {
-        let config = Config::parse("follow { auto #true }").unwrap_or_default();
-        assert!(config.follow().auto);
-        assert_eq!(config.follow().toast, Duration::from_secs(4));
+    fn jump_defaults_apply_per_key() {
+        let config = Config::parse("jump { auto #true }").unwrap_or_default();
+        assert!(config.jump().auto);
+        assert_eq!(config.jump().toast, Duration::from_secs(4));
     }
 
     #[test]
-    fn follow_errors_name_the_line() {
+    fn jump_and_watch_errors_name_the_line() {
         let bad = [
-            ("follow { toast -1 }", "millisecond"),
-            ("follow { auto \"yes\" }", "boolean"),
-            ("follow { nope 1 }", "unknown follow setting"),
-            ("follow \"x\"", "block"),
+            ("jump { toast -1 }", "millisecond"),
+            ("jump { auto \"yes\" }", "boolean"),
+            ("jump { nope 1 }", "unknown jump setting"),
+            ("watch { nope 1 }", "unknown watch setting"),
+            ("jump \"x\"", "block"),
         ];
         for (text, needle) in bad {
             let error = Config::parse(text)

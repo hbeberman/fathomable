@@ -246,7 +246,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             record: record.clone(),
             dirs: dirs.clone(),
             store,
-            follow: config.follow().clone(),
+            jump: config.jump().clone(),
+            watch: config.watch().clone(),
             seen,
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
@@ -337,17 +338,19 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         .unwrap_or(DEFAULT_THEME);
     println!("config {}", config_path(cli, dirs).display());
     println!("theme \"{theme}\"");
-    let follow = config.follow();
-    println!("follow {{");
-    println!("    auto #{}", follow.auto);
-    if !follow.ignore.is_empty() {
-        let globs: Vec<String> = follow.ignore.iter().map(|g| format!("{g:?}")).collect();
+    let jump = config.jump();
+    println!("jump {{");
+    println!("    auto #{}", jump.auto);
+    println!("    debounce {}", jump.debounce.as_millis());
+    println!("    toast {}", jump.toast.as_millis());
+    println!("}}");
+    let watch = config.watch();
+    println!("watch {{");
+    if !watch.ignore.is_empty() {
+        let globs: Vec<String> = watch.ignore.iter().map(|g| format!("{g:?}")).collect();
         println!("    ignore {}", globs.join(" "));
     }
-    println!("    hint-debounce {}", follow.hint_debounce.as_millis());
-    println!("    jump-debounce {}", follow.jump_debounce.as_millis());
-    println!("    seen-idle {}", follow.seen_idle.as_millis());
-    println!("    toast {}", follow.toast.as_millis());
+    println!("    debounce {}", watch.debounce.as_millis());
     println!("}}");
     let markdown = config.markdown();
     let extensions: Vec<String> = markdown

@@ -10,7 +10,11 @@ tags:
 
 # 0008 Configuration format
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-03 by
+[0047](0047-one-vocabulary.md): the `follow` block is `jump { auto
+debounce toast }` and `watch { ignore debounce }`, and `seen-idle` is
+under `viewer`; a `follow` block is an error naming each setting's new
+home.
 
 ## Context
 

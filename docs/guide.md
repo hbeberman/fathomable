@@ -46,7 +46,7 @@ it open next to an editor or an agent.
 
 The workspace is live too. A file or directory the agent creates,
 deletes, or renames shows up in, leaves, or moves within the tree on its
-own (within `follow.hint-debounce`) — a whole new directory arrives
+own (within `watch.debounce`) — a whole new directory arrives
 collapsed, and is listed when you expand it — so `R` is only for a
 listing you suspect is stale. If the file you are reading is deleted,
 the text stays put under a `deleted` banner: you can still scroll,
@@ -350,13 +350,15 @@ Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 ```kdl
 theme "default-light"
 
-follow {
+jump {
     auto #false             // start with auto-jump on
-    ignore "target/**"      // extra globs on top of .gitignore
-    hint-debounce 300       // ms of quiet before a write becomes a change
-    jump-debounce 1000      // ms of quiet before auto-jump moves
-    seen-idle 5000          // ms alone with a file before it counts as seen
+    debounce 1000           // ms of quiet before auto-jump moves
     toast 4000              // ms a toast stays; 0 disables toasts
+}
+
+watch {
+    ignore "target/**"      // extra globs on top of .gitignore
+    debounce 300            // ms of quiet before a write becomes a change
 }
 
 markdown {
@@ -367,6 +369,7 @@ markdown {
 
 viewer {
     max-file-size-mib 64    // larger text files show the file-info pane
+    seen-idle 5000          // ms alone with a file before it counts as seen
 }
 
 agents {

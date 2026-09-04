@@ -88,7 +88,7 @@ impl App {
     pub(super) fn auto_jump_tick(&mut self) {
         let quiet = self
             .last_change
-            .is_some_and(|at| at.elapsed() >= self.follow.jump_debounce);
+            .is_some_and(|at| at.elapsed() >= self.jump.debounce);
         if !(self.auto && quiet && self.auto_jump_allowed()) {
             return;
         }
@@ -124,7 +124,7 @@ impl App {
             return None;
         }
         let since = self.last_change.map_or(Duration::ZERO, |at| at.elapsed());
-        let wait = self.follow.jump_debounce.saturating_sub(since);
+        let wait = self.jump.debounce.saturating_sub(since);
         let activity = self.current.map_or(Duration::ZERO, |i| {
             RECENT_ACTIVITY.saturating_sub(self.docs[i].view.idle())
         });
@@ -145,7 +145,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fathomable_core::annotations::Store;
-    use fathomable_core::config::FollowConfig;
+    use fathomable_core::config::JumpConfig;
     use fathomable_core::session::{Request, Response};
     use fathomable_core::workspace::Workspace;
 
@@ -184,13 +184,13 @@ mod tests {
         /// and the reader long still.
         fn app(&self) -> anyhow::Result<App> {
             let workspace = Workspace::discover(&self.0)?;
-            let follow = FollowConfig {
+            let jump = JumpConfig {
                 auto: true,
-                jump_debounce: std::time::Duration::ZERO,
-                ..FollowConfig::default()
+                debounce: std::time::Duration::ZERO,
+                ..JumpConfig::default()
             };
             let options = Options {
-                follow,
+                jump,
                 store: Some(Store::open(self.0.join(".threads.jsonl"))?),
                 ..Options::for_test(self.0.clone())
             };

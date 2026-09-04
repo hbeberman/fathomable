@@ -1755,6 +1755,23 @@ mod tests {
     }
 
     #[test]
+    fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
+        let dir = TempDir::new("status")?;
+        let mut app = dir.app()?;
+        annotate(&mut app, "one")?;
+        app.view_mut().toggle_source_view();
+        let parts = crate::app::ui::status_parts(&app);
+        assert_eq!(parts.pill, "NOR");
+        assert_eq!(parts.badges, ["SRC"]);
+        assert!(parts.right.contains("1 threads"), "{}", parts.right);
+        app.open_thread_at_cursor();
+        let parts = crate::app::ui::status_parts(&app);
+        assert_eq!(parts.pill, "THREAD");
+        assert_eq!(parts.badges, ["SRC"], "the badge outlives the focus change");
+        Ok(())
+    }
+
+    #[test]
     fn annotation_jumps_wrap_and_picker_lists_threads() -> anyhow::Result<()> {
         let dir = TempDir::new("jumps")?;
         let mut app = dir.app()?;

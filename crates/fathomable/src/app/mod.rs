@@ -1214,8 +1214,11 @@ impl App {
         self.sidebar_scroll
     }
 
+    /// The notice on the status line: the answer to the reader's last key,
+    /// from the app or from the view. A toast, by contrast, reports what
+    /// happened without the reader (ADR 0010).
     pub fn message(&self) -> Option<&str> {
-        self.message.as_deref()
+        self.message.as_deref().or_else(|| self.view().message())
     }
 
     /// The keys typed so far of a binding that is not complete.

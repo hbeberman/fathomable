@@ -1,6 +1,7 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
 //! Draw the app with ratatui: sidebar, gutter and text, popups, status line.
 
+use std::fmt::Write as _;
 use std::path::Path;
 
 use fathomable_core::layout::{Face, Style as Face_, display_width};
@@ -908,61 +909,22 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         Mode::Select => theme.mode_select,
         _ => theme.mode_input,
     };
-    let label = if app.focus() == Focus::Sidebar {
-        "TREE".to_owned()
-    } else if app.focus() == Focus::Thread {
-        "THREAD".to_owned()
-    } else if app.focus() == Focus::Threads {
-        "THREADS".to_owned()
-    } else if app.focus() == Focus::FileThreads {
-        "FILE".to_owned()
-    } else if app.deleted() && mode == Mode::Normal {
-        "DELETED".to_owned()
-    } else if view.source_view() && mode == Mode::Normal {
-        "SRC".to_owned()
-    } else if view.diff_view() && mode == Mode::Normal {
-        if view.diff_seen() {
-            "DIFF seen".to_owned()
-        } else {
-            "DIFF".to_owned()
-        }
-    } else if app.auto_jump() && mode == Mode::Normal {
-        "AUTO".to_owned()
-    } else {
-        mode.to_string()
-    };
-    let (line, col) = view.source_position();
-    let threads = match app.thread_counts() {
-        (_, 0) => String::new(),
-        (open, total) => format!("{open}/{total} threads  "),
-    };
-    let waiting = match app.waiting_count() {
-        0 => String::new(),
-        n => format!("{n} waiting  "),
-    };
-    let followed = match app.followed().len() {
-        0 => String::new(),
-        n => format!("follow {n}  "),
-    };
+    let parts = status_parts(app);
     let hint = change_hint(app);
-    let changes = match view.diff_counts() {
-        None | Some((0, 0)) => String::new(),
-        Some((added, removed)) => format!("+{added} -{removed}  "),
-    };
-    let right = format!(
-        " {line}:{col}  {}%  {changes}{waiting}{threads}{followed}",
-        view.percent()
-    );
     // Keep the right-hand block visible by trimming the path from the left.
-    let fixed = display_width(&label) + 3 + display_width(&right) + 8;
+    let badges: usize = parts.badges.iter().map(|b| display_width(b) + 2).sum();
+    let fixed = display_width(parts.pill) + 3 + badges + display_width(&parts.right) + 8;
     let path = app.current_path().to_string_lossy();
     let path = truncate_left(&path, width.saturating_sub(fixed));
     let mut left = vec![
-        Span::styled(format!(" {label} "), pill_style),
+        Span::styled(format!(" {} ", parts.pill), pill_style),
         Span::raw(format!(" {path}")),
     ];
     if view.changed() {
         left.push(Span::styled(" [+]", theme.info));
+    }
+    for badge in parts.badges {
+        left.push(Span::styled(format!("  {badge}"), theme.info));
     }
     if !app.prefix().is_empty() {
         left.push(Span::styled(
@@ -970,11 +932,12 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
             theme.info,
         ));
     }
-    if let Some(message) = app.message().or_else(|| view.message()) {
+    if let Some(message) = app.message() {
         left.push(Span::styled(format!("  {message}"), theme.info));
     } else if let Some(hint) = hint {
         left.push(Span::styled(format!("  {hint}"), theme.diff_delta));
     }
+    let right = parts.right;
     let used: usize = left
         .iter()
         .map(|s| display_width(&s.content))
@@ -984,6 +947,68 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     left.push(Span::raw(" ".repeat(pad)));
     left.push(Span::raw(right));
     Paragraph::new(Line::from(left)).style(theme.statusline)
+}
+
+/// The status line's words (ADR 0010, amended by 0046's session): the
+/// pill says one thing, the mode or the focused pane; the badges after
+/// the path say how the text is shown and whether auto-jump is on; the
+/// right block is `line:col`, the percentage, and `N word` counts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct StatusParts {
+    pub pill: &'static str,
+    pub badges: Vec<&'static str>,
+    pub right: String,
+}
+
+pub(super) fn status_parts(app: &App) -> StatusParts {
+    let view = app.view();
+    let pill = match app.focus() {
+        Focus::Sidebar => "TREE",
+        Focus::Thread => "THREAD",
+        Focus::Threads => "LIST",
+        Focus::FileThreads => "FILE THREADS",
+        Focus::View => match view.mode() {
+            Mode::Normal => "NOR",
+            Mode::Select => "SEL",
+            Mode::Command => "CMD",
+            Mode::Search { .. } => "SRCH",
+        },
+    };
+    let mut badges = Vec::new();
+    if view.source_view() {
+        badges.push("SRC");
+    } else if view.diff_view() {
+        badges.push(if view.diff_seen() {
+            "DIFF seen"
+        } else {
+            "DIFF"
+        });
+    }
+    if app.auto_jump() {
+        badges.push("AUTO");
+    }
+    let (line, col) = view.source_position();
+    let mut right = format!(" {line}:{col}  {}%", view.percent());
+    if let Some((added, removed)) = view.diff_counts().filter(|(a, r)| a + r > 0) {
+        // Infallible: writing to a `String` cannot fail.
+        let _ = write!(right, "  +{added} -{removed}");
+    }
+    let counts = [
+        (app.waiting_count(), "waiting"),
+        (app.thread_counts().1, "threads"),
+        (app.followed().len(), "followed"),
+    ];
+    for (count, word) in counts {
+        if count > 0 {
+            let _ = write!(right, "  {count} {word}");
+        }
+    }
+    right.push_str("  ");
+    StatusParts {
+        pill,
+        badges,
+        right,
+    }
 }
 
 /// The newest queued change for the status line (ADR 0015), with its

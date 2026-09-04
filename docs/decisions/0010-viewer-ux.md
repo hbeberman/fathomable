@@ -69,9 +69,21 @@ viewer, the layout engine, and later themes agree.
   since it was opened, then on the right `line:col` in **source** coordinates,
   the percentage through the document, and the session id from
   [0009](0009-cli-and-diagnostics.md).
+- Amended 2026-09-03: **the pill says one thing** — the mode (`NOR`,
+  `SEL`, `CMD`, `SRCH`) while the text has focus, else the focused pane
+  (`TREE`, `THREAD`, `LIST`, `FILE THREADS`). How the text is shown is a
+  badge after the path (`SRC`, `DIFF`, `DIFF seen`) and so is auto-jump
+  (`AUTO`), so neither disappears when focus moves. `DELETED` is the
+  banner only. The right block reads `line:col`, the percentage, `+a -r`,
+  then every count as `N word`: `2 waiting  3 threads  1 followed`.
 - `:` and `/` input replace the status line while active, as in Vim. Pending
   key sequences and transient messages ("search hit BOTTOM, continuing at
   TOP", "copied 3 lines") use the same line and clear on the next key.
+- Amended 2026-09-03: a **notice** answers the reader's own key on the
+  status line and clears on the next one; a **toast** reports what
+  happened without the reader (a reply landing, auto-jump switching off)
+  and fades on its own. The app and the view each raise notices; the
+  status line reads them through one accessor.
 
 ### Selection and clipboard
 

@@ -49,8 +49,8 @@ deletes, or renames shows up in, leaves, or moves within the tree on its
 own (within `follow.hint-debounce`) — a whole new directory arrives
 collapsed, and is listed when you expand it — so `R` is only for a
 listing you suspect is stale. If the file you are reading is deleted,
-the text stays put under a `deleted` banner and the pill reads
-`DELETED`: you can still scroll, search, and read its threads, but `c`,
+the text stays put under a `deleted` banner: you can still scroll,
+search, and read its threads, but `c`,
 `C`, and replies are refused until the file comes back, at which point it
 reloads and the banner goes. If it is renamed, the view follows with
 your position and threads intact, the threads move to the new path in the
@@ -329,13 +329,13 @@ once its target is on screen. A file the agent says it is editing
 (`follow`) is revealed in the tree, its folders expanded, without moving
 your highlight unless the tree has focus.
 
-`Space j a` (or `:follow`) turns on **auto-jump**: the pill reads `AUTO`
+`Space j a` (or `:follow`) turns on **auto-jump**: an `AUTO` badge follows the path in the status line
 and the viewer opens the newest change by itself once writes have been
 quiet for a second, preferring a file the agent said it is editing
 (`follow`). It is a monitor, not a leash: it waits while you are
 selecting, writing a comment, reading a thread or diff, have a popup
 open, or have touched the keyboard or mouse in the last three seconds,
-and it switches itself off — toast `auto-jump off`, pill cleared — the
+and it switches itself off — toast `auto-jump off`, badge gone — the
 moment you go somewhere else: another file, a thread, the thread list,
 the diff view, a selection. Scrolling and searching in the file it
 landed on keep it on. When the change is in the file you are reading it
@@ -474,7 +474,7 @@ repository, and the tools are:
 | --- | --- |
 | `session_list`, `session_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `follow N` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer; a path is a file or a directory, and a directory covers every thread under it, including on files not written yet; fails, changing nothing, when a path is neither, naming same-named paths elsewhere (matching is by path component, so a bare file name never covers the same file in a subdirectory); the reply lists the paths now followed, a directory with a trailing slash; a later `follow` on a subscribed connection updates its coverage to the new paths |
+| `follow` | tell the viewer(s) which files the agent is editing (shown as `N followed` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer; a path is a file or a directory, and a directory covers every thread under it, including on files not written yet; fails, changing nothing, when a path is neither, naming same-named paths elsewhere (matching is by path component, so a bare file name never covers the same file in a subdirectory); the reply lists the paths now followed, a directory with a trailing slash; a later `follow` on a subscribed connection updates its coverage to the new paths |
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
 | `annotations_list` | read the threads on the current work, optionally `since` a Unix time or on one `path` — a file, or a directory to read the whole subtree — at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer; fails when `path` is neither |
 | `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |

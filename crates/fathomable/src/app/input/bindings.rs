@@ -1342,6 +1342,14 @@ pub fn lookup(place: Where, typed: &[Chord]) -> Match {
     if prefix { Match::Prefix } else { Match::Miss }
 }
 
+/// `label` without the `word: ` that names the submenu `typed` is,
+/// which the menu's breadcrumb row already carries.
+fn strip_submenu_word<'a>(typed: &[Chord], label: &'a str) -> &'a str {
+    submenu_word(typed)
+        .and_then(|word| label.strip_prefix(word)?.strip_prefix(": "))
+        .unwrap_or(label)
+}
+
 /// The which-key entries for `typed` on `place`: the next key of every
 /// binding that continues it, with its label, in table order.
 #[must_use]
@@ -1353,7 +1361,9 @@ pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
                 let next = keys[typed.len()].to_string();
                 if !entries.iter().any(|(key, _)| *key == next) {
                     let label = if keys.len() == typed.len() + 1 {
-                        binding.label.to_owned()
+                        // The breadcrumb row already names the submenu,
+                        // so an entry inside one does not repeat it.
+                        strip_submenu_word(typed, binding.label).to_owned()
                     } else {
                         // A submenu is named after where it leads.
                         let word = submenu_word(&keys[..=typed.len()]).unwrap_or("more");
@@ -1552,6 +1562,27 @@ mod tests {
         );
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
         assert!(menu(Where::Box, &[c(' ')]).is_empty());
+    }
+
+    /// A submenu's entries drop the word the breadcrumb already says:
+    /// `Space c c` reads "toggle stub visibility", not
+    /// "threads: toggle stub visibility".
+    #[test]
+    fn a_submenu_entry_does_not_repeat_the_submenu_word() {
+        for (prefix, word) in [(c('c'), "threads"), (c('v'), "view"), (c('r'), "rail")] {
+            for (key, label) in menu(Where::View, &[c(' '), prefix]) {
+                assert!(
+                    !label.starts_with(&format!("{word}: ")),
+                    "{key} still says {word}: {label}"
+                );
+            }
+        }
+        let stub = menu(Where::View, &[c(' '), c('c')]);
+        assert!(
+            stub.iter()
+                .any(|(key, label)| key == "c" && label == "toggle stub visibility"),
+            "{stub:?}"
+        );
     }
 
     /// Every prefix under `Space` that leads further is a named submenu,

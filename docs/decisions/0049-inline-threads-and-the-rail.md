@@ -302,7 +302,9 @@ Alt-Left / Alt-Right   jumplist back / forward
 - The which-key box gains a first row naming the prefix typed so far and
   its group word (`Space c · threads`), in the pill colour, and
   re-renders at every level. The status badge still shows the raw
-  prefix.
+  prefix. Because the breadcrumb names the submenu, an entry inside one
+  drops that word from its label: `Space c c` reads
+  `toggle stub visibility`, not `threads: toggle stub visibility`.
 
 ### Theme and configuration
 

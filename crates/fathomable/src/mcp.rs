@@ -451,63 +451,18 @@ impl Server {
             Ok(paths) => paths,
             Err(error) => return failure(error),
         };
-        let mut note = String::new();
-        let bonded = match (&p.id, &p.kind) {
-            (None, Some(_)) => self
-                .register(&session.root, now())
-                .ok()
-                .and_then(|r| r.session_for(&self.ancestors).map(str::to_owned)),
-            _ => None,
+        let client = context.client_info().map(|c| c.name);
+        let note = match self.subscription(
+            &session.root,
+            p.id,
+            p.kind,
+            p.persona,
+            client.as_deref(),
+            &paths,
+        ) {
+            Ok(note) => note,
+            Err(error) => return failure(error),
         };
-        let id = p.id.clone().or_else(|| bonded.clone());
-        match (&id, &p.kind) {
-            (Some(id), Some(kind)) => {
-                if !self.agents.allows(kind) {
-                    return failure(format!(
-                        "unknown agent type `{kind}`; configured types: {}",
-                        self.agents.types.join(", ")
-                    ));
-                }
-                let client = context.client_info().map(|c| c.name);
-                let when = now();
-                let outcome = self.register(&session.root, when).and_then(|mut register| {
-                    register
-                        .subscribe(
-                            id,
-                            kind,
-                            p.persona.as_deref(),
-                            client.as_deref(),
-                            paths.clone(),
-                            when,
-                        )
-                        .map_err(|e| e.to_string())
-                });
-                if let Err(error) = outcome {
-                    return failure(error);
-                }
-                if let Ok(mut current) = self.subscriber.lock() {
-                    *current = Some((id.clone(), kind.clone(), p.persona.clone()));
-                }
-                note = if bonded.is_some() {
-                    format!("subscribed {id} (your session, found from the harness) as {kind}; ")
-                } else {
-                    format!("subscribed {id} as {kind}; ")
-                };
-            }
-            (Some(_), None) => {
-                return failure(format!(
-                    "`id` needs a `type`; configured types: {}",
-                    self.agents.types.join(", ")
-                ));
-            }
-            (None, Some(_)) => {
-                return failure(
-                    "`type` needs the session `id` the hello hook gave you; this session \
-                     could not be told from the harness",
-                );
-            }
-            (None, None) => {}
-        }
         let files = listed(&session.root, &paths);
         if session.viewers.is_empty() && p.viewer.is_none() {
             return text(format!("{note}following {files}; no viewer is running"));
@@ -853,6 +808,92 @@ impl Server {
             .lock()
             .ok()
             .and_then(|s| s.as_ref().map(|(id, ..)| id.clone()))
+    }
+
+    /// The subscription side of `follow`: subscribe `id` as `kind`,
+    /// refuse a half-given pair, or, with neither, refresh the coverage
+    /// of the session this connection already speaks for. Returns the
+    /// note that prefixes the reply, empty when nothing was registered.
+    fn subscription(
+        &self,
+        root: &Path,
+        id: Option<String>,
+        kind: Option<String>,
+        persona: Option<String>,
+        client: Option<&str>,
+        paths: &[PathBuf],
+    ) -> Result<String, String> {
+        let when = now();
+        match (id, kind) {
+            (Some(id), Some(kind)) => {
+                let mut register = self.register(root, when)?;
+                self.subscribe(&mut register, &id, &kind, persona, client, paths, when)?;
+                Ok(format!("subscribed {id} as {kind}; "))
+            }
+            (None, Some(kind)) => {
+                let mut register = self.register(root, when)?;
+                let Some(id) = register.session_for(&self.ancestors).map(str::to_owned) else {
+                    return Err(
+                        "`type` needs the session `id` the hello hook gave you; this session \
+                         could not be told from the harness"
+                            .to_owned(),
+                    );
+                };
+                self.subscribe(&mut register, &id, &kind, persona, client, paths, when)?;
+                Ok(format!(
+                    "subscribed {id} (your session, found from the harness) as {kind}; "
+                ))
+            }
+            (Some(_), None) => Err(format!(
+                "`id` needs a `type`; configured types: {}",
+                self.agents.types.join(", ")
+            )),
+            (None, None) => {
+                let Ok(mut register) = self.register(root, when) else {
+                    return Ok(String::new());
+                };
+                let Some(id) = self.session_id(None, &register) else {
+                    return Ok(String::new());
+                };
+                let Some(existing) = register.subscriber(&id) else {
+                    return Ok(String::new());
+                };
+                let kind = existing.kind().to_owned();
+                let name = existing.name().map(str::to_owned);
+                register
+                    .subscribe(&id, &kind, name.as_deref(), client, paths.to_vec(), when)
+                    .map_err(|e| e.to_string())?;
+                Ok(format!("coverage updated for {id}; "))
+            }
+        }
+    }
+
+    /// Subscribe `id` as `kind` in `register` and remember it as this
+    /// connection's signature.
+    #[expect(clippy::too_many_arguments, reason = "one call per subscription field")]
+    fn subscribe(
+        &self,
+        register: &mut Register,
+        id: &str,
+        kind: &str,
+        persona: Option<String>,
+        client: Option<&str>,
+        paths: &[PathBuf],
+        when: u64,
+    ) -> Result<(), String> {
+        if !self.agents.allows(kind) {
+            return Err(format!(
+                "unknown agent type `{kind}`; configured types: {}",
+                self.agents.types.join(", ")
+            ));
+        }
+        register
+            .subscribe(id, kind, persona.as_deref(), client, paths.to_vec(), when)
+            .map_err(|e| e.to_string())?;
+        if let Ok(mut current) = self.subscriber.lock() {
+            *current = Some((id.to_owned(), kind.to_owned(), persona));
+        }
+        Ok(())
     }
 
     /// The session a call speaks for: the `id` it passed, else the one
@@ -1424,7 +1465,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::XdgDirs;
+    use fathomable_core::agents::Subscriber;
     use fathomable_core::annotations::{Author, Draft, LineRange, Status, Store, ThreadId};
+    use fathomable_core::config::AgentsConfig;
     use fathomable_core::session::{Id, Record};
 
     use serde_json::Value;
@@ -1617,6 +1660,64 @@ mod tests {
             )
             .is_err()
         );
+        Ok(())
+    }
+
+    /// A subscribed connection that calls `follow` again with only
+    /// `paths` moves its coverage to them: the register's subscriber
+    /// carries the new paths and a thread on the old path is no longer
+    /// covered. A connection that never subscribed is left alone.
+    #[test]
+    fn a_second_follow_updates_the_subscription_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("refollow")?;
+        let dirs = dir.dirs();
+        let root = dir.0.join("ws").canonicalize()?;
+        fs::write(root.join("a.md"), "one\n")?;
+        fs::write(root.join("b.md"), "one\n")?;
+        let on_a = {
+            let mut store = Store::open(dirs.threads_file(&root))?;
+            let id = store.annotate(
+                Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+                "one\n",
+                5,
+            )?;
+            store.thread(&id).cloned().ok_or("thread not stored")?
+        };
+        let server = Server::new(dirs.clone(), AgentsConfig::default());
+        let subscriber = |server: &Server| -> Result<Subscriber, String> {
+            server
+                .register(&root, 10)?
+                .subscriber("s1")
+                .cloned()
+                .ok_or_else(|| "s1 is not subscribed".to_owned())
+        };
+
+        // Not subscribed: paths alone register nothing.
+        let note = server.subscription(&root, None, None, None, None, &[PathBuf::from("a.md")])?;
+        assert_eq!(note, "");
+        assert_eq!(
+            subscriber(&server).map(|s| s.id().to_owned()),
+            Err("s1 is not subscribed".to_owned())
+        );
+
+        let note = server.subscription(
+            &root,
+            Some("s1".to_owned()),
+            Some("coder".to_owned()),
+            Some("bot".to_owned()),
+            None,
+            &[PathBuf::from("a.md")],
+        )?;
+        assert_eq!(note, "subscribed s1 as coder; ");
+        assert!(subscriber(&server)?.covers(&on_a));
+
+        let note = server.subscription(&root, None, None, None, None, &[PathBuf::from("b.md")])?;
+        assert_eq!(note, "coverage updated for s1; ");
+        let refreshed = subscriber(&server)?;
+        assert_eq!(refreshed.paths(), [PathBuf::from("b.md")]);
+        assert_eq!(refreshed.kind(), "coder");
+        assert_eq!(refreshed.name(), Some("bot"));
+        assert!(!refreshed.covers(&on_a));
         Ok(())
     }
 

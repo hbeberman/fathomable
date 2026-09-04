@@ -108,6 +108,10 @@ design:
   and names the allowed types. A subscriber's type is fixed for its
   life: `follow` with another type is refused. `follow` no longer fails
   when no viewer runs; it says how many it reached.
+  (Amended 2026-09-03: a later `follow` with only `paths` on a
+  connection that is subscribed, or whose session a bond resolves,
+  refreshes that subscription's paths too; the reply says `coverage
+  updated for <id>`.)
 - `unfollow {id}` removes the subscription, its deliveries, and its
   watches. A subscription also **expires** when `seen` — refreshed by
   every `follow`, `threads_pending`, and hook lookup — is older than

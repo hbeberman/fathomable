@@ -192,6 +192,8 @@ pub enum Popup {
     Compose(Compose),
     /// The `:status` overlay (ADR 0021).
     Status,
+    /// The context menu a right-click opened (ADR 0050).
+    Menu(input::menu::Menu),
 }
 
 #[derive(Debug)]
@@ -259,6 +261,10 @@ pub struct App {
     compose_rows: Option<usize>,
     /// The border a mouse drag is moving.
     drag: Option<Border>,
+    /// The cell the pointer was last seen at, for hover (ADR 0050).
+    pointer: Option<(usize, usize)>,
+    /// The last left press in the text, for click counts (ADR 0050).
+    press: Option<input::mouse::Press>,
     focus: Focus,
     popup: Option<Popup>,
     file_index: Option<Vec<String>>,
@@ -360,6 +366,8 @@ impl App {
             review_list: ReviewList::default(),
             compose_rows: None,
             drag: None,
+            pointer: None,
+            press: None,
             focus: Focus::View,
             popup: None,
             file_index: None,
@@ -1184,6 +1192,18 @@ impl App {
 
     pub fn end_drag(&mut self) {
         self.drag = None;
+    }
+
+    /// The cell the pointer was last seen at (ADR 0050).
+    #[must_use]
+    pub fn pointer(&self) -> Option<(usize, usize)> {
+        self.pointer
+    }
+
+    /// The terminal's size as the app last heard it.
+    #[must_use]
+    pub fn size(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 
     pub fn popup(&self) -> Option<&Popup> {

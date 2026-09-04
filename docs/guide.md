@@ -97,7 +97,8 @@ Text:
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
-| `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
+| `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
+| `gy` `gx` | copy the link under the cursor; open it with `xdg-open` |
 | `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
@@ -170,6 +171,7 @@ Tree and picker:
 | `j` `k` `h` `l` `Enter` | move (the highlighted file is shown), collapse, expand or open and focus |
 | `gg` `ge` `G` | top / bottom |
 | `R`, `I` | re-read (new, deleted, and renamed files already show on their own); show ignored |
+| `y` | copy the highlighted entry's path, relative to the root |
 | `Esc` | back to the text; the tree stays |
 | picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
 
@@ -188,6 +190,31 @@ tree stays in the tree: it expands a directory or shows a file like the
 wheel does, and only `Enter` moves focus to the view. A click on a stub
 expands its thread. Drag the rail's divider or the threads pane's rule
 to resize them.
+
+A **right-click** opens a menu of what the pointer is on, each entry
+showing the key that does the same: on a selection, comment, new
+thread, copy, and clear; on a line a thread covers, expand or fold,
+reply, resolve or reopen, edit, and delete; on a link, copy or open it;
+on any line, comment, select, and copy. In the tree it offers open,
+checkpoint, copy path, re-read, and ignored; on a threads pane or review
+list entry, go to, reply, resolve, edit, and delete. A right-click
+outside the selection moves the cursor there first; inside it keeps the
+selection. Hover highlights an entry; a click or its key runs it; `Esc`
+or a click elsewhere closes the menu. The `delete thread` entry deletes
+at once. The `Space` menu and `Space ?` take clicks too, as do the key
+hints at the right edge of the threads pane, review list, checkpoint,
+expanded thread, and comment box headers; a click on the threads pane
+header toggles its reach, and on the checkpoint header's base or target
+name opens that picker.
+
+Selecting with the mouse: drag over text for a character selection; a
+press or drag in the gutter selects whole lines; a double-click selects
+the word and a triple-click the line; Shift-click extends the
+selection to the pointer where the terminal passes Shift through (most
+keep it for their own selection). Every gesture ends in `SEL` mode, so
+`y`, `c`, `C`, and the right-click menu apply. The right button reaches
+the viewer only where the terminal forwards it under mouse capture
+(Ghostty, kitty, foot, WezTerm, and Alacritty do).
 Starting on a directory opens the tree; starting on a file opens the file.
 
 ## 4. Annotations

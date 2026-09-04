@@ -194,3 +194,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     `Alt-Left`/`Alt-Right` walk a jumplist of positions; the leader
     gains `c`, `v`, and `r` submenus and the menu a breadcrumb row
     ([0049](decisions/0049-inline-threads-and-the-rail.md)).
+41. **Mouse menus and gestures.** A right-click opens a context menu of
+    the actions that apply under the pointer, in the text, the tree, the
+    threads pane, and the review list, each entry showing its key; the
+    `Space` menu and `Space ?` take clicks; the gutter, double- and
+    triple-click, and Shift-click select; pane-header hints take
+    clicks; `gy`/`gx` copy or open a link
+    ([0050](decisions/0050-mouse-menus-and-gestures.md)).

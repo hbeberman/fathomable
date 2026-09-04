@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Diff, LineStatus};
 use fathomable_core::highlight::Highlighter;
-use fathomable_core::layout::{Layout, LineIndex, RowAnchor, display_width};
+use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
 use super::checkpoints::{CheckBody, CheckDiff};
@@ -110,6 +110,8 @@ pub enum Effect {
     None,
     Quit,
     Copy(String),
+    /// Open a URL with the desktop's opener (`gx`, ADR 0050).
+    Open(String),
     /// A `:` command the app handles (`:auto ...`, ADR 0015).
     Command(String),
     /// Hand the comment draft to `$EDITOR` (ADR 0018).
@@ -949,6 +951,98 @@ impl View {
         }
     }
 
+    /// A press in the gutter (ADR 0050): select the line under it, whole.
+    pub fn select_line_at(&mut self, screen_row: usize) {
+        self.click(screen_row, 0);
+        self.selection = Some(Selection {
+            anchor: self.cursor,
+            head: self.cursor,
+            linewise: true,
+        });
+        self.mode = Mode::Select;
+    }
+
+    /// A drag that began in the gutter (ADR 0050): extend by whole lines.
+    pub fn drag_lines(&mut self, screen_row: usize) {
+        self.drag(screen_row, 0);
+        if let Some(selection) = self.selection.as_mut() {
+            selection.linewise = true;
+        }
+    }
+
+    /// A double-click (ADR 0050): select the word under the pointer, a
+    /// run of letters, digits, and underscores, else of other non-blank
+    /// characters (vim's `iw`). Blank space selects nothing.
+    pub fn select_word_at(&mut self, screen_row: usize, col: usize) {
+        self.click(screen_row, col);
+        let row = self.cursor.row;
+        let Some((start, end)) = self
+            .layout
+            .lines()
+            .get(row)
+            .and_then(|line| word_at(&line.text(), col))
+        else {
+            return;
+        };
+        self.cursor.col = end;
+        self.want_col = end;
+        self.selection = Some(Selection {
+            anchor: Cursor { row, col: start },
+            head: self.cursor,
+            linewise: false,
+        });
+        self.mode = Mode::Select;
+    }
+
+    /// Shift-click (ADR 0050): extend the selection to the pointer, from
+    /// the cursor when there is none. A drag does the same.
+    pub fn extend_to(&mut self, screen_row: usize, col: usize) {
+        self.drag(screen_row, col);
+    }
+
+    /// The URL of the rendered link at `(row, col)`, if the cell is one.
+    #[must_use]
+    pub fn link_at(&self, row: usize, col: usize) -> Option<&str> {
+        let line = self.layout.lines().get(row)?;
+        let mut at = 0;
+        for span in line.spans() {
+            let width = span.width();
+            if col < at + width {
+                return match &span.style().face {
+                    Face::Link(url) => Some(url),
+                    _ => None,
+                };
+            }
+            at += width;
+        }
+        None
+    }
+
+    /// The URL of the link under the cursor, if any.
+    #[must_use]
+    pub fn link_at_cursor(&self) -> Option<&str> {
+        self.link_at(self.cursor.row, self.cursor.col)
+    }
+
+    /// `gy` (ADR 0050): copy the link under the cursor.
+    pub fn copy_link(&mut self) -> Effect {
+        let Some(url) = self.link_at_cursor().map(str::to_owned) else {
+            self.message = Some("no link here".to_owned());
+            return Effect::None;
+        };
+        self.message = Some("copied link".to_owned());
+        Effect::Copy(url)
+    }
+
+    /// `gx` (ADR 0050): open the link under the cursor.
+    pub fn open_link(&mut self) -> Effect {
+        let Some(url) = self.link_at_cursor().map(str::to_owned) else {
+            self.message = Some("no link here".to_owned());
+            return Effect::None;
+        };
+        Effect::Open(url)
+    }
+
     /// Drop the selection and return to normal mode.
     pub fn clear_selection(&mut self) {
         self.selection = None;
@@ -1044,9 +1138,21 @@ impl View {
         self.mode = Mode::Select;
     }
 
-    /// Copy the selection (`y`) and leave select mode.
+    /// Copy the selection (`y`) and leave select mode. With nothing
+    /// selected, the cursor line (ADR 0050).
     pub fn yank(&mut self) -> Effect {
+        let whole_line = self.selection.is_none();
+        if whole_line {
+            self.selection = Some(Selection {
+                anchor: self.cursor,
+                head: self.cursor,
+                linewise: true,
+            });
+        }
         let effect = self.copy_selection();
+        if whole_line {
+            self.selection = None;
+        }
         self.mode = Mode::Normal;
         effect
     }
@@ -1322,6 +1428,48 @@ fn compile(input: &str) -> Result<Regex, String> {
         regex::Error::Syntax(msg) => msg.lines().last().unwrap_or("bad pattern").to_owned(),
         other => other.to_string(),
     })
+}
+
+/// The display columns a word covers at `col`: its first column and the
+/// column of its last character. Letters, digits, and underscores are one
+/// class, other non-blank characters another; blanks are no word.
+fn word_at(text: &str, col: usize) -> Option<(usize, usize)> {
+    #[derive(PartialEq, Eq, Clone, Copy)]
+    enum Class {
+        Word,
+        Other,
+        Blank,
+    }
+    let class = |ch: char| {
+        if ch.is_alphanumeric() || ch == '_' {
+            Class::Word
+        } else if ch.is_whitespace() {
+            Class::Blank
+        } else {
+            Class::Other
+        }
+    };
+    let mut cells = Vec::new();
+    let mut at = 0;
+    for ch in text.chars() {
+        cells.push((at, class(ch)));
+        at += display_width(ch.encode_utf8(&mut [0; 4]));
+    }
+    let index = cells.iter().rposition(|&(start, _)| start <= col)?;
+    let kind = cells[index].1;
+    if kind == Class::Blank {
+        return None;
+    }
+    let first = (0..index)
+        .rev()
+        .take_while(|&i| cells[i].1 == kind)
+        .last()
+        .unwrap_or(index);
+    let last = (index..cells.len())
+        .take_while(|&i| cells[i].1 == kind)
+        .last()
+        .unwrap_or(index);
+    Some((cells[first].0, cells[last].0))
 }
 
 fn floor_char(text: &str, mut offset: usize) -> usize {

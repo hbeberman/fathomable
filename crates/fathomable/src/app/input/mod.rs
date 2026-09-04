@@ -4,8 +4,9 @@
 //! typed before it on the focused surface, and fires an
 //! [`bindings::Action`] through [`App::act`](super::App::act). The mouse
 //! is hand-written: it goes to the pane under the pointer, not the
-//! focused one.
+//! focused one, and a right-click opens a [`menu::Menu`] (ADR 0050).
 
 pub(crate) mod bindings;
 pub(crate) mod keys;
+pub(crate) mod menu;
 pub(crate) mod mouse;

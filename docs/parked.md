@@ -59,6 +59,15 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
   whether to warn or rate-limit. Origin: 0005.
 
+## Mouse follow-ups
+
+- **A scrollbar on the text pane**, clickable and draggable. Origin:
+  [0050](decisions/0050-mouse-menus-and-gestures.md); the wheel and
+  `Ctrl-d`/`Ctrl-u` cover scrolling and a scrollbar takes a column.
+- **A key that opens the context menu at the text cursor**, for a
+  terminal that keeps the right button for itself. Origin: 0050; the
+  clickable `Space` menu is the fallback for now.
+
 ## Checkpoint follow-ups
 
 - **Pruning checkpoints.** Origin:

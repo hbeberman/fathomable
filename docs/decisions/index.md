@@ -53,3 +53,4 @@ supersede rather than edit history.
 - [0047 One vocabulary for the viewer](0047-one-vocabulary.md)
 - [0048 Modules by concept](0048-modules-by-concept.md)
 - [0049 Inline threads, the rail, checkpoints, and the jumplist](0049-inline-threads-and-the-rail.md)
+- [0050 Mouse menus and gestures](0050-mouse-menus-and-gestures.md)

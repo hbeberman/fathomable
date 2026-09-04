@@ -17,6 +17,8 @@ Status: accepted (2026-08-28); amended 2026-09-03 by
 one thread cursor's thread, and `h` on the file's first thread, not
 `Left`, hands the keys back to the file-threads pane.
 
+Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the context menu's `delete thread` entry deletes without the second `d`; a click on a labelled entry is deliberate where a stray key is not.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

@@ -229,6 +229,9 @@ actions! {
     SelectLines,
     ExtendLine,
     Yank,
+    CopyLink,
+    OpenLink,
+    CopyPath,
     Comment,
     NewThread,
     WaitingNext,
@@ -438,7 +441,21 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c('y')]],
         A::Yank,
         "Select",
-        "copy the selection",
+        "copy the selection, or the line",
+    ),
+    bind(
+        W::View,
+        &[&[c('g'), c('y')]],
+        A::CopyLink,
+        "Links",
+        "copy the link here",
+    ),
+    bind(
+        W::View,
+        &[&[c('g'), c('x')]],
+        A::OpenLink,
+        "Links",
+        "open the link here",
     ),
     bind(
         W::View,
@@ -905,6 +922,7 @@ pub const BINDINGS: &[Binding] = &[
         "Tree",
         "show ignored entries",
     ),
+    bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
     bind(
         W::Tree,
         &[&[k(K::Esc)]],
@@ -1354,11 +1372,21 @@ fn strip_submenu_word<'a>(typed: &[Chord], label: &'a str) -> &'a str {
 /// binding that continues it, with its label, in table order.
 #[must_use]
 pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
-    let mut entries: Vec<(String, String)> = Vec::new();
+    menu_entries(place, typed)
+        .into_iter()
+        .map(|(chord, label)| (chord.to_string(), label))
+        .collect()
+}
+
+/// The which-key entries as chords, so a click on a drawn entry can be
+/// the key it shows typed (ADR 0050).
+#[must_use]
+pub fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)> {
+    let mut entries: Vec<(Chord, String)> = Vec::new();
     for binding in applicable(place) {
         for keys in binding.keys {
             if keys.len() > typed.len() && keys.starts_with(typed) {
-                let next = keys[typed.len()].to_string();
+                let next = keys[typed.len()];
                 if !entries.iter().any(|(key, _)| *key == next) {
                     let label = if keys.len() == typed.len() + 1 {
                         // The breadcrumb row already names the submenu,
@@ -1381,6 +1409,14 @@ pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
 /// sequence there, else its first `Any` sequence.
 #[must_use]
 pub fn hint(place: Where, action: Action) -> Option<String> {
+    first_keys(place, action).map(spell)
+}
+
+/// The sequence `hint` spells: the first one bound on `place`, else the
+/// first `Any` one when the place takes those. A menu entry keeps the
+/// chords so a typed key can be matched against them (ADR 0050).
+#[must_use]
+pub fn first_keys(place: Where, action: Action) -> Option<Keys> {
     let own = BINDINGS
         .iter()
         .find(|b| b.place == place && b.action == action);
@@ -1394,21 +1430,26 @@ pub fn hint(place: Where, action: Action) -> Option<String> {
             })
             .flatten()
     };
-    own.or_else(any)
-        .and_then(|b| b.keys.first())
-        .map(|keys| spell(keys))
+    own.or_else(any).and_then(|b| b.keys.first()).copied()
 }
 
 /// The help popup: one row per binding, keys joined by ` / `, under a
 /// header row per group.
 #[must_use]
 pub fn help() -> Vec<(String, String)> {
+    help_rows().into_iter().map(|(_, row)| row).collect()
+}
+
+/// The help rows with the binding each one stands for, `None` on a
+/// group header, so a click on a row can run it (ADR 0050).
+#[must_use]
+pub fn help_rows() -> Vec<(Option<&'static Binding>, (String, String))> {
     let mut rows = Vec::with_capacity(BINDINGS.len() + 16);
     let mut group = "";
     for binding in BINDINGS {
         if binding.group != group {
             group = binding.group;
-            rows.push((String::new(), group.to_owned()));
+            rows.push((None, (String::new(), group.to_owned())));
         }
         let keys = binding
             .keys
@@ -1416,7 +1457,7 @@ pub fn help() -> Vec<(String, String)> {
             .map(|keys| spell(keys))
             .collect::<Vec<_>>()
             .join(" / ");
-        rows.push((keys, binding.label.to_owned()));
+        rows.push((Some(binding), (keys, binding.label.to_owned())));
     }
     rows
 }

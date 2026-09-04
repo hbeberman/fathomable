@@ -302,7 +302,7 @@ impl App {
     }
 
     /// Columns the list has: the text column without the tree.
-    fn column_width(&self) -> usize {
+    pub(crate) fn column_width(&self) -> usize {
         self.width.saturating_sub(self.rail_width()).max(1)
     }
 

@@ -30,6 +30,7 @@ use crate::app::view::{Mode, View};
 
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::input::keys::place;
+use crate::app::input::menu::{Grid, Menu};
 use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
 
 /// Ratatui styles for the chrome and Markdown faces.
@@ -233,22 +234,20 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     draw_toasts(frame, app, theme, text_area);
     match app.popup() {
         Some(Popup::Help) => {
-            draw_table(
-                frame,
-                theme,
-                area,
-                " Keys (any key closes)",
-                &bindings::help(),
-            );
+            let rows = bindings::help();
+            let grid = help_grid(app, &rows);
+            let hover = app
+                .pointer()
+                .and_then(|(column, row)| grid.entry_at(column, row));
+            draw_table(frame, theme, grid, HELP_TITLE, &rows, hover);
         }
         Some(Popup::Status) => {
-            draw_table(
-                frame,
-                theme,
-                area,
-                " Status (any key closes)",
-                &app.status_lines(),
-            );
+            let rows = app.status_lines();
+            let grid = Grid::centred(&rows, STATUS_TITLE, 0, 0, app.size().0, app.pane_rows());
+            draw_table(frame, theme, grid, STATUS_TITLE, &rows, None);
+        }
+        Some(Popup::Menu(menu)) => {
+            draw_context_menu(frame, app, theme, menu);
         }
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
@@ -259,12 +258,18 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
+                let entries = bindings::menu(place, app.prefix());
+                let grid = which_key_grid(app, &entries);
+                let hover = app
+                    .pointer()
+                    .and_then(|(column, row)| grid.entry_at(column, row));
                 draw_menu(
                     frame,
                     theme,
-                    column,
+                    grid,
                     &bindings::menu_title(app.prefix()),
-                    &bindings::menu(place, app.prefix()),
+                    &entries,
+                    hover,
                 );
             }
             place_cursor(frame, app, view, text_area, status_area, gutter);
@@ -304,15 +309,8 @@ fn draw_checkpoint_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area:
         return area;
     };
     let width = usize::from(area.width);
-    let left = vec![Span::styled(format!(" {}", check.header), theme.popup_key)];
-    let hints: [Hint<'_>; 4] = [
-        ("h/l", "page"),
-        ("b", "base"),
-        ("t", "target"),
-        ("Space v r", "close"),
-    ];
     frame.render_widget(
-        Paragraph::new(header_line(theme, left, &hints, width)).style(theme.info),
+        Paragraph::new(checkpoint_header(&check.header).line(theme, width)).style(theme.info),
         Rect { height: 1, ..area },
     );
     let faint = theme.info.add_modifier(Modifier::DIM);
@@ -1097,39 +1095,9 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
     let Some(thread) = app.thread(stub.id()) else {
         return Vec::new();
     };
-    let mark = app.marks().iter().find(|mark| mark.id() == stub.id());
-    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-    let mut left = vec![Span::styled(" ● ", mark_style(theme, words.state()))];
-    if let Some(placement) = words.placement() {
-        left.push(Span::styled(placement, mark_style(theme, words.state())));
-        left.push(Span::styled(" · ", theme.info));
-    }
-    left.push(Span::styled(
-        label(words.state()),
-        mark_style(theme, words.state()),
-    ));
-    let watchers = app.watchers_of(thread.id());
-    if !watchers.is_empty() {
-        left.push(Span::styled(
-            format!(" · watched by {}", watchers.join(", ")),
-            theme.info,
-        ));
-    }
-    let resolve = if words.is_resolved() {
-        "reopen"
-    } else {
-        "resolve"
-    };
-    let keys = [
-        (key_of(Where::View, Action::Reply), "reply"),
-        (key_of(Where::View, Action::EditMessage), "edit"),
-        (key_of(Where::View, Action::ToggleResolved), resolve),
-        (key_of(Where::View, Action::Comment), "fold"),
-    ];
-    let hints: Vec<Hint<'_>> = keys.iter().map(|(k, l)| (k.as_str(), *l)).collect();
     let cursor = app.thread_cursor();
     let selected = (cursor.thread() == Some(stub.id())).then_some(cursor.message());
-    let mut lines = vec![header_line(theme, left, &hints, width)];
+    let mut lines = vec![expanded_header(app, stub, thread).line(theme, width)];
     lines.extend(expanded_lines(
         theme,
         app.highlighter(),
@@ -1356,56 +1324,99 @@ fn truncate_left(text: &str, max: usize) -> String {
 /// A Helix-style key menu anchored to the bottom of `pane`, under a
 /// breadcrumb row naming the prefix (ADR 0049), laid out in columns when
 /// the entries do not fit in the rows available.
+/// The which-key menu's grid along the bottom of the text column, the
+/// one the mouse reads back (ADR 0050).
+pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
+    Grid::bottom(
+        entries,
+        &bindings::menu_title(app.prefix()),
+        app.rail_width(),
+        0,
+        app.column_width(),
+        app.pane_rows(),
+    )
+}
+
+/// The help popup's grid (ADR 0050).
+pub(crate) fn help_grid(app: &App, rows: &[(String, String)]) -> Grid {
+    Grid::centred(rows, HELP_TITLE, 0, 0, app.size().0, app.pane_rows())
+}
+
+pub(crate) const HELP_TITLE: &str = " Keys (any key closes)";
+const STATUS_TITLE: &str = " Status (any key closes)";
+
+/// A Helix-style key menu in `grid` under a breadcrumb row naming the
+/// prefix (ADR 0049); `hover` is the entry under the pointer.
 fn draw_menu(
     frame: &mut Frame<'_>,
     theme: &Theme,
-    pane: Rect,
+    grid: Grid,
     title: &str,
     entries: &[(String, String)],
+    hover: Option<usize>,
 ) {
-    if pane.height < 3 || entries.is_empty() {
+    if grid.height < 2 || entries.is_empty() {
         return;
     }
-    let key_width = entries
-        .iter()
-        .map(|(k, _)| display_width(k))
-        .max()
-        .unwrap_or(1);
-    let label_width = entries
-        .iter()
-        .map(|(_, l)| display_width(l))
-        .max()
-        .unwrap_or(1);
-    let column_width = key_width + 2 + label_width + 3;
-    let max_rows = usize::from(pane.height.saturating_sub(2)).clamp(1, 8);
-    let columns = entries.len().div_ceil(max_rows);
-    let rows = entries.len().div_ceil(columns);
-    let mut lines = Vec::with_capacity(rows + 1);
+    let key_width = grid.key_width;
+    let label_width = grid.label_width;
+    let mut lines = Vec::with_capacity(grid.rows + 1);
     lines.push(Line::from(Span::styled(
         format!(" {title} "),
         theme.mode_normal,
     )));
-    for r in 0..rows {
+    for r in 0..grid.rows {
         let mut spans = vec![Span::raw(" ")];
-        for c in 0..columns {
-            let Some((key, label)) = entries.get(c * rows + r) else {
+        for c in 0..grid.columns {
+            let index = c * grid.rows + r;
+            let Some((key, label)) = entries.get(index) else {
                 break;
             };
-            spans.push(Span::styled(format!("{key:>key_width$}"), theme.popup_key));
-            spans.push(Span::raw(format!("  {label:<label_width$}   ")));
+            let row_style = if hover == Some(index) {
+                theme.picker_selected
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(
+                format!("{key:>key_width$}"),
+                theme.popup_key.patch(row_style),
+            ));
+            spans.push(Span::styled(
+                format!("  {label:<label_width$}   "),
+                row_style,
+            ));
         }
         lines.push(Line::from(spans));
     }
-    let width = u16_of((columns * column_width + 1).max(display_width(title) + 2)).min(pane.width);
-    let height = u16_of(rows + 1);
-    let area = Rect {
-        x: pane.x,
-        y: pane.y + pane.height - height,
-        width,
-        height,
-    };
+    let area = grid_rect(grid);
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
+}
+
+fn grid_rect(grid: Grid) -> Rect {
+    Rect {
+        x: u16_of(grid.x),
+        y: u16_of(grid.y),
+        width: u16_of(grid.width),
+        height: u16_of(grid.height),
+    }
+}
+
+/// The context menu at the pointer (ADR 0050): a title row in the pill
+/// colour naming what it acts on, then `key  label` rows, the one under
+/// the pointer highlighted.
+fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Menu) {
+    let (width, height) = app.size();
+    let grid = menu.grid(width, height);
+    let entries: Vec<(String, String)> = menu
+        .entries()
+        .iter()
+        .map(|entry| (entry.key().to_owned(), entry.label().to_owned()))
+        .collect();
+    let hover = app
+        .pointer()
+        .and_then(|(column, row)| grid.entry_at(column, row));
+    draw_menu(frame, theme, grid, menu.title(), &entries, hover);
 }
 
 /// A centred two-column popup with a title row: the key help and the
@@ -1413,51 +1424,38 @@ fn draw_menu(
 fn draw_table(
     frame: &mut Frame<'_>,
     theme: &Theme,
-    area: Rect,
+    grid: Grid,
     title: &str,
     rows: &[(String, String)],
+    hover: Option<usize>,
 ) {
-    let key_width = rows
-        .iter()
-        .map(|(k, _)| display_width(k))
-        .max()
-        .unwrap_or(1);
-    let label_width = rows
-        .iter()
-        .map(|(_, l)| display_width(l))
-        .max()
-        .unwrap_or(1);
+    let key_width = grid.key_width;
+    let label_width = grid.label_width;
     // Rows that do not fit under the title flow into further columns, so
     // a long table (`Space ?`) is read like a menu, not cut off.
-    let per_column = usize::from(area.height.saturating_sub(2)).max(1);
-    let columns = rows.len().div_ceil(per_column).max(1);
-    let per_column = rows.len().div_ceil(columns).max(1);
     let mut lines: Vec<Line<'_>> = vec![Line::from(Span::styled(title, theme.popup_key))];
-    for r in 0..per_column.min(rows.len()) {
+    for r in 0..grid.rows.min(rows.len()) {
         let mut spans = Vec::new();
-        for col in 0..columns {
-            let Some((key, label)) = rows.get(col * per_column + r) else {
+        for col in 0..grid.columns {
+            let index = col * grid.rows + r;
+            let Some((key, label)) = rows.get(index) else {
                 break;
+            };
+            let row_style = if hover == Some(index) {
+                theme.picker_selected
+            } else {
+                Style::default()
             };
             let gap = if col == 0 { " " } else { "   " };
             spans.push(Span::styled(
                 format!("{gap}{key:<key_width$}"),
-                theme.popup_key,
+                theme.popup_key.patch(row_style),
             ));
-            spans.push(Span::raw(format!("  {label:<label_width$}")));
+            spans.push(Span::styled(format!("  {label:<label_width$}"), row_style));
         }
         lines.push(Line::from(spans));
     }
-    let height = u16_of(lines.len()).min(area.height.saturating_sub(1));
-    let width = u16_of(
-        lines
-            .iter()
-            .map(|l| display_width(&l.to_string()) + 2)
-            .max()
-            .unwrap_or(20),
-    )
-    .min(area.width);
-    let popup = centred(area, width, height);
+    let popup = grid_rect(grid);
     frame.render_widget(Clear, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), popup);
 }
@@ -1540,53 +1538,6 @@ fn draw_compose(
     compose: &Compose,
     rows: usize,
 ) {
-    let title = match compose.target() {
-        ComposeTarget::New(range) => format!(" comment on L{range}"),
-        ComposeTarget::Reply(id) => {
-            let range = app
-                .marks()
-                .iter()
-                .find(|m| m.id() == id)
-                .map_or_else(String::new, |m| format!(" on L{}", m.range()));
-            format!(" reply{range}")
-        }
-        ComposeTarget::Edit { thread, .. } => {
-            let range = app
-                .marks()
-                .iter()
-                .find(|mark| mark.id() == thread)
-                .map_or_else(String::new, |mark| format!(" on L{}", mark.range()));
-            format!(" edit message{range}")
-        }
-    };
-    let key = |action| key_of(Where::Box, action);
-    let hint = if compose.confirming_discard() {
-        format!(
-            "{} again to discard · any key keeps the draft",
-            key(Action::Escape)
-        )
-    } else {
-        let mut parts = vec![
-            format!(
-                "{} {}",
-                key(Action::Confirm),
-                if matches!(compose.target(), ComposeTarget::Edit { .. }) {
-                    "save"
-                } else {
-                    "submit"
-                }
-            ),
-            format!("{} newline", key(Action::Newline)),
-        ];
-        parts.push(format!(
-            "{}/{} scroll",
-            key(Action::ScrollUp),
-            key(Action::ScrollDown)
-        ));
-        parts.push(format!("{} $EDITOR", key(Action::EditDraft)));
-        parts.push(key(Action::Escape));
-        parts.join(" · ")
-    };
     let width = usize::from(pane.width);
     if rows < 3 {
         return;
@@ -1598,12 +1549,7 @@ fn draw_compose(
     let first = app.compose_first_row();
     let mut lines = vec![
         rule_line(theme, width),
-        header_line(
-            theme,
-            vec![Span::styled(title, theme.popup_key)],
-            &hint.split(" · ").map(key_hint).collect::<Vec<_>>(),
-            width,
-        ),
+        compose_header(app, compose).line(theme, width),
     ];
     for row in wrapped.iter().skip(first).take(body_rows) {
         let text = buffer.row_text(*row);
@@ -1664,68 +1610,8 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     let list = app.review_list();
     let Rows { rows: all, entries } = app.review_rows(width);
-    let review = app.review();
-    let open = entries
-        .iter()
-        .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
-        .count();
-    let resolved = entries.len() - open;
-    let mut left = vec![
-        Span::styled(" review ", theme.popup_key),
-        Span::styled(format!(" {open} open"), theme.info),
-    ];
-    left.push(Span::styled(
-        if review.resolved {
-            format!("  {resolved} resolved")
-        } else {
-            "  resolved hidden".to_owned()
-        },
-        theme.info,
-    ));
-    if review.file_only {
-        left.push(Span::styled(
-            format!("  {}", app.current_path().display()),
-            theme.info,
-        ));
-    }
-    left.push(Span::styled(
-        format!("  {}", review.sort.label()),
-        theme.info,
-    ));
-    let key = |action| key_of(Where::Review, action);
-    let hints: Vec<(String, &str)> = if app.focus() == Focus::Review {
-        let mut hints = vec![
-            (key(Action::ReviewSort), "sort"),
-            (key(Action::ReviewResolved), "resolved"),
-            (key(Action::FileOnly), "file"),
-            (key(Action::Fold), "fold"),
-            (key(Action::Confirm), "open"),
-            (key(Action::Reply), "reply"),
-        ];
-        if app.thread_message_editable() {
-            hints.push((key(Action::EditMessage), "edit"));
-        }
-        hints.push((key(Action::ToggleResolved), "resolve"));
-        if entries.len() > 1 {
-            hints.push((
-                pair(Where::Review, Action::ThreadPrev, Action::ThreadNext),
-                "threads",
-            ));
-        }
-        if app.cursor_message_count() > 1 {
-            hints.push((
-                pair(Where::Review, Action::MoveDown, Action::MoveUp),
-                "messages",
-            ));
-        }
-        hints.push((key(Action::Escape), ""));
-        hints
-    } else {
-        vec![(String::new(), "click or Space A to focus")]
-    };
-    let hints: Vec<Hint<'_>> = hints.iter().map(|(k, l)| (k.as_str(), *l)).collect();
     let now = crate::app::threads::now();
-    let mut lines = vec![header_line(theme, left, &hints, width)];
+    let mut lines = vec![review_header(app, &entries).line(theme, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
     for row in all.iter().skip(scroll).take(rows - 1) {
         lines.push(list_row(theme, row, now, width));
@@ -1830,9 +1716,288 @@ fn pair(place: Where, a: Action, b: Action) -> String {
 /// A header hint: the key, then what it does. Either may be empty.
 type Hint<'a> = (&'a str, &'a str);
 
-/// `"Esc close"` as a [`Hint`]: the first word is the key.
-fn key_hint(text: &str) -> Hint<'_> {
-    text.split_once(' ').unwrap_or((text, ""))
+/// The colour a word of a header's left part takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Tone {
+    Key,
+    Info,
+    Mark(ThreadState),
+}
+
+/// A header hint with what a click on it runs (ADR 0050): nothing for
+/// words alone, two actions for an `a/b` pair split at the slash.
+#[derive(Debug, Clone)]
+pub(crate) struct HintOf {
+    key: String,
+    what: &'static str,
+    actions: Vec<Action>,
+}
+
+impl HintOf {
+    fn new(key: impl Into<String>, what: &'static str, actions: &[Action]) -> Self {
+        Self {
+            key: key.into(),
+            what,
+            actions: actions.to_vec(),
+        }
+    }
+
+    fn keyed(place: Where, action: Action, what: &'static str) -> Self {
+        Self::new(key_of(place, action), what, &[action])
+    }
+
+    fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
+        Self::new(pair(place, a, b), what, &[a, b])
+    }
+
+    fn width(&self) -> usize {
+        hint_width(&(self.key.as_str(), self.what))
+    }
+}
+
+/// A pane header: the words on the left and the hints at the right
+/// edge, built once so the drawing and the mouse agree on where each
+/// hint is (ADR 0050).
+#[derive(Debug, Clone)]
+pub(crate) struct Header {
+    left: Vec<(String, Tone)>,
+    hints: Vec<HintOf>,
+}
+
+impl Header {
+    fn new(left: Vec<(String, Tone)>, hints: Vec<HintOf>) -> Self {
+        Self { left, hints }
+    }
+
+    /// The cells the left part takes.
+    pub(crate) fn left_width(&self) -> usize {
+        self.left.iter().map(|(text, _)| display_width(text)).sum()
+    }
+
+    /// The hints that fit after the left part on `width` cells, and the
+    /// column the first starts at.
+    fn shown(&self, width: usize) -> Option<(usize, &[HintOf])> {
+        let used = self.left_width();
+        let free = width.saturating_sub(used);
+        let width_of = |shown: &[HintOf]| {
+            shown.iter().map(HintOf::width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
+        };
+        let shown = (1..=self.hints.len())
+            .rev()
+            .map(|n| &self.hints[..n])
+            .find(|shown| free >= width_of(shown) + 3)?;
+        Some((used + (free - width_of(shown) - 1), shown))
+    }
+
+    /// The action a click at `column` on a `width`-cell header runs: the
+    /// hint under the pointer, its left or right half for a pair.
+    pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
+        let (mut at, shown) = self.shown(width)?;
+        for (i, hint) in shown.iter().enumerate() {
+            if i > 0 {
+                at += 3;
+            }
+            let end = at + hint.width();
+            if column >= at && column < end {
+                let offset = column - at;
+                let slash = hint
+                    .key
+                    .find('/')
+                    .map(|byte| display_width(&hint.key[..byte]));
+                return match (hint.actions.as_slice(), slash) {
+                    ([first, second], Some(slash)) => {
+                        Some(if offset <= slash { *first } else { *second })
+                    }
+                    (actions, _) => actions.first().copied(),
+                };
+            }
+            at = end;
+        }
+        None
+    }
+
+    /// The header as one drawn line.
+    fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
+        let left = self
+            .left
+            .iter()
+            .map(|(text, tone)| {
+                let style = match tone {
+                    Tone::Key => theme.popup_key,
+                    Tone::Info => theme.info,
+                    Tone::Mark(state) => mark_style(theme, *state),
+                };
+                Span::styled(text.clone(), style)
+            })
+            .collect();
+        let hints: Vec<Hint<'_>> = self
+            .hints
+            .iter()
+            .map(|hint| (hint.key.as_str(), hint.what))
+            .collect();
+        header_line(theme, left, &hints, width)
+    }
+}
+
+/// The checkpoint view's header (ADR 0049): the pair's names, then the
+/// paging, side, and close keys.
+pub(crate) fn checkpoint_header(text: &str) -> Header {
+    Header::new(
+        vec![(format!(" {text}"), Tone::Key)],
+        vec![
+            HintOf::paired(Where::View, Action::MoveLeft, Action::MoveRight, "page"),
+            HintOf::keyed(Where::View, Action::CheckpointBase, "base"),
+            HintOf::keyed(Where::View, Action::CheckpointTarget, "target"),
+            HintOf::keyed(Where::View, Action::CheckpointDiff, "close"),
+        ],
+    )
+}
+
+/// An expanded thread's header row in the text (ADR 0049): the state,
+/// the placement, who watches it, and the thread keys.
+pub(crate) fn expanded_header(
+    app: &App,
+    stub: &Stub,
+    thread: &fathomable_core::annotations::Thread,
+) -> Header {
+    let mark = app.marks().iter().find(|mark| mark.id() == stub.id());
+    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
+    let tone = Tone::Mark(words.state());
+    let mut left = vec![(" ● ".to_owned(), tone)];
+    if let Some(placement) = words.placement() {
+        left.push((placement.to_owned(), tone));
+        left.push((" · ".to_owned(), Tone::Info));
+    }
+    left.push((label(words.state()).to_owned(), tone));
+    let watchers = app.watchers_of(thread.id());
+    if !watchers.is_empty() {
+        left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
+    }
+    let resolve = if words.is_resolved() {
+        "reopen"
+    } else {
+        "resolve"
+    };
+    Header::new(
+        left,
+        vec![
+            HintOf::keyed(Where::View, Action::Reply, "reply"),
+            HintOf::keyed(Where::View, Action::EditMessage, "edit"),
+            HintOf::keyed(Where::View, Action::ToggleResolved, resolve),
+            HintOf::keyed(Where::View, Action::Comment, "fold"),
+        ],
+    )
+}
+
+/// The review list's header (ADR 0025, ADR 0049): the counts and the
+/// sort, then the list keys while it has focus.
+pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Entry]) -> Header {
+    let review = app.review();
+    let open = entries
+        .iter()
+        .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
+        .count();
+    let resolved = entries.len() - open;
+    let mut left = vec![
+        (" review ".to_owned(), Tone::Key),
+        (format!(" {open} open"), Tone::Info),
+        (
+            if review.resolved {
+                format!("  {resolved} resolved")
+            } else {
+                "  resolved hidden".to_owned()
+            },
+            Tone::Info,
+        ),
+    ];
+    if review.file_only {
+        left.push((format!("  {}", app.current_path().display()), Tone::Info));
+    }
+    left.push((format!("  {}", review.sort.label()), Tone::Info));
+    let place = Where::Review;
+    let hints = if app.focus() == Focus::Review {
+        let mut hints = vec![
+            HintOf::keyed(place, Action::ReviewSort, "sort"),
+            HintOf::keyed(place, Action::ReviewResolved, "resolved"),
+            HintOf::keyed(place, Action::FileOnly, "file"),
+            HintOf::keyed(place, Action::Fold, "fold"),
+            HintOf::keyed(place, Action::Confirm, "open"),
+            HintOf::keyed(place, Action::Reply, "reply"),
+        ];
+        if app.thread_message_editable() {
+            hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
+        }
+        hints.push(HintOf::keyed(place, Action::ToggleResolved, "resolve"));
+        if entries.len() > 1 {
+            hints.push(HintOf::paired(
+                place,
+                Action::ThreadPrev,
+                Action::ThreadNext,
+                "threads",
+            ));
+        }
+        if app.cursor_message_count() > 1 {
+            hints.push(HintOf::paired(
+                place,
+                Action::MoveDown,
+                Action::MoveUp,
+                "messages",
+            ));
+        }
+        hints.push(HintOf::keyed(place, Action::Escape, ""));
+        hints
+    } else {
+        vec![HintOf::new("", "click or Space A to focus", &[])]
+    };
+    Header::new(left, hints)
+}
+
+/// The comment box's header (ADR 0018): what is being written and the
+/// box keys, or the discard question.
+pub(crate) fn compose_header(app: &App, compose: &Compose) -> Header {
+    let title = match compose.target() {
+        ComposeTarget::New(range) => format!(" comment on L{range}"),
+        ComposeTarget::Reply(id) => {
+            let range = app
+                .marks()
+                .iter()
+                .find(|m| m.id() == id)
+                .map_or_else(String::new, |m| format!(" on L{}", m.range()));
+            format!(" reply{range}")
+        }
+        ComposeTarget::Edit { thread, .. } => {
+            let range = app
+                .marks()
+                .iter()
+                .find(|mark| mark.id() == thread)
+                .map_or_else(String::new, |mark| format!(" on L{}", mark.range()));
+            format!(" edit message{range}")
+        }
+    };
+    let place = Where::Box;
+    let hints = if compose.confirming_discard() {
+        vec![
+            HintOf::keyed(place, Action::Escape, "again to discard"),
+            HintOf::new("", "any key keeps the draft", &[]),
+        ]
+    } else {
+        vec![
+            HintOf::keyed(
+                place,
+                Action::Confirm,
+                if matches!(compose.target(), ComposeTarget::Edit { .. }) {
+                    "save"
+                } else {
+                    "submit"
+                },
+            ),
+            HintOf::keyed(place, Action::Newline, "newline"),
+            HintOf::paired(place, Action::ScrollUp, Action::ScrollDown, "scroll"),
+            HintOf::keyed(place, Action::EditDraft, "$EDITOR"),
+            HintOf::keyed(place, Action::Escape, ""),
+        ]
+    };
+    Header::new(vec![(title, Tone::Key)], hints)
 }
 
 /// The columns a hint takes: key, action, and the space between when both

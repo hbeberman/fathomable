@@ -16,6 +16,8 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `C`, and `y` as a menu.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

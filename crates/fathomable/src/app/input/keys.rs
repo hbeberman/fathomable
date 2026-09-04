@@ -30,7 +30,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
 #[must_use]
 pub fn place(app: &App) -> Option<Where> {
     match app.popup() {
-        Some(Popup::Help | Popup::Status) => None,
+        Some(Popup::Help | Popup::Status | Popup::Menu(_)) => None,
         Some(Popup::Compose(_)) => Some(Where::Box),
         Some(Popup::Picker(_)) => Some(Where::Picker),
         None => Some(match app.focus() {
@@ -53,6 +53,10 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         app.cancel_delete();
         return Effect::None;
     };
+    // The context menu takes its own keys (ADR 0050).
+    if matches!(app.popup(), Some(Popup::Menu(_))) {
+        return app.menu_key(chord);
+    }
     let Some(place) = place(app) else {
         app.close_popup();
         return Effect::None;
@@ -61,6 +65,13 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         // Reader activity holds auto-jump back and delays "seen" (ADR 0015).
         app.view_mut().touch();
     }
+    typed(app, place, chord)
+}
+
+/// `chord` typed after the pending prefix on `place`: an exact binding
+/// fires, a prefix waits, a miss is dropped. A click on a which-key
+/// entry comes through here too (ADR 0050).
+pub(super) fn typed(app: &mut App, place: Where, chord: Chord) -> Effect {
     let mut typed = app.take_prefix();
     typed.push(chord);
     match lookup(place, &typed) {
@@ -234,6 +245,8 @@ impl App {
             Action::MoveRight if self.view().checkpoint_view() => self.checkpoint_page(1),
             Action::CheckpointBase => self.pick_checkpoint_side(false),
             Action::CheckpointTarget => self.pick_checkpoint_side(true),
+            Action::CopyLink => return self.view_mut().copy_link(),
+            Action::OpenLink => return self.view_mut().open_link(),
             // At column 0, `h` steps back into the tree; a selection wraps
             // instead (see `View::move_left`).
             Action::MoveLeft
@@ -311,6 +324,7 @@ impl App {
                 self.with_tree_result(Tree::expand);
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
+            Action::CopyPath => return self.copy_tree_path(),
             Action::Top => self.with_tree(|tree, _| {
                 tree.goto_top();
                 None

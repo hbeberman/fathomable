@@ -1,12 +1,35 @@
 //! The mouse goes to the pane under the pointer, not the focused one
 //! (ADR 0007): the wheel scrolls what it is over, a click focuses it,
-//! and a press on a border starts a drag.
+//! and a press on a border starts a drag. The right button opens the
+//! context menu for what is under the pointer, the drawn key menus and
+//! pane-header hints take clicks, and the gutter, a double- or
+//! triple-click, and Shift-click select (ADR 0050).
 
-use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+use std::time::{Duration, Instant};
+
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fathomable_core::layout::display_width;
 
 use super::super::{App, Border, Focus, Popup};
-use super::keys::{WHEEL_LINES, tree_highlight};
+use super::bindings::{self, Where};
+use super::keys::{self, WHEEL_LINES, tree_highlight};
+use crate::app::draw;
 use crate::app::view::Effect;
+
+/// Presses on one cell closer together than this are one gesture.
+const MULTI_CLICK: Duration = Duration::from_millis(400);
+
+/// The last left press in the text (ADR 0050): where and when, how many
+/// in a row on that cell, and whether it began in the gutter, which
+/// makes the drag that follows select whole lines.
+#[derive(Debug, Clone, Copy)]
+pub struct Press {
+    at: Instant,
+    column: usize,
+    row: usize,
+    count: u8,
+    gutter: bool,
+}
 
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
@@ -17,10 +40,10 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
 
 /// The mouse over the rail: the threads pane along its bottom (ADR 0027,
 /// ADR 0049) takes what lands on it; the tree above pages the viewer.
-fn rail_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+fn rail_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) {
     let tree_rows = app.tree_rows();
     if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
-        threads_pane_mouse(app, kind, row - tree_rows);
+        threads_pane_mouse(app, kind, column, row, row - tree_rows);
         return;
     }
     match kind {
@@ -44,51 +67,236 @@ fn rail_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
         // Row 0 is the root header.
         MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.tree_click(row - 1),
         MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
+        MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
+            app.open_tree_menu(row - 1, column, row);
+        }
         _ => {}
     }
 }
 
 /// The mouse over the threads pane (ADR 0027): the wheel steps between
-/// threads, a click on an entry goes to it, and the rule drags. Row 0 is
-/// the rule, row 1 the header.
-fn threads_pane_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+/// threads, a click on an entry goes to it, a click on the header
+/// toggles the reach (or, on its `x`, resolved threads), a right-click
+/// on an entry opens its menu, and the rule drags. Row 0 is the rule,
+/// row 1 the header.
+fn threads_pane_mouse(
+    app: &mut App,
+    kind: MouseEventKind,
+    column: usize,
+    row: usize,
+    pane_row: usize,
+) {
     match kind {
         MouseEventKind::ScrollDown => app.threads_pane_move(1),
         MouseEventKind::ScrollUp => app.threads_pane_move(-1),
-        MouseEventKind::Down(MouseButton::Left) if row == 0 => app.begin_drag(Border::ThreadsPane),
-        MouseEventKind::Down(MouseButton::Left) if row >= 2 => app.threads_pane_click(row - 2),
-        MouseEventKind::Down(MouseButton::Left) => app.threads_pane_focus(),
+        MouseEventKind::Down(MouseButton::Left) if pane_row == 0 => {
+            app.begin_drag(Border::ThreadsPane);
+        }
+        MouseEventKind::Down(MouseButton::Left) if pane_row == 1 => {
+            app.threads_pane_focus();
+            // The header ends in `s x ` before the divider: the `x` sits
+            // three cells in from the rail's edge.
+            if column + 3 == app.rail_width() {
+                app.review_toggle_resolved();
+            } else {
+                app.threads_pane_toggle_scope();
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => app.threads_pane_click(pane_row - 2),
+        MouseEventKind::Down(MouseButton::Right) if pane_row >= 2 => {
+            app.open_threads_pane_menu(pane_row - 2, column, row);
+        }
         _ => {}
     }
 }
 
 /// The mouse over the review list (ADR 0025): the wheel scrolls, a click
-/// selects the entry under the pointer. Row 0 is the list header.
-fn review_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+/// selects the entry under the pointer, a click on a header hint runs
+/// it, and a right-click on an entry opens its menu. Row 0 is the list
+/// header.
+fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
     match kind {
         MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
         MouseEventKind::ScrollUp => app.review_scroll(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.review_click(row - 1),
+        MouseEventKind::Down(MouseButton::Left) if row == 0 => {
+            if app.focus() != Focus::Review {
+                app.focus_pane(Focus::Review);
+                return Effect::None;
+            }
+            let width = app.column_width();
+            let rows = app.review_rows(width);
+            let header = draw::review_header(app, &rows.entries);
+            if let Some(action) = header.action_at(width, column - app.rail_width()) {
+                return app.act(action);
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => app.review_click(row - 1),
+        MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
+            app.open_review_menu(row - 1, column, row);
+        }
         _ => {}
+    }
+    Effect::None
+}
+
+/// A click on the checkpoint header (ADR 0050): a hint runs its key;
+/// the base name, before the ` · `, opens the base picker and the
+/// target name the target picker.
+fn checkpoint_header_click(app: &mut App, column: usize) -> Effect {
+    let Some(text) = app.view().checkpoint().map(|check| check.header.clone()) else {
+        return Effect::None;
+    };
+    app.focus_pane(Focus::View);
+    let header = draw::checkpoint_header(&text);
+    if let Some(action) = header.action_at(app.column_width(), column) {
+        return app.act(action);
+    }
+    if column < header.left_width() {
+        // The left part is ` ` then the header text.
+        let split = text
+            .find(" · ")
+            .map(|byte| 1 + display_width(&text[..byte]));
+        let action = match split {
+            Some(split) if column > split + 1 => bindings::Action::CheckpointTarget,
+            _ => bindings::Action::CheckpointBase,
+        };
+        return app.act(action);
+    }
+    Effect::None
+}
+
+/// A click on the help popup (ADR 0050): the binding on that row runs
+/// when it applies on the focused surface; any click closes the popup.
+fn help_click(app: &mut App, column: usize, row: usize) -> Effect {
+    let rows = bindings::help_rows();
+    let shown: Vec<(String, String)> = rows.iter().map(|(_, row)| row.clone()).collect();
+    let grid = draw::help_grid(app, &shown);
+    let index = grid.entry_at(column, row);
+    app.close_popup();
+    let Some((Some(binding), _)) = index.and_then(|index| rows.get(index)) else {
+        return Effect::None;
+    };
+    let Some(place) = keys::place(app) else {
+        return Effect::None;
+    };
+    if binding.place == place || (binding.place == Where::Any && place.takes_any()) {
+        return app.act(binding.action);
+    }
+    Effect::None
+}
+
+/// Count this left press at `(column, row)` against the last one: a
+/// second on the same cell within [`MULTI_CLICK`] is a double-click, a
+/// third a triple; the count wraps so a fourth starts over.
+fn press(app: &mut App, column: usize, row: usize, gutter: bool) -> u8 {
+    let now = Instant::now();
+    let count = match app.press {
+        Some(last)
+            if now.duration_since(last.at) < MULTI_CLICK
+                && last.column == column
+                && last.row == row =>
+        {
+            last.count % 3 + 1
+        }
+        _ => 1,
+    };
+    app.press = Some(Press {
+        at: now,
+        column,
+        row,
+        count,
+        gutter,
+    });
+    count
+}
+
+/// The popups' share of the mouse: the context menu, the help, and the
+/// status overlay take a click; `None` when the event goes on to the
+/// panes (no popup, or a right-click that just closed the menu).
+fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Option<Effect> {
+    let left = kind == MouseEventKind::Down(MouseButton::Left);
+    let right = kind == MouseEventKind::Down(MouseButton::Right);
+    // The context menu takes the mouse while it is open (ADR 0050): a
+    // click on an entry runs it, a click elsewhere closes it, and a
+    // right-click elsewhere closes it and opens the menu for there.
+    if let Some(menu) = app.menu() {
+        if left {
+            let (width, height) = app.size();
+            let grid = menu.grid(width, height);
+            if let Some(index) = grid.entry_at(column, row) {
+                return Some(app.menu_click(index));
+            }
+            app.close_popup();
+            return Some(Effect::None);
+        }
+        if !right {
+            return Some(Effect::None);
+        }
+        app.close_popup();
+        return None;
+    }
+    match app.popup() {
+        Some(Popup::Help) if left => Some(help_click(app, column, row)),
+        Some(Popup::Status) if left => {
+            app.close_popup();
+            Some(Effect::None)
+        }
+        Some(Popup::Help | Popup::Status | Popup::Picker(_)) => Some(Effect::None),
+        _ => None,
     }
 }
 
-fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
-    // The comment box keeps the keys but not the mouse: the reader can
-    // scroll, click, and resize around it while writing.
-    if matches!(
-        app.popup(),
-        Some(Popup::Help | Popup::Status | Popup::Picker(_))
-    ) {
+/// A click on a which-key entry is that key typed (ADR 0050).
+fn which_key_click(app: &mut App, column: usize, row: usize) -> Option<Effect> {
+    let place = keys::place(app).filter(|_| !app.prefix().is_empty())?;
+    let entries = bindings::menu_entries(place, app.prefix());
+    let shown: Vec<(String, String)> = entries
+        .iter()
+        .map(|(chord, label)| (chord.to_string(), label.clone()))
+        .collect();
+    let grid = draw::which_key_grid(app, &shown);
+    let index = grid.entry_at(column, row)?;
+    Some(keys::typed(app, place, entries[index].0))
+}
+
+/// The mouse over the comment box: a hint on the header runs its key
+/// (ADR 0050), a click in the text places the cursor. Row 0 is the rule,
+/// row 1 the header.
+fn compose_mouse(app: &mut App, kind: MouseEventKind, column: usize, box_row: usize) -> Effect {
+    if kind != MouseEventKind::Down(MouseButton::Left) {
         return Effect::None;
     }
-    if event.kind == MouseEventKind::Down(MouseButton::Left) {
+    if box_row == 1 {
+        let header = match app.popup() {
+            Some(Popup::Compose(compose)) => draw::compose_header(app, compose),
+            _ => return Effect::None,
+        };
+        if let Some(action) = header.action_at(app.column_width(), column) {
+            return app.act(action);
+        }
+    } else if box_row >= 2 {
+        app.compose_click(box_row - 2, column);
+    }
+    Effect::None
+}
+
+fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
+    let row = usize::from(event.row);
+    let column = usize::from(event.column);
+    app.pointer = Some((column, row));
+    if let Some(effect) = popup_mouse(app, event.kind, column, row) {
+        return effect;
+    }
+    let left = event.kind == MouseEventKind::Down(MouseButton::Left);
+    let right = event.kind == MouseEventKind::Down(MouseButton::Right);
+    if left {
+        if let Some(effect) = which_key_click(app, column, row) {
+            return effect;
+        }
         // A click ends a pending key sequence and an armed delete.
         app.take_prefix();
         app.cancel_delete();
     }
-    let row = usize::from(event.row);
-    let column = usize::from(event.column);
     let rows = app.pane_rows();
     let rail = app.rail_width();
     let box_rows = app.compose_rows();
@@ -101,7 +309,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         }
         return Effect::None;
     }
-    if event.kind == MouseEventKind::Down(MouseButton::Left) && row < rows {
+    if left && row < rows {
         if rail > 0 && column + 1 == rail {
             app.begin_drag(Border::Rail);
             return Effect::None;
@@ -112,49 +320,105 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         }
     }
     if box_rows > 0 && column >= rail && row > box_top && row < rows {
-        // Rule and header, then the text rows.
-        if event.kind == MouseEventKind::Down(MouseButton::Left) && row >= box_top + 2 {
-            app.compose_click(row - box_top - 2, column - rail);
-        }
+        return compose_mouse(app, event.kind, column - rail, row - box_top);
+    }
+    // The comment box keeps the keys, and the right button while it is
+    // open (ADR 0050); the rest of the mouse works around it.
+    if right && matches!(app.popup(), Some(Popup::Compose(_))) {
         return Effect::None;
     }
     if column < rail {
-        rail_mouse(app, event.kind, row);
+        rail_mouse(app, event.kind, column, row);
         return Effect::None;
     }
     if app.review_list().is_open() {
-        review_mouse(app, event.kind, row);
-        return Effect::None;
+        return review_mouse(app, event.kind, column, row);
     }
+    text_mouse(app, event, column, row)
+}
+
+/// The mouse over the text: the wheel scrolls; a right-click opens the
+/// menu; a left press places the cursor, expands a stub, runs a hint on
+/// an expanded thread's header, or begins a selection gesture; a drag
+/// extends the selection.
+fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Effect {
+    let rail = app.rail_width();
     let gutter = rail + crate::app::draw::gutter_width(app.view());
+    let in_gutter = column < gutter;
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
+    let left = event.kind == MouseEventKind::Down(MouseButton::Left);
     // The banner and the checkpoint header take rows over the text.
-    let Some(row) = row.checked_sub(app.text_top()) else {
+    let top = app.text_top();
+    let Some(text_row) = row.checked_sub(top) else {
+        if left && app.checkpoint_chrome() && row + 1 == top {
+            return checkpoint_header_click(app, column - rail);
+        }
         return Effect::None;
     };
-    if event.kind == MouseEventKind::Down(MouseButton::Left) {
+    if event.kind == MouseEventKind::Down(MouseButton::Right) {
+        if text_row < text_rows {
+            app.open_view_menu(text_row, col, column, row);
+        }
+        return Effect::None;
+    }
+    if left {
         app.focus_pane(Focus::View);
-        // A click on a collapsed stub expands its thread with the cursor
-        // on it (ADR 0049).
-        if row < text_rows
-            && let Some((stub, _, _)) = app.stub_on_row(app.view().scroll() + row)
-            && !stub.expanded()
+        if text_row < text_rows
+            && let Some((stub, index, _)) = app.stub_on_row(app.view().scroll() + text_row)
         {
             let id = stub.id().clone();
-            let newest = app.newest_message(&id);
-            app.goto_message(id, newest);
+            if stub.expanded() && index == 0 {
+                // A hint on an expanded thread's header runs its key on
+                // that thread (ADR 0050).
+                let header = app
+                    .thread(&id)
+                    .map(|thread| draw::expanded_header(app, &stub, thread));
+                let width = app.view().layout().width();
+                if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
+                    let newest = app.newest_message(&id);
+                    app.goto_message(id, newest);
+                    return app.act(action);
+                }
+            } else if !stub.expanded() {
+                // A click on a collapsed stub expands its thread with the
+                // cursor on it (ADR 0049).
+                let newest = app.newest_message(&id);
+                app.goto_message(id, newest);
+                return Effect::None;
+            }
+        }
+        if text_row >= text_rows {
             return Effect::None;
         }
+        let count = press(app, column, row, in_gutter);
+        let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+        let view = app.view_mut();
+        view.touch();
+        if shift {
+            view.extend_to(text_row, col);
+        } else if in_gutter || count == 3 {
+            view.select_line_at(text_row);
+        } else if count == 2 {
+            view.select_word_at(text_row, col);
+        } else {
+            view.click(text_row, col);
+        }
+        return Effect::None;
     }
+    let linewise = app.press.is_some_and(|press| press.gutter);
     let view = app.view_mut();
     view.touch();
     match event.kind {
         MouseEventKind::ScrollDown => view.scroll_by(WHEEL_LINES),
         MouseEventKind::ScrollUp => view.scroll_by(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row < text_rows => view.click(row, col),
         MouseEventKind::Drag(MouseButton::Left) => {
-            view.drag(row.min(text_rows.saturating_sub(1)), col);
+            let text_row = text_row.min(text_rows.saturating_sub(1));
+            if linewise {
+                view.drag_lines(text_row);
+            } else {
+                view.drag(text_row, col);
+            }
         }
         MouseEventKind::Up(MouseButton::Left) => view.release(),
         _ => {}

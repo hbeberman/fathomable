@@ -361,6 +361,7 @@ async fn run_async(
                 tracing::debug!(bytes = text.len(), "copied selection via OSC 52");
                 clipboard::copy(&text).context("cannot write to clipboard")?;
             }
+            Effect::Open(url) => open_url(&mut app, &url),
             Effect::Command(command) => app.command(&command),
             Effect::EditDraft => edit_draft(&mut app, &input, &mut terminal).await?,
         }
@@ -368,6 +369,27 @@ async fn run_async(
     app.on_quit();
     tracing::info!("app closed");
     Ok(())
+}
+
+/// `gx` (ADR 0050): hand `url` to `xdg-open`, the one process the
+/// viewer starts. The child is reaped on a thread of its own so the
+/// loop never waits on a browser.
+fn open_url(app: &mut App, url: &str) {
+    let spawned = Command::new("xdg-open")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match spawned {
+        Ok(mut child) => {
+            thread::spawn(move || {
+                let _ = child.wait();
+            });
+            app.notice(format!("opening {url}"));
+        }
+        Err(error) => app.notice(format!("cannot open link with xdg-open: {error}")),
+    }
 }
 
 fn handle_event(app: &mut App, event: &Event) -> Effect {

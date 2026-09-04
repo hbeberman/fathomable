@@ -6,6 +6,7 @@
 use fathomable_core::tree::{Activation, Tree};
 use fathomable_core::workspace::{Filter, Workspace};
 
+use super::view::Effect;
 use super::{App, Focus, TREE_SCROLLOFF};
 
 impl App {
@@ -88,6 +89,38 @@ impl App {
             tree.activate(workspace)
         });
         self.focus = Focus::Tree;
+    }
+
+    /// A right-click on tree row `row` (ADR 0050): the highlight moves
+    /// there and the main pane shows the file as the wheel does; a
+    /// directory is neither expanded nor collapsed.
+    pub fn tree_point(&mut self, row: usize) {
+        let index = self.tree_scroll + row;
+        let before = self.tree().map(Tree::cursor);
+        self.with_tree(|tree, _| {
+            if index < tree.rows().len() {
+                tree.set_cursor(index);
+            }
+            None
+        });
+        self.focus = Focus::Tree;
+        if self.tree().map(Tree::cursor) != before {
+            self.show_highlight();
+        }
+    }
+
+    /// `y` in the tree (ADR 0050): copy the highlighted row's path,
+    /// relative to the workspace root as the tree shows it.
+    pub fn copy_tree_path(&mut self) -> Effect {
+        let Some(path) = self
+            .tree()
+            .and_then(Tree::current)
+            .map(|row| row.path().to_string_lossy().into_owned())
+        else {
+            return Effect::None;
+        };
+        self.notice(format!("copied {path}"));
+        Effect::Copy(path)
     }
 
     pub(super) fn scroll_tree(&mut self) {

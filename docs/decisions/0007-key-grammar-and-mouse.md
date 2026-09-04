@@ -12,6 +12,8 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the right button opens a context menu of the actions that apply under the pointer, the `Space` menu takes clicks, and the gutter, double- and triple-click, and Shift-click select.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

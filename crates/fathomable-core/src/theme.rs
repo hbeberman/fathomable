@@ -174,9 +174,9 @@ pub enum Key {
     UiWarning,
     /// An affordance dimmer than text: `(c expand)` on a stub (ADR 0049).
     UiHint,
-    UiSidebar,
-    UiSidebarSelected,
-    UiSidebarDir,
+    UiRail,
+    UiRailSelected,
+    UiRailDir,
     UiPopup,
     UiPopupKey,
     UiPickerMatch,
@@ -217,9 +217,9 @@ impl Key {
         ("ui.statusline.info", Self::UiStatuslineInfo),
         ("ui.warning", Self::UiWarning),
         ("ui.hint", Self::UiHint),
-        ("ui.sidebar", Self::UiSidebar),
-        ("ui.sidebar.selected", Self::UiSidebarSelected),
-        ("ui.sidebar.dir", Self::UiSidebarDir),
+        ("ui.rail", Self::UiRail),
+        ("ui.rail.selected", Self::UiRailSelected),
+        ("ui.rail.dir", Self::UiRailDir),
         ("ui.popup", Self::UiPopup),
         ("ui.popup.key", Self::UiPopupKey),
         ("ui.picker.match", Self::UiPickerMatch),
@@ -263,12 +263,17 @@ impl Key {
         }
     }
 
-    /// The name a key was written under before ADR 0047, when `name` is
-    /// one: `annotation.*` is `thread.*` now, still accepted for one
+    /// The name a key was written under before it was renamed, when
+    /// `name` is one: `annotation.*` is `thread.*` (ADR 0047) and
+    /// `ui.sidebar*` is `ui.rail*` (ADR 0049), each still accepted for one
     /// release and reported by `--doctor`.
     fn renamed_from(name: &str) -> Option<String> {
         name.strip_prefix("annotation.")
             .map(|rest| format!("thread.{rest}"))
+            .or_else(|| {
+                name.strip_prefix("ui.sidebar")
+                    .map(|rest| format!("ui.rail{rest}"))
+            })
             .filter(|new| Self::parse(new).is_some())
     }
 
@@ -296,7 +301,7 @@ pub struct Theme {
     deprecated: Vec<DeprecatedKey>,
 }
 
-/// A key a theme file sets under a name that was renamed (ADR 0047).
+/// A key a theme file sets under a name that was renamed (ADR 0047, 0049).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeprecatedKey {
     /// The theme file that sets it.
@@ -644,7 +649,7 @@ struct ThemeFile {
     palette: Vec<(String, RawColor)>,
     colors: Vec<(Key, RawStyle)>,
     syntect: Option<String>,
-    /// Keys written under a name renamed by ADR 0047.
+    /// Keys written under a name renamed by ADR 0047 or 0049.
     deprecated: Vec<DeprecatedKey>,
 }
 

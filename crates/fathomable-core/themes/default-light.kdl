@@ -36,9 +36,9 @@ colors {
     "ui.warning"           fg="white" bg="red" mods="bold"
     "ui.hint"              fg="#a0a8b0"
 
-    "ui.sidebar"           fg="fg" bg="paper"
-    "ui.sidebar.selected"  bg="surface" mods="bold"
-    "ui.sidebar.dir"       fg="blue"
+    "ui.rail"              fg="fg" bg="paper"
+    "ui.rail.selected"     bg="surface" mods="bold"
+    "ui.rail.dir"          fg="blue"
     "ui.popup"             fg="fg" bg="surface"
     "ui.popup.key"         fg="orange" mods="bold"
     "ui.picker.match"      fg="orange" mods="bold"

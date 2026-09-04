@@ -58,9 +58,9 @@ pub struct Theme {
     pub mode_normal: Style,
     pub mode_select: Style,
     pub mode_input: Style,
-    pub sidebar: Style,
-    pub sidebar_selected: Style,
-    pub sidebar_dir: Style,
+    pub rail: Style,
+    pub rail_selected: Style,
+    pub rail_dir: Style,
     pub popup: Style,
     pub popup_key: Style,
     pub picker_match: Style,
@@ -105,9 +105,9 @@ impl Theme {
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
-            sidebar: style(Key::UiSidebar),
-            sidebar_selected: style(Key::UiSidebarSelected),
-            sidebar_dir: style(Key::UiSidebarDir),
+            rail: style(Key::UiRail),
+            rail_selected: style(Key::UiRailSelected),
+            rail_dir: style(Key::UiRailDir),
             popup: style(Key::UiPopup),
             popup_key: style(Key::UiPopupKey),
             picker_match: style(Key::UiPickerMatch),
@@ -506,7 +506,7 @@ fn sidebar_lines<'a>(
         .map_or_else(|| "/".to_owned(), |n| n.to_string_lossy().into_owned());
     let mut out = Vec::with_capacity(rows);
     // The header carries the repo's summed `+n -m` (ADR 0017).
-    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    let header_style = theme.rail_dir.add_modifier(Modifier::BOLD);
     // A sidebar too narrow for the whole name cuts it rather than spilling
     // over the divider.
     let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
@@ -555,12 +555,12 @@ fn sidebar_lines<'a>(
             if row.is_dir() { "/" } else { "" }
         );
         let mut style = if row.is_dir() {
-            theme.sidebar_dir
+            theme.rail_dir
         } else {
-            theme.sidebar
+            theme.rail
         };
         if index == tree.cursor() {
-            style = style.patch(theme.sidebar_selected);
+            style = style.patch(theme.rail_selected);
             if !focused {
                 style = style.remove_modifier(Modifier::BOLD);
             }
@@ -698,7 +698,7 @@ fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 width,
                 usize::from(tree_area.height),
             ))
-            .style(theme.sidebar),
+            .style(theme.rail),
             tree_area,
         );
     }
@@ -710,7 +710,7 @@ fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 width,
                 usize::from(pane_area.height),
             ))
-            .style(theme.sidebar),
+            .style(theme.rail),
             pane_area,
         );
     }
@@ -735,7 +735,7 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
     )]));
     let scope = app.rail_scope();
     let entries = app.threads_pane_rows();
-    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    let header_style = theme.rail_dir.add_modifier(Modifier::BOLD);
     let title = format!(" threads · {} {}", scope.word(), entries.len());
     let keys = "s x ";
     let mut header = Vec::new();
@@ -768,9 +768,9 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
         .skip(app.threads_pane_scroll())
         .take(rows.saturating_sub(2))
     {
-        let mut style = theme.sidebar;
+        let mut style = theme.rail;
         if selected == Some(index) {
-            style = style.patch(theme.sidebar_selected);
+            style = style.patch(theme.rail_selected);
             if !focused {
                 style = style.remove_modifier(Modifier::BOLD);
             }
@@ -808,7 +808,7 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
     while out.len() < rows {
         out.push(with_divider(vec![Span::styled(
             " ".repeat(inner),
-            theme.sidebar,
+            theme.rail,
         )]));
     }
     out

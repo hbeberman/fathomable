@@ -37,9 +37,9 @@ colors {
     "ui.warning"           fg="black" bg="red" mods="bold"
     "ui.hint"              fg="trim"
 
-    "ui.sidebar"           fg="fg"
-    "ui.sidebar.selected"  bg="surface" mods="bold"
-    "ui.sidebar.dir"       fg="blue"
+    "ui.rail"              fg="fg"
+    "ui.rail.selected"     bg="surface" mods="bold"
+    "ui.rail.dir"          fg="blue"
     "ui.popup"             fg="fg" bg="surface"
     "ui.popup.key"         fg="yellow" mods="bold"
     "ui.picker.match"      fg="yellow" mods="bold"

@@ -110,7 +110,7 @@ The `Space` menu, from any pane:
 | `Space e`, `Space E` | tree: open and focus or return focus; hide |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
 | `Space a` | the thread pane on the thread at the cursor; on the focused pane, close it |
-| `Space A` | the thread list: every thread on this work in place of the document, open then resolved, grouped by file; on the focused list, close it |
+| `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
 | `Space t` | focus the file-threads pane under the tree: this file's threads, open and resolved, the highlighted one shown in the thread pane; on the focused pane, close the thread pane and return to the text |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |

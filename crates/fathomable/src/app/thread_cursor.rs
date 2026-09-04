@@ -252,7 +252,7 @@ impl App {
     pub fn thread_step_across(&mut self, delta: isize) {
         let order = self.workspace_threads();
         if order.is_empty() {
-            self.notice("no threads on this work");
+            self.notice("no threads in the workspace");
             return;
         }
         if let Some(id) = self.step_in(&order, delta) {

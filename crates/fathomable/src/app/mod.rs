@@ -424,7 +424,7 @@ impl App {
             None => Reach::everything(),
         };
         if scope != self.reach {
-            tracing::info!(head = ?self.workspace.head_commit(), "thread scope changed");
+            tracing::info!(head = ?self.workspace.head_commit(), "thread reach changed");
             self.reach = scope;
             for index in 0..self.docs.len() {
                 self.refresh_marks(index);
@@ -1502,7 +1502,7 @@ impl App {
                         .cloned()
                         .collect(),
                 ),
-                None => Response::Error("annotations unavailable; see the log".to_owned()),
+                None => Response::Error("threads unavailable; see the log".to_owned()),
             },
             Request::ThreadReply {
                 thread,
@@ -2114,13 +2114,13 @@ async fn edit_draft(
 
 fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<socket::Serving> {
     let Some(path) = record.socket() else {
-        tracing::warn!("XDG_RUNTIME_DIR unset; no session socket");
+        tracing::warn!("XDG_RUNTIME_DIR unset; no viewer socket");
         return None;
     };
     match socket::Listener::bind(path) {
         Ok(listener) => Some(listener.serve(record.clone(), app)),
         Err(error) => {
-            tracing::warn!(%error, path = %path.display(), "cannot listen on session socket");
+            tracing::warn!(%error, path = %path.display(), "cannot listen on the viewer socket");
             None
         }
     }

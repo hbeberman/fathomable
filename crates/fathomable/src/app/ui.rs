@@ -1359,13 +1359,13 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         } => (o, *count),
         _ => (o, r),
     });
-    let scope = if list.file_only() {
+    let heading = if list.file_only() {
         format!(" threads: {}", app.current_path().display())
     } else {
         " threads: workspace".to_owned()
     };
     let left = vec![
-        Span::styled(scope, theme.popup_key),
+        Span::styled(heading, theme.popup_key),
         Span::styled(format!("  open {open} · resolved {resolved}"), theme.info),
     ];
     let key = |action| key_of(Where::List, action);

@@ -42,7 +42,7 @@ impl Listener {
             Err(error) => return Err(error),
         }
         let listener = UnixListener::bind(path)?;
-        tracing::info!(path = %path.display(), "listening on session socket");
+        tracing::info!(path = %path.display(), "listening on the viewer socket");
         Ok(Self {
             path: path.to_path_buf(),
             listener,
@@ -110,11 +110,11 @@ async fn connection(stream: UnixStream, record: Record, app: mpsc::Sender<Envelo
 async fn forward(app: &mpsc::Sender<Envelope>, request: Request) -> Response {
     let (reply, answer) = oneshot::channel();
     if app.send(Envelope { request, reply }).await.is_err() {
-        return Response::Error("session is shutting down".to_owned());
+        return Response::Error("viewer is shutting down".to_owned());
     }
     answer
         .await
-        .unwrap_or_else(|_| Response::Error("session dropped the request".to_owned()))
+        .unwrap_or_else(|_| Response::Error("viewer dropped the request".to_owned()))
 }
 
 /// The running accept loop; dropping it stops serving and unlinks the socket.

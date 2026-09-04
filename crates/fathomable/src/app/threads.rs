@@ -175,7 +175,7 @@ impl App {
     /// The store, or a status-line notice explaining why there is none.
     pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
         if self.store.is_none() {
-            self.notice("annotations unavailable; see the log");
+            self.notice("threads unavailable; see the log");
         }
         self.store.as_mut()
     }
@@ -664,9 +664,9 @@ impl App {
                 // Commenting on lines means they were read (ADR 0020).
                 self.mark_seen(index);
                 self.view_mut().clear_selection();
-                self.notice(format!("annotated L{range}"));
+                self.notice(format!("commented on L{range}"));
             }
-            Err(error) => self.notice(format!("cannot save annotation: {error}")),
+            Err(error) => self.notice(format!("cannot save comment: {error}")),
         }
     }
 
@@ -728,7 +728,7 @@ impl App {
         let store = self
             .store
             .as_mut()
-            .ok_or("annotations unavailable; see the log")?;
+            .ok_or("threads unavailable; see the log")?;
         if store.thread(id).is_none() {
             return Err(format!("unknown thread {id}"));
         }
@@ -1226,7 +1226,7 @@ mod tests {
         type_in(&mut app, "tighten\nthis");
         app.compose_submit();
         assert!(app.popup().is_none());
-        assert_eq!(app.message(), Some("annotated L3-5"));
+        assert_eq!(app.message(), Some("commented on L3-5"));
         assert_eq!(app.thread_counts(), (1, 1));
         assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
         assert_eq!(app.mark_in(LineRange::new(1, 1)), None);

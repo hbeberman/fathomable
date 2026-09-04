@@ -193,7 +193,7 @@ impl App {
             self.notice(if self.list.file_only {
                 "no threads in this file"
             } else {
-                "no threads on this work"
+                "no threads in the workspace"
             });
         } else if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
@@ -537,7 +537,7 @@ impl App {
             self.notice(if self.list.file_only {
                 "no threads in this file"
             } else {
-                "no threads on this work"
+                "no threads in the workspace"
             });
         } else if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);

@@ -36,11 +36,11 @@ impl App {
             all => all
                 .iter()
                 .map(|s| {
-                    let scope = match s.paths().len() {
+                    let coverage = match s.paths().len() {
                         0 => "whole workspace".to_owned(),
                         n => format!("{n} file(s)"),
                     };
-                    format!("{} {}: {scope}", s.label(), s.id())
+                    format!("{} {}: {coverage}", s.label(), s.id())
                 })
                 .collect::<Vec<_>>()
                 .join("; "),
@@ -133,9 +133,9 @@ impl App {
                 "auto-jump".to_owned(),
                 if self.auto { "on" } else { "off" }.to_owned(),
             ),
-            ("pending changes".to_owned(), self.queue.len().to_string()),
+            ("changes".to_owned(), self.queue.len().to_string()),
             ("waiting".to_owned(), self.waiting_total().to_string()),
-            ("agent follows".to_owned(), followed),
+            ("followed".to_owned(), followed),
             ("subscribers".to_owned(), subscribers),
         ]
     }

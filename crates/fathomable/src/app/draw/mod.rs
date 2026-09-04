@@ -222,6 +222,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_rail(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
+    let text_area = draw_checkpoint_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     frame.render_widget(
         status_line(app, theme, usize::from(area.width)),
@@ -288,6 +289,61 @@ fn draw_banner(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect)
         y: text_area.y + 1,
         height: text_area.height - 1,
         ..text_area
+    }
+}
+
+/// The checkpoint view's header over the text and the strip of the file's
+/// checkpoints under it (ADR 0049); the rows between are returned.
+fn draw_checkpoint_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
+    let Some(check) = app
+        .view()
+        .checkpoint()
+        .filter(|_| app.checkpoint_chrome() && area.height > 2)
+    else {
+        return area;
+    };
+    let width = usize::from(area.width);
+    let left = vec![Span::styled(format!(" {}", check.header), theme.popup_key)];
+    let hints: [Hint<'_>; 4] = [
+        ("h/l", "page"),
+        ("b", "base"),
+        ("t", "target"),
+        ("Space v r", "close"),
+    ];
+    frame.render_widget(
+        Paragraph::new(header_line(theme, left, &hints, width)).style(theme.info),
+        Rect { height: 1, ..area },
+    );
+    let faint = theme.info.add_modifier(Modifier::DIM);
+    let mut spans = vec![Span::styled(" checkpoints ", faint)];
+    let strip = app.checkpoint_strip();
+    if strip.is_empty() {
+        spans.push(Span::styled("none yet · Space v c", faint));
+    }
+    for (i, entry) in strip.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let glyph = if entry.workspace { "◆" } else { "·" };
+        let style = if entry.shown {
+            theme.popup_key
+        } else {
+            theme.info
+        };
+        spans.push(Span::styled(format!("{glyph} {}", entry.label), style));
+    }
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(theme.info),
+        Rect {
+            y: area.y + area.height - 1,
+            height: 1,
+            ..area
+        },
+    );
+    Rect {
+        y: area.y + 1,
+        height: area.height - 2,
+        ..area
     }
 }
 
@@ -1221,7 +1277,9 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         },
     };
     let mut badges = Vec::new();
-    if view.source_view() {
+    if view.checkpoint_view() {
+        badges.push("CHECK");
+    } else if view.source_view() {
         badges.push("SRC");
     } else if view.diff_view() {
         badges.push(if view.diff_seen() {
@@ -1235,7 +1293,12 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     }
     let (line, col) = view.source_position();
     let mut right = format!(" {line}:{col}  {}%", view.percent());
-    if let Some((added, removed)) = view.diff_counts().filter(|(a, r)| a + r > 0) {
+    let counts = if view.checkpoint_view() {
+        view.checkpoint_counts()
+    } else {
+        view.diff_counts()
+    };
+    if let Some((added, removed)) = counts.filter(|(a, r)| a + r > 0) {
         // Infallible: writing to a `String` cannot fail.
         let _ = write!(right, "  +{added} -{removed}");
     }
@@ -1410,6 +1473,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
         super::PickerKind::Wake => "wake",
+        super::PickerKind::CheckBase => "base",
+        super::PickerKind::CheckTarget => "target",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),

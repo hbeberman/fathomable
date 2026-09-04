@@ -402,6 +402,16 @@ impl Layout {
     /// Context and added lines carry the source range of the line in
     /// `new`, so the gutter numbers, the cursor, and annotation marks keep
     /// working; removed lines and hunk headers have no source. Long lines
+    /// One sourceless marker line saying `text`: what a view shows when it
+    /// has nothing else to show (ADR 0049's checkpoint view with no
+    /// checkpoint yet).
+    #[must_use]
+    pub fn notice(text: &str, width: usize) -> Self {
+        let chunk = Chunk::new(text, Style::marker(), None);
+        let lines = wrap_hard(&chunk, width.max(1));
+        Self::finish(lines, width, LineIndex::new(""))
+    }
+
     /// wrap under a blank diff-sign cell. When the texts are identical the
     /// layout is one sourceless notice line.
     #[must_use]

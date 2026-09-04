@@ -83,6 +83,40 @@ pub enum Filter {
     All,
 }
 
+/// One commit that changed a file, from [`Workspace::file_history`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    hex: String,
+    time: u64,
+    subject: String,
+}
+
+impl Commit {
+    /// The full commit id as hex.
+    #[must_use]
+    pub fn hex(&self) -> &str {
+        &self.hex
+    }
+
+    /// The first seven characters of the id.
+    #[must_use]
+    pub fn short(&self) -> &str {
+        &self.hex[..self.hex.len().min(7)]
+    }
+
+    /// The committer time in seconds since the Unix epoch.
+    #[must_use]
+    pub fn time(&self) -> u64 {
+        self.time
+    }
+
+    /// The first line of the message.
+    #[must_use]
+    pub fn subject(&self) -> &str {
+        &self.subject
+    }
+}
+
 /// A workspace root with git ignore evaluation.
 pub struct Workspace {
     root: PathBuf,
@@ -275,25 +309,147 @@ impl Workspace {
             .repo
             .head_tree()
             .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+        self.blob_in(&tree, relative, "HEAD").map(Some)
+    }
+
+    /// The bytes of `relative` in `tree`, empty when the tree has no such
+    /// path; `whence` names the tree in errors.
+    fn blob_in(
+        &self,
+        tree: &gix::Tree<'_>,
+        relative: &Path,
+        whence: &str,
+    ) -> Result<Vec<u8>, WorkspaceError> {
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
         let Some(entry) = tree.lookup_entry_by_path(relative).map_err(|error| {
             fail(format!(
-                "cannot look up {} in HEAD: {error}",
+                "cannot look up {} in {whence}: {error}",
                 relative.display()
             ))
         })?
         else {
-            tracing::debug!(path = %relative.display(), "not in HEAD; diff base is empty");
-            return Ok(Some(Vec::new()));
+            tracing::debug!(path = %relative.display(), whence, "not in the tree; text is empty");
+            return Ok(Vec::new());
         };
         if !entry.mode().is_blob_or_symlink() {
-            return Err(fail(
-                "HEAD has a directory or submodule at this path".to_owned(),
-            ));
+            return Err(fail(format!(
+                "{whence} has a directory or submodule at this path"
+            )));
         }
         let object = entry
             .object()
-            .map_err(|error| fail(format!("cannot read blob from HEAD: {error}")))?;
-        Ok(Some(object.detach().data))
+            .map_err(|error| fail(format!("cannot read blob from {whence}: {error}")))?;
+        Ok(object.detach().data)
+    }
+
+    /// The text of root-relative `relative` as committed in `commit` (hex),
+    /// a side of the checkpoint diff (ADR 0049).
+    ///
+    /// Returns `None` outside git, and `Some("")` for a file the commit
+    /// does not have.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the commit or the blob cannot be
+    /// read, or the blob is not UTF-8 text.
+    pub fn text_at(&self, commit: &str, relative: &Path) -> Result<Option<String>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(None);
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        let id = ObjectId::from_hex(commit.as_bytes())
+            .map_err(|error| fail(format!("not a commit id: {error}")))?;
+        let tree = git
+            .repo
+            .find_commit(id)
+            .map_err(|error| fail(format!("cannot read commit {commit}: {error}")))?
+            .tree()
+            .map_err(|error| fail(format!("cannot read the tree of {commit}: {error}")))?;
+        let short = &commit[..commit.len().min(7)];
+        let bytes = self.blob_in(&tree, relative, short)?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| fail(format!("blob at {short} is not UTF-8 text: {error}")))
+    }
+
+    /// The commits reachable from `HEAD` that changed root-relative
+    /// `relative`, newest first, at most `limit` of them (ADR 0049). A
+    /// commit changed the file when its blob differs from the one in its
+    /// first parent, or the file is new there. Empty outside git or before
+    /// the first commit.
+    #[must_use]
+    pub fn file_history(&self, relative: &Path, limit: usize) -> Vec<Commit> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(head) = git.repo.head_id() else {
+            return Vec::new();
+        };
+        let walk = match git.repo.rev_walk([head]).all() {
+            Ok(walk) => walk,
+            Err(error) => {
+                tracing::warn!(%error, "cannot walk history from HEAD");
+                return Vec::new();
+            }
+        };
+        let blob_of = |id: ObjectId| -> Option<Option<ObjectId>> {
+            let tree = git.repo.find_commit(id).ok()?.tree().ok()?;
+            let entry = tree.lookup_entry_by_path(relative).ok()?;
+            Some(entry.map(|entry| entry.oid().to_owned()))
+        };
+        let mut out = Vec::new();
+        for info in walk {
+            if out.len() >= limit {
+                break;
+            }
+            let info = match info {
+                Ok(info) => info,
+                Err(error) => {
+                    tracing::warn!(%error, "history walk stopped early");
+                    break;
+                }
+            };
+            let id = info.id;
+            let Some(blob) = blob_of(id) else {
+                continue;
+            };
+            let parent_blob = info
+                .parent_ids()
+                .next()
+                .map_or(Some(None), |parent| blob_of(parent.detach()));
+            let changed = match (blob, parent_blob) {
+                (None, _) => false,
+                (Some(_), None) => true,
+                (Some(now), Some(before)) => Some(now) != before,
+            };
+            if !changed {
+                continue;
+            }
+            let Ok(commit) = git.repo.find_commit(id) else {
+                continue;
+            };
+            let time = commit
+                .time()
+                .map_or(0, |time| u64::try_from(time.seconds).unwrap_or(0));
+            let subject = commit
+                .message_raw_sloppy()
+                .lines()
+                .next()
+                .map(|line| line.to_str_lossy().into_owned())
+                .unwrap_or_default();
+            out.push(Commit {
+                hex: id.to_hex().to_string(),
+                time,
+                subject,
+            });
+        }
+        out
     }
 
     /// The text of root-relative `relative` as staged in the index, the

@@ -129,6 +129,10 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let gutter = sidebar + crate::app::draw::gutter_width(app.view());
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
+    // The banner and the checkpoint header take rows over the text.
+    let Some(row) = row.checked_sub(app.text_top()) else {
+        return Effect::None;
+    };
     if event.kind == MouseEventKind::Down(MouseButton::Left) {
         app.focus_pane(Focus::View);
         // A click on a collapsed stub expands its thread with the cursor

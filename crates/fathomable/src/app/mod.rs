@@ -120,6 +120,10 @@ pub enum PickerKind {
     Recent,
     /// Subscribed agents to wake with `Space w` (ADR 0040).
     Wake,
+    /// The base side of the checkpoint diff (ADR 0049).
+    CheckBase,
+    /// The target side of the checkpoint diff (ADR 0049).
+    CheckTarget,
 }
 
 /// The open picker popup.
@@ -293,6 +297,10 @@ pub struct App {
     seen: Option<seen::Store>,
     /// The reader's checkpoints (ADR 0049).
     checkpoints: Option<fathomable_core::checkpoints::Store>,
+    /// What each item of an open side picker names (ADR 0049).
+    check_choices: Vec<(String, checkpoints::Side)>,
+    /// The target `Space v g` fixes for the next base choice.
+    check_target_next: Option<checkpoints::Side>,
     /// When the queue last changed, for the auto-jump debounce.
     last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
@@ -379,6 +387,8 @@ impl App {
             toasts: Vec::new(),
             seen,
             checkpoints,
+            check_choices: Vec::new(),
+            check_target_next: None,
             last_change: None,
             watching_root: false,
             status: Status::default(),
@@ -1345,7 +1355,13 @@ impl App {
     pub fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
+            .saturating_sub(if self.checkpoint_chrome() { 2 } else { 0 })
             .max(1)
+    }
+
+    /// Rows over the text: the banner and the checkpoint view's header.
+    pub fn text_top(&self) -> usize {
+        usize::from(self.banner().is_some()) + usize::from(self.checkpoint_chrome())
     }
 
     pub fn resize(&mut self, width: usize, height: usize) {
@@ -1807,6 +1823,7 @@ impl App {
                 .iter()
                 .map(|s| format!("{}  {}", s.label(), s.id()))
                 .collect(),
+            PickerKind::CheckBase | PickerKind::CheckTarget => self.checkpoint_choices(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
@@ -1868,6 +1885,9 @@ impl App {
                 if let Some(id) = item.rsplit("  ").next() {
                     self.wake_subscriber(id);
                 }
+            }
+            Some((kind @ (PickerKind::CheckBase | PickerKind::CheckTarget), item)) => {
+                self.choose_checkpoint_side(kind, &item);
             }
             None => {}
         }

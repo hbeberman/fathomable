@@ -238,6 +238,10 @@ actions! {
     DiffSeen,
     CheckpointFile,
     CheckpointWorkspace,
+    CheckpointDiff,
+    CheckpointCommit,
+    CheckpointBase,
+    CheckpointTarget,
     HunkNext,
     HunkPrev,
     DirtyNext,
@@ -543,6 +547,20 @@ pub const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
+        &[&[c('b')]],
+        A::CheckpointBase,
+        "Display",
+        "checkpoint diff: pick the base",
+    ),
+    bind(
+        W::View,
+        &[&[c('t')]],
+        A::CheckpointTarget,
+        "Display",
+        "checkpoint diff: pick the target",
+    ),
+    bind(
+        W::View,
         &[&[c(']'), c('g')]],
         A::HunkNext,
         "Git",
@@ -779,6 +797,20 @@ pub const BINDINGS: &[Binding] = &[
         A::CheckpointWorkspace,
         "Space menu",
         "view: checkpoint the workspace",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('r')]],
+        A::CheckpointDiff,
+        "Space menu",
+        "view: toggle the checkpoint diff",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('g')]],
+        A::CheckpointCommit,
+        "Space menu",
+        "view: diff a commit against the working file",
     ),
     bind(
         W::Any,
@@ -1516,7 +1548,7 @@ mod tests {
         );
         assert_eq!(
             keys(Where::Review, &[c(' '), c('v')]),
-            ["s", "d", "D", "c", "C"]
+            ["s", "d", "D", "c", "C", "r", "g"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
         assert!(menu(Where::Box, &[c(' ')]).is_empty());

@@ -14,6 +14,8 @@ use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
+use super::checkpoints::{CheckBody, CheckDiff};
+
 /// Rendered lines kept visible above and below the cursor.
 const SCROLLOFF: usize = 3;
 
@@ -49,6 +51,8 @@ pub enum Display {
     Diff,
     /// A unified diff against the last-seen snapshot (ADR 0015).
     DiffSeen,
+    /// The checkpoint diff between two chosen sides (ADR 0049).
+    Checkpoint,
 }
 
 /// A position in rendered coordinates.
@@ -164,6 +168,8 @@ pub struct View {
     index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
     head: Option<String>,
+    /// The checkpoint diff's sides while it is shown (ADR 0049).
+    check: Option<CheckDiff>,
     /// The working tree against `HEAD`: the gutter, `]g`, and the counts.
     diff: Option<Diff>,
     /// The working tree against the index: which hunks are not yet staged.
@@ -227,6 +233,7 @@ impl View {
             seen: None,
             index: None,
             head: None,
+            check: None,
             diff: None,
             unstaged: None,
             activity: Instant::now(),
@@ -348,6 +355,60 @@ impl View {
     /// The document text as laid out.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The text the layout's source ranges index: the checkpoint diff's
+    /// target when that is not the working file, else the text.
+    fn shown(&self) -> &str {
+        match (&self.display, &self.check) {
+            (
+                Display::Checkpoint,
+                Some(CheckDiff {
+                    body:
+                        CheckBody::Diff {
+                            target: Some(target),
+                            ..
+                        },
+                    ..
+                }),
+            ) => target,
+            _ => &self.text,
+        }
+    }
+
+    /// Whether the checkpoint diff is shown (ADR 0049).
+    pub fn checkpoint_view(&self) -> bool {
+        self.display == Display::Checkpoint
+    }
+
+    /// The checkpoint diff's sides while it is shown.
+    pub fn checkpoint(&self) -> Option<&CheckDiff> {
+        self.check.as_ref().filter(|_| self.checkpoint_view())
+    }
+
+    /// `(added, removed)` between the checkpoint diff's sides, while shown.
+    pub fn checkpoint_counts(&self) -> Option<(usize, usize)> {
+        match &self.checkpoint()?.body {
+            CheckBody::Diff { base, target } => {
+                Some(Diff::new(base, target.as_deref().unwrap_or(&self.text)).counts())
+            }
+            CheckBody::Notice(_) => None,
+        }
+    }
+
+    /// Show the checkpoint diff `check` in place of the document.
+    pub fn show_checkpoint(&mut self, check: CheckDiff) {
+        self.check = Some(check);
+        self.display = Display::Checkpoint;
+        self.relayout();
+    }
+
+    /// Leave the checkpoint diff for the rendered view.
+    pub fn leave_checkpoint(&mut self) {
+        if self.display == Display::Checkpoint {
+            self.display = Display::Rendered;
+            self.relayout();
+        }
     }
 
     /// Note that the reader did something here (ADR 0015 guardrails and
@@ -473,7 +534,7 @@ impl View {
     pub fn source_position(&self) -> (usize, usize) {
         let offset = self.cursor_offset().unwrap_or(0);
         let index = self.layout.index();
-        (index.line_of(offset), index.column_of(&self.text, offset))
+        (index.line_of(offset), index.column_of(self.shown(), offset))
     }
 
     /// The source byte offset under the cursor.
@@ -636,7 +697,7 @@ impl View {
                     .source()
                     .map_or(0, |range| range.start);
                 let index = self.layout.index();
-                (index.line_of(start), index.column_of(&self.text, start))
+                (index.line_of(start), index.column_of(self.shown(), start))
             }
             None => self.source_position(),
         };
@@ -647,6 +708,13 @@ impl View {
             _ => None,
         };
         self.layout = match (self.display, base) {
+            (Display::Checkpoint, _) => match self.check.as_ref().map(|check| &check.body) {
+                Some(CheckBody::Diff { base, target }) => {
+                    Layout::diff(base, target.as_deref().unwrap_or(&self.text), self.width)
+                }
+                Some(CheckBody::Notice(text)) => Layout::notice(text, self.width),
+                None => Layout::notice("no checkpoint diff", self.width),
+            },
             (Display::Source, _) => Layout::source_with(
                 &self.text,
                 self.width,
@@ -668,7 +736,7 @@ impl View {
         );
         let index = self.layout.index();
         let line = line.min(index.line_count());
-        let offset = index.offset_at(&self.text, line, column);
+        let offset = index.offset_at(self.shown(), line, column);
         let row = on_detached
             .and_then(|anchor| {
                 self.layout
@@ -1030,9 +1098,10 @@ impl View {
         if from >= to {
             return None;
         }
-        let from = floor_char(&self.text, from);
-        let to = ceil_char(&self.text, to);
-        self.text.get(from..to).map(str::to_owned)
+        let shown = self.shown();
+        let from = floor_char(shown, from);
+        let to = ceil_char(shown, to);
+        shown.get(from..to).map(str::to_owned)
     }
 
     /// Esc: clear input, pending keys, selection, then search highlights.

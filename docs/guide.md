@@ -93,6 +93,7 @@ Text:
 | `:N` | go to source line N |
 | `gs` / `:source` | toggle raw source view |
 | `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
+| `h` `l`, `b` `t` in the checkpoint diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the commits that touched it, `HEAD`, and the working file |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
@@ -118,6 +119,7 @@ The `Space` menu, from any pane:
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
+| `Space v r`, `Space v g` | view: toggle the checkpoint diff (`CHECK`), opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -345,8 +347,21 @@ one go, and a toast counts them (`checkpoint: 3 files`; a file the agent
 has not touched gets no new entry). Checkpoints live beside the snapshots
 under `~/.local/state/fathomable/workspaces/<hash>/checkpoints/`, one blob
 per distinct content plus an `index.jsonl` of events; nothing expires, and
-`--doctor` counts them. The view that pages through a file's checkpoints
-is the next step of [0049](decisions/0049-inline-threads-and-the-rail.md).
+`--doctor` counts them.
+
+`Space v r` opens the **checkpoint diff** (badge `CHECK`): a unified diff
+between two sides of the current file, opened on the newest pair, the
+latest checkpoint against the working file. Its header reads
+`checkpoint 2/3  5m ago · now`; `h` and `l` page to the earlier or later
+pair along the timeline, and a strip along the bottom lists the file's
+checkpoints, `◆` on the workspace-wide ones. `b` and `t` pick the base or
+the target from the file's checkpoints, the commits that touched it (the
+fifty most recent reachable from `HEAD`), `HEAD`, and the working file;
+the header then names both sides (`a1b2c3d · now`). `Space v g` is the
+shortcut for a commit against the working file. With no checkpoint the
+view says so and names `Space v c`; `Space v r` again, `gs`, or `gd`
+leave it. `gd` and `gD` are untouched: checkpoints sit beside git, they
+never replace it ([0049](decisions/0049-inline-threads-and-the-rail.md)).
 
 ## 6. Following an agent
 

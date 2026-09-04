@@ -203,6 +203,8 @@ impl App {
             Action::DiffSeen => self.view_mut().toggle_seen_diff_view(),
             Action::CheckpointFile => self.checkpoint_file(),
             Action::CheckpointWorkspace => self.checkpoint_workspace(),
+            Action::CheckpointDiff => self.toggle_checkpoint_view(),
+            Action::CheckpointCommit => self.checkpoint_against_commit(),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_sidebar_focus();
@@ -227,6 +229,11 @@ impl App {
 
     fn act_view(&mut self, action: Action) -> Effect {
         match action {
+            // In the checkpoint diff `h`/`l` page the timeline (ADR 0049).
+            Action::MoveLeft if self.view().checkpoint_view() => self.checkpoint_page(-1),
+            Action::MoveRight if self.view().checkpoint_view() => self.checkpoint_page(1),
+            Action::CheckpointBase => self.pick_checkpoint_side(false),
+            Action::CheckpointTarget => self.pick_checkpoint_side(true),
             // At column 0, `h` steps back into the tree; a selection wraps
             // instead (see `View::move_left`).
             Action::MoveLeft

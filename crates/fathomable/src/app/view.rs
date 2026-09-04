@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Diff, LineStatus};
 use fathomable_core::highlight::Highlighter;
-use fathomable_core::layout::{Layout, LineIndex, display_width};
+use fathomable_core::layout::{Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
 /// Rendered lines kept visible above and below the cursor.
@@ -183,6 +183,8 @@ pub struct View {
     changed: bool,
     /// Source lines a detached thread's row stands before (ADR 0039).
     detached: Vec<usize>,
+    /// The stub blocks hanging under rows, in row order (ADR 0049).
+    stubs: Vec<(RowAnchor, usize)>,
 }
 
 impl View {
@@ -229,6 +231,7 @@ impl View {
             message: None,
             changed: false,
             detached: Vec::new(),
+            stubs: Vec::new(),
         }
     }
 
@@ -243,6 +246,45 @@ impl View {
         }
         self.detached = lines;
         self.relayout();
+    }
+
+    /// Lay the document out again with the stub rows of `blocks` under
+    /// their anchors (ADR 0049); a call that changes nothing keeps the
+    /// layout.
+    pub fn set_stub_blocks(&mut self, blocks: Vec<(RowAnchor, usize)>) {
+        if blocks == self.stubs {
+            return;
+        }
+        self.stubs = blocks;
+        self.relayout();
+    }
+
+    /// The stub block and index row `row` was inserted for, if it is a
+    /// stub row.
+    pub fn stub_slot_of_row(&self, row: usize) -> Option<(usize, usize)> {
+        self.layout.lines().get(row)?.stub_slot()
+    }
+
+    /// Whether `row` is a stub row, which the cursor never rests on.
+    fn is_stub_row(&self, row: usize) -> bool {
+        self.stub_slot_of_row(row).is_some()
+    }
+
+    /// The row the cursor settles on when `row` is a stub row: the next
+    /// row of the document when moving forward, else the previous one,
+    /// the other way when there is none.
+    fn settle(&self, row: usize, forward: bool) -> usize {
+        if !self.is_stub_row(row) {
+            return row;
+        }
+        let after = (row + 1..self.layout.lines().len()).find(|&r| !self.is_stub_row(r));
+        let before = (0..row).rev().find(|&r| !self.is_stub_row(r));
+        if forward {
+            after.or(before)
+        } else {
+            before.or(after)
+        }
+        .unwrap_or(row)
     }
 
     /// The source line the detached row `row` stands before, if it is one.
@@ -532,11 +574,35 @@ impl View {
     }
 
     fn relayout(&mut self) {
-        // Anchor by source line and column, not byte offset, so an insertion
-        // above the cursor does not drag it onto unrelated text (ADR 0010).
-        let (line, column) = self.source_position();
         // A cursor on a detached row stays on it (ADR 0039).
         let on_detached = self.detached_anchor_of_row(self.cursor.row);
+        // A cursor on a row with no source — a blank rendered row — is
+        // anchored to the nearest sourced row above it and put back the
+        // same number of document rows below that one.
+        let anchor_row = if self.cursor_offset().is_none() && on_detached.is_none() {
+            (0..self.cursor.row)
+                .rev()
+                .find(|&row| self.layout.lines()[row].source().is_some())
+        } else {
+            None
+        };
+        let rows_below = anchor_row.map_or(0, |above| {
+            (above + 1..=self.cursor.row)
+                .filter(|&row| !self.is_stub_row(row))
+                .count()
+        });
+        // Anchor by source line and column, not byte offset, so an insertion
+        // above the cursor does not drag it onto unrelated text (ADR 0010).
+        let (line, column) = match anchor_row {
+            Some(above) => {
+                let start = self.layout.lines()[above]
+                    .source()
+                    .map_or(0, |range| range.start);
+                let index = self.layout.index();
+                (index.line_of(start), index.column_of(&self.text, start))
+            }
+            None => self.source_position(),
+        };
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
         let base = match self.display {
             Display::Diff => self.head.as_deref(),
@@ -555,7 +621,8 @@ impl View {
             }
             _ => Layout::render_with(&self.text, self.width, &self.syntax.highlighter),
         }
-        .with_rows_before(&self.detached);
+        .with_rows_before(&self.detached)
+        .with_rows_after(&self.stubs);
         let index = self.layout.index();
         let line = line.min(index.line_count());
         let offset = index.offset_at(&self.text, line, column);
@@ -568,7 +635,13 @@ impl View {
             })
             .or_else(|| offset.and_then(|offset| self.layout.line_at_offset(offset)))
             .unwrap_or(self.cursor.row);
-        self.cursor.row = row.min(self.last_row());
+        let mut row = row.min(self.last_row());
+        for _ in 0..rows_below {
+            row = (row + 1..=self.last_row())
+                .find(|&r| !self.is_stub_row(r))
+                .unwrap_or(row);
+        }
+        self.cursor.row = self.settle(row, false);
         self.scroll = self.cursor.row.saturating_sub(screen_row);
         self.clamp_col();
         self.selection = None;
@@ -619,7 +692,9 @@ impl View {
     }
 
     fn set_row(&mut self, row: usize) {
-        self.cursor.row = row.min(self.last_row());
+        let row = row.min(self.last_row());
+        // Stub rows are stepped over in the direction of travel (ADR 0049).
+        self.cursor.row = self.settle(row, row >= self.cursor.row);
         self.clamp_col();
         self.extend_selection();
         self.ensure_visible();
@@ -717,10 +792,10 @@ impl View {
         let top = self.scroll;
         let bottom = self.scroll + self.height - 1;
         if self.cursor.row < top {
-            self.cursor.row = top;
+            self.cursor.row = self.settle(top, true);
             self.clamp_col();
         } else if self.cursor.row > bottom {
-            self.cursor.row = bottom.min(self.last_row());
+            self.cursor.row = self.settle(bottom.min(self.last_row()), false);
             self.clamp_col();
         }
     }
@@ -729,7 +804,8 @@ impl View {
     pub fn click(&mut self, screen_row: usize, col: usize) {
         self.selection = None;
         self.mode = Mode::Normal;
-        self.cursor.row = (self.scroll + screen_row).min(self.last_row());
+        // A click on a stub row lands on the row it hangs under (ADR 0049).
+        self.cursor.row = self.settle((self.scroll + screen_row).min(self.last_row()), false);
         self.want_col = col;
         self.clamp_col();
     }
@@ -737,7 +813,7 @@ impl View {
     /// Extend a mouse selection to a screen position (drag).
     pub fn drag(&mut self, screen_row: usize, col: usize) {
         let anchor = self.cursor;
-        let row = (self.scroll + screen_row).min(self.last_row());
+        let row = self.settle((self.scroll + screen_row).min(self.last_row()), false);
         let col = self
             .columns(row)
             .iter()

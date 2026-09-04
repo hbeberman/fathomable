@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use crate::app::threads::list::ThreadList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, JumpConfig, MarkdownConfig, RailConfig, ViewerConfig, WatchConfig,
+    AgentsConfig, JumpConfig, MarkdownConfig, RailConfig, ThreadsConfig, ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -233,6 +233,8 @@ pub struct App {
     tree: Option<Tree>,
     /// The rail's panes, scope, split, and sizes (ADR 0049).
     rail: threads::pane::Rail,
+    /// Whether stubs are drawn, and for resolved threads (ADR 0049).
+    stubs: threads::stubs::StubState,
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     sidebar_scroll: usize,
@@ -318,6 +320,7 @@ impl App {
             markdown,
             viewer,
             rail,
+            threads,
             agents,
             config_path,
         } = options;
@@ -338,6 +341,7 @@ impl App {
             welcome: View::new(String::new(), 1, 1),
             tree: None,
             rail: threads::pane::Rail::new(rail),
+            stubs: threads::stubs::StubState::from_config(&threads),
             review: threads::list::ReviewState::default(),
             sidebar_scroll: 0,
             sidebar_cols: None,
@@ -804,6 +808,7 @@ impl App {
         };
         self.queue.remove(from);
         let mut current_moved = None;
+        let mut renamed = Vec::new();
         for index in 0..self.docs.len() {
             let Some(target) = moved(&self.docs[index].relative) else {
                 continue;
@@ -815,10 +820,15 @@ impl App {
             if self.current == Some(index) {
                 current_moved = Some(target);
             }
+            renamed.push(index);
+        }
+        // The store moves first, so the marks are read once under the new
+        // path rather than emptied and refilled.
+        self.move_threads(&moved);
+        for index in renamed {
             self.refresh_base(index);
             self.refresh_marks(index);
         }
-        self.move_threads(&moved);
         if let Some(target) = current_moved {
             self.notice(format!("renamed to {}", target.display()));
         }
@@ -1572,6 +1582,8 @@ impl App {
         self.focus = Focus::View;
         self.refresh_base(index);
         self.refresh_marks(index);
+        // The document's stubs follow the session's toggles (ADR 0049).
+        self.place_stub_rows();
         self.relayout();
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
@@ -1920,6 +1932,8 @@ pub struct Options {
     pub viewer: ViewerConfig,
     /// The rail's width and split (ADR 0049).
     pub rail: RailConfig,
+    /// How threads show in the text (ADR 0049).
+    pub threads: ThreadsConfig,
     /// Subscriptions and the wake command (ADR 0040).
     pub agents: AgentsConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
@@ -1942,6 +1956,7 @@ impl Options {
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
             rail: RailConfig::default(),
+            threads: ThreadsConfig::default(),
             agents: AgentsConfig::default(),
             config_path: PathBuf::from("config.kdl"),
         }

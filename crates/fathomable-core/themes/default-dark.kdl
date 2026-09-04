@@ -35,6 +35,7 @@ colors {
     "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
     "ui.statusline.info"   fg="dim"
     "ui.warning"           fg="black" bg="red" mods="bold"
+    "ui.hint"              fg="trim"
 
     "ui.sidebar"           fg="fg"
     "ui.sidebar.selected"  bg="surface" mods="bold"
@@ -56,6 +57,7 @@ colors {
     "thread.waiting"       fg="teal" mods="bold"
     "thread.line"          bg="#2a2a1e"
     "thread.focus"         bg="#1c2a3f"
+    "thread.inline"        bg="#171d27"
 
     "markup.heading"       fg="purple" mods="bold"
     "markup.raw.inline"    fg="orange"

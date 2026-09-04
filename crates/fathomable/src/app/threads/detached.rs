@@ -110,12 +110,17 @@ mod tests {
         Ok(app)
     }
 
+    /// The document's rows with their source line and note glyph; the
+    /// stub rows under a thread (ADR 0049) are left out and the rows
+    /// numbered without them.
     fn glyphs(app: &App) -> Vec<(usize, Option<usize>, Option<&'static str>)> {
         let rows = app.view().layout().lines().len();
         (0..rows)
-            .map(|row| {
+            .filter(|&row| app.view().stub_slot_of_row(row).is_none())
+            .enumerate()
+            .map(|(index, row)| {
                 (
-                    row,
+                    index,
                     app.view().source_line_of_row(row),
                     app.note_on_row(row).map(|(glyph, _)| glyph),
                 )

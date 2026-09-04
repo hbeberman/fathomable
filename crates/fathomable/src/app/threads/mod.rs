@@ -20,6 +20,7 @@ pub(crate) mod open;
 pub(crate) mod pane;
 pub(crate) mod reach;
 pub(crate) mod reanchor;
+pub(crate) mod stubs;
 pub(crate) mod waiting;
 pub(crate) mod words;
 
@@ -305,6 +306,7 @@ impl App {
         // the detached ones take rows of their own (ADR 0039).
         if self.current == Some(index) {
             self.place_detached_rows();
+            self.place_stub_rows();
             self.scroll_sidebar();
         }
     }
@@ -647,6 +649,8 @@ impl App {
     /// The box closed: the keys go back to the pane or the list it was
     /// opened from.
     fn refocus_after_compose(&mut self) {
+        // A new message changes what the stubs show (ADR 0049).
+        self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() > 0 {
             // A reply from the threads pane keeps its keys (ADR 0034).
         } else if self.thread.is_some() {

@@ -275,6 +275,8 @@ actions! {
     Reply,
     EditMessage,
     EditNewestOwn,
+    StubToggle,
+    StubResolvedToggle,
     ToggleResolved,
     Delete,
     DeleteThread,
@@ -665,6 +667,20 @@ pub const BINDINGS: &[Binding] = &[
         A::TreeReveal,
         "Space menu",
         "rail: reveal this file in the tree",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('c')]],
+        A::StubToggle,
+        "Space menu",
+        "threads: toggle stub visibility",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('x')]],
+        A::StubResolvedToggle,
+        "Space menu",
+        "threads: toggle resolved stubs",
     ),
     bind(
         W::Any,
@@ -1560,7 +1576,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["n", "r", "o", "e", "d"]
+            ["c", "x", "n", "r", "o", "e", "d"]
         );
         assert_eq!(keys(Where::List, &[c(' '), c('v')]), ["s", "d", "D"]);
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);

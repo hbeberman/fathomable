@@ -37,7 +37,26 @@ pub struct Config {
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
     rail: RailConfig,
+    threads: ThreadsConfig,
     agents: AgentsConfig,
+}
+
+/// The `threads { ... }` block (ADR 0049): how threads show in the text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadsConfig {
+    /// Draw a stub under each thread's lines.
+    pub stubs: bool,
+    /// Give resolved threads a stub too.
+    pub stubs_resolved: bool,
+}
+
+impl Default for ThreadsConfig {
+    fn default() -> Self {
+        Self {
+            stubs: true,
+            stubs_resolved: false,
+        }
+    }
 }
 
 /// The `rail { ... }` block (ADR 0049): the left column that holds the
@@ -427,6 +446,31 @@ impl Config {
                         }
                     }
                 }
+                "threads" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`threads` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        match child.name().value() {
+                            "stubs" => config.threads.stubs = one_bool(child, line)?,
+                            "stubs-resolved" => {
+                                config.threads.stubs_resolved = one_bool(child, line)?;
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown threads setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 "rail" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -515,6 +559,12 @@ impl Config {
     #[must_use]
     pub fn rail(&self) -> &RailConfig {
         &self.rail
+    }
+
+    /// How threads show in the text (ADR 0049).
+    #[must_use]
+    pub fn threads(&self) -> &ThreadsConfig {
+        &self.threads
     }
 
     /// Which files render as Markdown (ADR 0016).
@@ -668,6 +718,10 @@ rail {
     width 40
     split 12
 }
+threads {
+    stubs #false
+    stubs-resolved #true
+}
 "#,
         )
         .map_err(|e| e.to_string());
@@ -680,6 +734,9 @@ rail {
         assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
         assert_eq!(config.rail().width, 40);
         assert_eq!(config.rail().split, 12);
+        assert!(!config.threads().stubs);
+        assert!(config.threads().stubs_resolved);
+        assert_eq!(Config::default().threads(), &ThreadsConfig::default());
         assert_eq!(Config::default().rail(), &RailConfig::default());
     }
 

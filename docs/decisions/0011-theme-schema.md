@@ -105,6 +105,8 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `thread.waiting` | gutter note cell, list rows, and sidebar tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
 | `thread.line` | background of annotated rows (0013) |
 | `thread.focus` | background of the rows of the thread open in the thread pane ([0033](0033-open-thread-lines.md)) |
+| `thread.inline` | background of a thread's stub rows under its lines; `none` marks them with `▎` instead ([0049](0049-inline-threads-and-the-rail.md)) |
+| `ui.hint` | an affordance dimmer than text, the `(c expand)` on a stub (0049) |
 | `markup.heading` | all heading levels; `markup.heading.1`…`.6` override one level |
 | `markup.raw.inline`, `markup.raw.block` | inline code, code block lines |
 | `markup.link` | link text |

@@ -2,7 +2,9 @@
 type: Decision
 title: Inline threads, the rail, checkpoints, and the jumplist
 description: Threads show under their lines as two-row stubs that c expands in place and the bottom thread pane goes; the left column is the rail, holding the tree pane and the threads pane as peers at a fixed split; Space A is the review list sorted by newest agent reply with resolved hidden; checkpoints of a file or the workspace sit on a per-file timeline beside git diff; Alt-Left and Alt-Right walk a jumplist of positions; and the leader gains c, v, and r submenus with a breadcrumb in the menu.
+resource: crates/fathomable/src/app/threads/stubs.rs
 related_resources:
+  - crates/fathomable-core/src/layout/mod.rs
   - crates/fathomable/src/app/mod.rs
   - crates/fathomable/src/app/sidebar.rs
   - crates/fathomable/src/app/view.rs
@@ -330,7 +332,6 @@ pane).
   beside the auto-jump module `app/jump.rs`); the rail; collapsed stubs
   and their toggles, then expansion and the pane's removal; the review
   list; the checkpoint store, then its view; then the vocabulary pass.
-  This record gains a `resource` when the stub module exists.
 - Amended by this record where they describe the surfaces it removes:
   [0010](0010-viewer-ux.md) (the pills and Esc rule),
   [0012](0012-workspace-mode.md) (the sidebar and `[o`/`]o`),

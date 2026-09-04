@@ -180,6 +180,19 @@ pub struct Line {
     /// A blank row inserted before this source line by
     /// [`Layout::with_rows_before`] (ADR 0039).
     before: Option<usize>,
+    /// A sourceless row inserted by [`Layout::with_rows_after`] (ADR
+    /// 0049): the block it belongs to and its index within the block.
+    stub: Option<(usize, usize)>,
+}
+
+/// Where a block of inserted rows hangs (ADR 0049): under the last row
+/// of a source line, or under the blank row standing before a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RowAnchor {
+    /// The 1-based source line whose last rendered row the block follows.
+    Line(usize),
+    /// The detached row inserted before this 1-based source line.
+    Detached(usize),
 }
 
 impl Line {
@@ -190,6 +203,7 @@ impl Line {
             source,
             number: None,
             before: None,
+            stub: None,
         }
     }
 
@@ -229,6 +243,13 @@ impl Line {
     #[must_use]
     pub fn stands_before(&self) -> Option<usize> {
         self.before
+    }
+
+    /// The block and index of a row [`Layout::with_rows_after`] inserted,
+    /// `None` for a line of the document or a detached row.
+    #[must_use]
+    pub fn stub_slot(&self) -> Option<(usize, usize)> {
+        self.stub
     }
 
     /// The 1-based source line to show in the gutter.
@@ -466,6 +487,57 @@ impl Layout {
             self.lines.insert(row, blank);
         }
         self
+    }
+
+    /// Insert `count` sourceless rows after the row each anchor names
+    /// (ADR 0049), block `i`'s rows carrying `(i, 0..count)`. Blocks
+    /// are given in row order; two on one anchor come one after the
+    /// other in that order. An anchor no row holds is skipped.
+    #[must_use]
+    pub fn with_rows_after(mut self, blocks: &[(RowAnchor, usize)]) -> Self {
+        // Back to front, so earlier insertions do not shift later rows.
+        for (block, &(anchor, count)) in blocks.iter().enumerate().rev() {
+            let Some(row) = self.row_of_anchor(anchor) else {
+                continue;
+            };
+            for index in (0..count).rev() {
+                let mut line = Line::blank();
+                line.stub = Some((block, index));
+                self.lines.insert(row + 1, line);
+            }
+        }
+        self
+    }
+
+    /// The last row holding `anchor`: the detached row before a line, or
+    /// the last row whose source covers the line, else the last row that
+    /// starts at or before it (a blank line has no row of its own).
+    fn row_of_anchor(&self, anchor: RowAnchor) -> Option<usize> {
+        match anchor {
+            RowAnchor::Detached(before) => self
+                .lines
+                .iter()
+                .rposition(|line| line.before == Some(before)),
+            RowAnchor::Line(wanted) => {
+                let lines_of = |line: &Line| {
+                    let range = line.source.as_ref()?;
+                    let first = self.index.line_of(range.start);
+                    let last = self.index.line_of(range.end.max(range.start + 1) - 1);
+                    Some((first, last))
+                };
+                self.lines
+                    .iter()
+                    .rposition(|line| {
+                        lines_of(line)
+                            .is_some_and(|(first, last)| first <= wanted && wanted <= last)
+                    })
+                    .or_else(|| {
+                        self.lines.iter().rposition(|line| {
+                            lines_of(line).is_some_and(|(first, _)| first <= wanted)
+                        })
+                    })
+            }
+        }
     }
 
     /// The rendered lines, top to bottom.

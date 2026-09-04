@@ -161,11 +161,18 @@ mod tests {
         annotate(&mut app, 3, 5, "inner");
         annotate(&mut app, 7, 7, "point");
         assert_eq!(app.thread_counts(), (3, 3));
-        let glyphs: String = (0..8)
+        // Stub rows (ADR 0049) sit between; the document's rows are read.
+        let document_rows = |app: &App| -> Vec<usize> {
+            (0..app.view().layout().lines().len())
+                .filter(|&row| app.view().stub_slot_of_row(row).is_none())
+                .collect()
+        };
+        let glyphs: String = document_rows(&app)
+            .into_iter()
             .map(|row| app.note_on_row(row).map_or(" ", |(glyph, _)| glyph))
             .collect();
         assert_eq!(glyphs, "╭│╭│╰│•╰");
-        assert_eq!(app.note_on_row(8), None);
+        assert_eq!(app.note_on_row(app.view().layout().lines().len()), None);
         // A one-row thread on a range's first row: the bracket wins.
         annotate(&mut app, 1, 1, "on the start");
         assert_eq!(app.note_on_row(0).map(|(g, _)| g), Some("╭"));
@@ -212,6 +219,7 @@ mod tests {
         let view = app.view();
         let rows = view.layout().lines().len();
         let glyphs: String = (0..rows)
+            .filter(|&row| view.stub_slot_of_row(row).is_none())
             .map(|row| app.note_on_row(row).map_or(" ", |(glyph, _)| glyph))
             .collect();
         assert_eq!(glyphs.trim_end(), "  ╭│││╰", "{glyphs:?}");

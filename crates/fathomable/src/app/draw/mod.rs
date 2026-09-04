@@ -23,6 +23,7 @@ use fathomable_core::status::Summary;
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{thread_body_lines, thread_body_rows};
 use crate::app::threads::list::{Row, Rows};
+use crate::app::threads::stubs::Stub;
 use crate::app::threads::words::{Words, label};
 use crate::app::threads::{Compose, ComposeTarget, ThreadPane, ThreadState};
 use crate::app::view::{Mode, View};
@@ -54,6 +55,8 @@ pub struct Theme {
     pub info: Style,
     /// The `deleted` banner (ADR 0028).
     pub warning: Style,
+    /// `(c expand)` on a stub (ADR 0049).
+    pub hint: Style,
     pub mode_normal: Style,
     pub mode_select: Style,
     pub mode_input: Style,
@@ -69,6 +72,8 @@ pub struct Theme {
     pub thread_waiting: Style,
     pub thread_line: Style,
     pub thread_focus: Style,
+    /// A stub's background (ADR 0049).
+    pub thread_inline: Style,
     pub diff_plus: Style,
     pub diff_delta: Style,
     pub diff_minus: Style,
@@ -98,6 +103,7 @@ impl Theme {
             statusline: style(Key::UiStatusline),
             info: style(Key::UiStatuslineInfo),
             warning: style(Key::UiWarning),
+            hint: style(Key::UiHint),
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
@@ -113,6 +119,7 @@ impl Theme {
             thread_waiting: style(Key::ThreadWaiting),
             thread_line: style(Key::ThreadLine),
             thread_focus: style(Key::ThreadFocus),
+            thread_inline: style(Key::ThreadInline),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
             diff_minus: style(Key::DiffMinus),
@@ -834,8 +841,16 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     let cursor = view.cursor();
     let selection = view.selection();
     let lines = view.layout().lines();
+    let width = gutter + view.layout().width();
     let mut out = Vec::with_capacity(rows);
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
+        // A stub row says what a thread said, under its lines (ADR 0049).
+        if let Some((stub, message, last)) = app.stub_on_row(row) {
+            out.push(stub_line(
+                app, theme, &stub, message, last, row, gutter, width,
+            ));
+            continue;
+        }
         let is_cursor = row == cursor.row;
         // The note cell brackets a thread's rows (ADR 0027).
         let note = app.note_on_row(row);
@@ -917,6 +932,111 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         ]));
     }
     out
+}
+
+/// One row of a collapsed stub (ADR 0049): the gutter's bracket if an
+/// outer thread spans the row, then the state glyph, the author, the
+/// age, and the first line of the message, on the `thread.inline`
+/// background — or behind a `▎` in the state colour when the theme sets
+/// none. The thread under the cursor reads in the text colour, the
+/// others dimmed; the thread cursor's last row ends with `(c expand)`.
+#[expect(clippy::too_many_arguments, reason = "one row's facts, read once each")]
+fn stub_line<'a>(
+    app: &App,
+    theme: &Theme,
+    stub: &Stub,
+    message: usize,
+    last: bool,
+    row: usize,
+    gutter: usize,
+    width: usize,
+) -> Line<'a> {
+    let digits = gutter - 3;
+    let Some(thread) = app.thread(stub.id()) else {
+        return Line::from("");
+    };
+    let kind = app
+        .marks()
+        .iter()
+        .find(|mark| mark.id() == stub.id())
+        .map_or(ThreadState::Open, crate::app::threads::Mark::kind);
+    let (author, created, body) = match message.checked_sub(1) {
+        None => ("user".to_owned(), thread.created(), thread.comment()),
+        Some(index) => {
+            let reply = &thread.replies()[index];
+            (author_label(reply.author()), reply.created(), reply.body())
+        }
+    };
+    let covered = app.threads_at_cursor().contains(stub.id());
+    let hinted = last && covered && app.thread_cursor().thread() == Some(stub.id());
+    let row_style = theme.thread_inline;
+    let text_style = if covered {
+        theme
+            .text
+            .patch(Style::default().fg(theme.thread_focus.fg.unwrap_or_default()))
+    } else {
+        theme.info
+    }
+    .patch(row_style);
+    let text_style = if theme.thread_focus.fg.is_none() && covered {
+        theme.text.patch(row_style)
+    } else {
+        text_style
+    };
+    let note = app.note_on_row(row).map_or_else(
+        || Span::styled(" ", row_style),
+        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
+    );
+    let edge = if row_style.bg.is_none() {
+        Span::styled("▎", mark_style(theme, kind))
+    } else {
+        Span::styled(" ", row_style)
+    };
+    let now = crate::app::threads::now();
+    let lead = format!(" {author} {}  ", format_age_short(created, now));
+    let hint = if hinted { " (c expand)" } else { "" };
+    let free = width
+        .saturating_sub(gutter)
+        .saturating_sub(1)
+        .saturating_sub(1 + display_width(&lead))
+        .saturating_sub(display_width(hint));
+    let first = body.lines().next().unwrap_or("");
+    let text = if display_width(first) > free && free > 0 {
+        let mut shortened: String = first.chars().collect();
+        while display_width(&shortened) + 1 > free && !shortened.is_empty() {
+            shortened.pop();
+        }
+        fit(&format!("{shortened}…"), free)
+    } else {
+        fit(first, free)
+    };
+    let spans = vec![
+        note,
+        Span::styled(" ".repeat(digits), row_style),
+        Span::styled(" ", row_style),
+        Span::styled(" ", row_style),
+        edge,
+        Span::styled("●".to_owned(), mark_style(theme, kind).patch(row_style)),
+        Span::styled(lead, theme.popup_key.patch(row_style)),
+        Span::styled(text, text_style),
+        Span::styled(hint.to_owned(), theme.hint.patch(row_style)),
+    ];
+    Line::from(spans).style(row_style)
+}
+
+/// How a message's author reads on a stub: the user as `user`, an agent
+/// as `name (type)` when it subscribed with a type.
+fn author_label(author: &fathomable_core::annotations::Author) -> String {
+    use fathomable_core::annotations::Author;
+    match author {
+        Author::User => "user".to_owned(),
+        Author::Agent {
+            name,
+            kind: Some(kind),
+            ..
+        } => format!("{name} ({kind})"),
+        Author::Agent { name, .. } => name.clone(),
+    }
 }
 
 fn grapheme_cells(text: &str) -> impl Iterator<Item = &str> {

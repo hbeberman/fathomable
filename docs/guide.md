@@ -114,6 +114,7 @@ The `Space` menu, from any pane:
 | `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
 | `Space t`, `Space T` | threads pane: show and focus or return focus; hide |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
+| `Space c c`, `Space c x` | threads: toggle stub visibility for the session; toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
@@ -229,6 +230,20 @@ found. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
+
+Every open thread shows a **stub** under the last of its lines: one row
+per message for its newest two, each with the state glyph, the author
+(`user`, or an agent as `name (type)`), the age, and the first line of
+the message, on a tinted background (`thread.inline`; a theme that sets
+it to `none` gets a `▎` at the left edge instead). Stubs are not lines:
+`j`/`k`, paging, search, `:N`, and selection step over them, a click on
+one lands on the row above, and they carry no line number. Stubs of
+threads stacked on one row follow one another in line order. The stub
+of the thread under the cursor reads in the text colour and, for the
+thread the cursor is on, ends with `(c expand)`; the others are dimmed.
+`Space c c` hides and shows them for the session and `Space c x` gives
+resolved threads a stub too; `threads { stubs; stubs-resolved }` sets the
+defaults.
 
 The left column is the **rail**: the tree pane above the **threads
 pane**, each shown or hidden on its own (`Space e`/`E`, `Space t`/`T`),
@@ -386,6 +401,11 @@ viewer {
 rail {
     width 32                // columns for the tree and threads panes
     split 8                 // rows the threads pane keeps under the tree
+}
+
+threads {
+    stubs #true             // a stub under each thread's lines
+    stubs-resolved #false   // resolved threads get one too
 }
 
 agents {

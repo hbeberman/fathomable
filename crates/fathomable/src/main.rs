@@ -253,6 +253,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),
             rail: config.rail().clone(),
+            threads: config.threads().clone(),
             agents: config.agents().clone(),
             config_path: config_path(cli, dirs),
         },
@@ -374,6 +375,11 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("rail {{");
     println!("    width {}", rail.width);
     println!("    split {}", rail.split);
+    println!("}}");
+    let threads = config.threads();
+    println!("threads {{");
+    println!("    stubs #{}", threads.stubs);
+    println!("    stubs-resolved #{}", threads.stubs_resolved);
     println!("}}");
     let agents = config.agents();
     let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();

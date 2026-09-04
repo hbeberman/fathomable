@@ -172,6 +172,8 @@ pub enum Key {
     UiStatuslineInfo,
     /// A banner that warns: the deleted-file row (ADR 0028).
     UiWarning,
+    /// An affordance dimmer than text: `(c expand)` on a stub (ADR 0049).
+    UiHint,
     UiSidebar,
     UiSidebarSelected,
     UiSidebarDir,
@@ -189,6 +191,8 @@ pub enum Key {
     ThreadWaiting,
     ThreadLine,
     ThreadFocus,
+    /// The background of a thread's stub and expanded rows (ADR 0049).
+    ThreadInline,
     MarkupHeading,
     /// One heading level, 1 through 6; falls back to [`Key::MarkupHeading`].
     MarkupHeadingLevel(u8),
@@ -200,7 +204,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 34] = [
+    const NAMED: [(&'static str, Self); 36] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.cursorline", Self::UiCursorline),
@@ -212,6 +216,7 @@ impl Key {
         ("ui.statusline.input", Self::UiStatuslineInput),
         ("ui.statusline.info", Self::UiStatuslineInfo),
         ("ui.warning", Self::UiWarning),
+        ("ui.hint", Self::UiHint),
         ("ui.sidebar", Self::UiSidebar),
         ("ui.sidebar.selected", Self::UiSidebarSelected),
         ("ui.sidebar.dir", Self::UiSidebarDir),
@@ -229,6 +234,7 @@ impl Key {
         ("thread.waiting", Self::ThreadWaiting),
         ("thread.line", Self::ThreadLine),
         ("thread.focus", Self::ThreadFocus),
+        ("thread.inline", Self::ThreadInline),
         ("markup.heading", Self::MarkupHeading),
         ("markup.raw.inline", Self::MarkupRawInline),
         ("markup.raw.block", Self::MarkupRawBlock),

@@ -59,18 +59,20 @@ fn message_lines<'a>(
     out
 }
 
+/// One row of a message, padded to the text width so the thread's
+/// background reaches the right edge however short the row is.
 fn message_line<'a>(
     theme: &Theme,
     mut spans: Vec<Span<'a>>,
     width: usize,
     selected: bool,
 ) -> Line<'a> {
+    let used = spans
+        .iter()
+        .map(|span| display_width(&span.content))
+        .sum::<usize>();
+    spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
     if selected {
-        let used = spans
-            .iter()
-            .map(|span| display_width(&span.content))
-            .sum::<usize>();
-        spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
         Line::from(spans).style(theme.picker_selected)
     } else {
         Line::from(spans)
@@ -173,6 +175,14 @@ mod tests {
             .collect()
     }
 
+    /// The same rows without the padding that fills each one out.
+    fn trimmed(lines: &[Line<'_>]) -> Vec<String> {
+        texts(lines)
+            .into_iter()
+            .map(|line| line.trim_end().to_owned())
+            .collect()
+    }
+
     fn render(body: &str, badge: Option<&str>, width: usize) -> anyhow::Result<Vec<Line<'static>>> {
         let message = Message {
             author: "Copilot",
@@ -194,7 +204,7 @@ mod tests {
     fn plain_sentence_renders_as_itself_under_the_header() -> anyhow::Result<()> {
         let lines = render("please check this", None, 40)?;
         assert_eq!(
-            texts(&lines),
+            trimmed(&lines),
             [" Copilot  just now", "   please check this"]
         );
         Ok(())
@@ -203,7 +213,7 @@ mod tests {
     #[test]
     fn a_newline_stays_a_line_break() -> anyhow::Result<()> {
         let lines = render("first\nsecond", None, 40)?;
-        assert_eq!(texts(&lines)[1..], ["   first", "   second"]);
+        assert_eq!(trimmed(&lines)[1..], ["   first", "   second"]);
         Ok(())
     }
 
@@ -211,7 +221,7 @@ mod tests {
     fn markdown_blocks_render_and_wrap_to_the_indented_width() -> anyhow::Result<()> {
         let body = "Two **points**:\n\n- first\n- second `x`\n\n```rust\nfn a() {}\n```\n";
         let lines = render(body, Some("proposes resolving"), 30)?;
-        let rows = texts(&lines);
+        let rows = trimmed(&lines);
         assert_eq!(rows[0], " Copilot  just now  [proposes resolving]");
         assert!(rows.iter().any(|t| t == "   Two points:"), "{rows:?}");
         assert!(rows.iter().any(|t| t.contains("• first")), "{rows:?}");
@@ -224,7 +234,14 @@ mod tests {
         let long = "word ".repeat(20);
         let wrapped = render(&long, None, 30)?;
         assert!(wrapped.len() > 3, "wrapped: {}", wrapped.len());
-        assert!(texts(&wrapped).iter().all(|t| t.chars().count() <= 30));
+        assert!(texts(&wrapped).iter().all(|t| display_width(t) == 30));
+        Ok(())
+    }
+
+    #[test]
+    fn every_row_fills_the_width_so_the_background_reaches_the_edge() -> anyhow::Result<()> {
+        let lines = render("short", None, 24)?;
+        assert!(texts(&lines).iter().all(|line| display_width(line) == 24));
         Ok(())
     }
 

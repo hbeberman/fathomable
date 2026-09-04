@@ -1862,6 +1862,9 @@ fn header_line<'a>(
         .map(|n| &hints[..n])
         .find(|shown| free >= width_of(shown) + 3)
     else {
+        // No room for the keys; the row still fills out so its
+        // background reaches the right edge.
+        spans.push(Span::raw(" ".repeat(free)));
         return Line::from(spans);
     };
     let faint = theme.info.add_modifier(Modifier::DIM);

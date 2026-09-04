@@ -5,7 +5,7 @@
 //! [`App`] keeps the [`Store`] for the workspace; every open document
 //! carries the [`Mark`]s of its threads, re-located whenever the text
 //! changes. The comment box ([`Compose`]) starts a thread or replies to
-//! one; the [`ThreadPane`] reads a thread and resolves it. The submodules
+//! one; the stubs (`stubs`) read a thread in place. The submodules
 //! are the thread cursor (`cursor`), the threads pane (`pane`),
 //! the thread list (`list`), deletion, detached rows, the open thread's
 //! lines (`open`), git reach, re-anchoring, waiting threads, and the
@@ -140,30 +140,6 @@ impl Compose {
     pub fn place_cursor(&mut self, width: usize, cell: Cell) {
         self.confirm_discard = false;
         self.buffer.place_cursor(width, cell);
-    }
-}
-
-/// The open thread pane: how far the cursor's thread is scrolled. Which
-/// thread it shows is the thread cursor's (ADR 0046); its place among the
-/// file's threads is computed from the document's marks
-/// ([`App::thread_position`]), so a reload cannot strand it (ADR 0027).
-#[derive(Debug)]
-pub struct ThreadPane {
-    scroll: usize,
-    /// Number of messages when the scroll was last set.
-    seen_messages: usize,
-    /// The thread's `updated` when the scroll was last set, so a new
-    /// reply sends the pane back to its end (ADR 0034).
-    seen: u64,
-}
-
-/// A scroll past any body: the drawing and `thread_scroll` clamp it to
-/// the last row, so the pane opens at its end (ADR 0034).
-const BOTTOM: usize = usize::MAX;
-
-impl ThreadPane {
-    pub fn scroll(&self) -> usize {
-        self.scroll
     }
 }
 
@@ -380,6 +356,7 @@ impl App {
         order
     }
 
+    #[cfg(test)]
     /// `(current, total)`, 1-based, of the cursor's thread among the
     /// file's, for the pane header.
     pub fn thread_position(&self) -> Option<(usize, usize)> {
@@ -390,6 +367,7 @@ impl App {
         Some((index + 1, order.len()))
     }
 
+    #[cfg(test)]
     /// `(current, total)`, 1-based, of the cursor's thread among the
     /// workspace's, for the pane header.
     pub fn thread_position_across(&self) -> Option<(usize, usize)> {
@@ -594,11 +572,11 @@ impl App {
         }
     }
 
-    /// `PageUp` / `PageDown` / Alt-Up / Alt-Down while replying: scroll the
-    /// thread shown above the box.
+    /// Alt-Up / Alt-Down while replying: scroll the text behind the box,
+    /// where the thread is expanded (ADR 0049).
     pub fn compose_scroll(&mut self, delta: isize) {
         if matches!(self.popup, Some(Popup::Compose(_))) {
-            self.thread_scroll(delta);
+            self.view_mut().scroll_by(delta);
         }
     }
 
@@ -687,8 +665,6 @@ impl App {
         self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() > 0 {
             // A reply from the threads pane keeps its keys (ADR 0034).
-        } else if self.thread.is_some() {
-            self.focus = Focus::Thread;
         } else if self.list.is_open() {
             self.focus = Focus::Threads;
         }
@@ -738,8 +714,6 @@ impl App {
                     let newest = self.newest_message(id);
                     self.set_thread_cursor_message(id.clone(), newest);
                     self.thread_list_follow_cursor();
-                } else if self.thread.is_some() {
-                    self.open_thread(id.clone());
                 } else if self.focus != Focus::ThreadsPane {
                     // From the text the thread expands in place and the
                     // cursor lands on the reply (ADR 0049).
@@ -759,12 +733,6 @@ impl App {
             Ok(()) => {
                 tracing::info!(%id, ?target, "thread message edited");
                 self.refresh_all_marks();
-                if let Some(updated) = self.thread(id).map(Thread::updated)
-                    && self.thread_cursor().thread() == Some(id)
-                    && let Some(panel) = self.thread.as_mut()
-                {
-                    panel.seen = updated;
-                }
                 self.follow_cursor_message();
                 self.notice("message edited");
             }
@@ -818,104 +786,7 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
-        if self.pane_thread() == Some(id) {
-            self.open_thread(id.clone());
-        }
         Ok(())
-    }
-
-    // ----- thread pane -----
-
-    /// `Space a`: the pane on the first thread under the cursor, the
-    /// others one `l` away; on the focused pane, close it instead.
-    pub fn toggle_thread_pane(&mut self) {
-        if self.thread.is_some() && self.focus == Focus::Thread {
-            self.close_thread();
-        } else {
-            self.open_thread_at_cursor();
-        }
-    }
-
-    /// Show the first thread under the cursor; the others on the row are
-    /// one `l` away.
-    pub fn open_thread_at_cursor(&mut self) {
-        let Some(id) = self.threads_at_cursor().into_iter().next() else {
-            self.notice("no thread on this line");
-            return;
-        };
-        self.open_thread(id);
-    }
-
-    /// Show one thread at its end, keeping the scroll and the highlighted
-    /// message only when the pane already shows it and nothing was added
-    /// (ADR 0034). The cursor moves onto the thread (ADR 0046).
-    pub fn open_thread(&mut self, id: ThreadId) {
-        self.refresh_watchers();
-        let updated = self.thread(&id).map_or(0, Thread::updated);
-        let messages = self
-            .thread(&id)
-            .map_or(0, |thread| thread.replies().len() + 1);
-        let kept = self
-            .thread
-            .as_ref()
-            .filter(|panel| {
-                self.thread_cursor.thread() == Some(&id)
-                    && panel.seen == updated
-                    && panel.seen_messages == messages
-            })
-            .map(|panel| panel.scroll);
-        let message = match kept {
-            Some(_) => self.thread_cursor.message(),
-            None => self.newest_message(&id),
-        };
-        self.set_thread_cursor_message(id, message);
-        self.show_panel(ThreadPane {
-            scroll: kept.unwrap_or(BOTTOM),
-            seen_messages: messages,
-            seen: updated,
-        });
-        // Resolve `BOTTOM` to the real last row now the pane has a height.
-        self.thread_scroll(0);
-    }
-
-    /// Show `id` without taking the keys from the pane that asked: the
-    /// threads pane drives the thread pane (ADR 0034).
-    pub(super) fn open_thread_behind(&mut self, id: ThreadId) {
-        let focus = self.focus;
-        self.open_thread(id);
-        self.focus = focus;
-    }
-
-    /// The pane opens along the bottom of the text and takes the keys
-    /// unless the comment box is up.
-    fn show_panel(&mut self, panel: ThreadPane) {
-        self.thread = Some(panel);
-        if self.popup.is_none() {
-            self.focus = Focus::Thread;
-        }
-        self.relayout();
-    }
-
-    /// Esc in the pane: the keys go back to the text and the pane stays
-    /// (ADR 0010, amended 2026-09-03); `Space a` closes it.
-    pub fn leave_thread_pane(&mut self) {
-        if self.focus == Focus::Thread {
-            self.focus = Focus::View;
-        }
-    }
-
-    /// `Space a` on the focused pane, the list taking the column, or a
-    /// deleted thread: close the pane and hand the keys back to the text.
-    pub fn close_thread(&mut self) {
-        self.thread = None;
-        if self.focus == Focus::Thread {
-            self.focus = Focus::View;
-        }
-        self.relayout();
-    }
-
-    fn panel_mut(&mut self) -> Option<&mut ThreadPane> {
-        self.thread.as_mut()
     }
 
     /// Move the cursor to the first line of `id`, when the document has it.
@@ -930,88 +801,6 @@ impl App {
             let line = mark.range().start();
             self.view_mut().goto_source_line(line);
         }
-    }
-
-    /// Scroll the panel text, stopping at the last row.
-    pub fn thread_scroll(&mut self, delta: isize) {
-        let Some(id) = self.thread_cursor().thread().cloned() else {
-            return;
-        };
-        let Some(panel) = self.panel_mut() else {
-            return;
-        };
-        let scroll = panel.scroll;
-        // The limit is the body as drawn, wrapped at the column's width,
-        // so a half page from the end moves at once (ADR 0034).
-        let body_rows = self.thread_rows().saturating_sub(2);
-        let width = self.width.saturating_sub(self.rail_width()).max(1);
-        let limit = self
-            .thread(&id)
-            .map_or(0, |thread| {
-                crate::app::draw::message::thread_body_rows(thread, width, &self.highlighter)
-            })
-            .saturating_sub(body_rows);
-        if let Some(panel) = self.panel_mut() {
-            panel.scroll = scroll.min(limit).saturating_add_signed(delta).min(limit);
-        }
-    }
-
-    /// `Ctrl-d` / `Ctrl-u` in the pane: scroll by half its body rows.
-    pub fn thread_scroll_half_page(&mut self, direction: isize) {
-        let half = isize::try_from(self.thread_rows().saturating_sub(2) / 2)
-            .unwrap_or(isize::MAX)
-            .max(1);
-        self.thread_scroll(direction.signum() * half);
-    }
-
-    pub(super) fn thread_message_into_view(&mut self) {
-        let cursor = self.thread_cursor();
-        let Some(id) = cursor.thread().cloned() else {
-            return;
-        };
-        let Some(panel) = self.thread.as_ref() else {
-            return;
-        };
-        let selected = cursor.message();
-        let scroll = panel.scroll;
-        let body_rows = self.thread_rows().saturating_sub(2).max(1);
-        let width = self.width.saturating_sub(self.rail_width()).max(1);
-        let Some(thread) = self.thread(&id) else {
-            return;
-        };
-        let total = crate::app::draw::message::thread_body_rows(thread, width, &self.highlighter);
-        let Some(range) = crate::app::draw::message::thread_message_range(
-            thread,
-            selected,
-            width,
-            &self.highlighter,
-        ) else {
-            return;
-        };
-        let limit = total.saturating_sub(body_rows);
-        let next = if range.start < scroll {
-            range.start
-        } else if range.end > scroll.saturating_add(body_rows) {
-            if range.len() > body_rows {
-                range.start
-            } else {
-                range.end.saturating_sub(body_rows)
-            }
-        } else {
-            scroll
-        };
-        if let Some(panel) = self.panel_mut() {
-            panel.scroll = next.min(limit);
-        }
-    }
-
-    /// `h` on the file's first thread: the keys go to the threads pane,
-    /// shown first if it was hidden (ADR 0034, ADR 0049).
-    pub fn thread_to_threads_pane(&mut self) {
-        if self.marks().is_empty() {
-            return;
-        }
-        self.focus_threads_pane();
     }
 
     pub(super) fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
@@ -1132,11 +921,10 @@ mod tests {
             None,
         )
         .map_err(anyhow::Error::msg)?;
-        app.open_thread(id.clone());
+        app.expand_thread(id.clone());
         app.thread_reply();
         type_in(&mut app, "user follow-up");
         app.compose_submit();
-        app.close_thread();
         app.view_mut().goto_bottom();
         app.start_comment();
         type_in(&mut app, "bottom");
@@ -1227,10 +1015,9 @@ mod tests {
         app.start_new_comment();
         assert!(app.popup().is_none());
         assert!(app.message().is_some_and(|m| m.contains("deleted")));
-        app.open_thread(id.clone());
+        app.expand_thread(id.clone());
         app.thread_reply();
         assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
-        app.close_thread();
 
         // Shown again while still gone: the file-info pane.
         app.open(Path::new("other.md"));
@@ -1305,7 +1092,7 @@ mod tests {
 
         // The user's reply acknowledges the edit.
         app.view_mut().move_down(3);
-        app.open_thread_at_cursor();
+        app.expand_at_cursor();
         app.thread_reply();
         type_in(&mut app, "still fine");
         app.compose_submit();
@@ -1324,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_panel_renders_header_snippet_badge_and_overflow() -> anyhow::Result<()> {
+    fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -1354,7 +1141,7 @@ mod tests {
             None,
         )
         .map_err(anyhow::Error::msg)?;
-        app.open_thread(id);
+        app.expand_thread(id);
 
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = crate::app::draw::Theme::from_core(&core);
@@ -1368,40 +1155,20 @@ mod tests {
                         .map(|x| buffer[(x, y)].symbol().to_owned())
                         .collect::<String>()
                 })
-                .skip_while(|row| !row.contains(" thread "))
                 .collect())
         };
         app.resize(80, 36);
-        // The pane opens at its end, under the END row (ADR 0034).
-        let panel = render(&app)?;
-        let screen = panel.join("\n");
+        // Every message shows, under a header with the state and the
+        // keys; there is no END row and nothing to scroll (ADR 0049).
+        let rows = render(&app)?;
+        let screen = rows.join("\n");
         assert!(
-            panel.iter().any(|row| row.contains("─── END ───")),
-            "end marker:\n{screen}"
+            rows.iter()
+                .any(|row| row.contains("auto-resolved") && row.contains("fold")),
+            "header carries the state and the keys:\n{screen}"
         );
         assert!(
-            !panel.iter().any(|row| row.contains("▼")),
-            "nothing below at the end:\n{screen}"
-        );
-        app.thread_scroll(-100);
-        assert_eq!(app.thread_panel().map(super::ThreadPane::scroll), Some(0));
-        let panel = render(&app)?;
-        let screen = panel.join("\n");
-        assert!(
-            panel[0].contains("thread 1/1 in file · 1/1 overall · L3-5 · auto-resolved"),
-            "header carries range and status:\n{screen}"
-        );
-        assert!(
-            !panel.iter().any(|row| row.contains("─── END ───")),
-            "the end is off screen at the top:\n{screen}"
-        );
-        assert!(
-            panel.iter().any(|row| row.contains("3 │ alpha")),
-            "snippet lines are numbered:\n{screen}"
-        );
-        assert!(
-            panel
-                .iter()
+            rows.iter()
                 .any(|row| row.contains("Copilot") && row.contains("[proposes resolving]")),
             "short author and badge share the row:\n{screen}"
         );
@@ -1410,27 +1177,22 @@ mod tests {
             "client id is not shown"
         );
         assert!(
-            panel
-                .iter()
-                .any(|row| row.contains("▼") && row.contains("more")),
-            "overflow indicator:\n{screen}"
+            rows.iter().any(|row| row.contains("line 12")),
+            "the whole reply shows:\n{screen}"
         );
-        for _ in 0..100 {
-            app.thread_scroll(1);
-        }
-        let Some(panel) = app.thread_panel() else {
-            anyhow::bail!("panel closed");
-        };
-        assert!(panel.scroll() < 40, "scroll clamps to the thread length");
+        assert!(
+            !screen.contains("─── END ───") && !rows.iter().any(|row| row.contains("▼")),
+            "no END row and no overflow:\n{screen}"
+        );
         Ok(())
     }
 
     #[test]
-    fn thread_panel_replies_resolves_and_reopens() -> anyhow::Result<()> {
+    fn an_expanded_thread_replies_resolves_and_reopens() -> anyhow::Result<()> {
         let dir = fixture("panel")?;
         let mut app = app(&dir)?;
-        app.open_thread_at_cursor();
-        assert_eq!(app.message(), Some("no thread on this line"));
+        app.thread_reply();
+        assert_eq!(app.message(), Some("no thread here"));
         app.start_comment();
         type_in(
             &mut app,
@@ -1442,37 +1204,34 @@ mod tests {
         app.compose_submit();
         assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(ThreadState::Open));
 
-        app.open_thread_at_cursor();
-        anyhow::ensure!(app.thread_panel().is_some(), "panel did not open");
+        app.expand_at_cursor();
+        anyhow::ensure!(app.shows_thread(), "the thread did not expand");
         let id = app.thread_cursor().thread().cloned().context("no cursor")?;
         assert_eq!(app.thread_position(), Some((1, 1)));
-        assert_eq!(app.focus(), Focus::Thread);
-        app.thread_scroll(-100);
+        assert_eq!(app.focus(), Focus::View);
         app.thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if c.target() == &ComposeTarget::Reply(id.clone()))
         );
         assert!(
-            app.thread_panel().is_some(),
+            app.shows_thread(),
             "the thread stays readable while replying"
         );
+        app.resize(100, 16);
         app.compose_scroll(2);
+        assert_eq!(app.view().scroll(), 2, "Alt-Down scrolls the text behind");
         app.compose_cancel();
         assert!(app.popup().is_none());
-        assert!(
-            app.thread_panel().is_some_and(|p| p.scroll() == 2),
-            "Esc returns to the pane"
-        );
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::View);
         app.thread_reply();
         type_in(&mut app, "second thoughts");
         app.compose_submit();
         assert!(app.popup().is_none());
         assert!(
-            app.thread_panel().is_some(),
-            "pane stays open after a reply"
+            app.shows_thread(),
+            "the thread stays expanded after a reply"
         );
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::View);
         let thread = app.thread(&id).cloned();
         assert_eq!(thread.as_ref().map(|t| t.replies().len()), Some(1));
 
@@ -1511,11 +1270,11 @@ mod tests {
             None,
         )
         .map_err(anyhow::Error::msg)?;
-        app.open_thread(id.clone());
+        app.goto_message(id.clone(), 1);
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
 
         assert_eq!(
-            app.thread_panel().map(|_| app.thread_cursor().message()),
+            Some(app.thread_cursor().message()),
             Some(1),
             "the newest message starts selected"
         );
@@ -1524,10 +1283,7 @@ mod tests {
         assert_eq!(app.message(), Some("only your messages can be edited"));
 
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(
-            app.thread_panel().map(|_| app.thread_cursor().message()),
-            Some(0)
-        );
+        assert_eq!(Some(app.thread_cursor().message()), Some(0));
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
         assert!(matches!(
             app.popup(),
@@ -1549,10 +1305,7 @@ mod tests {
         app.thread_reply();
         type_in(&mut app, "user follow-up");
         app.compose_submit();
-        assert_eq!(
-            app.thread_panel().map(|_| app.thread_cursor().message()),
-            Some(2)
-        );
+        assert_eq!(Some(app.thread_cursor().message()), Some(2));
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
         assert!(matches!(
             app.popup(),
@@ -1568,9 +1321,8 @@ mod tests {
         assert!(app.popup().is_none(), "an unchanged edit closes at once");
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
         assert_eq!(app.thread_cursor().message(), 1);
-        keys::handle_key(&mut app, key(KeyCode::Char('g')));
-        keys::handle_key(&mut app, key(KeyCode::Char('g')));
-        assert_eq!(app.thread_cursor().message(), 0, "gg is the comment");
+        keys::handle_key(&mut app, key(KeyCode::Char('k')));
+        assert_eq!(app.thread_cursor().message(), 0, "k reaches the comment");
         keys::handle_key(&mut app, key(KeyCode::Char('G')));
         assert_eq!(app.thread_cursor().message(), 2, "G is the newest");
         Ok(())
@@ -1719,7 +1471,7 @@ mod tests {
         app.thread_list_click(agent_row - app.thread_list().scroll());
         app.thread_open_in_file();
         assert_eq!(
-            app.thread_panel().map(|_| app.thread_cursor().message()),
+            Some(app.thread_cursor().message()),
             Some(1),
             "Enter carries the selected message into the pane"
         );
@@ -1730,7 +1482,6 @@ mod tests {
     fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-        use super::ThreadPane;
         use crate::app::Border;
 
         let mouse = |kind, column: usize, row: usize| MouseEvent {
@@ -1752,40 +1503,18 @@ mod tests {
             .join("\n");
         type_in(&mut app, &long);
         app.compose_submit();
-        app.open_thread_at_cursor();
-        assert_eq!(app.focus(), Focus::Thread);
-        let rows = app.pane_rows();
-        let top = rows - app.thread_rows();
-        assert_eq!(app.text_rows(), top, "the pane takes rows from the text");
-        app.thread_scroll(-100);
+        app.expand_at_cursor();
+        assert_eq!(app.focus(), Focus::View);
+        app.resize(100, 20);
 
-        // The wheel scrolls the pane under the pointer, focus aside.
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::ScrollDown, 20, top + 2),
-        );
-        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(3));
-        assert_eq!(app.view().scroll(), 0);
+        // The wheel scrolls the text under the pointer, focus aside.
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, 2));
+        assert_eq!(app.view().scroll(), 3);
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert_eq!(app.focus(), Focus::View, "a click on the text focuses it");
-        assert!(app.thread_panel().is_some(), "the pane stays open");
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::ScrollUp, 20, top + 2),
-        );
-        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(0));
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, top + 2));
-        assert_eq!(app.focus(), Focus::Thread, "a click on the pane focuses it");
-
-        // Dragging the rule resizes the pane.
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, top));
-        assert_eq!(app.dragging(), Some(Border::Thread));
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 20, top - 4));
-        assert_eq!(app.thread_rows(), rows - top + 4);
-        assert_eq!(app.text_rows(), top - 4);
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 20, top - 4));
-        assert_eq!(app.dragging(), None);
-        assert_eq!(app.view().selection(), None, "a border drag never selects");
+        assert!(app.shows_thread(), "the thread stays expanded");
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 20, 2));
+        assert_eq!(app.view().scroll(), 0);
 
         // Dragging the tree's divider resizes the tree.
         app.toggle_sidebar_focus();
@@ -1808,12 +1537,12 @@ mod tests {
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         app.thread_reply();
         assert!(matches!(app.popup(), Some(Popup::Compose(_))));
-        let top = rows - app.thread_rows();
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::ScrollDown, 20, top + 2),
+        crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, 2));
+        assert_eq!(
+            app.view().scroll(),
+            3,
+            "the wheel scrolls the text behind the box"
         );
-        assert_eq!(app.thread_panel().map(ThreadPane::scroll), Some(3));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
         assert!(
             matches!(app.popup(), Some(Popup::Compose(_))),
@@ -1832,17 +1561,17 @@ mod tests {
         assert_eq!(parts.pill, "NOR");
         assert_eq!(parts.badges, ["SRC"]);
         assert!(parts.right.contains("1 threads"), "{}", parts.right);
-        app.open_thread_at_cursor();
+        app.focus_threads_pane();
         let parts = crate::app::draw::status_parts(&app);
-        assert_eq!(parts.pill, "THREAD");
+        assert_eq!(parts.pill, "THREADS");
         assert_eq!(parts.badges, ["SRC"], "the badge outlives the focus change");
         Ok(())
     }
 
-    /// Esc leaves a pane where it is; the Space key that opened it
-    /// closes it (ADR 0010, amended 2026-09-03).
+    /// Esc leaves a pane where it is; its Space key focuses it or hands
+    /// the keys back, and the capital hides it (ADR 0010, ADR 0049).
     #[test]
-    fn esc_leaves_a_pane_and_its_space_key_closes_it() -> anyhow::Result<()> {
+    fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         use crate::app::input::keys;
@@ -1858,23 +1587,22 @@ mod tests {
             press(app, KeyCode::Char(ch));
         };
 
-        space(&mut app, 'a');
-        assert_eq!(app.focus(), Focus::Thread);
+        space(&mut app, 't');
+        assert_eq!(app.focus(), Focus::ThreadsPane);
         press(&mut app, KeyCode::Esc);
         assert_eq!(app.focus(), Focus::View);
-        assert!(app.thread_panel().is_some(), "Esc leaves the pane open");
-        space(&mut app, 'a');
+        assert!(app.threads_pane_shown(), "Esc leaves the pane open");
+        space(&mut app, 't');
         assert_eq!(
             app.focus(),
-            Focus::Thread,
-            "Space a returns to the open pane"
+            Focus::ThreadsPane,
+            "Space t returns to the pane"
         );
-        space(&mut app, 'a');
-        assert!(
-            app.thread_panel().is_none(),
-            "Space a on the focused pane closes it"
-        );
-        assert_eq!(app.focus(), Focus::View);
+        space(&mut app, 't');
+        assert_eq!(app.focus(), Focus::View, "Space t on the pane hands back");
+        assert!(app.threads_pane_shown());
+        space(&mut app, 'T');
+        assert!(!app.threads_pane_shown(), "Space T hides it");
 
         space(&mut app, 'A');
         assert!(app.thread_list().is_open());
@@ -1938,7 +1666,7 @@ mod tests {
         app.start_comment();
         type_in(&mut app, "top");
         app.compose_submit();
-        assert!(app.thread_panel().is_none());
+        assert!(!app.shows_thread());
 
         // `c` again on the row expands the thread in place rather than
         // opening a box (ADR 0049); `c` once more folds it.
@@ -1961,7 +1689,7 @@ mod tests {
         assert_eq!(app.thread_counts(), (3, 3));
 
         // The walk is by line, then store order, and moves the cursor.
-        app.open_thread_at_cursor();
+        app.expand_at_cursor();
         assert_eq!(app.thread_position(), Some((1, 3)));
         app.thread_step_in_file(1);
         assert_eq!(app.thread_position(), Some((2, 3)));
@@ -1995,7 +1723,7 @@ mod tests {
         // under the file; Enter jumps to the selected one and opens the pane.
         app.open_thread_list();
         assert_eq!(app.focus(), Focus::Threads);
-        assert!(app.thread_panel().is_none());
+        assert!(!app.shows_thread());
         let rows = app.thread_list_rows(60);
         assert_eq!(rows.entries.len(), 2);
         assert!(matches!(
@@ -2015,8 +1743,8 @@ mod tests {
         app.thread_list_step(1);
         app.thread_open_in_file();
         assert!(!app.thread_list().is_open());
-        assert_eq!(app.focus(), Focus::Thread);
-        assert!(app.thread_panel().is_some());
+        assert_eq!(app.focus(), Focus::View);
+        assert!(app.shows_thread());
         assert_eq!(app.view().cursor_source_line(), bottom);
 
         // `x` moves an entry to the resolved section; `f` narrows to the
@@ -2353,7 +2081,7 @@ mod tests {
         draw(&mut app, "text")?;
         app.show_sidebar();
         draw(&mut app, "sidebar")?;
-        app.open_thread(id);
+        app.expand_thread(id);
         draw(&mut app, "thread")?;
         app.thread_reply();
         type_in(&mut app, "a reply long enough to wrap more than once over");

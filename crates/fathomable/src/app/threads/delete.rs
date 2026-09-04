@@ -16,6 +16,7 @@ const ARMED: &str = "d again to delete this thread · any other key cancels";
 
 impl App {
     /// The thread a first `d` armed for deletion.
+    #[cfg(test)]
     pub fn delete_armed(&self) -> Option<&ThreadId> {
         self.pending_delete.as_ref()
     }
@@ -29,7 +30,7 @@ impl App {
     /// The first `d` on a thread surface: arm the cursor's thread.
     pub fn arm_delete_here(&mut self) {
         match self.focus() {
-            Focus::Thread | Focus::ThreadsPane | Focus::Threads => self.thread_arm_delete(),
+            Focus::ThreadsPane | Focus::Threads => self.thread_arm_delete(),
             // In the text, only a thread covering the cursor row is armed
             // (ADR 0049), never one further up the file.
             Focus::View if !self.threads_at_cursor().is_empty() => self.thread_arm_delete(),
@@ -60,9 +61,8 @@ impl App {
     }
 
     /// Delete `id`: a tombstone in the store, every document's marks
-    /// refreshed, and the thread pane moved on when it showed the thread.
+    /// refreshed, and its rows gone from the text.
     pub fn delete_thread(&mut self, id: &ThreadId) {
-        let order = self.file_threads();
         let place = self.thread_list_selected_index();
         let Some(store) = self.store_mut() else {
             return;
@@ -73,26 +73,15 @@ impl App {
         }
         tracing::info!(%id, "thread deleted");
         self.refresh_all_marks();
-        if self.thread.is_some() && self.thread_cursor.thread() == Some(id) {
-            let next = order
-                .iter()
-                .position(|other| other == id)
-                .and_then(|index| {
-                    order[index + 1..]
-                        .iter()
-                        .chain(&order[..index])
-                        .next()
-                        .cloned()
-                });
-            match next {
-                Some(next) => {
-                    // The surface that deleted keeps the keys.
-                    self.goto_thread(&next);
-                    self.open_thread_behind(next);
-                }
-                None => self.close_thread(),
-            }
+        // An expanded thread that is gone leaves its rows with it, and a
+        // cursor pinned on it rides the text again (ADR 0046).
+        self.expanded.remove(id);
+        self.cycle = None;
+        if self.thread_cursor.thread() == Some(id) {
+            self.thread_cursor = crate::app::threads::cursor::ThreadCursor::default();
+            self.thread_cursor_anchor = None;
         }
+        self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() == 0 {
             self.focus = Focus::View;
         }
@@ -160,11 +149,12 @@ mod tests {
         annotate(&mut app, 7, "seven");
         assert_eq!(app.marks().len(), 3);
 
-        // The thread pane: a cancel is swallowed, the second `d` deletes
-        // and the pane moves to the next thread in the file.
+        // The text: a cancel is swallowed, the second `d` deletes, and
+        // the cursor stays where it was with the next thread as its own.
+        app.focus_pane(Focus::View);
         app.view_mut().goto_source_line(3);
-        app.open_thread_at_cursor();
-        assert_eq!(app.focus(), Focus::Thread);
+        app.expand_at_cursor();
+        assert_eq!(app.focus(), Focus::View);
         press(&mut app, KeyCode::Char('d'));
         assert!(app.delete_armed().is_some());
         assert!(app.message().is_some_and(|m| m.starts_with("d again")));
@@ -176,11 +166,10 @@ mod tests {
         press(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 2);
         assert_eq!(app.thread_position(), Some((1, 2)));
-        assert_eq!(app.view().cursor_source_line(), Some(5));
+        assert_eq!(app.view().cursor_source_line(), Some(3));
         assert_eq!(app.message(), Some("deleted"));
 
         // The threads pane: `d d` on the highlight; a click cancels.
-        app.close_thread();
         app.focus_threads_pane();
         press(&mut app, KeyCode::Char('d'));
         crate::app::input::mouse::handle_mouse(
@@ -208,7 +197,6 @@ mod tests {
         assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
 
         // The thread list: the entry under the selection goes.
-        app.close_thread();
         app.open_thread_list();
         assert_eq!(app.focus(), Focus::Threads);
         press(&mut app, KeyCode::Char('d'));
@@ -224,14 +212,14 @@ mod tests {
     }
 
     #[test]
-    fn deleting_the_last_thread_closes_the_pane() -> anyhow::Result<()> {
+    fn deleting_the_last_thread_leaves_the_text_clean() -> anyhow::Result<()> {
         let dir = fixture("last")?;
         let mut app = app(&dir)?;
         annotate(&mut app, 3, "only");
-        app.open_thread_at_cursor();
+        app.expand_at_cursor();
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('d'));
-        assert!(app.thread_panel().is_none());
+        assert!(!app.shows_thread());
         assert_eq!(app.focus(), Focus::View);
         Ok(())
     }

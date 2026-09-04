@@ -223,6 +223,10 @@ mod tests {
             .map(|row| app.note_on_row(row).map_or(" ", |(glyph, _)| glyph))
             .collect();
         assert_eq!(glyphs.trim_end(), "  ╭│││╰", "{glyphs:?}");
+        // The thread the cursor is on tints its rows (ADR 0049); elsewhere
+        // nothing is tinted.
+        assert!(app.open_thread_on_row(2));
+        app.view_mut().goto_source_line(1);
         assert!(!app.open_thread_on_row(2));
         Ok(())
     }

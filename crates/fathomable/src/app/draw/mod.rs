@@ -21,19 +21,17 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::info::Info;
-use crate::app::draw::message::{expanded_lines, thread_body_lines, thread_body_rows};
+use crate::app::draw::message::expanded_lines;
 use crate::app::threads::list::{Row, Rows};
 use crate::app::threads::stubs::Stub;
 use crate::app::threads::words::{Words, label};
-use crate::app::threads::{Compose, ComposeTarget, ThreadPane, ThreadState};
+use crate::app::threads::{Compose, ComposeTarget, ThreadState};
 use crate::app::view::{Mode, View};
 
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::input::keys::place;
 use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
 
-/// Snippet lines quoted at the top of the thread panel.
-pub(super) const SNIPPET_ROWS: usize = 3;
 /// Ratatui styles for the chrome and Markdown faces.
 ///
 /// Built from a resolved [`fathomable_core::theme::Theme`] (ADR 0011) so the
@@ -212,17 +210,8 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     // The comment box grows up from the status line, pushing the thread
     // pane up so a reply is written under the thread it answers.
     let box_rows = app.compose_rows().min(usize::from(column.height));
-    let thread_rows = u16_of(app.thread_rows()).min(column.height.saturating_sub(u16_of(box_rows)));
     let text_area = Rect {
-        height: column
-            .height
-            .saturating_sub(thread_rows)
-            .saturating_sub(u16_of(box_rows)),
-        ..column
-    };
-    let thread_area = Rect {
-        y: text_area.y + text_area.height,
-        height: thread_rows,
+        height: column.height.saturating_sub(u16_of(box_rows)),
         ..column
     };
     let status_area = Rect {
@@ -234,9 +223,6 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     draw_rail(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
-    if let Some(panel) = app.thread_panel() {
-        draw_thread(frame, app, theme, thread_area, panel);
-    }
     frame.render_widget(
         status_line(app, theme, usize::from(area.width)),
         status_area,
@@ -1225,7 +1211,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
     let pill = match app.focus() {
         Focus::Sidebar => "TREE",
-        Focus::Thread => "THREAD",
         Focus::Threads => "LIST",
         Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
@@ -1527,13 +1512,11 @@ fn draw_compose(
             ),
             format!("{} newline", key(Action::Newline)),
         ];
-        if app.thread_panel().is_some() && !matches!(compose.target(), ComposeTarget::Edit { .. }) {
-            parts.push(format!(
-                "{}/{} thread",
-                key(Action::ScrollUp),
-                key(Action::ScrollDown)
-            ));
-        }
+        parts.push(format!(
+            "{}/{} scroll",
+            key(Action::ScrollUp),
+            key(Action::ScrollDown)
+        ));
         parts.push(format!("{} $EDITOR", key(Action::EditDraft)));
         parts.push(key(Action::Escape));
         parts.join(" · ")
@@ -1775,141 +1758,6 @@ fn list_selection_line<'a>(
     } else {
         Line::from(spans)
     }
-}
-
-fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPane) {
-    let cursor = app.thread_cursor();
-    let Some(thread) = cursor.thread().and_then(|id| app.thread(id)) else {
-        return;
-    };
-    let rows = usize::from(area.height);
-    if rows < 3 {
-        return;
-    }
-    let width = usize::from(area.width);
-    let now = crate::app::threads::now();
-    let mark = app.marks().iter().find(|m| m.id() == thread.id());
-    let (index, total) = app.thread_position().unwrap_or((1, 1));
-    let (across, overall) = app.thread_position_across().unwrap_or((1, 1));
-    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-    let range = mark.map_or_else(|| thread.range(), crate::app::threads::Mark::range);
-    // Both counts (ADR 0046): the file's, then the workspace's.
-    let mut left = vec![
-        Span::styled(format!(" thread {index}/{total} "), theme.popup_key),
-        Span::styled("in file", theme.info.add_modifier(Modifier::DIM)),
-        Span::styled(format!(" · {across}/{overall} "), theme.info),
-        Span::styled("overall", theme.info.add_modifier(Modifier::DIM)),
-        Span::styled(format!(" · L{range} · "), theme.info),
-    ];
-    // Placement first, then state, so a detached thread still says
-    // whether it waits or was resolved (ADR 0032).
-    if let Some(placement) = words.placement() {
-        left.push(Span::styled(placement, mark_style(theme, words.state())));
-        left.push(Span::styled(" · ", theme.info));
-    }
-    left.push(Span::styled(
-        label(words.state()),
-        mark_style(theme, words.state()),
-    ));
-    let watchers = app.watchers_of(thread.id());
-    if !watchers.is_empty() {
-        left.push(Span::styled(
-            format!(" · watched by {}", watchers.join(", ")),
-            theme.info,
-        ));
-    }
-    let body = thread_body_lines(
-        theme,
-        app.highlighter(),
-        thread,
-        range.start(),
-        now,
-        width,
-        cursor.message(),
-    );
-    debug_assert_eq!(
-        body.len(),
-        thread_body_rows(thread, width, app.highlighter())
-    );
-    let body_rows = rows - 2;
-    let hints = thread_hints(
-        app,
-        words,
-        total,
-        thread.replies().len() + 1,
-        body.len(),
-        body_rows,
-    );
-    let hints: Vec<Hint<'_>> = hints.iter().map(|(k, l)| (k.as_str(), *l)).collect();
-    let mut lines = vec![
-        rule_line(theme, width),
-        header_line(theme, left, &hints, width),
-    ];
-    let scroll = panel.scroll().min(body.len().saturating_sub(body_rows));
-    let below = body.len().saturating_sub(scroll + body_rows);
-    let shown = if below > 0 { body_rows - 1 } else { body_rows };
-    lines.extend(body.into_iter().skip(scroll).take(shown));
-    if below > 0 {
-        // The last body row becomes the indicator, so it hides one more.
-        lines.push(Line::from(Span::styled(
-            format!(" ▼ {} more", below + 1),
-            theme.info,
-        )));
-    }
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.text), area);
-}
-
-/// The keys that do something in the thread pane right now, most useful
-/// first so a narrow pane keeps the ones that matter (ADR 0007).
-fn thread_hints(
-    app: &App,
-    words: Words,
-    total: usize,
-    messages: usize,
-    body_len: usize,
-    body_rows: usize,
-) -> Vec<(String, &'static str)> {
-    if app.focus() != Focus::Thread {
-        return vec![(String::new(), "click or Space a to focus")];
-    }
-    if app.delete_armed().is_some() {
-        return vec![("d".to_owned(), "delete"), ("other".to_owned(), "cancels")];
-    }
-    let key = |action| key_of(Where::ThreadPane, action);
-    let mut hints = vec![(key(Action::Reply), "reply")];
-    if app.thread_message_editable() {
-        hints.push((key(Action::EditMessage), "edit"));
-    }
-    hints.push((
-        key(Action::ToggleResolved),
-        if words.is_resolved() {
-            "reopen"
-        } else {
-            "resolve"
-        },
-    ));
-    hints.push((key(Action::Delete), "delete"));
-    if total > 1 {
-        hints.push((
-            pair(Where::ThreadPane, Action::ThreadPrev, Action::ThreadNext),
-            "threads",
-        ));
-    }
-    if messages > 1 {
-        hints.push((
-            pair(Where::ThreadPane, Action::MoveDown, Action::MoveUp),
-            "messages",
-        ));
-    }
-    if body_len > body_rows {
-        hints.push((
-            pair(Where::ThreadPane, Action::ScrollUp, Action::ScrollDown),
-            "scroll",
-        ));
-    }
-    hints.push((key(Action::Escape), "text"));
-    hints
 }
 
 /// How `action` is spelled on `place`, for a hint; a binding the table

@@ -86,14 +86,14 @@ impl App {
 
     fn step_waiting(&mut self, forward: bool) {
         // First the current document, beyond the cursor — or beyond the
-        // thread whose pane is open, since a rendered row can hold
+        // expanded thread the cursor is on, since a rendered row can hold
         // several source lines and the cursor alone cannot tell them
         // apart.
         let here = self.waiting_marks_here();
+        // On an expanded thread's rows, step beyond that thread.
         let shown = self
-            .thread_panel()
-            .and(self.thread_cursor().thread())
-            .and_then(|shown| here.iter().position(|(_, id)| id == shown));
+            .expanded_row_message(self.view().cursor().row)
+            .and_then(|(shown, _)| here.iter().position(|(_, id)| *id == shown));
         let next_here = match (shown, forward) {
             (Some(at), true) => here.get(at + 1),
             (Some(at), false) => at.checked_sub(1).and_then(|at| here.get(at)),
@@ -170,8 +170,12 @@ impl App {
         marks
     }
 
+    /// `]r` lands on a thread expanded, since reading the reply is its
+    /// point (ADR 0049).
     fn land_on(&mut self, id: &ThreadId) {
-        self.show_thread(id.clone());
+        self.goto_thread(id);
+        let newest = self.newest_message(id);
+        self.goto_message(id.clone(), newest);
     }
 }
 
@@ -234,9 +238,12 @@ mod tests {
         Ok(())
     }
 
-    /// The first line of the thread whose pane is open.
+    /// The first line of the thread the cursor is on, when it is
+    /// expanded.
     fn open_line(app: &App) -> Option<usize> {
-        app.thread_panel()?;
+        if !app.shows_thread() {
+            return None;
+        }
         let cursor = app.thread_cursor();
         Some(app.thread(cursor.thread()?)?.range().start())
     }
@@ -264,46 +271,47 @@ mod tests {
         assert_eq!(open_line(&app), Some(3));
         assert_eq!(app.thread_position(), Some((1, 2)));
         assert_eq!(app.thread_position_across(), Some((1, 3)));
-        // In the file, `l` wraps within README.
-        press(&mut app, KeyCode::Char('l'));
-        press(&mut app, KeyCode::Char('l'));
-        assert_eq!(app.current_path(), Path::new("README.md"));
-        assert_eq!(open_line(&app), Some(3));
-        assert_eq!(app.message(), Some("wrapped to first thread"));
-
-        // Across the workspace, `L` crosses into notes.md and wraps back.
-        press(&mut app, KeyCode::Char('L'));
-        press(&mut app, KeyCode::Char('L'));
-        assert_eq!(app.current_path(), Path::new("notes.md"));
-        assert_eq!(open_line(&app), Some(4));
-        assert_eq!(app.thread_position(), Some((1, 1)));
-        assert_eq!(app.thread_position_across(), Some((3, 3)));
-        press(&mut app, KeyCode::Char('L'));
-        assert_eq!(app.current_path(), Path::new("README.md"));
-        assert_eq!(app.thread_position_across(), Some((1, 3)));
-        press(&mut app, KeyCode::Char('H'));
-        assert_eq!(app.current_path(), Path::new("notes.md"));
-
-        // `h` on the file's only thread hops to the threads pane.
-        press(&mut app, KeyCode::Char('h'));
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        assert_eq!(app.current_path(), Path::new("notes.md"));
-
-        // From the text with the pane closed, `]C` and `[C` step from the
-        // cursor line and open the other file without opening the pane.
-        // README's lines 3-5 render as one paragraph row, so the cursor
-        // thread, not the cursor line, says which thread was reached.
         let cursor_line = |app: &App| {
             let cursor = app.thread_cursor();
             app.thread(cursor.thread()?).map(|t| t.range().start())
         };
-        app.close_thread();
+        // In the file, `]c` wraps within README.
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('c'));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('c'));
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(cursor_line(&app), Some(3));
+        assert_eq!(app.message(), Some("wrapped to first thread"));
+
+        // Across the workspace, `]C` crosses into notes.md and wraps back.
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+        assert_eq!(cursor_line(&app), Some(4));
+        assert_eq!(app.thread_position(), Some((1, 1)));
+        assert_eq!(app.thread_position_across(), Some((3, 3)));
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.thread_position_across(), Some((1, 3)));
+        press(&mut app, KeyCode::Char('['));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+
+        // From the text, `]C` and `[C` step from the cursor line and open
+        // the other file without expanding anything. README's lines 3-5
+        // render as one paragraph row, so the cursor thread, not the
+        // cursor line, says which thread was reached.
         app.open(Path::new("README.md"));
+        app.toggle_expand_all();
         app.view_mut().goto_source_line(1);
         press(&mut app, KeyCode::Char(']'));
         press(&mut app, KeyCode::Char('C'));
         assert_eq!(cursor_line(&app), Some(3));
-        assert!(app.thread_panel().is_none(), "`]C` does not open the pane");
+        assert!(!app.shows_thread(), "`]C` does not expand");
         press(&mut app, KeyCode::Char(']'));
         press(&mut app, KeyCode::Char('C'));
         assert_eq!(
@@ -351,12 +359,12 @@ mod tests {
         assert!(app.path_waits(Path::new("notes.md")));
         assert!(!app.path_waits(Path::new("other.md")));
 
-        // ]r lands on README:5 and opens the pane; again crosses into
-        // notes.md; a third wraps back with a notice.
+        // ]r lands on README:5 expanded; again crosses into notes.md; a
+        // third wraps back with a notice.
         app.waiting_next();
         assert_eq!(app.current_path(), Path::new("README.md"));
         assert_eq!(open_line(&app), Some(5));
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::View);
         app.waiting_next();
         assert_eq!(app.current_path(), Path::new("notes.md"));
         assert_eq!(open_line(&app), Some(4));

@@ -32,7 +32,6 @@ struct Place {
 enum Aside {
     Compose,
     List,
-    Thread,
     Diff,
     Selecting,
 }
@@ -44,8 +43,6 @@ impl App {
             Some(Aside::Compose)
         } else if self.list.is_open() {
             Some(Aside::List)
-        } else if self.thread.is_some() {
-            Some(Aside::Thread)
         } else if view.diff_view() {
             Some(Aside::Diff)
         } else if view.selection().is_some() || view.mode() == view::Mode::Select {
@@ -104,7 +101,7 @@ impl App {
     }
 
     fn auto_jump_allowed(&self) -> bool {
-        if self.popup.is_some() || self.thread.is_some() || self.list.is_open() {
+        if self.popup.is_some() || self.list.is_open() {
             return false;
         }
         let Some(index) = self.current else {

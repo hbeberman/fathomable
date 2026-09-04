@@ -188,12 +188,11 @@ impl App {
             self.store_mut();
             return;
         }
-        // The cursor the pane or the text was on becomes the list's.
+        // The cursor the text was on becomes the list's.
         let cursor = self.thread_cursor();
         if let Some(id) = cursor.thread().cloned() {
             self.set_thread_cursor_message(id, cursor.message());
         }
-        self.thread = None;
         self.list.open = true;
         self.focus = Focus::Threads;
         let rows = self.thread_list_rows(self.column_width());

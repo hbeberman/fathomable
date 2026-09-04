@@ -10,7 +10,7 @@ use crate::app::view::Effect;
 
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
-/// tree's divider or the thread pane's rule drags that border.
+/// rail's divider or the threads pane's rule drags that border.
 pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     app.with_navigation_watch(|app| mouse_event(app, event))
 }
@@ -91,10 +91,8 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let column = usize::from(event.column);
     let rows = app.pane_rows();
     let sidebar = app.rail_width();
-    // The box sits under the thread pane and pushes it up (ADR 0013).
     let box_rows = app.compose_rows();
     let box_top = rows.saturating_sub(box_rows);
-    let thread_top = box_top.saturating_sub(app.thread_rows());
     if app.dragging().is_some() {
         match event.kind {
             MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
@@ -106,10 +104,6 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if event.kind == MouseEventKind::Down(MouseButton::Left) && row < rows {
         if sidebar > 0 && column + 1 == sidebar {
             app.begin_drag(Border::Sidebar);
-            return Effect::None;
-        }
-        if app.thread_rows() > 0 && column >= sidebar && row == thread_top {
-            app.begin_drag(Border::Thread);
             return Effect::None;
         }
         if box_rows > 0 && column >= sidebar && row == box_top {
@@ -126,15 +120,6 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     if column < sidebar {
         sidebar_mouse(app, event.kind, row);
-        return Effect::None;
-    }
-    if row >= thread_top && row < box_top {
-        match event.kind {
-            MouseEventKind::ScrollDown => app.thread_scroll(WHEEL_LINES),
-            MouseEventKind::ScrollUp => app.thread_scroll(-WHEEL_LINES),
-            MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Thread),
-            _ => {}
-        }
         return Effect::None;
     }
     if app.thread_list().is_open() {

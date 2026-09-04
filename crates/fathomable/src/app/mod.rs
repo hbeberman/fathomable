@@ -50,7 +50,7 @@ use fathomable_core::{Document, XdgDirs};
 use input::bindings::Chord;
 
 pub use threads::cursor::ThreadCursor;
-pub use threads::{Compose, Mark, ThreadPane};
+pub use threads::{Compose, Mark};
 use view::{HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
@@ -78,8 +78,6 @@ const SIDEBAR_MIN_WIDTH: usize = 8;
 /// Fewest text columns a drag leaves the view.
 const TEXT_MIN_WIDTH: usize = 20;
 
-/// Shortest the thread pane can be dragged: rule, header, one body row.
-const THREAD_MIN_ROWS: usize = 3;
 /// Most rows the comment box grows to on its own before it scrolls.
 const COMPOSE_MAX_ROWS: usize = 8;
 /// Rule, header, and one line of text.
@@ -93,8 +91,6 @@ const SIDEBAR_SCROLLOFF: usize = 2;
 pub enum Focus {
     View,
     Sidebar,
-    /// The thread pane (ADR 0013).
-    Thread,
     /// The thread list (ADR 0025).
     Threads,
     /// The rail's threads pane (ADR 0027, ADR 0049).
@@ -106,8 +102,6 @@ pub enum Focus {
 pub enum Border {
     /// The rule between the tree and the text.
     Sidebar,
-    /// The rule along the top of the thread pane.
-    Thread,
     /// The rule along the top of the comment box (ADR 0018).
     Compose,
     /// The rule along the top of the threads pane (ADR 0027).
@@ -245,8 +239,6 @@ pub struct App {
     sidebar_scroll: usize,
     /// Tree width once dragged; the default follows the terminal.
     sidebar_cols: Option<usize>,
-    /// The thread pane along the bottom of the text (ADR 0013).
-    thread: Option<ThreadPane>,
     /// The thread and message the thread surfaces show; authoritative
     /// while the pane or the list is open, or the text cursor rests
     /// where `thread_cursor_anchor` says it was set (ADR 0046).
@@ -256,8 +248,6 @@ pub struct App {
     thread_cursor_anchor: Option<(Option<usize>, usize)>,
     /// The thread list shown in place of the document (ADR 0025).
     list: ThreadList,
-    /// Thread pane height once dragged; the default follows the terminal.
-    thread_rows: Option<usize>,
     /// File-threads pane height once dragged; the default follows its
     /// Comment box height once dragged; the default follows its text.
     compose_rows: Option<usize>,
@@ -352,11 +342,9 @@ impl App {
             review: threads::list::ReviewState::default(),
             sidebar_scroll: 0,
             sidebar_cols: None,
-            thread: None,
             thread_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
             list: ThreadList::default(),
-            thread_rows: None,
             compose_rows: None,
             drag: None,
             focus: Focus::View,
@@ -455,15 +443,6 @@ impl App {
                 self.refresh_reach();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
-                }
-                if let Some(id) = self.pane_thread().cloned() {
-                    // Deleted elsewhere (ADR 0034): the pane has nothing
-                    // to show.
-                    if self.thread(&id).is_some() {
-                        self.open_thread(id);
-                    } else {
-                        self.close_thread();
-                    }
                 }
             }
             Err(error) => tracing::warn!(%error, "cannot reload the thread store"),
@@ -1152,7 +1131,6 @@ impl App {
         let present = match focus {
             Focus::View => true,
             Focus::Sidebar => self.tree().is_some(),
-            Focus::Thread => self.thread.is_some(),
             Focus::Threads => self.list.is_open(),
             Focus::ThreadsPane => self.threads_pane_height() > 0,
         };
@@ -1164,11 +1142,6 @@ impl App {
     /// Whether a document is open, rather than the welcome screen.
     pub fn has_document(&self) -> bool {
         self.current.is_some()
-    }
-
-    /// The open thread pane.
-    pub fn thread_panel(&self) -> Option<&ThreadPane> {
-        self.thread.as_ref()
     }
 
     /// The border a drag is moving, while the button is down.
@@ -1186,13 +1159,6 @@ impl App {
     pub fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
             Some(Border::Sidebar) => self.sidebar_cols = Some(column + 1),
-            Some(Border::Thread) => {
-                self.thread_rows = Some(
-                    self.pane_rows()
-                        .saturating_sub(self.compose_rows())
-                        .saturating_sub(row),
-                );
-            }
             Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
             Some(Border::ThreadsPane) => self.drag_threads_pane_to(row),
             None => return,
@@ -1310,18 +1276,6 @@ impl App {
         self.height.saturating_sub(1).max(1)
     }
 
-    /// Rows the thread pane takes along the bottom, 0 when closed.
-    pub fn thread_rows(&self) -> usize {
-        if self.thread.is_none() {
-            return 0;
-        }
-        let rows = self.pane_rows();
-        let tallest = rows.saturating_sub(1);
-        self.thread_rows
-            .unwrap_or_else(|| (rows / 3).max(6))
-            .clamp(THREAD_MIN_ROWS.min(tallest), tallest)
-    }
-
     /// Rows the comment box takes along the bottom, 0 when closed: its
     /// wrapped text plus the rule and header, capped, unless its rule was
     /// dragged (ADR 0018).
@@ -1385,7 +1339,6 @@ impl App {
     /// Rows left to the text once the thread pane is taken.
     pub fn text_rows(&self) -> usize {
         self.pane_rows()
-            .saturating_sub(self.thread_rows())
             .saturating_sub(usize::from(self.banner().is_some()))
             .max(1)
     }

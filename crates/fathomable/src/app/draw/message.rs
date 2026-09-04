@@ -1,18 +1,18 @@
 // @okf-doc: /decisions/0037-markdown-in-threads.md
-//! Thread-pane messages rendered as Markdown (ADR 0037).
+//! Thread messages rendered as Markdown (ADR 0037), in the rows of an
+//! expanded thread (ADR 0049).
 //!
 //! A comment or reply body goes through the same renderer as a Markdown
-//! file, wrapped to the pane's width less the message indent, with fenced
-//! code coloured by its language. The row count the pane scrolls by is
+//! file, wrapped to the text width less the message indent, with fenced
+//! code coloured by its language. The row count the view lays out is
 //! taken from the same rendering, so the two cannot disagree.
 
 use fathomable_core::annotations::Thread;
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, display_width};
-use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::{SNIPPET_ROWS, Theme, face_style, fit, format_age};
+use crate::app::draw::{Theme, face_style, format_age};
 
 /// Cells a message body sits in from the pane's left edge.
 const MESSAGE_INDENT: usize = 3;
@@ -23,76 +23,6 @@ struct Message<'a> {
     created: u64,
     body: &'a str,
     badge: Option<&'a str>,
-}
-
-/// The pane's body for `thread`, whose snippet starts at source line
-/// `first`: the quoted snippet, a blank, the comment, each reply after a
-/// blank, and the END row of ADR 0034.
-pub(crate) fn thread_body_lines<'a>(
-    theme: &Theme,
-    highlighter: &Highlighter,
-    thread: &Thread,
-    first: usize,
-    now: u64,
-    width: usize,
-    selected: usize,
-) -> Vec<Line<'a>> {
-    let inner = width.saturating_sub(2);
-    let mut body: Vec<Line<'_>> = Vec::new();
-    let snippet: Vec<&str> = thread.snippet().lines().collect();
-    let number_width = (first + snippet.len()).to_string().len();
-    for (offset, line) in snippet.iter().take(SNIPPET_ROWS).enumerate() {
-        body.push(Line::from(Span::styled(
-            fit(
-                &format!(" {:>number_width$} │ {line}", first + offset),
-                width,
-            ),
-            theme.info,
-        )));
-    }
-    if snippet.len() > SNIPPET_ROWS {
-        body.push(Line::from(Span::styled(
-            format!(" {:>number_width$} │ …", ""),
-            theme.info,
-        )));
-    }
-    body.push(Line::from(""));
-    let comment = Message {
-        author: "user",
-        created: thread.created(),
-        body: thread.comment(),
-        badge: None,
-    };
-    body.extend(message_lines(
-        theme,
-        highlighter,
-        &comment,
-        now,
-        inner,
-        selected == 0,
-    ));
-    for (index, reply) in thread.replies().iter().enumerate() {
-        body.push(Line::from(""));
-        let message = Message {
-            author: reply.author().name(),
-            created: reply.created(),
-            body: reply.body(),
-            badge: reply.proposes_resolution().then_some("proposes resolving"),
-        };
-        body.extend(message_lines(
-            theme,
-            highlighter,
-            &message,
-            now,
-            inner,
-            selected == index + 1,
-        ));
-    }
-    body.push(Line::from(Span::styled(
-        " ─── END ───",
-        theme.info.add_modifier(Modifier::DIM),
-    )));
-    body
 }
 
 /// A message: author, age and an optional badge on one row, the body
@@ -209,48 +139,6 @@ pub(crate) fn expanded_rows(
     (total, stops)
 }
 
-/// Rows the pane's body takes for `thread` at `width`: snippet, blank,
-/// comment, each reply after a blank, and the END row.
-pub(crate) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &Highlighter) -> usize {
-    let inner = width.saturating_sub(2);
-    let snippet = thread.snippet().lines().count();
-    let snippet_rows = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS);
-    let message_rows = |body: &str| 1 + body_layout(body, inner, highlighter).lines().len();
-    let replies: usize = thread
-        .replies()
-        .iter()
-        .map(|reply| 1 + message_rows(reply.body()))
-        .sum();
-    snippet_rows + 1 + message_rows(thread.comment()) + replies + 1
-}
-
-/// The body rows occupied by message `selected`, zero for the comment.
-pub(crate) fn thread_message_range(
-    thread: &Thread,
-    selected: usize,
-    width: usize,
-    highlighter: &Highlighter,
-) -> Option<std::ops::Range<usize>> {
-    let inner = width.saturating_sub(2);
-    let snippet = thread.snippet().lines().count();
-    let mut start = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS) + 1;
-    let rows = |body: &str| 1 + body_layout(body, inner, highlighter).lines().len();
-    let comment_rows = rows(thread.comment());
-    if selected == 0 {
-        return Some(start..start + comment_rows);
-    }
-    start += comment_rows;
-    for (index, reply) in thread.replies().iter().enumerate() {
-        start += 1;
-        let reply_rows = rows(reply.body());
-        if selected == index + 1 {
-            return Some(start..start + reply_rows);
-        }
-        start += reply_rows;
-    }
-    None
-}
-
 /// The body laid out as Markdown in the cells left of `width` after the
 /// indent, a newline kept as a line break, fenced code coloured by
 /// `highlighter`.
@@ -264,6 +152,8 @@ fn body_layout(body: &str, width: usize, highlighter: &Highlighter) -> Layout {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::style::Modifier;
+
     use super::*;
 
     fn theme() -> anyhow::Result<Theme> {

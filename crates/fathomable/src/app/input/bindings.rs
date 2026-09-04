@@ -169,8 +169,6 @@ pub enum Where {
     View,
     /// The file tree.
     Tree,
-    /// The thread pane under the text.
-    ThreadPane,
     /// The rail's threads pane.
     ThreadsPane,
     /// The workspace thread list.
@@ -181,7 +179,7 @@ pub enum Where {
     Picker,
     /// The `:` and `/` input line.
     Input,
-    /// Every pane: the view, the tree, and the three thread surfaces.
+    /// Every pane: the view, the tree, and the two thread surfaces.
     Any,
 }
 
@@ -260,7 +258,6 @@ actions! {
     PickFile,
     PickAnyFile,
     PickRecent,
-    ThreadAtCursor,
     ThreadList,
     ThreadsPaneFocus,
     ThreadsPaneHide,
@@ -650,13 +647,6 @@ pub const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('a')]],
-        A::ThreadAtCursor,
-        "Space menu",
-        "thread pane: open on the thread here, or close",
-    ),
-    bind(
-        W::Any,
         &[&[c(' '), c('A')]],
         A::ThreadList,
         "Space menu",
@@ -873,112 +863,6 @@ pub const BINDINGS: &[Binding] = &[
         A::Escape,
         "Tree",
         "back to the text",
-    ),
-    // ----- the thread pane -----
-    bind(
-        W::ThreadPane,
-        &[&[c('j')], &[k(K::Down)]],
-        A::MoveDown,
-        "Thread pane",
-        "next message",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('k')], &[k(K::Up)]],
-        A::MoveUp,
-        "Thread pane",
-        "previous message",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('l')], &[k(K::Right)]],
-        A::ThreadNext,
-        "Thread pane",
-        "next thread in the file",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('h')], &[k(K::Left)]],
-        A::ThreadPrev,
-        "Thread pane",
-        "previous thread in the file; on the first, the threads pane",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('L')]],
-        A::ThreadNextAcross,
-        "Thread pane",
-        "next thread across the workspace",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('H')]],
-        A::ThreadPrevAcross,
-        "Thread pane",
-        "previous thread across the workspace",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('g'), c('g')]],
-        A::Top,
-        "Thread pane",
-        "first message",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('g'), c('e')], &[c('G')]],
-        A::Bottom,
-        "Thread pane",
-        "last message",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[ctrl('d')]],
-        A::HalfPageDown,
-        "Thread pane",
-        "scroll half the pane down",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[ctrl('u')]],
-        A::HalfPageUp,
-        "Thread pane",
-        "scroll half the pane up",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('r')]],
-        A::Reply,
-        "Thread pane",
-        "reply",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('e')]],
-        A::EditMessage,
-        "Thread pane",
-        "edit your message",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('o')]],
-        A::ToggleResolved,
-        "Thread pane",
-        "resolve or reopen",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[c('d'), c('d')]],
-        A::Delete,
-        "Thread pane",
-        "delete the thread",
-    ),
-    bind(
-        W::ThreadPane,
-        &[&[k(K::Esc)]],
-        A::Escape,
-        "Thread pane",
-        "back to the text; the pane stays",
     ),
     // ----- the threads pane -----
     bind(
@@ -1479,13 +1363,7 @@ mod tests {
         spell,
     };
 
-    const PANES: [Where; 5] = [
-        Where::View,
-        Where::Tree,
-        Where::ThreadPane,
-        Where::ThreadsPane,
-        Where::List,
-    ];
+    const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::List];
 
     /// An action nobody can press is dead code the table would hide.
     #[test]
@@ -1505,7 +1383,6 @@ mod tests {
         let places = [
             Where::View,
             Where::Tree,
-            Where::ThreadPane,
             Where::ThreadsPane,
             Where::List,
             Where::Box,

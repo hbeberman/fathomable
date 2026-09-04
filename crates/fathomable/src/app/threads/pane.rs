@@ -334,6 +334,19 @@ impl App {
         }
     }
 
+    /// Enter: open the file with the cursor's thread expanded and the
+    /// keys going to the text (ADR 0049).
+    pub fn threads_pane_open(&mut self) {
+        let Some(id) = self.thread_cursor().thread().cloned() else {
+            return;
+        };
+        if self.land_on_thread(id.clone()) {
+            let newest = self.newest_message(&id);
+            self.goto_message(id, newest);
+            self.focus = Focus::View;
+        }
+    }
+
     /// The pane's rule was dragged to screen row `row`.
     pub(crate) fn drag_threads_pane_to(&mut self, row: usize) {
         self.rail.split = Some(self.pane_rows().saturating_sub(row));
@@ -401,7 +414,6 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
-        app.close_thread();
     }
 
     fn press(app: &mut App, keys: &str) {
@@ -477,7 +489,6 @@ mod tests {
         app.thread_reply();
         app.compose_insert("answered");
         app.compose_submit();
-        app.close_thread();
         assert_eq!(app.threads_pane_rows()[0].summary(), "answered");
         assert_eq!(app.threads_pane_rows()[0].replies(), 1);
 
@@ -523,12 +534,11 @@ mod tests {
         assert_eq!(app.current_path(), Path::new("README.md"), "wrapped");
         assert_eq!(app.focus(), Focus::ThreadsPane);
 
-        // Enter opens the thread pane on the highlight; `r` replies in
-        // place with the keys staying here.
+        // Enter opens the thread expanded with the keys in the text; `r`
+        // replies in place with the keys staying here.
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::Thread);
-        assert!(app.thread_panel().is_some());
-        app.close_thread();
+        assert_eq!(app.focus(), Focus::View);
+        assert!(app.shows_thread());
         app.focus_threads_pane();
         press(&mut app, "r");
         assert!(
@@ -646,11 +656,12 @@ mod tests {
         app.view_mut().goto_source_line(1);
         assert_eq!(app.thread_cursor().thread(), Some(&ids[0]));
 
-        // The thread pane: `l` steps, the threads pane's highlight follows.
+        // The text: `]c` steps, the threads pane's highlight follows.
+        app.focus_pane(Focus::View);
         app.view_mut().goto_source_line(2);
-        app.open_thread_at_cursor();
-        assert_eq!(app.focus(), Focus::Thread);
-        press(&mut app, "l");
+        app.expand_at_cursor();
+        assert_eq!(app.focus(), Focus::View);
+        press(&mut app, "]c");
         assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
         assert_eq!(app.threads_pane_selected(), Some(1));
         assert_eq!(app.thread_position(), Some((2, 3)));
@@ -669,29 +680,22 @@ mod tests {
         press(&mut app, "h");
         assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
 
-        // Enter carries it into the pane; the text lands on its line.
+        // Enter expands it in the text; the cursor lands on its line.
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::View);
         assert_eq!(app.thread_position(), Some((2, 3)));
         assert_eq!(app.view().cursor_source_line(), Some(6));
 
-        // Closed again, the cursor stays until the reader moves.
-        app.close_thread();
+        // The cursor stays until the reader moves.
         assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
         app.view_mut().goto_source_line(7);
         assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
 
-        // `h` on the file's first thread, in the thread pane, hops here.
-        app.view_mut().goto_source_line(2);
-        app.open_thread_at_cursor();
-        press(&mut app, "h");
-        assert_eq!(app.focus(), Focus::ThreadsPane);
+        // Esc in the threads pane leaves; the pane stays.
+        app.focus_threads_pane();
         app.leave_threads_pane();
         assert_eq!(app.focus(), Focus::View);
-        assert!(
-            app.thread_panel().is_some(),
-            "Esc leaves, it does not close"
-        );
+        assert!(app.threads_pane_shown(), "Esc leaves, it does not hide");
         Ok(())
     }
 
@@ -708,7 +712,6 @@ mod tests {
         app.start_comment();
         app.compose_insert("long");
         app.compose_submit();
-        app.close_thread();
         annotate(&mut app, 4, "short");
         assert_eq!(app.threads_pane_rows().len(), 2);
         assert_eq!(app.threads_pane_rows()[1].range().start(), 4);

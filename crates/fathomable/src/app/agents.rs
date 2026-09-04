@@ -198,7 +198,7 @@ mod tests {
             .unwrap_or_default();
         assert!(row.contains("bot (coder) s-1"), "{row}");
         app.open("a.md".as_ref());
-        app.open_thread(id.clone());
+        app.expand_thread(id.clone());
         assert_eq!(app.watchers_of(&id), ["bot (coder)"]);
         app.wake();
         assert!(app.message().is_some_and(|m| m.contains("agents.wake")));

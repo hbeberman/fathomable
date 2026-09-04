@@ -137,8 +137,11 @@ impl App {
             .marks()
             .iter()
             .filter(|mark| {
+                // A resolved thread has no stub unless asked for, but an
+                // expanded one always has its rows.
                 self.stubs.resolved
                     || matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting)
+                    || self.expanded.contains(mark.id())
             })
             .collect();
         marks.sort_by_key(|mark| (mark.range().start(), mark.range().end(), mark.id().clone()));
@@ -220,6 +223,7 @@ impl App {
     /// Expand `id` in place, the view staying where it is, and put the
     /// cursor on its newest message.
     pub fn expand_thread(&mut self, id: ThreadId) {
+        self.refresh_watchers();
         self.expanded.insert(id.clone());
         self.place_stub_rows();
         let newest = self.newest_message(&id);
@@ -294,6 +298,22 @@ impl App {
         self.place_stub_rows();
     }
 
+    /// Expand the thread cursor's thread, as `c` does on a fresh row.
+    #[cfg(test)]
+    pub fn expand_at_cursor(&mut self) {
+        if let Some(id) = self.thread_cursor().thread().cloned() {
+            self.expand_thread(id);
+        }
+    }
+
+    /// Whether the thread cursor's thread is expanded in place.
+    #[cfg(test)]
+    pub fn shows_thread(&self) -> bool {
+        self.thread_cursor()
+            .thread()
+            .is_some_and(|id| self.is_expanded(id))
+    }
+
     /// `Space c c`: draw stubs, or not, for the session.
     pub fn toggle_stubs(&mut self) {
         self.stubs.shown = !self.stubs.shown;
@@ -365,7 +385,6 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
-        app.close_thread();
     }
 
     fn press(app: &mut App, keys: &str) {

@@ -165,9 +165,8 @@ mod tests {
         let dir = fixture("keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
-        app.show_thread(id.clone());
+        app.goto_thread(&id);
         assert_eq!(app.view().cursor().row, 2);
-        app.close_thread();
         assert_eq!(app.threads_at_cursor().len(), 1);
         app.start_new_comment();
         assert!(app.popup().is_none());

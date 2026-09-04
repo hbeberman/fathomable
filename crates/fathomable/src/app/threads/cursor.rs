@@ -24,8 +24,8 @@ use std::path::PathBuf;
 
 use fathomable_core::annotations::{MessageTarget, ThreadId};
 
+use crate::app::App;
 use crate::app::threads::{ComposeTarget, message_target};
-use crate::app::{App, Focus};
 
 /// A thread and a message in it: zero for the opening comment, then the
 /// replies in order.
@@ -67,9 +67,8 @@ impl ThreadCursor {
 
 impl App {
     /// The cursor as every thread surface shows it: the stored one while
-    /// the thread pane or the list is open or the text cursor has not
-    /// moved since it was set, else the thread under the text cursor at
-    /// its newest message.
+    /// the list is open or the text cursor has not moved since it was
+    /// set, else the thread under the text cursor at its newest message.
     #[must_use]
     pub fn thread_cursor(&self) -> ThreadCursor {
         if self.cursor_is_stored() {
@@ -79,13 +78,11 @@ impl App {
         }
     }
 
-    /// Whether the stored cursor is authoritative: a thread surface that
-    /// keeps its own place is open, or the text cursor still rests where
-    /// the last thread motion left it.
+    /// Whether the stored cursor is authoritative: the list keeps its own
+    /// place, or the text cursor still rests where the last thread motion
+    /// left it.
     fn cursor_is_stored(&self) -> bool {
-        self.thread.is_some()
-            || self.list.is_open()
-            || self.thread_cursor_anchor == Some(self.text_anchor())
+        self.list.is_open() || self.thread_cursor_anchor == Some(self.text_anchor())
     }
 
     /// Where the text cursor is, for telling a rest from a move.
@@ -97,11 +94,6 @@ impl App {
     fn pin_thread_cursor(&mut self, cursor: ThreadCursor) {
         self.thread_cursor = cursor;
         self.thread_cursor_anchor = Some(self.text_anchor());
-    }
-
-    /// The thread the open pane shows: the cursor's, while there is a pane.
-    pub(crate) fn pane_thread(&self) -> Option<&ThreadId> {
-        self.thread.as_ref().and(self.thread_cursor.thread())
     }
 
     /// The thread the text cursor is at: among the threads on its row,
@@ -265,22 +257,14 @@ impl App {
         }
     }
 
-    /// Whether the cursor is on the first thread of the file, where `h`
-    /// in the pane hops to the threads pane instead of wrapping.
-    pub(crate) fn cursor_on_first_in_file(&self) -> bool {
-        let order = self.file_threads();
-        self.anchor_in(&order) == Ok(0)
-    }
-
     /// Go to `id`: its file opened when it is elsewhere, the text cursor
-    /// on its first line, the cursor on it, and the pane showing it when
-    /// the pane is open. A deleted file is reported instead.
+    /// on its first line, and the cursor on it. A deleted file is
+    /// reported instead.
     pub(crate) fn land_on_thread(&mut self, id: ThreadId) -> bool {
         let Some(path) = self.thread(&id).map(|thread| thread.path().to_path_buf()) else {
             return false;
         };
-        // Showing another file hands the keys to the text; a pane that
-        // was open keeps them where they were.
+        // Showing another file keeps the keys where they were.
         let focus = self.focus;
         if path != self.current_path() {
             if !self.workspace.root().join(&path).is_file() {
@@ -291,11 +275,8 @@ impl App {
             self.open(&path);
         }
         self.goto_thread(&id);
-        self.set_thread_cursor(id.clone());
-        if self.thread.is_some() {
-            self.open_thread(id);
-            self.focus = focus;
-        }
+        self.set_thread_cursor(id);
+        self.focus = focus;
         true
     }
 
@@ -311,21 +292,6 @@ impl App {
         self.go_to_message(message);
     }
 
-    /// `gg` in the pane: the opening comment.
-    pub fn message_first(&mut self) {
-        if self.cursor_message_count() > 0 {
-            self.go_to_message(0);
-        }
-    }
-
-    /// `ge` / `G` in the pane: the newest message.
-    pub fn message_last(&mut self) {
-        let count = self.cursor_message_count();
-        if count > 0 {
-            self.go_to_message(count - 1);
-        }
-    }
-
     fn go_to_message(&mut self, message: usize) {
         if let Some(id) = self.thread_cursor().thread().cloned() {
             self.set_thread_cursor_message(id, message);
@@ -336,9 +302,6 @@ impl App {
     /// Keep the highlighted message on screen in whichever surface shows
     /// it.
     pub(crate) fn follow_cursor_message(&mut self) {
-        if self.thread.is_some() {
-            self.thread_message_into_view();
-        }
         if self.list.is_open() {
             self.thread_list_follow_cursor();
         }
@@ -417,8 +380,9 @@ impl App {
         }
     }
 
-    /// Enter in the list: open the file and the pane on the highlighted
-    /// message, the list closing as the document takes the column.
+    /// Enter in the list: open the file with the thread expanded and the
+    /// cursor on the highlighted message (ADR 0049), the list closing as
+    /// the document takes the column.
     pub fn thread_open_in_file(&mut self) {
         let cursor = self.thread_cursor();
         let Some(id) = cursor.thread().cloned() else {
@@ -426,24 +390,7 @@ impl App {
         };
         self.close_thread_list();
         if self.land_on_thread(id.clone()) {
-            self.open_thread(id.clone());
-            self.set_thread_cursor_message(id, cursor.message());
-            self.thread_message_into_view();
+            self.goto_message(id, cursor.message());
         }
-    }
-
-    /// Enter or `l` in the threads pane: the pane on the cursor's
-    /// thread takes the keys.
-    pub fn focus_thread_pane(&mut self) {
-        if let Some(id) = self.thread_cursor().thread().cloned() {
-            self.show_thread(id);
-            self.focus = Focus::Thread;
-        }
-    }
-
-    /// Jump to `id` in the open document and open the pane on it.
-    pub(crate) fn show_thread(&mut self, id: ThreadId) {
-        self.goto_thread(&id);
-        self.open_thread(id);
     }
 }

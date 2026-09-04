@@ -39,7 +39,6 @@ pub fn place(app: &App) -> Option<Where> {
             }
             Focus::View => Where::View,
             Focus::Sidebar => Where::Tree,
-            Focus::Thread => Where::ThreadPane,
             Focus::Threads => Where::List,
             Focus::ThreadsPane => Where::ThreadsPane,
         }),
@@ -176,7 +175,6 @@ impl App {
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
-            Action::ThreadAtCursor => self.toggle_thread_pane(),
             Action::ThreadList => self.toggle_thread_list(),
             Action::ThreadsPaneFocus => self.toggle_threads_pane(),
             Action::ThreadsPaneHide => self.hide_threads_pane(),
@@ -213,7 +211,6 @@ impl App {
                 return match place {
                     Where::View => self.act_view(action),
                     Where::Tree => self.act_tree(action),
-                    Where::ThreadPane => self.act_thread_pane(action),
                     Where::ThreadsPane => self.act_threads_pane(action),
                     Where::List => self.act_list(action),
                     Where::Box => self.act_box(action),
@@ -325,33 +322,6 @@ impl App {
         Effect::None
     }
 
-    /// Keys while the thread pane has focus (ADR 0013); the thread and
-    /// message keys move the one cursor (ADR 0046).
-    fn act_thread_pane(&mut self, action: Action) -> Effect {
-        match action {
-            Action::Escape => self.leave_thread_pane(),
-            Action::MoveDown => self.message_step(1),
-            Action::MoveUp => self.message_step(-1),
-            // `h` on the file's first thread hops to the threads pane,
-            // as `h` at column 0 hops to the tree.
-            Action::ThreadPrev if self.cursor_on_first_in_file() => {
-                self.thread_to_threads_pane();
-            }
-            Action::ThreadPrev => self.thread_step_in_file(-1),
-            Action::ThreadNext => self.thread_step_in_file(1),
-            Action::ThreadPrevAcross => self.thread_step_across(-1),
-            Action::ThreadNextAcross => self.thread_step_across(1),
-            Action::Top => self.message_first(),
-            Action::Bottom => self.message_last(),
-            Action::HalfPageDown => self.thread_scroll_half_page(1),
-            Action::HalfPageUp => self.thread_scroll_half_page(-1),
-            Action::ScrollUp => self.thread_scroll(-WHEEL_LINES),
-            Action::ScrollDown => self.thread_scroll(WHEEL_LINES),
-            _ => return self.act_on_cursor(action),
-        }
-        Effect::None
-    }
-
     /// Keys in the threads pane (ADR 0027, `d` per ADR 0034, scope and
     /// resolved toggles per ADR 0049).
     fn act_threads_pane(&mut self, action: Action) -> Effect {
@@ -359,7 +329,7 @@ impl App {
             Action::Escape => self.leave_threads_pane(),
             Action::MoveDown => self.threads_pane_move(1),
             Action::MoveUp => self.threads_pane_move(-1),
-            Action::Confirm => self.focus_thread_pane(),
+            Action::Confirm => self.threads_pane_open(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
             Action::PaneResolved => self.threads_pane_toggle_resolved(),
             _ => return self.act_on_cursor(action),
@@ -559,7 +529,6 @@ mod tests {
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
         // A reply still opens the thread pane (ADR 0046) until stubs
         // replace it; close it to keep acting from the text.
-        app.close_thread();
         assert_eq!(app.focus(), Focus::View);
 
         press(&mut app, " ce");
@@ -641,7 +610,6 @@ mod tests {
         annotate(&mut app, 1, "guide");
         app.open(Path::new("README.md"));
         app.view_mut().goto_source_line(5);
-        app.close_thread();
 
         press(&mut app, "]C");
         assert_eq!(here(&app), ("docs/guide.md".to_owned(), Some(1)));

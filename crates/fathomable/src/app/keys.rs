@@ -529,3 +529,73 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     Effect::None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{HELP, SPACE_MENU};
+
+    /// What the key handlers above must mention for one help token to be
+    /// honest: the `KeyCode` variants, or the characters, it is made of.
+    fn needed(token: &str) -> Vec<String> {
+        let named = |name: &str| match name {
+            "PgUp" => "KeyCode::PageUp".to_owned(),
+            "PgDn" => "KeyCode::PageDown".to_owned(),
+            "Space" => "KeyCode::Char(' ')".to_owned(),
+            _ => format!("KeyCode::{name}"),
+        };
+        let bare = token
+            .strip_prefix("Ctrl-")
+            .or_else(|| token.strip_prefix("Alt-"))
+            .unwrap_or(token);
+        if bare.chars().count() > 1 && bare.chars().next().is_some_and(char::is_uppercase) {
+            return vec![named(bare)];
+        }
+        bare.chars().map(|ch| format!("Char({ch:?})")).collect()
+    }
+
+    /// Every key the help popup lists is a key the handlers match, so the
+    /// table cannot name a binding that does not exist.
+    #[test]
+    fn help_names_only_keys_the_handlers_match() {
+        let source = include_str!("keys.rs");
+        let contexts = [
+            "thread",
+            "file",
+            "list",
+            "comment",
+            "tree",
+            "picker",
+            "mouse",
+            "drag",
+            "(selected)",
+            "/",
+            "NAME",
+            "on|off",
+            "seen",
+        ];
+        for (keys, _) in HELP {
+            // `Space x` and `Space x / Y` are menu entries, not handler arms.
+            if let Some(menu) = keys.strip_prefix("Space ") {
+                for entry in menu.split(" / ") {
+                    let ch = entry.chars().next().unwrap_or_default();
+                    assert!(
+                        SPACE_MENU.iter().any(|(key, _)| *key == ch),
+                        "help lists `{keys}` but the Space menu has no `{ch}`"
+                    );
+                }
+                continue;
+            }
+            for token in keys.split(' ') {
+                if token.starts_with(':') || contexts.contains(&token) {
+                    continue;
+                }
+                for need in needed(token) {
+                    assert!(
+                        source.contains(&need),
+                        "help lists `{token}` in `{keys}` but keys.rs never matches {need}"
+                    );
+                }
+            }
+        }
+    }
+}

@@ -248,9 +248,10 @@ impl Toast {
 }
 
 /// Every binding, for `Space ?`.
-pub const HELP: [(&str, &str); 45] = [
+pub const HELP: &[(&str, &str)] = &[
     ("j / k", "move down / up"),
     ("h / l", "move left / right"),
+    ("0 / $ Home End", "line start / end"),
     ("gg / ge G", "top / bottom"),
     ("Ctrl-d / Ctrl-u", "half page down / up"),
     ("/ ?", "search forward / backward"),
@@ -265,11 +266,6 @@ pub const HELP: [(&str, &str); 45] = [
     ("C", "always start a new thread"),
     ("Space a", "read thread at cursor"),
     ("Space A", "list every thread on this work"),
-    ("list j k gg ge G Enter", "move, jump, open the thread"),
-    (
-        "list r x z Z f",
-        "reply, resolve, fold, fold resolved, file only",
-    ),
     ("]c / [c", "next / previous thread"),
     (
         "]r / [r",
@@ -281,16 +277,42 @@ pub const HELP: [(&str, &str); 45] = [
         "wake a subscribed agent with its pending threads",
     ),
     (
-        "file j k Enter r x",
-        "next / previous thread, open, reply, resolve",
+        "thread h l j k Tab",
+        "previous / next thread, previous / next message, local / global",
     ),
     (
-        "thread r x n p j k",
-        "reply, resolve, next / previous in file, scroll",
+        "thread r e x d d",
+        "reply, edit your message, resolve or reopen, delete",
+    ),
+    (
+        "thread PgUp PgDn Left Esc",
+        "scroll, back to the file-threads pane, close",
+    ),
+    (
+        "file j k l Enter r x d d",
+        "previous / next thread, focus the thread pane, reply, resolve, delete",
+    ),
+    (
+        "list h l j k gg ge G",
+        "previous / next thread, previous / next message, first / last",
+    ),
+    (
+        "list Ctrl-d Ctrl-u PgUp PgDn Enter",
+        "half a page of threads, open the file on the thread",
+    ),
+    (
+        "list r e x d d z Z f",
+        "reply, edit, resolve or reopen, delete, fold, fold resolved, file only",
     ),
     (
         "comment Enter",
         "submit; Ctrl-Enter or Alt-Enter adds a newline",
+    ),
+    ("comment Ctrl-c", "clear the draft; empty closes"),
+    ("comment Ctrl-e", "edit the draft in $EDITOR"),
+    (
+        "comment PgUp PgDn Alt-Up Alt-Down",
+        "scroll the thread above",
     ),
     ("gs / :source", "toggle source view"),
     ("gd / :diff", "toggle the diff against HEAD"),
@@ -299,7 +321,7 @@ pub const HELP: [(&str, &str); 45] = [
     ("]G / [G", "next / previous uncommitted file"),
     ("]f / [f", "next / previous changed file"),
     ("Space j", "follow: jump, auto, clear"),
-    (":follow", "toggle auto-jump"),
+    (":follow on|off", "toggle or set auto-jump"),
     (":status", "viewer, paths, follow state"),
     (":name NAME", "name this viewer for agents"),
     ("[o / ]o", "previous / next opened file"),

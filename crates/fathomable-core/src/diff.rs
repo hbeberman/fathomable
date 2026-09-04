@@ -6,7 +6,7 @@
 //! working-tree text using Myers' algorithm in linear space. The result
 //! answers the two questions the viewer asks: which status the gutter bar
 //! shows for a line of the new text ([`Diff::status`]), and what a unified
-//! diff view lists ([`Diff::unified`]). Hunk starts drive `]c` / `[c`.
+//! diff view lists ([`Diff::unified`]). Hunk starts drive `]g` / `[g`.
 //!
 //! # Examples
 //!

@@ -1459,6 +1459,7 @@ impl ServerHandler for Server {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_testing::TempDir;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1495,28 +1496,16 @@ mod tests {
         assert!(bind(&sessions, Path::new("/tmp")).is_none());
     }
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir =
-                std::env::temp_dir().join(format!("fathomable-mcp-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::create_dir_all(dir.join("state"))?;
-            Ok(Self(dir))
-        }
-
-        fn dirs(&self) -> XdgDirs {
-            let state = self.0.join("state").into_os_string();
-            XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("mcp-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::create_dir_all(dir.0.join("state"))?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn dirs(dir: &TempDir) -> XdgDirs {
+        let state = dir.0.join("state").into_os_string();
+        XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
     }
 
     /// With no viewer, an agent still reads the store and its reply lands
@@ -1527,7 +1516,7 @@ mod tests {
     /// legal entry; `.` segments and the root itself drop out.
     #[test]
     fn paths_are_checked_against_the_workspace() -> std::io::Result<()> {
-        let dir = TempDir::new("paths")?;
+        let dir = fixture("paths")?;
         let root = dir.0.join("ws");
         fs::create_dir_all(root.join("src/deep"))?;
         fs::write(root.join("src/jokes.rs"), "")?;
@@ -1584,9 +1573,9 @@ mod tests {
     /// ids are checked against the store first.
     #[test]
     fn watches_name_only_stored_threads() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = TempDir::new("watch")?;
+        let dir = fixture("watch")?;
         let root = dir.0.join("ws");
-        let dirs = dir.dirs();
+        let dirs = dirs(&dir);
         let id = Store::open(dirs.threads_file(&root))?.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
             "one\n",
@@ -1603,8 +1592,8 @@ mod tests {
 
     #[test]
     fn headless_reads_and_answers_the_store() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = TempDir::new("headless")?;
-        let dirs = dir.dirs();
+        let dir = fixture("headless")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\ntwo\n")?;
         let id = Store::open(dirs.threads_file(&root))?.annotate(
@@ -1663,8 +1652,8 @@ mod tests {
     /// covered. A connection that never subscribed is left alone.
     #[test]
     fn a_second_follow_updates_the_subscription_paths() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = TempDir::new("refollow")?;
-        let dirs = dir.dirs();
+        let dir = fixture("refollow")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\n")?;
         fs::write(root.join("b.md"), "one\n")?;

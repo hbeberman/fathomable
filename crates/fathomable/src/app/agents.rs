@@ -134,7 +134,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::XdgDirs;
     use fathomable_core::agents::{Register, WatchWhen};
@@ -144,31 +144,20 @@ mod tests {
 
     use crate::app::threads::now;
     use crate::app::{App, Options, PickerKind, Popup};
+    use fathomable_testing::TempDir;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir =
-                std::env::temp_dir().join(format!("fathomable-wake-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::create_dir_all(dir.join("state"))?;
-            Ok(Self(dir))
-        }
-
-        fn dirs(&self) -> XdgDirs {
-            let state = self.0.join("state").into_os_string();
-            XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("wake-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::create_dir_all(dir.0.join("state"))?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn dirs(dir: &TempDir) -> XdgDirs {
+        let state = dir.0.join("state").into_os_string();
+        XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
     }
 
     /// The status row and the thread header read the register; `Space w`
@@ -176,8 +165,8 @@ mod tests {
     /// offers a picker for several.
     #[test]
     fn subscribers_show_up_and_space_w_picks_one() -> TestResult {
-        let dir = TempDir::new("status")?;
-        let dirs = dir.dirs();
+        let dir = fixture("status")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\n")?;
         let mut store = Store::open(dirs.threads_file(&root))?;

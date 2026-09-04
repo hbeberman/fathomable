@@ -57,49 +57,36 @@ pub(crate) fn follow_reply_lines(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::annotations::{Author, LineRange, Store};
     use fathomable_core::session::{Request, Response};
     use fathomable_core::workspace::Workspace;
 
     use crate::app::{App, Options};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir().join(format!(
-                "fathomable-open-thread-{name}-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(
-                dir.join("ws/README.md"),
-                "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-            )?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, 100, 30, options);
-            app.open(Path::new("README.md"));
-            app.view_mut().toggle_source_view();
-            Ok(app)
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("open-thread-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        app.view_mut().toggle_source_view();
+        Ok(app)
     }
 
     fn line(n: usize) -> LineRange {
@@ -108,8 +95,8 @@ mod tests {
 
     #[test]
     fn the_open_threads_lines_are_marked_unless_detached() -> anyhow::Result<()> {
-        let dir = TempDir::new("marked")?;
-        let mut app = dir.app()?;
+        let dir = fixture("marked")?;
+        let mut app = app(&dir)?;
         app.view_mut().goto_source_line(3);
         app.view_mut().select_lines();
         app.view_mut().move_down(1);
@@ -137,8 +124,8 @@ mod tests {
 
     #[test]
     fn an_agent_reply_with_lines_moves_the_thread() -> anyhow::Result<()> {
-        let dir = TempDir::new("reply")?;
-        let mut app = dir.app()?;
+        let dir = fixture("reply")?;
+        let mut app = app(&dir)?;
         app.view_mut().goto_source_line(3);
         app.start_new_comment();
         app.compose_insert("expand this");

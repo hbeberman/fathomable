@@ -770,7 +770,7 @@ pub(crate) fn gather<'a>(
 mod tests {
     use std::error::Error;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::XdgDirs;
     use fathomable_core::agents::Register;
@@ -784,39 +784,28 @@ mod tests {
         Diag, Event, Harness, Input, Occasion, compose, hello_text, prefix_warning, workspace_for,
     };
     use crate::app::threads::now;
+    use fathomable_testing::TempDir;
 
     type TestResult = Result<(), Box<dyn Error>>;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-hooks-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws/src"))?;
-            fs::create_dir_all(dir.join("state"))?;
-            Ok(Self(dir))
-        }
-
-        fn dirs(&self) -> XdgDirs {
-            let state = self.0.join("state").into_os_string();
-            XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("hooks-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws/src"))?;
+        fs::create_dir_all(dir.0.join("state"))?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn dirs(dir: &TempDir) -> XdgDirs {
+        let state = dir.0.join("state").into_os_string();
+        XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
     }
 
     /// A subscribed session is handed a thread once; the next check is
     /// silent until someone else speaks; an unsubscribed one hears nothing.
     #[test]
     fn pending_delivers_each_message_once() -> TestResult {
-        let dir = TempDir::new("once")?;
-        let dirs = dir.dirs();
+        let dir = fixture("once")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         Marker::new(root.clone()).write(&dirs)?;
         assert_eq!(workspace_for(&dirs, &root.join("src")), Some(root.clone()));
@@ -873,8 +862,8 @@ mod tests {
     /// `threads_pending` — so the rest must still be deliverable there.
     #[test]
     fn overflow_threads_survive_for_threads_pending() -> TestResult {
-        let dir = TempDir::new("overflow")?;
-        let dirs = dir.dirs();
+        let dir = fixture("overflow")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         Marker::new(root.clone()).write(&dirs)?;
         let mut store = Store::open(dirs.threads_file(&root))?;
@@ -931,8 +920,8 @@ mod tests {
     /// no turn ever refused to answer.
     #[test]
     fn context_does_not_count_toward_the_nag() -> TestResult {
-        let dir = TempDir::new("resume")?;
-        let dirs = dir.dirs();
+        let dir = fixture("resume")?;
+        let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         Marker::new(root.clone()).write(&dirs)?;
         let mut store = Store::open(dirs.threads_file(&root))?;

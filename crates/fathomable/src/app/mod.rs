@@ -1893,6 +1893,7 @@ impl Options {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_testing::{TempDir, git};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1901,30 +1902,18 @@ mod tests {
     use fathomable_core::config::{JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig};
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::tree::Tree;
-    use fathomable_core::workspace::{Workspace, WorkspaceError, open_options};
+    use fathomable_core::workspace::{Workspace, WorkspaceError};
 
     use super::input::bindings::Action;
     use super::{App, Focus, Options, PickerKind, Popup};
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir =
-                std::env::temp_dir().join(format!("fathomable-app-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("docs"))?;
-            fs::write(dir.join("README.md"), "# Readme\n\nhello\n")?;
-            fs::write(dir.join("docs/guide.md"), "# Guide\n")?;
-            fs::write(dir.join("docs/notes.md"), "# Notes\n")?;
-            Ok(Self(dir))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("app-{name}"))?;
+        fs::create_dir_all(dir.0.join("docs"))?;
+        fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n")?;
+        fs::write(dir.0.join("docs/guide.md"), "# Guide\n")?;
+        fs::write(dir.0.join("docs/notes.md"), "# Notes\n")?;
+        Ok(dir)
     }
 
     fn app(dir: &TempDir) -> Result<App, WorkspaceError> {
@@ -1949,7 +1938,7 @@ mod tests {
 
     #[test]
     fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result<()> {
-        let dir = TempDir::new("syntax")?;
+        let dir = fixture("syntax")?;
         fs::write(dir.0.join("main.rs"), "fn main() {}\n")?;
         fs::write(dir.0.join("LICENSE"), "# Terms\n")?;
         fs::write(dir.0.join("justfile"), "default:\n    make help\n")?;
@@ -2001,7 +1990,7 @@ mod tests {
 
     #[test]
     fn opening_files_builds_history_and_recent_list() -> anyhow::Result<()> {
-        let dir = TempDir::new("history")?;
+        let dir = fixture("history")?;
         let mut app = app(&dir)?;
         assert_eq!(app.current_path(), Path::new(""));
         app.open(Path::new("README.md"));
@@ -2030,14 +2019,9 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let dir = TempDir::new("narrow")?;
-        gix::ThreadSafeRepository::init_opts(
-            &dir.0,
-            gix::create::Kind::WithWorktree,
-            gix::create::Options::default(),
-            open_options(),
-        )?;
-        commit_and_stage(
+        let dir = fixture("narrow")?;
+        git::init(&dir.0)?;
+        git::commit_and_stage(
             &dir.0,
             &[
                 ("README.md", "# Readme\n"),
@@ -2090,7 +2074,7 @@ mod tests {
 
     #[test]
     fn sidebar_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
-        let dir = TempDir::new("sidebar")?;
+        let dir = fixture("sidebar")?;
         let mut app = app(&dir)?;
         assert_eq!(app.sidebar_width(), 0);
         app.open(Path::new("docs/notes.md"));
@@ -2115,7 +2099,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         use super::{Tree, input::keys};
-        let dir = TempDir::new("ge")?;
+        let dir = fixture("ge")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
         let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
@@ -2154,7 +2138,7 @@ mod tests {
 
     #[test]
     fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
-        let dir = TempDir::new("wrap")?;
+        let dir = fixture("wrap")?;
         let long = "abcdefghijklmnopqrstuvwxyz".repeat(8);
         fs::write(dir.0.join("long.md"), format!("```\n{long}\n```\n"))?;
         let mut app = app(&dir)?;
@@ -2188,7 +2172,7 @@ mod tests {
         };
 
         use super::input::keys;
-        let dir = TempDir::new("paging")?;
+        let dir = fixture("paging")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
         app.toggle_sidebar_focus();
@@ -2248,7 +2232,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         use super::input::keys;
-        let dir = TempDir::new("left")?;
+        let dir = fixture("left")?;
         let mut app = app(&dir)?;
         app.open(Path::new("docs/notes.md"));
         let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
@@ -2274,7 +2258,7 @@ mod tests {
 
     #[test]
     fn picker_filters_and_opens() -> anyhow::Result<()> {
-        let dir = TempDir::new("picker")?;
+        let dir = fixture("picker")?;
         let mut app = app(&dir)?;
         app.act(Action::PickFile);
         assert_eq!(picker_items(&app).len(), 3);
@@ -2291,7 +2275,7 @@ mod tests {
 
     #[test]
     fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
-        let dir = TempDir::new("touch")?;
+        let dir = fixture("touch")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
         app.open(Path::new("docs/guide.md"));
@@ -2311,14 +2295,9 @@ mod tests {
         use fathomable_core::annotations::{Draft, LineRange, Store};
         use fathomable_core::session::{Request, Response};
 
-        let dir = TempDir::new("scope")?;
-        gix::ThreadSafeRepository::init_opts(
-            &dir.0,
-            gix::create::Kind::WithWorktree,
-            gix::create::Options::default(),
-            open_options(),
-        )?;
-        commit_and_stage(&dir.0, &[("README.md", "# Readme\n\nhello\n")])?;
+        let dir = fixture("scope")?;
+        git::init(&dir.0)?;
+        git::commit_and_stage(&dir.0, &[("README.md", "# Readme\n\nhello\n")])?;
         let workspace = Workspace::discover(&dir.0)?;
         let head = workspace
             .head_commit()
@@ -2389,15 +2368,10 @@ mod tests {
     fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
         use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
 
-        let dir = TempDir::new("rescope")?;
-        gix::ThreadSafeRepository::init_opts(
-            &dir.0,
-            gix::create::Kind::WithWorktree,
-            gix::create::Options::default(),
-            open_options(),
-        )?;
+        let dir = fixture("rescope")?;
+        git::init(&dir.0)?;
         let text = "# Readme\n\nhello\n";
-        commit_and_stage(&dir.0, &[("README.md", text)])?;
+        git::commit_and_stage(&dir.0, &[("README.md", text)])?;
         fs::write(dir.0.join("README.md"), text)?;
         let workspace = Workspace::discover(&dir.0)?;
         let first = workspace
@@ -2426,7 +2400,7 @@ mod tests {
 
         // Amend: an orphan commit with the third line dropped.
         let amended = "# Readme\n\n";
-        amend(&dir.0, &[("README.md", amended)])?;
+        git::amend(&dir.0, &[("README.md", amended)])?;
         changed(&mut app, &dir, "README.md", amended)?;
         app.on_changes(vec![dir.0.join(".git/HEAD")]);
         let second = app
@@ -2453,95 +2427,10 @@ mod tests {
         Ok(())
     }
 
-    /// Replace `HEAD` with a commit of `files` that has no parent, as an
-    /// amend of the root commit does.
-    fn amend(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
-        let repo = gix::open_opts(root, open_options())?;
-        let tree = write_tree(&repo, files)?;
-        let signature = gix::actor::SignatureRef {
-            name: "test".into(),
-            email: "test@example.com".into(),
-            time: "1 +0000",
-        };
-        let commit = gix::objs::Commit {
-            message: "amended".into(),
-            tree,
-            author: signature.into(),
-            committer: signature.into(),
-            encoding: None,
-            parents: std::iter::empty().collect(),
-            extra_headers: Vec::default(),
-        };
-        let id = repo.write_object(&commit)?;
-        repo.reference(
-            "refs/heads/main",
-            id,
-            gix::refs::transaction::PreviousValue::Any,
-            "amend",
-        )?;
-        stage(root, files)
-    }
-
     fn changed(app: &mut App, dir: &TempDir, relative: &str, text: &str) -> std::io::Result<()> {
         let absolute = dir.0.join(relative);
         fs::write(&absolute, text)?;
         app.on_changes(vec![absolute]);
-        Ok(())
-    }
-
-    /// Write `files` (root-relative, content) as a tree object, nested
-    /// directories and all, and return its id.
-    fn write_tree(repo: &gix::Repository, files: &[(&str, &str)]) -> anyhow::Result<gix::ObjectId> {
-        use std::collections::BTreeMap;
-        let mut entries = Vec::new();
-        let mut subdirs: BTreeMap<&str, Vec<(&str, &str)>> = BTreeMap::new();
-        for (path, content) in files {
-            match path.split_once('/') {
-                Some((dir, rest)) => subdirs.entry(dir).or_default().push((rest, content)),
-                None => entries.push(gix::objs::tree::Entry {
-                    mode: gix::objs::tree::EntryKind::Blob.into(),
-                    filename: (*path).into(),
-                    oid: repo.write_blob(content.as_bytes())?.detach(),
-                }),
-            }
-        }
-        for (dir, files) in subdirs {
-            entries.push(gix::objs::tree::Entry {
-                mode: gix::objs::tree::EntryKind::Tree.into(),
-                filename: dir.into(),
-                oid: write_tree(repo, &files)?,
-            });
-        }
-        entries.sort();
-        Ok(repo.write_object(gix::objs::Tree { entries })?.detach())
-    }
-
-    /// Commit `files` as `HEAD` and stage the same tree, as `git add -A`
-    /// then `git commit` would leave things.
-    fn commit_and_stage(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
-        let repo = gix::open_opts(root, open_options())?;
-        let tree = write_tree(&repo, files)?;
-        let signature = gix::actor::SignatureRef {
-            name: "test".into(),
-            email: "test@example.com".into(),
-            time: "0 +0000",
-        };
-        let parent = repo.head_id().ok().map(gix::Id::detach);
-        repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
-        stage(root, files)
-    }
-
-    /// Replace the index with `files`.
-    fn stage(root: &Path, files: &[(&str, &str)]) -> anyhow::Result<()> {
-        let repo = gix::open_opts(root, open_options())?;
-        let tree = write_tree(&repo, files)?;
-        let state = gix::index::State::from_tree(
-            &tree,
-            &repo.objects,
-            gix::validate::path::component::Options::default(),
-        )?;
-        let mut file = gix::index::File::from_state(state, repo.index_path());
-        file.write(gix::index::write::Options::default())?;
         Ok(())
     }
 
@@ -2550,19 +2439,14 @@ mod tests {
     fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
         use fathomable_core::status::State;
 
-        let dir = TempDir::new("hunks")?;
-        gix::ThreadSafeRepository::init_opts(
-            &dir.0,
-            gix::create::Kind::WithWorktree,
-            gix::create::Options::default(),
-            open_options(),
-        )?;
+        let dir = fixture("hunks")?;
+        git::init(&dir.0)?;
         let committed = [
             ("README.md", "# Readme\n\nhello\n"),
             ("docs/guide.md", "# Guide\n"),
             ("docs/notes.md", "# Notes\n"),
         ];
-        commit_and_stage(&dir.0, &committed)?;
+        git::commit_and_stage(&dir.0, &committed)?;
         fs::write(
             dir.0.join("README.md"),
             "# Readme\n\nfirst\n\nhello\n\nlast\n",
@@ -2645,7 +2529,7 @@ mod tests {
 
         // Staging README marks its lines staged; the index event refreshes
         // both the bases and the dirty set.
-        stage(
+        git::stage(
             &dir.0,
             &[
                 ("README.md", "# Readme\n\nfirst\n\nhello\n\nlast\n"),
@@ -2670,7 +2554,7 @@ mod tests {
         );
 
         // Committing everything empties the set.
-        commit_and_stage(
+        git::commit_and_stage(
             &dir.0,
             &[
                 ("README.md", "# Readme\n\nfirst\n\nhello\n\nlast\n"),
@@ -2689,7 +2573,7 @@ mod tests {
 
     #[test]
     fn workspace_changes_queue_newest_first_and_jump() -> anyhow::Result<()> {
-        let dir = TempDir::new("changes")?;
+        let dir = fixture("changes")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
         assert!(app.queue().is_empty());
@@ -2733,7 +2617,7 @@ mod tests {
     #[test]
     fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
         use super::watch::Event;
-        let dir = TempDir::new("tree-events")?;
+        let dir = fixture("tree-events")?;
         let watch = WatchConfig {
             ignore: vec!["build/**".to_owned()],
             ..WatchConfig::default()
@@ -2808,7 +2692,7 @@ mod tests {
     #[test]
     fn followed_files_are_revealed_in_the_tree() -> anyhow::Result<()> {
         use fathomable_core::session::Request;
-        let dir = TempDir::new("follow-reveal")?;
+        let dir = fixture("follow-reveal")?;
         let mut app = app(&dir)?;
         app.show_sidebar();
         app.focus_pane(Focus::View);
@@ -2847,7 +2731,7 @@ mod tests {
 
     #[test]
     fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
-        let dir = TempDir::new("tree-watch")?;
+        let dir = fixture("tree-watch")?;
         let mut app = app(&dir)?;
         app.toggle_sidebar_focus();
         let names = |app: &App| -> Vec<String> {
@@ -2880,7 +2764,7 @@ mod tests {
 
     #[test]
     fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
-        let dir = TempDir::new("source")?;
+        let dir = fixture("source")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
         changed(&mut app, &dir, "README.md", "# Readme\n\nchanged\n")?;
@@ -2948,7 +2832,7 @@ mod tests {
 
     #[test]
     fn seen_snapshots_feed_the_seen_diff_view() -> anyhow::Result<()> {
-        let dir = TempDir::new("seen")?;
+        let dir = fixture("seen")?;
         let seen_store = || fathomable_core::seen::Store::open(&dir.0.join(".seen-state"));
         let mut app = app_with(
             &dir,
@@ -3016,7 +2900,7 @@ mod tests {
 
     #[test]
     fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
-        let dir = TempDir::new("auto")?;
+        let dir = fixture("auto")?;
         let jump = JumpConfig {
             auto: true,
             debounce: std::time::Duration::ZERO,
@@ -3076,7 +2960,7 @@ mod tests {
     fn agent_open_queues_a_settled_range_and_session_info_reports_state() -> anyhow::Result<()> {
         use fathomable_core::session::{Request, Response};
 
-        let dir = TempDir::new("agent")?;
+        let dir = fixture("agent")?;
         let mut app = app(&dir)?;
         let state = match app.handle_request(Request::SessionInfo) {
             Response::Session(_, state) => state,
@@ -3104,7 +2988,7 @@ mod tests {
     fn agent_open_range_shows_without_selecting() -> anyhow::Result<()> {
         use fathomable_core::session::{Request, Response};
 
-        let dir = TempDir::new("agent-range")?;
+        let dir = fixture("agent-range")?;
         let body = "line\n".repeat(60);
         fs::write(dir.0.join("long.txt"), body)?;
         let mut app = app(&dir)?;
@@ -3140,7 +3024,7 @@ mod tests {
     fn binary_and_oversized_files_open_as_file_info() -> anyhow::Result<()> {
         use fathomable_core::config::ViewerConfig;
 
-        let dir = TempDir::new("binary")?;
+        let dir = fixture("binary")?;
         fs::write(dir.0.join("plugin.wasm"), b"\0asm\x01\0\0\0")?;
         fs::write(dir.0.join("big.log"), "x".repeat(3 * 1024 * 1024))?;
         let mut app = app_with(

@@ -93,7 +93,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -103,40 +103,29 @@ mod tests {
 
     use crate::app::input::keys;
     use crate::app::{App, Focus, Options};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-delete-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(
-                dir.join("ws/README.md"),
-                "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-            )?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, 100, 30, options);
-            app.open(Path::new("README.md"));
-            app.view_mut().toggle_source_view();
-            Ok(app)
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("delete-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        app.view_mut().toggle_source_view();
+        Ok(app)
     }
 
     fn annotate(app: &mut App, line: usize, text: &str) {
@@ -152,8 +141,8 @@ mod tests {
 
     #[test]
     fn d_d_deletes_from_each_surface_and_any_other_key_cancels() -> anyhow::Result<()> {
-        let dir = TempDir::new("surfaces")?;
-        let mut app = dir.app()?;
+        let dir = fixture("surfaces")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         annotate(&mut app, 3, "three");
         annotate(&mut app, 5, "five");
@@ -221,8 +210,8 @@ mod tests {
 
     #[test]
     fn deleting_the_last_thread_closes_the_pane() -> anyhow::Result<()> {
-        let dir = TempDir::new("last")?;
-        let mut app = dir.app()?;
+        let dir = fixture("last")?;
+        let mut app = app(&dir)?;
         annotate(&mut app, 3, "only");
         app.open_thread_at_cursor();
         press(&mut app, KeyCode::Char('d'));

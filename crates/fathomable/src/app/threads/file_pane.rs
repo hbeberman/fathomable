@@ -224,7 +224,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use fathomable_core::annotations::Store;
@@ -232,42 +232,29 @@ mod tests {
 
     use crate::app::threads::{ComposeTarget, ThreadState};
     use crate::app::{App, Border, Focus, Options, Popup};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir().join(format!(
-                "fathomable-file-threads-{name}-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(
-                dir.join("ws/README.md"),
-                "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-            )?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, 100, 30, options);
-            app.open(Path::new("README.md"));
-            app.view_mut().toggle_source_view();
-            Ok(app)
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("file-threads-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(
+            dir.0.join("ws/README.md"),
+            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
+        )?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        app.view_mut().toggle_source_view();
+        Ok(app)
     }
 
     fn annotate(app: &mut App, line: usize, text: &str) {
@@ -281,8 +268,8 @@ mod tests {
 
     #[test]
     fn the_pane_follows_the_cursor_and_acts_on_the_highlight() -> anyhow::Result<()> {
-        let dir = TempDir::new("follow")?;
-        let mut app = dir.app()?;
+        let dir = fixture("follow")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         assert_eq!(app.file_thread_pane_rows(), 0, "no threads, no pane");
         app.focus_file_threads();
@@ -387,8 +374,8 @@ mod tests {
 
         use crate::app::input::keys;
 
-        let dir = TempDir::new("cursor")?;
-        let mut app = dir.app()?;
+        let dir = fixture("cursor")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         annotate(&mut app, 2, "two");
         annotate(&mut app, 6, "six");
@@ -445,8 +432,8 @@ mod tests {
 
     #[test]
     fn the_keys_step_between_the_pane_and_the_list() -> anyhow::Result<()> {
-        let dir = TempDir::new("step")?;
-        let mut app = dir.app()?;
+        let dir = fixture("step")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         annotate(&mut app, 7, "seven");
         annotate(&mut app, 3, "three");
@@ -494,8 +481,8 @@ mod tests {
 
     #[test]
     fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
-        let dir = TempDir::new("overlap")?;
-        let mut app = dir.app()?;
+        let dir = fixture("overlap")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         // A long thread over L3-5, then a short one at L4 inside it.
         app.view_mut().goto_source_line(3);
@@ -528,8 +515,8 @@ mod tests {
 
     #[test]
     fn the_highlight_follows_the_open_pane_when_the_cursor_cannot() -> anyhow::Result<()> {
-        let dir = TempDir::new("blank")?;
-        let mut app = dir.app()?;
+        let dir = fixture("blank")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         annotate(&mut app, 2, "on the blank line");
         annotate(&mut app, 7, "on the list");
@@ -549,8 +536,8 @@ mod tests {
 
     #[test]
     fn the_mouse_clicks_wheels_and_drags_the_pane() -> anyhow::Result<()> {
-        let dir = TempDir::new("mouse")?;
-        let mut app = dir.app()?;
+        let dir = fixture("mouse")?;
+        let mut app = app(&dir)?;
         app.show_sidebar();
         annotate(&mut app, 2, "two");
         annotate(&mut app, 6, "six");

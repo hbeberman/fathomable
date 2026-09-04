@@ -184,44 +184,33 @@ mod tests {
     use fathomable_core::workspace::Workspace;
 
     use crate::app::{App, Focus, Options};
+    use fathomable_testing::TempDir;
 
     const README: &str = "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n";
     const NOTES: &str = "notes\n\nfirst\nsecond\nthird\n";
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-waiting-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(dir.join("ws/README.md"), README)?;
-            fs::write(dir.join("ws/notes.md"), NOTES)?;
-            Ok(Self(dir))
-        }
-
-        fn store_path(&self) -> PathBuf {
-            self.0.join("state/threads.jsonl")
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.store_path())?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, 100, 30, options);
-            app.open(Path::new("README.md"));
-            Ok(app)
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("waiting-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(dir.0.join("ws/README.md"), README)?;
+        fs::write(dir.0.join("ws/notes.md"), NOTES)?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn store_path(dir: &TempDir) -> PathBuf {
+        dir.0.join("state/threads.jsonl")
+    }
+
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(store_path(dir))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        Ok(app)
     }
 
     /// A second writer, as a headless `--mcp` reply would be: a thread
@@ -260,12 +249,12 @@ mod tests {
 
         use crate::app::input::keys;
 
-        let dir = TempDir::new("nav")?;
-        let mut app = dir.app()?;
+        let dir = fixture("nav")?;
+        let mut app = app(&dir)?;
         let press = |app: &mut App, code| {
             keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
         };
-        let mut other = Store::open(dir.store_path())?;
+        let mut other = Store::open(store_path(&dir))?;
         agent_thread(&mut other, "README.md", README, 3, true)?;
         agent_thread(&mut other, "README.md", README, 5, true)?;
         agent_thread(&mut other, "notes.md", NOTES, 4, true)?;
@@ -342,14 +331,14 @@ mod tests {
 
     #[test]
     fn a_reply_landing_toasts_and_the_keys_walk_waiting_threads() -> anyhow::Result<()> {
-        let dir = TempDir::new("walk")?;
-        let mut app = dir.app()?;
+        let dir = fixture("walk")?;
+        let mut app = app(&dir)?;
         assert_eq!(app.waiting_total(), 0);
         app.waiting_next();
         assert_eq!(app.message(), Some("nothing waiting on you"));
 
         // Another writer answers two threads and leaves one unanswered.
-        let mut other = Store::open(dir.store_path())?;
+        let mut other = Store::open(store_path(&dir))?;
         agent_thread(&mut other, "README.md", README, 3, false)?;
         agent_thread(&mut other, "README.md", README, 5, true)?;
         agent_thread(&mut other, "notes.md", NOTES, 4, true)?;

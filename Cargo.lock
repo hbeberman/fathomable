@@ -587,7 +587,7 @@ dependencies = [
  "clap",
  "crossterm",
  "fathomable-core",
- "gix",
+ "fathomable-testing",
  "notify",
  "ratatui",
  "regex",
@@ -615,6 +615,14 @@ dependencies = [
  "tracing",
  "unicode-segmentation",
  "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "fathomable-testing"
+version = "0.1.0"
+dependencies = [
+ "fathomable-core",
+ "gix",
 ]
 
 [[package]]

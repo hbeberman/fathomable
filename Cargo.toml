@@ -2,6 +2,7 @@
 members = [
     "crates/fathomable",
     "crates/fathomable-core",
+    "crates/fathomable-testing",
 ]
 resolver = "3"
 

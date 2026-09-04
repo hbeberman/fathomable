@@ -152,6 +152,7 @@ mod tests {
     use super::RECENT_ACTIVITY;
     use crate::app::input::keys;
     use crate::app::{App, Options};
+    use fathomable_testing::TempDir;
 
     /// Sixty paragraphs: more rows than the 30-row test terminal shows.
     fn readme() -> String {
@@ -166,52 +167,39 @@ mod tests {
     const NOTES: &str = "notes\n\nfirst\n";
     const GUIDE: &str = "guide\n\none\n";
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-autojump-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir)?;
-            fs::write(dir.join("README.md"), readme())?;
-            fs::write(dir.join("notes.md"), NOTES)?;
-            fs::write(dir.join("guide.md"), GUIDE)?;
-            Ok(Self(dir))
-        }
-
-        /// An app with auto-jump on and no debounce, `README.md` open,
-        /// and the reader long still.
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(&self.0)?;
-            let jump = JumpConfig {
-                auto: true,
-                debounce: std::time::Duration::ZERO,
-                ..JumpConfig::default()
-            };
-            let options = Options {
-                jump,
-                store: Some(Store::open(self.0.join(".threads.jsonl"))?),
-                ..Options::for_test(self.0.clone())
-            };
-            let mut app = App::new(workspace, 100, 30, options);
-            app.open(Path::new("README.md"));
-            app.view_mut().rest(RECENT_ACTIVITY);
-            Ok(app)
-        }
-
-        fn changed(&self, app: &mut App, relative: &str, text: &str) -> std::io::Result<()> {
-            let absolute = self.0.join(relative);
-            fs::write(&absolute, text)?;
-            app.on_changes(vec![absolute]);
-            Ok(())
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("autojump-{name}"))?;
+        fs::write(dir.0.join("README.md"), readme())?;
+        fs::write(dir.0.join("notes.md"), NOTES)?;
+        fs::write(dir.0.join("guide.md"), GUIDE)?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    /// An app with auto-jump on and no debounce, `README.md` open,
+    /// and the reader long still.
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(&dir.0)?;
+        let jump = JumpConfig {
+            auto: true,
+            debounce: std::time::Duration::ZERO,
+            ..JumpConfig::default()
+        };
+        let options = Options {
+            jump,
+            store: Some(Store::open(dir.0.join(".threads.jsonl"))?),
+            ..Options::for_test(dir.0.clone())
+        };
+        let mut app = App::new(workspace, 100, 30, options);
+        app.open(Path::new("README.md"));
+        app.view_mut().rest(RECENT_ACTIVITY);
+        Ok(app)
+    }
+
+    fn changed(dir: &TempDir, app: &mut App, relative: &str, text: &str) -> std::io::Result<()> {
+        let absolute = dir.0.join(relative);
+        fs::write(&absolute, text)?;
+        app.on_changes(vec![absolute]);
+        Ok(())
     }
 
     fn press(app: &mut App, code: KeyCode) {
@@ -224,10 +212,10 @@ mod tests {
 
     #[test]
     fn going_elsewhere_switches_off_but_looking_around_does_not() -> anyhow::Result<()> {
-        let dir = TempDir::new("leave")?;
-        let mut app = dir.app()?;
-        dir.changed(&mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
-        dir.changed(&mut app, "guide.md", "guide\n\none\ntwo\n")?;
+        let dir = fixture("leave")?;
+        let mut app = app(&dir)?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\n")?;
 
         // Scrolling and searching in place keep auto-jump on.
         press(&mut app, KeyCode::Char('j'));
@@ -258,9 +246,9 @@ mod tests {
 
     #[test]
     fn its_own_jump_does_not_switch_it_off() -> anyhow::Result<()> {
-        let dir = TempDir::new("own")?;
-        let mut app = dir.app()?;
-        dir.changed(&mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        let dir = fixture("own")?;
+        let mut app = app(&dir)?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
         app.tick();
         assert_eq!(app.current_path(), Path::new("notes.md"));
         assert!(app.auto_jump());
@@ -270,11 +258,12 @@ mod tests {
 
     #[test]
     fn the_visible_file_scrolls_only_when_the_hunk_is_off_screen() -> anyhow::Result<()> {
-        let dir = TempDir::new("visible")?;
-        let mut app = dir.app()?;
+        let dir = fixture("visible")?;
+        let mut app = app(&dir)?;
 
         // A hunk on screen settles without moving.
-        dir.changed(
+        changed(
+            &dir,
             &mut app,
             "README.md",
             &readme().replace("line 3\n", "line 3!\n"),
@@ -290,7 +279,7 @@ mod tests {
         let edited = readme()
             .replace("line 3\n", "line 3!\n")
             .replace("line 60\n", "line 60!\n");
-        dir.changed(&mut app, "README.md", &edited)?;
+        changed(&dir, &mut app, "README.md", &edited)?;
         app.view_mut().rest(RECENT_ACTIVITY);
         assert!(!app.queue().is_empty());
         app.tick();
@@ -302,14 +291,14 @@ mod tests {
 
     #[test]
     fn a_burst_lands_on_the_followed_file_first() -> anyhow::Result<()> {
-        let dir = TempDir::new("burst")?;
-        let mut app = dir.app()?;
+        let dir = fixture("burst")?;
+        let mut app = app(&dir)?;
         let response = app.handle_request(Request::Follow {
             paths: vec![PathBuf::from("notes.md")],
         });
         assert_eq!(response, Response::Done);
-        dir.changed(&mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
-        dir.changed(&mut app, "guide.md", "guide\n\none\ntwo\n")?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\n")?;
         assert_eq!(
             app.queue().newest().map(|c| c.path.as_path()),
             Some(Path::new("guide.md"))
@@ -329,8 +318,8 @@ mod tests {
             }),
             Response::Done
         );
-        dir.changed(&mut app, "deep/inner.md", "inner\n\none\ntwo\n")?;
-        dir.changed(&mut app, "guide.md", "guide\n\none\ntwo\nthree\n")?;
+        changed(&dir, &mut app, "deep/inner.md", "inner\n\none\ntwo\n")?;
+        changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\nthree\n")?;
         app.view_mut().rest(RECENT_ACTIVITY);
         app.tick();
         assert_eq!(

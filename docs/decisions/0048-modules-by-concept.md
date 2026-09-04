@@ -11,6 +11,7 @@ related_resources:
   - crates/fathomable/src/app/jump.rs
   - crates/fathomable/src/app/agents.rs
   - scripts/okf-lint.py
+  - crates/fathomable-testing/src/lib.rs
 tags:
   - decision
   - architecture
@@ -55,6 +56,12 @@ an existing module, which is how the directory got that way.
   records keep their resources at the moved paths.
 - **Module docs lead with the concept** and cite records once, at the
   end, per the Rust guidelines the repository follows.
+- **Test scaffolding is one crate.** `crates/fathomable-testing`
+  (`publish = false`, a dev-dependency of the app crate) holds `TempDir`
+  and the git fixtures (`init`, `commit_and_stage`, `stage`, `amend`,
+  `write_tree`); the thirteen per-module copies in the app crate are
+  gone. The core crate keeps its own four, since the testing crate
+  depends on the core for the workspace's git open options.
 
 ## Consequences
 

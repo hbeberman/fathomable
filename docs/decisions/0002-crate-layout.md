@@ -15,6 +15,10 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Amended 2026-09-03 by [0048](0048-modules-by-concept.md): a third
+workspace member, `fathomable-testing`, holds the test scaffolding shared
+by the app crate's tests; it is never published.
+
 ## Context
 
 Rendering, annotation anchoring, session state, and the MCP server must be

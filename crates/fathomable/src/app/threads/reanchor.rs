@@ -122,7 +122,7 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::annotations::{Anchor, Draft, LineRange, Store, Thread};
     use fathomable_core::context::Context;
@@ -130,34 +130,23 @@ mod tests {
     use fathomable_core::workspace::Workspace;
 
     use crate::app::{App, Options};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-reanchor-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                seen: Some(seen::Store::open(&self.0.join("state/seen"))?),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            Ok(App::new(workspace, 100, 30, options))
-        }
+    fn fixture(name: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("reanchor-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            seen: Some(seen::Store::open(&dir.0.join("state/seen"))?),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        Ok(App::new(workspace, 100, 30, options))
     }
 
     const ORIGINAL: &str = "one\ntwo\nthree\nfour\n";
@@ -173,14 +162,14 @@ mod tests {
         )?;
         seen::Store::open(&dir.0.join("state/seen"))?.record(Path::new("a.txt"), ORIGINAL)?;
         fs::write(dir.0.join("ws/a.txt"), edited)?;
-        let mut app = dir.app()?;
+        let mut app = app(dir)?;
         app.open(Path::new("a.txt"));
         Ok(app)
     }
 
     #[test]
     fn thread_edited_offline_follows_through_the_snapshot() -> anyhow::Result<()> {
-        let dir = TempDir::new("edited")?;
+        let dir = fixture("edited")?;
         let app = annotate_then_edit_offline(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
@@ -194,7 +183,7 @@ mod tests {
 
     #[test]
     fn thread_removed_offline_stays_detached() -> anyhow::Result<()> {
-        let dir = TempDir::new("removed")?;
+        let dir = fixture("removed")?;
         let app = annotate_then_edit_offline(&dir, "one\nthree\nfour\n")?;
         assert!(app.marks()[0].is_detached());
         Ok(())
@@ -210,14 +199,14 @@ mod tests {
             1,
         )?;
         fs::write(dir.0.join("ws/a.txt"), edited)?;
-        let mut app = dir.app()?;
+        let mut app = app(dir)?;
         app.open(Path::new("a.txt"));
         Ok(app)
     }
 
     #[test]
     fn without_a_snapshot_the_thread_follows_through_its_window() -> anyhow::Result<()> {
-        let dir = TempDir::new("nosnap")?;
+        let dir = fixture("nosnap")?;
         let app = annotate_without_snapshot_then_edit(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
@@ -236,7 +225,7 @@ mod tests {
 
     #[test]
     fn without_a_snapshot_a_rewrite_around_the_lines_detaches() -> anyhow::Result<()> {
-        let dir = TempDir::new("nosnap-rewrite")?;
+        let dir = fixture("nosnap-rewrite")?;
         let app = annotate_without_snapshot_then_edit(&dir, "ONE\nTWO\nTHREE\nFOUR\n")?;
         assert!(app.marks()[0].is_detached());
         Ok(())
@@ -244,7 +233,7 @@ mod tests {
 
     #[test]
     fn a_thread_stored_without_a_window_is_given_one_on_start() -> anyhow::Result<()> {
-        let dir = TempDir::new("backfill")?;
+        let dir = fixture("backfill")?;
         fs::write(dir.0.join("ws/a.txt"), ORIGINAL)?;
         fs::create_dir_all(dir.0.join("state"))?;
         let anchor = serde_json::to_string(
@@ -263,7 +252,7 @@ mod tests {
                 anchor = anchor
             ),
         )?;
-        drop(dir.app()?);
+        drop(app(&dir)?);
         let store = Store::open(dir.0.join("state/threads.jsonl"))?;
         let thread = &store.threads()[0];
         assert_eq!(
@@ -273,7 +262,7 @@ mod tests {
         assert_eq!(thread.updated(), 1, "the backfill is not an update");
 
         fs::write(dir.0.join("ws/a.txt"), "one\nTWO\nthree\nfour\n")?;
-        let mut app = dir.app()?;
+        let mut app = app(&dir)?;
         app.open(Path::new("a.txt"));
         assert!(app.marks()[0].placement().is_edited());
         Ok(())

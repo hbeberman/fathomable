@@ -1,0 +1,18 @@
+[package]
+name = "fathomable-testing"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+description = "Test scaffolding shared by the Fathomable crates: temporary workspaces and git fixtures"
+keywords.workspace = true
+categories.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fathomable-core = { version = "0.1.0", path = "../fathomable-core" }
+gix = { version = "0.87", default-features = false, features = ["index", "sha1"] }

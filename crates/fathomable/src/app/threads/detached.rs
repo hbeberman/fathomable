@@ -54,47 +54,36 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::annotations::{LineRange, Store};
     use fathomable_core::workspace::Workspace;
 
     use crate::app::threads::ThreadState;
     use crate::app::{App, Options, Popup};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str, readme: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-detached-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(dir.join("ws/README.md"), readme)?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, 80, 30, options);
-            app.open(Path::new("README.md"));
-            Ok(app)
-        }
-
-        fn rewrite(&self, readme: &str) -> std::io::Result<()> {
-            fs::write(self.0.join("ws/README.md"), readme)
-        }
+    fn fixture(name: &str, readme: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("detached-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(dir.0.join("ws/README.md"), readme)?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, 80, 30, options);
+        app.open(Path::new("README.md"));
+        Ok(app)
+    }
+
+    fn rewrite(dir: &TempDir, readme: &str) -> std::io::Result<()> {
+        fs::write(dir.0.join("ws/README.md"), readme)
     }
 
     fn annotate(app: &mut App, from: usize, to: usize, text: &str) {
@@ -113,9 +102,9 @@ mod tests {
     /// Comment on `two` (line 3), then delete it: the thread detaches
     /// and a blank row appears where the line was.
     fn detach(dir: &TempDir) -> anyhow::Result<App> {
-        let mut app = dir.app()?;
+        let mut app = app(dir)?;
         annotate(&mut app, 3, 3, "gone soon");
-        dir.rewrite("one\n\nthree\n\nfour\n")?;
+        rewrite(dir, "one\n\nthree\n\nfour\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert!(app.marks()[0].is_detached());
         Ok(app)
@@ -136,7 +125,7 @@ mod tests {
 
     #[test]
     fn a_detached_thread_gets_a_row_where_its_lines_were() -> anyhow::Result<()> {
-        let dir = TempDir::new("row", BEFORE)?;
+        let dir = fixture("row", BEFORE)?;
         let app = detach(&dir)?;
         let rows = glyphs(&app);
         // one, blank, [detached row], three, blank, four
@@ -151,9 +140,9 @@ mod tests {
 
     #[test]
     fn the_row_is_removed_when_the_thread_re_anchors() -> anyhow::Result<()> {
-        let dir = TempDir::new("back", BEFORE)?;
+        let dir = fixture("back", BEFORE)?;
         let mut app = detach(&dir)?;
-        dir.rewrite(BEFORE)?;
+        rewrite(&dir, BEFORE)?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert!(!app.marks()[0].is_detached());
         assert!(
@@ -168,7 +157,7 @@ mod tests {
 
     #[test]
     fn c_on_the_row_opens_the_thread_and_capital_c_is_refused() -> anyhow::Result<()> {
-        let dir = TempDir::new("keys", BEFORE)?;
+        let dir = fixture("keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
         app.show_thread(id);
@@ -186,10 +175,10 @@ mod tests {
 
     #[test]
     fn a_thread_past_the_end_stands_after_the_last_line() -> anyhow::Result<()> {
-        let dir = TempDir::new("end", BEFORE)?;
-        let mut app = dir.app()?;
+        let dir = fixture("end", BEFORE)?;
+        let mut app = app(&dir)?;
         annotate(&mut app, 7, 7, "last");
-        dir.rewrite("one\n\ntwo\n")?;
+        rewrite(&dir, "one\n\ntwo\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
         assert!(app.marks()[0].is_detached());
         let rows = glyphs(&app);

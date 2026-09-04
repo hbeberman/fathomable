@@ -108,42 +108,31 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::annotations::{LineRange, Store};
     use fathomable_core::workspace::Workspace;
 
     use crate::app::{App, Options};
+    use fathomable_testing::TempDir;
 
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str, readme: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-gutter-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(dir.join("ws"))?;
-            fs::write(dir.join("ws/README.md"), readme)?;
-            Ok(Self(dir))
-        }
-
-        fn app(&self, width: usize) -> anyhow::Result<App> {
-            let workspace = Workspace::discover(self.0.join("ws"))?;
-            let store = Store::open(self.0.join("state/threads.jsonl"))?;
-            let options = Options {
-                store: Some(store),
-                ..Options::for_test(self.0.join("ws"))
-            };
-            let mut app = App::new(workspace, width, 30, options);
-            app.open(Path::new("README.md"));
-            Ok(app)
-        }
+    fn fixture(name: &str, readme: &str) -> std::io::Result<TempDir> {
+        let dir = TempDir::new(&format!("gutter-{name}"))?;
+        fs::create_dir_all(dir.0.join("ws"))?;
+        fs::write(dir.0.join("ws/README.md"), readme)?;
+        Ok(dir)
     }
 
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
+    fn app(dir: &TempDir, width: usize) -> anyhow::Result<App> {
+        let workspace = Workspace::discover(dir.0.join("ws"))?;
+        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
+        let options = Options {
+            store: Some(store),
+            ..Options::for_test(dir.0.join("ws"))
+        };
+        let mut app = App::new(workspace, width, 30, options);
+        app.open(Path::new("README.md"));
+        Ok(app)
     }
 
     fn annotate(app: &mut App, from: usize, to: usize, text: &str) {
@@ -161,11 +150,11 @@ mod tests {
     /// re-draws the corners for a nested thread on the outer's line.
     #[test]
     fn the_gutter_brackets_ranges_and_nests_corners() -> anyhow::Result<()> {
-        let dir = TempDir::new(
+        let dir = fixture(
             "brackets",
             "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
         )?;
-        let mut app = dir.app(100)?;
+        let mut app = app(&dir, 100)?;
         // Source view: one row per line, eight lines.
         app.view_mut().toggle_source_view();
         annotate(&mut app, 1, 8, "outer");
@@ -192,8 +181,8 @@ mod tests {
     #[test]
     fn a_wrapped_line_is_bracketed_across_its_rows() -> anyhow::Result<()> {
         let long = "word ".repeat(30);
-        let dir = TempDir::new("wrapped", &format!("short\n\n{long}\n\nshort\n"))?;
-        let mut app = dir.app(40)?;
+        let dir = fixture("wrapped", &format!("short\n\n{long}\n\nshort\n"))?;
+        let mut app = app(&dir, 40)?;
         let view = app.view();
         let rows: Vec<usize> = (0..view.layout().lines().len())
             .filter(|&row| view.source_lines_of_row(row).is_some_and(|l| l.contains(3)))
@@ -215,8 +204,8 @@ mod tests {
     /// do not break a bracket; they draw `│` inside it.
     #[test]
     fn blank_rows_inside_a_range_are_bridged() -> anyhow::Result<()> {
-        let dir = TempDir::new("bridged", "# Title\n\none\n\ntwo\n\nthree\n\nfour\n")?;
-        let mut app = dir.app(60)?;
+        let dir = fixture("bridged", "# Title\n\none\n\ntwo\n\nthree\n\nfour\n")?;
+        let mut app = app(&dir, 60)?;
         // Lines 3 to 7: `one`, `two`, `three`, with blank lines between.
         annotate(&mut app, 3, 7, "range");
         annotate(&mut app, 3, 3, "point on the start");

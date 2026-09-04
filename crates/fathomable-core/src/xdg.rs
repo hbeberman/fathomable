@@ -118,6 +118,13 @@ impl XdgDirs {
         self.workspace_dir(root).join("seen")
     }
 
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/checkpoints`, where the
+    /// reader's checkpoints live (ADR 0049).
+    #[must_use]
+    pub fn checkpoints_dir(&self, root: &Path) -> PathBuf {
+        self.workspace_dir(root).join("checkpoints")
+    }
+
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.
     #[must_use]
     pub fn runtime_dir(&self) -> Option<PathBuf> {

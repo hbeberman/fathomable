@@ -117,6 +117,7 @@ The `Space` menu, from any pane:
 | `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
+| `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
 | `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -337,6 +338,16 @@ returns to the rendered view. Snapshots live under
 any time; they expire after thirty days unless the file has an open
 thread.
 
+A **checkpoint** is a mark you make yourself. `Space v c` records the
+current file's content on that file's timeline; `Space v C` records every
+non-ignored text file whose content moved since its last checkpoint, in
+one go, and a toast counts them (`checkpoint: 3 files`; a file the agent
+has not touched gets no new entry). Checkpoints live beside the snapshots
+under `~/.local/state/fathomable/workspaces/<hash>/checkpoints/`, one blob
+per distinct content plus an `index.jsonl` of events; nothing expires, and
+`--doctor` counts them. The view that pages through a file's checkpoints
+is the next step of [0049](decisions/0049-inline-threads-and-the-rail.md).
+
 ## 6. Following an agent
 
 Any file written under the workspace (ignoring what git ignores) becomes a
@@ -402,6 +413,9 @@ rail {
 threads {
     stubs #true             // a stub under each thread's lines
     stubs-resolved #false   // resolved threads get one too
+}
+
+checkpoints {               // reserved; no setting yet
 }
 
 agents {

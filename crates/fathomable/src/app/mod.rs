@@ -11,6 +11,7 @@
 //! [`run`] owns the terminal, the file watcher, and the viewer socket.
 
 pub(crate) mod agents;
+mod checkpoints;
 mod clipboard;
 mod commands;
 mod draw;
@@ -290,6 +291,8 @@ pub struct App {
     queue: Queue,
     toasts: Vec<Toast>,
     seen: Option<seen::Store>,
+    /// The reader's checkpoints (ADR 0049).
+    checkpoints: Option<fathomable_core::checkpoints::Store>,
     /// When the queue last changed, for the auto-jump debounce.
     last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
@@ -311,6 +314,7 @@ impl App {
             jump,
             watch,
             seen,
+            checkpoints,
             highlighter,
             markdown,
             viewer,
@@ -374,6 +378,7 @@ impl App {
             queue: Queue::default(),
             toasts: Vec::new(),
             seen,
+            checkpoints,
             last_change: None,
             watching_root: false,
             status: Status::default(),
@@ -1884,6 +1889,8 @@ pub struct Options {
     pub watch: WatchConfig,
     /// The last-seen snapshot store, or `None` when it could not be opened.
     pub seen: Option<seen::Store>,
+    /// The checkpoint store (ADR 0049), or `None` when it could not be opened.
+    pub checkpoints: Option<fathomable_core::checkpoints::Store>,
     /// Code highlighting for fences and source files (ADR 0016).
     pub highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
@@ -1912,6 +1919,7 @@ impl Options {
             jump: JumpConfig::default(),
             watch: WatchConfig::default(),
             seen: None,
+            checkpoints: None,
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),

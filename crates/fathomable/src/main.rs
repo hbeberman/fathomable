@@ -240,6 +240,18 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             None
         }
     };
+    let checkpoints = match fathomable_core::checkpoints::Store::open(
+        &dirs.checkpoints_dir(workspace.root()),
+    ) {
+        Ok(checkpoints) => {
+            tracing::info!(path = %checkpoints.dir().display(), events = checkpoints.events(), "checkpoints loaded");
+            Some(checkpoints)
+        }
+        Err(error) => {
+            tracing::error!(%error, "cannot open the checkpoint store; checkpoints disabled");
+            None
+        }
+    };
     let result = app::run::run(
         workspace,
         app::Options {
@@ -249,6 +261,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             jump: config.jump().clone(),
             watch: config.watch().clone(),
             seen,
+            checkpoints,
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),
@@ -380,6 +393,9 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("threads {{");
     println!("    stubs #{}", threads.stubs);
     println!("    stubs-resolved #{}", threads.stubs_resolved);
+    println!("}}");
+    // Reserved by ADR 0049; nothing is settable yet.
+    println!("checkpoints {{");
     println!("}}");
     let agents = config.agents();
     let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();

@@ -201,6 +201,8 @@ impl App {
             Action::SourceView => self.view_mut().toggle_source_view(),
             Action::DiffHead => self.view_mut().toggle_diff_view(),
             Action::DiffSeen => self.view_mut().toggle_seen_diff_view(),
+            Action::CheckpointFile => self.checkpoint_file(),
+            Action::CheckpointWorkspace => self.checkpoint_workspace(),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_sidebar_focus();

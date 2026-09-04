@@ -18,6 +18,8 @@ related_resources:
   - crates/fathomable/src/app/jumplist.rs
   - crates/fathomable-core/src/config.rs
   - crates/fathomable-core/src/theme.rs
+  - crates/fathomable-core/src/checkpoints.rs
+  - crates/fathomable/src/app/checkpoints.rs
 tags:
   - decision
   - annotations

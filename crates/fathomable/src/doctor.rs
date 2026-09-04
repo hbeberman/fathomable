@@ -191,6 +191,22 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 println!("  FAIL  snapshots: {error}");
             }
         }
+        let dir = dirs.checkpoints_dir(workspace.root());
+        match fathomable_core::checkpoints::Store::open(&dir) {
+            Ok(checkpoints) => println!(
+                "  ok    {} checkpoint{} over {} file{} ({} bytes) in {}",
+                checkpoints.events(),
+                if checkpoints.events() == 1 { "" } else { "s" },
+                checkpoints.len(),
+                if checkpoints.len() == 1 { "" } else { "s" },
+                checkpoints.blob_bytes(),
+                dir.display()
+            ),
+            Err(error) => {
+                ok = false;
+                println!("  FAIL  checkpoints: {error}");
+            }
+        }
     }
 
     ok

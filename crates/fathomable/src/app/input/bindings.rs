@@ -236,6 +236,8 @@ actions! {
     SourceView,
     DiffHead,
     DiffSeen,
+    CheckpointFile,
+    CheckpointWorkspace,
     HunkNext,
     HunkPrev,
     DirtyNext,
@@ -763,6 +765,20 @@ pub const BINDINGS: &[Binding] = &[
         A::DiffSeen,
         "Space menu",
         "view: toggle the diff against last seen",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('c')]],
+        A::CheckpointFile,
+        "Space menu",
+        "view: checkpoint this file",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('C')]],
+        A::CheckpointWorkspace,
+        "Space menu",
+        "view: checkpoint the workspace",
     ),
     bind(
         W::Any,
@@ -1498,7 +1514,10 @@ mod tests {
             keys(Where::View, &[c(' '), c('c')]),
             ["c", "z", "x", "n", "r", "o", "e", "d"]
         );
-        assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "d", "D"]);
+        assert_eq!(
+            keys(Where::Review, &[c(' '), c('v')]),
+            ["s", "d", "D", "c", "C"]
+        );
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
         assert!(menu(Where::Box, &[c(' ')]).is_empty());
     }

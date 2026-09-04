@@ -12,7 +12,7 @@ use fathomable_core::layout::{Layout, display_width};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use super::ui::{SNIPPET_ROWS, Theme, face_style, fit, format_age};
+use crate::app::draw::{SNIPPET_ROWS, Theme, face_style, fit, format_age};
 
 /// Cells a message body sits in from the pane's left edge.
 const MESSAGE_INDENT: usize = 3;
@@ -28,7 +28,7 @@ struct Message<'a> {
 /// The pane's body for `thread`, whose snippet starts at source line
 /// `first`: the quoted snippet, a blank, the comment, each reply after a
 /// blank, and the END row of ADR 0034.
-pub(super) fn thread_body_lines<'a>(
+pub(crate) fn thread_body_lines<'a>(
     theme: &Theme,
     highlighter: &Highlighter,
     thread: &Thread,
@@ -149,7 +149,7 @@ fn message_line<'a>(
 
 /// Rows the pane's body takes for `thread` at `width`: snippet, blank,
 /// comment, each reply after a blank, and the END row.
-pub(super) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &Highlighter) -> usize {
+pub(crate) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &Highlighter) -> usize {
     let inner = width.saturating_sub(2);
     let snippet = thread.snippet().lines().count();
     let snippet_rows = snippet.min(SNIPPET_ROWS) + usize::from(snippet > SNIPPET_ROWS);
@@ -163,7 +163,7 @@ pub(super) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &High
 }
 
 /// The body rows occupied by message `selected`, zero for the comment.
-pub(super) fn thread_message_range(
+pub(crate) fn thread_message_range(
     thread: &Thread,
     selected: usize,
     width: usize,

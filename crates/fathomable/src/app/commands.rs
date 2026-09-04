@@ -3,7 +3,7 @@
 //!
 //! `View::execute` keeps the commands that only touch the pane (`:q`,
 //! `:noh`, `:source`, `:diff`, `:N`); everything else arrives here as
-//! [`Effect::Command`](super::view::Effect::Command).
+//! [`Effect::Command`](crate::app::view::Effect::Command).
 
 use super::App;
 

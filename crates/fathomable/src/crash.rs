@@ -53,7 +53,7 @@ pub fn observe(rows: Vec<(String, String)>) {
 pub fn fatal(error: &anyhow::Error) {
     // Usually a no-op: the guard has already restored on the way out. It
     // matters when entering the terminal itself failed partway.
-    crate::app::restore_terminal();
+    crate::app::run::restore_terminal();
     if STATE.try_lock().is_ok_and(|state| state.is_empty()) {
         eprintln!("fathomable: {error:#}");
         return;
@@ -69,7 +69,7 @@ pub fn fatal(error: &anyhow::Error) {
 fn panicked(info: &PanicHookInfo<'_>) {
     // Hand the terminal back first: anything written to the alternate
     // screen goes with it when the screen is left.
-    crate::app::restore_terminal();
+    crate::app::run::restore_terminal();
     let message = info
         .payload_as_str()
         .unwrap_or("panicked with a payload that is not a string");
@@ -252,7 +252,7 @@ mod tests {
         let trace: String = [
             frame(0, "fathomable::crash::panicked"),
             frame(1, "std::panicking::panic_with_hook"),
-            frame(2, "fathomable::app::ui::draw"),
+            frame(2, "fathomable::app::draw::draw"),
             frame(3, "<tokio::runtime::scheduler::Core>::block_on"),
             frame(4, "fathomable::main"),
             frame(5, "main"),
@@ -260,7 +260,7 @@ mod tests {
         ]
         .concat();
         let kept = trim_backtrace(&trace);
-        assert!(kept.contains("2: fathomable::app::ui::draw"), "{kept}");
+        assert!(kept.contains("2: fathomable::app::draw::draw"), "{kept}");
         assert!(kept.contains("4: fathomable::main"), "{kept}");
         assert!(!kept.contains("panic_with_hook"), "the hook is not the bug");
         assert!(!kept.contains("block_on"), "the runtime is not the bug");

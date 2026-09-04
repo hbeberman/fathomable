@@ -69,7 +69,7 @@ The renames that carry it, each landing as one commit:
    `annotations::Scope` → `Reach`, `mcp::Session` → `Target`,
    `App.session` → `viewer_id`, `Thread::awaits_user` and `pending_for`
    → `awaits(Party::User | Party::Subscriber(id))`, `app/rescope.rs` →
-   `app/reach.rs`.
+   `app/threads/reach.rs`.
 2. **Screen.** Notices and `:status` rows say *workspace*, *changes*,
    *followed*, *subscribers*; nothing says *the work*, *local*, or
    *global*.

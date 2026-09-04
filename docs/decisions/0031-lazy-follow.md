@@ -2,7 +2,7 @@
 type: Decision
 title: Lazy follow
 description: Auto-jump is a monitor, not a leash; it switches itself off when the reader navigates away, leaves the visible file alone while its hunk is on screen, and prefers the file the agent says it is editing.
-resource: crates/fathomable/src/app/autojump.rs
+resource: crates/fathomable/src/app/jump.rs
 tags:
   - decision
   - input
@@ -68,7 +68,7 @@ and `follow.jump-debounce` the quiet period.
 
 ## Consequences
 
-- `app/autojump.rs`, which this record backs, holds the tick, the
+- `app/jump.rs`, which this record backs, holds the tick, the
   guards, the target choice, and the off-switch; `open`, the thread and
   diff entry points, and selection start call the off-switch, and
   auto-jump's own `open` bypasses it.

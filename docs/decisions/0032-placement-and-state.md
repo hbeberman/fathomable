@@ -2,7 +2,7 @@
 type: Decision
 title: Placement and state
 description: A thread's placement (detached, edited) and its state (waiting, open, resolved) are shown as two words, an agent reply toasts in the viewer it came through, and the store appends each event in one write so concurrent writers cannot corrupt it.
-resource: crates/fathomable/src/app/mark_words.rs
+resource: crates/fathomable/src/app/threads/words.rs
 tags:
   - decision
   - annotations
@@ -62,7 +62,7 @@ again.
 
 ### Two words
 
-- `app/mark_words.rs`, which this record backs, derives `Words` for a
+- `app/threads/words.rs`, which this record backs, derives `Words` for a
   thread: an optional *placement* word (`detached`, `edited`) from the
   gutter kind, and a *state* word (`waiting`, `open`, `resolved`,
   `auto-resolved`) from the thread alone. The gutter colour is

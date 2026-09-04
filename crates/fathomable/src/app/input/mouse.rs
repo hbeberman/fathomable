@@ -4,9 +4,9 @@
 
 use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 
-use super::super::view::Effect;
 use super::super::{App, Border, Focus, Popup};
 use super::keys::{WHEEL_LINES, tree_highlight};
+use crate::app::view::Effect;
 
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
@@ -141,7 +141,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         thread_list_mouse(app, event.kind, row);
         return Effect::None;
     }
-    let gutter = sidebar + super::super::ui::gutter_width(app.view());
+    let gutter = sidebar + crate::app::draw::gutter_width(app.view());
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
     if event.kind == MouseEventKind::Down(MouseButton::Left) {

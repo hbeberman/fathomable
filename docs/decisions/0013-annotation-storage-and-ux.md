@@ -4,7 +4,7 @@ title: Annotation storage and UX
 description: The JSONL event log, the line-hash anchor, the comment box, the gutter mark, the thread panel, and the keys that drive them.
 resource: crates/fathomable-core/src/annotations.rs
 related_resources:
-  - crates/fathomable/src/app/threads.rs
+  - crates/fathomable/src/app/threads/mod.rs
 tags:
   - decision
   - annotations

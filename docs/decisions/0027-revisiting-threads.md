@@ -2,7 +2,7 @@
 type: Decision
 title: Revisiting threads
 description: c on a thread opens it and C always starts one; the thread pane walks every thread in the file; the gutter brackets a thread's range with rounded corners; and a file-threads pane under the tree lists the file's threads, open and resolved, in step with the cursor.
-resource: crates/fathomable/src/app/file_threads.rs
+resource: crates/fathomable/src/app/threads/file_pane.rs
 tags:
   - decision
   - annotations
@@ -110,7 +110,7 @@ selected thread and selected message.)
 (Amended by [0036](0036-gutter-rows-and-focus-colour.md), 2026-08-28: the
 rows are rendered rows, decided from their neighbours, so a one-line
 thread that wraps is bracketed across its rows rather than dotted on
-each; the logic moved to `app/gutter.rs`.)
+each; the logic moved to `app/draw/gutter.rs`.)
 
 ### The file-threads pane
 
@@ -156,7 +156,7 @@ each; the logic moved to `app/gutter.rs`.)
 
 - `Focus` gains a `FileThreads` variant and `Border` a `FileThreads`
   rule; `Space t` joins the menu and `C` the view keys. The pane's
-  layout and key handling live in `app/file_threads.rs`, which this
+  layout and key handling live in `app/threads/file_pane.rs`, which this
   record backs; `ui` draws it under the tree with the sidebar's
   styles, and the tree's rows and scroll-off shrink by the pane's
   height.

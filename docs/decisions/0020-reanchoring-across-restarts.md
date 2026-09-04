@@ -2,7 +2,7 @@
 type: Decision
 title: Re-anchoring across restarts
 description: How a thread edited while Fathomable was closed finds its lines again, using the last-seen snapshot as the text it was last placed in.
-resource: crates/fathomable/src/app/reanchor.rs
+resource: crates/fathomable/src/app/threads/reanchor.rs
 tags:
   - decision
   - annotations

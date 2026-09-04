@@ -240,7 +240,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             None
         }
     };
-    let result = app::run(
+    let result = app::run::run(
         workspace,
         app::Options {
             record: record.clone(),

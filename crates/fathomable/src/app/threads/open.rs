@@ -9,8 +9,8 @@ use std::path::Path;
 
 use fathomable_core::annotations::{LineRange, Store, ThreadId};
 
-use super::App;
-use super::threads::overlaps;
+use crate::app::App;
+use crate::app::threads::overlaps;
 
 impl App {
     /// Whether `lines` carries part of the open thread pane's thread.

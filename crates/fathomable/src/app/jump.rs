@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use fathomable_core::follow::Change;
 
-use super::{App, Popup, view};
+use crate::app::{App, Popup, view};
 
 /// Reader activity newer than this holds auto-jump back (ADR 0015).
 pub(super) const RECENT_ACTIVITY: Duration = Duration::from_secs(3);

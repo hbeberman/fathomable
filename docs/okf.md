@@ -25,3 +25,5 @@ just links
 ```
 
 `just okf` validates bundle structure, tags, resource ownership, and source backlinks. `just links` checks maintained local links and anchors without requiring network access. Both checks are part of the canonical commit gate.
+
+A document's `resource` is the file it owns; that file carries exactly one `@okf-doc` backlink, to its owner. `related_resources` are forward pointers: each must exist, but it needs no backlink, so a decision record may point at the concept module it changed without taking it from the record that owns it, and an ADR need not own a new file at all.

@@ -2,7 +2,7 @@
 type: Decision
 title: The thread list
 description: Space A opens every thread on the current work, open then resolved, grouped by file, in place of the document; Enter jumps to one, and the file picker it replaces is gone.
-resource: crates/fathomable/src/app/thread_list.rs
+resource: crates/fathomable/src/app/threads/list.rs
 tags:
   - decision
   - annotations
@@ -115,7 +115,7 @@ round on 2026-08-27; the choices are recorded below.
 - `Focus` gains a `Threads` variant; the pill, the key dispatch, and the
   mouse routing branch on it. The list's state includes the selected
   thread and message; its state and row model live in
-  `app/thread_list.rs`, which this record backs, and `ui` draws the rows.
+  `app/threads/list.rs`, which this record backs, and `ui` draws the rows.
 - The list's rows are computed from the store on every draw and key, not
   cached, so there is no list state to invalidate on reload. The cost is
   one pass over the store's threads, which the picker already paid.

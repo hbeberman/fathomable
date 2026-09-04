@@ -8,7 +8,7 @@ use std::time::UNIX_EPOCH;
 
 use fathomable_core::content::{self, Content};
 
-use super::App;
+use crate::app::App;
 
 /// The pane's content: labelled rows, then a notice below them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -155,7 +155,7 @@ fn modified(path: &Path) -> Option<String> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    Some(super::ui::format_time(secs))
+    Some(crate::app::draw::format_time(secs))
 }
 
 #[cfg(test)]

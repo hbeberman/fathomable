@@ -180,3 +180,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     wire, theme, and docs are renamed to match, with one release of
     compatibility for the flag, the record directory, and the theme keys
     ([0047](decisions/0047-one-vocabulary.md)).
+39. **Modules by concept.** `app/` regroups into `threads/`, `draw/`,
+    `input/`, `jump`, `agents`, and `run`; records point at the concept
+    module they changed through `related_resources`, which need no
+    backlink ([0048](decisions/0048-modules-by-concept.md)).

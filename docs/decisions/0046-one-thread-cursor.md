@@ -2,7 +2,7 @@
 type: Decision
 title: One thread cursor
 description: The thread pane, the file-threads pane, and the thread list show and move one cursor, a thread and a message, that rides the text cursor while both are closed; lowercase thread motions step within the file and uppercase ones across the workspace, o resolves, and paging is Ctrl-d and Ctrl-u everywhere with no PgUp or PgDn.
-resource: crates/fathomable/src/app/thread_cursor.rs
+resource: crates/fathomable/src/app/threads/cursor.rs
 tags:
   - decision
   - annotations

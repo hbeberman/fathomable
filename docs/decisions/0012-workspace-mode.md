@@ -4,7 +4,7 @@ title: Workspace mode
 description: The tree sidebar, the space menu, the fuzzy file picker, open-file history, and the first session record and socket.
 resource: crates/fathomable/src/app/mod.rs
 related_resources:
-  - crates/fathomable/src/app/ui.rs
+  - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable-core/src/workspace.rs
   - crates/fathomable-core/src/tree.rs
   - crates/fathomable-core/src/picker.rs

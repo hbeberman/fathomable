@@ -1,12 +1,27 @@
 // @okf-doc: /decisions/0013-annotation-storage-and-ux.md
-//! Annotations on top of the view: gutter marks, the comment box, and the
-//! thread panel.
+//! Threads on top of the view: the store, the marks, the comment box, and
+//! the thread pane, with the thread concept's other modules beneath.
 //!
 //! [`App`] keeps the [`Store`] for the workspace; every open document
 //! carries the [`Mark`]s of its threads, re-located whenever the text
 //! changes. The comment box ([`Compose`]) starts a thread or replies to
-//! one; the [`ThreadPane`] reads a thread and resolves it. All of it is
-//! plain state so ADR 0013 behaviour is tested without a terminal.
+//! one; the [`ThreadPane`] reads a thread and resolves it. The submodules
+//! are the thread cursor (`cursor`), the file-threads pane (`file_pane`),
+//! the thread list (`list`), deletion, detached rows, the open thread's
+//! lines (`open`), git reach, re-anchoring, waiting threads, and the
+//! placement and state words. All of it is plain state, tested without a
+//! terminal (ADRs 0013 and 0046).
+
+pub(crate) mod cursor;
+pub(crate) mod delete;
+pub(crate) mod detached;
+pub(crate) mod file_pane;
+pub(crate) mod list;
+pub(crate) mod open;
+pub(crate) mod reach;
+pub(crate) mod reanchor;
+pub(crate) mod waiting;
+pub(crate) mod words;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,7 +34,7 @@ use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 use fathomable_core::reanchor::{Mapping, map_range};
 
-use super::{App, Focus, Popup};
+use crate::app::{App, Focus, Popup};
 
 /// A thread's status, which is its colour in the gutter, the file-threads
 /// pane, and the thread list (ADR 0039); where the thread is placed is
@@ -734,7 +749,7 @@ impl App {
         }
         let when = now();
         if let Some(lines) = lines {
-            super::open_thread::follow_reply_lines(store, &root, id, lines, when)?;
+            crate::app::threads::open::follow_reply_lines(store, &root, id, lines, when)?;
         }
         let reply = Reply::new(author.clone(), when, body);
         let reply = if resolve {
@@ -890,7 +905,7 @@ impl App {
         let limit = self
             .thread(&id)
             .map_or(0, |thread| {
-                super::message::thread_body_rows(thread, width, &self.highlighter)
+                crate::app::draw::message::thread_body_rows(thread, width, &self.highlighter)
             })
             .saturating_sub(body_rows);
         if let Some(panel) = self.panel_mut() {
@@ -921,10 +936,13 @@ impl App {
         let Some(thread) = self.thread(&id) else {
             return;
         };
-        let total = super::message::thread_body_rows(thread, width, &self.highlighter);
-        let Some(range) =
-            super::message::thread_message_range(thread, selected, width, &self.highlighter)
-        else {
+        let total = crate::app::draw::message::thread_body_rows(thread, width, &self.highlighter);
+        let Some(range) = crate::app::draw::message::thread_message_range(
+            thread,
+            selected,
+            width,
+            &self.highlighter,
+        ) else {
             return;
         };
         let limit = total.saturating_sub(body_rows);
@@ -1010,7 +1028,7 @@ mod tests {
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
     use super::{ComposeTarget, ThreadState};
-    use crate::app::thread_list::Row;
+    use crate::app::threads::list::Row;
     use crate::app::{App, Border, Options, Popup};
 
     struct TempDir(PathBuf);
@@ -1312,10 +1330,10 @@ mod tests {
         app.open_thread(id);
 
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        let theme = crate::app::ui::Theme::from_core(&core);
+        let theme = crate::app::draw::Theme::from_core(&core);
         let render = |app: &App| -> anyhow::Result<Vec<String>> {
             let mut terminal = Terminal::new(TestBackend::new(80, 36))?;
-            terminal.draw(|frame| crate::app::ui::draw(frame, app, &theme))?;
+            terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
             let buffer = terminal.backend().buffer().clone();
             Ok((0..buffer.area.height)
                 .map(|y| {
@@ -1783,12 +1801,12 @@ mod tests {
         let mut app = dir.app()?;
         annotate(&mut app, "one")?;
         app.view_mut().toggle_source_view();
-        let parts = crate::app::ui::status_parts(&app);
+        let parts = crate::app::draw::status_parts(&app);
         assert_eq!(parts.pill, "NOR");
         assert_eq!(parts.badges, ["SRC"]);
         assert!(parts.right.contains("1 threads"), "{}", parts.right);
         app.open_thread_at_cursor();
-        let parts = crate::app::ui::status_parts(&app);
+        let parts = crate::app::draw::status_parts(&app);
         assert_eq!(parts.pill, "THREAD");
         assert_eq!(parts.badges, ["SRC"], "the badge outlives the focus change");
         Ok(())
@@ -2286,14 +2304,14 @@ mod tests {
         .map_err(anyhow::Error::msg)?;
 
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        let theme = crate::app::ui::Theme::from_core(&core);
+        let theme = crate::app::draw::Theme::from_core(&core);
         let draw = |app: &mut App, state: &str| -> anyhow::Result<()> {
             for width in [1u16, 2, 4, 8, 12, 20, 40, 80] {
                 for height in 1..=6u16 {
                     app.resize(usize::from(width), usize::from(height));
                     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
                     terminal
-                        .draw(|frame| crate::app::ui::draw(frame, app, &theme))
+                        .draw(|frame| crate::app::draw::draw(frame, app, &theme))
                         .with_context(|| format!("{state} at {width}x{height}"))?;
                 }
             }

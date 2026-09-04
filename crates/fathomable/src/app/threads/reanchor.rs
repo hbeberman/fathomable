@@ -18,8 +18,8 @@ use fathomable_core::context::map_context;
 use fathomable_core::reanchor::{Mapping, map_range};
 use fathomable_core::seen;
 
-use super::App;
-use super::threads::now;
+use crate::app::App;
+use crate::app::threads::now;
 
 impl App {
     /// Follow every thread that no longer locates in its file from the
@@ -28,7 +28,7 @@ impl App {
     /// Threads whose file cannot be read, whose lines were removed rather
     /// than rewritten, or that have neither a snapshot nor a context
     /// window stay detached.
-    pub(super) fn reanchor_from_snapshots(&mut self) {
+    pub(crate) fn reanchor_from_snapshots(&mut self) {
         let (Some(store), Some(seen)) = (self.store.as_mut(), self.seen.as_ref()) else {
             return;
         };

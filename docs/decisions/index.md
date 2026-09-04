@@ -51,3 +51,4 @@ supersede rather than edit history.
 - [0045 Bindings are data](0045-bindings-are-data.md)
 - [0046 One thread cursor](0046-one-thread-cursor.md)
 - [0047 One vocabulary for the viewer](0047-one-vocabulary.md)
+- [0048 Modules by concept](0048-modules-by-concept.md)

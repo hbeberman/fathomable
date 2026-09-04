@@ -2,7 +2,7 @@
 type: Decision
 title: Open thread lines
 description: The lines of the thread shown in the thread pane draw in their own colour, and an agent's reply may carry the lines it rewrote so the thread follows a rewrite the reload diff would have lost.
-resource: crates/fathomable/src/app/open_thread.rs
+resource: crates/fathomable/src/app/threads/open.rs
 tags:
   - decision
   - annotations
@@ -57,7 +57,7 @@ choices:
 
 ## Decision
 
-- `app/open_thread.rs`, which this record backs, answers
+- `app/threads/open.rs`, which this record backs, answers
   `App::open_thread_in(lines)`: whether the open pane's thread, unless
   detached, overlaps those source lines. `text_lines` patches such rows
   with `annotation.focus`, a theme key added to the

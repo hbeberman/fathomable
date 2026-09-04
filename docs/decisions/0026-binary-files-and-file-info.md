@@ -4,7 +4,7 @@ title: Binary files and the file-info pane
 description: A file is binary when git would say so — the diff attribute, else a NUL in its first 8000 bytes; opening one, or a text file over the configured size, shows a file-info pane instead of a dead-end notice, and the sidebar tags it.
 resource: crates/fathomable-core/src/content.rs
 related_resources:
-  - crates/fathomable/src/app/info.rs
+  - crates/fathomable/src/app/draw/info.rs
 tags:
   - decision
   - git
@@ -128,7 +128,7 @@ File-wide threads, with a way to show them, are a noted follow-up.
   `is_binary`, set from the same classification the counts use.
 - `Config` gains the `viewer` block and `ViewerConfig`; `Options` gains
   `viewer` and the resolved `config_path` the notice names.
-- The pane's rows are assembled in `app/info.rs`; `ui` draws them.
+- The pane's rows are assembled in `app/draw/info.rs`; `ui` draws them.
 - 0012's "a file that is not valid UTF-8 is not opened" narrows to the
   non-UTF-8 text case; 0015's snapshot rules are unchanged (a binary or
   over-limit file has no text to snapshot).

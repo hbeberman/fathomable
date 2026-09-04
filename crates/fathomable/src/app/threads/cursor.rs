@@ -24,8 +24,8 @@ use std::path::PathBuf;
 
 use fathomable_core::annotations::{MessageTarget, ThreadId};
 
-use super::threads::{ComposeTarget, message_target};
-use super::{App, Focus};
+use crate::app::threads::{ComposeTarget, message_target};
+use crate::app::{App, Focus};
 
 /// A thread and a message in it: zero for the opening comment, then the
 /// replies in order.
@@ -100,7 +100,7 @@ impl App {
     }
 
     /// The thread the open pane shows: the cursor's, while there is a pane.
-    pub(super) fn pane_thread(&self) -> Option<&ThreadId> {
+    pub(crate) fn pane_thread(&self) -> Option<&ThreadId> {
         self.thread.as_ref().and(self.thread_cursor.thread())
     }
 
@@ -139,12 +139,12 @@ impl App {
     }
 
     /// The index of a thread's newest message.
-    pub(super) fn newest_message(&self, id: &ThreadId) -> usize {
+    pub(crate) fn newest_message(&self, id: &ThreadId) -> usize {
         self.thread(id).map_or(0, |thread| thread.replies().len())
     }
 
     /// Messages in the cursor's thread.
-    pub(super) fn cursor_message_count(&self) -> usize {
+    pub(crate) fn cursor_message_count(&self) -> usize {
         self.thread_cursor()
             .thread()
             .and_then(|id| self.thread(id))
@@ -153,7 +153,7 @@ impl App {
 
     /// Put the cursor on `id`, at its newest message unless the cursor
     /// already stands on it.
-    pub(super) fn set_thread_cursor(&mut self, id: ThreadId) {
+    pub(crate) fn set_thread_cursor(&mut self, id: ThreadId) {
         let current = self.thread_cursor();
         let message = if current.thread() == Some(&id) {
             current.message()
@@ -165,7 +165,7 @@ impl App {
 
     /// Put the cursor on message `message` of `id`, clamped to the
     /// thread's messages.
-    pub(super) fn set_thread_cursor_message(&mut self, id: ThreadId, message: usize) {
+    pub(crate) fn set_thread_cursor_message(&mut self, id: ThreadId, message: usize) {
         let last = self.newest_message(&id);
         self.pin_thread_cursor(ThreadCursor::new(id, message.min(last)));
     }
@@ -262,7 +262,7 @@ impl App {
 
     /// Whether the cursor is on the first thread of the file, where `h`
     /// in the pane hops to the file-threads pane instead of wrapping.
-    pub(super) fn cursor_on_first_in_file(&self) -> bool {
+    pub(crate) fn cursor_on_first_in_file(&self) -> bool {
         let order = self.file_threads();
         self.anchor_in(&order) == Ok(0)
     }
@@ -270,7 +270,7 @@ impl App {
     /// Go to `id`: its file opened when it is elsewhere, the text cursor
     /// on its first line, the cursor on it, and the pane showing it when
     /// the pane is open. A deleted file is reported instead.
-    pub(super) fn land_on_thread(&mut self, id: ThreadId) -> bool {
+    pub(crate) fn land_on_thread(&mut self, id: ThreadId) -> bool {
         let Some(path) = self.thread(&id).map(|thread| thread.path().to_path_buf()) else {
             return false;
         };
@@ -330,7 +330,7 @@ impl App {
 
     /// Keep the highlighted message on screen in whichever surface shows
     /// it.
-    pub(super) fn follow_cursor_message(&mut self) {
+    pub(crate) fn follow_cursor_message(&mut self) {
         if self.thread.is_some() {
             self.thread_message_into_view();
         }
@@ -411,7 +411,7 @@ impl App {
     }
 
     /// Jump to `id` in the open document and open the pane on it.
-    pub(super) fn show_thread(&mut self, id: ThreadId) {
+    pub(crate) fn show_thread(&mut self, id: ThreadId) {
         self.goto_thread(&id);
         self.open_thread(id);
     }

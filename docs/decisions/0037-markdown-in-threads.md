@@ -2,7 +2,7 @@
 type: Decision
 title: Markdown in the thread pane
 description: Comment and reply bodies in the thread pane render as Markdown through the file renderer, with a single newline kept as a line break and fenced code coloured by its language.
-resource: crates/fathomable/src/app/message.rs
+resource: crates/fathomable/src/app/draw/message.rs
 tags:
   - decision
   - annotations
@@ -50,7 +50,7 @@ Settled in a question round on 2026-08-28:
 
 ## Decision
 
-- `app/message.rs`, which this record backs, takes `message_lines` and
+- `app/draw/message.rs`, which this record backs, takes `message_lines` and
   `thread_body_rows` from `ui.rs`. A body is laid out by
   `Layout::render_message` at the pane's width less the message indent,
   and each rendered line's spans are drawn through `face_style`, so

@@ -13,9 +13,9 @@
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
-use super::mark_words::Words;
-use super::threads::ThreadState;
-use super::{App, Focus};
+use crate::app::threads::ThreadState;
+use crate::app::threads::words::Words;
+use crate::app::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
 const CHROME_ROWS: usize = 2;
@@ -216,7 +216,7 @@ impl App {
     }
 
     /// The pane's rule was dragged to screen row `row`.
-    pub(super) fn drag_file_threads_to(&mut self, row: usize) {
+    pub(crate) fn drag_file_threads_to(&mut self, row: usize) {
         self.file_rows = Some(self.pane_rows().saturating_sub(row));
     }
 }
@@ -317,9 +317,9 @@ mod tests {
         // the cursor's thread highlighted.
         app.view_mut().goto_source_line(7);
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        let theme = crate::app::ui::Theme::from_core(&core);
+        let theme = crate::app::draw::Theme::from_core(&core);
         let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
-        terminal.draw(|frame| crate::app::ui::draw(frame, &app, &theme))?;
+        terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
         let buffer = terminal.backend().buffer().clone();
         let column: Vec<String> = (0..buffer.area.height)
             .map(|y| {

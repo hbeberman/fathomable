@@ -4,7 +4,7 @@ title: Agent subscriptions, pending threads, and harness hooks
 description: An agent subscribes to a workspace once with its harness session id and a configured agent type; a thread is pending for it when the newest message is someone else's; a harness stop hook delivers each pending thread once as a self-contained prompt; watches wake an agent when another thread moves; and no unsubscribed session ever hears from Fathomable.
 resource: crates/fathomable-core/src/agents.rs
 related_resources:
-  - crates/fathomable/src/app/wake.rs
+  - crates/fathomable/src/app/agents.rs
 tags:
   - decision
   - sessions
@@ -209,7 +209,7 @@ design:
   them. Nothing beyond `agents.max-lines` lines: past it, the rest are
   listed as `id path:range` with "call `threads_pending`". The blob
   never carries file content beyond the snippet.
-- `app/wake.rs` is the viewer's side. `Space w` runs `agents.wake` — a
+- `app/agents.rs` is the viewer's side. `Space w` runs `agents.wake` — a
   command template whose `{id}` and `{prompt}` become shell positional
   parameters — for the one subscriber, or the one picked from a picker,
   with the blob as `{prompt}`; the command runs detached with no

@@ -232,7 +232,9 @@ class Linter:
             if urlsplit(related_resource).scheme:
                 self.error(path, "frontmatter `related_resources` entries must be repository-relative paths")
                 continue
-            target = self._register_resource_reference(path, related_resource, slug)
+            # A related resource is a forward pointer: it must exist, but it
+            # keeps its backlink for the document that owns it (docs/okf.md).
+            target = self.local_resource(path, related_resource)
             if target is not None and target == resource_target:
                 self.error(path, "frontmatter `related_resources` may not duplicate `resource`")
 

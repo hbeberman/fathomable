@@ -8,8 +8,8 @@
 
 use fathomable_core::annotations::LineRange;
 
-use super::App;
-use super::threads::{Mark, ThreadState, overlaps};
+use crate::app::App;
+use crate::app::threads::{Mark, ThreadState, overlaps};
 
 impl App {
     /// The note-cell glyph and colour of rendered row `row` of the

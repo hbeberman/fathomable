@@ -9,7 +9,7 @@
 
 use fathomable_core::annotations::{Placement, Thread};
 
-use super::threads::ThreadState;
+use crate::app::threads::ThreadState;
 
 /// The placement word, when the lines are not where the comment was
 /// written, and the state word.

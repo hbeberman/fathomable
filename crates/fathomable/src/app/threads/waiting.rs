@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{Party, Store, Thread, ThreadId};
 
-use super::App;
-use super::threads::ThreadState;
+use crate::app::App;
+use crate::app::threads::ThreadState;
 
 impl App {
     /// Waiting threads on the current document.
@@ -44,7 +44,7 @@ impl App {
     }
 
     /// The ids of the store's waiting threads, for the reload diff.
-    pub(super) fn waiting_ids(store: &Store) -> HashSet<ThreadId> {
+    pub(crate) fn waiting_ids(store: &Store) -> HashSet<ThreadId> {
         store
             .threads()
             .iter()
@@ -55,7 +55,7 @@ impl App {
 
     /// After a store reload: toast the threads that started waiting, so
     /// an agent's reply is seen wherever the reader is.
-    pub(super) fn toast_waiting(&mut self, before: &HashSet<ThreadId>) {
+    pub(crate) fn toast_waiting(&mut self, before: &HashSet<ThreadId>) {
         let Some(store) = self.store.as_ref() else {
             return;
         };
@@ -355,7 +355,7 @@ mod tests {
         agent_thread(&mut other, "notes.md", NOTES, 4, true)?;
         app.reload_store();
         assert_eq!(
-            app.toasts().last().map(super::super::Toast::text),
+            app.toasts().last().map(crate::app::Toast::text),
             Some("2 replies")
         );
         assert_eq!((app.waiting_count(), app.waiting_total()), (1, 2));

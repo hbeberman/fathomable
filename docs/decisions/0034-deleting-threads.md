@@ -2,7 +2,7 @@
 type: Decision
 title: Deleting threads and the list that drives the pane
 description: d d deletes a thread from the thread pane, the file-threads pane, or the thread list, recorded as a tombstone; the file-threads pane drives the thread pane without taking focus from it; and the pane opens at its end, marked END.
-resource: crates/fathomable/src/app/delete.rs
+resource: crates/fathomable/src/app/threads/delete.rs
 tags:
   - decision
   - annotations
@@ -111,7 +111,7 @@ below.
 
 ## Consequences
 
-- `app/delete.rs`, which this record backs, holds the arming state,
+- `app/threads/delete.rs`, which this record backs, holds the arming state,
   the confirm/cancel step the three key handlers share, and
   `delete_thread`. `Store::delete` and `Event::Delete` join
   `annotations.rs`; the wire version stays 2, since an older reader

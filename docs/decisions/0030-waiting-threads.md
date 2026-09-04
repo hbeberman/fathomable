@@ -2,7 +2,7 @@
 type: Decision
 title: Threads waiting on the user
 description: An open thread whose newest message is an agent's is waiting on the user; it gets its own gutter colour, a count in the status line and a toast when it arrives, and ]r and [r jump through them across files.
-resource: crates/fathomable/src/app/waiting.rs
+resource: crates/fathomable/src/app/threads/waiting.rs
 tags:
   - decision
   - annotations
@@ -74,7 +74,7 @@ most recent reply on*, so they can clear what needs them quickly.
 - `MarkKind` gains `Waiting`; `MarkKind::of` reads it from a new
   `Thread::awaits_user()` in `fathomable-core::annotations`, which
   this record's predicate defines and which the MCP list can reuse.
-- `app/waiting.rs`, which this record backs, holds the jump, the
+- `app/threads/waiting.rs`, which this record backs, holds the jump, the
   reload diff that raises the toast, and the counts; `ui` draws the
   new face, the sidebar tag, and the status block.
 - `Theme` gains `annotation.waiting`; both built-in themes set it, and

@@ -12,9 +12,9 @@ use crossterm::event::KeyEvent;
 use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::tree::Tree;
 
-use super::super::view::{Effect, Mode};
 use super::super::{App, Focus, PickerKind, Popup};
 use super::bindings::{Action, Chord, Key, Match, Where, lookup};
+use crate::app::view::{Effect, Mode};
 
 /// Rows a scroll key or wheel notch moves.
 pub const WHEEL_LINES: isize = 3;

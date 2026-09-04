@@ -1,5 +1,11 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! Draw the app with ratatui: sidebar, gutter and text, popups, status line.
+//! Draw the app with ratatui: sidebar, gutter and text, thread surfaces,
+//! popups, and the status line; `gutter`, `info`, and `message` build the
+//! rows the frame draws.
+
+pub(crate) mod gutter;
+pub(crate) mod info;
+pub(crate) mod message;
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -14,16 +20,16 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
-use super::info::Info;
-use super::mark_words::{Words, label};
-use super::message::{thread_body_lines, thread_body_rows};
-use super::thread_list::{Row, Rows};
-use super::threads::{Compose, ComposeTarget, ThreadPane, ThreadState};
-use super::view::{Mode, View};
+use crate::app::draw::info::Info;
+use crate::app::draw::message::{thread_body_lines, thread_body_rows};
+use crate::app::threads::list::{Row, Rows};
+use crate::app::threads::words::{Words, label};
+use crate::app::threads::{Compose, ComposeTarget, ThreadPane, ThreadState};
+use crate::app::view::{Mode, View};
 
-use super::input::bindings::{self, Action, Where};
-use super::input::keys::place;
-use super::{App, Focus, MAX_TOASTS, PickerState, Popup};
+use crate::app::input::bindings::{self, Action, Where};
+use crate::app::input::keys::place;
+use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
 
 /// Snippet lines quoted at the top of the thread panel.
 pub(super) const SNIPPET_ROWS: usize = 3;
@@ -676,7 +682,7 @@ fn file_thread_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) ->
     )]));
     let focused = app.focus() == Focus::FileThreads;
     let selected = app.file_thread_selected();
-    let now = super::threads::now();
+    let now = crate::app::threads::now();
     for (index, row) in app
         .file_thread_rows()
         .iter()
@@ -1403,7 +1409,7 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         vec![(String::new(), "click or Space A to focus")]
     };
     let hints: Vec<Hint<'_>> = hints.iter().map(|(k, l)| (k.as_str(), *l)).collect();
-    let now = super::threads::now();
+    let now = crate::app::threads::now();
     let mut lines = vec![header_line(theme, left, &hints, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
     for row in all.iter().skip(scroll).take(rows - 1) {
@@ -1514,12 +1520,12 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         return;
     }
     let width = usize::from(area.width);
-    let now = super::threads::now();
+    let now = crate::app::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = app.thread_position().unwrap_or((1, 1));
     let (across, overall) = app.thread_position_across().unwrap_or((1, 1));
-    let words = Words::of(mark.map(super::threads::Mark::placement), thread);
-    let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
+    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
+    let range = mark.map_or_else(|| thread.range(), crate::app::threads::Mark::range);
     // Both counts (ADR 0046): the file's, then the workspace's.
     let mut left = vec![
         Span::styled(format!(" thread {index}/{total} "), theme.popup_key),
@@ -1774,7 +1780,7 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 mod tests {
     use fathomable_core::layout::display_width;
 
-    use crate::app::thread_list::Row;
+    use crate::app::threads::list::Row;
 
     use super::{Theme, format_age, format_age_short, format_time, list_row};
 

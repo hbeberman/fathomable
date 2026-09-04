@@ -2,7 +2,7 @@
 type: Decision
 title: Gutter colour says status, detached threads get a row
 description: The note cell's colour is the thread's status alone (amber open, teal waiting, grey resolved); placement words stay in the panes; a detached thread draws on a blank row inserted where its lines were; and a bracket bridges rendered rows that no source line backs.
-resource: crates/fathomable/src/app/detached.rs
+resource: crates/fathomable/src/app/threads/detached.rs
 tags:
   - decision
   - annotations
@@ -97,7 +97,7 @@ Settled in a discussion on 2026-08-28:
 
 ### The detached row
 
-- `app/detached.rs`, which this record backs, places detached marks. A
+- `app/threads/detached.rs`, which this record backs, places detached marks. A
   detached thread's *anchor line* is the start of its last known range,
   clamped to one past the last line of the file. `Layout` gains
   `Layout::with_rows_before(lines)`: for each anchor line, in order,

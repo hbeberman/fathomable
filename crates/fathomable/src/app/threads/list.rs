@@ -13,8 +13,8 @@ use std::path::PathBuf;
 use fathomable_core::annotations::{LineRange, Thread, ThreadId};
 use fathomable_core::layout::wrap_text;
 
-use super::threads::ThreadState;
-use super::{App, Focus};
+use crate::app::threads::ThreadState;
+use crate::app::{App, Focus};
 
 /// Rows kept visible above and below the selected message.
 const SCROLLOFF: usize = 2;
@@ -49,7 +49,7 @@ impl ThreadList {
     }
 
     /// A document took the column back.
-    pub(super) fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         self.open = false;
     }
 }
@@ -421,7 +421,7 @@ impl App {
 
     /// Scroll enough to keep the cursor's message, or a folded header,
     /// visible; the entry is re-found when the rows changed under it.
-    pub(super) fn thread_list_follow_cursor(&mut self) {
+    pub(crate) fn thread_list_follow_cursor(&mut self) {
         let rows = self.thread_list_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
@@ -571,7 +571,7 @@ impl App {
     }
 
     /// The selected entry's index, for a caller about to change the store.
-    pub(super) fn thread_list_selected_index(&self) -> Option<usize> {
+    pub(crate) fn thread_list_selected_index(&self) -> Option<usize> {
         if !self.list.is_open() {
             return None;
         }
@@ -581,7 +581,7 @@ impl App {
     /// Re-select after the store changed under the list: the entry with
     /// the selected id, else the one now at `place` (the index before
     /// the change), else the last, else nothing.
-    pub(super) fn thread_list_reselect(&mut self, place: Option<usize>) {
+    pub(crate) fn thread_list_reselect(&mut self, place: Option<usize>) {
         if !self.list.is_open() {
             return;
         }

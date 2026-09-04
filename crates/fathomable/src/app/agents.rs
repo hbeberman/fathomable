@@ -8,8 +8,8 @@ use std::process::{Command, Stdio};
 use fathomable_core::agents::{Register, Subscriber};
 use fathomable_core::annotations::ThreadId;
 
-use super::{App, PickerKind};
 use crate::app::threads::now;
+use crate::app::{App, PickerKind};
 use crate::hooks;
 
 impl App {

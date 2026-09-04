@@ -2,7 +2,7 @@
 type: Decision
 title: Gutter brackets rendered rows, focus in a second colour
 description: The note cell decides its bracket from the neighbouring rendered rows, so a wrapped one-line thread is bracketed rather than dotted on every row; the open thread's lines take a blue (dark) or teal (light) tint instead of a stronger yellow.
-resource: crates/fathomable/src/app/gutter.rs
+resource: crates/fathomable/src/app/draw/gutter.rs
 tags:
   - decision
   - annotations
@@ -54,7 +54,7 @@ taken:
 
 ## Decision
 
-- `app/gutter.rs`, which this record backs, takes over the note cell
+- `app/draw/gutter.rs`, which this record backs, takes over the note cell
   from `threads.rs`. `App::note_on_row(row)` reads the source lines of
   the row and of the rows above and below it, and `App::note_in(lines,
   above, below)` decides the glyph: a thread *starts* on the row when it

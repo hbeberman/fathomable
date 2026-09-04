@@ -276,6 +276,7 @@ actions! {
     EditMessage,
     EditNewestOwn,
     StubToggle,
+    StubExpandAll,
     StubResolvedToggle,
     ToggleResolved,
     Delete,
@@ -441,7 +442,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c('c')]],
         A::Comment,
         "Threads",
-        "open the thread here, else comment on the selection or line",
+        "expand or fold the thread here, else comment on the selection or line",
     ),
     bind(
         W::View,
@@ -449,6 +450,34 @@ pub const BINDINGS: &[Binding] = &[
         A::NewThread,
         "Threads",
         "always start a new thread",
+    ),
+    bind(
+        W::View,
+        &[&[c('r')]],
+        A::Reply,
+        "Threads",
+        "reply to the thread here",
+    ),
+    bind(
+        W::View,
+        &[&[c('e')]],
+        A::EditMessage,
+        "Threads",
+        "edit the message here, when yours",
+    ),
+    bind(
+        W::View,
+        &[&[c('o')]],
+        A::ToggleResolved,
+        "Threads",
+        "resolve or reopen the thread here",
+    ),
+    bind(
+        W::View,
+        &[&[c('d'), c('d')]],
+        A::Delete,
+        "Threads",
+        "delete the thread here",
     ),
     bind(
         W::View,
@@ -674,6 +703,13 @@ pub const BINDINGS: &[Binding] = &[
         A::StubToggle,
         "Space menu",
         "threads: toggle stub visibility",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('z')]],
+        A::StubExpandAll,
+        "Space menu",
+        "threads: expand or fold every stub",
     ),
     bind(
         W::Any,
@@ -1576,7 +1612,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "x", "n", "r", "o", "e", "d"]
+            ["c", "z", "x", "n", "r", "o", "e", "d"]
         );
         assert_eq!(keys(Where::List, &[c(' '), c('v')]), ["s", "d", "D"]);
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
@@ -1661,10 +1697,7 @@ mod tests {
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::List, Action::Reply).as_deref(), Some("r"));
         assert_eq!(hint(Where::Tree, Action::TreeRefresh).as_deref(), Some("R"));
-        assert_eq!(
-            hint(Where::View, Action::Reply).as_deref(),
-            Some("Space c r")
-        );
+        assert_eq!(hint(Where::View, Action::Reply).as_deref(), Some("r"));
         assert_eq!(hint(Where::List, Action::CommandLine).as_deref(), Some(":"));
         assert_eq!(hint(Where::Box, Action::CommandLine), None);
         assert!(help().iter().any(|(keys, _)| keys == "j / Down"));

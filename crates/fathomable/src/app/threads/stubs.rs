@@ -1,21 +1,27 @@
 // @okf-doc: /decisions/0049-inline-threads-and-the-rail.md
 //! Inline stubs (ADR 0049): a thread shows under the last row of its
-//! lines as a block of one or two rows, the newest messages first line
-//! each, so a file reads with its conversation in place.
+//! lines as a block of one or two rows, the newest messages' first line
+//! each, and `c` expands it in place into the whole thread, so a file
+//! reads with its conversation where the lines are.
 //!
 //! Stubs are not lines. The view inserts their rows after the row they
 //! hang under, the way a detached thread's row is inserted (ADR 0039),
-//! and every motion steps over them; only the mouse lands on one. Which
-//! threads produce rows, under which row, in what order, and with which
-//! messages is decided here from the marks; the view keeps only the
-//! anchors and the row counts, and the drawing asks back for the words.
+//! and every motion steps over a collapsed stub; only the mouse lands on
+//! one. An expanded thread's message rows are stops: `j`/`k` walk them,
+//! and the message under the cursor is the thread cursor's. Which
+//! threads produce rows, under which row, in what order, with which
+//! messages, and which rows are stops is decided here from the marks;
+//! the view keeps only the anchors, counts, and stops, and the drawing
+//! asks back for the words.
 
 use fathomable_core::annotations::ThreadId;
 use fathomable_core::config::ThreadsConfig;
 use fathomable_core::layout::RowAnchor;
 
 use crate::app::App;
+use crate::app::draw::message::expanded_rows;
 use crate::app::threads::{Mark, ThreadState};
+use crate::app::view::StubBlock;
 
 /// Messages a collapsed stub shows: the newest two.
 const STUB_MESSAGES: usize = 2;
@@ -37,13 +43,19 @@ impl StubState {
     }
 }
 
-/// One thread's stub: where it hangs and which messages it shows,
-/// oldest first (zero is the comment).
+/// One thread's stub: where it hangs, which messages it shows (oldest
+/// first, zero the comment), and its shape when expanded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stub {
     id: ThreadId,
     anchor: RowAnchor,
     messages: Vec<usize>,
+    expanded: bool,
+    /// Rows the block takes.
+    rows: usize,
+    /// Row indices within the block the cursor may rest on: an expanded
+    /// thread's message rows. Empty for a collapsed stub.
+    stops: Vec<usize>,
 }
 
 impl Stub {
@@ -57,10 +69,41 @@ impl Stub {
         &self.messages
     }
 
-    /// The row the stub hangs under and how many rows it takes, for the
-    /// view.
-    pub fn block(&self) -> (RowAnchor, usize) {
-        (self.anchor, self.messages.len())
+    /// Whether the whole thread shows.
+    pub fn expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// The message row `index` of the block belongs to: for a collapsed
+    /// stub the message on that row, for an expanded thread the message
+    /// whose header or body it is; `None` on the expanded header row.
+    #[must_use]
+    pub fn message_of_row(&self, index: usize) -> Option<usize> {
+        if !self.expanded {
+            return self.messages.get(index).copied();
+        }
+        let position = self.stops.iter().rposition(|&stop| stop <= index)?;
+        self.messages.get(position).copied()
+    }
+
+    /// The row within the block that message `message` starts on, when
+    /// the thread is expanded.
+    #[must_use]
+    pub fn row_of_message(&self, message: usize) -> Option<usize> {
+        if !self.expanded {
+            return None;
+        }
+        let position = self.messages.iter().position(|&m| m == message)?;
+        self.stops.get(position).copied()
+    }
+
+    /// The block as the view lays it out.
+    pub fn block(&self) -> StubBlock {
+        StubBlock {
+            anchor: self.anchor,
+            rows: self.rows,
+            stops: self.stops.clone(),
+        }
     }
 }
 
@@ -77,6 +120,11 @@ impl App {
         self.stubs.resolved
     }
 
+    /// Whether `id` is expanded in place.
+    pub fn is_expanded(&self, id: &ThreadId) -> bool {
+        self.expanded.contains(id)
+    }
+
     /// The current document's stubs in row order: threads by start line,
     /// then end line, then id, so stacked stubs come one thread after
     /// another and never interleave.
@@ -84,6 +132,7 @@ impl App {
         if !self.stubs.shown {
             return Vec::new();
         }
+        let width = self.view().layout().width();
         let mut marks: Vec<&Mark> = self
             .marks()
             .iter()
@@ -103,11 +152,28 @@ impl App {
                     RowAnchor::Line(mark.range().end())
                 };
                 let count = thread.replies().len() + 1;
-                let messages = (count.saturating_sub(STUB_MESSAGES)..count).collect();
+                let expanded = self.expanded.contains(mark.id());
+                let (messages, rows, stops) = if expanded {
+                    let (rows, stops) = expanded_rows(thread, width, self.highlighter());
+                    // The header row comes first; the stops follow it.
+                    (
+                        (0..count).collect(),
+                        rows + 1,
+                        stops.into_iter().map(|stop| stop + 1).collect(),
+                    )
+                } else {
+                    let messages: Vec<usize> =
+                        (count.saturating_sub(STUB_MESSAGES)..count).collect();
+                    let rows = messages.len();
+                    (messages, rows, Vec::new())
+                };
                 Some(Stub {
                     id: mark.id().clone(),
                     anchor,
                     messages,
+                    expanded,
+                    rows,
+                    stops,
                 })
             })
             .collect()
@@ -116,18 +182,116 @@ impl App {
     /// Lay the current document out again with its stub rows in place;
     /// called whenever the marks, the messages, or the toggles change.
     pub(crate) fn place_stub_rows(&mut self) {
-        let blocks: Vec<(RowAnchor, usize)> = self.stubs().iter().map(Stub::block).collect();
+        let blocks: Vec<StubBlock> = self.stubs().iter().map(Stub::block).collect();
         self.view_mut().set_stub_blocks(blocks);
     }
 
-    /// The thread whose stub row `row` belongs to, with the message the
-    /// row shows and whether it is the block's last row.
+    /// The stub whose row `row` is, with the row's index in the block
+    /// and whether it is the block's last row.
     pub fn stub_on_row(&self, row: usize) -> Option<(Stub, usize, bool)> {
         let (block, index) = self.view().stub_slot_of_row(row)?;
         let stub = self.stubs().into_iter().nth(block)?;
-        let message = *stub.messages.get(index)?;
-        let last = index + 1 == stub.messages.len();
-        Some((stub, message, last))
+        let last = index + 1 == stub.rows;
+        Some((stub, index, last))
+    }
+
+    /// The thread and message an expanded row shows, `None` off the
+    /// expanded rows.
+    pub fn expanded_row_message(&self, row: usize) -> Option<(ThreadId, usize)> {
+        let (stub, index, _) = self.stub_on_row(row)?;
+        if !stub.expanded {
+            return None;
+        }
+        let message = stub.message_of_row(index)?;
+        Some((stub.id, message))
+    }
+
+    /// The rendered row message `message` of the expanded `id` starts on.
+    fn row_of_message(&self, id: &ThreadId, message: usize) -> Option<usize> {
+        let (block, stub) = self
+            .stubs()
+            .into_iter()
+            .enumerate()
+            .find(|(_, stub)| stub.id() == id)?;
+        let index = stub.row_of_message(message)?;
+        self.view().row_of_stub_slot(block, index)
+    }
+
+    /// Expand `id` in place, the view staying where it is, and put the
+    /// cursor on its newest message.
+    pub fn expand_thread(&mut self, id: ThreadId) {
+        self.expanded.insert(id.clone());
+        self.place_stub_rows();
+        let newest = self.newest_message(&id);
+        self.set_thread_cursor_message(id, newest);
+    }
+
+    /// Fold `id` back to a stub.
+    pub fn fold_thread(&mut self, id: &ThreadId) {
+        if self.expanded.remove(id) {
+            self.place_stub_rows();
+        }
+    }
+
+    /// Put the text cursor on message `message` of `id`, expanding the
+    /// thread if it is folded, so a reply lands under the reader's eye.
+    pub(crate) fn goto_message(&mut self, id: ThreadId, message: usize) {
+        if !self.is_expanded(&id) {
+            self.expanded.insert(id.clone());
+            self.place_stub_rows();
+        }
+        if let Some(row) = self.row_of_message(&id, message) {
+            self.view_mut().goto_row(row);
+        }
+        self.set_thread_cursor_message(id, message);
+    }
+
+    /// `c` on a row threads cover: expand the thread cursor's thread; on
+    /// an expanded thread, fold it and expand the next thread covering
+    /// the same lines, in line order and wrapping, until the cycle comes
+    /// back to where it started, when nothing is expanded.
+    pub fn cycle_expanded(&mut self, covering: Vec<ThreadId>) {
+        let Some(current) = self.thread_cursor().thread().cloned() else {
+            return;
+        };
+        if !self.is_expanded(&current) {
+            self.cycle = Some((current.clone(), covering));
+            self.expand_thread(current);
+            return;
+        }
+        self.fold_thread(&current);
+        // The ring the cycle started with, unless it no longer holds the
+        // thread; then the threads covering its lines now.
+        let (start, ring) = self
+            .cycle
+            .take()
+            .filter(|(_, ring)| ring.contains(&current))
+            .unwrap_or((current.clone(), covering));
+        let next = ring
+            .iter()
+            .position(|id| *id == current)
+            .map(|at| ring[(at + 1) % ring.len()].clone());
+        match next {
+            Some(next) if next != start && next != current => {
+                self.cycle = Some((start, ring));
+                self.expand_thread(next);
+            }
+            _ => self.set_thread_cursor(current),
+        }
+    }
+
+    /// `Space c z`: expand every stub in the file, or fold every expanded
+    /// thread when any is.
+    pub fn toggle_expand_all(&mut self) {
+        let ids: Vec<ThreadId> = self.stubs().into_iter().map(|stub| stub.id).collect();
+        if ids.iter().any(|id| self.expanded.contains(id)) {
+            for id in &ids {
+                self.expanded.remove(id);
+            }
+        } else {
+            self.expanded.extend(ids);
+        }
+        self.place_stub_rows();
     }
 
     /// `Space c c`: draw stubs, or not, for the session.
@@ -166,7 +330,8 @@ mod tests {
     use fathomable_testing::TempDir;
 
     use crate::app::input::keys;
-    use crate::app::{App, Options};
+    use crate::app::threads::ComposeTarget;
+    use crate::app::{App, Focus, Options, Popup};
 
     fn fixture(name: &str) -> std::io::Result<TempDir> {
         let dir = TempDir::new(&format!("stubs-{name}"))?;
@@ -209,6 +374,18 @@ mod tests {
         }
     }
 
+    fn click(app: &mut App, column: u16, row: u16) {
+        crate::app::input::mouse::handle_mouse(
+            app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+    }
+
     fn screen(app: &App) -> anyhow::Result<Vec<String>> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = crate::app::draw::Theme::from_core(&core);
@@ -238,11 +415,13 @@ mod tests {
         app.thread_reply();
         app.compose_insert("agent-free reply");
         app.compose_submit();
-        app.close_thread();
-        annotate(&mut app, 7, 7, "seven");
+        // A reply from the text expands the thread; fold it again.
+        let inner = app.file_threads()[1].clone();
+        app.fold_thread(&inner);
         app.view_mut().goto_source_line(1);
 
         // Row model: 8 source rows, plus 1 + 2 rows under L5 and 1 under L7.
+        annotate(&mut app, 7, 7, "seven");
         let rows = app.view().layout().lines().len();
         assert_eq!(rows, 12);
         assert_eq!(app.view().source_line_of_row(4), Some(5));
@@ -259,17 +438,17 @@ mod tests {
             "inner's reply row"
         );
         assert_eq!(app.view().source_line_of_row(8), Some(6));
-        let (stub, message, last) = app
+        let (stub, index, last) = app
             .stub_on_row(5)
             .ok_or_else(|| anyhow::anyhow!("a stub under L5"))?;
         assert_eq!(stub.messages(), [0]);
-        assert_eq!((message, last), (0, true));
-        let (stub, message, last) = app
+        assert_eq!((index, last), (0, true));
+        let (stub, index, last) = app
             .stub_on_row(6)
             .ok_or_else(|| anyhow::anyhow!("a stub under L5"))?;
         assert_eq!(stub.messages(), [0, 1]);
-        assert_eq!((message, last), (0, false));
-        assert_eq!(app.stub_on_row(7).map(|(_, m, l)| (m, l)), Some((1, true)));
+        assert_eq!((index, last), (0, false));
+        assert_eq!(app.stub_on_row(7).map(|(_, i, l)| (i, l)), Some((1, true)));
 
         // The screen: the stub rows show the author, age, and text, no
         // number; the text of the thread under the cursor and the hint.
@@ -322,17 +501,6 @@ mod tests {
             Some((5, 6))
         );
         press(&mut app, "\u{1b}");
-        // A click on a stub row lands on the row it hangs under.
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column: 60,
-                row: 7,
-                modifiers: KeyModifiers::NONE,
-            },
-        );
-        assert_eq!(app.view().cursor().row, 4);
         Ok(())
     }
 
@@ -381,6 +549,127 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("a detached row"))?;
         assert!(app.view().stub_slot_of_row(detached + 1).is_some());
         assert_eq!(app.view().source_line_of_row(detached + 2), Some(4));
+        Ok(())
+    }
+
+    /// `c` expands the thread under the cursor in place without moving
+    /// the view; `j`/`k` walk its messages and `r` replies with the
+    /// cursor landing on the reply; `c` folds; `c` cycles through the
+    /// threads covering a row and ends with none expanded.
+    #[test]
+    fn c_expands_in_place_walks_messages_and_cycles() -> anyhow::Result<()> {
+        let dir = fixture("expand")?;
+        let mut app = app(&dir)?;
+        annotate(&mut app, 3, 5, "outer thread");
+        annotate(&mut app, 5, 5, "inner point");
+        app.thread_reply();
+        app.compose_insert("first reply\nwith a second line");
+        app.compose_submit();
+        let outer = app.file_threads()[0].clone();
+        let inner = app.file_threads()[1].clone();
+        assert!(app.is_expanded(&inner), "a reply from the text expands");
+        app.fold_thread(&inner);
+
+        // On L5 the thread cursor is the inner thread; `c` expands it.
+        app.view_mut().goto_source_line(5);
+        let scroll = app.view().scroll();
+        press(&mut app, "c");
+        assert!(app.is_expanded(&inner));
+        assert!(!app.is_expanded(&outer));
+        assert_eq!(app.view().scroll(), scroll, "the view stays still");
+        assert_eq!(app.view().cursor_source_line(), Some(5), "the cursor too");
+        assert_eq!(app.thread_cursor().message(), 1, "the newest message");
+        let shown = screen(&app)?;
+        // Outer's collapsed stub, then inner's header, comment, reply.
+        assert!(shown[5].contains("outer thread"), "{:?}", shown[5]);
+        assert!(
+            shown[6].contains("open") && shown[6].contains("fold"),
+            "{:?}",
+            shown[6]
+        );
+        assert!(
+            shown[7].contains("user") && shown[8].contains("inner point"),
+            "{:?}",
+            &shown[7..9]
+        );
+        assert!(
+            shown[10].contains("first reply") && shown[11].contains("second line"),
+            "{:?}",
+            &shown[10..12]
+        );
+        assert_eq!(shown[12].trim(), "6", "L6 follows: {:?}", shown[12]);
+
+        // `j` from L5 stops on the comment, then the reply, then L6.
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 7);
+        assert_eq!(app.thread_cursor().message(), 0);
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 9);
+        assert_eq!(app.thread_cursor().message(), 1);
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor_source_line(), Some(6));
+        press(&mut app, "kk");
+        assert_eq!(app.view().cursor().row, 7);
+        assert_eq!(app.expanded_row_message(7), Some((inner.clone(), 0)));
+
+        // `r` on a message row replies to its thread; the cursor lands on
+        // the reply and the keys stay with the text.
+        press(&mut app, "r");
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(c)) if *c.target() == ComposeTarget::Reply(inner.clone())
+        ));
+        app.compose_insert("second reply");
+        app.compose_submit();
+        assert_eq!(app.focus(), Focus::View);
+        assert_eq!(app.thread_cursor().message(), 2);
+        assert_eq!(
+            app.expanded_row_message(app.view().cursor().row),
+            Some((inner.clone(), 2))
+        );
+        // `e` edits the message under the cursor.
+        press(&mut app, "e");
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Edit { .. })
+        ));
+        app.close_popup();
+
+        // `c` on an expanded row folds it and expands the next covering
+        // thread; the outer thread covers L5 too, so it comes next, and
+        // after it `c` leaves nothing expanded.
+        press(&mut app, "c");
+        assert!(!app.is_expanded(&inner));
+        assert!(app.is_expanded(&outer));
+        press(&mut app, "c");
+        assert!(!app.is_expanded(&outer));
+        assert!(!app.is_expanded(&inner), "the cycle ends with none");
+        assert_eq!(app.view().cursor_source_line(), Some(5));
+
+        // `Space c z` expands every stub, then folds them all.
+        press(&mut app, " cz");
+        assert!(app.is_expanded(&inner) && app.is_expanded(&outer));
+        press(&mut app, " cz");
+        assert!(!app.is_expanded(&inner) && !app.is_expanded(&outer));
+
+        // A click on a collapsed stub expands it with the cursor on it.
+        let shown = screen(&app)?;
+        let row = shown
+            .iter()
+            .position(|line| line.contains("inner point"))
+            .ok_or_else(|| anyhow::anyhow!("inner's stub"))?;
+        click(&mut app, 60, u16::try_from(row)?);
+        assert!(app.is_expanded(&inner));
+        assert_eq!(app.thread_cursor().thread(), Some(&inner));
+        assert_eq!(
+            app.expanded_row_message(app.view().cursor().row)
+                .map(|(id, _)| id),
+            Some(inner.clone())
+        );
+        // `dd` on its rows deletes the thread (ADR 0034).
+        press(&mut app, "dd");
+        assert_eq!(app.file_threads().len(), 1);
+        assert_eq!(app.message(), Some("deleted"));
         Ok(())
     }
 }

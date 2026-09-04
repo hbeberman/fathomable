@@ -184,7 +184,18 @@ pub struct View {
     /// Source lines a detached thread's row stands before (ADR 0039).
     detached: Vec<usize>,
     /// The stub blocks hanging under rows, in row order (ADR 0049).
-    stubs: Vec<(RowAnchor, usize)>,
+    stubs: Vec<StubBlock>,
+}
+
+/// A block of rows inserted under a row for a thread (ADR 0049): where
+/// it hangs, how many rows, and which of them the cursor may rest on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StubBlock {
+    pub anchor: RowAnchor,
+    pub rows: usize,
+    /// Row indices within the block that are stops: an expanded thread's
+    /// message rows. A collapsed stub has none.
+    pub stops: Vec<usize>,
 }
 
 impl View {
@@ -251,12 +262,38 @@ impl View {
     /// Lay the document out again with the stub rows of `blocks` under
     /// their anchors (ADR 0049); a call that changes nothing keeps the
     /// layout.
-    pub fn set_stub_blocks(&mut self, blocks: Vec<(RowAnchor, usize)>) {
+    pub fn set_stub_blocks(&mut self, blocks: Vec<StubBlock>) {
         if blocks == self.stubs {
             return;
         }
         self.stubs = blocks;
         self.relayout();
+    }
+
+    /// The rendered row of stub `index` of block `block`, if laid out.
+    pub fn row_of_stub_slot(&self, block: usize, index: usize) -> Option<usize> {
+        self.layout
+            .lines()
+            .iter()
+            .position(|line| line.stub_slot() == Some((block, index)))
+    }
+
+    /// Whether the cursor may rest on `row`: a row of the document, or a
+    /// stop in an expanded thread.
+    fn is_stop_row(&self, row: usize) -> bool {
+        match self.stub_slot_of_row(row) {
+            Some((block, index)) => self
+                .stubs
+                .get(block)
+                .is_some_and(|block| block.stops.contains(&index)),
+            None => true,
+        }
+    }
+
+    /// Jump to `row`, landing on its first column; a row the cursor may
+    /// not rest on settles as a motion would.
+    pub fn goto_row(&mut self, row: usize) {
+        self.jump_to_row(row);
     }
 
     /// The stub block and index row `row` was inserted for, if it is a
@@ -270,15 +307,15 @@ impl View {
         self.stub_slot_of_row(row).is_some()
     }
 
-    /// The row the cursor settles on when `row` is a stub row: the next
-    /// row of the document when moving forward, else the previous one,
-    /// the other way when there is none.
+    /// The row the cursor settles on when `row` is not a stop: the next
+    /// stop when moving forward, else the previous one, the other way
+    /// when there is none.
     fn settle(&self, row: usize, forward: bool) -> usize {
-        if !self.is_stub_row(row) {
+        if self.is_stop_row(row) {
             return row;
         }
-        let after = (row + 1..self.layout.lines().len()).find(|&r| !self.is_stub_row(r));
-        let before = (0..row).rev().find(|&r| !self.is_stub_row(r));
+        let after = (row + 1..self.layout.lines().len()).find(|&r| self.is_stop_row(r));
+        let before = (0..row).rev().find(|&r| self.is_stop_row(r));
         if forward {
             after.or(before)
         } else {
@@ -622,7 +659,13 @@ impl View {
             _ => Layout::render_with(&self.text, self.width, &self.syntax.highlighter),
         }
         .with_rows_before(&self.detached)
-        .with_rows_after(&self.stubs);
+        .with_rows_after(
+            &self
+                .stubs
+                .iter()
+                .map(|block| (block.anchor, block.rows))
+                .collect::<Vec<_>>(),
+        );
         let index = self.layout.index();
         let line = line.min(index.line_count());
         let offset = index.offset_at(&self.text, line, column);

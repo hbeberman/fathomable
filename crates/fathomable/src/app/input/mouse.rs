@@ -146,6 +146,17 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let text_rows = app.text_rows();
     if event.kind == MouseEventKind::Down(MouseButton::Left) {
         app.focus_pane(Focus::View);
+        // A click on a collapsed stub expands its thread with the cursor
+        // on it (ADR 0049).
+        if row < text_rows
+            && let Some((stub, _, _)) = app.stub_on_row(app.view().scroll() + row)
+            && !stub.expanded()
+        {
+            let id = stub.id().clone();
+            let newest = app.newest_message(&id);
+            app.goto_message(id, newest);
+            return Effect::None;
+        }
     }
     let view = app.view_mut();
     view.touch();

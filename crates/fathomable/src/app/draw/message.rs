@@ -147,6 +147,68 @@ fn message_line<'a>(
     }
 }
 
+/// The rows of `thread` expanded in place (ADR 0049): the comment and
+/// each reply as a message, author row then body, with no snippet and
+/// no END row; `selected` is the message the cursor is on.
+pub(crate) fn expanded_lines<'a>(
+    theme: &Theme,
+    highlighter: &Highlighter,
+    thread: &Thread,
+    now: u64,
+    width: usize,
+    selected: Option<usize>,
+) -> Vec<Line<'a>> {
+    let mut out = Vec::new();
+    let comment = Message {
+        author: "user",
+        created: thread.created(),
+        body: thread.comment(),
+        badge: None,
+    };
+    out.extend(message_lines(
+        theme,
+        highlighter,
+        &comment,
+        now,
+        width,
+        selected == Some(0),
+    ));
+    for (index, reply) in thread.replies().iter().enumerate() {
+        let message = Message {
+            author: reply.author().name(),
+            created: reply.created(),
+            body: reply.body(),
+            badge: reply.proposes_resolution().then_some("proposes resolving"),
+        };
+        out.extend(message_lines(
+            theme,
+            highlighter,
+            &message,
+            now,
+            width,
+            selected == Some(index + 1),
+        ));
+    }
+    out
+}
+
+/// How many rows [`expanded_lines`] takes for `thread` at `width`, and
+/// the row each message starts on.
+pub(crate) fn expanded_rows(
+    thread: &Thread,
+    width: usize,
+    highlighter: &Highlighter,
+) -> (usize, Vec<usize>) {
+    let rows = |body: &str| 1 + body_layout(body, width, highlighter).lines().len();
+    let mut stops = vec![0];
+    let mut total = rows(thread.comment());
+    for reply in thread.replies() {
+        stops.push(total);
+        total += rows(reply.body());
+    }
+    (total, stops)
+}
+
 /// Rows the pane's body takes for `thread` at `width`: snippet, blank,
 /// comment, each reply after a blank, and the END row.
 pub(crate) fn thread_body_rows(thread: &Thread, width: usize, highlighter: &Highlighter) -> usize {

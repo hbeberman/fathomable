@@ -198,6 +198,7 @@ impl App {
             Action::EditNewestOwn => self.thread_edit_newest_own(),
             Action::StubToggle => self.toggle_stubs(),
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
+            Action::StubExpandAll => self.toggle_expand_all(),
             Action::DeleteThread => self.thread_delete_here(),
             Action::SourceView => self.view_mut().toggle_source_view(),
             Action::DiffHead => self.view_mut().toggle_diff_view(),
@@ -240,6 +241,10 @@ impl App {
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),
+            // On an expanded thread's rows the text keeps the thread keys
+            // (ADR 0049); elsewhere they act on the thread at the cursor.
+            Action::EditMessage => self.thread_edit_message(),
+            Action::Delete => self.delete_armed_thread(),
             Action::ThreadNext => self.thread_step_in_file(1),
             Action::ThreadPrev => self.thread_step_in_file(-1),
             Action::ThreadNextAcross => self.thread_step_across(1),

@@ -165,7 +165,7 @@ mod tests {
         let dir = fixture("keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
-        app.show_thread(id);
+        app.show_thread(id.clone());
         assert_eq!(app.view().cursor().row, 2);
         app.close_thread();
         assert_eq!(app.threads_at_cursor().len(), 1);
@@ -173,7 +173,7 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.message(), Some("no lines here to annotate"));
         app.start_comment();
-        assert!(app.thread_panel().is_some());
+        assert!(app.is_expanded(&id), "`c` on the row expands the thread");
         assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
         Ok(())
     }

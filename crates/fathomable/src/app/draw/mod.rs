@@ -21,7 +21,7 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::info::Info;
-use crate::app::draw::message::{thread_body_lines, thread_body_rows};
+use crate::app::draw::message::{expanded_lines, thread_body_lines, thread_body_rows};
 use crate::app::threads::list::{Row, Rows};
 use crate::app::threads::stubs::Stub;
 use crate::app::threads::words::{Words, label};
@@ -842,13 +842,32 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     let selection = view.selection();
     let lines = view.layout().lines();
     let width = gutter + view.layout().width();
+    let mut expanded: std::collections::HashMap<usize, Vec<Line<'a>>> =
+        std::collections::HashMap::new();
     let mut out = Vec::with_capacity(rows);
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
-        // A stub row says what a thread said, under its lines (ADR 0049).
-        if let Some((stub, message, last)) = app.stub_on_row(row) {
-            out.push(stub_line(
-                app, theme, &stub, message, last, row, gutter, width,
-            ));
+        // A stub row says what a thread said, under its lines; an
+        // expanded thread's rows show the whole of it (ADR 0049).
+        if let Some((stub, index, last)) = app.stub_on_row(row) {
+            if stub.expanded() {
+                let block = view.stub_slot_of_row(row).map_or(0, |(block, _)| block);
+                let body = expanded
+                    .entry(block)
+                    .or_insert_with(|| expanded_block_lines(app, theme, &stub, width - gutter));
+                let is_cursor = row == cursor.row;
+                out.push(with_gutter(
+                    app,
+                    theme,
+                    body.get(index).cloned().unwrap_or_default(),
+                    row,
+                    digits,
+                    is_cursor,
+                ));
+            } else {
+                out.push(stub_line(
+                    app, theme, &stub, index, last, row, gutter, width,
+                ));
+            }
             continue;
         }
         let is_cursor = row == cursor.row;
@@ -923,15 +942,19 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         }
         out.push(Line::from(spans).style(row_style));
     }
-    // The one row past the end that the view may scroll to: a `~` in the
-    // number column and nothing else, as Helix draws it.
     if out.len() < rows && view.scroll() + out.len() == lines.len() {
-        out.push(Line::from(vec![
-            Span::raw(" "),
-            Span::styled(format!("{:>digits$}", "~"), theme.line_number),
-        ]));
+        out.push(past_end_line(theme, digits));
     }
     out
+}
+
+/// The one row past the end that the view may scroll to: a `~` in the
+/// number column and nothing else, as Helix draws it.
+fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(format!("{:>digits$}", "~"), theme.line_number),
+    ])
 }
 
 /// One row of a collapsed stub (ADR 0049): the gutter's bracket if an
@@ -1022,6 +1045,87 @@ fn stub_line<'a>(
         Span::styled(hint.to_owned(), theme.hint.patch(row_style)),
     ];
     Line::from(spans).style(row_style)
+}
+
+/// The rows of `stub`'s thread expanded in place (ADR 0049), at the text
+/// width: a header with the state, placement, and watchers on the left
+/// and the keys on the right, then every message as the pane drew them.
+fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
+    let Some(thread) = app.thread(stub.id()) else {
+        return Vec::new();
+    };
+    let mark = app.marks().iter().find(|mark| mark.id() == stub.id());
+    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
+    let mut left = vec![Span::styled(" ● ", mark_style(theme, words.state()))];
+    if let Some(placement) = words.placement() {
+        left.push(Span::styled(placement, mark_style(theme, words.state())));
+        left.push(Span::styled(" · ", theme.info));
+    }
+    left.push(Span::styled(
+        label(words.state()),
+        mark_style(theme, words.state()),
+    ));
+    let watchers = app.watchers_of(thread.id());
+    if !watchers.is_empty() {
+        left.push(Span::styled(
+            format!(" · watched by {}", watchers.join(", ")),
+            theme.info,
+        ));
+    }
+    let resolve = if words.is_resolved() {
+        "reopen"
+    } else {
+        "resolve"
+    };
+    let keys = [
+        (key_of(Where::View, Action::Reply), "reply"),
+        (key_of(Where::View, Action::EditMessage), "edit"),
+        (key_of(Where::View, Action::ToggleResolved), resolve),
+        (key_of(Where::View, Action::Comment), "fold"),
+    ];
+    let hints: Vec<Hint<'_>> = keys.iter().map(|(k, l)| (k.as_str(), *l)).collect();
+    let cursor = app.thread_cursor();
+    let selected = (cursor.thread() == Some(stub.id())).then_some(cursor.message());
+    let mut lines = vec![header_line(theme, left, &hints, width)];
+    lines.extend(expanded_lines(
+        theme,
+        app.highlighter(),
+        thread,
+        crate::app::threads::now(),
+        width,
+        selected,
+    ));
+    lines
+}
+
+/// An expanded thread's row with the gutter in front of it: the bracket
+/// of a thread spanning the row, blanks for the number and the bar, on
+/// the `thread.inline` background, the cursor row tinted as any other.
+fn with_gutter<'a>(
+    app: &App,
+    theme: &Theme,
+    line: Line<'a>,
+    row: usize,
+    digits: usize,
+    is_cursor: bool,
+) -> Line<'a> {
+    let mut row_style = theme.thread_inline;
+    if is_cursor {
+        row_style = row_style.patch(theme.cursorline);
+    }
+    let note = app.note_on_row(row).map_or_else(
+        || Span::styled(" ", row_style),
+        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
+    );
+    let mut spans = vec![
+        note,
+        Span::styled(" ".repeat(digits), row_style),
+        Span::styled(" ", row_style),
+        Span::styled(" ", row_style),
+    ];
+    let inner = line.style;
+    spans.extend(line.spans);
+    Line::from(spans).style(row_style.patch(inner))
 }
 
 /// How a message's author reads on a stub: the user as `user`, an agent

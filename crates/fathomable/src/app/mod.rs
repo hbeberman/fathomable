@@ -235,6 +235,11 @@ pub struct App {
     rail: threads::pane::Rail,
     /// Whether stubs are drawn, and for resolved threads (ADR 0049).
     stubs: threads::stubs::StubState,
+    /// The threads expanded in place this session (ADR 0049).
+    expanded: HashSet<ThreadId>,
+    /// A `c` cycle in progress: the thread it started on and the threads
+    /// it walks (ADR 0049).
+    cycle: Option<(ThreadId, Vec<ThreadId>)>,
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     sidebar_scroll: usize,
@@ -342,6 +347,8 @@ impl App {
             tree: None,
             rail: threads::pane::Rail::new(rail),
             stubs: threads::stubs::StubState::from_config(&threads),
+            expanded: HashSet::new(),
+            cycle: None,
             review: threads::list::ReviewState::default(),
             sidebar_scroll: 0,
             sidebar_cols: None,

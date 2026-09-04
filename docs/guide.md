@@ -97,7 +97,8 @@ Text:
 | `]f` `[f` | next / previous changed file |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
-| `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
+| `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
+| `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file (the pane follows when it is open) |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
@@ -114,7 +115,7 @@ The `Space` menu, from any pane:
 | `Space A` | the thread list: every thread in the workspace in place of the document, open then resolved, grouped by file; on the focused list, close it |
 | `Space t`, `Space T` | threads pane: show and focus or return focus; hide |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
-| `Space c c`, `Space c x` | threads: toggle stub visibility for the session; toggle stubs for resolved threads (hidden by default) |
+| `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
@@ -244,6 +245,17 @@ thread the cursor is on, ends with `(c expand)`; the others are dimmed.
 `Space c c` hides and shows them for the session and `Space c x` gives
 resolved threads a stub too; `threads { stubs; stubs-resolved }` sets the
 defaults.
+
+`c` on a line a thread covers **expands** its stub in place, the view
+staying still: a header row with the state, placement, watchers, and
+the keys, then every message rendered as Markdown. Its message rows are
+cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
+on the reply, `e` edits the message under the cursor when you wrote it,
+`o` resolves or reopens, `dd` deletes the thread, and `c` on any of its
+rows folds it. When several threads cover the line, `c` again folds the
+expanded one and expands the next in line order, wrapping, and after the
+last leaves none expanded. `Space c z` expands every stub in the file or
+folds them all; a click on a stub expands it.
 
 The left column is the **rail**: the tree pane above the **threads
 pane**, each shown or hidden on its own (`Space e`/`E`, `Space t`/`T`),

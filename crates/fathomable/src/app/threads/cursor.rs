@@ -111,6 +111,11 @@ impl App {
     /// "first on the row" alone would pick a long earlier thread over the
     /// one starting under the cursor.
     fn cursor_from_text(&self) -> ThreadCursor {
+        // On an expanded thread's rows the message under the cursor is
+        // the cursor's (ADR 0049).
+        if let Some((id, message)) = self.expanded_row_message(self.view().cursor().row) {
+            return ThreadCursor::new(id, message);
+        }
         let order = self.file_threads();
         let Some(first) = order.first() else {
             return ThreadCursor::default();

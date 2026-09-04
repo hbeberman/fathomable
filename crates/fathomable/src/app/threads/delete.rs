@@ -30,6 +30,9 @@ impl App {
     pub fn arm_delete_here(&mut self) {
         match self.focus() {
             Focus::Thread | Focus::ThreadsPane | Focus::Threads => self.thread_arm_delete(),
+            // In the text, only a thread covering the cursor row is armed
+            // (ADR 0049), never one further up the file.
+            Focus::View if !self.threads_at_cursor().is_empty() => self.thread_arm_delete(),
             Focus::View | Focus::Sidebar => {}
         }
     }

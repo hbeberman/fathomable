@@ -404,6 +404,10 @@ impl App {
     /// detached threads standing on it (ADR 0039).
     pub fn threads_at_cursor(&self) -> Vec<ThreadId> {
         let view = self.view();
+        // On a thread's stub or expanded rows, that thread (ADR 0049).
+        if let Some((stub, _, _)) = self.stub_on_row(view.cursor().row) {
+            return vec![stub.id().clone()];
+        }
         if let Some(anchor) = view.detached_anchor_of_row(view.cursor().row) {
             return self
                 .detached_marks_at(anchor)
@@ -429,11 +433,41 @@ impl App {
     /// nothing is selected (ADR 0027); otherwise the comment box on the
     /// selection, or the cursor line.
     pub fn start_comment(&mut self) {
-        if self.view().selected_lines().is_none() && !self.threads_at_cursor().is_empty() {
-            self.open_thread_at_cursor();
+        if self.view().selected_lines().is_some() {
+            self.start_new_comment();
             return;
         }
-        self.start_new_comment();
+        let row = self.view().cursor().row;
+        // On an expanded thread's rows, `c` folds it and moves the cycle
+        // on through the threads covering its last line (ADR 0049).
+        if let Some((stub, _, _)) = self.stub_on_row(row) {
+            let line = self
+                .marks()
+                .iter()
+                .find(|mark| mark.id() == stub.id())
+                .map_or(0, |mark| mark.range().end());
+            let covering = self.threads_on_line(line);
+            self.cycle_expanded(covering);
+            return;
+        }
+        let covering = self.threads_at_cursor();
+        if covering.is_empty() {
+            self.start_new_comment();
+            return;
+        }
+        self.cycle_expanded(covering);
+    }
+
+    /// The placed threads covering source line `line`, in line order.
+    fn threads_on_line(&self, line: usize) -> Vec<ThreadId> {
+        let lines = LineRange::new(line, line);
+        self.file_threads()
+            .into_iter()
+            .filter(|id| {
+                self.placed_marks()
+                    .any(|mark| mark.id() == id && overlaps(mark.range(), lines))
+            })
+            .collect()
     }
 
     /// `C`: open the comment box on the selection, or the cursor line,
@@ -704,8 +738,13 @@ impl App {
                     let newest = self.newest_message(id);
                     self.set_thread_cursor_message(id.clone(), newest);
                     self.thread_list_follow_cursor();
-                } else if self.focus != Focus::ThreadsPane {
+                } else if self.thread.is_some() {
                     self.open_thread(id.clone());
+                } else if self.focus != Focus::ThreadsPane {
+                    // From the text the thread expands in place and the
+                    // cursor lands on the reply (ADR 0049).
+                    let newest = self.newest_message(id);
+                    self.goto_message(id.clone(), newest);
                 }
             }
             Err(error) => self.notice(format!("cannot save reply: {error}")),
@@ -1901,12 +1940,16 @@ mod tests {
         app.compose_submit();
         assert!(app.thread_panel().is_none());
 
-        // `c` again on the row opens the pane rather than a box.
+        // `c` again on the row expands the thread in place rather than
+        // opening a box (ADR 0049); `c` once more folds it.
         app.start_comment();
         assert!(app.popup().is_none());
-        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.focus(), Focus::View);
+        let top = app.thread_cursor().thread().cloned();
+        assert!(top.as_ref().is_some_and(|id| app.is_expanded(id)));
         assert_eq!(app.thread_position(), Some((1, 2)));
-        app.close_thread();
+        app.start_comment();
+        assert!(top.as_ref().is_some_and(|id| !app.is_expanded(id)));
 
         // `C` starts a second thread on the same line.
         app.start_new_comment();

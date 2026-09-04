@@ -82,6 +82,12 @@ impl App {
             self.notice("no file open");
             return;
         }
+        self.show_newest_pair();
+    }
+
+    /// The latest checkpoint against the working file, or the notice that
+    /// there is none.
+    fn show_newest_pair(&mut self) {
         let count = self.timeline_len();
         if count == 0 {
             self.show_checkpoint(Side::Working, Side::Working);
@@ -415,13 +421,18 @@ impl App {
                 } else {
                     format!("checkpoint: {stored} files")
                 });
-                // The open checkpoint view counts its timeline afresh.
+                // The open checkpoint view counts its timeline afresh; one
+                // that had nothing to show moves to the new pair.
                 if let Some((base, target)) = self
                     .view()
                     .checkpoint()
                     .map(|c| (c.base.clone(), c.target.clone()))
                 {
-                    self.show_checkpoint(base, target);
+                    if base == Side::Working && target == Side::Working {
+                        self.show_newest_pair();
+                    } else {
+                        self.show_checkpoint(base, target);
+                    }
                 }
             }
             Err(error) => {
@@ -563,11 +574,16 @@ mod tests {
             30 - 1 - 2,
             "header and strip take two rows"
         );
+        press(&mut app, " vc");
+        assert_eq!(
+            header(&app),
+            "checkpoint 1/1  just now · now",
+            "the first checkpoint moves the empty view to the new pair"
+        );
         press(&mut app, " vr");
         assert!(!app.view().checkpoint_view());
         assert_eq!(app.text_rows(), 29);
 
-        press(&mut app, " vc");
         fs::write(dir.0.join("a.md"), "four\n")?;
         app.on_changes(vec![dir.0.join("a.md")]);
         press(&mut app, " vc");

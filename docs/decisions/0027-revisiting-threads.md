@@ -17,6 +17,13 @@ Status: accepted (2026-08-28); amended 2026-09-03 by
 selections are gone, `h`/`l` step within the file and `H`/`L` across the
 workspace, and the header counts both.
 
+Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
+*viewer* or *workspace* (the harness session keeps the word), *follow
+mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
+`Scope` is `Reach`, *local*/*global* are *in file*/*across the
+workspace*, and the `session` tool parameter is `workspace`; the text
+below keeps the old words where it describes what was decided then.
+
 ## Context
 
 [0013](0013-annotation-storage-and-ux.md) made writing a comment one

@@ -16,6 +16,13 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
+*viewer* or *workspace* (the harness session keeps the word), *follow
+mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
+`Scope` is `Reach`, *local*/*global* are *in file*/*across the
+workspace*, and the `session` tool parameter is `workspace`; the text
+below keeps the old words where it describes what was decided then.
+
 ## Context
 
 [0003](0003-sessions-and-mcp.md) decided that `fathomable --mcp` is a stdio

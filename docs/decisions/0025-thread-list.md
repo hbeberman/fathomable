@@ -18,6 +18,13 @@ thread cursor, it no longer remembers a selection across close and open,
 `Ctrl-d`/`Ctrl-u` move by half a page of rows, `PgUp`/`PgDn` are gone,
 and `o` resolves.
 
+Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
+*viewer* or *workspace* (the harness session keeps the word), *follow
+mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
+`Scope` is `Reach`, *local*/*global* are *in file*/*across the
+workspace*, and the `session` tool parameter is `workspace`; the text
+below keeps the old words where it describes what was decided then.
+
 ## Context
 
 [0024](0024-workspace-sessions.md) made a thread belong to the commit it

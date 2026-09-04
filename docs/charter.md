@@ -22,17 +22,18 @@ the agent does the writing.
 - A **renderer**: pretty Markdown (tables, nested lists, task lists, footnotes,
   links) and syntax-highlighted code, with a source-view toggle for Markdown.
 - A **follower**: watched files re-render on change while preserving the
-  reader's position; a lazy "follow the agent" mode keeps the viewer near what
-  the agent is touching without constantly jumping.
+  reader's position; **auto-jump** keeps the viewer near what the agent is
+  touching without constantly jumping, preferring the files the agent says
+  it follows.
 - A **reviewer**: line-range annotations on rendered content, captured with the
   snippet, the source range, a timestamp, and the user's comment. Annotations
   form threads. Agents reply into threads, so a document can carry a
   long-running local review conversation across many agent sessions.
 - A **diff lens**: a Git gutter strip showing changed lines, and diff views for
   both "working tree vs HEAD" and "what changed since I last looked".
-- An **agent endpoint**: `fathomable --mcp` is a stdio MCP server that binds to a
-  running session so an agent can open files, jump to locations, list
-  annotations, and reply to threads.
+- An **agent endpoint**: `fathomable --mcp` is a stdio MCP server that resolves
+  the workspace on every call and works without a viewer, so an agent can
+  open files, jump to locations, read threads, and reply to them.
 - **Modal**: Vim grammar for navigation, `:` command line, `/` search, and
   first-class mouse support so selecting lines to annotate is a drag.
 
@@ -85,11 +86,25 @@ Deferred, not rejected:
 
 ## Vocabulary
 
-- **Workspace**: the directory tree Fathomable is viewing.
-- **Session**: one running Fathomable instance bound to one workspace root,
-  discoverable by agents.
-- **Annotation**: a user comment attached to a line range of a document, with
-  its captured snippet and source mapping.
-- **Thread**: an annotation plus the replies (human or agent) attached to it.
-- **Anchor**: the durable identity of an annotated range, derived from line
+One word per idea ([0047](decisions/0047-one-vocabulary.md)):
+
+- **Workspace**: the directory tree Fathomable is viewing, and the home of
+  its threads; there is no separate word for a workspace's annotation state.
+- **Viewer**: one running Fathomable showing a workspace, named or by id.
+- **Agent session**: the harness session an agent runs in, identified by the
+  `id` the `hello` hook gives it.
+- **Subscriber**: an agent session that registered with `follow`, so the
+  hooks hand it what others write; its **coverage** is the files it follows.
+- **Thread**: a comment on a line range of a document plus the replies
+  (human or agent) attached to it. The opening message is the **comment**.
+- **Anchor**: the durable identity of a thread's range, derived from line
   content hashes so it survives re-renders.
+- **Placement**: where a thread's lines are now: anchored, edited, or
+  detached.
+- **Waiting** / **pending**: a thread whose newest message is someone
+  else's, seen from the user's chair or from an agent's.
+- **Mark**: a thread placed in the text as the viewer draws it (code only).
+- **Reach**: the threads the current `HEAD` shows, those written against a
+  commit it can reach.
+- **Change**: a write the watcher queued for the reader; **last seen** is the
+  snapshot "what changed since I looked" is measured from.

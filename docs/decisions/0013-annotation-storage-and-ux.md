@@ -149,7 +149,10 @@ were captured in a question round on 2026-08-26.
   local (this file) and global (the work), with each scope remembering
   its selected thread and message. `PageUp`/`PageDown` scroll long
   content, `Left` returns to the file-threads pane, `r` replies through
-  the comment box, `x` resolves or reopens, and Esc closes.
+  the comment box, `x` resolves or reopens, and Esc closes. (Amended
+  2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the thread pane and
+  `Space a` are gone; a thread is a stub under its lines that `c`
+  expands in place, with `r`, `e`, `o`, and `dd` on its rows.)
 - While replying the pane stays on screen above the box, pushed up by
   the box's rows, so the thread can be read; Up/Down scroll it
   (superseded by [0018](0018-comment-editor.md), 2026-08-27: Up/Down

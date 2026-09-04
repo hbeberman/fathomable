@@ -15,7 +15,11 @@ tags:
 Status: accepted (2026-08-28); amended 2026-09-03 by
 [0046](0046-one-thread-cursor.md): the `Tab` scope and its remembered
 selections are gone, `h`/`l` step within the file and `H`/`L` across the
-workspace, and the header counts both.
+workspace, and the header counts both. Amended 2026-09-04 by
+[0049](0049-inline-threads-and-the-rail.md): the thread pane is gone and `c`
+expands the thread in place; the file-threads pane is the rail's
+**threads pane**, shown whether or not the tree pane is, at a fixed
+split, with a file or workspace scope and a resolved toggle.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

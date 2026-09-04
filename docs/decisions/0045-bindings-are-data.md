@@ -66,6 +66,9 @@ is possible while the map is prose.
   the old `g` hint list now are. A pane header asks `hint(place, action)`
   how a key is spelled, so a hint cannot name a key that is not bound
   there. The status line shows the prefix as the table spells it.
+  (Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the which-key
+  menu leads with a row naming the prefix and its group word, `Space c
+  · threads`, and re-renders at every level.)
 - **Tests make it load-bearing.** Every `Action` is bound at least once;
   on each surface no sequence has two meanings and none is the start of
   another; no binding uses a zellij lock chord (`Ctrl-g p t n h s o q

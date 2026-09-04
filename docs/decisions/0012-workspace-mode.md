@@ -62,7 +62,11 @@ choices were captured in a question round on 2026-08-26.
   and `Ctrl-b` does the same for one-handed use. With the sidebar focused,
   `Space e` or `Esc` returns focus to the view and leaves the tree
   visible; `Space E` hides it. Opening a file from the tree also returns
-  focus to the view.
+  focus to the view. (Amended 2026-09-04 by
+  [0049](0049-inline-threads-and-the-rail.md): the sidebar is the **rail**, holding
+  the **tree pane** above the **threads pane** at a fixed split;
+  `rail { width split }` configures it; `Space r` is the rail submenu
+  for re-read, ignored, and reveal.)
 - Width is 32 columns, clamped to a third of the terminal, until the
   divider is dragged ([0007](0007-key-grammar-and-mouse.md)).
 - Before a file is open the text column shows a welcome block, not a
@@ -123,6 +127,9 @@ choices were captured in a question round on 2026-08-26.
 - A jumplist records the order files were opened. `[o` goes back and `]o`
   forward (bracket pairs never collide with a multiplexer); `Space o`
   opens the picker over the loaded documents, most recent first.
+  (Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): `[o`/`]o` and
+  the opened-file history are gone; `Alt-Left`/`Alt-Right` walk a
+  jumplist of positions that every far move records. `Space o` stays.)
 - Files are read-only, so no buffer can be "modified"; `[+]` continues to
   mean changed on disk.
 

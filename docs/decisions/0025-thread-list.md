@@ -16,7 +16,13 @@ Status: accepted (2026-08-27); amended 2026-09-03 by
 [0046](0046-one-thread-cursor.md): the list's selection is the shared
 thread cursor, it no longer remembers a selection across close and open,
 `Ctrl-d`/`Ctrl-u` move by half a page of rows, `PgUp`/`PgDn` are gone,
-and `o` resolves.
+and `o` resolves. Amended 2026-09-04 by
+[0049](0049-inline-threads-and-the-rail.md): the list is the **review list** (pill
+`REVIEW`), opens sorted by newest agent reply first with `s` toggling
+to file and line order, hides resolved threads until `x` shows them
+(`Z` is gone), carries the path in every entry header, `f` narrows to
+the current file, and `Enter` opens the file with the thread expanded
+in place since the thread pane is gone.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

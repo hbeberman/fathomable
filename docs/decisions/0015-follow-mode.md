@@ -162,7 +162,11 @@ animation, noted in [parked](../parked.md).)
   thread panel is open; any popup is open. It re-evaluates when the
   condition clears.
 - An auto-jump pushes the previous position onto the `[o`/`]o` history so
-  it can be undone in one key.
+  it can be undone in one key. (Amended 2026-09-04 by
+  [0049](0049-inline-threads-and-the-rail.md): the history is the jumplist and the
+  key is `Alt-Left`; the thread pane that held auto-jump back is gone,
+  an expanded stub does not. The last-seen snapshot stays automatic;
+  checkpoints are the reader's own marks beside it.)
 
 ### Configuration
 

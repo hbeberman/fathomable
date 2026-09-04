@@ -184,3 +184,13 @@ Milestones are ordered; each is usable on its own. Details live in the
     `input/`, `jump`, `agents`, and `run`; records point at the concept
     module they changed through `related_resources`, which need no
     backlink ([0048](decisions/0048-modules-by-concept.md)).
+40. **Inline threads, the rail, checkpoints, and the jumplist.** A
+    thread shows under its lines as a two-row stub that `c` expands in
+    place and the bottom thread pane goes; the left column is the rail,
+    a tree pane above a threads pane at a fixed split; `Space A` is the
+    review list, newest agent reply first with resolved hidden;
+    `Space v c`/`C` checkpoint a file or the workspace onto per-file
+    timelines that `Space v r` pages through beside git diff;
+    `Alt-Left`/`Alt-Right` walk a jumplist of positions; the leader
+    gains `c`, `v`, and `r` submenus and the menu a breadcrumb row
+    ([0049](decisions/0049-inline-threads-and-the-rail.md)).

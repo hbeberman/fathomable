@@ -108,3 +108,13 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
   commit it can reach.
 - **Change**: a write the watcher queued for the reader; **last seen** is the
   snapshot "what changed since I looked" is measured from.
+- **Rail**: the left column, holding the **tree pane** and the **threads
+  pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md)).
+- **Stub**: the condensed block a thread shows under its lines, collapsed
+  to two rows or expanded to the whole thread.
+- **Review list**: the `Space A` view of every thread on the work.
+- **Checkpoint**: a content of one file the reader recorded on purpose, on
+  that file's **checkpoint timeline**; a **workspace checkpoint** records
+  every file that moved. Last seen is automatic; a checkpoint is not.
+- **Jumplist**: the positions far moves leave behind, walked with
+  `Alt-Left` and `Alt-Right`.

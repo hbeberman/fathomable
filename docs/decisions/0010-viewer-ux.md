@@ -160,6 +160,13 @@ viewer, the layout engine, and later themes agree.
   replacement, not a side pane, so Esc closes it and `Space A` toggles
   it. `Left` and `Right` mean `h` and `l` on every surface
   ([0046](0046-one-thread-cursor.md)).
+- Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the thread pane
+  and the file-threads pane are gone. A thread shows as a stub under its
+  lines and `c` expands it in place; the left column is the **rail**
+  with a tree pane and a threads pane, shown and hidden by
+  `Space e`/`E` and `Space t`/`T`. The pills are `TREE`, `THREADS`,
+  `REVIEW`, and `CHECK`; Esc in a rail pane returns to the text and
+  leaves the pane where it is.
 
 ## Consequences
 

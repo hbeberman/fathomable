@@ -6,6 +6,7 @@ tag_definitions:
   annotations: Annotation records, threads, and anchoring.
   architecture: Crate boundaries and process structure.
   charter: Project identity, scope, and principles.
+  checkpoints: Reader-made marks of a file's or the workspace's content, and the diffs between them.
   configuration: User configuration files and formats.
   decision: Architecture decision records.
   dependencies: Third-party crate policy and selection.

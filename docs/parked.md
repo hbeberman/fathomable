@@ -59,6 +59,16 @@ rejected for good (record rejections in the [charter](charter.md)).
 - **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
   whether to warn or rate-limit. Origin: 0005.
 
+## Checkpoint follow-ups
+
+- **Pruning checkpoints.** Origin:
+  [0049](decisions/0049-inline-threads-and-the-rail.md); nothing expires
+  in the first version and `--doctor` counts the store. A retention
+  rule (age, count, or size) can come once the store has been used.
+- **"New since checkpoint" marks** on stub and threads-pane rows, and a
+  gutter or `]g` toggle for the checkpoint base. Origin: 0049; offered
+  in the design round and not chosen.
+
 ## Milestone 5 follow-ups
 
 - **Side-by-side diff view.** [0006](decisions/0006-git-access.md) allows

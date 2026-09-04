@@ -103,3 +103,7 @@ selects a line in the text, one focus away.
   [0027](0027-revisiting-threads.md), and
   [0034](0034-deleting-threads.md) are amended by this record where
   they describe a per-surface selection or the `Tab` scope.
+- Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the thread pane
+  and its `h`/`l`/`H`/`L` are gone; the cursor keeps its meaning and an
+  expanded thread's message rows, walked by `j`/`k` in the text, are
+  where its message index shows. `]o`/`[o` retire with the history.

@@ -63,6 +63,13 @@ theme, and docs use these words and no other for these ideas.
 | position in a list | **cursor**; the row drawn for it the **highlight**; **selection** only for `v`/`V` | selected, current |
 | "what changed since I looked" base | **last seen**, **snapshot** | seen (alone) |
 
+Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the left column
+is the **rail**, holding the **tree pane** and the **threads pane**; the
+thread pane and the file-threads pane are gone; the `Space A` view is
+the **review list**; **stub**, **checkpoint**, and **jumplist** join the
+table and the `ui.sidebar.*` theme keys become `ui.rail.*` with one
+release of the old spelling.
+
 The renames that carry it, each landing as one commit:
 
 1. **Code.** `ThreadPanel` → `ThreadPane`, `MarkKind` → `ThreadState`,

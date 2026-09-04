@@ -21,7 +21,8 @@ pub(crate) mod reanchor;
 pub(crate) mod rescope;
 mod sidebar;
 mod socket;
-pub(crate) mod thread_list;
+pub(crate) mod thread_cursor;
+mod thread_list;
 pub(crate) mod threads;
 mod ui;
 mod view;
@@ -71,8 +72,8 @@ use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::mpsc;
 
 use crate::crash;
-use threads::ThreadSelections;
-pub use threads::{Compose, Mark, ThreadNav, ThreadPanel};
+pub use thread_cursor::ThreadCursor;
+pub use threads::{Compose, Mark, ThreadPanel};
 use view::{Effect, HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
@@ -258,10 +259,13 @@ pub struct App {
     sidebar_cols: Option<usize>,
     /// The thread pane along the bottom of the text (ADR 0013).
     thread: Option<ThreadPanel>,
-    /// Where the pane's `h` / `l` paging walks (ADR 0027).
-    thread_nav: ThreadNav,
-    /// The thread and message last selected in each pane scope.
-    thread_selections: ThreadSelections,
+    /// The thread and message the thread surfaces show; authoritative
+    /// while the pane or the list is open, or the text cursor rests
+    /// where `thread_cursor_anchor` says it was set (ADR 0046).
+    thread_cursor: ThreadCursor,
+    /// `(document, row)` of the text cursor when the thread cursor was
+    /// last set.
+    thread_cursor_anchor: Option<(Option<usize>, usize)>,
     /// The thread list shown in place of the document (ADR 0025).
     list: ThreadList,
     /// Thread pane height once dragged; the default follows the terminal.
@@ -355,8 +359,8 @@ impl App {
             sidebar_scroll: 0,
             sidebar_cols: None,
             thread: None,
-            thread_nav: ThreadNav::default(),
-            thread_selections: ThreadSelections::default(),
+            thread_cursor: ThreadCursor::default(),
+            thread_cursor_anchor: None,
             list: ThreadList::default(),
             thread_rows: None,
             file_rows: None,
@@ -457,7 +461,7 @@ impl App {
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
                 }
-                if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
+                if let Some(id) = self.pane_thread().cloned() {
                     // Deleted elsewhere (ADR 0034): the pane has nothing
                     // to show.
                     if self.thread(&id).is_some() {

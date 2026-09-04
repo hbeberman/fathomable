@@ -26,12 +26,10 @@ impl App {
         self.notice(ARMED);
     }
 
-    /// The first `d` on whichever thread surface has focus.
+    /// The first `d` on a thread surface: arm the cursor's thread.
     pub fn arm_delete_here(&mut self) {
         match self.focus() {
-            Focus::Thread => self.thread_arm_delete(),
-            Focus::FileThreads => self.file_thread_arm_delete(),
-            Focus::Threads => self.thread_list_arm_delete(),
+            Focus::Thread | Focus::FileThreads | Focus::Threads => self.thread_arm_delete(),
             Focus::View | Focus::Sidebar => {}
         }
     }
@@ -64,7 +62,7 @@ impl App {
         }
         tracing::info!(%id, "thread deleted");
         self.refresh_all_marks();
-        if self.thread.as_ref().is_some_and(|panel| panel.id() == id) {
+        if self.thread.is_some() && self.thread_cursor.thread() == Some(id) {
             let next = order
                 .iter()
                 .position(|other| other == id)

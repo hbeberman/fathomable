@@ -24,10 +24,12 @@ the mouse.
   `:` command line, visual line mode for selecting annotation ranges, marks.
 - The thread pane and workspace thread list are lateral contexts (amended
   2026-08-30): `h`/`l` page threads, `j`/`k` select messages within the
-  thread, and `e` edits a selected user-authored message. In the pane,
-  `Tab` switches local/global scope, `PageUp`/`PageDown` scroll the body,
-  and `Left` returns to the file-threads pane. In the workspace list,
-  the page keys and `Ctrl-d`/`Ctrl-u` retain half-page thread movement.
+  thread, and `e` edits a selected user-authored message. (Amended
+  2026-09-03 by [0046](0046-one-thread-cursor.md): the pane, the
+  file-threads pane, and the list share one thread cursor; `Tab`,
+  `PageUp`, `PageDown`, and the pane's `Left` are gone; lowercase
+  motions step within the file and uppercase across the workspace;
+  `Ctrl-d`/`Ctrl-u` page everywhere; `o` resolves.)
 - Mouse is enabled always: click to focus and place the cursor, drag to select
   lines, scroll wheel to scroll, click on tree entries and links. Mouse and
   keyboard share one selection model.

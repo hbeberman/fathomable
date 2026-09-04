@@ -92,7 +92,8 @@ impl App {
         let here = self.waiting_marks_here();
         let shown = self
             .thread_panel()
-            .and_then(|panel| here.iter().position(|(_, id)| id == panel.id()));
+            .and(self.thread_cursor().thread())
+            .and_then(|shown| here.iter().position(|(_, id)| id == shown));
         let next_here = match (shown, forward) {
             (Some(at), true) => here.get(at + 1),
             (Some(at), false) => at.checked_sub(1).and_then(|at| here.get(at)),
@@ -170,8 +171,7 @@ impl App {
     }
 
     fn land_on(&mut self, id: &ThreadId) {
-        self.goto_thread(id);
-        self.open_thread(id.clone());
+        self.show_thread(id.clone());
     }
 }
 
@@ -183,7 +183,7 @@ mod tests {
     use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Focus, Options, ThreadNav};
+    use crate::app::{App, Focus, Options};
 
     const README: &str = "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n";
     const NOTES: &str = "notes\n\nfirst\nsecond\nthird\n";
@@ -247,14 +247,15 @@ mod tests {
 
     /// The first line of the thread whose pane is open.
     fn open_line(app: &App) -> Option<usize> {
-        let panel = app.thread_panel()?;
-        Some(app.thread(panel.id())?.range().start())
+        app.thread_panel()?;
+        let cursor = app.thread_cursor();
+        Some(app.thread(cursor.thread()?)?.range().start())
     }
 
-    /// Tab widens the thread pane from the file to the work and restores
-    /// each scope's own selected thread when toggled back.
+    /// `l` / `h` walk the file's threads and `L` / `H` the workspace's,
+    /// one cursor behind both (ADR 0046).
     #[test]
-    fn tab_in_the_pane_preserves_file_and_workspace_selections() -> anyhow::Result<()> {
+    fn lowercase_walks_the_file_and_uppercase_the_workspace() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         use crate::app::input::keys;
@@ -272,42 +273,70 @@ mod tests {
 
         app.waiting_next();
         assert_eq!(open_line(&app), Some(3));
-        assert_eq!(app.thread_nav(), ThreadNav::File);
         assert_eq!(app.thread_position(), Some((1, 2)));
-        // In the file, paging wraps within README.
+        assert_eq!(app.thread_position_across(), Some((1, 3)));
+        // In the file, `l` wraps within README.
         press(&mut app, KeyCode::Char('l'));
         press(&mut app, KeyCode::Char('l'));
         assert_eq!(app.current_path(), Path::new("README.md"));
         assert_eq!(open_line(&app), Some(3));
+        assert_eq!(app.message(), Some("wrapped to first thread"));
 
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.thread_nav(), ThreadNav::Workspace);
-        assert_eq!(app.thread_position(), Some((1, 3)));
-        press(&mut app, KeyCode::Char('l'));
-        press(&mut app, KeyCode::Char('l'));
+        // Across the workspace, `L` crosses into notes.md and wraps back.
+        press(&mut app, KeyCode::Char('L'));
+        press(&mut app, KeyCode::Char('L'));
         assert_eq!(app.current_path(), Path::new("notes.md"));
         assert_eq!(open_line(&app), Some(4));
-        assert_eq!(app.thread_position(), Some((3, 3)));
-        // Previous from the first thread wraps to the last, whichever file.
-        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.thread_position(), Some((1, 1)));
+        assert_eq!(app.thread_position_across(), Some((3, 3)));
+        press(&mut app, KeyCode::Char('L'));
         assert_eq!(app.current_path(), Path::new("README.md"));
-        assert_eq!(app.thread_position(), Some((1, 3)));
+        assert_eq!(app.thread_position_across(), Some((1, 3)));
+        press(&mut app, KeyCode::Char('H'));
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+
+        // `h` on the file's only thread hops to the file-threads pane.
         press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.focus(), Focus::FileThreads);
         assert_eq!(app.current_path(), Path::new("notes.md"));
 
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.thread_nav(), ThreadNav::File);
+        // From the text with the pane closed, `]C` and `[C` step from the
+        // cursor line and open the other file without opening the pane.
+        // README's lines 3-5 render as one paragraph row, so the cursor
+        // thread, not the cursor line, says which thread was reached.
+        let cursor_line = |app: &App| {
+            let cursor = app.thread_cursor();
+            app.thread(cursor.thread()?).map(|t| t.range().start())
+        };
+        app.close_thread();
+        app.open(Path::new("README.md"));
+        app.view_mut().goto_source_line(1);
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(cursor_line(&app), Some(3));
+        assert!(app.thread_panel().is_none(), "`]C` does not open the pane");
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(
+            cursor_line(&app),
+            Some(5),
+            "the cursor tells 3 from 5 on one row"
+        );
+        press(&mut app, KeyCode::Char(']'));
+        press(&mut app, KeyCode::Char('C'));
+        assert_eq!(app.current_path(), Path::new("notes.md"));
+        assert_eq!(cursor_line(&app), Some(4));
+        press(&mut app, KeyCode::Char('['));
+        press(&mut app, KeyCode::Char('C'));
         assert_eq!(app.current_path(), Path::new("README.md"));
-        assert_eq!(open_line(&app), Some(3));
-        assert_eq!(app.thread_position(), Some((1, 2)));
-        press(&mut app, KeyCode::Char('l'));
-        assert_eq!(open_line(&app), Some(5));
-
-        press(&mut app, KeyCode::Tab);
-        assert_eq!(app.thread_nav(), ThreadNav::Workspace);
-        assert_eq!(app.current_path(), Path::new("notes.md"));
-        assert_eq!(open_line(&app), Some(4));
-        assert_eq!(app.thread_position(), Some((3, 3)));
+        assert_eq!(cursor_line(&app), Some(5));
+        // Moving in the text hands the cursor back to the text.
+        app.view_mut().goto_top();
+        assert_eq!(
+            cursor_line(&app),
+            Some(3),
+            "the cursor rides the text again"
+        );
         Ok(())
     }
 

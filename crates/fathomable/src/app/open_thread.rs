@@ -17,11 +17,11 @@ impl App {
     /// False when no pane is open or the thread is detached: its last
     /// known range is not its lines, and the gutter already says so.
     pub fn open_thread_in(&self, lines: LineRange) -> bool {
-        let Some(panel) = self.thread.as_ref() else {
+        let Some(shown) = self.pane_thread() else {
             return false;
         };
         self.placed_marks()
-            .filter(|mark| mark.id() == panel.id())
+            .filter(|mark| mark.id() == shown)
             .any(|mark| overlaps(mark.range(), lines))
     }
 }
@@ -128,7 +128,7 @@ mod tests {
         // no longer claimed.
         fs::write(dir.0.join("ws/README.md"), "# Readme\n\n- one\n- two\n")?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
-        app.file_thread_open();
+        app.focus_thread_pane();
         assert!(app.thread_panel().is_some());
         assert!(app.marks()[0].is_detached());
         assert!(!app.open_thread_in(line(3)));
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(reply, Response::Done);
         assert_eq!(app.marks()[0].range(), LineRange::new(3, 6));
         assert!(app.marks()[0].placement().is_edited());
-        app.file_thread_open();
+        app.focus_thread_pane();
         assert!(app.open_thread_in(line(5)));
         assert!(!app.open_thread_in(line(7)));
 

@@ -171,8 +171,10 @@ impl App {
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),
             Action::NewThread => self.start_new_comment(),
-            Action::ThreadNextInFile => self.next_annotation(),
-            Action::ThreadPrevInFile => self.prev_annotation(),
+            Action::ThreadNext => self.thread_step_in_file(1),
+            Action::ThreadPrev => self.thread_step_in_file(-1),
+            Action::ThreadNextAcross => self.thread_step_across(1),
+            Action::ThreadPrevAcross => self.thread_step_across(-1),
             Action::WaitingNext => self.waiting_next(),
             Action::WaitingPrev => self.waiting_prev(),
             Action::HunkNext => self.hunk_next(),
@@ -256,23 +258,29 @@ impl App {
         Effect::None
     }
 
-    /// Keys while the thread pane has focus (ADR 0013).
+    /// Keys while the thread pane has focus (ADR 0013); the thread and
+    /// message keys move the one cursor (ADR 0046).
     fn act_thread_pane(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => self.close_thread(),
-            Action::ScopeToggle => self.thread_toggle_nav(),
-            Action::MoveDown => self.thread_message_move(1),
-            Action::MoveUp => self.thread_message_move(-1),
-            Action::ThreadPrev => self.thread_step(-1),
-            Action::ThreadNext => self.thread_step(1),
+            Action::MoveDown => self.message_step(1),
+            Action::MoveUp => self.message_step(-1),
+            // `h` on the file's first thread hops to the file-threads pane,
+            // as `h` at column 0 hops to the tree.
+            Action::ThreadPrev if self.cursor_on_first_in_file() => {
+                self.thread_to_file_threads();
+            }
+            Action::ThreadPrev => self.thread_step_in_file(-1),
+            Action::ThreadNext => self.thread_step_in_file(1),
+            Action::ThreadPrevAcross => self.thread_step_across(-1),
+            Action::ThreadNextAcross => self.thread_step_across(1),
+            Action::Top => self.message_first(),
+            Action::Bottom => self.message_last(),
+            Action::HalfPageDown => self.thread_scroll_half_page(1),
+            Action::HalfPageUp => self.thread_scroll_half_page(-1),
             Action::ScrollUp => self.thread_scroll(-WHEEL_LINES),
             Action::ScrollDown => self.thread_scroll(WHEEL_LINES),
-            Action::Reply => self.thread_reply(),
-            Action::EditMessage => self.thread_edit_message(),
-            Action::ToggleResolved => self.thread_toggle_resolved(),
-            Action::Delete => self.delete_armed_thread(),
-            Action::ToFileThreads => self.thread_to_file_threads(),
-            _ => {}
+            _ => return self.act_on_cursor(action),
         }
         Effect::None
     }
@@ -283,38 +291,41 @@ impl App {
             Action::Escape => self.leave_file_threads(),
             Action::MoveDown => self.file_thread_move(1),
             Action::MoveUp => self.file_thread_move(-1),
-            Action::Confirm => self.file_thread_open(),
-            Action::Reply => self.file_thread_reply(),
-            Action::ToggleResolved => self.file_thread_toggle_resolved(),
-            Action::Delete => self.delete_armed_thread(),
-            _ => {}
+            Action::Confirm => self.focus_thread_pane(),
+            _ => return self.act_on_cursor(action),
         }
         Effect::None
     }
 
     /// Keys in the thread list (ADR 0025).
     fn act_list(&mut self, action: Action) -> Effect {
-        let half = isize::try_from(self.text_rows() / 2)
-            .unwrap_or(isize::MAX)
-            .max(1);
         match action {
             Action::Escape => self.close_thread_list(),
-            Action::MoveDown => self.thread_list_message_move(1),
-            Action::MoveUp => self.thread_list_message_move(-1),
+            Action::MoveDown => self.message_step(1),
+            Action::MoveUp => self.message_step(-1),
             Action::ThreadPrev => self.thread_list_step(-1),
             Action::ThreadNext => self.thread_list_step(1),
-            Action::HalfPageDown => self.thread_list_step(half),
-            Action::HalfPageUp => self.thread_list_step(-half),
+            Action::HalfPageDown => self.thread_list_page(1),
+            Action::HalfPageUp => self.thread_list_page(-1),
             Action::Top => self.thread_list_goto(false),
             Action::Bottom => self.thread_list_goto(true),
-            Action::Confirm => self.thread_list_open_entry(),
-            Action::Reply => self.thread_list_reply(),
-            Action::EditMessage => self.thread_list_edit_message(),
-            Action::ToggleResolved => self.thread_list_toggle_resolved(),
-            Action::Delete => self.delete_armed_thread(),
+            Action::Confirm => self.thread_open_in_file(),
             Action::Fold => self.thread_list_fold(),
             Action::FoldResolved => self.thread_list_fold_resolved(),
             Action::FileOnly => self.thread_list_toggle_file(),
+            _ => return self.act_on_cursor(action),
+        }
+        Effect::None
+    }
+
+    /// The keys every thread surface shares: they act on the cursor's
+    /// thread and message (ADR 0046).
+    fn act_on_cursor(&mut self, action: Action) -> Effect {
+        match action {
+            Action::Reply => self.thread_reply(),
+            Action::EditMessage => self.thread_edit_message(),
+            Action::ToggleResolved => self.thread_toggle_resolved(),
+            Action::Delete => self.delete_armed_thread(),
             _ => {}
         }
         Effect::None

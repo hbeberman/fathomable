@@ -12,7 +12,10 @@ tags:
 
 # 0027 Revisiting threads
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28); amended 2026-09-03 by
+[0046](0046-one-thread-cursor.md): the `Tab` scope and its remembered
+selections are gone, `h`/`l` step within the file and `H`/`L` across the
+workspace, and the header counts both.
 
 ## Context
 

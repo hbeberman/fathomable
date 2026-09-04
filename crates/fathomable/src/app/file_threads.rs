@@ -3,10 +3,10 @@
 //! and resolved, in line order along the bottom of the tree column.
 //!
 //! The pane keeps no selection of its own. The highlighted row is the
-//! thread open in the thread pane, else the thread under the view cursor,
-//! derived on every draw and key from the document's marks, so the pane
-//! can never disagree with the text or go stale on a reload. Its only
-//! state is the height a drag gave it.
+//! thread cursor's (ADR 0046): the thread open in the thread pane, else
+//! the thread under the view cursor, derived on every draw and key from
+//! the document's marks, so the pane can never disagree with the text or
+//! go stale on a reload. Its only state is the height a drag gave it.
 //!
 //! While the pane has focus the thread pane shows the highlight and
 //! follows `j`/`k` and clicks without taking the keys (ADR 0034).
@@ -14,7 +14,7 @@
 use fathomable_core::annotations::{LineRange, ThreadId};
 
 use super::mark_words::Words;
-use super::threads::{MarkKind, ThreadPanel};
+use super::threads::MarkKind;
 use super::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
@@ -109,45 +109,13 @@ impl App {
             .max(1)
     }
 
-    /// The highlighted entry: the thread open in the thread pane when it
-    /// is one of this file's; else, among the threads on the cursor row,
-    /// the first (in line order) starting on the cursor line, else the
-    /// first in line order; with none on the row, the nearest thread
-    /// starting above the cursor, else the first.
-    ///
-    /// The open pane wins outright because a jump to its thread may not
-    /// land the cursor on it: a rendered blank line has no row, so the
-    /// cursor stays put and "under the cursor" would name another thread.
-    /// Ranges overlap, so "first on the row" alone would highlight a long
-    /// earlier thread after a jump to the one starting under the cursor.
+    /// The highlighted entry: the thread cursor's thread among the file's
+    /// (ADR 0046), `None` when the cursor is in another file.
     pub fn file_thread_selected(&self) -> Option<usize> {
         let order = self.file_threads();
-        if order.is_empty() {
-            return None;
-        }
-        let position = |id: &ThreadId| order.iter().position(|other| other == id);
-        if let Some(index) = self.thread.as_ref().map(ThreadPanel::id).and_then(position) {
-            return Some(index);
-        }
-        let line = self.view().cursor_source_line().unwrap_or(0);
-        let at_cursor = self.threads_at_cursor();
-        let mut candidates: Vec<usize> = at_cursor.iter().filter_map(position).collect();
-        candidates.sort_unstable();
-        let starts_here = candidates.iter().copied().find(|&index| {
-            self.marks()
-                .iter()
-                .any(|mark| *mark.id() == order[index] && mark.range().start() == line)
-        });
-        if let Some(index) = starts_here.or_else(|| candidates.first().copied()) {
-            return Some(index);
-        }
-        let above = self
-            .marks()
-            .iter()
-            .filter(|mark| mark.range().start() < line)
-            .max_by_key(|mark| mark.range().start())
-            .and_then(|mark| order.iter().position(|other| other == mark.id()));
-        Some(above.unwrap_or(0))
+        let cursor = self.thread_cursor();
+        let id = cursor.thread()?;
+        order.iter().position(|other| other == id)
     }
 
     /// The first entry drawn, chosen so the highlighted one is on screen.
@@ -186,19 +154,17 @@ impl App {
         }
     }
 
-    /// `j` / `k`: the next or previous entry, wrapping; the cursor and
-    /// the thread pane follow.
+    /// `j` / `k` and the wheel: the next or previous entry, wrapping; the
+    /// cursor and the thread pane follow, the pane opening if it was not.
     pub fn file_thread_move(&mut self, delta: isize) {
-        let order = self.file_threads();
-        if order.is_empty() {
+        if self.marks().is_empty() {
             self.notice("no threads in this file");
             return;
         }
-        let index = self.file_thread_selected().unwrap_or(0);
-        let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
-        let id = order[(index + step) % order.len()].clone();
-        self.goto_thread(&id);
-        self.open_thread_behind(id);
+        self.thread_step_in_file(delta);
+        if self.thread.is_none() {
+            self.file_thread_show();
+        }
     }
 
     /// Show the highlighted thread in the thread pane, keys staying here.
@@ -218,37 +184,7 @@ impl App {
     }
 
     fn file_thread_id(&self) -> Option<ThreadId> {
-        let index = self.file_thread_selected()?;
-        self.file_threads().into_iter().nth(index)
-    }
-
-    /// `Enter` / `l`: the thread pane on the highlighted thread takes
-    /// the keys.
-    pub fn file_thread_open(&mut self) {
-        if let Some(id) = self.file_thread_id() {
-            self.show_thread(id);
-        }
-    }
-
-    /// `d`: arm deletion of the highlighted thread (ADR 0034).
-    pub fn file_thread_arm_delete(&mut self) {
-        if let Some(id) = self.file_thread_id() {
-            self.arm_delete(id);
-        }
-    }
-
-    /// `r`: reply to the highlighted thread through the comment box.
-    pub fn file_thread_reply(&mut self) {
-        if let Some(id) = self.file_thread_id() {
-            self.open_compose(super::threads::ComposeTarget::Reply(id));
-        }
-    }
-
-    /// `x`: resolve the highlighted thread, or reopen it.
-    pub fn file_thread_toggle_resolved(&mut self) {
-        if let Some(id) = self.file_thread_id() {
-            self.toggle_resolved(&id);
-        }
+        self.thread_cursor().thread().cloned()
     }
 
     /// A click on entry row `row` (counted from the first drawn entry):
@@ -431,6 +367,70 @@ mod tests {
         Ok(())
     }
 
+    /// A step from any surface moves the one cursor, and every surface
+    /// highlights the same thread (ADR 0046).
+    #[test]
+    fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        use crate::app::input::keys;
+
+        let dir = TempDir::new("cursor")?;
+        let mut app = dir.app()?;
+        app.show_sidebar();
+        annotate(&mut app, 2, "two");
+        annotate(&mut app, 6, "six");
+        annotate(&mut app, 7, "seven");
+        let press = |app: &mut App, code| {
+            keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+        };
+        let ids = app.file_threads();
+
+        // Nothing open: the cursor rides the text.
+        app.close_thread();
+        app.view_mut().goto_source_line(6);
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
+        assert_eq!(app.file_thread_selected(), Some(1));
+        app.view_mut().goto_source_line(1);
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[0]));
+
+        // The pane: `l` steps, the file-threads highlight follows.
+        app.view_mut().goto_source_line(2);
+        app.open_thread_at_cursor();
+        assert_eq!(app.focus(), Focus::Thread);
+        press(&mut app, KeyCode::Char('l'));
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
+        assert_eq!(app.file_thread_selected(), Some(1));
+        assert_eq!(app.thread_position(), Some((2, 3)));
+
+        // The file-threads pane: `j` steps the same cursor.
+        app.focus_file_threads();
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
+        assert_eq!(app.thread_position(), Some((3, 3)));
+        assert_eq!(app.view().cursor_source_line(), Some(7));
+
+        // The list opens on it and `h` steps it back.
+        app.open_thread_list();
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
+        assert_eq!(app.thread_list_selected_index(), Some(2));
+        press(&mut app, KeyCode::Char('h'));
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
+
+        // Enter carries it into the pane; the text lands on its line.
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.focus(), Focus::Thread);
+        assert_eq!(app.thread_position(), Some((2, 3)));
+        assert_eq!(app.view().cursor_source_line(), Some(6));
+
+        // Closed again, the cursor stays until the reader moves.
+        app.close_thread();
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
+        app.view_mut().goto_source_line(7);
+        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
+        Ok(())
+    }
+
     #[test]
     fn the_keys_step_between_the_pane_and_the_list() -> anyhow::Result<()> {
         let dir = TempDir::new("step")?;
@@ -445,7 +445,7 @@ mod tests {
 
         // `r` replies in place; `x` resolves; `l` steps into the thread
         // pane and Left steps back; Esc closes the pane with the focus.
-        app.file_thread_reply();
+        app.thread_reply();
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
         );
@@ -454,9 +454,9 @@ mod tests {
         assert_eq!(app.focus(), Focus::FileThreads);
         assert!(app.thread_panel().is_some());
         assert_eq!(app.file_thread_rows()[0].replies(), 1);
-        app.file_thread_toggle_resolved();
+        app.thread_toggle_resolved();
         assert_eq!(app.file_thread_rows()[0].kind(), MarkKind::Resolved);
-        app.file_thread_open();
+        app.focus_thread_pane();
         assert_eq!(app.focus(), Focus::Thread);
         assert_eq!(app.thread_position(), Some((1, 3)));
         app.thread_to_file_threads();
@@ -466,7 +466,7 @@ mod tests {
         assert!(app.thread_panel().is_none());
         // Left from the pane shows the tree when it was hidden.
         app.hide_sidebar();
-        app.file_thread_open();
+        app.focus_thread_pane();
         app.thread_to_file_threads();
         assert!(app.tree().is_some());
         assert_eq!(app.focus(), Focus::FileThreads);
@@ -523,7 +523,7 @@ mod tests {
         app.file_thread_click(0);
         assert_eq!(app.thread_position(), Some((1, 2)));
         assert_eq!(app.file_thread_selected(), Some(0));
-        app.thread_step(1);
+        app.thread_step_in_file(1);
         assert_eq!(app.file_thread_selected(), Some(1));
         Ok(())
     }

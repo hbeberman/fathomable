@@ -126,66 +126,14 @@ impl Compose {
     }
 }
 
-/// The open thread panel: the thread it shows and how far it is scrolled.
-/// Its place among the file's threads is computed from the document's
-/// marks ([`App::thread_position`]), so a reload cannot strand it
-/// (ADR 0027).
-/// Where `h` / `l` in the thread pane walk: this file's threads or the
-/// whole work's, in path order (ADR 0027).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ThreadNav {
-    /// Threads of the open file, by line.
-    #[default]
-    File,
-    /// Every thread on the work, by path then line.
-    Workspace,
-}
-
-impl ThreadNav {
-    /// The other scope.
-    #[must_use]
-    pub fn toggled(self) -> Self {
-        match self {
-            Self::File => Self::Workspace,
-            Self::Workspace => Self::File,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct ThreadSelection {
-    id: ThreadId,
-    message: usize,
-}
-
-#[derive(Debug, Default)]
-pub(super) struct ThreadSelections {
-    file: Option<ThreadSelection>,
-    workspace: Option<ThreadSelection>,
-}
-
-impl ThreadSelections {
-    fn get(&self, nav: ThreadNav) -> Option<ThreadSelection> {
-        match nav {
-            ThreadNav::File => self.file.clone(),
-            ThreadNav::Workspace => self.workspace.clone(),
-        }
-    }
-
-    fn set(&mut self, nav: ThreadNav, selection: ThreadSelection) {
-        match nav {
-            ThreadNav::File => self.file = Some(selection),
-            ThreadNav::Workspace => self.workspace = Some(selection),
-        }
-    }
-}
-
+/// The open thread pane: how far the cursor's thread is scrolled. Which
+/// thread it shows is the thread cursor's (ADR 0046); its place among the
+/// file's threads is computed from the document's marks
+/// ([`App::thread_position`]), so a reload cannot strand it (ADR 0027).
 #[derive(Debug)]
 pub struct ThreadPanel {
-    id: ThreadId,
     scroll: usize,
-    selected_message: usize,
-    /// Number of messages when the scroll and selection were last set.
+    /// Number of messages when the scroll was last set.
     seen_messages: usize,
     /// The thread's `updated` when the scroll was last set, so a new
     /// reply sends the pane back to its end (ADR 0034).
@@ -197,17 +145,8 @@ pub struct ThreadPanel {
 const BOTTOM: usize = usize::MAX;
 
 impl ThreadPanel {
-    pub fn id(&self) -> &ThreadId {
-        &self.id
-    }
-
     pub fn scroll(&self) -> usize {
         self.scroll
-    }
-
-    /// The selected message: zero for the opening comment, then replies.
-    pub fn selected_message(&self) -> usize {
-        self.selected_message
     }
 }
 
@@ -388,18 +327,18 @@ impl App {
     }
 
     /// The document's threads in line order: by first line, then the
-    /// order the store holds them (ADR 0027). This is the order `n`/`p`
-    /// in the thread pane and the file-threads pane walk.
+    /// order the store holds them (ADR 0027). This is the order `l` / `h`
+    /// in the thread pane and `j` / `k` in the file-threads pane walk.
     pub fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
         marks.sort_by_key(|mark| mark.range().start());
         marks.into_iter().map(|mark| mark.id().clone()).collect()
     }
 
-    /// Every thread on the work in the pane's walking order: files by
+    /// Every thread on the work in the order `L` / `H` walk: files by
     /// path, threads by line. The open file contributes its marks, so
     /// re-anchored ranges keep their place.
-    fn workspace_threads(&self) -> Vec<ThreadId> {
+    pub(super) fn workspace_threads(&self) -> Vec<ThreadId> {
         let current = self.current.map(|i| self.docs[i].relative.as_path());
         let mut others: Vec<(&Path, usize, ThreadId)> = self
             .store
@@ -423,61 +362,22 @@ impl App {
         order
     }
 
-    /// The threads `h` / `l` walk, in order, per the pane's scope.
-    fn nav_threads(&self) -> Vec<ThreadId> {
-        match self.thread_nav {
-            ThreadNav::File => self.file_threads(),
-            ThreadNav::Workspace => self.workspace_threads(),
-        }
-    }
-
-    /// Where `h` / `l` in the thread pane walk.
-    pub fn thread_nav(&self) -> ThreadNav {
-        self.thread_nav
-    }
-
-    /// Tab in the pane: switch between this file and the whole work,
-    /// restoring the thread and message last selected in each.
-    pub fn thread_toggle_nav(&mut self) {
-        let current = self.thread.as_ref().map(|panel| ThreadSelection {
-            id: panel.id.clone(),
-            message: panel.selected_message,
-        });
-        if let Some(selection) = current.clone() {
-            self.thread_selections.set(self.thread_nav, selection);
-        }
-        self.thread_nav = self.thread_nav.toggled();
-        let order = self.nav_threads();
-        let selection = self
-            .thread_selections
-            .get(self.thread_nav)
-            .filter(|selection| {
-                self.thread(&selection.id).is_some_and(|thread| {
-                    self.scope.includes(thread)
-                        && self.workspace.root().join(thread.path()).is_file()
-                })
-            })
-            .or_else(|| current.filter(|selection| order.contains(&selection.id)))
-            .or_else(|| {
-                order.first().map(|id| ThreadSelection {
-                    id: id.clone(),
-                    message: self.thread(id).map_or(0, |thread| thread.replies().len()),
-                })
-            });
-        if let Some(selection) = selection {
-            self.show_thread_selection(&selection);
-        }
-        self.notice(match self.thread_nav {
-            ThreadNav::File => "thread scope: local",
-            ThreadNav::Workspace => "thread scope: global",
-        });
-    }
-
-    /// `(current, total)`, 1-based, of the open pane's thread among the
-    /// threads `h` / `l` walk, for the pane header.
+    /// `(current, total)`, 1-based, of the cursor's thread among the
+    /// file's, for the pane header.
     pub fn thread_position(&self) -> Option<(usize, usize)> {
-        let id = self.thread.as_ref()?.id();
-        let order = self.nav_threads();
+        let cursor = self.thread_cursor();
+        let id = cursor.thread()?;
+        let order = self.file_threads();
+        let index = order.iter().position(|other| other == id)?;
+        Some((index + 1, order.len()))
+    }
+
+    /// `(current, total)`, 1-based, of the cursor's thread among the
+    /// workspace's, for the pane header.
+    pub fn thread_position_across(&self) -> Option<(usize, usize)> {
+        let cursor = self.thread_cursor();
+        let id = cursor.thread()?;
+        let order = self.workspace_threads();
         let index = order.iter().position(|other| other == id)?;
         Some((index + 1, order.len()))
     }
@@ -777,10 +677,13 @@ impl App {
             Ok(()) => {
                 tracing::info!(%id, "reply added");
                 self.refresh_all_marks();
-                // The list and the file-threads pane reply in place; a
-                // reply from the text opens the thread it answered.
+                // The reply becomes the highlighted message. The list and
+                // the file-threads pane reply in place; a reply from the
+                // text opens the thread it answered.
                 if self.list.is_open() {
-                    self.thread_list_select_newest_message(id);
+                    let newest = self.newest_message(id);
+                    self.set_thread_cursor_message(id.clone(), newest);
+                    self.thread_list_follow_cursor();
                 } else if self.focus != Focus::FileThreads {
                     self.open_thread(id.clone());
                 }
@@ -798,12 +701,12 @@ impl App {
                 tracing::info!(%id, ?target, "thread message edited");
                 self.refresh_all_marks();
                 if let Some(updated) = self.thread(id).map(Thread::updated)
-                    && let Some(panel) = self.thread.as_mut().filter(|panel| panel.id() == id)
+                    && self.thread_cursor().thread() == Some(id)
+                    && let Some(panel) = self.thread.as_mut()
                 {
                     panel.seen = updated;
                 }
-                self.thread_message_into_view();
-                self.thread_list_reselect(None);
+                self.follow_cursor_message();
                 self.notice("message edited");
             }
             Err(error) => self.notice(format!("cannot edit message: {error}")),
@@ -856,7 +759,7 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
-        if self.thread.as_ref().is_some_and(|panel| panel.id() == id) {
+        if self.pane_thread() == Some(id) {
             self.open_thread(id.clone());
         }
         Ok(())
@@ -874,8 +777,9 @@ impl App {
         self.open_thread(id);
     }
 
-    /// Show one thread at its end, keeping the scroll only when the same
-    /// thread is already shown and nothing was added to it (ADR 0034).
+    /// Show one thread at its end, keeping the scroll and the highlighted
+    /// message only when the pane already shows it and nothing was added
+    /// (ADR 0034). The cursor moves onto the thread (ADR 0046).
     pub fn open_thread(&mut self, id: ThreadId) {
         self.refresh_watchers();
         let updated = self.thread(&id).map_or(0, Thread::updated);
@@ -886,19 +790,18 @@ impl App {
             .thread
             .as_ref()
             .filter(|panel| {
-                panel.id() == &id && panel.seen == updated && panel.seen_messages == messages
+                self.thread_cursor.thread() == Some(&id)
+                    && panel.seen == updated
+                    && panel.seen_messages == messages
             })
-            .map(|panel| (panel.scroll, panel.selected_message));
-        let (scroll, selected_message) = kept.unwrap_or_else(|| {
-            (
-                BOTTOM,
-                self.thread(&id).map_or(0, |thread| thread.replies().len()),
-            )
-        });
+            .map(|panel| panel.scroll);
+        let message = match kept {
+            Some(_) => self.thread_cursor.message(),
+            None => self.newest_message(&id),
+        };
+        self.set_thread_cursor_message(id, message);
         self.show_panel(ThreadPanel {
-            id,
-            scroll,
-            selected_message,
+            scroll: kept.unwrap_or(BOTTOM),
             seen_messages: messages,
             seen: updated,
         });
@@ -937,65 +840,6 @@ impl App {
         self.thread.as_mut()
     }
 
-    /// `h` / `l`: the previous or next thread, wrapping, in the file or
-    /// across the work per [`ThreadNav`]; the cursor moves to its first
-    /// line, opening its file when it is elsewhere (ADR 0027).
-    pub fn thread_step(&mut self, delta: isize) {
-        let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) else {
-            return;
-        };
-        let order = self.nav_threads();
-        if order.is_empty() {
-            return;
-        }
-        let index = order.iter().position(|other| *other == id).unwrap_or(0);
-        let step = delta.rem_euclid(order.len().cast_signed()).cast_unsigned();
-        let next = order[(index + step) % order.len()].clone();
-        let message = self
-            .thread(&next)
-            .map_or(0, |thread| thread.replies().len());
-        self.show_thread_selection(&ThreadSelection { id: next, message });
-    }
-
-    fn show_thread_selection(&mut self, selection: &ThreadSelection) {
-        let elsewhere = self
-            .thread(&selection.id)
-            .is_some_and(|thread| self.current_path() != thread.path());
-        if elsewhere {
-            self.goto_thread_in_file(&selection.id);
-        } else {
-            self.goto_thread(&selection.id);
-            self.open_thread(selection.id.clone());
-        }
-        let count = self
-            .thread(&selection.id)
-            .map_or(0, |thread| thread.replies().len() + 1);
-        if let Some(panel) = self
-            .thread
-            .as_mut()
-            .filter(|panel| panel.id() == &selection.id)
-        {
-            panel.selected_message = selection.message.min(count.saturating_sub(1));
-        }
-        self.thread_message_into_view();
-    }
-
-    /// Open the file `id` lives in, move the cursor to its first line, and
-    /// show it in the pane. A deleted file is reported instead.
-    fn goto_thread_in_file(&mut self, id: &ThreadId) {
-        let Some(path) = self.thread(id).map(|thread| thread.path().to_path_buf()) else {
-            return;
-        };
-        if !self.workspace.root().join(&path).is_file() {
-            self.notice(format!("{} is deleted", path.display()));
-            return;
-        }
-        self.close_popup();
-        self.open(&path);
-        self.goto_thread(id);
-        self.open_thread(id.clone());
-    }
-
     /// Move the cursor to the first line of `id`, when the document has it.
     pub(super) fn goto_thread(&mut self, id: &ThreadId) {
         let Some(mark) = self.marks().iter().find(|mark| mark.id() == id) else {
@@ -1012,13 +856,15 @@ impl App {
 
     /// Scroll the panel text, stopping at the last row.
     pub fn thread_scroll(&mut self, delta: isize) {
+        let Some(id) = self.thread_cursor().thread().cloned() else {
+            return;
+        };
         let Some(panel) = self.panel_mut() else {
             return;
         };
-        let id = panel.id().clone();
         let scroll = panel.scroll;
         // The limit is the body as drawn, wrapped at the column's width,
-        // so PageUp from the end moves at once (ADR 0034).
+        // so a half page from the end moves at once (ADR 0034).
         let body_rows = self.thread_rows().saturating_sub(2);
         let width = self.width.saturating_sub(self.sidebar_width()).max(1);
         let limit = self
@@ -1032,33 +878,23 @@ impl App {
         }
     }
 
-    /// `j` / `k`: highlight the next or previous message without wrapping.
-    pub fn thread_message_move(&mut self, delta: isize) {
-        let Some(panel) = self.thread.as_ref() else {
-            return;
-        };
-        let count = self
-            .thread(panel.id())
-            .map_or(0, |thread| thread.replies().len() + 1);
-        if count == 0 {
-            return;
-        }
-        let selected = panel
-            .selected_message
-            .saturating_add_signed(delta)
-            .min(count - 1);
-        if let Some(panel) = self.panel_mut() {
-            panel.selected_message = selected;
-        }
-        self.thread_message_into_view();
+    /// `Ctrl-d` / `Ctrl-u` in the pane: scroll by half its body rows.
+    pub fn thread_scroll_half_page(&mut self, direction: isize) {
+        let half = isize::try_from(self.thread_rows().saturating_sub(2) / 2)
+            .unwrap_or(isize::MAX)
+            .max(1);
+        self.thread_scroll(direction.signum() * half);
     }
 
-    fn thread_message_into_view(&mut self) {
+    pub(super) fn thread_message_into_view(&mut self) {
+        let cursor = self.thread_cursor();
+        let Some(id) = cursor.thread().cloned() else {
+            return;
+        };
         let Some(panel) = self.thread.as_ref() else {
             return;
         };
-        let id = panel.id().clone();
-        let selected = panel.selected_message;
+        let selected = cursor.message();
         let scroll = panel.scroll;
         let body_rows = self.thread_rows().saturating_sub(2).max(1);
         let width = self.width.saturating_sub(self.sidebar_width()).max(1);
@@ -1088,15 +924,8 @@ impl App {
         }
     }
 
-    /// `d` in the pane: arm deletion of the shown thread (ADR 0034).
-    pub fn thread_arm_delete(&mut self) {
-        if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
-            self.arm_delete(id);
-        }
-    }
-
-    /// Left in the pane: the keys go to the file-threads pane, the
-    /// tree shown first if it was hidden (ADR 0034).
+    /// `h` on the file's first thread: the keys go to the file-threads
+    /// pane, the tree shown first if it was hidden (ADR 0034).
     pub fn thread_to_file_threads(&mut self) {
         if self.marks().is_empty() {
             return;
@@ -1109,37 +938,6 @@ impl App {
         }
     }
 
-    /// `r`: reply to the shown thread through the comment box; the pane
-    /// stays readable above it.
-    pub fn thread_reply(&mut self) {
-        if let Some(id) = self.thread.as_ref().map(|panel| panel.id().clone()) {
-            self.open_compose(ComposeTarget::Reply(id));
-        }
-    }
-
-    /// `e`: edit the selected message when the user wrote it.
-    pub fn thread_edit_message(&mut self) {
-        let Some(panel) = self.thread.as_ref() else {
-            return;
-        };
-        let id = panel.id().clone();
-        let target = message_target(panel.selected_message);
-        self.open_compose(ComposeTarget::Edit {
-            thread: id,
-            message: target,
-        });
-    }
-
-    /// Whether the selected message belongs to the user.
-    pub fn thread_message_editable(&self) -> bool {
-        let Some(panel) = self.thread.as_ref() else {
-            return false;
-        };
-        let target = message_target(panel.selected_message);
-        self.message_for(panel.id(), target)
-            .is_some_and(|(_, editable)| editable)
-    }
-
     pub(super) fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
         let thread = self.thread(id)?;
         match target {
@@ -1148,13 +946,6 @@ impl App {
                 .replies()
                 .get(index)
                 .map(|reply| (reply.body(), reply.author().is_user())),
-        }
-    }
-
-    /// `x`: resolve the shown thread, or reopen it when already resolved.
-    pub fn thread_toggle_resolved(&mut self) {
-        if let Some(id) = self.panel_mut().map(|panel| panel.id().clone()) {
-            self.toggle_resolved(&id);
         }
     }
 
@@ -1178,67 +969,6 @@ impl App {
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),
         }
-    }
-
-    // ----- navigation -----
-
-    /// `]c`: the next mark below the cursor, wrapping to the top.
-    pub fn next_annotation(&mut self) {
-        self.jump_annotation(1);
-    }
-
-    /// `[c`: the previous mark above the cursor, wrapping to the bottom.
-    pub fn prev_annotation(&mut self) {
-        self.jump_annotation(-1);
-    }
-
-    pub(super) fn jump_annotation(&mut self, direction: isize) {
-        let mut starts: Vec<usize> = self.marks().iter().map(|m| m.range().start()).collect();
-        starts.sort_unstable();
-        starts.dedup();
-        if starts.is_empty() {
-            self.notice("no threads in this file");
-            return;
-        }
-        let line = self.view().cursor_source_line().unwrap_or(0);
-        let (target, wrapped) = if direction > 0 {
-            starts
-                .iter()
-                .find(|&&start| start > line)
-                .map_or((starts[0], true), |&start| (start, false))
-        } else {
-            starts
-                .iter()
-                .rev()
-                .find(|&&start| start < line)
-                .map_or((starts[starts.len() - 1], true), |&start| (start, false))
-        };
-        if wrapped {
-            self.notice(if direction > 0 {
-                "wrapped to first thread"
-            } else {
-                "wrapped to last thread"
-            });
-        }
-        self.view_mut().goto_source_line(target);
-    }
-
-    /// The list's Enter (ADR 0025): jump to `id` and open the pane on it.
-    pub(super) fn show_thread(&mut self, id: ThreadId) {
-        self.goto_thread(&id);
-        self.open_thread(id);
-    }
-
-    /// The list's Enter: open `id` with its selected message carried over.
-    pub(super) fn show_thread_message(&mut self, id: &ThreadId, message: usize) {
-        self.show_thread(id.clone());
-        let count = self
-            .thread(id)
-            .map_or(0, |thread| thread.replies().len() + 1);
-        if let Some(panel) = self.thread.as_mut().filter(|panel| panel.id() == id) {
-            panel.selected_message = message.min(count.saturating_sub(1));
-        }
-        self.thread_message_into_view();
     }
 }
 
@@ -1593,7 +1323,7 @@ mod tests {
         let panel = render(&app)?;
         let screen = panel.join("\n");
         assert!(
-            panel[0].contains("thread 1/1 local  L3-5  auto-resolved"),
+            panel[0].contains("thread 1/1 in file · 1/1 overall · L3-5 · auto-resolved"),
             "header carries range and status:\n{screen}"
         );
         assert!(
@@ -1648,10 +1378,8 @@ mod tests {
         assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(MarkKind::Open));
 
         app.open_thread_at_cursor();
-        let Some(panel) = app.thread_panel() else {
-            anyhow::bail!("panel did not open");
-        };
-        let id = panel.id().clone();
+        anyhow::ensure!(app.thread_panel().is_some(), "panel did not open");
+        let id = app.thread_cursor().thread().cloned().context("no cursor")?;
         assert_eq!(app.thread_position(), Some((1, 1)));
         assert_eq!(app.focus(), Focus::Thread);
         app.thread_scroll(-100);
@@ -1719,7 +1447,7 @@ mod tests {
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
 
         assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
+            app.thread_panel().map(|_| app.thread_cursor().message()),
             Some(1),
             "the newest message starts selected"
         );
@@ -1729,7 +1457,7 @@ mod tests {
 
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
         assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
+            app.thread_panel().map(|_| app.thread_cursor().message()),
             Some(0)
         );
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
@@ -1754,7 +1482,7 @@ mod tests {
         type_in(&mut app, "user follow-up");
         app.compose_submit();
         assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
+            app.thread_panel().map(|_| app.thread_cursor().message()),
             Some(2)
         );
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
@@ -1770,24 +1498,13 @@ mod tests {
         assert_eq!(app.compose_draft(), Some("user follow-up"));
         app.compose_cancel();
         assert!(app.popup().is_none(), "an unchanged edit closes at once");
-        keys::handle_key(&mut app, key(KeyCode::Tab));
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
-            Some(1)
-        );
-        keys::handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
-            Some(2),
-            "local restores its selected message"
-        );
-        keys::handle_key(&mut app, key(KeyCode::Tab));
-        assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
-            Some(1),
-            "global restores its selected message"
-        );
+        assert_eq!(app.thread_cursor().message(), 1);
+        keys::handle_key(&mut app, key(KeyCode::Char('g')));
+        keys::handle_key(&mut app, key(KeyCode::Char('g')));
+        assert_eq!(app.thread_cursor().message(), 0, "gg is the comment");
+        keys::handle_key(&mut app, key(KeyCode::Char('G')));
+        assert_eq!(app.thread_cursor().message(), 2, "G is the newest");
         Ok(())
     }
 
@@ -1801,7 +1518,7 @@ mod tests {
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
 
         assert_eq!(
-            app.thread_list().selected_message(),
+            app.thread_cursor().message(),
             2,
             "the newest message starts selected"
         );
@@ -1819,13 +1536,13 @@ mod tests {
         );
 
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.thread_list().selected_message(), 1);
+        assert_eq!(app.thread_cursor().message(), 1);
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
         assert!(app.popup().is_none());
         assert_eq!(app.message(), Some("only your messages can be edited"));
 
         keys::handle_key(&mut app, key(KeyCode::Char('k')));
-        assert_eq!(app.thread_list().selected_message(), 0);
+        assert_eq!(app.thread_cursor().message(), 0);
         keys::handle_key(&mut app, key(KeyCode::Char('e')));
         assert!(matches!(
             app.popup(),
@@ -1846,10 +1563,10 @@ mod tests {
         );
 
         keys::handle_key(&mut app, key(KeyCode::Char('l')));
-        assert_eq!(app.thread_list().selected_message(), 0);
+        assert_eq!(app.thread_cursor().message(), 0);
         keys::handle_key(&mut app, key(KeyCode::Char('h')));
         assert_eq!(
-            app.thread_list().selected_message(),
+            app.thread_cursor().message(),
             2,
             "changing threads selects the newest message"
         );
@@ -1891,19 +1608,19 @@ mod tests {
         anyhow::ensure!(agent_row >= scroll, "agent message is above the viewport");
         app.thread_list_click(agent_row - scroll);
         assert_eq!(
-            app.thread_list().selected_message(),
+            app.thread_cursor().message(),
             1,
             "a click selects its message"
         );
-        app.thread_list_reply();
+        app.thread_reply();
         type_in(&mut app, "reply from the list");
         app.compose_submit();
         assert_eq!(
-            app.thread_list().selected_message(),
+            app.thread_cursor().message(),
             3,
             "a reply sent from the list becomes selected"
         );
-        app.thread_list_edit_message();
+        app.thread_edit_message();
         assert!(matches!(
             app.popup(),
             Some(Popup::Compose(compose))
@@ -1932,9 +1649,9 @@ mod tests {
             })
             .context("no agent message row after reply")?;
         app.thread_list_click(agent_row - app.thread_list().scroll());
-        app.thread_list_open_entry();
+        app.thread_open_in_file();
         assert_eq!(
-            app.thread_panel().map(super::ThreadPanel::selected_message),
+            app.thread_panel().map(|_| app.thread_cursor().message()),
             Some(1),
             "Enter carries the selected message into the pane"
         );
@@ -2041,7 +1758,7 @@ mod tests {
     fn annotation_jumps_wrap_and_picker_lists_threads() -> anyhow::Result<()> {
         let dir = TempDir::new("jumps")?;
         let mut app = dir.app()?;
-        app.next_annotation();
+        app.thread_step_in_file(1);
         assert_eq!(app.message(), Some("no threads in this file"));
         app.start_comment();
         type_in(&mut app, "top");
@@ -2052,12 +1769,12 @@ mod tests {
         app.compose_submit();
         let bottom = app.view().cursor_source_line();
         app.view_mut().goto_top();
-        app.next_annotation();
+        app.thread_step_in_file(1);
         assert_eq!(app.view().cursor_source_line(), bottom);
-        app.next_annotation();
+        app.thread_step_in_file(1);
         assert_eq!(app.view().cursor_source_line(), Some(1));
         assert_eq!(app.message(), Some("wrapped to first thread"));
-        app.prev_annotation();
+        app.thread_step_in_file(-1);
         assert_eq!(app.view().cursor_source_line(), bottom);
         app.start_new_comment();
         app.compose_submit();
@@ -2102,16 +1819,16 @@ mod tests {
         // The walk is by line, then store order, and moves the cursor.
         app.open_thread_at_cursor();
         assert_eq!(app.thread_position(), Some((1, 3)));
-        app.thread_step(1);
+        app.thread_step_in_file(1);
         assert_eq!(app.thread_position(), Some((2, 3)));
         assert_eq!(app.view().cursor_source_line(), Some(1));
-        app.thread_step(1);
+        app.thread_step_in_file(1);
         assert_eq!(app.thread_position(), Some((3, 3)));
         assert_eq!(app.view().cursor_source_line(), bottom);
-        app.thread_step(1);
+        app.thread_step_in_file(1);
         assert_eq!(app.thread_position(), Some((1, 3)), "wraps");
         assert_eq!(app.view().cursor_source_line(), Some(1));
-        app.thread_step(-1);
+        app.thread_step_in_file(-1);
         assert_eq!(app.view().cursor_source_line(), bottom);
         Ok(())
     }
@@ -2152,7 +1869,7 @@ mod tests {
                 .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "top"))
         );
         app.thread_list_step(1);
-        app.thread_list_open_entry();
+        app.thread_open_in_file();
         assert!(!app.thread_list().is_open());
         assert_eq!(app.focus(), Focus::Thread);
         assert!(app.thread_panel().is_some());
@@ -2161,7 +1878,7 @@ mod tests {
         // `x` moves an entry to the resolved section; `f` narrows to the
         // file; `Z` folds the resolved section; reopening keeps the entry.
         app.open_thread_list();
-        app.thread_list_toggle_resolved();
+        app.thread_toggle_resolved();
         let rows = app.thread_list_rows(60);
         assert!(matches!(
             rows.rows.first(),
@@ -2197,7 +1914,7 @@ mod tests {
         app.close_thread_list();
         assert_eq!(app.focus(), Focus::View);
         app.open_thread_list();
-        app.thread_list_reply();
+        app.thread_reply();
         type_in(&mut app, "still here");
         app.compose_submit();
         assert_eq!(app.focus(), Focus::Threads);
@@ -2509,7 +2226,7 @@ mod tests {
         app.close_popup();
         app.open_thread_list();
         draw(&mut app, "thread list")?;
-        app.thread_list_reply();
+        app.thread_reply();
         type_in(&mut app, "a reply from the list");
         draw(&mut app, "compose over list")?;
         Ok(())

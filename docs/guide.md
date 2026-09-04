@@ -98,7 +98,7 @@ Text:
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment |
 | `c` with nothing selected | open the thread on the cursor line, or comment on it when there is none |
 | `C` | always start a new thread, on the selection or the cursor line |
-| `]c` `[c` | next / previous thread in the file |
+| `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file (the pane follows when it is open) |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
 | `:follow`, `:status`, `:name NAME` | toggle auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight; quit |
@@ -117,16 +117,16 @@ The `Space` menu, from any pane:
 | `Space ?` | all keys |
 | `:` | the command line, from any pane |
 
-Thread pane:
+Thread pane (its header reads `thread 2/5 in file · 7/40 overall`):
 
 | Keys | Action |
 | --- | --- |
 | `j` `k` | previous / next message (the highlight stays on screen) |
-| `h` `l` | previous / next thread; the cursor follows |
-| `Tab` | switch between the file's threads and the work's |
-| `PgUp` `PgDn` | scroll |
-| `r` `e` `x`, `dd` | reply, edit your highlighted message, resolve or reopen, delete (the second `d` confirms, any other key cancels) |
-| `Left` | back to the file-threads pane |
+| `h` `l` / `Left` `Right` | previous / next thread in this file; `h` on the first hops to the file-threads pane |
+| `H` `L` | previous / next thread across the workspace, opening its file |
+| `gg`, `ge` / `G` | first / last message |
+| `Ctrl-d` `Ctrl-u` | scroll half the pane |
+| `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete (the second `d` confirms, any other key cancels) |
 | `Esc` | close |
 
 File-threads pane:
@@ -135,7 +135,7 @@ File-threads pane:
 | --- | --- |
 | `j` `k` | next / previous thread; the cursor and the thread pane follow |
 | `l` / `Right` / `Enter` | focus the thread pane |
-| `r` `x`, `dd` | reply, resolve or reopen, delete |
+| `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | close the thread pane, back to the text |
 
 Thread list:
@@ -143,11 +143,11 @@ Thread list:
 | Keys | Action |
 | --- | --- |
 | `j` `k` | previous / next message |
-| `h` `l` | previous / next thread |
+| `h` `l` / `Left` `Right` | previous / next thread |
 | `gg` `ge` `G` | first / last thread |
-| `Ctrl-d` `Ctrl-u`, `PgUp` `PgDn` | half a page of threads |
+| `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file and thread pane on the highlighted message |
-| `r` `e` `x`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
+| `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `z` `Z` `f` | fold the entry, fold resolved, only this file |
 | `Esc` | back to the document |
 
@@ -159,7 +159,7 @@ Comment and edit box:
 | `Alt-Enter` / `Ctrl-Enter` | newline |
 | arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
 | `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
-| paste, click, `PgUp` `PgDn` / `Alt-Up` `Alt-Down` | insert at the cursor, place the cursor, scroll the thread above |
+| paste, click, `Alt-j` `Alt-k` / `Alt-Down` `Alt-Up` | insert at the cursor, place the cursor, scroll the thread above |
 | `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Ctrl-c` | clear the draft (empty closes) |
 | `Esc` | cancel (twice after a change) |
@@ -231,18 +231,29 @@ reply count and age at the edge. The highlighted row is the thread under
 the cursor, so reading the file walks the pane; `Space t` or a click on
 its header focuses it and opens the thread pane on the highlight, a
 click on a row or `j`/`k` shows that thread in the pane while the keys
-stay with the list, `l` steps into the pane (`Left` steps back), and `r`
-and `x` act on the highlight. The thread pane opens at its end, where
-a dim `─── END ───` row follows the last message.
+stay with the list, `l` steps into the pane (`h` on the first thread
+steps back), and `r` and `o` act on the highlight. The thread pane
+opens at its end, where a dim `─── END ───` row follows the last message.
+
+The thread pane, the file-threads pane, and the thread list show one
+**thread cursor**: a thread and a message in it. Whichever surface you
+move it from, the others follow, and `r`, `e`, `o`, and `dd` act on it
+wherever the keys came from. While the thread pane or the list is open
+the cursor is what you last stepped to or clicked; once both are closed
+and you move in the text, the cursor rides the text cursor again.
 
 In the thread pane the newest message starts highlighted. `j`/`k` move
 the highlight between the opening comment and its replies, keeping it on
-screen; `e` opens the highlighted message in the same editor when the
-user wrote it, while agent messages cannot be edited. `h`/`l` page
-threads and `Tab` switches their scope between `local` (this file) and
-`global` (the work). Each scope remembers its own selected thread and
-message. `PgUp`/`PgDn` scroll long messages, and `Left` returns to the
-file-threads pane.
+screen, and `gg`/`G` go to the first or last; `e` opens the highlighted
+message in the same editor when the user wrote it, while agent messages
+cannot be edited. Thread motions follow one rule: lowercase steps within
+the file, uppercase crosses files. `h`/`l` (or `Left`/`Right`) step to
+the previous or next thread of this file, wrapping, and `H`/`L` step
+across the workspace, files in path order, opening the file they land
+in; in the text `]c`/`[c` and `]C`/`[C` are the same two motions, and
+the pane follows them when it is open. The header counts both ways:
+`thread 2/5 in file · 7/40 overall`. `Ctrl-d`/`Ctrl-u` scroll long
+messages by half the pane.
 
 `Space A` shows the whole review at once: every thread on the current
 work (the ones whose commit `HEAD` can reach), open ones first and then
@@ -250,10 +261,10 @@ resolved ones dimmed, grouped by file, each with its comment and replies
 in full. It takes the text column the way a document does; the tree
 stays beside it. The newest message in the selected thread starts
 highlighted; `h`/`l` move between threads, `j`/`k` move between their
-messages, and `e` edits a highlighted message you wrote. `Enter` opens
-the file and thread pane on that message, `r` and `x` reply and resolve
-in place, `f` narrows the list to the file you were reading, and `Esc`
-goes back to it.
+messages, `Ctrl-d`/`Ctrl-u` move by half a page of rows, and `e` edits
+a highlighted message you wrote. `Enter` opens the file and thread pane
+on that message, `r` and `o` reply and resolve in place, `f` narrows
+the list to the file you were reading, and `Esc` goes back to it.
 
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting

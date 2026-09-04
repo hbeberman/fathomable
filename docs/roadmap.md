@@ -167,3 +167,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     the prefix menus, `Space ?`, the pane hints, and the guide's key
     section are read from or checked against; the picker moves on
     `Ctrl-j`/`Ctrl-k` ([0045](decisions/0045-bindings-are-data.md)).
+37. **One thread cursor.** The thread pane, the file-threads pane, and
+    the thread list show and move one thread-and-message cursor that
+    rides the text cursor once the reader moves on; `]c`/`[c` and
+    `l`/`h` step within the file, `]C`/`[C` and `L`/`H` across the
+    workspace; `o` resolves; `Ctrl-d`/`Ctrl-u`, `gg`/`G`, and
+    `Alt-j`/`Alt-k` page without `PgUp`/`PgDn`
+    ([0046](decisions/0046-one-thread-cursor.md)).

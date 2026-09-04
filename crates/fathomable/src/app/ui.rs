@@ -17,7 +17,7 @@ use super::info::Info;
 use super::mark_words::{Words, label};
 use super::message::{thread_body_lines, thread_body_rows};
 use super::thread_list::{Row, Rows};
-use super::threads::{Compose, ComposeTarget, MarkKind, ThreadNav, ThreadPanel};
+use super::threads::{Compose, ComposeTarget, MarkKind, ThreadPanel};
 use super::view::{Mode, View};
 
 use super::input::bindings::{self, Action, Where};
@@ -1349,7 +1349,7 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
             (key(Action::Confirm), "open"),
             (key(Action::Reply), "reply"),
         ];
-        if app.thread_list_message_editable() {
+        if app.thread_message_editable() {
             hints.push((key(Action::EditMessage), "edit"));
         }
         hints.push((key(Action::ToggleResolved), "resolve"));
@@ -1359,7 +1359,7 @@ fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
                 "threads",
             ));
         }
-        if app.thread_list_message_count() > 1 {
+        if app.cursor_message_count() > 1 {
             hints.push((
                 pair(Where::List, Action::MoveDown, Action::MoveUp),
                 "messages",
@@ -1480,7 +1480,8 @@ fn list_selection_line<'a>(
 }
 
 fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, panel: &ThreadPanel) {
-    let Some(thread) = app.thread(panel.id()) else {
+    let cursor = app.thread_cursor();
+    let Some(thread) = cursor.thread().and_then(|id| app.thread(id)) else {
         return;
     };
     let rows = usize::from(area.height);
@@ -1491,16 +1492,16 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
     let now = super::threads::now();
     let mark = app.marks().iter().find(|m| m.id() == thread.id());
     let (index, total) = app.thread_position().unwrap_or((1, 1));
+    let (across, overall) = app.thread_position_across().unwrap_or((1, 1));
     let words = Words::of(mark.map(super::threads::Mark::placement), thread);
     let range = mark.map_or_else(|| thread.range(), super::threads::Mark::range);
-    let scope = match app.thread_nav() {
-        ThreadNav::File => "local",
-        ThreadNav::Workspace => "global",
-    };
+    // Both counts (ADR 0046): the file's, then the workspace's.
     let mut left = vec![
         Span::styled(format!(" thread {index}/{total} "), theme.popup_key),
-        Span::styled(scope, theme.info.add_modifier(Modifier::DIM)),
-        Span::styled(format!("  L{range}  "), theme.info),
+        Span::styled("in file", theme.info.add_modifier(Modifier::DIM)),
+        Span::styled(format!(" · {across}/{overall} "), theme.info),
+        Span::styled("overall", theme.info.add_modifier(Modifier::DIM)),
+        Span::styled(format!(" · L{range} · "), theme.info),
     ];
     // Placement first, then state, so a detached thread still says
     // whether it waits or was resolved (ADR 0032).
@@ -1526,7 +1527,7 @@ fn draw_thread(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, pane
         range.start(),
         now,
         width,
-        panel.selected_message(),
+        cursor.message(),
     );
     debug_assert_eq!(
         body.len(),
@@ -1597,7 +1598,6 @@ fn thread_hints(
             "threads",
         ));
     }
-    hints.push((key(Action::ScopeToggle), "scope"));
     if messages > 1 {
         hints.push((
             pair(Where::ThreadPane, Action::MoveDown, Action::MoveUp),
@@ -1610,10 +1610,7 @@ fn thread_hints(
             "scroll",
         ));
     }
-    hints.extend([
-        (key(Action::ToFileThreads), "list"),
-        (key(Action::Escape), "close"),
-    ]);
+    hints.push((key(Action::Escape), "close"));
     hints
 }
 

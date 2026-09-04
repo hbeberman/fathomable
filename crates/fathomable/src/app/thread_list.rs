@@ -8,12 +8,12 @@
 //! so a reload or a scope change needs nothing invalidated.
 
 use std::collections::{BTreeMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use fathomable_core::annotations::{LineRange, MessageTarget, Thread, ThreadId};
+use fathomable_core::annotations::{LineRange, Thread, ThreadId};
 use fathomable_core::layout::wrap_text;
 
-use super::threads::{ComposeTarget, MarkKind, message_target};
+use super::threads::MarkKind;
 use super::{App, Focus};
 
 /// Rows kept visible above and below the selected message.
@@ -29,8 +29,6 @@ pub struct ThreadList {
     open: bool,
     /// Only the current document's threads.
     file_only: bool,
-    selected: Option<ThreadId>,
-    selected_message: usize,
     scroll: usize,
     folded: HashSet<ThreadId>,
     resolved_folded: bool,
@@ -43,11 +41,6 @@ impl ThreadList {
 
     pub fn scroll(&self) -> usize {
         self.scroll
-    }
-
-    /// The selected message: zero for the opening comment, then replies.
-    pub fn selected_message(&self) -> usize {
-        self.selected_message
     }
 
     /// Whether the list is narrowed to the current document.
@@ -168,17 +161,17 @@ impl App {
     }
 
     /// `Space A`: show the list in place of the document. The pane closes;
-    /// the selection, filter, and folds are whatever they were last time.
+    /// the filter and folds are whatever they were last time, and the
+    /// cursor is where the reader was (ADR 0046).
     pub fn open_thread_list(&mut self) {
         if self.store.is_none() {
             self.store_mut();
             return;
         }
-        if self.list.selected.is_none()
-            && let Some(panel) = self.thread.as_ref()
-        {
-            self.list.selected = Some(panel.id().clone());
-            self.list.selected_message = panel.selected_message();
+        // The cursor the pane or the text was on becomes the list's.
+        let cursor = self.thread_cursor();
+        if let Some(id) = cursor.thread().cloned() {
+            self.set_thread_cursor_message(id, cursor.message());
         }
         self.thread = None;
         self.list.open = true;
@@ -275,6 +268,7 @@ impl App {
             return;
         }
         let folded = resolved && self.list.resolved_folded;
+        let cursor = self.thread_cursor();
         if !out.rows.is_empty() {
             out.rows.push(Row::Blank);
         }
@@ -291,7 +285,7 @@ impl App {
             }
             for entry in entries {
                 let index = out.entries.len();
-                let selected = self.list.selected.as_ref() == Some(&entry.id);
+                let selected = cursor.thread() == Some(&entry.id);
                 let entry_folded = self.list.folded.contains(&entry.id);
                 if !folded {
                     self.push_entry(
@@ -339,7 +333,7 @@ impl App {
             return;
         }
         let selected_message =
-            selected.then(|| self.list.selected_message.min(thread.replies().len()));
+            selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
         let mut message = |message: usize,
                            author: &str,
                            created: u64,
@@ -386,46 +380,46 @@ impl App {
         self.text_rows().saturating_sub(1).max(1)
     }
 
-    /// The selected entry's index, or the first entry when the selection
-    /// is gone or unset.
+    /// The cursor's entry, or the first entry when the cursor's thread
+    /// is not listed.
     fn selected_index(&self, rows: &Rows) -> Option<usize> {
-        let by_id = self
-            .list
-            .selected
-            .as_ref()
+        let cursor = self.thread_cursor();
+        let by_id = cursor
+            .thread()
             .and_then(|id| rows.entries.iter().position(|entry| &entry.id == id));
         by_id.or_else(|| (!rows.entries.is_empty()).then_some(0))
     }
 
-    /// Select entry `index`, defaulting a new thread to its newest message.
+    /// Put the cursor on entry `index`, a new thread at its newest message.
     fn select_entry(&mut self, rows: &Rows, index: usize) {
         let Some(entry) = rows.entries.get(index) else {
             return;
         };
-        let id = entry.id.clone();
-        if self.list.selected.as_ref() != Some(&id) {
-            self.list.selected_message =
-                self.thread(&id).map_or(0, |thread| thread.replies().len());
-        }
-        self.list.selected = Some(id);
+        self.set_thread_cursor(entry.id.clone());
         self.scroll_to_selection(rows, index);
     }
 
     fn select_message(&mut self, rows: &Rows, entry: usize, message: usize) {
-        self.select_entry(rows, entry);
         let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
             return;
         };
-        self.list.selected_message = self
-            .thread(&id)
-            .map_or(0, |thread| message.min(thread.replies().len()));
+        self.set_thread_cursor_message(id, message);
         self.scroll_to_selection(rows, entry);
+    }
+
+    /// Scroll enough to keep the cursor's message, or a folded header,
+    /// visible; the entry is re-found when the rows changed under it.
+    pub(super) fn thread_list_follow_cursor(&mut self) {
+        let rows = self.thread_list_rows(self.column_width());
+        if let Some(index) = self.selected_index(&rows) {
+            self.select_entry(&rows, index);
+        }
     }
 
     /// Scroll enough to keep the selected message, or a folded header, visible.
     fn scroll_to_selection(&mut self, rows: &Rows, entry: usize) {
         let range = rows
-            .message_range(entry, self.list.selected_message)
+            .message_range(entry, self.thread_cursor().message())
             .or_else(|| rows.header_row(entry).map(|row| row..row + 1));
         let Some(range) = range else {
             return;
@@ -444,7 +438,7 @@ impl App {
         }
     }
 
-    /// `h`/`l` and the half-page keys: move between threads by `delta`.
+    /// `h` / `l`: move between threads by `delta` in the list's order.
     pub fn thread_list_step(&mut self, delta: isize) {
         let rows = self.thread_list_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
@@ -455,27 +449,37 @@ impl App {
         self.select_entry(&rows, target);
     }
 
-    /// `j`/`k`: move between messages in the selected thread.
-    pub fn thread_list_message_move(&mut self, delta: isize) {
+    /// `Ctrl-d` / `Ctrl-u`: the message half a page of rows below or
+    /// above the highlighted one, the nearest when that row is a heading.
+    pub fn thread_list_page(&mut self, direction: isize) {
         let rows = self.thread_list_rows(self.column_width());
         let Some(entry) = self.selected_index(&rows) else {
             return;
         };
-        let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
+        let Some(start) = rows
+            .message_range(entry, self.thread_cursor().message())
+            .map(|range| range.start)
+            .or_else(|| rows.header_row(entry))
+        else {
             return;
         };
-        let count = self
-            .thread(&id)
-            .map_or(0, |thread| thread.replies().len() + 1);
-        if count == 0 {
-            return;
+        let half = (self.list_rows() / 2).max(1);
+        let last = rows.rows.len().saturating_sub(1);
+        let target = if direction > 0 {
+            (start + half).min(last)
+        } else {
+            start.saturating_sub(half)
+        };
+        let landing = if direction > 0 {
+            (target..=last).find_map(|row| rows.selection_at(row))
+        } else {
+            (0..=target).rev().find_map(|row| rows.selection_at(row))
+        };
+        match landing {
+            Some((entry, Some(message))) => self.select_message(&rows, entry, message),
+            Some((entry, None)) => self.select_entry(&rows, entry),
+            None => {}
         }
-        let target = self
-            .list
-            .selected_message
-            .saturating_add_signed(delta)
-            .min(count - 1);
-        self.select_message(&rows, entry, target);
     }
 
     /// `gg` / `G`.
@@ -538,7 +542,7 @@ impl App {
         if !self.list.folded.remove(&id) {
             self.list.folded.insert(id.clone());
         }
-        self.list.selected = Some(id);
+        self.set_thread_cursor(id);
         let rows = self.thread_list_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
@@ -551,45 +555,6 @@ impl App {
         let rows = self.thread_list_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
-        }
-    }
-
-    /// The selected entry, when there is one.
-    fn selected_entry(&self) -> Option<Entry> {
-        let rows = self.thread_list_rows(self.column_width());
-        let index = self.selected_index(&rows)?;
-        rows.entries.get(index).cloned()
-    }
-
-    fn selected_message_target(&self) -> Option<(Entry, MessageTarget)> {
-        let entry = self.selected_entry()?;
-        let thread = self.thread(&entry.id)?;
-        let message = if self.list.selected.as_ref() == Some(&entry.id) {
-            self.list.selected_message().min(thread.replies().len())
-        } else {
-            thread.replies().len()
-        };
-        Some((entry, message_target(message)))
-    }
-
-    /// Number of messages in the selected thread.
-    pub fn thread_list_message_count(&self) -> usize {
-        self.selected_entry()
-            .and_then(|entry| self.thread(&entry.id))
-            .map_or(0, |thread| thread.replies().len() + 1)
-    }
-
-    /// Whether the selected list message belongs to the user.
-    pub fn thread_list_message_editable(&self) -> bool {
-        self.selected_message_target()
-            .and_then(|(entry, target)| self.message_for(&entry.id, target))
-            .is_some_and(|(_, editable)| editable)
-    }
-
-    /// `d`: arm deletion of the selected entry (ADR 0034).
-    pub fn thread_list_arm_delete(&mut self) {
-        if let Some(entry) = self.selected_entry() {
-            self.arm_delete(entry.id);
         }
     }
 
@@ -609,72 +574,17 @@ impl App {
             return;
         }
         let rows = self.thread_list_rows(self.column_width());
+        let cursor = self.thread_cursor();
         let index = self
             .selected_index(&rows)
             .filter(|_| {
-                self.list
-                    .selected
-                    .as_ref()
+                cursor
+                    .thread()
                     .is_some_and(|id| rows.entries.iter().any(|entry| &entry.id == id))
             })
             .or_else(|| place.map(|place| place.min(rows.entries.len().saturating_sub(1))));
         if let Some(index) = index {
             self.select_entry(&rows, index);
-        }
-    }
-
-    /// A reply sent from the list becomes its selected message.
-    pub(super) fn thread_list_select_newest_message(&mut self, id: &ThreadId) {
-        if !self.list.is_open() || self.list.selected.as_ref() != Some(id) {
-            return;
-        }
-        let rows = self.thread_list_rows(self.column_width());
-        let Some(entry) = rows.entries.iter().position(|entry| &entry.id == id) else {
-            return;
-        };
-        let message = self.thread(id).map_or(0, |thread| thread.replies().len());
-        self.select_message(&rows, entry, message);
-    }
-
-    /// Enter: open the entry's file at the thread, open the pane on it,
-    /// and close the list.
-    pub fn thread_list_open_entry(&mut self) {
-        let Some((entry, message)) = self.selected_message_target() else {
-            return;
-        };
-        let message = match message {
-            MessageTarget::Comment => 0,
-            MessageTarget::Reply(index) => index + 1,
-        };
-        self.close_thread_list();
-        self.open(Path::new(&entry.path));
-        if self.current_path() == entry.path {
-            self.show_thread_message(&entry.id, message);
-        }
-    }
-
-    /// `r`: reply to the selected entry through the comment box.
-    pub fn thread_list_reply(&mut self) {
-        if let Some(entry) = self.selected_entry() {
-            self.open_compose(ComposeTarget::Reply(entry.id));
-        }
-    }
-
-    /// `e`: edit the selected message when the user wrote it.
-    pub fn thread_list_edit_message(&mut self) {
-        if let Some((entry, message)) = self.selected_message_target() {
-            self.open_compose(ComposeTarget::Edit {
-                thread: entry.id,
-                message,
-            });
-        }
-    }
-
-    /// `x`: resolve the selected entry, or reopen it.
-    pub fn thread_list_toggle_resolved(&mut self) {
-        if let Some(entry) = self.selected_entry() {
-            self.toggle_resolved(&entry.id);
-            self.thread_list_reselect(None);
         }
     }
 }

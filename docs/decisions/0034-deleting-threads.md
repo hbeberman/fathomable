@@ -12,7 +12,10 @@ tags:
 
 # 0034 Deleting threads and the list that drives the pane
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28); amended 2026-09-03 by
+[0046](0046-one-thread-cursor.md): the three surfaces arm and delete the
+one thread cursor's thread, and `h` on the file's first thread, not
+`Left`, hands the keys back to the file-threads pane.
 
 ## Context
 

@@ -20,8 +20,9 @@ pub struct Tool {
     pub params: &'static [&'static str],
 }
 
-/// The `session` parameter every tool but `session_list` takes.
-pub const SESSION: &str = "session";
+/// The `workspace` parameter every tool but `workspace_list` takes: a
+/// root, or a viewer name or id (ADR 0047).
+pub const WORKSPACE: &str = "workspace";
 /// A viewer name or id.
 pub const VIEWER: &str = "viewer";
 /// A harness session id.
@@ -63,66 +64,66 @@ pub const WHEN_MESSAGE: &str = "message";
 pub const WHEN_RESOLVED: &str = "resolved";
 
 /// List the known workspaces and their viewers.
-pub const SESSION_LIST: Tool = Tool {
-    name: "session_list",
+pub const WORKSPACE_LIST: Tool = Tool {
+    name: "workspace_list",
     params: &[],
 };
 /// Pin a workspace for later calls.
-pub const SESSION_SWITCH: Tool = Tool {
-    name: "session_switch",
-    params: &[SESSION],
+pub const WORKSPACE_SWITCH: Tool = Tool {
+    name: "workspace_switch",
+    params: &[WORKSPACE],
 };
 /// Show a file in the viewer.
 pub const OPEN: Tool = Tool {
     name: "open",
-    params: &[PATH, LINE, END_LINE, SESSION, VIEWER],
+    params: &[PATH, LINE, END_LINE, WORKSPACE, VIEWER],
 };
 /// Name the files being edited and subscribe.
 pub const FOLLOW: Tool = Tool {
     name: "follow",
-    params: &[PATHS, ID, TYPE, PERSONA, SESSION, VIEWER],
+    params: &[PATHS, ID, TYPE, PERSONA, WORKSPACE, VIEWER],
 };
 /// End a subscription.
 pub const UNFOLLOW: Tool = Tool {
     name: "unfollow",
-    params: &[ID, SESSION],
+    params: &[ID, WORKSPACE],
 };
 /// Read threads.
-pub const ANNOTATIONS_LIST: Tool = Tool {
-    name: "annotations_list",
-    params: &[SINCE, PATH, LIMIT, SESSION],
+pub const THREADS_LIST: Tool = Tool {
+    name: "threads_list",
+    params: &[SINCE, PATH, LIMIT, WORKSPACE],
 };
 /// The threads waiting on a subscriber.
 pub const THREADS_PENDING: Tool = Tool {
     name: "threads_pending",
-    params: &[ID, LIMIT, SESSION],
+    params: &[ID, LIMIT, WORKSPACE],
 };
 /// Answer one thread or several.
 pub const THREAD_REPLY: Tool = Tool {
     name: "thread_reply",
     params: &[
-        THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, PERSONA, ID, SESSION,
+        THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, PERSONA, ID, WORKSPACE,
     ],
 };
 /// Be woken when another thread moves.
 pub const THREAD_WATCH: Tool = Tool {
     name: "thread_watch",
-    params: &[ON, WHEN, REMIND, ID, SESSION],
+    params: &[ON, WHEN, REMIND, ID, WORKSPACE],
 };
 /// Cancel a watch.
 pub const THREAD_UNWATCH: Tool = Tool {
     name: "thread_unwatch",
-    params: &[ON, ID, SESSION],
+    params: &[ON, ID, WORKSPACE],
 };
 
 /// Every tool, in the order the guide lists them.
 pub const ALL: [Tool; 10] = [
-    SESSION_LIST,
-    SESSION_SWITCH,
+    WORKSPACE_LIST,
+    WORKSPACE_SWITCH,
     OPEN,
     FOLLOW,
     UNFOLLOW,
-    ANNOTATIONS_LIST,
+    THREADS_LIST,
     THREADS_PENDING,
     THREAD_REPLY,
     THREAD_WATCH,

@@ -4,14 +4,14 @@
 //! answers the thread store directly (ADR 0003, ADR 0014, ADR 0024).
 //!
 //! The server holds two pieces of state: the pinned workspace set by
-//! `session_switch`, and the subscriber this connection last registered
+//! `workspace_switch`, and the subscriber this connection last registered
 //! with `follow` (ADR 0040), which signs its replies and is the default
 //! `id` of the subscription tools. Every call otherwise resolves the
 //! workspace afresh: an
-//! explicit `session` argument, then the pin, then the known workspace
+//! explicit `workspace` argument, then the pin, then the known workspace
 //! whose root is the longest prefix of the current directory. `open` and
 //! `follow` reach every live viewer of that workspace or the one named by
-//! `viewer`; `annotations_list` and `thread_reply` go through a viewer when
+//! `viewer`; `threads_list` and `thread_reply` go through a viewer when
 //! one runs and to the store on disk when none does. Client identity is
 //! read from the request context on each call, so the server behaves the
 //! same under the legacy `initialize` flow and discovery-first startup.
@@ -96,12 +96,12 @@ struct Target {
     viewers: Vec<Record>,
 }
 
-/// `session_switch` arguments.
+/// `workspace_switch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct SwitchParams {
-    /// A workspace root as shown by `session_list`, or a viewer name or id
+    /// A workspace root as shown by `workspace_list`, or a viewer name or id
     /// (which selects that viewer's workspace).
-    session: String,
+    workspace: String,
 }
 
 /// `open` arguments.
@@ -119,7 +119,7 @@ pub struct OpenParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
     /// Viewer name or id to show the file in; every viewer when omitted.
     #[serde(default)]
     viewer: Option<String>,
@@ -148,7 +148,7 @@ pub struct FollowParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
     /// Viewer name or id to tell; every viewer when omitted.
     #[serde(default)]
     viewer: Option<String>,
@@ -162,10 +162,10 @@ pub struct UnfollowParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
-/// `annotations_list` arguments.
+/// `threads_list` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ListParams {
     /// Only threads changed at or after this Unix time in seconds.
@@ -182,7 +182,7 @@ pub struct ListParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
 /// `threads_pending` arguments.
@@ -198,13 +198,13 @@ pub struct PendingParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
 /// One reply in a `thread_reply` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 pub struct ReplyItem {
-    /// Thread id from `annotations_list` or `threads_pending`.
+    /// Thread id from `threads_list` or `threads_pending`.
     thread: String,
     /// Reply text; Markdown.
     body: String,
@@ -223,7 +223,7 @@ pub struct ReplyItem {
 /// `thread_reply` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ReplyParams {
-    /// Thread id from `annotations_list` or `threads_pending`, for a
+    /// Thread id from `threads_list` or `threads_pending`, for a
     /// single reply.
     #[serde(default)]
     thread: Option<String>,
@@ -256,7 +256,7 @@ pub struct ReplyParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
 /// `thread_watch` arguments.
@@ -275,7 +275,7 @@ pub struct WatchParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
 /// `thread_unwatch` arguments.
@@ -289,15 +289,15 @@ pub struct UnwatchParams {
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
-    session: Option<String>,
+    workspace: Option<String>,
 }
 
 #[tool_router]
 impl Server {
     fn new(dirs: XdgDirs, agents: AgentsConfig) -> Self {
         let cwd = env::current_dir().unwrap_or_default();
-        if let Some(session) = bind(&targets(&dirs), &cwd) {
-            tracing::info!(root = %session.root.display(), viewers = session.viewers.len(), "workspace contains the cwd");
+        if let Some(target) = bind(&targets(&dirs), &cwd) {
+            tracing::info!(root = %target.root.display(), viewers = target.viewers.len(), "workspace contains the cwd");
         } else {
             tracing::warn!(cwd = %cwd.display(), "no known workspace contains the cwd");
         }
@@ -315,13 +315,13 @@ impl Server {
         description = "List the workspaces Fathomable knows and the viewers running in each; \
                        the one later calls address by default is marked. Use it when a call \
                        says no workspace contains the current directory, then pin one with \
-                       `session_switch`. Returns roots and viewer names, not threads.",
+                       `workspace_switch`. Returns roots and viewer names, not threads.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    fn session_list(&self) -> CallToolResult {
+    fn workspace_list(&self) -> CallToolResult {
         let all = targets(&self.dirs);
         let default = self.resolve(None).ok().map(|s| s.root);
-        let sessions: Vec<Value> = all
+        let workspaces: Vec<Value> = all
             .iter()
             .map(|s| {
                 let viewers: Vec<Value> = s
@@ -365,7 +365,7 @@ impl Server {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
-        with_summary(json!({ "sessions": sessions }), summary)
+        with_summary(json!({ "workspaces": workspaces }), summary)
     }
 
     #[tool(
@@ -379,16 +379,16 @@ impl Server {
             open_world_hint = false
         )
     )]
-    fn session_switch(&self, Parameters(p): Parameters<SwitchParams>) -> CallToolResult {
-        match self.resolve(Some(&p.session)) {
-            Ok(session) => {
+    fn workspace_switch(&self, Parameters(p): Parameters<SwitchParams>) -> CallToolResult {
+        match self.resolve(Some(&p.workspace)) {
+            Ok(target) => {
                 if let Ok(mut pinned) = self.pinned.lock() {
-                    *pinned = Some(session.root.clone());
+                    *pinned = Some(target.root.clone());
                 }
                 text(format!(
                     "bound to {} ({} viewer(s) running)",
-                    session.root.display(),
-                    session.viewers.len()
+                    target.root.display(),
+                    target.viewers.len()
                 ))
             }
             Err(error) => failure(error),
@@ -413,7 +413,7 @@ impl Server {
             end_line: p.end_line,
         };
         match self
-            .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
+            .broadcast(p.workspace.as_deref(), p.viewer.as_deref(), &request)
             .await
         {
             Ok(count) => text(format!("opened {} in {count} viewer(s)", p.path.display())),
@@ -443,17 +443,17 @@ impl Server {
         Parameters(p): Parameters<FollowParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
-        let paths = match check_paths(&session.root, &p.paths) {
+        let paths = match check_paths(&target.root, &p.paths) {
             Ok(paths) => paths,
             Err(error) => return failure(error),
         };
         let client = context.client_info().map(|c| c.name);
         let note = match self.subscription(
-            &session.root,
+            &target.root,
             p.id,
             p.kind,
             p.persona,
@@ -463,13 +463,13 @@ impl Server {
             Ok(note) => note,
             Err(error) => return failure(error),
         };
-        let files = listed(&session.root, &paths);
-        if session.viewers.is_empty() && p.viewer.is_none() {
+        let files = listed(&target.root, &paths);
+        if target.viewers.is_empty() && p.viewer.is_none() {
             return text(format!("{note}following {files}; no viewer is running"));
         }
         let request = Request::Follow { paths };
         match self
-            .broadcast(p.session.as_deref(), p.viewer.as_deref(), &request)
+            .broadcast(p.workspace.as_deref(), p.viewer.as_deref(), &request)
             .await
         {
             Ok(count) => text(format!("{note}following {files} in {count} viewer(s)")),
@@ -488,12 +488,12 @@ impl Server {
         )
     )]
     fn unfollow(&self, Parameters(p): Parameters<UnfollowParams>) -> CallToolResult {
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
         let when = now();
-        let outcome = self.register(&session.root, when).and_then(|mut register| {
+        let outcome = self.register(&target.root, when).and_then(|mut register| {
             if register.subscriber(&p.id).is_none() {
                 return Ok(false);
             }
@@ -529,12 +529,12 @@ impl Server {
                        read every thread under it; it fails when it is neither.",
         annotations(read_only_hint = true, open_world_hint = false)
     )]
-    async fn annotations_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+    async fn threads_list(&self, Parameters(p): Parameters<ListParams>) -> CallToolResult {
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
-        let path = match check_paths(&session.root, p.path.as_slice()) {
+        let path = match check_paths(&target.root, p.path.as_slice()) {
             Ok(paths) => paths.into_iter().next(),
             Err(error) => return failure(error),
         };
@@ -542,9 +542,9 @@ impl Server {
             since: p.since,
             path: path.clone(),
         };
-        let outcome = match session.viewers.first() {
+        let outcome = match target.viewers.first() {
             Some(viewer) => call(viewer, &request).await,
-            None => headless_list(&self.dirs, &session.root, p.since, path.as_deref())
+            None => headless_list(&self.dirs, &target.root, p.since, path.as_deref())
                 .map(Response::Threads),
         };
         match outcome {
@@ -582,12 +582,12 @@ impl Server {
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     fn threads_pending(&self, Parameters(p): Parameters<PendingParams>) -> CallToolResult {
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
         let when = now();
-        let mut register = match self.register(&session.root, when) {
+        let mut register = match self.register(&target.root, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
@@ -601,7 +601,7 @@ impl Server {
                 "session {id} is not subscribed; call follow with `id` and `type`"
             ));
         };
-        let threads = match headless_store(&self.dirs, &session.root) {
+        let threads = match headless_store(&self.dirs, &target.root) {
             Ok((store, scope)) => store
                 .threads()
                 .iter()
@@ -670,12 +670,12 @@ impl Server {
         Parameters(p): Parameters<ReplyParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
         let client = context.client_info().map(|c| c.name);
-        let subscription = self.signature(p.id, &session.root);
+        let subscription = self.signature(p.id, &target.root);
         let mut author = Author::Agent {
             name: p
                 .persona
@@ -706,7 +706,7 @@ impl Server {
         }
         let mut lines = Vec::new();
         for item in items {
-            match self.reply_one(&session, author.clone(), item).await {
+            match self.reply_one(&target, author.clone(), item).await {
                 Ok(line) => lines.push(line),
                 Err(error) => {
                     lines.push(error);
@@ -749,18 +749,18 @@ impl Server {
             Ok(ids) => ids,
             Err(error) => return failure(error),
         };
-        let session = match self.resolve(p.session.as_deref()) {
-            Ok(session) => session,
+        let target = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
         if let Err(error) = known_threads(
             &self.dirs,
-            &session.root,
+            &target.root,
             std::iter::once(&on).chain(&remind),
         ) {
             return failure(error);
         }
-        self.with_subscriber(p.session.as_deref(), p.id, |register, id, now| {
+        self.with_subscriber(p.workspace.as_deref(), p.id, |register, id, now| {
             register
                 .watch(id, &on, when, remind.clone(), now)
                 .map(|()| format!("watching {} for {when}", p.on))
@@ -781,7 +781,7 @@ impl Server {
             Ok(id) => id,
             Err(error) => return failure(error),
         };
-        self.with_subscriber(p.session.as_deref(), p.id, |register, id, now| {
+        self.with_subscriber(p.workspace.as_deref(), p.id, |register, id, now| {
             register
                 .unwatch(id, &on, now)
                 .map(|()| format!("no longer watching {}", p.on))
@@ -789,7 +789,7 @@ impl Server {
     }
 }
 
-/// `annotations_list` threads per call unless `limit` says otherwise.
+/// `threads_list` threads per call unless `limit` says otherwise.
 const DEFAULT_LIST_LIMIT: usize = 50;
 /// `threads_pending` fresh threads per call unless `limit` says otherwise.
 const DEFAULT_PENDING_LIMIT: usize = 20;
@@ -936,7 +936,7 @@ impl Server {
     /// connection's), answering with its message.
     fn with_subscriber(
         &self,
-        session: Option<&str>,
+        workspace: Option<&str>,
         id: Option<String>,
         act: impl FnOnce(
             &mut Register,
@@ -944,12 +944,12 @@ impl Server {
             u64,
         ) -> Result<String, fathomable_core::agents::RegisterError>,
     ) -> CallToolResult {
-        let session = match self.resolve(session) {
-            Ok(session) => session,
+        let target = match self.resolve(workspace) {
+            Ok(target) => target,
             Err(error) => return failure(error),
         };
         let when = now();
-        let mut register = match self.register(&session.root, when) {
+        let mut register = match self.register(&target.root, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
@@ -967,7 +967,7 @@ impl Server {
     /// One reply of a `thread_reply` call, through a viewer or the store.
     async fn reply_one(
         &self,
-        session: &Target,
+        target: &Target,
         author: Author,
         item: ReplyItem,
     ) -> Result<String, String> {
@@ -982,11 +982,11 @@ impl Server {
             resolve: item.resolve,
             lines,
         };
-        let outcome = match session.viewers.first() {
+        let outcome = match target.viewers.first() {
             Some(viewer) => call(viewer, &request).await,
             None => headless_reply(
                 &self.dirs,
-                &session.root,
+                &target.root,
                 &thread,
                 author,
                 item.body,
@@ -1008,11 +1008,11 @@ impl Server {
         }
     }
 
-    /// The workspace a call addresses: `session` when given (a root, or a
+    /// The workspace a call addresses: `workspace` when given (a root, or a
     /// viewer name or id), else the pin, else the one containing the cwd.
-    fn resolve(&self, session: Option<&str>) -> Result<Target, String> {
+    fn resolve(&self, workspace: Option<&str>) -> Result<Target, String> {
         let all = targets(&self.dirs);
-        if let Some(key) = session {
+        if let Some(key) = workspace {
             if let Some(found) = all
                 .iter()
                 .find(|s| s.viewers.iter().any(|v| v.is_called(key)))
@@ -1021,11 +1021,9 @@ impl Server {
             }
             let path = PathBuf::from(key);
             let path = path.canonicalize().unwrap_or(path);
-            return all
-                .iter()
-                .find(|s| s.root == path)
-                .cloned()
-                .ok_or_else(|| format!("no workspace or viewer called `{key}`; see session_list"));
+            return all.iter().find(|s| s.root == path).cloned().ok_or_else(|| {
+                format!("no workspace or viewer called `{key}`; see workspace_list")
+            });
         }
         if let Some(pinned) = self.pinned()
             && let Some(found) = all.iter().find(|s| s.root == pinned)
@@ -1034,7 +1032,7 @@ impl Server {
         }
         let cwd = env::current_dir().unwrap_or_default();
         bind(&all, &cwd).cloned().ok_or_else(|| {
-            "no known workspace contains the current directory; call session_list and session_switch"
+            "no known workspace contains the current directory; call workspace_list and workspace_switch"
                 .to_owned()
         })
     }
@@ -1044,31 +1042,31 @@ impl Server {
     /// fails the call.
     async fn broadcast(
         &self,
-        session: Option<&str>,
+        workspace: Option<&str>,
         viewer: Option<&str>,
         request: &Request,
     ) -> Result<usize, String> {
-        let session = self.resolve(session)?;
+        let target = self.resolve(workspace)?;
         let targets: Vec<&Record> = match viewer {
             Some(key) => {
-                let found = session
+                let found = target
                     .viewers
                     .iter()
                     .find(|v| v.is_called(key))
                     .ok_or_else(|| {
                         format!(
-                            "no viewer called `{key}` on {}; see session_list",
-                            session.root.display()
+                            "no viewer called `{key}` on {}; see workspace_list",
+                            target.root.display()
                         )
                     })?;
                 vec![found]
             }
-            None => session.viewers.iter().collect(),
+            None => target.viewers.iter().collect(),
         };
         if targets.is_empty() {
             return Err(format!(
                 "no viewer is running for {}; start Fathomable there",
-                session.root.display()
+                target.root.display()
             ));
         }
         let mut count = 0;
@@ -1408,7 +1406,7 @@ fn instructions() -> String {
         reply = vocab::THREAD_REPLY.name,
         replies = vocab::REPLIES,
         pending = vocab::THREADS_PENDING.name,
-        list = vocab::ANNOTATIONS_LIST.name,
+        list = vocab::THREADS_LIST.name,
         open = vocab::OPEN.name,
         watch = vocab::THREAD_WATCH.name,
     )
@@ -1477,7 +1475,7 @@ mod tests {
         known_threads, listed, thread_id, vocab, with_types,
     };
 
-    fn session(root: &str, viewers: usize) -> Target {
+    fn target(root: &str, viewers: usize) -> Target {
         Target {
             root: PathBuf::from(root),
             viewers: (0..viewers)
@@ -1488,11 +1486,7 @@ mod tests {
 
     #[test]
     fn binding_picks_the_longest_root_even_without_viewers() {
-        let sessions = [
-            session("/work", 1),
-            session("/work/repo", 0),
-            session("/x", 2),
-        ];
+        let sessions = [target("/work", 1), target("/work/repo", 0), target("/x", 2)];
         let bound = bind(&sessions, Path::new("/work/repo/src"));
         assert_eq!(
             bound.map(|s| s.root.as_path()),

@@ -873,7 +873,7 @@ impl<'a> Blob<'a> {
                 replies = vocab::REPLIES,
                 line = vocab::LINE,
                 end_line = vocab::END_LINE,
-                list = vocab::ANNOTATIONS_LIST.name,
+                list = vocab::THREADS_LIST.name,
                 pending = vocab::THREADS_PENDING.name,
             ),
         ]

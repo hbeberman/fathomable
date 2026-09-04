@@ -14,7 +14,10 @@ tags:
 
 # 0011 Theme schema
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-03 by
+[0047](0047-one-vocabulary.md): the `annotation.*` keys are `thread.*`;
+the old names still load for one release and `--doctor` names each one
+a theme file sets.
 
 ## Context
 
@@ -98,10 +101,10 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.sidebar`, `ui.sidebar.selected`, `ui.sidebar.dir` | tree sidebar background, its cursor row, directory names ([0012](0012-workspace-mode.md)) |
 | `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
-| `annotation.open`, `annotation.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
-| `annotation.waiting` | gutter note cell, list rows, and sidebar tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
-| `annotation.line` | background of annotated rows (0013) |
-| `annotation.focus` | background of the rows of the thread open in the thread pane ([0033](0033-open-thread-lines.md)) |
+| `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
+| `thread.waiting` | gutter note cell, list rows, and sidebar tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
+| `thread.line` | background of annotated rows (0013) |
+| `thread.focus` | background of the rows of the thread open in the thread pane ([0033](0033-open-thread-lines.md)) |
 | `markup.heading` | all heading levels; `markup.heading.1`…`.6` override one level |
 | `markup.raw.inline`, `markup.raw.block` | inline code, code block lines |
 | `markup.link` | link text |

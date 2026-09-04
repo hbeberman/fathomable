@@ -113,7 +113,7 @@ fn message_lines<'a>(
         ),
     ];
     if let Some(badge) = message.badge {
-        header.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
+        header.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
     }
     let mut out = vec![message_line(theme, header, width, selected)];
     let indent = " ".repeat(MESSAGE_INDENT);

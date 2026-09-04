@@ -58,11 +58,11 @@ pub struct Theme {
     pub popup_key: Style,
     pub picker_match: Style,
     pub picker_selected: Style,
-    pub annotation_open: Style,
-    pub annotation_resolved: Style,
-    pub annotation_waiting: Style,
-    pub annotation_line: Style,
-    pub annotation_focus: Style,
+    pub thread_open: Style,
+    pub thread_resolved: Style,
+    pub thread_waiting: Style,
+    pub thread_line: Style,
+    pub thread_focus: Style,
     pub diff_plus: Style,
     pub diff_delta: Style,
     pub diff_minus: Style,
@@ -102,11 +102,11 @@ impl Theme {
             popup_key: style(Key::UiPopupKey),
             picker_match: style(Key::UiPickerMatch),
             picker_selected: style(Key::UiPickerSelected),
-            annotation_open: style(Key::AnnotationOpen),
-            annotation_resolved: style(Key::AnnotationResolved),
-            annotation_waiting: style(Key::AnnotationWaiting),
-            annotation_line: style(Key::AnnotationLine),
-            annotation_focus: style(Key::AnnotationFocus),
+            thread_open: style(Key::ThreadOpen),
+            thread_resolved: style(Key::ThreadResolved),
+            thread_waiting: style(Key::ThreadWaiting),
+            thread_line: style(Key::ThreadLine),
+            thread_focus: style(Key::ThreadFocus),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
             diff_minus: style(Key::DiffMinus),
@@ -605,7 +605,7 @@ fn sidebar_marks<'a>(
     }
     // A file with a thread waiting on the user (ADR 0030).
     if !row.is_dir() && app.path_waits(row.path()) {
-        tail.push(Span::styled(" ↩", on_bg(theme.annotation_waiting)));
+        tail.push(Span::styled(" ↩", on_bg(theme.thread_waiting)));
     }
     (letter, tail)
 }
@@ -785,9 +785,9 @@ fn status_style(theme: &Theme, status: LineStatus) -> Style {
 
 fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
     match kind {
-        ThreadState::Open => theme.annotation_open,
-        ThreadState::Resolved | ThreadState::AutoResolved => theme.annotation_resolved,
-        ThreadState::Waiting => theme.annotation_waiting,
+        ThreadState::Open => theme.thread_open,
+        ThreadState::Resolved | ThreadState::AutoResolved => theme.thread_resolved,
+        ThreadState::Waiting => theme.thread_waiting,
     }
 }
 
@@ -804,11 +804,11 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         let note = app.note_on_row(row);
         let mut row_style = Style::default();
         if note.is_some() {
-            row_style = row_style.patch(theme.annotation_line);
+            row_style = row_style.patch(theme.thread_line);
         }
         // The open thread's own lines stand out from the rest (ADR 0033).
         if app.open_thread_on_row(row) {
-            row_style = row_style.patch(theme.annotation_focus);
+            row_style = row_style.patch(theme.thread_focus);
         }
         if is_cursor {
             row_style = row_style.patch(theme.cursorline);
@@ -1467,7 +1467,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 Span::styled(format!("  {}", format_age(*created, now)), theme.info),
             ];
             if let Some(badge) = badge {
-                spans.push(Span::styled(format!("  [{badge}]"), theme.annotation_open));
+                spans.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
             }
             list_selection_line(theme, spans, width, *selected)
         }

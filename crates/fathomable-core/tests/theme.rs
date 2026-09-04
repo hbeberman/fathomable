@@ -256,3 +256,41 @@ fn key_names_round_trip() -> TestResult {
     }
     Ok(())
 }
+
+/// `annotation.*` keys from before ADR 0047 still load as `thread.*`, and
+/// the theme reports each one so `--doctor` can name it.
+#[test]
+fn old_annotation_keys_load_as_thread_keys_and_are_reported() -> TestResult {
+    let theme = Theme::resolve(
+        "old",
+        from_map(&[(
+            "old",
+            "colors { \"annotation.open\" fg=\"#ff0000\"\n \"thread.line\" bg=\"#0000ff\" }",
+        )]),
+    )?;
+    assert_eq!(
+        theme.style(Key::ThreadOpen).fg(),
+        Some(Color::Rgb(255, 0, 0))
+    );
+    assert_eq!(
+        theme.style(Key::ThreadLine).bg(),
+        Some(Color::Rgb(0, 0, 255))
+    );
+    let reported: Vec<(&str, &str, &str)> = theme
+        .deprecated_keys()
+        .iter()
+        .map(|k| (k.theme.as_str(), k.written.as_str(), k.now.as_str()))
+        .collect();
+    assert_eq!(reported, [("old", "annotation.open", "thread.open")]);
+    let error = must_fail(
+        "bad",
+        &[("bad", "colors { \"annotation.nope\" fg=\"red\" }")],
+    )?;
+    assert!(
+        error
+            .to_string()
+            .contains("unknown theme key `annotation.nope`"),
+        "{error}"
+    );
+    Ok(())
+}

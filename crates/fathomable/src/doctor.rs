@@ -77,6 +77,12 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
     match Theme::load(&theme_name, dirs) {
         Ok(theme) => {
             println!("  ok    theme `{}` loaded", theme.name());
+            for key in theme.deprecated_keys() {
+                println!(
+                    "  note  theme `{}` sets `{}`; the key is `{}` now",
+                    key.theme, key.written, key.now
+                );
+            }
             match Highlighter::new(theme.syntect()) {
                 Ok(highlighter) if highlighter.is_enabled() => {
                     println!(

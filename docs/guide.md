@@ -201,13 +201,13 @@ as *detached* when the lines are gone: a blank row then appears where
 the lines were, carrying the thread's mark, and the lines now at that
 place are left alone. `c` on that row opens the thread; `C` is refused,
 as the row is not text. The colour of a mark is the thread's status
-alone: amber while open (`annotation.open`), a bold cool colour when it
-waits on you (`annotation.waiting`), grey once resolved
-(`annotation.resolved`); *edited* and *detached* are words in the pane
+alone: amber while open (`thread.open`), a bold cool colour when it
+waits on you (`thread.waiting`), grey once resolved
+(`thread.resolved`); *edited* and *detached* are words in the pane
 header, not colours. The lines of the thread open in
 the thread pane are tinted in a cool colour (blue in the dark theme, teal in
 the light one), distinct from the tint of other annotated lines
-(`annotation.focus`). Comment and reply bodies in the pane render as
+(`thread.focus`). Comment and reply bodies in the pane render as
 Markdown: lists, emphasis, `inline code`, and fenced blocks coloured by
 their language, with a newline kept as a line break as in a GitHub
 comment; the text in `threads.jsonl` is the source you typed. Where the lines went and what
@@ -268,7 +268,7 @@ the list to the file you were reading, and `Esc` goes back to it.
 
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting
-threads have their own colour (`annotation.waiting`) in the gutter
+threads have their own colour (`thread.waiting`) in the gutter
 bracket, the file-threads pane, and the thread list, the status line
 counts them (`2 waiting`), the tree tags their files `↩`, and a reply
 landing while you read raises a toast (`reply on src/lib.rs:42`, or

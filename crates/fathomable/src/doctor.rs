@@ -24,11 +24,11 @@ pub fn run(dirs: &XdgDirs) -> ExitCode {
     println!("  state    {}", dirs.state_dir().display());
     println!("  log      {}", dirs.log_dir().display());
     println!("  themes   {}", dirs.themes_dir().display());
-    println!("  sessions {}", dirs.sessions_dir().display());
+    println!("  viewers  {}", dirs.viewers_dir().display());
     match dirs.runtime_dir() {
         Some(runtime) => println!("  runtime  {}", runtime.display()),
         None => {
-            println!("  runtime  unset (XDG_RUNTIME_DIR); sessions will need it");
+            println!("  runtime  unset (XDG_RUNTIME_DIR); the viewer socket needs it");
         }
     }
 

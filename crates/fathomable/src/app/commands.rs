@@ -12,9 +12,9 @@ impl App {
     pub fn command(&mut self, command: &str) {
         let mut words = command.split_whitespace();
         match (words.next(), words.next(), words.next()) {
-            (Some("follow"), None, _) => self.toggle_auto_jump(),
-            (Some("follow"), Some("on"), None) => self.set_auto_jump(true),
-            (Some("follow"), Some("off"), None) => self.set_auto_jump(false),
+            (Some("auto"), None, _) => self.toggle_auto_jump(),
+            (Some("auto"), Some("on"), None) => self.set_auto_jump(true),
+            (Some("auto"), Some("off"), None) => self.set_auto_jump(false),
             (Some("status"), None, _) => self.open_status(),
             (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),

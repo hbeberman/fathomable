@@ -58,9 +58,9 @@ struct Cli {
     #[arg(long)]
     doctor: bool,
 
-    /// List known workspaces, their live viewers, and their sockets.
-    #[arg(long)]
-    sessions: bool,
+    /// List known workspaces, their viewer records, and their sockets.
+    #[arg(long, alias = "sessions")]
+    viewers: bool,
 
     /// Name this viewer so an agent can target it (also `:name`).
     #[arg(long, value_name = "NAME")]
@@ -130,8 +130,8 @@ fn main() -> ExitCode {
     if cli.doctor {
         return doctor::run(&dirs);
     }
-    if cli.sessions {
-        return list_sessions(&dirs);
+    if cli.viewers {
+        return list_viewers(&dirs);
     }
     if cli.config_show {
         return config_show(&cli, &dirs);
@@ -285,13 +285,13 @@ fn register(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `--sessions`: one block per known workspace, then its viewer records,
+/// `--viewers`: one block per known workspace, then its viewer records,
 /// marking dead ones (ADR 0024).
-fn list_sessions(dirs: &XdgDirs) -> ExitCode {
+fn list_viewers(dirs: &XdgDirs) -> ExitCode {
     let markers = Marker::list(dirs);
     let records = Record::list(dirs);
     if markers.is_empty() && records.is_empty() {
-        println!("no sessions");
+        println!("no workspaces");
         return ExitCode::SUCCESS;
     }
     let mut roots: Vec<PathBuf> = markers.iter().map(|m| m.root().to_path_buf()).collect();

@@ -1,9 +1,9 @@
 // @okf-doc: /decisions/0024-workspace-sessions.md
 //! Viewer records, workspace markers, and the v2 socket protocol.
 //!
-//! A session is the annotation state of one workspace root; a running TUI
-//! is a *viewer* of it (ADR 0024). Each viewer writes a [`Record`] under
-//! `$XDG_STATE_HOME/fathomable/sessions/<id>/` and listens on
+//! A workspace's annotation state is the workspace's; a running TUI is a
+//! *viewer* of it (ADR 0024, words per ADR 0047). Each viewer writes a
+//! [`Record`] under `$XDG_STATE_HOME/fathomable/viewers/<id>/` and listens on
 //! `$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`; the workspace
 //! itself is marked by a [`Marker`] beside its thread store so an agent can
 //! find it when no viewer runs. The socket speaks line-delimited JSON: one
@@ -189,7 +189,7 @@ impl Record {
     /// The directory this record lives in.
     #[must_use]
     pub fn dir(&self, dirs: &XdgDirs) -> PathBuf {
-        dirs.sessions_dir().join(self.id.as_str())
+        dirs.viewers_dir().join(self.id.as_str())
     }
 
     /// Write the record, creating its directory.
@@ -227,21 +227,26 @@ impl Record {
     }
 
     /// Every record on disk, oldest first; unreadable ones are skipped with
-    /// a log line. A missing sessions directory yields an empty list.
+    /// a log line. A missing viewers directory yields an empty list.
     #[must_use]
     pub fn list(dirs: &XdgDirs) -> Vec<Self> {
+        let mut records = Self::list_in(&dirs.viewers_dir());
+        records.sort_by_key(|record| record.started);
+        records
+    }
+
+    fn list_in(dir: &Path) -> Vec<Self> {
         let mut records = Vec::new();
-        let Ok(entries) = fs::read_dir(dirs.sessions_dir()) else {
+        let Ok(entries) = fs::read_dir(dir) else {
             return records;
         };
         for entry in entries.flatten() {
             let path = entry.path().join(RECORD_FILE);
             match Self::read(&path) {
                 Ok(record) => records.push(record),
-                Err(error) => tracing::warn!(%error, path = %path.display(), "bad session record"),
+                Err(error) => tracing::warn!(%error, path = %path.display(), "bad viewer record"),
             }
         }
-        records.sort_by_key(|record| record.started);
         records
     }
 
@@ -254,22 +259,26 @@ impl Record {
             .collect()
     }
 
-    /// Remove records whose process is gone. Returns how many were removed.
+    /// Remove records whose process is gone, from the viewers directory
+    /// and, for one release, from the `sessions/` directory it replaced
+    /// (ADR 0047). Returns how many were removed.
     pub fn sweep_dead(dirs: &XdgDirs) -> usize {
         let mut removed = 0;
-        for record in Self::list(dirs) {
-            if record.is_alive() {
-                continue;
-            }
-            match record.remove(dirs) {
-                Ok(()) => {
-                    removed += 1;
-                    if let Some(socket) = record.socket() {
-                        let _ = fs::remove_file(socket);
-                    }
-                    tracing::info!(id = %record.id, pid = record.pid, "removed dead session");
+        for dir in [dirs.viewers_dir(), dirs.old_viewers_dir()] {
+            for record in Self::list_in(&dir) {
+                if record.is_alive() {
+                    continue;
                 }
-                Err(error) => tracing::warn!(%error, id = %record.id, "cannot remove session"),
+                match fs::remove_dir_all(dir.join(record.id.as_str())) {
+                    Ok(()) => {
+                        removed += 1;
+                        if let Some(socket) = record.socket() {
+                            let _ = fs::remove_file(socket);
+                        }
+                        tracing::info!(id = %record.id, pid = record.pid, "removed dead viewer");
+                    }
+                    Err(error) => tracing::warn!(%error, id = %record.id, "cannot remove viewer"),
+                }
             }
         }
         removed
@@ -575,6 +584,40 @@ mod tests {
             PathBuf::from("/work"),
             Some(PathBuf::from("/run/fathomable/1700000000-42.sock")),
         )
+    }
+
+    /// Dead records are swept from `viewers/` and, for one release, from
+    /// the `sessions/` directory it replaced (ADR 0047).
+    #[test]
+    fn dead_records_are_swept_from_both_directories() -> std::io::Result<()> {
+        use std::ffi::OsString;
+        use std::fs;
+
+        let state = std::env::temp_dir().join(format!(
+            "fathomable-sweep-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let _ = fs::remove_dir_all(&state);
+        let dirs = crate::XdgDirs::resolve(|name| {
+            (name == "XDG_STATE_HOME").then(|| OsString::from(&state))
+        });
+        // A pid no live process has: the record reads as dead.
+        let dead =
+            r#"{"id":"1700000000-4000000","pid":4000000,"root":"/w","socket":"","started":1}"#;
+        for dir in [dirs.viewers_dir(), dirs.old_viewers_dir()] {
+            let record_dir = dir.join("1700000000-4000000");
+            fs::create_dir_all(&record_dir)?;
+            fs::write(record_dir.join(super::RECORD_FILE), dead)?;
+        }
+        record().write(&dirs)?;
+        assert_eq!(Record::sweep_dead(&dirs), 2);
+        assert!(!dirs.old_viewers_dir().join("1700000000-4000000").exists());
+        assert!(!dirs.viewers_dir().join("1700000000-4000000").exists());
+        assert_eq!(Record::list(&dirs).len(), 1, "the live record stays");
+        fs::remove_dir_all(&state)
     }
 
     #[test]

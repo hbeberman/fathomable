@@ -106,7 +106,7 @@ pub enum Effect {
     None,
     Quit,
     Copy(String),
-    /// A `:` command the app handles (`:follow ...`, ADR 0015).
+    /// A `:` command the app handles (`:auto ...`, ADR 0015).
     Command(String),
     /// Hand the comment draft to `$EDITOR` (ADR 0018).
     EditDraft,

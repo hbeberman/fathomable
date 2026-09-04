@@ -100,7 +100,7 @@ Text:
 | `C` | always start a new thread, on the selection or the cursor line |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file (the pane follows when it is open) |
 | `]r` `[r` | next / previous thread waiting on you, crossing into the next file and opening its pane |
-| `:follow`, `:status`, `:name NAME` | toggle auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
+| `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight; quit |
 
 The `Space` menu, from any pane:
@@ -329,7 +329,7 @@ once its target is on screen. A file the agent says it is editing
 (`follow`) is revealed in the tree, its folders expanded, without moving
 your highlight unless the tree has focus.
 
-`Space j a` (or `:follow`) turns on **auto-jump**: an `AUTO` badge follows the path in the status line
+`Space j a` (or `:auto`) turns on **auto-jump**: an `AUTO` badge follows the path in the status line
 and the viewer opens the newest change by itself once writes have been
 quiet for a second, preferring a file the agent said it is editing
 (`follow`). It is a monitor, not a leash: it waits while you are
@@ -396,9 +396,9 @@ transparent ([0016](decisions/0016-syntax-highlighting.md)).
 
 ## 8. Connect an agent
 
-A *session* is a workspace's annotation state; every running Fathomable is
+A workspace's threads are the workspace's; every running Fathomable is
 a *viewer* of one. A viewer writes a record under
-`$XDG_STATE_HOME/fathomable/sessions/`, marks its workspace in
+`$XDG_STATE_HOME/fathomable/viewers/`, marks its workspace in
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, and listens
 on `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`. `fathomable --mcp` is a
 stdio MCP server that, on every call, picks the known workspace containing
@@ -641,7 +641,7 @@ Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
 
 ```sh
 fathomable --doctor        # terminal, directories, config, log locations
-fathomable --sessions      # known workspaces and their viewer records
+fathomable --viewers       # known workspaces and their viewer records
 fathomable --config-show   # effective configuration
 fathomable --register [DIR] # mark a workspace known without starting a viewer
 echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --verbose

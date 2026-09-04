@@ -537,7 +537,7 @@ impl App {
         self.queue.iter().any(|c| c.path.starts_with(path))
     }
 
-    /// Toggle auto-jump (`Space j a`, `:follow`).
+    /// Toggle auto-jump (`Space j a`, `:auto`).
     pub fn toggle_auto_jump(&mut self) {
         self.auto = !self.auto;
         self.notice(if self.auto {
@@ -553,7 +553,7 @@ impl App {
         self.last_change = None;
     }
 
-    /// Set auto-jump (`:follow on` / `:follow off`).
+    /// Set auto-jump (`:auto on` / `:auto off`).
     pub fn set_auto_jump(&mut self, on: bool) {
         self.auto = on;
         self.notice(if on { "auto-jump on" } else { "auto-jump off" });
@@ -3285,14 +3285,14 @@ mod tests {
             },
         )?;
         changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n3\n")?;
-        assert!(app.queue().is_empty(), "follow.ignore globs apply");
+        assert!(app.queue().is_empty(), "watch.ignore globs apply");
         changed(&mut app, &dir, "README.md", "# Readme\n\nx\n")?;
         assert_eq!(app.queue().len(), 1);
         assert!(app.toasts().is_empty(), "toast 0 disables toasts");
 
-        app.command("follow");
+        app.command("auto");
         assert!(app.auto_jump());
-        app.command("follow off");
+        app.command("auto off");
         assert!(!app.auto_jump());
         app.command("status");
         assert!(matches!(app.popup(), Some(Popup::Status)));

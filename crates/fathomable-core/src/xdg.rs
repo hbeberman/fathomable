@@ -68,9 +68,16 @@ impl XdgDirs {
         self.state_dir().join("log")
     }
 
-    /// `$XDG_STATE_HOME/fathomable/sessions`, where session records live.
+    /// `$XDG_STATE_HOME/fathomable/viewers`, where viewer records live.
     #[must_use]
-    pub fn sessions_dir(&self) -> PathBuf {
+    pub fn viewers_dir(&self) -> PathBuf {
+        self.state_dir().join("viewers")
+    }
+
+    /// `$XDG_STATE_HOME/fathomable/sessions`, where viewer records lived
+    /// before ADR 0047; still swept of dead records for one release.
+    #[must_use]
+    pub fn old_viewers_dir(&self) -> PathBuf {
         self.state_dir().join("sessions")
     }
 

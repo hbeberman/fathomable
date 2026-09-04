@@ -264,7 +264,7 @@ actions! {
     PickFile,
     PickAnyFile,
     PickRecent,
-    ThreadList,
+    Review,
     ThreadsPaneFocus,
     ThreadsPaneHide,
     PaneScope,
@@ -635,14 +635,14 @@ pub const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('e')]],
         A::TreeToggleFocus,
         "Space menu",
-        "tree: focus, or return",
+        "tree pane: focus, or return",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('E')]],
         A::TreeHide,
         "Space menu",
-        "tree: hide",
+        "tree pane: hide",
     ),
     bind(
         W::Any,
@@ -668,7 +668,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('A')]],
-        A::ThreadList,
+        A::Review,
         "Space menu",
         "review list: open, or close",
     ),
@@ -932,7 +932,7 @@ pub const BINDINGS: &[Binding] = &[
         &[&[k(K::Enter)], &[c('l')], &[k(K::Right)]],
         A::Confirm,
         "Threads pane",
-        "open the thread pane on the highlight",
+        "open the file with the thread expanded",
     ),
     bind(
         W::ThreadsPane,
@@ -976,7 +976,7 @@ pub const BINDINGS: &[Binding] = &[
         "Threads pane",
         "back to the text; the pane stays",
     ),
-    // ----- the thread list -----
+    // ----- the review list -----
     bind(
         W::Review,
         &[&[c('j')], &[k(K::Down)]],

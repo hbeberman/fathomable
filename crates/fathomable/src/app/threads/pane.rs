@@ -441,7 +441,7 @@ mod tests {
     fn the_pane_lists_the_file_or_the_workspace_and_hides_resolved() -> anyhow::Result<()> {
         let dir = fixture("scope")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 7, "seven");
         annotate(&mut app, 3, "three");
@@ -581,7 +581,7 @@ mod tests {
         // The tree joins above at the configured split of 8 rows, and a
         // dozen threads do not grow it.
         press(&mut app, " e");
-        assert_eq!(app.focus(), Focus::Sidebar);
+        assert_eq!(app.focus(), Focus::Tree);
         assert_eq!(app.threads_pane_height(), 8);
         assert_eq!(app.tree_rows(), app.pane_rows() - 8);
         for line in 1..=8 {
@@ -639,7 +639,7 @@ mod tests {
     fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
         let dir = fixture("cursor")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 2, "two");
         annotate(&mut app, 6, "six");
@@ -671,9 +671,9 @@ mod tests {
         assert_eq!(app.view().cursor_source_line(), Some(7));
 
         // The list opens on it and `h` steps it back.
-        app.open_thread_list();
+        app.open_review();
         assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
-        assert_eq!(app.thread_list_selected_index(), Some(2));
+        assert_eq!(app.review_selected_index(), Some(2));
         press(&mut app, "h");
         assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
 
@@ -700,7 +700,7 @@ mod tests {
     fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
         let dir = fixture("overlap")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         app.show_threads_pane();
         // A long thread over L3-5, then a short one at L4 inside it.
         app.view_mut().goto_source_line(3);
@@ -727,7 +727,7 @@ mod tests {
     fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
         let dir = fixture("mouse")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 2, "two");
         annotate(&mut app, 6, "six");
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!(app.view().cursor_source_line(), Some(2));
         // A click on the tree above leaves the pane.
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, 1));
-        assert_eq!(app.focus(), Focus::Sidebar);
+        assert_eq!(app.focus(), Focus::Tree);
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-//! Behaviour of the workspace listing and sidebar tree (ADR 0012).
+//! Behaviour of the workspace listing and the tree pane's tree (ADR 0012).
 
 use std::fs;
 use std::path::{Path, PathBuf};

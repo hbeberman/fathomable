@@ -4,7 +4,7 @@
 //! A [`Workspace`] is rooted at the enclosing git work tree of the path it
 //! was opened on, or at that directory itself when there is no repository
 //! (ADR 0009). Directory listings hide the `.git` directory and anything git
-//! ignores, using the repository's own exclude stack, so the sidebar and the
+//! ignores, using the repository's own exclude stack, so the tree pane and the
 //! picker agree with `git status` on what exists.
 //!
 //! # Examples
@@ -35,7 +35,7 @@ use crate::content::{self, Attr};
 use crate::diff::Diff;
 use crate::status::{self, State, Status};
 
-/// One directory entry, as the sidebar shows it.
+/// One directory entry, as the tree pane shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     name: String,

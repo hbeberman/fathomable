@@ -1,10 +1,10 @@
 // @okf-doc: /decisions/0046-one-thread-cursor.md
 //! The thread cursor: the one thread and message the reader is on, which
-//! the thread pane, the threads pane, and the thread list all show
+//! the expanded stubs, the threads pane, and the review list all show
 //! and all move.
 //!
-//! While the thread pane or the thread list is open the cursor is what
-//! the last motion, click, `c`, or `Space a` set, and it stays so while
+//! While the review list is open the cursor is what the last motion,
+//! click, or `c` set, and it stays so while
 //! the text cursor rests on the row that motion left it on. Once the
 //! reader moves in the text with both closed, the cursor rides the text
 //! cursor: the thread starting on the cursor line, else the first on its
@@ -82,7 +82,7 @@ impl App {
     /// place, or the text cursor still rests where the last thread motion
     /// left it.
     fn cursor_is_stored(&self) -> bool {
-        self.list.is_open() || self.thread_cursor_anchor == Some(self.text_anchor())
+        self.review_list.is_open() || self.thread_cursor_anchor == Some(self.text_anchor())
     }
 
     /// Where the text cursor is, for telling a rest from a move.
@@ -302,8 +302,8 @@ impl App {
     /// Keep the highlighted message on screen in whichever surface shows
     /// it.
     pub(crate) fn follow_cursor_message(&mut self) {
-        if self.list.is_open() {
-            self.thread_list_follow_cursor();
+        if self.review_list.is_open() {
+            self.review_follow_cursor();
         }
     }
 
@@ -368,8 +368,8 @@ impl App {
             return;
         };
         self.toggle_resolved(&id);
-        if self.list.is_open() {
-            self.thread_list_follow_cursor();
+        if self.review_list.is_open() {
+            self.review_follow_cursor();
         }
     }
 
@@ -388,7 +388,7 @@ impl App {
         let Some(id) = cursor.thread().cloned() else {
             return;
         };
-        self.close_thread_list();
+        self.close_review();
         if self.land_on_thread(id.clone()) {
             self.goto_message(id, cursor.message());
         }

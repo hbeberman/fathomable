@@ -52,16 +52,18 @@ theme, and docs use these words and no other for these ideas.
 | viewer jumps on its own | **auto-jump** (`:auto`, `jump.auto`, `AUTO`) | follow mode, `:follow`, `follow.auto` |
 | agent registers | **subscribe**, **subscriber**, **subscription** | — |
 | agent category | `type` outward, `kind` in code | — |
-| left column | **sidebar**; the widget in it is the **tree** | — |
-| bottom-of-text thread view | **thread pane** (`ThreadPane`) | panel, `ThreadPanel` |
-| `Space A` view | **thread list** | — |
-| threads-of-this-file view | **file-threads pane** | — |
+| left column | **rail**, holding the **tree pane** and the **threads pane** (0049) | sidebar, dock |
+| a thread's rows under its lines | **stub**, **collapsed** or **expanded** (0049); the bottom-of-text **thread pane** is gone | panel, `ThreadPanel` |
+| `Space A` view | **review list** (`ReviewList`, 0049) | thread list |
+| threads-of-this-file view | **threads pane**, in file or workspace scope (0049) | file-threads pane |
 | what receives keys | **focus** | — |
 | anything layered | **popup** | overlay |
 | a queued write | **change**; its status segment the **change hint** | pending change |
 | prefix key being held | **prefix** | pending |
 | position in a list | **cursor**; the row drawn for it the **highlight**; **selection** only for `v`/`V` | selected, current |
 | "what changed since I looked" base | **last seen**, **snapshot** | seen (alone) |
+| a reader-made record of a file's content | **checkpoint**, on the file's **checkpoint timeline** (0049) | snapshot (that is last-seen) |
+| positions far moves leave behind | **jumplist** (0049) | history |
 
 Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the left column
 is the **rail**, holding the **tree pane** and the **threads pane**; the

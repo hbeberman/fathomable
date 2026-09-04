@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! Draw the app with ratatui: sidebar, gutter and text, thread surfaces,
+//! Draw the app with ratatui: rail, gutter and text, thread surfaces,
 //! popups, and the status line; `gutter`, `info`, and `message` build the
 //! rows the frame draws.
 
@@ -191,19 +191,20 @@ fn u16_of(value: usize) -> u16 {
 pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = frame.area();
     let rows = app.pane_rows();
-    let sidebar = app.rail_width();
+    let rail = app.rail_width();
     let view = app.view();
     let gutter = gutter_width(view);
     let pane_height = u16_of(rows).min(area.height);
-    let sidebar_area = Rect {
-        width: u16_of(sidebar),
+    let rail_area = Rect {
+        width: u16_of(rail),
         height: pane_height,
         ..area
     };
-    // The text column: the view on top, the thread pane along the bottom.
+    // The text column: the view, with the comment box along the bottom
+    // while a message is written.
     let column = Rect {
-        x: area.x + sidebar_area.width,
-        width: area.width.saturating_sub(sidebar_area.width),
+        x: area.x + rail_area.width,
+        width: area.width.saturating_sub(rail_area.width),
         height: pane_height,
         ..area
     };
@@ -220,7 +221,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         ..area
     };
 
-    draw_rail(frame, app, theme, sidebar_area);
+    draw_rail(frame, app, theme, rail_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     let text_area = draw_checkpoint_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
@@ -347,13 +348,13 @@ fn draw_checkpoint_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area:
     }
 }
 
-/// The text column: the thread list when it is open (ADR 0025), else the
+/// The text column: the review list when it is open (ADR 0025), else the
 /// file-info pane for a binary or over-limit file (ADR 0026), else the
 /// document, else the welcome block.
 fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
     let text_rows = usize::from(text_area.height);
-    if app.thread_list().is_open() {
-        draw_thread_list(frame, app, theme, text_area);
+    if app.review_list().is_open() {
+        draw_review(frame, app, theme, text_area);
     } else if let Some(info) = app.info() {
         draw_info(frame, app, theme, text_area, &info);
     } else if app.has_document() {
@@ -376,7 +377,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
         ("Space e", "browse the tree".to_owned()),
-        ("Space a", "read the thread under the cursor".to_owned()),
+        ("Space A", "review the threads".to_owned()),
         ("Space ?", "list every key".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -443,7 +444,7 @@ fn place_cursor(
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
     } else if app.focus() != Focus::View
         || !app.has_document()
-        || app.thread_list().is_open()
+        || app.review_list().is_open()
         || app.info().is_some()
     {
         // The highlighted row is the cursor; leaving the terminal cursor
@@ -490,7 +491,7 @@ fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
     frame.render_widget(Paragraph::new(text).style(theme.popup), area);
 }
 
-fn sidebar_lines<'a>(
+fn tree_lines<'a>(
     app: &App,
     tree: &'a fathomable_core::tree::Tree,
     theme: &Theme,
@@ -507,7 +508,7 @@ fn sidebar_lines<'a>(
     let mut out = Vec::with_capacity(rows);
     // The header carries the repo's summed `+n -m` (ADR 0017).
     let header_style = theme.rail_dir.add_modifier(Modifier::BOLD);
-    // A sidebar too narrow for the whole name cuts it rather than spilling
+    // A rail too narrow for the whole name cuts it rather than spilling
     // over the divider.
     let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
     let mut header_width = display_width(&title);
@@ -535,12 +536,12 @@ fn sidebar_lines<'a>(
     ));
     header.push(divider.clone());
     out.push(Line::from(header));
-    let focused = app.focus() == Focus::Sidebar;
+    let focused = app.focus() == Focus::Tree;
     for (index, row) in tree
         .rows()
         .iter()
         .enumerate()
-        .skip(app.sidebar_scroll())
+        .skip(app.tree_scroll())
         .take(rows.saturating_sub(1))
     {
         let marker = if row.is_dir() {
@@ -572,9 +573,9 @@ fn sidebar_lines<'a>(
         } else {
             app.queue().contains(row.path())
         };
-        let (letter, mut tail) = sidebar_marks(app, row, theme, style, badge);
+        let (letter, mut tail) = tree_marks(app, row, theme, style, badge);
         // The marks follow the name directly, one space apart, and the
-        // rest of the row is padded; a narrow sidebar drops the marks.
+        // rest of the row is padded; a narrow rail drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
         if tail_width == 0 || inner <= tail_width + 1 {
             tail.clear();
@@ -582,7 +583,7 @@ fn sidebar_lines<'a>(
         }
         let name = fit(&text, inner - tail_width).trim_end().to_owned();
         // The git letter takes the gutter column ahead of the indent, which
-        // is the name's leading space; a sidebar too narrow to hold any of
+        // is the name's leading space; a rail too narrow to hold any of
         // the name has no such column to take.
         let letter = letter.filter(|_| !name.is_empty());
         let used = display_width(&name) + tail_width;
@@ -604,11 +605,11 @@ fn sidebar_lines<'a>(
     out
 }
 
-/// The marks around a sidebar name: the git letter for the gutter column
+/// The marks around a tree pane name: the git letter for the gutter column
 /// (ADR 0017; files only, a folder's state is its children's), then the
 /// counts and the follow badge (ADR 0015) that follow the name, each drawn
 /// over the row's background.
-fn sidebar_marks<'a>(
+fn tree_marks<'a>(
     app: &App,
     row: &fathomable_core::tree::Row,
     theme: &Theme,
@@ -691,7 +692,7 @@ fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         && tree_area.height > 0
     {
         frame.render_widget(
-            Paragraph::new(sidebar_lines(
+            Paragraph::new(tree_lines(
                 app,
                 tree,
                 theme,
@@ -1266,7 +1267,7 @@ pub(super) struct StatusParts {
 pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
     let pill = match app.focus() {
-        Focus::Sidebar => "TREE",
+        Focus::Tree => "TREE",
         Focus::Review => "REVIEW",
         Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
@@ -1622,10 +1623,6 @@ fn draw_compose(
     frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(row)));
 }
 
-/// The thread pane, filling `area`: rule, header, quoted snippet, comment,
-/// replies. It is a pane, not a popup, so it draws on the text background.
-/// The thread list (ADR 0025) in place of the document: a header with
-/// the filter, the counts, and the keys, then the rows from the scroll.
 /// The file-info pane (ADR 0026): the path as a header, the labelled
 /// rows with their labels right-aligned, then the notice.
 fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: &Info) {
@@ -1659,14 +1656,14 @@ fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: 
     );
 }
 
-fn draw_thread_list(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let width = usize::from(area.width);
     let rows = usize::from(area.height);
     if rows == 0 {
         return;
     }
-    let list = app.thread_list();
-    let Rows { rows: all, entries } = app.thread_list_rows(width);
+    let list = app.review_list();
+    let Rows { rows: all, entries } = app.review_rows(width);
     let review = app.review();
     let open = entries
         .iter()
@@ -1959,7 +1956,7 @@ mod tests {
     use super::{Theme, format_age, format_age_short, format_time, list_row};
 
     #[test]
-    fn selected_thread_list_messages_fill_the_row() -> anyhow::Result<()> {
+    fn selected_review_messages_fill_the_row() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
         let rows = [

@@ -1,12 +1,12 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! The workspace app: open documents, sidebar, popups, and the state every
+//! The workspace app: open documents, rail, popups, and the state every
 //! concept module hangs off.
 //!
 //! [`App`] is plain state so the viewer's behaviour is tested without a
 //! terminal. The modules are grouped by concept (ADR 0048): `threads`
 //! holds the thread cursor, the panes, the list, and the store operations;
 //! `draw` renders; `input` binds and dispatches keys and the mouse; `jump`
-//! is auto-jump; `agents` wakes subscribers; `view`, `sidebar`, `watch`,
+//! is auto-jump; `agents` wakes subscribers; `view`, `rail`, `watch`,
 //! `socket`, `commands`, and `clipboard` are what their names say; and
 //! [`run`] owns the terminal, the file watcher, and the viewer socket.
 
@@ -18,8 +18,8 @@ mod draw;
 pub(crate) mod input;
 mod jump;
 mod jumplist;
+mod rail;
 pub(crate) mod run;
-mod sidebar;
 mod socket;
 pub(crate) mod threads;
 mod view;
@@ -31,7 +31,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::app::threads::list::ThreadList;
+use crate::app::threads::list::ReviewList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
     AgentsConfig, JumpConfig, MarkdownConfig, RailConfig, ThreadsConfig, ViewerConfig, WatchConfig,
@@ -74,7 +74,7 @@ impl Toast {
 }
 
 /// Narrowest the tree can be dragged.
-const SIDEBAR_MIN_WIDTH: usize = 8;
+const RAIL_MIN_WIDTH: usize = 8;
 
 /// Fewest text columns a drag leaves the view.
 const TEXT_MIN_WIDTH: usize = 20;
@@ -84,14 +84,15 @@ const COMPOSE_MAX_ROWS: usize = 8;
 /// Rule, header, and one line of text.
 const COMPOSE_MIN_ROWS: usize = 3;
 
-/// Rows kept visible above and below the sidebar cursor.
-const SIDEBAR_SCROLLOFF: usize = 2;
+/// Rows kept visible above and below the tree cursor.
+const TREE_SCROLLOFF: usize = 2;
 
 /// Which pane receives keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     View,
-    Sidebar,
+    /// The rail's tree pane.
+    Tree,
     /// The review list (ADR 0025, ADR 0049).
     Review,
     /// The rail's threads pane (ADR 0027, ADR 0049).
@@ -101,8 +102,8 @@ pub enum Focus {
 /// A pane border the mouse is dragging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Border {
-    /// The rule between the tree and the text.
-    Sidebar,
+    /// The rule between the rail and the text.
+    Rail,
     /// The rule along the top of the comment box (ADR 0018).
     Compose,
     /// The rule along the top of the threads pane (ADR 0027).
@@ -241,9 +242,9 @@ pub struct App {
     cycle: Option<(ThreadId, Vec<ThreadId>)>,
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
-    sidebar_scroll: usize,
+    tree_scroll: usize,
     /// Tree width once dragged; the default follows the terminal.
-    sidebar_cols: Option<usize>,
+    rail_cols: Option<usize>,
     /// The thread and message the thread surfaces show; authoritative
     /// while the pane or the list is open, or the text cursor rests
     /// where `thread_cursor_anchor` says it was set (ADR 0046).
@@ -251,8 +252,8 @@ pub struct App {
     /// `(document, row)` of the text cursor when the thread cursor was
     /// last set.
     thread_cursor_anchor: Option<(Option<usize>, usize)>,
-    /// The thread list shown in place of the document (ADR 0025).
-    list: ThreadList,
+    /// The review list shown in place of the document (ADR 0025).
+    review_list: ReviewList,
     /// File-threads pane height once dragged; the default follows its
     /// Comment box height once dragged; the default follows its text.
     compose_rows: Option<usize>,
@@ -352,11 +353,11 @@ impl App {
             expanded: HashSet::new(),
             cycle: None,
             review: threads::list::ReviewState::default(),
-            sidebar_scroll: 0,
-            sidebar_cols: None,
+            tree_scroll: 0,
+            rail_cols: None,
             thread_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
-            list: ThreadList::default(),
+            review_list: ReviewList::default(),
             compose_rows: None,
             drag: None,
             focus: Focus::View,
@@ -432,7 +433,7 @@ impl App {
 
     /// Re-read the thread store after another writer appended to it: a
     /// second viewer, or a headless `--mcp` reply (ADR 0024). Marks and the
-    /// open thread panel follow.
+    /// expanded threads follow.
     pub fn reload_store(&mut self) {
         let Some(path) = self.store.as_ref().map(|store| store.path().to_path_buf()) else {
             return;
@@ -482,7 +483,7 @@ impl App {
     }
 
     /// How a root-relative `path` should be coloured and first displayed.
-    /// The code highlighter shared by every view and the thread pane.
+    /// The code highlighter shared by every view and the expanded threads.
     pub fn highlighter(&self) -> &Highlighter {
         &self.highlighter
     }
@@ -1145,8 +1146,8 @@ impl App {
     pub fn focus_pane(&mut self, focus: Focus) {
         let present = match focus {
             Focus::View => true,
-            Focus::Sidebar => self.tree().is_some(),
-            Focus::Review => self.list.is_open(),
+            Focus::Tree => self.tree().is_some(),
+            Focus::Review => self.review_list.is_open(),
             Focus::ThreadsPane => self.threads_pane_height() > 0,
         };
         if present {
@@ -1170,10 +1171,10 @@ impl App {
     }
 
     /// The mouse moved with a border held: the tree's divider follows the
-    /// column, the thread pane's rule follows the row.
+    /// column, the threads pane's rule follows the row.
     pub fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
-            Some(Border::Sidebar) => self.sidebar_cols = Some(column + 1),
+            Some(Border::Rail) => self.rail_cols = Some(column + 1),
             Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
             Some(Border::ThreadsPane) => self.drag_threads_pane_to(row),
             None => return,
@@ -1193,8 +1194,8 @@ impl App {
         self.tree.as_ref().filter(|_| self.rail.tree)
     }
 
-    pub fn sidebar_scroll(&self) -> usize {
-        self.sidebar_scroll
+    pub fn tree_scroll(&self) -> usize {
+        self.tree_scroll
     }
 
     /// The notice on the status line: the answer to the reader's last key,
@@ -1259,7 +1260,7 @@ impl App {
     pub fn banner(&self) -> Option<&'static str> {
         self.current
             .and_then(|i| self.docs.get(i))
-            .filter(|doc| doc.deleted == Some(Deleted::Banner) && !self.list.is_open())
+            .filter(|doc| doc.deleted == Some(Deleted::Banner) && !self.review_list.is_open())
             .map(|_| "deleted")
     }
 
@@ -1278,12 +1279,12 @@ impl App {
             return 0;
         }
         let widest = self.width.saturating_sub(TEXT_MIN_WIDTH);
-        self.sidebar_cols
+        self.rail_cols
             .map_or_else(
                 || self.rail.config.width.min(self.width / 3),
                 |cols| cols.min(widest),
             )
-            .max(SIDEBAR_MIN_WIDTH)
+            .max(RAIL_MIN_WIDTH)
     }
 
     /// Rows available to panes once the status line is taken.
@@ -1351,7 +1352,8 @@ impl App {
         }
     }
 
-    /// Rows left to the text once the thread pane is taken.
+    /// Rows left to the text once the banner and the checkpoint view's
+    /// header and strip are taken.
     pub fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
@@ -1372,14 +1374,14 @@ impl App {
 
     fn relayout(&mut self) {
         let rows = self.text_rows();
-        let sidebar = self.rail_width();
+        let rail = self.rail_width();
         let text_width = self
             .width
-            .saturating_sub(sidebar)
+            .saturating_sub(rail)
             .saturating_sub(crate::app::draw::gutter_width(self.view()))
             .max(1);
         self.view_mut().resize(text_width, rows);
-        self.scroll_sidebar();
+        self.scroll_tree();
     }
 
     pub fn clear_message(&mut self) {
@@ -1559,7 +1561,7 @@ impl App {
             doc.deleted = Some(Deleted::Info);
         }
         // A document takes the column back from the list (ADR 0025).
-        self.list.close();
+        self.review_list.close();
         self.focus = Focus::View;
         self.refresh_base(index);
         self.refresh_marks(index);
@@ -1694,7 +1696,7 @@ impl App {
         }
     }
 
-    // ----- sidebar -----
+    // ----- rail -----
 
     fn ensure_tree(&mut self) -> bool {
         if self.tree.is_some() {
@@ -1718,40 +1720,40 @@ impl App {
         if let Some(path) = open {
             self.open(path);
         } else {
-            self.show_sidebar();
+            self.show_tree();
             self.show_threads_pane();
         }
     }
 
     /// Show and focus the tree, as a workspace start does (ADR 0012).
-    pub fn show_sidebar(&mut self) {
+    pub fn show_tree(&mut self) {
         if !self.rail.tree {
-            self.toggle_sidebar_focus();
+            self.toggle_tree_focus();
         }
     }
 
     /// `Space e`: open and focus the tree, or hand focus back.
-    pub fn toggle_sidebar_focus(&mut self) {
+    pub fn toggle_tree_focus(&mut self) {
         if !self.rail.tree {
             if !self.ensure_tree() {
                 return;
             }
             self.rail.tree = true;
             self.reveal_current();
-            self.focus = Focus::Sidebar;
-        } else if self.focus == Focus::Sidebar {
+            self.focus = Focus::Tree;
+        } else if self.focus == Focus::Tree {
             self.focus = Focus::View;
         } else {
             self.reveal_current();
-            self.focus = Focus::Sidebar;
+            self.focus = Focus::Tree;
         }
         self.relayout();
     }
 
     /// `Space E`: hide the tree pane; the threads pane keeps the rail.
-    pub fn hide_sidebar(&mut self) {
+    pub fn hide_tree(&mut self) {
         self.rail.tree = false;
-        if self.focus == Focus::Sidebar {
+        if self.focus == Focus::Tree {
             self.focus = Focus::View;
         }
         self.relayout();
@@ -1770,7 +1772,7 @@ impl App {
     }
 
     /// Show every followed file the tree does not list yet (ADR 0028):
-    /// its parents expand without moving the cursor, unless the sidebar
+    /// its parents expand without moving the cursor, unless the tree pane
     /// has focus, in which case the cursor lands on it and pages the
     /// viewer to it as the tree keys do (ADR 0023).
     fn reveal_followed(&mut self) {
@@ -1781,7 +1783,7 @@ impl App {
             if self.tree.as_ref().is_some_and(|tree| tree.contains(&path)) {
                 continue;
             }
-            if self.focus == Focus::Sidebar {
+            if self.focus == Focus::Tree {
                 self.with_tree_result(|tree, workspace| {
                     tree.reveal(workspace, &path).map(|_| None)
                 });
@@ -2069,11 +2071,11 @@ mod tests {
         Ok(())
     }
 
-    /// A sidebar squeezed past the width of its narrowest name still draws
+    /// A rail squeezed past the width of its narrowest name still draws
     /// whole rows: the git letter has no column to take, and the marks that
     /// no longer fit take no width either.
     #[test]
-    fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
+    fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -2090,7 +2092,7 @@ mod tests {
             ],
         )?;
         // A modified file earns the git letter, and enough changed lines
-        // earn `+n -m` counts wider than the sidebar itself.
+        // earn `+n -m` counts wider than the rail itself.
         fs::write(dir.0.join("README.md"), "# Readme\n\nmore\n")?;
         fs::create_dir_all(dir.0.join("docs/deep"))?;
         fs::write(
@@ -2099,9 +2101,9 @@ mod tests {
         )?;
         let mut app = app(&dir)?;
         // Opening the nested file unfolds the tree down to it, so the rows
-        // are indented past what a narrow sidebar can show.
+        // are indented past what a narrow rail can show.
         app.open(Path::new("docs/deep/notes.md"));
-        app.show_sidebar();
+        app.show_tree();
         assert!(
             app.tree()
                 .is_some_and(|tree| tree.rows().iter().any(|row| row.depth() == 2)),
@@ -2131,23 +2133,23 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
-        let dir = fixture("sidebar")?;
+    fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
+        let dir = fixture("rail")?;
         let mut app = app(&dir)?;
         assert_eq!(app.rail_width(), 0);
         app.open(Path::new("docs/notes.md"));
-        app.toggle_sidebar_focus();
-        assert_eq!(app.focus(), Focus::Sidebar);
+        app.toggle_tree_focus();
+        assert_eq!(app.focus(), Focus::Tree);
         assert_eq!(app.rail_width(), 32);
         let selected = app
             .tree()
             .and_then(|tree| tree.current())
             .map(|row| row.path().to_path_buf());
         assert_eq!(selected.as_deref(), Some(Path::new("docs/notes.md")));
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         assert_eq!(app.focus(), Focus::View);
         assert!(app.tree().is_some(), "tree stays visible");
-        app.hide_sidebar();
+        app.hide_tree();
         assert!(app.tree().is_none());
         Ok(())
     }
@@ -2171,7 +2173,7 @@ mod tests {
         keys::handle_key(&mut app, key('G'));
         assert_eq!(app.view().source_position().0, bottom, "ge matches G");
 
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         keys::handle_key(&mut app, key('g'));
         keys::handle_key(&mut app, key('g'));
         let top = app
@@ -2233,7 +2235,7 @@ mod tests {
         let dir = fixture("paging")?;
         let mut app = app(&dir)?;
         app.open(Path::new("README.md"));
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
         // Directories come first, so `k` from README.md lands on `docs`.
         keys::handle_key(&mut app, key('k'));
@@ -2245,7 +2247,7 @@ mod tests {
         keys::handle_key(&mut app, key('l'));
         keys::handle_key(&mut app, key('j'));
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
-        assert_eq!(app.focus(), Focus::Sidebar, "paging does not steal focus");
+        assert_eq!(app.focus(), Focus::Tree, "paging does not steal focus");
 
         // The wheel steps one row per tick: guide.md to notes.md, not three
         // rows down.
@@ -2259,7 +2261,7 @@ mod tests {
             },
         );
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-        assert_eq!(app.focus(), Focus::Sidebar);
+        assert_eq!(app.focus(), Focus::Tree);
 
         // Paging is browsing, not a far move: the jumplist has nothing.
         app.jump_back();
@@ -2278,7 +2280,7 @@ mod tests {
             },
         );
         assert_eq!(app.current_path(), Path::new("README.md"));
-        assert_eq!(app.focus(), Focus::Sidebar, "a click does not steal focus");
+        assert_eq!(app.focus(), Focus::Tree, "a click does not steal focus");
 
         // Enter commits: focus moves to the viewer.
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -2297,8 +2299,8 @@ mod tests {
         let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
         keys::handle_key(&mut app, left);
         assert_eq!(app.focus(), Focus::View, "no tree, nothing to focus");
-        app.toggle_sidebar_focus();
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
+        app.toggle_tree_focus();
         assert_eq!(app.focus(), Focus::View);
         keys::handle_key(
             &mut app,
@@ -2311,7 +2313,7 @@ mod tests {
             &mut app,
             KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
         );
-        assert_eq!(app.focus(), Focus::Sidebar);
+        assert_eq!(app.focus(), Focus::Tree);
         Ok(())
     }
 
@@ -2688,7 +2690,7 @@ mod tests {
                 ..Options::for_test(dir.0.clone())
             },
         )?;
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         app.open_picker(PickerKind::Files);
         assert!(!picker_items(&app).iter().any(|p| p == "NEW.md"));
         app.close_popup();
@@ -2753,7 +2755,7 @@ mod tests {
         use fathomable_core::session::Request;
         let dir = fixture("follow-reveal")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         app.focus_pane(Focus::View);
         let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
         assert!(!has(&app, "docs/guide.md"));
@@ -2772,7 +2774,7 @@ mod tests {
             None
         });
         assert!(!has(&app, "docs/notes.md"));
-        app.focus_pane(Focus::Sidebar);
+        app.focus_pane(Focus::Tree);
         app.handle_request(Request::Follow {
             paths: vec![PathBuf::from("docs/notes.md")],
         });
@@ -2784,7 +2786,7 @@ mod tests {
             Some(PathBuf::from("docs/notes.md"))
         );
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-        assert_eq!(app.focus(), Focus::Sidebar);
+        assert_eq!(app.focus(), Focus::Tree);
         Ok(())
     }
 
@@ -2792,7 +2794,7 @@ mod tests {
     fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
         let dir = fixture("tree-watch")?;
         let mut app = app(&dir)?;
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         let names = |app: &App| -> Vec<String> {
             app.tree()
                 .map(|tree| {

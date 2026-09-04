@@ -2,7 +2,7 @@
 type: Decision
 title: Sidebar paging
 description: The tree highlight is the file the main pane shows, and the sidebar wheel steps one row per tick, so the tree pages the viewer through files.
-resource: crates/fathomable/src/app/sidebar.rs
+resource: crates/fathomable/src/app/rail.rs
 tags:
   - decision
   - input
@@ -10,7 +10,10 @@ tags:
 
 # 0023 Sidebar paging
 
-Status: accepted (2026-08-27)
+Status: accepted (2026-08-27); amended 2026-09-04 by
+[0049](0049-inline-threads-and-the-rail.md): the sidebar is the rail's
+**tree pane** and the module is `app/rail.rs`; the paging rule is
+unchanged.
 
 ## Context
 
@@ -48,7 +51,7 @@ highlight drives the pane.
 ## Consequences
 
 - The tree's app-side operations move from `app/mod.rs` into
-  `app/sidebar.rs`, which this record backs.
+  `app/sidebar.rs` (`app/rail.rs` since 0049), which this record backs.
 - Paging past an unreadable file shows the status-line notice an
   `Enter`-open showed, and stays on the current document.
 - Wheel-paging a long directory writes real entries into the history and

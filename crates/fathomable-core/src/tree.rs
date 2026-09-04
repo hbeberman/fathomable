@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! The sidebar tree: lazily expanded directories with a cursor.
+//! The tree pane's tree: lazily expanded directories with a cursor.
 //!
 //! [`Tree`] is plain data over a [`Workspace`]: directories are read when
 //! first expanded, and the visible rows are recomputed after every change so
@@ -71,7 +71,7 @@ pub enum Activation {
     Toggled,
 }
 
-/// The sidebar tree over one workspace.
+/// The tree over one workspace, shown in the rail's tree pane.
 #[derive(Debug, Clone)]
 pub struct Tree {
     root: Node,

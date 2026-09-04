@@ -6,7 +6,7 @@ resource: crates/fathomable/src/app/threads/stubs.rs
 related_resources:
   - crates/fathomable-core/src/layout/mod.rs
   - crates/fathomable/src/app/mod.rs
-  - crates/fathomable/src/app/sidebar.rs
+  - crates/fathomable/src/app/rail.rs
   - crates/fathomable/src/app/view.rs
   - crates/fathomable/src/app/threads/mod.rs
   - crates/fathomable/src/app/threads/cursor.rs
@@ -19,6 +19,7 @@ related_resources:
   - crates/fathomable-core/src/config.rs
   - crates/fathomable-core/src/theme.rs
   - crates/fathomable-core/src/checkpoints.rs
+  - crates/fathomable-core/src/workspace.rs
   - crates/fathomable/src/app/checkpoints.rs
 tags:
   - decision
@@ -30,7 +31,20 @@ tags:
 
 # 0049 Inline threads, the rail, checkpoints, and the jumplist
 
-Status: accepted (2026-09-04)
+Status: accepted (2026-09-04); amended 2026-09-04 as the work landed:
+
+- `dd` on an expanded thread's rows deletes the **thread**, not the
+  message under the cursor: the store has no message-delete event
+  ([0034](0034-deleting-threads.md) has only thread tombstones). `e` edits
+  the message under the cursor when it is the user's, else the user's
+  newest; `Space c e` edits the user's newest message from any pane.
+- The checkpoint header and pickers name a checkpoint by its age (`5m
+  ago`, `yesterday 14:02`, else the UTC date), not a local clock time:
+  the app has no time zone. A checkpoint whose content equals the
+  file's latest entry adds nothing under either key (toast `checkpoint:
+  nothing changed`), so no pair on a timeline is ever an empty diff.
+- `Space v r` toggles the view; `gs`, `gd`, and `gD` leave it too. `b`
+  and `t` outside the view only say how to open it.
 
 ## Context
 

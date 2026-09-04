@@ -38,7 +38,7 @@ pub fn place(app: &App) -> Option<Where> {
                 Where::Input
             }
             Focus::View => Where::View,
-            Focus::Sidebar => Where::Tree,
+            Focus::Tree => Where::Tree,
             Focus::Review => Where::Review,
             Focus::ThreadsPane => Where::ThreadsPane,
         }),
@@ -170,12 +170,12 @@ impl App {
             return Effect::None;
         };
         match action {
-            Action::TreeToggleFocus => self.toggle_sidebar_focus(),
-            Action::TreeHide => self.hide_sidebar(),
+            Action::TreeToggleFocus => self.toggle_tree_focus(),
+            Action::TreeHide => self.hide_tree(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
-            Action::ThreadList => self.toggle_thread_list(),
+            Action::Review => self.toggle_review(),
             Action::ThreadsPaneFocus => self.toggle_threads_pane(),
             Action::ThreadsPaneHide => self.hide_threads_pane(),
             Action::JumpNewest => self.jump_newest(),
@@ -207,7 +207,7 @@ impl App {
             Action::CheckpointCommit => self.checkpoint_against_commit(),
             Action::CommandLine => {
                 if place == Where::Tree {
-                    self.toggle_sidebar_focus();
+                    self.toggle_tree_focus();
                 }
                 self.view_mut().start_command();
             }
@@ -241,7 +241,7 @@ impl App {
                     && self.tree().is_some()
                     && self.view().at_line_start() =>
             {
-                self.toggle_sidebar_focus();
+                self.toggle_tree_focus();
                 return Effect::None;
             }
             // `c` opens the thread on the cursor row, else annotates the
@@ -319,7 +319,7 @@ impl App {
                 tree.goto_bottom();
                 None
             }),
-            Action::Escape => self.toggle_sidebar_focus(),
+            Action::Escape => self.toggle_tree_focus(),
             _ => {}
         }
         // The highlight is what the main pane shows (ADR 0023): a key that
@@ -349,20 +349,20 @@ impl App {
     /// Keys in the review list (ADR 0025, ADR 0049).
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
-            Action::Escape => self.close_thread_list(),
+            Action::Escape => self.close_review(),
             Action::MoveDown => self.message_step(1),
             Action::MoveUp => self.message_step(-1),
-            Action::ThreadPrev => self.thread_list_step(-1),
-            Action::ThreadNext => self.thread_list_step(1),
-            Action::HalfPageDown => self.thread_list_page(1),
-            Action::HalfPageUp => self.thread_list_page(-1),
-            Action::Top => self.thread_list_goto(false),
-            Action::Bottom => self.thread_list_goto(true),
+            Action::ThreadPrev => self.review_step(-1),
+            Action::ThreadNext => self.review_step(1),
+            Action::HalfPageDown => self.review_page(1),
+            Action::HalfPageUp => self.review_page(-1),
+            Action::Top => self.review_goto(false),
+            Action::Bottom => self.review_goto(true),
             Action::Confirm => self.thread_open_in_file(),
-            Action::Fold => self.thread_list_fold(),
+            Action::Fold => self.review_fold(),
             Action::ReviewSort => self.review_toggle_sort(),
             Action::ReviewResolved => self.review_toggle_resolved(),
-            Action::FileOnly => self.thread_list_toggle_file(),
+            Action::FileOnly => self.review_toggle_file(),
             _ => return self.act_on_cursor(action),
         }
         Effect::None
@@ -537,8 +537,8 @@ mod tests {
         app.compose_insert("answer");
         app.compose_submit();
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
-        // A reply still opens the thread pane (ADR 0046) until stubs
-        // replace it; close it to keep acting from the text.
+        // A reply expands the thread in place (ADR 0049); focus stays in
+        // the text.
         assert_eq!(app.focus(), Focus::View);
 
         press(&mut app, " ce");
@@ -558,8 +558,8 @@ mod tests {
         app.close_popup();
 
         // From the tree the same keys reach the same thread.
-        app.show_sidebar();
-        assert_eq!(app.focus(), Focus::Sidebar);
+        app.show_tree();
+        assert_eq!(app.focus(), Focus::Tree);
         press(&mut app, " co");
         assert_eq!(app.marks()[0].kind(), ThreadState::Resolved);
         press(&mut app, " co");
@@ -567,10 +567,10 @@ mod tests {
         press(&mut app, " cd");
         assert_eq!(app.marks().len(), 1);
         assert_eq!(app.marks()[0].range().start(), 5);
-        assert_eq!(app.focus(), Focus::Sidebar, "focus stays where it was");
+        assert_eq!(app.focus(), Focus::Tree, "focus stays where it was");
 
         // `Space c n` starts a new thread on the cursor line.
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         app.view_mut().goto_source_line(4);
         press(&mut app, " cn");
         assert!(matches!(
@@ -597,8 +597,8 @@ mod tests {
             .map(|row| row.path().to_path_buf());
         assert_eq!(highlighted.as_deref(), Some(Path::new("docs/guide.md")));
 
-        app.toggle_sidebar_focus();
-        assert_eq!(app.focus(), Focus::Sidebar);
+        app.toggle_tree_focus();
+        assert_eq!(app.focus(), Focus::Tree);
         let before = app.view().source_view();
         press(&mut app, " vs");
         assert_ne!(app.view().source_view(), before);

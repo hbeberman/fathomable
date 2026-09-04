@@ -247,7 +247,7 @@ impl App {
     /// under the text.
     pub(crate) fn checkpoint_chrome(&self) -> bool {
         self.has_document()
-            && !self.thread_list().is_open()
+            && !self.review_list().is_open()
             && self.info().is_none()
             && self.view().checkpoint_view()
     }

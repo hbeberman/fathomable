@@ -4,7 +4,7 @@
 //! A thread *waits* when it is open and an agent wrote its newest message
 //! ([`Thread::awaits`]); the user's reply, resolve, or reopen ends
 //! the wait, so nothing is tracked per viewer. This module counts the
-//! waiting threads for the status line and the sidebar, raises a toast
+//! waiting threads for the status line and the tree pane, raises a toast
 //! when a store reload turns a thread waiting, and walks them with
 //! `]r` / `[r`: the current document's below (above) the cursor first,
 //! then the other files' in path order, wrapping.

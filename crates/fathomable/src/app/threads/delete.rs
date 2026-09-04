@@ -34,7 +34,7 @@ impl App {
             // In the text, only a thread covering the cursor row is armed
             // (ADR 0049), never one further up the file.
             Focus::View if !self.threads_at_cursor().is_empty() => self.thread_arm_delete(),
-            Focus::View | Focus::Sidebar => {}
+            Focus::View | Focus::Tree => {}
         }
     }
 
@@ -63,7 +63,7 @@ impl App {
     /// Delete `id`: a tombstone in the store, every document's marks
     /// refreshed, and its rows gone from the text.
     pub fn delete_thread(&mut self, id: &ThreadId) {
-        let place = self.thread_list_selected_index();
+        let place = self.review_selected_index();
         let Some(store) = self.store_mut() else {
             return;
         };
@@ -85,7 +85,7 @@ impl App {
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() == 0 {
             self.focus = Focus::View;
         }
-        self.thread_list_reselect(place);
+        self.review_reselect(place);
         self.notice("deleted");
     }
 }
@@ -143,7 +143,7 @@ mod tests {
     fn d_d_deletes_from_each_surface_and_any_other_key_cancels() -> anyhow::Result<()> {
         let dir = fixture("surfaces")?;
         let mut app = app(&dir)?;
-        app.show_sidebar();
+        app.show_tree();
         annotate(&mut app, 3, "three");
         annotate(&mut app, 5, "five");
         annotate(&mut app, 7, "seven");
@@ -196,14 +196,14 @@ mod tests {
         assert_eq!(app.marks()[0].range().start(), 5);
         assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
 
-        // The thread list: the entry under the selection goes.
-        app.open_thread_list();
+        // The review list: the entry under the selection goes.
+        app.open_review();
         assert_eq!(app.focus(), Focus::Review);
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('d'));
         assert!(app.marks().is_empty());
-        assert!(app.thread_list_rows(80).entries.is_empty());
-        app.close_thread_list();
+        assert!(app.review_rows(80).entries.is_empty());
+        app.close_review();
 
         // The store agrees after a reload.
         let reloaded = Store::open(dir.0.join("state/threads.jsonl"))?;

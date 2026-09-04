@@ -41,7 +41,7 @@ impl App {
         let view = self.view();
         let aside = if matches!(self.popup, Some(Popup::Compose(_))) {
             Some(Aside::Compose)
-        } else if self.list.is_open() {
+        } else if self.review_list.is_open() {
             Some(Aside::List)
         } else if view.diff_view() {
             Some(Aside::Diff)
@@ -101,7 +101,7 @@ impl App {
     }
 
     fn auto_jump_allowed(&self) -> bool {
-        if self.popup.is_some() || self.list.is_open() {
+        if self.popup.is_some() || self.review_list.is_open() {
             return false;
         }
         let Some(index) = self.current else {
@@ -227,7 +227,7 @@ mod tests {
         assert!(toasts(&app).contains(&"auto-jump off"));
         assert!(!app.queue().is_empty(), "the queue is untouched");
 
-        // Back on, opening the thread list is leaving too.
+        // Back on, opening the review list is leaving too.
         app.set_auto_jump(true);
         press(&mut app, KeyCode::Char(' '));
         press(&mut app, KeyCode::Char('A'));

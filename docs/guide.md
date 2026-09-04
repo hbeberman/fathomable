@@ -262,7 +262,7 @@ walks the pane; `j`/`k` step the cursor and the text follows, another
 file opening in workspace scope, `Enter` opens the file with the thread
 expanded, and `r` and `o` act on the highlight.
 
-The text, the threads pane, and the thread list show one **thread
+The text, the threads pane, and the review list show one **thread
 cursor**: a thread and a message in it. Whichever surface you move it
 from, the others follow, and `r`, `e`, `o`, and `dd` act on it wherever
 the keys came from. While the list is open the cursor is what you last
@@ -294,7 +294,7 @@ it.
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting
 threads have their own colour (`thread.waiting`) in the gutter
-bracket, the threads pane, and the thread list, the status line
+bracket, the threads pane, and the review list, the status line
 counts them (`2 waiting`), the tree tags their files `↩`, and a reply
 landing while you read raises a toast (`reply on src/lib.rs:42`, or
 `reply on src/lib.rs:42, resolved` when the agent resolved it). `]r`
@@ -384,7 +384,7 @@ quiet for a second, preferring a file the agent said it is editing
 selecting, writing a comment, reading a thread or diff, have a popup
 open, or have touched the keyboard or mouse in the last three seconds,
 and it switches itself off — toast `auto-jump off`, badge gone — the
-moment you go somewhere else: another file, a thread, the thread list,
+moment you go somewhere else: another file, a thread, the review list,
 the diff view, a selection. Scrolling and searching in the file it
 landed on keep it on. When the change is in the file you are reading it
 only scrolls if the hunk is off screen. `Alt-Left` takes you back;

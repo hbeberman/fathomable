@@ -28,7 +28,8 @@ impl App {
         }
     }
 
-    /// Whether the open thread pane's thread covers rendered row `row`:
+    /// Whether the thread cursor's thread (the focused thread, ADR 0033)
+    /// covers rendered row `row`:
     /// its lines, or a sourceless row between two of them.
     pub fn open_thread_on_row(&self, row: usize) -> bool {
         if let Some(lines) = self.view().source_lines_of_row(row) {

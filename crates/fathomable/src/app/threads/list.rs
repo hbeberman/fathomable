@@ -7,7 +7,7 @@
 //! and the folds; the sort, the resolved flag, and the file filter are
 //! the [`ReviewState`] the rail's threads pane shares. Its rows are
 //! computed from the store on every draw and key by
-//! [`App::thread_list_rows`], so a reload or a change of state needs
+//! [`App::review_rows`], so a reload or a change of state needs
 //! nothing invalidated.
 
 use std::collections::HashSet;
@@ -61,13 +61,13 @@ pub struct ReviewState {
 
 /// The list's state; the rows are derived from the store.
 #[derive(Debug, Default)]
-pub struct ThreadList {
+pub struct ReviewList {
     open: bool,
     scroll: usize,
     folded: HashSet<ThreadId>,
 }
 
-impl ThreadList {
+impl ReviewList {
     pub fn is_open(&self) -> bool {
         self.open
     }
@@ -188,26 +188,26 @@ fn is_open(kind: ThreadState) -> bool {
 
 impl App {
     /// The list, open or not.
-    pub fn thread_list(&self) -> &ThreadList {
-        &self.list
+    pub fn review_list(&self) -> &ReviewList {
+        &self.review_list
     }
 
     /// `Space A`: show the list in place of the document, or focus it
     /// when it is open, or close it when it is open and focused.
-    pub fn toggle_thread_list(&mut self) {
-        if self.list.is_open() && self.focus == Focus::Review {
-            self.close_thread_list();
-        } else if self.list.is_open() {
+    pub fn toggle_review(&mut self) {
+        if self.review_list.is_open() && self.focus == Focus::Review {
+            self.close_review();
+        } else if self.review_list.is_open() {
             self.focus = Focus::Review;
         } else {
-            self.open_thread_list();
+            self.open_review();
         }
     }
 
     /// Show the list in place of the document. The pane closes; the
     /// filter and folds are whatever they were last time, and the cursor
     /// is where the reader was (ADR 0046).
-    pub fn open_thread_list(&mut self) {
+    pub fn open_review(&mut self) {
         if self.store.is_none() {
             self.store_mut();
             return;
@@ -217,9 +217,9 @@ impl App {
         if let Some(id) = cursor.thread().cloned() {
             self.set_thread_cursor_message(id, cursor.message());
         }
-        self.list.open = true;
+        self.review_list.open = true;
         self.focus = Focus::Review;
-        let rows = self.thread_list_rows(self.column_width());
+        let rows = self.review_rows(self.column_width());
         if rows.entries.is_empty() {
             self.notice(self.empty_review_notice());
         } else if let Some(index) = self.selected_index(&rows) {
@@ -290,11 +290,11 @@ impl App {
     }
 
     /// Esc: back to the document that was showing.
-    pub fn close_thread_list(&mut self) {
-        if !self.list.open {
+    pub fn close_review(&mut self) {
+        if !self.review_list.open {
             return;
         }
-        self.list.open = false;
+        self.review_list.open = false;
         if self.focus == Focus::Review {
             self.focus = Focus::View;
         }
@@ -309,14 +309,14 @@ impl App {
     /// The rows and entries for a list `width` cells wide, in review
     /// order: every entry with its header, then its messages unless
     /// folded, a blank row between entries.
-    pub fn thread_list_rows(&self, width: usize) -> Rows {
+    pub fn review_rows(&self, width: usize) -> Rows {
         let mut out = Rows::default();
         let body_width = width.saturating_sub(MESSAGE_INDENT).max(1);
         let cursor = self.thread_cursor();
         for entry in self.review_entries(self.review.file_only) {
             let index = out.entries.len();
             let selected = cursor.thread() == Some(&entry.id);
-            let folded = self.list.folded.contains(&entry.id);
+            let folded = self.review_list.folded.contains(&entry.id);
             self.push_entry(
                 &mut out,
                 &entry,
@@ -451,8 +451,8 @@ impl App {
 
     /// Scroll enough to keep the cursor's message, or a folded header,
     /// visible; the entry is re-found when the rows changed under it.
-    pub(crate) fn thread_list_follow_cursor(&mut self) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub(crate) fn review_follow_cursor(&mut self) {
+        let rows = self.review_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
         }
@@ -469,10 +469,10 @@ impl App {
         let visible = self.list_rows();
         let top = range.start.saturating_sub(SCROLLOFF);
         let bottom = (range.end + SCROLLOFF).min(rows.rows.len());
-        if top < self.list.scroll {
-            self.list.scroll = top;
-        } else if bottom > self.list.scroll + visible {
-            self.list.scroll = if range.len() > visible {
+        if top < self.review_list.scroll {
+            self.review_list.scroll = top;
+        } else if bottom > self.review_list.scroll + visible {
+            self.review_list.scroll = if range.len() > visible {
                 range.start
             } else {
                 bottom.saturating_sub(visible)
@@ -481,8 +481,8 @@ impl App {
     }
 
     /// `h` / `l`: move between threads by `delta` in the list's order.
-    pub fn thread_list_step(&mut self, delta: isize) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub fn review_step(&mut self, delta: isize) {
+        let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;
         };
@@ -493,8 +493,8 @@ impl App {
 
     /// `Ctrl-d` / `Ctrl-u`: the message half a page of rows below or
     /// above the highlighted one, the nearest when that row is a heading.
-    pub fn thread_list_page(&mut self, direction: isize) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub fn review_page(&mut self, direction: isize) {
+        let rows = self.review_rows(self.column_width());
         let Some(entry) = self.selected_index(&rows) else {
             return;
         };
@@ -525,8 +525,8 @@ impl App {
     }
 
     /// `gg` / `G`.
-    pub fn thread_list_goto(&mut self, end: bool) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub fn review_goto(&mut self, end: bool) {
+        let rows = self.review_rows(self.column_width());
         let target = if end {
             rows.entries.len().saturating_sub(1)
         } else {
@@ -534,21 +534,25 @@ impl App {
         };
         self.select_entry(&rows, target);
         if !end {
-            self.list.scroll = 0;
+            self.review_list.scroll = 0;
         }
     }
 
     /// The wheel: scroll the rows; the selection stays where it is.
-    pub fn thread_list_scroll(&mut self, delta: isize) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub fn review_scroll(&mut self, delta: isize) {
+        let rows = self.review_rows(self.column_width());
         let max = rows.rows.len().saturating_sub(self.list_rows());
-        self.list.scroll = self.list.scroll.saturating_add_signed(delta).min(max);
+        self.review_list.scroll = self
+            .review_list
+            .scroll
+            .saturating_add_signed(delta)
+            .min(max);
     }
 
     /// A click on list row `row` (below the header) selects its message.
-    pub fn thread_list_click(&mut self, row: usize) {
-        let rows = self.thread_list_rows(self.column_width());
-        if let Some((entry, message)) = rows.selection_at(self.list.scroll + row) {
+    pub fn review_click(&mut self, row: usize) {
+        let rows = self.review_rows(self.column_width());
+        if let Some((entry, message)) = rows.selection_at(self.review_list.scroll + row) {
             if let Some(message) = message {
                 self.select_message(&rows, entry, message);
             } else {
@@ -559,7 +563,7 @@ impl App {
     }
 
     /// `f`: narrow to the current file, or widen again.
-    pub fn thread_list_toggle_file(&mut self) {
+    pub fn review_toggle_file(&mut self) {
         self.review.file_only = !self.review.file_only;
         self.reshow_review();
     }
@@ -589,11 +593,11 @@ impl App {
     /// The rows changed under the list: keep the cursor's entry in view,
     /// or say why the list is empty.
     fn reshow_review(&mut self) {
-        if !self.list.is_open() {
+        if !self.review_list.is_open() {
             return;
         }
-        self.list.scroll = 0;
-        let rows = self.thread_list_rows(self.column_width());
+        self.review_list.scroll = 0;
+        let rows = self.review_rows(self.column_width());
         if rows.entries.is_empty() {
             self.notice(self.empty_review_notice());
         } else if let Some(index) = self.selected_index(&rows) {
@@ -602,38 +606,38 @@ impl App {
     }
 
     /// `z`: fold the selected entry to its header, or unfold it.
-    pub fn thread_list_fold(&mut self) {
-        let rows = self.thread_list_rows(self.column_width());
+    pub fn review_fold(&mut self) {
+        let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;
         };
         let id = rows.entries[index].id.clone();
-        if !self.list.folded.remove(&id) {
-            self.list.folded.insert(id.clone());
+        if !self.review_list.folded.remove(&id) {
+            self.review_list.folded.insert(id.clone());
         }
         self.set_thread_cursor(id);
-        let rows = self.thread_list_rows(self.column_width());
+        let rows = self.review_rows(self.column_width());
         if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
         }
     }
 
     /// The selected entry's index, for a caller about to change the store.
-    pub(crate) fn thread_list_selected_index(&self) -> Option<usize> {
-        if !self.list.is_open() {
+    pub(crate) fn review_selected_index(&self) -> Option<usize> {
+        if !self.review_list.is_open() {
             return None;
         }
-        self.selected_index(&self.thread_list_rows(self.column_width()))
+        self.selected_index(&self.review_rows(self.column_width()))
     }
 
     /// Re-select after the store changed under the list: the entry with
     /// the selected id, else the one now at `place` (the index before
     /// the change), else the last, else nothing.
-    pub(crate) fn thread_list_reselect(&mut self, place: Option<usize>) {
-        if !self.list.is_open() {
+    pub(crate) fn review_reselect(&mut self, place: Option<usize>) {
+        if !self.review_list.is_open() {
             return;
         }
-        let rows = self.thread_list_rows(self.column_width());
+        let rows = self.review_rows(self.column_width());
         let cursor = self.thread_cursor();
         let index = self
             .selected_index(&rows)

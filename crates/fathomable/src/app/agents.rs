@@ -26,7 +26,7 @@ impl App {
     }
 
     /// Re-read who watches which thread; called when the store reloads
-    /// and when a thread pane opens, so the header stays honest without
+    /// and when a thread expands, so the header stays honest without
     /// reading the register on every frame.
     pub(super) fn refresh_watchers(&mut self) {
         let path = self.dirs.agents_file(self.workspace.root());

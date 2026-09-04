@@ -17,7 +17,7 @@ pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
 
 /// The mouse over the rail: the threads pane along its bottom (ADR 0027,
 /// ADR 0049) takes what lands on it; the tree above pages the viewer.
-fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+fn rail_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     let tree_rows = app.tree_rows();
     if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
         threads_pane_mouse(app, kind, row - tree_rows);
@@ -25,8 +25,8 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     }
     match kind {
         // One row per tick, not `WHEEL_LINES`: each tick pages the main
-        // pane to the next file (ADR 0023). The text and thread panes
-        // below keep their three-line wheel.
+        // pane to the next file (ADR 0023). The text and the threads pane
+        // keep their three-line wheel.
         MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
             let before = tree_highlight(app);
             app.with_tree(|tree, _| {
@@ -42,8 +42,8 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
             }
         }
         // Row 0 is the root header.
-        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.sidebar_click(row - 1),
-        MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Sidebar),
+        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.tree_click(row - 1),
+        MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
         _ => {}
     }
 }
@@ -62,13 +62,13 @@ fn threads_pane_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     }
 }
 
-/// The mouse over the thread list (ADR 0025): the wheel scrolls, a click
+/// The mouse over the review list (ADR 0025): the wheel scrolls, a click
 /// selects the entry under the pointer. Row 0 is the list header.
-fn thread_list_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
+fn review_mouse(app: &mut App, kind: MouseEventKind, row: usize) {
     match kind {
-        MouseEventKind::ScrollDown => app.thread_list_scroll(WHEEL_LINES),
-        MouseEventKind::ScrollUp => app.thread_list_scroll(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.thread_list_click(row - 1),
+        MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
+        MouseEventKind::ScrollUp => app.review_scroll(-WHEEL_LINES),
+        MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.review_click(row - 1),
         _ => {}
     }
 }
@@ -90,7 +90,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let row = usize::from(event.row);
     let column = usize::from(event.column);
     let rows = app.pane_rows();
-    let sidebar = app.rail_width();
+    let rail = app.rail_width();
     let box_rows = app.compose_rows();
     let box_top = rows.saturating_sub(box_rows);
     if app.dragging().is_some() {
@@ -102,31 +102,31 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         return Effect::None;
     }
     if event.kind == MouseEventKind::Down(MouseButton::Left) && row < rows {
-        if sidebar > 0 && column + 1 == sidebar {
-            app.begin_drag(Border::Sidebar);
+        if rail > 0 && column + 1 == rail {
+            app.begin_drag(Border::Rail);
             return Effect::None;
         }
-        if box_rows > 0 && column >= sidebar && row == box_top {
+        if box_rows > 0 && column >= rail && row == box_top {
             app.begin_drag(Border::Compose);
             return Effect::None;
         }
     }
-    if box_rows > 0 && column >= sidebar && row > box_top && row < rows {
+    if box_rows > 0 && column >= rail && row > box_top && row < rows {
         // Rule and header, then the text rows.
         if event.kind == MouseEventKind::Down(MouseButton::Left) && row >= box_top + 2 {
-            app.compose_click(row - box_top - 2, column - sidebar);
+            app.compose_click(row - box_top - 2, column - rail);
         }
         return Effect::None;
     }
-    if column < sidebar {
-        sidebar_mouse(app, event.kind, row);
+    if column < rail {
+        rail_mouse(app, event.kind, row);
         return Effect::None;
     }
-    if app.thread_list().is_open() {
-        thread_list_mouse(app, event.kind, row);
+    if app.review_list().is_open() {
+        review_mouse(app, event.kind, row);
         return Effect::None;
     }
-    let gutter = sidebar + crate::app::draw::gutter_width(app.view());
+    let gutter = rail + crate::app::draw::gutter_width(app.view());
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
     // The banner and the checkpoint header take rows over the text.

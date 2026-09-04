@@ -4,7 +4,7 @@
 //!
 //! [`Status`] is what [`Workspace::status`](crate::workspace::Workspace::status)
 //! returns: one [`Entry`] per dirty path, sorted by path, with the line
-//! counts against `HEAD` the sidebar shows. It is plain data; stepping
+//! counts against `HEAD` the tree pane shows. It is plain data; stepping
 //! through it in path order is what `]G` and `[G` do, and `]g` crosses
 //! into the next entry when a file's hunks run out.
 //!
@@ -43,7 +43,7 @@ pub enum State {
 }
 
 impl State {
-    /// The sidebar letter.
+    /// The tree pane's letter.
     #[must_use]
     pub const fn letter(self) -> char {
         match self {
@@ -93,7 +93,7 @@ impl Entry {
     }
 
     /// Mark the entry as binary (ADR 0026): it has no line counts, and
-    /// the sidebar tags it instead.
+    /// the tree pane tags it instead.
     #[must_use]
     pub fn binary(mut self) -> Self {
         self.binary = true;

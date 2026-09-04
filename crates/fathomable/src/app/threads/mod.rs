@@ -1,13 +1,13 @@
 // @okf-doc: /decisions/0013-annotation-storage-and-ux.md
 //! Threads on top of the view: the store, the marks, the comment box, and
-//! the thread pane, with the thread concept's other modules beneath.
+//! the stubs, with the thread concept's other modules beneath.
 //!
 //! [`App`] keeps the [`Store`] for the workspace; every open document
 //! carries the [`Mark`]s of its threads, re-located whenever the text
 //! changes. The comment box ([`Compose`]) starts a thread or replies to
 //! one; the stubs (`stubs`) read a thread in place. The submodules
 //! are the thread cursor (`cursor`), the threads pane (`pane`),
-//! the thread list (`list`), deletion, detached rows, the open thread's
+//! the review list (`list`), deletion, detached rows, the open thread's
 //! lines (`open`), git reach, re-anchoring, waiting threads, and the
 //! placement and state words. All of it is plain state, tested without a
 //! terminal (ADRs 0013 and 0046).
@@ -38,7 +38,7 @@ use fathomable_core::reanchor::{Mapping, map_range};
 use crate::app::{App, Focus, Popup};
 
 /// A thread's status, which is its colour in the gutter, the file-threads
-/// pane, and the thread list (ADR 0039); where the thread is placed is
+/// pane, and the review list (ADR 0039); where the thread is placed is
 /// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
 /// on one row is their `max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -283,7 +283,7 @@ impl App {
         if self.current == Some(index) {
             self.place_detached_rows();
             self.place_stub_rows();
-            self.scroll_sidebar();
+            self.scroll_tree();
         }
     }
 
@@ -321,8 +321,8 @@ impl App {
     }
 
     /// The document's threads in line order: by first line, then the
-    /// order the store holds them (ADR 0027). This is the order `l` / `h`
-    /// in the thread pane and `j` / `k` in the threads pane walk.
+    /// order the store holds them (ADR 0027). This is the order `]c` / `[c`
+    /// in the text and `j` / `k` in the threads pane walk.
     pub fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
         marks.sort_by_key(|mark| mark.range().start());
@@ -580,7 +580,7 @@ impl App {
         }
     }
 
-    /// Esc: drop the comment box; a reply returns to its thread pane. A
+    /// Esc: drop the comment box; a reply returns to its thread's rows. A
     /// changed draft or edit asks for a second Esc first.
     pub fn compose_cancel(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
@@ -665,7 +665,7 @@ impl App {
         self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() > 0 {
             // A reply from the threads pane keeps its keys (ADR 0034).
-        } else if self.list.is_open() {
+        } else if self.review_list.is_open() {
             self.focus = Focus::Review;
         }
     }
@@ -710,10 +710,10 @@ impl App {
                 // The reply becomes the highlighted message. The list and
                 // the threads pane reply in place; a reply from the text
                 // opens the thread it answered.
-                if self.list.is_open() {
+                if self.review_list.is_open() {
                     let newest = self.newest_message(id);
                     self.set_thread_cursor_message(id.clone(), newest);
-                    self.thread_list_follow_cursor();
+                    self.review_follow_cursor();
                 } else if self.focus != Focus::ThreadsPane {
                     // From the text the thread expands in place and the
                     // cursor lands on the reply (ADR 0049).
@@ -902,7 +902,7 @@ mod tests {
         Ok(())
     }
 
-    fn app_with_thread_list_messages(
+    fn app_with_review_messages(
         name: &str,
     ) -> anyhow::Result<(TempDir, App, fathomable_core::annotations::ThreadId)> {
         let dir = fixture(name)?;
@@ -930,7 +930,7 @@ mod tests {
         type_in(&mut app, "bottom");
         app.compose_submit();
         app.view_mut().goto_top();
-        app.open_thread_list();
+        app.open_review();
         Ok((dir, app, id))
     }
 
@@ -1329,12 +1329,12 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
+    fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         use crate::app::input::keys;
 
-        let (_dir, mut app, id) = app_with_thread_list_messages("list-message-nav")?;
+        let (_dir, mut app, id) = app_with_review_messages("list-message-nav")?;
         let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
 
         assert_eq!(
@@ -1342,7 +1342,7 @@ mod tests {
             2,
             "the newest message starts selected"
         );
-        let rows = app.thread_list_rows(60);
+        let rows = app.review_rows(60);
         let selected_row = rows
             .rows
             .iter()
@@ -1350,7 +1350,7 @@ mod tests {
             .context("no selected message row")?;
         let visible = app.text_rows().saturating_sub(1).max(1);
         assert!(
-            (app.thread_list().scroll()..app.thread_list().scroll() + visible)
+            (app.review_list().scroll()..app.review_list().scroll() + visible)
                 .contains(&selected_row),
             "the selected message is visible"
         );
@@ -1376,7 +1376,7 @@ mod tests {
         app.set_compose_text("revised opening");
         app.compose_submit();
         assert_eq!(app.focus(), Focus::Review);
-        assert!(app.thread_list().is_open());
+        assert!(app.review_list().is_open());
         assert_eq!(
             app.thread(&id).map(Thread::comment),
             Some("revised opening")
@@ -1407,9 +1407,9 @@ mod tests {
     }
 
     #[test]
-    fn thread_list_mouse_selects_messages_and_reply_selects_itself() -> anyhow::Result<()> {
-        let (_dir, mut app, id) = app_with_thread_list_messages("list-message-mouse")?;
-        let rows = app.thread_list_rows(100);
+    fn review_mouse_selects_messages_and_reply_selects_itself() -> anyhow::Result<()> {
+        let (_dir, mut app, id) = app_with_review_messages("list-message-mouse")?;
+        let rows = app.review_rows(100);
         let agent_row = rows
             .rows
             .iter()
@@ -1424,9 +1424,9 @@ mod tests {
                 )
             })
             .context("no agent message row")?;
-        let scroll = app.thread_list().scroll();
+        let scroll = app.review_list().scroll();
         anyhow::ensure!(agent_row >= scroll, "agent message is above the viewport");
-        app.thread_list_click(agent_row - scroll);
+        app.review_click(agent_row - scroll);
         assert_eq!(
             app.thread_cursor().message(),
             1,
@@ -1453,7 +1453,7 @@ mod tests {
         assert_eq!(app.compose_draft(), Some("reply from the list"));
         app.compose_cancel();
 
-        let rows = app.thread_list_rows(100);
+        let rows = app.review_rows(100);
         let agent_row = rows
             .rows
             .iter()
@@ -1468,7 +1468,7 @@ mod tests {
                 )
             })
             .context("no agent message row after reply")?;
-        app.thread_list_click(agent_row - app.thread_list().scroll());
+        app.review_click(agent_row - app.review_list().scroll());
         app.thread_open_in_file();
         assert_eq!(
             Some(app.thread_cursor().message()),
@@ -1517,21 +1517,17 @@ mod tests {
         assert_eq!(app.view().scroll(), 0);
 
         // Dragging the tree's divider resizes the tree.
-        app.toggle_sidebar_focus();
+        app.toggle_tree_focus();
         let width = app.rail_width();
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, width - 1, 3));
-        assert_eq!(app.dragging(), Some(Border::Sidebar));
+        assert_eq!(app.dragging(), Some(Border::Rail));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 44, 3));
         assert_eq!(app.rail_width(), 45);
         crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 2, 3));
         assert_eq!(app.rail_width(), 8, "no narrower than the minimum");
         crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 2, 3));
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 3, 0));
-        assert_eq!(
-            app.focus(),
-            Focus::Sidebar,
-            "the header row focuses the tree"
-        );
+        assert_eq!(app.focus(), Focus::Tree, "the header row focuses the tree");
 
         // The comment box keeps the keys but lets the mouse through.
         crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
@@ -1605,17 +1601,17 @@ mod tests {
         assert!(!app.threads_pane_shown(), "Space T hides it");
 
         space(&mut app, 'A');
-        assert!(app.thread_list().is_open());
+        assert!(app.review_list().is_open());
         assert_eq!(app.focus(), Focus::Review);
         space(&mut app, 'A');
         assert!(
-            !app.thread_list().is_open(),
+            !app.review_list().is_open(),
             "Space A on the focused list closes it"
         );
         space(&mut app, 'A');
         press(&mut app, KeyCode::Esc);
         assert!(
-            !app.thread_list().is_open(),
+            !app.review_list().is_open(),
             "Esc closes the list: it is the column"
         );
         assert_eq!(app.focus(), Focus::View);
@@ -1706,7 +1702,7 @@ mod tests {
     }
 
     #[test]
-    fn the_thread_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
+    fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
         let dir = fixture("list")?;
         let mut app = app(&dir)?;
         app.start_comment();
@@ -1722,10 +1718,10 @@ mod tests {
         // The list (ADR 0025, ADR 0049) takes the column: both threads,
         // every header carrying the path; Enter opens the file with the
         // thread expanded.
-        app.open_thread_list();
+        app.open_review();
         assert_eq!(app.focus(), Focus::Review);
         assert!(!app.shows_thread());
-        let rows = app.thread_list_rows(60);
+        let rows = app.review_rows(60);
         assert_eq!(rows.entries.len(), 2);
         assert!(matches!(
             rows.rows.first(),
@@ -1736,21 +1732,21 @@ mod tests {
                 .iter()
                 .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "top"))
         );
-        app.thread_list_step(1);
+        app.review_step(1);
         app.thread_open_in_file();
-        assert!(!app.thread_list().is_open());
+        assert!(!app.review_list().is_open());
         assert_eq!(app.focus(), Focus::View);
         assert!(app.shows_thread());
         assert_eq!(app.view().cursor_source_line(), bottom);
 
         // `o` resolves an entry, which leaves the list until `x` shows
         // it dimmed; `f` narrows to the file; reopening keeps the entry.
-        app.open_thread_list();
+        app.open_review();
         app.thread_toggle_resolved();
         assert_eq!(app.message(), Some("resolved"));
-        assert_eq!(app.thread_list_rows(60).entries.len(), 1, "resolved hidden");
+        assert_eq!(app.review_rows(60).entries.len(), 1, "resolved hidden");
         app.review_toggle_resolved();
-        let rows = app.thread_list_rows(60);
+        let rows = app.review_rows(60);
         assert_eq!(rows.entries.len(), 2);
         assert!(
             rows.rows
@@ -1758,26 +1754,26 @@ mod tests {
                 .any(|row| matches!(row, Row::Header { dim: true, .. }))
         );
         app.review_toggle_resolved();
-        app.thread_list_toggle_file();
-        assert_eq!(app.thread_list_rows(60).entries.len(), 1);
-        app.thread_list_toggle_file();
-        app.close_thread_list();
+        app.review_toggle_file();
+        assert_eq!(app.review_rows(60).entries.len(), 1);
+        app.review_toggle_file();
+        app.close_review();
         assert_eq!(app.focus(), Focus::View);
-        app.open_thread_list();
+        app.open_review();
         app.thread_reply();
         type_in(&mut app, "still here");
         app.compose_submit();
         assert_eq!(app.focus(), Focus::Review);
-        assert!(app.thread_list().is_open());
+        assert!(app.review_list().is_open());
         assert!(
-            app.thread_list_rows(60)
+            app.review_rows(60)
                 .rows
                 .iter()
                 .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "still here"))
         );
         // A file opened by any route takes the column back.
         app.open(Path::new("README.md"));
-        assert!(!app.thread_list().is_open());
+        assert!(!app.review_list().is_open());
         assert_eq!(app.focus(), Focus::View);
 
         Ok(())
@@ -1809,13 +1805,13 @@ mod tests {
         )
         .map_err(anyhow::Error::msg)?;
         let order = |app: &App| -> Vec<fathomable_core::annotations::ThreadId> {
-            app.thread_list_rows(60)
+            app.review_rows(60)
                 .entries
                 .iter()
                 .map(|entry| entry.id().clone())
                 .collect()
         };
-        app.open_thread_list();
+        app.open_review();
         assert_eq!(order(&app), [top.clone(), bottom.clone()], "answered first");
         app.review_toggle_sort();
         assert_eq!(app.message(), Some("review by file"));
@@ -1841,7 +1837,7 @@ mod tests {
             [bottom.clone(), top.clone()],
             "newest reply first"
         );
-        app.close_thread_list();
+        app.close_review();
 
         // The threads pane's workspace scope reads the same order.
         app.show_threads_pane();
@@ -1894,21 +1890,21 @@ mod tests {
             since: None,
             path: None,
         }) else {
-            anyhow::bail!("no thread list");
+            anyhow::bail!("no review list");
         };
         assert_eq!(all.len(), 1);
         let Response::Threads(none) = app.handle_request(Request::AnnotationsList {
             since: Some(all[0].updated() + 1),
             path: None,
         }) else {
-            anyhow::bail!("no thread list");
+            anyhow::bail!("no review list");
         };
         assert!(none.is_empty());
         let Response::Threads(elsewhere) = app.handle_request(Request::AnnotationsList {
             since: None,
             path: Some(PathBuf::from("other.md")),
         }) else {
-            anyhow::bail!("no thread list");
+            anyhow::bail!("no review list");
         };
         assert!(elsewhere.is_empty());
 
@@ -2126,8 +2122,8 @@ mod tests {
         };
 
         draw(&mut app, "text")?;
-        app.show_sidebar();
-        draw(&mut app, "sidebar")?;
+        app.show_tree();
+        draw(&mut app, "rail")?;
         app.expand_thread(id);
         draw(&mut app, "thread")?;
         app.thread_reply();
@@ -2143,8 +2139,8 @@ mod tests {
         app.open_picker(crate::app::PickerKind::Files);
         draw(&mut app, "picker")?;
         app.close_popup();
-        app.open_thread_list();
-        draw(&mut app, "thread list")?;
+        app.open_review();
+        draw(&mut app, "review list")?;
         app.thread_reply();
         type_in(&mut app, "a reply from the list");
         draw(&mut app, "compose over list")?;

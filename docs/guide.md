@@ -682,7 +682,9 @@ as that session.
 A directory is *seen* once a viewer has opened it or
 `fathomable --register [DIR]` has marked it; `scripts/demo-repo.sh`
 (`just demo`) builds a throwaway repository, registers it, and seeds
-threads and a subscriber to try the loop against.
+threads and a subscriber to try the loop against (through the hidden
+`fathomable seed FILE` subcommand, so the script never writes the store
+files itself).
 
 Two subcommands, both reading the harness's hook JSON on stdin:
 

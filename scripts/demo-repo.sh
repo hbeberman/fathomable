@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Create a throwaway git workspace, register it with Fathomable, and seed
 # threads and a subscriber so `--mcp`, the hooks, and an agent can be
-# smoke-tested against it (ADR 0040). Needs bash, git, python3, and an
-# installed `fathomable` (or FATHOMABLE=path/to/binary).
+# smoke-tested against it (ADR 0040). Needs bash, git, and an installed
+# `fathomable` (or FATHOMABLE=path/to/binary).
 #
 #   scripts/demo-repo.sh [--isolated] [DIR]
 #
@@ -116,78 +116,35 @@ EOF
 # 2. Make the workspace known without a viewer.
 STATE_DIR=$("$FATHOMABLE" --register "$DIR" | sed -n 2p)
 
-# 3–4. Seed threads and a subscriber. The JSONL shapes are those of
-# fathomable-core `annotations::Event` and `agents::Event`.
+# 3–4. Seed threads and a subscriber through the binary, so the store
+# formats have one writer (`fathomable seed`, hidden; its file shape is
+# documented in crates/fathomable/src/seed.rs).
 AGENT_ID=${DEMO_AGENT_ID:-demo-1}
-python3 - "$DIR" "$STATE_DIR" "$HEAD" "$AGENT_ID" <<'EOF'
-import hashlib, json, os, sys, time
-
-root, state, head, agent = sys.argv[1:5]
-now = int(time.time())
-CONTEXT = 3
-
-def h(s):
-    return hashlib.sha256(s.rstrip().encode()).hexdigest()[:16]
-
-def lines_of(path):
-    return open(os.path.join(root, path)).read().split("\n")[:-1]
-
-def annotate(n, path, start, end, comment, detached=False):
-    ls = lines_of(path)
-    body = ls[start - 1:end]
-    anchor = {"lines": [h(l) for l in body] if not detached else ["0" * 16] * len(body)}
-    if start > 1:
-        anchor["before"] = h(ls[start - 2])
-    if end < len(ls):
-        anchor["after"] = h(ls[end])
-    ctx = {"lines": body}
-    before = ls[max(0, start - 1 - CONTEXT):start - 1]
-    after = ls[end:end + CONTEXT]
-    if before: ctx["before"] = before
-    if after: ctx["after"] = after
-    tid = f"{now}-demo-{n}"
-    event = {
-        "event": "annotate", "v": 1, "id": tid, "path": path,
-        "range": {"start": start, "end": end}, "snippet": "\n".join(body),
-        "anchor": anchor, "created": now - 600 + n, "comment": comment,
-        "commit": head,
-    }
-    # A detached thread carries no context either, or ADR 0038 would
-    # place it again from the surrounding lines.
-    if not detached:
-        event["context"] = ctx
-    return tid, event
-
-events, ids = [], {}
-t, e = annotate(1, "src/lib.rs", 9, 11, "This splits on a single space; two spaces in a row give a phantom word. Use split_whitespace.")
-events.append(e); ids["lib-open"] = t
-t, e = annotate(2, "README.md", 14, 16, "Please update this table once the fix lands.")
-events.append(e); ids["readme-replied"] = t
-events.append({"event": "reply", "v": 1, "thread": t,
-               "author": {"name": "rev", "id": "other", "kind": "reviewer"},
-               "created": now - 500, "body": "Agreed; the coder should do this after fixing word_count."})
-t, e = annotate(3, "docs/plan.md", 3, 5, "Step 2 first: a failing test for the empty string proves the fix.")
-events.append(e); ids["plan-open"] = t
-t, e = annotate(4, "src/main.rs", 4, 5, "Fine as it is.")
-events.append(e); ids["main-resolved"] = t
-events.append({"event": "resolve", "v": 1, "thread": t, "created": now - 400})
-t, e = annotate(5, "README.md", 3, 3, "This paragraph was rewritten; the thread no longer matches any line.", detached=True)
-events.append(e); ids["readme-detached"] = t
-
-os.makedirs(state, exist_ok=True)
-with open(os.path.join(state, "threads.jsonl"), "a") as f:
-    for e in events:
-        f.write(json.dumps(e, separators=(",", ":")) + "\n")
-with open(os.path.join(state, "agents.jsonl"), "a") as f:
-    f.write(json.dumps({"event": "subscribe", "v": 1, "id": agent, "kind": "coder",
-                        "name": "demo", "created": now}) + "\n")
-    f.write(json.dumps({"event": "watch", "v": 1, "id": agent, "on": ids["plan-open"],
-                        "when": "resolved", "remind": [ids["lib-open"]], "created": now}) + "\n")
-
-print("threads:")
-for k, v in ids.items():
-    print(f"  {k:16} {v}")
+SEED=$(mktemp -t fathomable-seed.XXXXXX.json)
+trap 'rm -f "$SEED"' EXIT
+cat > "$SEED" <<EOF
+{
+  "threads": [
+    {"key": "lib-open", "path": "src/lib.rs", "line": 9, "end_line": 11,
+     "comment": "This splits on a single space; two spaces in a row give a phantom word. Use split_whitespace."},
+    {"key": "readme-replied", "path": "README.md", "line": 14, "end_line": 16,
+     "comment": "Please update this table once the fix lands.",
+     "replies": [{"author": {"name": "rev", "id": "other", "type": "reviewer"},
+                  "body": "Agreed; the coder should do this after fixing word_count."}]},
+    {"key": "plan-open", "path": "docs/plan.md", "line": 3, "end_line": 5,
+     "comment": "Step 2 first: a failing test for the empty string proves the fix."},
+    {"key": "main-resolved", "path": "src/main.rs", "line": 4, "end_line": 5,
+     "comment": "Fine as it is.", "resolved": true},
+    {"key": "readme-detached", "path": "README.md", "line": 3,
+     "comment": "This paragraph was rewritten; the thread no longer matches any line.",
+     "detached": true}
+  ],
+  "subscribers": [{"id": "$AGENT_ID", "type": "coder", "name": "demo"}],
+  "watches": [{"subscriber": "$AGENT_ID", "on": "plan-open", "when": "resolved",
+               "remind": ["lib-open"]}]
+}
 EOF
+"$FATHOMABLE" seed --workspace "$DIR" "$SEED"
 
 # 5. Where everything is and what to run.
 cat <<EOF

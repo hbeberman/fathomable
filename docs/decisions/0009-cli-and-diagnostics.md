@@ -6,6 +6,7 @@ resource: crates/fathomable/src/main.rs
 related_resources:
   - crates/fathomable/src/doctor.rs
   - crates/fathomable/src/logging.rs
+  - crates/fathomable/src/seed.rs
   - crates/fathomable-core/src/xdg.rs
 tags:
   - decision
@@ -66,6 +67,15 @@ so scripts and tests (`scripts/demo-repo.sh`) can make a directory known
 to headless `--mcp` and the hooks of
 [0040](0040-agent-subscriptions-and-hooks.md) without mirroring the
 marker format.
+
+Note (2026-09-05): `fathomable seed FILE [--workspace DIR]`, hidden from
+`--help`, writes the threads, replies, resolutions, subscribers, and
+watches a JSON file declares through `annotations::Store` and
+`agents::Register` (`crates/fathomable/src/seed.rs` documents the
+shape). It replaces the Python in `scripts/demo-repo.sh` that wrote
+`threads.jsonl` and `agents.jsonl` by hand from a copy of the serde
+shapes, so the formats have one writer. It exists for the demo and for
+tests, not for users; the viewer and the tools are how threads are made.
 
 ## Consequences
 

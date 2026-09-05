@@ -8,6 +8,7 @@ mod doctor;
 mod hooks;
 mod logging;
 mod mcp;
+mod seed;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -107,6 +108,16 @@ enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Write the threads, subscribers, and watches FILE declares into a
+    /// workspace's store and register (for `scripts/demo-repo.sh`).
+    #[command(hide = true)]
+    Seed {
+        /// The JSON seed file; its shape is documented in `seed.rs`.
+        file: PathBuf,
+        /// The workspace to seed (default: the one around the current directory).
+        #[arg(long, value_name = "DIR")]
+        workspace: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -124,6 +135,10 @@ fn main() -> ExitCode {
             verbose,
         }) => {
             return hooks::pending(&dirs, hook, id, prompt, verbose);
+        }
+        Some(Command::Seed { file, workspace }) => {
+            let workspace = workspace.unwrap_or_else(|| PathBuf::from("."));
+            return seed::run(&dirs, &workspace, &file);
         }
         None => {}
     }

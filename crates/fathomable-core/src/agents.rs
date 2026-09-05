@@ -812,23 +812,14 @@ impl<'a> Blob<'a> {
                 vocab::THREADS.name
             ));
             for thread in &self.listed {
-                out.push(format!(
-                    "  {} {}:{}",
-                    thread.id(),
-                    thread.path().display(),
-                    thread.range()
-                ));
+                out.push(format!("  {} {}", thread.id(), thread.place()));
             }
         }
         if !self.reminder.is_empty() {
             if !out.is_empty() {
                 out.push(String::new());
             }
-            let places: Vec<String> = self
-                .reminder
-                .iter()
-                .map(|t| format!("{}:{}", t.path().display(), t.range()))
-                .collect();
+            let places: Vec<String> = self.reminder.iter().map(|t| t.place()).collect();
             out.push(format!(
                 "FATHOMABLE reminder: {} thread{} still unanswered: {}",
                 self.reminder.len(),
@@ -901,10 +892,9 @@ fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
     }
     let messages = 1 + thread.replies().len();
     lines.push(format!(
-        "── thread {} · {}:{} · {} · {messages} msg{}",
+        "── thread {} · {} · {} · {messages} msg{}",
         thread.id(),
-        thread.path().display(),
-        thread.range(),
+        thread.place(),
         match thread.status() {
             Status::Open if thread.proposes_resolution() => "open, proposed",
             Status::Open => "open",
@@ -912,13 +902,16 @@ fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
         },
         if messages == 1 { "" } else { "s" }
     ));
-    let start = thread.range().start();
-    let snippet: Vec<&str> = thread.snippet().lines().collect();
-    for (i, text) in snippet.iter().take(6).enumerate() {
-        lines.push(format!("   {:>4} │ {text}", start + i));
-    }
-    if snippet.len() > 6 {
-        lines.push(format!("        │ … {} more line(s)", snippet.len() - 6));
+    // A thread on the file as a whole has no lines to quote (ADR 0063).
+    if let Some(range) = thread.range() {
+        let start = range.start();
+        let snippet: Vec<&str> = thread.snippet().lines().collect();
+        for (i, text) in snippet.iter().take(6).enumerate() {
+            lines.push(format!("   {:>4} │ {text}", start + i));
+        }
+        if snippet.len() > 6 {
+            lines.push(format!("        │ … {} more line(s)", snippet.len() - 6));
+        }
     }
     // Every message as (who, body, edited), the comment first.
     let all: Vec<(String, &str, Option<u64>)> = std::iter::once((

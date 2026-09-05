@@ -70,11 +70,11 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
             .for_path(&path)
             .filter(|thread| thread.locate(&text).is_detached())
             .filter_map(|thread| {
-                let from = thread.range();
+                let from = thread.range()?;
                 let through_snapshot = snapshot.as_deref().and_then(|snapshot| {
                     let placement = thread.locate(snapshot);
-                    (!placement.is_detached())
-                        .then(|| map_range(snapshot, &text, placement.range()))
+                    let range = placement.range().filter(|_| !placement.is_detached())?;
+                    Some(map_range(snapshot, &text, range))
                 });
                 let (mapping, source) = match through_snapshot {
                     Some(mapping @ (Mapping::Edited(_) | Mapping::Moved(_))) => {
@@ -107,7 +107,8 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
             .filter(|thread| thread.context().is_none())
             .filter_map(|thread| {
                 let placement = thread.locate(&text);
-                (!placement.is_detached()).then(|| (thread.id().clone(), placement.range()))
+                (!placement.is_detached())
+                    .then(|| Some((thread.id().clone(), placement.range()?)))?
             })
             .collect();
         for (id, range) in missing {
@@ -163,10 +164,10 @@ mod tests {
         let dir = testing::bare("reanchor-edited")?;
         let app = annotate_then_edit_offline(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
-        assert_eq!(mark.range(), LineRange::new(3, 3));
+        assert_eq!(mark.range(), Some(LineRange::new(3, 3)));
         assert!(mark.placement().is_edited());
         assert_eq!(
-            app.thread(mark.id()).map(Thread::range),
+            app.thread(mark.id()).and_then(Thread::range),
             Some(LineRange::new(3, 3))
         );
         Ok(())
@@ -200,12 +201,12 @@ mod tests {
         let dir = testing::bare("reanchor-nosnap")?;
         let app = annotate_without_snapshot_then_edit(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
-        assert_eq!(mark.range(), LineRange::new(3, 3));
+        assert_eq!(mark.range(), Some(LineRange::new(3, 3)));
         assert!(mark.placement().is_edited());
         let thread = app
             .thread(mark.id())
             .ok_or_else(|| anyhow::anyhow!("thread"))?;
-        assert_eq!(thread.range(), LineRange::new(3, 3));
+        assert_eq!(thread.range(), Some(LineRange::new(3, 3)));
         assert_eq!(
             thread.context().map(Context::text),
             Some("zero\none\nTWO\nthree\nfour\n".to_owned()),

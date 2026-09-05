@@ -204,6 +204,7 @@ impl App {
             // The threads, view, and diff submenus (ADR 0049, ADR 0060)
             // mean the same thing everywhere.
             Action::NewThread => self.start_new_comment(),
+            Action::FileComment => self.start_file_comment(),
             Action::Reply => self.thread_reply(),
             Action::ToggleResolved => self.thread_toggle_resolved(),
             Action::EditNewestOwn => self.thread_edit_newest_own(),
@@ -554,7 +555,7 @@ mod tests {
         assert_eq!(app.marks()[0].kind(), ThreadState::Open);
         press(&mut app, " cd");
         assert_eq!(app.marks().len(), 1);
-        assert_eq!(app.marks()[0].range().start(), 5);
+        assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(5));
         assert_eq!(app.focus(), Focus::Tree, "focus stays where it was");
 
         // `Space c c` starts a new thread on the cursor line.

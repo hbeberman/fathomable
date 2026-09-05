@@ -300,7 +300,9 @@ impl<'a> Answered<'a> {
 pub(super) struct Shown<'a> {
     id: &'a ThreadId,
     path: &'a Path,
-    range: LineRange,
+    /// Absent for a thread on the file as a whole (ADR 0063).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<LineRange>,
     placement: &'static str,
     status: Status,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -340,7 +342,7 @@ impl<'a> Shown<'a> {
             } else {
                 thread.comment().lines().next().unwrap_or_default()
             },
-            snippet: open.then(|| thread.snippet()),
+            snippet: (open && !thread.is_on_file()).then(|| thread.snippet()),
             replies: open.then(|| thread.replies()),
             commit: thread.commit(),
             edited: thread.edited(),
@@ -349,18 +351,17 @@ impl<'a> Shown<'a> {
         }
     }
 
-    /// The one summary line: `id  path:range  status`, then `pending`,
-    /// `answered by NAME (type)`, or `proposed by NAME (type)`, then
-    /// `edited` or `detached` when they apply, then the comment's first
+    /// The one summary line: `id  path:range  status` (the path alone
+    /// for a thread on the file as a whole), then `pending`, `answered by
+    /// NAME (type)`, or `proposed by NAME (type)`, then `edited`,
+    /// `detached`, or `file` when they apply, then the comment's first
     /// line.
     fn line(&self) -> String {
-        let mut line = format!(
-            "{}  {}:{}  {}",
-            self.id,
-            self.path.display(),
-            self.range,
-            status_word(self.status)
-        );
+        let at = match self.range {
+            Some(range) => format!("{}:{range}", self.path.display()),
+            None => self.path.display().to_string(),
+        };
+        let mut line = format!("{}  {at}  {}", self.id, status_word(self.status));
         if self.pending {
             line.push(' ');
             line.push_str(vocab::PENDING);
@@ -390,6 +391,16 @@ const fn placement_word(placement: Placement) -> &'static str {
         Placement::Anchored(_) => "anchored",
         Placement::Edited(_) => "edited",
         Placement::Detached(_) => "detached",
+        Placement::File => "file",
+    }
+}
+
+/// Where `thread` is at `placement`, as a line names it: `path:lines`,
+/// or the path alone for a thread on the file as a whole (ADR 0063).
+fn at(thread: &Thread, placement: Placement) -> String {
+    match placement.range() {
+        Some(range) => format!("{}:{range}", thread.path().display()),
+        None => thread.path().display().to_string(),
     }
 }
 
@@ -422,9 +433,10 @@ impl<'a> Tree<'a> {
             .texts
             .entry(thread.path().to_path_buf())
             .or_insert_with(|| fs::read_to_string(self.root.join(thread.path())).ok());
-        match text {
-            Some(text) => thread.locate(text),
-            None => Placement::Detached(thread.range()),
+        match (text, thread.range()) {
+            (Some(text), _) => thread.locate(text),
+            (None, Some(range)) => Placement::Detached(range),
+            (None, None) => Placement::File,
         }
     }
 }
@@ -1136,10 +1148,9 @@ pub(super) fn shown_lines(threads: &[Thread], tree: &mut Tree<'_>, verb: &str) -
         .map(|thread| {
             let placement = tree.place(thread);
             format!(
-                "{verb} {} at {}:{} ({}){}",
+                "{verb} {} at {} ({}){}",
                 thread.id(),
-                thread.path().display(),
-                placement.range(),
+                at(thread, placement),
                 placement_word(placement),
                 if thread.proposes_resolution() {
                     ", proposing to resolve it"
@@ -1618,6 +1629,27 @@ mod tests {
         assert!(json.get("anchor").is_none());
         assert!(json.get("messages").is_none());
         assert_eq!(json["snippet"], "one");
+
+        // A thread on the file as a whole (ADR 0063): the path alone,
+        // `file` for its placement, no range, no snippet.
+        let on_file = store.annotate(
+            Draft::on_file(Author::User, Path::new("a.md"), "split this"),
+            "one\ntwo\n",
+            5,
+        )?;
+        let thread = store.thread(&on_file).cloned().ok_or("gone")?;
+        assert_eq!(tree.place(&thread), Placement::File);
+        let shown = Shown::new(&thread, tree.place(&thread));
+        assert_eq!(
+            shown.line(),
+            format!("{on_file}  a.md  open pending file  split this")
+        );
+        let json = serde_json::to_value(&shown)?;
+        assert_eq!(json["placement"], "file");
+        assert!(
+            json.get("range").is_none() && json.get("snippet").is_none(),
+            "{json}"
+        );
 
         // An agent's answer names it; a proposal says so; the user's edit
         // of the comment takes the word back.

@@ -28,6 +28,7 @@ impl Words {
         let placement = placement.and_then(|placement| match placement {
             Placement::Detached(_) => Some("detached"),
             Placement::Edited(_) => Some("edited"),
+            Placement::File => Some("file"),
             Placement::Anchored(_) => None,
         });
         Self {
@@ -37,7 +38,8 @@ impl Words {
         }
     }
 
-    /// `detached` or `edited`, when the lines are not where they were.
+    /// `detached` or `edited`, when the lines are not where they were;
+    /// `file` for a thread on the file as a whole (ADR 0063).
     #[must_use]
     pub(crate) fn placement(self) -> Option<&'static str> {
         self.placement

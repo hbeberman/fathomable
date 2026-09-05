@@ -10,7 +10,6 @@ use std::path::Path;
 use fathomable_core::annotations::{LineRange, Store, ThreadId};
 
 use crate::app::App;
-use crate::app::threads::overlaps;
 
 impl App {
     /// Whether `lines` carries part of the thread the cursor is on: the
@@ -27,7 +26,7 @@ impl App {
         }
         self.placed_marks()
             .filter(|mark| mark.id() == shown)
-            .any(|mark| overlaps(mark.range(), lines))
+            .any(|mark| mark.covers(lines))
     }
 }
 
@@ -135,7 +134,7 @@ mod tests {
             lines: Some(LineRange::new(3, 6)),
         });
         assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
-        assert_eq!(app.marks()[0].range(), LineRange::new(3, 6));
+        assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 6)));
         assert!(app.marks()[0].placement().is_edited());
         app.threads_pane_open();
         assert!(app.open_thread_in(line(5)));

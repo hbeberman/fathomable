@@ -1,11 +1,12 @@
 // @okf-doc: /decisions/0061-agents-start-threads.md
-//! `thread_start`: an agent opens a thread on lines of a file (ADR 0061).
+//! `thread_start`: an agent opens a thread on lines of a file (ADR 0061),
+//! or on the file as a whole (ADR 0063).
 //!
 //! One comment, or several in a `comments` batch, each on a line range
-//! of a workspace file. The batch is checked before anything is written:
-//! a path that is not a file, a range past the end of the file, a file
-//! that is not text, or an empty body refuses the whole call, naming
-//! every offending item. A comment is signed as a reply is and stamped
+//! of a workspace file, or on the file itself when it names no line. The
+//! batch is checked before anything is written: a path that is not a
+//! file, a range past the end of the file, a file that is not text, or
+//! an empty body refuses the whole call, naming every offending item. A comment is signed as a reply is and stamped
 //! with `HEAD` as the user's comments are, through the viewer when one
 //! shows the workspace and through the store when none does. The result
 //! is `thread_reply`'s: the new threads as an agent sees them, and one
@@ -35,7 +36,8 @@ use super::{Server, Target, call};
 pub(crate) struct StartItem {
     /// Workspace-relative path of the file.
     path: PathBuf,
-    /// First line the comment is on, 1-based.
+    /// First line the comment is on, 1-based. Omit it only for a comment
+    /// on the file as a whole.
     #[serde(default)]
     line: Option<usize>,
     /// Last line of that range; defaults to `line`.
@@ -51,7 +53,8 @@ pub(crate) struct StartParams {
     /// Workspace-relative path of the file, for a single comment.
     #[serde(default)]
     path: Option<PathBuf>,
-    /// First line the comment is on, 1-based (single comment).
+    /// First line the comment is on, 1-based (single comment). Omit it
+    /// only for a comment on the file as a whole.
     #[serde(default)]
     line: Option<usize>,
     /// Last line of that range; defaults to `line` (single comment).
@@ -79,7 +82,8 @@ pub(crate) struct StartParams {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Placed {
     path: PathBuf,
-    range: LineRange,
+    /// `None` for a comment on the file as a whole (ADR 0063).
+    range: Option<LineRange>,
     body: String,
 }
 
@@ -89,12 +93,14 @@ impl Server {
         name = "thread_start",
         description = "Start a thread of your own on lines of a file, for the user to read \
                        in the viewer: one with `path`, `line`, `end_line`, and `body`, or \
-                       several in `comments`. Returns each new thread as it stands. The \
-                       thread waits on the user and reaches no agent until they answer; \
-                       it is not a reply, so pass a thread id to `thread_reply` instead \
-                       when you are answering. The batch is checked first: a path that is \
-                       not a file, a range past the end, or an empty body refuses the whole \
-                       call and nothing is written.",
+                       several in `comments`. Omit `line` only for a remark about the file \
+                       as a whole; a comment about particular lines names them. Returns \
+                       each new thread as it stands. The thread waits on the user and \
+                       reaches no agent until they answer; it is not a reply, so pass a \
+                       thread id to `thread_reply` instead when you are answering. The \
+                       batch is checked first: a path that is not a file, a range past \
+                       the end, or an empty body refuses the whole call and nothing is \
+                       written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -186,7 +192,10 @@ impl Server {
         author: Author,
         item: Placed,
     ) -> Result<Thread, String> {
-        let place = format!("{}:{}", item.path.display(), item.range.start());
+        let place = match item.range {
+            Some(range) => format!("{}:{}", item.path.display(), range.start()),
+            None => item.path.display().to_string(),
+        };
         let request = Request::ThreadStart {
             path: item.path.clone(),
             range: item.range,
@@ -207,8 +216,9 @@ impl Server {
 }
 
 /// Where `item` goes, or why it cannot go there: the path is not a file
-/// in the workspace, there is no line, the file is not text, the range
-/// runs past its end, or the body is empty.
+/// in the workspace, the file is not text, the range runs past its end,
+/// or the body is empty. An item with no line is a comment on the file
+/// as a whole (ADR 0063).
 fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     let shown = item.path.display();
     let path = check_path(root, Some(&item.path))?
@@ -217,23 +227,27 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     if full.is_dir() {
         return Err(format!("{shown} is a directory; pass a file"));
     }
-    let line = item
-        .line
-        .ok_or_else(|| format!("{shown}: pass `{}`", vocab::LINE))?;
-    let range = LineRange::new(line, item.end_line.unwrap_or(line));
     let text = fs::read(&full)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| format!("{shown} is not a text file"))?;
+    let range = item
+        .line
+        .map(|line| LineRange::new(line, item.end_line.unwrap_or(line)));
     let count = text.lines().count();
-    if range.end() > count {
+    if let Some(range) = range
+        && range.end() > count
+    {
         return Err(format!(
             "lines {range} are past the end of {shown} ({count} line{})",
             if count == 1 { "" } else { "s" }
         ));
     }
     if item.body.trim().is_empty() {
-        return Err(format!("{shown}:{line}: `{}` is empty", vocab::BODY));
+        return Err(match item.line {
+            Some(line) => format!("{shown}:{line}: `{}` is empty", vocab::BODY),
+            None => format!("{shown}: `{}` is empty", vocab::BODY),
+        });
     }
     Ok(Placed {
         path,
@@ -256,7 +270,11 @@ fn headless_start(
         .ok()
         .and_then(|workspace| workspace.head_commit());
     let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
-    let draft = Draft::new(author, &item.path, item.range, item.body).at_commit(commit);
+    let draft = match item.range {
+        Some(range) => Draft::new(author, &item.path, range, item.body),
+        None => Draft::on_file(author, &item.path, item.body),
+    }
+    .at_commit(commit);
     let id = store
         .annotate(draft, &text, now())
         .map_err(|e| e.to_string())?;
@@ -307,8 +325,17 @@ mod tests {
             good,
             Ok(Placed {
                 path: PathBuf::from("src/lib.rs"),
-                range: LineRange::new(2, 3),
+                range: Some(LineRange::new(2, 3)),
                 body: "look".to_owned(),
+            })
+        );
+        // No line is a comment on the file as a whole (ADR 0063).
+        assert_eq!(
+            place(&root, &item("src/lib.rs", None, None, "split this")),
+            Ok(Placed {
+                path: PathBuf::from("src/lib.rs"),
+                range: None,
+                body: "split this".to_owned(),
             })
         );
         let refused = [
@@ -317,8 +344,8 @@ mod tests {
                 "src is a directory; pass a file",
             ),
             (
-                item("src/lib.rs", None, None, "x"),
-                "src/lib.rs: pass `line`",
+                item("src/lib.rs", None, None, " "),
+                "src/lib.rs: `body` is empty",
             ),
             (
                 item("src/lib.rs", Some(3), Some(5), "x"),
@@ -364,7 +391,7 @@ mod tests {
             author.clone(),
             Placed {
                 path: PathBuf::from("a.md"),
-                range: LineRange::new(2, 2),
+                range: Some(LineRange::new(2, 2)),
                 body: "look here".to_owned(),
             },
         )?;

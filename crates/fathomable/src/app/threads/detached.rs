@@ -12,7 +12,8 @@ impl App {
     /// last known range, clamped to one past the last line of the file.
     pub(crate) fn detached_anchor(&self, mark: &Mark) -> usize {
         let past_end = self.view().layout().index().line_count() + 1;
-        mark.range().start().min(past_end)
+        mark.range()
+            .map_or(past_end, |range| range.start().min(past_end))
     }
 
     /// The anchors of the current document's detached threads, for

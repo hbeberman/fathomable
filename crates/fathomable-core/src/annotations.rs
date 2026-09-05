@@ -210,15 +210,26 @@ pub enum Placement {
     Edited(LineRange),
     /// The lines are gone; this is the last known range.
     Detached(LineRange),
+    /// The thread is on the file as a whole, not on lines of it
+    /// (ADR 0063).
+    File,
 }
 
 impl Placement {
-    /// The range to draw at, anchored or not.
+    /// The range to draw at, anchored or not; `None` for a thread on the
+    /// file as a whole.
     #[must_use]
-    pub fn range(&self) -> LineRange {
+    pub fn range(&self) -> Option<LineRange> {
         match self {
-            Self::Anchored(range) | Self::Edited(range) | Self::Detached(range) => *range,
+            Self::Anchored(range) | Self::Edited(range) | Self::Detached(range) => Some(*range),
+            Self::File => None,
         }
+    }
+
+    /// Whether the thread is on the file as a whole (ADR 0063).
+    #[must_use]
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File)
     }
 
     /// Whether the lines under the thread were rewritten since the last
@@ -523,9 +534,13 @@ pub enum Status {
 pub struct Thread {
     id: ThreadId,
     path: PathBuf,
-    range: LineRange,
+    /// The lines the comment is on; `None` for a comment on the file as
+    /// a whole (ADR 0063), which then has no anchor and an empty snippet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    range: Option<LineRange>,
     snippet: String,
-    anchor: Anchor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    anchor: Option<Anchor>,
     created: u64,
     updated: u64,
     /// Who wrote the comment (ADR 0061); the user unless the record says
@@ -574,22 +589,41 @@ impl Thread {
         &self.path
     }
 
-    /// The range as it was when the annotation was made.
+    /// The range as it was when the annotation was made; `None` for a
+    /// thread on the file as a whole (ADR 0063).
     #[must_use]
-    pub fn range(&self) -> LineRange {
+    pub fn range(&self) -> Option<LineRange> {
         self.range
     }
 
-    /// The annotated source lines, without the trailing newline.
+    /// Whether the thread is on the file as a whole rather than on lines
+    /// of it (ADR 0063).
+    #[must_use]
+    pub fn is_on_file(&self) -> bool {
+        self.range.is_none()
+    }
+
+    /// Where the thread is, the way notices name it: `path:lines`, or
+    /// the path alone for a thread on the file as a whole (ADR 0063).
+    #[must_use]
+    pub fn place(&self) -> String {
+        match self.range {
+            Some(range) => format!("{}:{range}", self.path.display()),
+            None => self.path.display().to_string(),
+        }
+    }
+
+    /// The annotated source lines, without the trailing newline; empty
+    /// for a thread on the file as a whole.
     #[must_use]
     pub fn snippet(&self) -> &str {
         &self.snippet
     }
 
-    /// The content anchor.
+    /// The content anchor; `None` for a thread on the file as a whole.
     #[must_use]
-    pub fn anchor(&self) -> &Anchor {
-        &self.anchor
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
     }
 
     /// The window of text the thread was last placed in (ADR 0038);
@@ -721,10 +755,13 @@ impl Thread {
     /// Where the thread sits in `text` now.
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
-        match (self.anchor.locate(text, self.range), self.edited) {
+        let (Some(anchor), Some(range)) = (&self.anchor, self.range) else {
+            return Placement::File;
+        };
+        match (anchor.locate(text, range), self.edited) {
             (Some(range), Some(_)) => Placement::Edited(range),
             (Some(range), None) => Placement::Anchored(range),
-            (None, _) => Placement::Detached(self.range),
+            (None, _) => Placement::Detached(range),
         }
     }
 }
@@ -734,7 +771,7 @@ impl Thread {
 pub struct Draft {
     author: Author,
     path: PathBuf,
-    range: LineRange,
+    range: Option<LineRange>,
     comment: String,
     commit: Option<String>,
 }
@@ -749,7 +786,20 @@ impl Draft {
         Self {
             author,
             path: path.to_path_buf(),
-            range,
+            range: Some(range),
+            comment: comment.into(),
+            commit: None,
+        }
+    }
+
+    /// `author`'s comment on the workspace-relative `path` as a whole
+    /// (ADR 0063): the thread has no lines, no anchor, and no snippet.
+    #[must_use]
+    pub fn on_file(author: Author, path: &Path, comment: impl Into<String>) -> Self {
+        Self {
+            author,
+            path: path.to_path_buf(),
+            range: None,
             comment: comment.into(),
             commit: None,
         }
@@ -816,9 +866,12 @@ enum Event {
         v: u32,
         id: ThreadId,
         path: PathBuf,
-        range: LineRange,
+        /// Absent for a comment on the file as a whole (ADR 0063).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<LineRange>,
         snippet: String,
-        anchor: Anchor,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        anchor: Option<Anchor>,
         created: u64,
         /// Who wrote the comment; written only for an agent (ADR 0061).
         #[serde(default, skip_serializing_if = "Author::is_user")]
@@ -1032,16 +1085,21 @@ impl Store {
     /// Returns [`StoreError`] when the range runs past the end of `text` or
     /// the file cannot be appended to.
     pub fn annotate(&mut self, draft: Draft, text: &str, now: u64) -> Result<ThreadId, StoreError> {
-        let anchor = Anchor::capture(text, draft.range).ok_or(StoreError {
-            kind: ErrorKind::BadRange(draft.range),
-        })?;
-        let context = Context::capture(text, draft.range);
-        let snippet = text
-            .lines()
-            .skip(draft.range.start - 1)
-            .take(draft.range.len())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let (anchor, context, snippet) = match draft.range {
+            Some(range) => {
+                let anchor = Anchor::capture(text, range).ok_or(StoreError {
+                    kind: ErrorKind::BadRange(range),
+                })?;
+                let snippet = text
+                    .lines()
+                    .skip(range.start - 1)
+                    .take(range.len())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (Some(anchor), Context::capture(text, range), snippet)
+            }
+            None => (None, None, String::new()),
+        };
         let id = ThreadId(format!(
             "{now}-{}-{}",
             std::process::id(),
@@ -1134,8 +1192,9 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the thread is unknown, the range runs
-    /// past the end of `text`, or the file cannot be appended to.
+    /// Returns [`StoreError`] when the thread is unknown or on the file as
+    /// a whole, the range runs past the end of `text`, or the file cannot
+    /// be appended to.
     pub fn relocate(
         &mut self,
         id: &ThreadId,
@@ -1143,6 +1202,7 @@ impl Store {
         text: &str,
         now: u64,
     ) -> Result<(), StoreError> {
+        self.on_lines(id)?;
         let anchor = Anchor::capture(text, range).ok_or(StoreError {
             kind: ErrorKind::BadRange(range),
         })?;
@@ -1162,8 +1222,9 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the thread is unknown, the range runs
-    /// past the end of `text`, or the file cannot be appended to.
+    /// Returns [`StoreError`] when the thread is unknown or on the file as
+    /// a whole, the range runs past the end of `text`, or the file cannot
+    /// be appended to.
     pub fn record_context(
         &mut self,
         id: &ThreadId,
@@ -1171,6 +1232,7 @@ impl Store {
         text: &str,
         now: u64,
     ) -> Result<(), StoreError> {
+        self.on_lines(id)?;
         let context = Context::capture(text, range).ok_or(StoreError {
             kind: ErrorKind::BadRange(range),
         })?;
@@ -1359,8 +1421,8 @@ impl Store {
             } => {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(created);
-                thread.range = range;
-                thread.anchor = anchor;
+                thread.range = Some(range);
+                thread.anchor = Some(anchor);
                 thread.edited = Some(created);
                 thread.context = context;
             }
@@ -1398,6 +1460,20 @@ impl Store {
         Ok(())
     }
 
+    /// Refuse a thread on the file as a whole (ADR 0063), which has no
+    /// lines to move or window to record.
+    fn on_lines(&self, id: &ThreadId) -> Result<(), StoreError> {
+        let thread = self.thread(id).ok_or_else(|| StoreError {
+            kind: ErrorKind::UnknownThread(id.clone()),
+        })?;
+        if thread.is_on_file() {
+            return Err(StoreError {
+                kind: ErrorKind::OnFile(id.clone()),
+            });
+        }
+        Ok(())
+    }
+
     fn thread_mut(&mut self, id: &ThreadId) -> Result<&mut Thread, StoreError> {
         self.threads
             .iter_mut()
@@ -1417,6 +1493,7 @@ enum ErrorKind {
     UnknownMessage(ThreadId, MessageTarget),
     MessageNotEditable(ThreadId, MessageTarget),
     BadRange(LineRange),
+    OnFile(ThreadId),
 }
 
 /// Why the store could not be read or written.
@@ -1473,6 +1550,9 @@ impl fmt::Display for StoreError {
                 )
             }
             ErrorKind::BadRange(range) => write!(f, "lines {range} are past the end of the file"),
+            ErrorKind::OnFile(id) => {
+                write!(f, "thread {id} is on the file as a whole and has no lines")
+            }
         }
     }
 }
@@ -1636,6 +1716,61 @@ mod tests {
         Ok(())
     }
 
+    /// A comment on the file as a whole (ADR 0063): no range, anchor,
+    /// or snippet in the record, placed as `File` in any text, refused
+    /// by the moves that need lines, and read back the same.
+    #[test]
+    fn a_comment_on_the_file_has_no_lines() -> Result<(), StoreError> {
+        let file = TempFile::new("on-file")?;
+        let mut store = Store::open(&file.0)?;
+        let id = store.annotate(
+            Draft::on_file(Author::User, Path::new("a.md"), "split this"),
+            TEXT,
+            10,
+        )?;
+        let thread = store.thread(&id).ok_or_else(|| StoreError {
+            kind: super::ErrorKind::UnknownThread(id.clone()),
+        })?;
+        assert!(thread.is_on_file());
+        assert_eq!(thread.range(), None);
+        assert!(thread.anchor().is_none());
+        assert_eq!(thread.snippet(), "");
+        assert!(thread.context().is_none());
+        assert_eq!(thread.place(), "a.md");
+        assert_eq!(thread.locate(TEXT), Placement::File);
+        assert_eq!(thread.locate(""), Placement::File);
+        assert_eq!(Placement::File.range(), None);
+        let record = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+        assert!(
+            !record.contains("\"range\"") && !record.contains("\"anchor\""),
+            "{record}"
+        );
+        // The moves that need lines refuse it.
+        let moved = store.relocate(&id, LineRange::new(2, 2), TEXT, 11);
+        assert!(
+            moved
+                .as_ref()
+                .is_err_and(|e| e.to_string().contains("on the file as a whole")),
+            "{moved:?}"
+        );
+        assert!(
+            store
+                .record_context(&id, LineRange::new(2, 2), TEXT, 11)
+                .is_err()
+        );
+        // It replies and resolves as any thread does, and reads back.
+        store.reply(&id, Reply::new(Author::agent("claude"), 12, "done"))?;
+        store.resolve(&id, 13)?;
+        let reloaded = Store::open(&file.0)?;
+        let thread = reloaded.thread(&id).ok_or_else(|| StoreError {
+            kind: super::ErrorKind::UnknownThread(id.clone()),
+        })?;
+        assert_eq!(thread.range(), None);
+        assert_eq!(thread.status(), Status::Resolved);
+        assert_eq!(thread.replies().len(), 1);
+        Ok(())
+    }
+
     #[test]
     fn a_deleted_thread_is_gone_and_later_events_on_it_are_ignored() -> Result<(), StoreError> {
         let file = TempFile::new("delete")?;
@@ -1766,10 +1901,10 @@ mod tests {
             .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
         assert_eq!(thread.path(), Path::new("docs/new.md"));
         assert_eq!(thread.updated(), 120, "since polling sees the move");
-        assert_eq!(thread.range(), LineRange::new(3, 4));
+        assert_eq!(thread.range(), Some(LineRange::new(3, 4)));
         assert_eq!(
             thread.locate(TEXT).range(),
-            LineRange::new(3, 4),
+            Some(LineRange::new(3, 4)),
             "the anchor still finds its lines"
         );
         assert!(again.for_path(Path::new("old.md")).next().is_none());
@@ -2172,7 +2307,7 @@ mod tests {
         );
         let placement = thread.locate("nothing here\n");
         assert!(placement.is_detached());
-        assert_eq!(placement.range(), LineRange::new(5, 5));
+        assert_eq!(placement.range(), Some(LineRange::new(5, 5)));
         Ok(())
     }
 }

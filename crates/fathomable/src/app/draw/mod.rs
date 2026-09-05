@@ -1131,6 +1131,16 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
             )
             .line(theme, width),
         ],
+        Subject::FileDraft => vec![
+            Header::new(
+                vec![(
+                    format!(" comment on {}", app.current_path().display()),
+                    Tone::Key,
+                )],
+                Vec::new(),
+            )
+            .line(theme, width),
+        ],
         Subject::Thread(id) => {
             let Some(thread) = app.thread(id) else {
                 return Vec::new();
@@ -1680,7 +1690,8 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                     if *dim { theme.info } else { theme.heading[2] },
                 ),
                 Span::styled(
-                    format!("  L{range}  "),
+                    // A thread on the file as a whole says so (ADR 0063).
+                    range.map_or_else(|| "  file  ".to_owned(), |range| format!("  L{range}  ")),
                     if *dim { theme.info } else { theme.text },
                 ),
                 Span::styled(status, status_style),

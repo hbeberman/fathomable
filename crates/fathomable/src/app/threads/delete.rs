@@ -161,7 +161,7 @@ mod tests {
         press_key(&mut app, KeyCode::Char('d'));
         press_key(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 1);
-        assert_eq!(app.marks()[0].range().start(), 5);
+        assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(5));
         assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
 
         // The review list: the entry under the selection goes.

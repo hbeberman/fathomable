@@ -50,7 +50,8 @@ impl PaneScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PaneRow {
     path: PathBuf,
-    range: LineRange,
+    /// `None` for a thread on the file as a whole (ADR 0063).
+    range: Option<LineRange>,
     kind: ThreadState,
     words: Words,
     /// The first line of the newest message.
@@ -62,7 +63,7 @@ pub(crate) struct PaneRow {
 
 impl PaneRow {
     #[cfg(test)]
-    pub(crate) fn range(&self) -> LineRange {
+    pub(crate) fn range(&self) -> Option<LineRange> {
         self.range
     }
 
@@ -88,18 +89,24 @@ impl PaneRow {
     }
 
     /// Where the thread is, as the scope names it: `L9-11` in the file,
-    /// `lib.rs:9` across the workspace.
+    /// `lib.rs:9` across the workspace; `file` and `lib.rs` for a thread
+    /// on the file as a whole (ADR 0063).
     #[must_use]
     pub(crate) fn place(&self, scope: PaneScope) -> String {
         match scope {
-            PaneScope::File => format!("L{}", self.range),
+            PaneScope::File => self
+                .range
+                .map_or_else(|| "file".to_owned(), |range| format!("L{range}")),
             PaneScope::Workspace => {
                 let name = self
                     .path
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                format!("{name}:{}", self.range.start())
+                match self.range {
+                    Some(range) => format!("{name}:{}", range.start()),
+                    None => name,
+                }
             }
         }
     }
@@ -461,7 +468,10 @@ mod tests {
         press(&mut app, "o");
         assert_eq!(app.marks()[1].kind(), ThreadState::Resolved, "L3 resolved");
         assert_eq!(app.threads_pane_rows().len(), 1);
-        assert_eq!(app.threads_pane_rows()[0].range().start(), 7);
+        assert_eq!(
+            app.threads_pane_rows()[0].range().map(|r| r.start()),
+            Some(7)
+        );
         press(&mut app, "x");
         assert_eq!(app.message(), Some("resolved shown"));
         assert_eq!(app.threads_pane_rows().len(), 2);
@@ -693,7 +703,10 @@ mod tests {
         app.compose_submit();
         annotate(&mut app, 4, "short");
         assert_eq!(app.threads_pane_rows().len(), 2);
-        assert_eq!(app.threads_pane_rows()[1].range().start(), 4);
+        assert_eq!(
+            app.threads_pane_rows()[1].range().map(|r| r.start()),
+            Some(4)
+        );
 
         // Clicking the second entry highlights it, not the long thread
         // that also covers L4.

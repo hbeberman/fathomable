@@ -193,6 +193,8 @@ pub enum RowAnchor {
     Line(usize),
     /// The detached row inserted before this 1-based source line.
     Detached(usize),
+    /// Before the first row: a thread on the file as a whole (ADR 0063).
+    Top,
 }
 
 impl Line {
@@ -527,13 +529,17 @@ impl Layout {
     pub fn with_rows_after(mut self, blocks: &[(RowAnchor, usize)]) -> Self {
         // Back to front, so earlier insertions do not shift later rows.
         for (block, &(anchor, count)) in blocks.iter().enumerate().rev() {
-            let Some(row) = self.row_of_anchor(anchor) else {
-                continue;
+            let at = match anchor {
+                RowAnchor::Top => 0,
+                _ => match self.row_of_anchor(anchor) {
+                    Some(row) => row + 1,
+                    None => continue,
+                },
             };
             for index in (0..count).rev() {
                 let mut line = Line::blank();
                 line.stub = Some((block, index));
-                self.lines.insert(row + 1, line);
+                self.lines.insert(at, line);
             }
         }
         self
@@ -544,6 +550,7 @@ impl Layout {
     /// starts at or before it (a blank line has no row of its own).
     fn row_of_anchor(&self, anchor: RowAnchor) -> Option<usize> {
         match anchor {
+            RowAnchor::Top => None,
             RowAnchor::Detached(before) => self
                 .lines
                 .iter()

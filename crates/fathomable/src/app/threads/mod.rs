@@ -17,6 +17,7 @@ pub(crate) mod cursor;
 pub(crate) mod delete;
 pub(crate) mod detached;
 pub(crate) mod draft;
+pub(crate) mod file;
 pub(crate) mod list;
 pub(crate) mod open;
 pub(crate) mod pane;
@@ -76,8 +77,16 @@ impl Mark {
         &self.id
     }
 
-    pub(crate) fn range(&self) -> LineRange {
+    /// The lines the thread is drawn at; `None` for a thread on the file
+    /// as a whole (ADR 0063).
+    pub(crate) fn range(&self) -> Option<LineRange> {
         self.placement.range()
+    }
+
+    /// Whether the thread's lines overlap `lines`; a thread on the file
+    /// as a whole covers none.
+    pub(crate) fn covers(&self, lines: LineRange) -> bool {
+        self.range().is_some_and(|range| overlaps(range, lines))
     }
 
     pub(crate) fn kind(&self) -> ThreadState {
@@ -133,14 +142,19 @@ impl App {
     /// The marks placed on lines, leaving out the detached ones, which
     /// draw on rows of their own (ADR 0039).
     pub(super) fn placed_marks(&self) -> impl Iterator<Item = &Mark> {
-        self.marks().iter().filter(|mark| !mark.is_detached())
+        self.marks().iter().filter(|mark| {
+            matches!(
+                mark.placement,
+                Placement::Anchored(_) | Placement::Edited(_)
+            )
+        })
     }
 
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
     pub(crate) fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
         self.placed_marks()
-            .filter(|mark| overlaps(mark.range(), lines))
+            .filter(|mark| mark.covers(lines))
             .map(Mark::kind)
             .max()
     }
@@ -184,7 +198,7 @@ impl App {
                     .iter()
                     .find(|(id, _)| id == thread.id())
                     .filter(|(_, placement)| !placement.is_detached())
-                    .map(|(id, placement)| (id.clone(), placement.range()))
+                    .and_then(|(id, placement)| Some((id.clone(), placement.range()?)))
             })
             .collect();
         for (id, range) in stale {
@@ -271,7 +285,8 @@ impl App {
     /// in the text and `j` / `k` in the threads pane walk.
     pub(crate) fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
-        marks.sort_by_key(|mark| mark.range().start());
+        // A thread on the file as a whole has no start and comes first.
+        marks.sort_by_key(|mark| mark.range().map(|range| range.start()));
         marks.into_iter().map(|mark| mark.id().clone()).collect()
     }
 
@@ -280,12 +295,15 @@ impl App {
     /// re-anchored ranges keep their place.
     pub(super) fn workspace_threads(&self) -> Vec<ThreadId> {
         let current = self.current.map(|i| self.docs[i].relative.as_path());
-        let mut others: Vec<(&Path, usize, ThreadId)> = self
+        let mut others: Vec<(&Path, Option<usize>, ThreadId)> = self
             .store
             .iter()
             .flat_map(Store::threads)
             .filter(|thread| self.reach.includes(thread) && Some(thread.path()) != current)
-            .map(|thread| (thread.path(), thread.range().start(), thread.id().clone()))
+            .map(|thread| {
+                let start = thread.range().map(|range| range.start());
+                (thread.path(), start, thread.id().clone())
+            })
             .collect();
         others.sort();
         let mut order = Vec::with_capacity(others.len() + self.marks().len());
@@ -348,7 +366,7 @@ impl App {
             return Vec::new();
         };
         self.placed_marks()
-            .filter(|mark| overlaps(mark.range(), lines))
+            .filter(|mark| mark.covers(lines))
             .map(|mark| mark.id().clone())
             .collect()
     }
@@ -387,7 +405,7 @@ impl App {
         // The toast a store reload would raise (ADR 0030), for the viewer
         // the reply came through; a proposing reply says so (ADR 0053).
         if let Some(thread) = store.thread(id) {
-            let place = format!("{}:{}", thread.path().display(), thread.range().start());
+            let place = file::toast_place(thread);
             self.push_toast(if resolve {
                 format!("reply on {place}, proposes resolving")
             } else {
@@ -405,21 +423,30 @@ impl App {
             .ok_or_else(|| format!("thread {id} vanished after the reply"))
     }
 
-    /// An agent starts a thread on `range` of `path` (ADR 0061): the
-    /// comment is stamped with `HEAD` as the user's is, the viewer
-    /// toasts it and refreshes its marks, and nothing moves or is marked
-    /// seen. Answers with the thread as it stands.
+    /// An agent starts a thread on `range` of `path` (ADR 0061), or on
+    /// the file as a whole with no range (ADR 0063): the comment is
+    /// stamped with `HEAD` as the user's is, the viewer toasts it and
+    /// refreshes its marks, and nothing moves or is marked seen. Answers
+    /// with the thread as it stands.
     pub(super) fn agent_start(
         &mut self,
         path: &Path,
-        range: LineRange,
+        range: Option<LineRange>,
         author: Author,
         body: String,
     ) -> Result<Thread, String> {
         let text = std::fs::read_to_string(self.workspace.root().join(path))
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         let label = author.to_string();
-        let draft = Draft::new(author, path, range, body).at_commit(self.workspace.head_commit());
+        let place = match range {
+            Some(range) => format!("{}:{}", path.display(), range.start()),
+            None => path.display().to_string(),
+        };
+        let draft = match range {
+            Some(range) => Draft::new(author, path, range, body),
+            None => Draft::on_file(author, path, body),
+        }
+        .at_commit(self.workspace.head_commit());
         let store = self
             .store
             .as_mut()
@@ -427,14 +454,10 @@ impl App {
         let id = store
             .annotate(draft, &text, now())
             .map_err(|e| e.to_string())?;
-        tracing::info!(%id, path = %path.display(), %range, %label, "agent thread started");
+        tracing::info!(%id, %place, %label, "agent thread started");
         self.refresh_reach();
         self.refresh_all_marks();
-        self.push_toast(format!(
-            "comment on {}:{} from {label}",
-            path.display(),
-            range.start()
-        ));
+        self.push_toast(format!("comment on {place} from {label}"));
         self.store
             .as_ref()
             .and_then(|store| store.thread(&id))
@@ -447,12 +470,16 @@ impl App {
         let Some(mark) = self.marks().iter().find(|mark| mark.id() == id) else {
             return;
         };
-        if mark.is_detached() {
-            let anchor = self.detached_anchor(mark);
-            self.view_mut().goto_detached_row(anchor);
-        } else {
-            let line = mark.range().start();
-            self.view_mut().goto_source_line(line);
+        match mark.placement() {
+            Placement::Detached(_) => {
+                let anchor = self.detached_anchor(mark);
+                self.view_mut().goto_detached_row(anchor);
+            }
+            Placement::Anchored(range) | Placement::Edited(range) => {
+                self.view_mut().goto_source_line(range.start());
+            }
+            // Its block stands above the first line (ADR 0063).
+            Placement::File => self.view_mut().goto_row(0),
         }
     }
 

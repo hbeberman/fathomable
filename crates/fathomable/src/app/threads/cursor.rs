@@ -118,18 +118,20 @@ impl App {
         let mut candidates: Vec<usize> = at_cursor.iter().filter_map(position).collect();
         candidates.sort_unstable();
         let starts_here = candidates.iter().copied().find(|&index| {
-            self.marks()
-                .iter()
-                .any(|mark| *mark.id() == order[index] && mark.range().start() == line)
+            self.marks().iter().any(|mark| {
+                *mark.id() == order[index]
+                    && mark.range().is_some_and(|range| range.start() == line)
+            })
         });
         let index = starts_here
             .or_else(|| candidates.first().copied())
             .or_else(|| {
                 self.marks()
                     .iter()
-                    .filter(|mark| mark.range().start() < line)
-                    .max_by_key(|mark| mark.range().start())
-                    .and_then(|mark| position(mark.id()))
+                    .filter_map(|mark| Some((mark.range()?.start(), mark)))
+                    .filter(|(start, _)| *start < line)
+                    .max_by_key(|(start, _)| *start)
+                    .and_then(|(_, mark)| position(mark.id()))
             });
         let id = index.map_or(first, |index| &order[index]);
         ThreadCursor::new(id.clone(), self.newest_message(id))
@@ -183,7 +185,7 @@ impl App {
         }
         let here = (
             self.current_path().to_path_buf(),
-            self.view().cursor_source_line().unwrap_or(0),
+            Some(self.view().cursor_source_line().unwrap_or(0)),
         );
         if let Some(index) = order
             .iter()
@@ -198,16 +200,20 @@ impl App {
     }
 
     /// `(path, first line)` of `id`: from the loaded document's mark when
-    /// its file is open, else as stored.
-    fn thread_start(&self, id: &ThreadId) -> Option<(PathBuf, usize)> {
+    /// its file is open, else as stored; no line for a thread on the
+    /// file as a whole, which sorts before the file's others (ADR 0063).
+    fn thread_start(&self, id: &ThreadId) -> Option<(PathBuf, Option<usize>)> {
         let thread = self.thread(id)?;
-        let line = self
+        let range = self
             .docs
             .iter()
             .find(|doc| doc.relative == thread.path())
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == id))
-            .map_or_else(|| thread.range().start(), |mark| mark.range().start());
-        Some((thread.path().to_path_buf(), line))
+            .map_or_else(|| thread.range(), crate::app::threads::Mark::range);
+        Some((
+            thread.path().to_path_buf(),
+            range.map(|range| range.start()),
+        ))
     }
 
     /// The thread `delta` steps from the cursor in `order`, wrapping, with

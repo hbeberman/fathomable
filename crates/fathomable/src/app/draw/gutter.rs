@@ -53,7 +53,7 @@ impl App {
     /// The most urgent thread covering both `above` and `below`.
     fn spanning_mark(&self, above: LineRange, below: LineRange) -> Option<ThreadState> {
         self.placed_marks()
-            .filter(|mark| overlaps(mark.range(), above) && overlaps(mark.range(), below))
+            .filter(|mark| mark.covers(above) && mark.covers(below))
             .map(Mark::kind)
             .max()
     }
@@ -77,11 +77,10 @@ impl App {
         let kind = self.mark_in(lines)?;
         let mut bracket: Option<(usize, &'static str)> = None;
         let mut point = false;
-        for mark in self
-            .placed_marks()
-            .filter(|mark| overlaps(mark.range(), lines))
-        {
-            let range = mark.range();
+        for mark in self.placed_marks().filter(|mark| mark.covers(lines)) {
+            let Some(range) = mark.range() else {
+                continue;
+            };
             let continues =
                 |rows: Option<LineRange>| rows.is_some_and(|rows| overlaps(range, rows));
             let glyph = match (continues(above), continues(below)) {

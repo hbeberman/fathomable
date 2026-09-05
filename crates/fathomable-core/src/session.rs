@@ -18,7 +18,7 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":1,"op":"threads_list"}"#.parse()?;
+//! let request: Request = r#"{"v":2,"op":"threads_list"}"#.parse()?;
 //! assert_eq!(request, Request::ThreadsList { since: None, path: None });
 //! assert_eq!(Response::Done.to_line(), r#"{"ok":true}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -36,7 +36,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 1;
+pub(crate) const PROTOCOL_VERSION: u32 = 2;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -396,13 +396,15 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lines: Option<LineRange>,
     },
-    /// Start a thread on `range` of `path` as `author` (ADR 0061);
-    /// answered with the new thread.
+    /// Start a thread on `range` of `path` as `author` (ADR 0061), or on
+    /// the file as a whole when there is no range (ADR 0063); answered
+    /// with the new thread.
     ThreadStart {
         /// Workspace-relative path of the file.
         path: PathBuf,
-        /// The lines the comment is on.
-        range: LineRange,
+        /// The lines the comment is on; none for the file as a whole.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<LineRange>,
         /// Who is commenting.
         author: Author,
         /// The comment text.
@@ -607,14 +609,14 @@ mod tests {
             },
             Request::ThreadStart {
                 path: PathBuf::from("src/lib.rs"),
-                range: LineRange::new(9, 11),
+                range: Some(LineRange::new(9, 11)),
                 author: Author::agent("reviewer").subscribed("s-1", "coder"),
                 body: "look here".to_owned(),
             },
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":1,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":2,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         assert_eq!(
@@ -623,7 +625,7 @@ mod tests {
                 path: None
             }
             .to_line(),
-            r#"{"v":1,"op":"threads_list"}"#
+            r#"{"v":2,"op":"threads_list"}"#
         );
         Ok(())
     }
@@ -632,17 +634,17 @@ mod tests {
     /// floor and no op exempt from the check (ADR 0062).
     #[test]
     fn every_request_needs_the_current_version() {
-        let too_old = r#"{"v":0,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 0")));
-        let too_new = r#"{"v":2,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 2")));
+        let too_old = r#"{"v":1,"op":"threads_list"}"#.parse::<Request>().err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 1")));
+        let too_new = r#"{"v":3,"op":"threads_list"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 3")));
         // `follow` (ADR 0055) and the liveness ops (ADR 0062) are gone.
         assert_eq!(
-            r#"{"v":1,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
+            r#"{"v":2,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
             None
         );
-        assert_eq!(r#"{"v":1,"op":"ping"}"#.parse::<Request>().ok(), None);
-        assert_eq!(r#"{"v":1,"op":"dance"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":2,"op":"ping"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":2,"op":"dance"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
     }
 

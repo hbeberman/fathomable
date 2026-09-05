@@ -63,7 +63,7 @@ impl App {
             .threads()
             .iter()
             .filter(|thread| thread.awaits_user() && !before.contains(thread.id()))
-            .map(|thread| format!("{}:{}", thread.path().display(), thread.range().start()))
+            .map(crate::app::threads::file::toast_place)
             .collect();
         let text = match arrived.as_slice() {
             [] => return,
@@ -97,12 +97,14 @@ impl App {
         let next_here = match (shown, forward) {
             (Some(at), true) => here.get(at + 1),
             (Some(at), false) => at.checked_sub(1).and_then(|at| here.get(at)),
+            // A thread on the file as a whole (no line) is above every
+            // cursor line: behind it going forward, ahead going back.
             (None, true) => {
-                let line = self.view().cursor_source_line().unwrap_or(0);
+                let line = Some(self.view().cursor_source_line().unwrap_or(0));
                 here.iter().find(|(start, _)| *start > line)
             }
             (None, false) => {
-                let line = self.view().cursor_source_line().unwrap_or(0);
+                let line = Some(self.view().cursor_source_line().unwrap_or(0));
                 here.iter().rev().find(|(start, _)| *start < line)
             }
         };
@@ -158,13 +160,14 @@ impl App {
     }
 
     /// `(first line, id)` of the current document's waiting threads, in
-    /// line order.
-    fn waiting_marks_here(&self) -> Vec<(usize, ThreadId)> {
-        let mut marks: Vec<(usize, ThreadId)> = self
+    /// line order; a thread on the file as a whole has no line and comes
+    /// first (ADR 0063).
+    fn waiting_marks_here(&self) -> Vec<(Option<usize>, ThreadId)> {
+        let mut marks: Vec<(Option<usize>, ThreadId)> = self
             .marks()
             .iter()
             .filter(|mark| mark.kind() == ThreadState::Waiting)
-            .map(|mark| (mark.range().start(), mark.id().clone()))
+            .map(|mark| (mark.range().map(|range| range.start()), mark.id().clone()))
             .collect();
         marks.sort();
         marks
@@ -233,7 +236,7 @@ mod tests {
             return None;
         }
         let cursor = app.thread_cursor();
-        Some(app.thread(cursor.thread()?)?.range().start())
+        Some(app.thread(cursor.thread()?)?.range()?.start())
     }
 
     /// `l` / `h` walk the file's threads and `L` / `H` the workspace's,
@@ -261,7 +264,7 @@ mod tests {
         assert_eq!(app.thread_position_across(), Some((1, 3)));
         let cursor_line = |app: &App| {
             let cursor = app.thread_cursor();
-            app.thread(cursor.thread()?).map(|t| t.range().start())
+            app.thread(cursor.thread()?)?.range().map(|r| r.start())
         };
         // In the file, `]c` wraps within README.
         press(&mut app, KeyCode::Char(']'));

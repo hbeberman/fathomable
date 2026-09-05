@@ -238,6 +238,8 @@ actions! {
     CopyPath,
     Comment,
     NewThread,
+    /// `Space c f`: a comment on the open file as a whole (ADR 0063).
+    FileComment,
     WaitingNext,
     WaitingPrev,
     SourceView,
@@ -791,6 +793,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::DeleteThread,
         "Space menu",
         "threads: delete thread",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('f')]],
+        A::FileComment,
+        "Space menu",
+        "threads: comment on file",
     ),
     bind(
         W::Any,
@@ -1618,7 +1627,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "r", "o", "e", "d"]
+            ["c", "r", "o", "e", "d", "f"]
         );
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(

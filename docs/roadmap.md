@@ -281,3 +281,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     delete; a `follow` config block is an unknown setting; nothing
     written before the first tag is owed a reader
     ([0062](decisions/0062-one-version-no-compatibility.md)).
+54. **A comment on the file.** A thread may be on a file as a whole:
+    `Space c f` starts one, `thread_start` without `line` starts one,
+    the record carries no range, anchor, or snippet, the viewer shows
+    it as a stub above the first line with `file` as its placement
+    word, and every list names it by its path alone
+    ([0063](decisions/0063-a-comment-on-the-file.md)).

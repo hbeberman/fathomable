@@ -82,12 +82,19 @@ impl ReviewList {
     }
 }
 
+/// The first line of an entry, for sorting; a thread on the file as a
+/// whole has none and comes first.
+fn start_of(entry: &Entry) -> Option<usize> {
+    entry.range.map(|range| range.start())
+}
+
 /// One thread in list order, for moving and acting on the selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Entry {
     id: ThreadId,
     path: PathBuf,
-    range: LineRange,
+    /// `None` for a thread on the file as a whole (ADR 0063).
+    range: Option<LineRange>,
     kind: ThreadState,
     /// An agent's newest reply proposes resolving it (ADR 0053).
     proposed: bool,
@@ -114,7 +121,8 @@ pub(crate) enum Row {
     Header {
         entry: usize,
         path: PathBuf,
-        range: LineRange,
+        /// `None` for a thread on the file as a whole (ADR 0063).
+        range: Option<LineRange>,
         kind: ThreadState,
         /// The state word is followed by `proposed` (ADR 0053).
         proposed: bool,
@@ -287,12 +295,12 @@ impl App {
                 b.1.cmp(&a.1)
                     .then(b.2.cmp(&a.2))
                     .then(a.0.path.cmp(&b.0.path))
-                    .then(a.0.range.start().cmp(&b.0.range.start()))
+                    .then(start_of(&a.0).cmp(&start_of(&b.0)))
             }),
             ReviewSort::File => entries.sort_by(|a, b| {
                 a.0.path
                     .cmp(&b.0.path)
-                    .then(a.0.range.start().cmp(&b.0.range.start()))
+                    .then(start_of(&a.0).cmp(&start_of(&b.0)))
             }),
         }
         entries.into_iter().map(|(entry, _, _)| entry).collect()
@@ -341,8 +349,9 @@ impl App {
     }
 
     /// Range and status of `thread`: from the loaded document's mark when
-    /// its file is open this session, else as stored.
-    pub(super) fn placement_of(&self, thread: &Thread) -> (LineRange, ThreadState) {
+    /// its file is open this session, else as stored; no range for a
+    /// thread on the file as a whole (ADR 0063).
+    pub(super) fn placement_of(&self, thread: &Thread) -> (Option<LineRange>, ThreadState) {
         self.docs
             .iter()
             .find(|doc| doc.relative == thread.path())

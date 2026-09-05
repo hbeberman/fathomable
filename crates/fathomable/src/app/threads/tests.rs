@@ -96,7 +96,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     assert_eq!(app.current_path(), Path::new("docs/GUIDE.md"));
     assert_eq!(app.message(), Some("renamed to docs/GUIDE.md"));
     assert_eq!(app.view().cursor(), cursor);
-    assert_eq!(app.marks()[0].range(), LineRange::new(3, 5));
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 5)));
     assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
     assert_eq!(
         app.thread(&id).map(Thread::path),
@@ -129,7 +129,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     )?;
     app.on_events(vec![Event::Change(dir.0.join("ws/notes/GUIDE.md"))]);
     assert!(app.view().text().contains("intro"));
-    assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     Ok(())
 }
 
@@ -177,7 +177,7 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
     assert!(!app.deleted());
     assert!(app.info().is_none());
     assert!(app.view().text().contains("intro"));
-    assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     app.start_new_comment();
     assert!(matches!(app.popup(), Some(Popup::Compose(_))));
     Ok(())
@@ -214,7 +214,7 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
         "# Readme\n\nnew intro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
     )?;
     app.on_changes(vec![dir.0.join("ws/README.md")]);
-    assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     assert_eq!(app.mark_in(LineRange::new(3, 3)), None);
 
     // Edit one of them: the thread follows onto the rewritten lines
@@ -224,12 +224,12 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
         "# Readme\n\nnew intro\n\nalpha\nBETA\ngamma\n\n- one\n- two\n",
     )?;
     app.on_changes(vec![dir.0.join("ws/README.md")]);
-    assert_eq!(app.marks()[0].range(), LineRange::new(5, 7));
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     assert!(app.marks()[0].placement().is_edited());
     assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Open));
     let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
     assert!(reopened.threads()[0].edited().is_some());
-    assert_eq!(reopened.threads()[0].range(), LineRange::new(5, 7));
+    assert_eq!(reopened.threads()[0].range(), Some(LineRange::new(5, 7)));
 
     // The user's reply acknowledges the edit.
     app.view_mut().move_down(3);
@@ -1164,7 +1164,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     let author = Author::agent("reviewer").subscribed("s-1", "coder");
     let reply = app.handle_request(Request::ThreadStart {
         path: PathBuf::from("README.md"),
-        range: LineRange::new(2, 3),
+        range: Some(LineRange::new(2, 3)),
         author: author.clone(),
         body: "look here".to_owned(),
     });
@@ -1175,7 +1175,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     let id = started[0].id().clone();
     assert_eq!(started[0].author(), &author);
     assert_eq!(started[0].comment(), "look here");
-    assert_eq!(started[0].range(), LineRange::new(2, 3));
+    assert_eq!(started[0].range(), Some(LineRange::new(2, 3)));
     assert!(started[0].awaits_user() && !started[0].awaits_agent());
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
@@ -1205,7 +1205,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     ] {
         let reply = app.handle_request(Request::ThreadStart {
             path: PathBuf::from(path),
-            range,
+            range: Some(range),
             author: author.clone(),
             body: "?".to_owned(),
         });

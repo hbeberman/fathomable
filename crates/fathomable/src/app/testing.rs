@@ -163,3 +163,21 @@ impl AppBuilder {
         Ok(app)
     }
 }
+
+/// The app drawn on a 100×30 test terminal, one trimmed string per row.
+pub(crate) fn screen(app: &App) -> anyhow::Result<Vec<String>> {
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
+    terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
+    let buffer = terminal.backend().buffer().clone();
+    Ok((0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol().to_owned())
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect())
+}

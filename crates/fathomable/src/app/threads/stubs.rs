@@ -16,7 +16,7 @@
 //! at the bottom of its thread's block, an edit's in place of the
 //! message it edits, and a new comment's in a draft block of its own.
 
-use fathomable_core::annotations::{LineRange, ThreadId};
+use fathomable_core::annotations::{LineRange, Placement, ThreadId};
 use fathomable_core::config::ThreadsConfig;
 use fathomable_core::layout::RowAnchor;
 
@@ -51,6 +51,8 @@ impl StubState {
 pub(crate) enum Subject {
     Thread(ThreadId),
     Draft(LineRange),
+    /// The comment being written on the file as a whole (ADR 0063).
+    FileDraft,
 }
 
 /// One block's stub: what it stands for, where it hangs, which messages
@@ -83,7 +85,7 @@ impl Stub {
     pub(crate) fn thread(&self) -> Option<&ThreadId> {
         match &self.subject {
             Subject::Thread(id) => Some(id),
-            Subject::Draft(_) => None,
+            Subject::Draft(_) | Subject::FileDraft => None,
         }
     }
 
@@ -142,6 +144,26 @@ impl Stub {
     }
 }
 
+/// The draft block of a new comment: on its lines, or above the first
+/// line for a comment on the file as a whole; `None` for a reply or an
+/// edit, which are written in their thread's block.
+fn new_comment_block(target: &ComposeTarget, draft_rows: usize) -> Option<Stub> {
+    let (subject, anchor) = match target {
+        ComposeTarget::New(range) => (Subject::Draft(*range), RowAnchor::Line(range.end())),
+        ComposeTarget::OnFile => (Subject::FileDraft, RowAnchor::Top),
+        ComposeTarget::Reply(_) | ComposeTarget::Edit { .. } => return None,
+    };
+    Some(Stub {
+        subject,
+        anchor,
+        messages: Vec::new(),
+        expanded: true,
+        rows: 1 + draft_rows,
+        stops: Vec::new(),
+        draft: Some((1, 0)),
+    })
+}
+
 impl App {
     /// Whether stubs are drawn (`threads { stubs }`).
     #[cfg(test)]
@@ -187,15 +209,26 @@ impl App {
                     || holds_draft(mark.id())
             })
             .collect();
-        marks.sort_by_key(|mark| (mark.range().start(), mark.range().end(), mark.id().clone()));
+        // A thread on the file as a whole has no lines and comes first
+        // (ADR 0063).
+        marks.sort_by_key(|mark| {
+            let range = mark.range();
+            (
+                range.map(|range| range.start()),
+                range.map(|range| range.end()),
+                mark.id().clone(),
+            )
+        });
         let mut stubs: Vec<Stub> = marks
             .into_iter()
             .filter_map(|mark| {
                 let thread = self.thread(mark.id())?;
-                let anchor = if mark.is_detached() {
-                    RowAnchor::Detached(self.detached_anchor(mark))
-                } else {
-                    RowAnchor::Line(mark.range().end())
+                let anchor = match mark.placement() {
+                    Placement::Detached(_) => RowAnchor::Detached(self.detached_anchor(mark)),
+                    Placement::Anchored(range) | Placement::Edited(range) => {
+                        RowAnchor::Line(range.end())
+                    }
+                    Placement::File => RowAnchor::Top,
                 };
                 let count = thread.replies().len() + 1;
                 let expanded = self.expanded.contains(mark.id());
@@ -248,17 +281,11 @@ impl App {
             })
             .collect();
         // A new comment's draft block hangs under its lines, after any
-        // thread's stub on the same row (ADR 0054).
-        if let Some((ComposeTarget::New(range), draft_rows)) = draft {
-            stubs.push(Stub {
-                subject: Subject::Draft(range),
-                anchor: RowAnchor::Line(range.end()),
-                messages: Vec::new(),
-                expanded: true,
-                rows: 1 + draft_rows,
-                stops: Vec::new(),
-                draft: Some((1, 0)),
-            });
+        // thread's stub on the same row (ADR 0054); a comment on the file
+        // as a whole is written above the first line, after any file
+        // thread's stub (ADR 0063).
+        if let Some((target, draft_rows)) = draft {
+            stubs.extend(new_comment_block(&target, draft_rows));
         }
         stubs
     }
@@ -430,7 +457,7 @@ mod tests {
 
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-    use crate::app::testing::{self, press, source_app};
+    use crate::app::testing::{self, press, screen, source_app};
 
     use crate::app::threads::ComposeTarget;
     use crate::app::{App, Focus, Popup};
@@ -456,23 +483,6 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             },
         );
-    }
-
-    fn screen(app: &App) -> anyhow::Result<Vec<String>> {
-        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        let theme = crate::app::draw::Theme::from_core(&core);
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
-        terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
-        let buffer = terminal.backend().buffer().clone();
-        Ok((0..buffer.area.height)
-            .map(|y| {
-                (0..buffer.area.width)
-                    .map(|x| buffer[(x, y)].symbol().to_owned())
-                    .collect::<String>()
-                    .trim_end()
-                    .to_owned()
-            })
-            .collect())
     }
 
     /// Stub rows sit under the last row of their thread, carry no line

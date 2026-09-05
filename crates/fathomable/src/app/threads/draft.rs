@@ -17,7 +17,7 @@ use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 
 use crate::app::draw::message::MESSAGE_INDENT;
-use crate::app::threads::overlaps;
+use crate::app::threads::Mark;
 use crate::app::{App, Popup};
 
 /// What the draft will produce on submit.
@@ -25,6 +25,8 @@ use crate::app::{App, Popup};
 pub(crate) enum ComposeTarget {
     /// A new thread on these source lines.
     New(LineRange),
+    /// A new thread on the open file as a whole (ADR 0063).
+    OnFile,
     /// A reply to an existing thread.
     Reply(ThreadId),
     /// A replacement for one user-authored message.
@@ -39,7 +41,7 @@ impl ComposeTarget {
     #[must_use]
     pub(crate) fn thread(&self) -> Option<&ThreadId> {
         match self {
-            Self::New(_) => None,
+            Self::New(_) | Self::OnFile => None,
             Self::Reply(id) | Self::Edit { thread: id, .. } => Some(id),
         }
     }
@@ -53,7 +55,7 @@ impl ComposeTarget {
                 MessageTarget::Comment => 0,
                 MessageTarget::Reply(index) => index + 1,
             }),
-            Self::New(_) | Self::Reply(_) => None,
+            Self::New(_) | Self::OnFile | Self::Reply(_) => None,
         }
     }
 }
@@ -112,12 +114,19 @@ impl App {
         if let Some((stub, _, _)) = self.stub_on_row(row)
             && let Some(id) = stub.thread()
         {
-            let line = self
+            let range = self
                 .marks()
                 .iter()
                 .find(|mark| mark.id() == id)
-                .map_or(0, |mark| mark.range().end());
-            let covering = self.threads_on_line(line);
+                .and_then(Mark::range);
+            // A thread on the file as a whole covers no line to cycle
+            // through: `c` folds it (ADR 0063).
+            let Some(range) = range else {
+                let id = id.clone();
+                self.fold_thread(&id);
+                return;
+            };
+            let covering = self.threads_on_line(range.end());
             self.cycle_expanded(covering);
             return;
         }
@@ -136,32 +145,41 @@ impl App {
             .into_iter()
             .filter(|id| {
                 self.placed_marks()
-                    .any(|mark| mark.id() == id && overlaps(mark.range(), lines))
+                    .any(|mark| mark.id() == id && mark.covers(lines))
             })
             .collect()
     }
 
-    /// `C`: a draft on the selection, or the cursor line, whether or not
-    /// a thread is already there.
-    pub(crate) fn start_new_comment(&mut self) {
+    /// Whether the open file can take a comment: there is one, it is
+    /// text (ADR 0026), and the store is open; says why not otherwise.
+    pub(super) fn can_annotate(&mut self) -> bool {
         let Some(doc) = self.current.and_then(|index| self.docs.get(index)) else {
             self.notice("open a file to annotate it");
-            return;
+            return false;
         };
         // Threads anchor to lines, and these files have none (ADR 0026).
         match doc.document.content() {
             Content::Text(_) => {}
             Content::Binary { .. } => {
                 self.notice("cannot annotate a binary file");
-                return;
+                return false;
             }
             Content::TooLarge { .. } => {
                 self.notice("cannot annotate a file this large");
-                return;
+                return false;
             }
         }
         if self.store.is_none() {
             self.store_mut();
+            return false;
+        }
+        true
+    }
+
+    /// `C`: a draft on the selection, or the cursor line, whether or not
+    /// a thread is already there.
+    pub(crate) fn start_new_comment(&mut self) {
+        if !self.can_annotate() {
             return;
         }
         let view = self.view();
@@ -187,7 +205,7 @@ impl App {
         // A new thread would anchor to a snapshot no file matches, and a
         // reply would land on one (ADR 0028).
         let deleted = match &target {
-            ComposeTarget::New(_) => self
+            ComposeTarget::New(_) | ComposeTarget::OnFile => self
                 .current
                 .and_then(|index| self.docs.get(index))
                 .filter(|doc| doc.deleted.is_some())
@@ -217,7 +235,9 @@ impl App {
                 }
                 body.to_owned()
             }
-            ComposeTarget::New(_) | ComposeTarget::Reply(_) => String::new(),
+            ComposeTarget::New(_) | ComposeTarget::OnFile | ComposeTarget::Reply(_) => {
+                String::new()
+            }
         };
         let from_review = self.review_list.is_open();
         if from_review {
@@ -373,7 +393,8 @@ impl App {
             return;
         };
         match compose.target {
-            ComposeTarget::New(range) => self.submit_annotation(range, text),
+            ComposeTarget::New(range) => self.submit_annotation(Some(range), text),
+            ComposeTarget::OnFile => self.submit_annotation(None, text),
             ComposeTarget::Reply(id) => self.submit_reply(&id, text),
             ComposeTarget::Edit { thread, message } => {
                 self.submit_message_edit(&thread, message, text);
@@ -480,7 +501,9 @@ impl App {
 
     // ----- writing to the store -----
 
-    fn submit_annotation(&mut self, range: LineRange, comment: String) {
+    /// Start the thread on `range` of the open file, or on the file as a
+    /// whole with no range (ADR 0063).
+    fn submit_annotation(&mut self, range: Option<LineRange>, comment: String) {
         let Some(index) = self.current else {
             return;
         };
@@ -491,20 +514,24 @@ impl App {
             .unwrap_or_default()
             .to_owned();
         // The thread belongs to the work it was written against (ADR 0024).
-        let draft =
-            Draft::new(Author::User, &path, range, comment).at_commit(self.workspace.head_commit());
+        let draft = match range {
+            Some(range) => Draft::new(Author::User, &path, range, comment),
+            None => Draft::on_file(Author::User, &path, comment),
+        }
+        .at_commit(self.workspace.head_commit());
+        let where_at = range.map_or_else(|| "the file".to_owned(), |range| format!("L{range}"));
         let Some(store) = self.store_mut() else {
             return;
         };
         match store.annotate(draft, &text, now()) {
             Ok(id) => {
-                tracing::info!(%id, path = %path.display(), %range, "thread started");
+                tracing::info!(%id, path = %path.display(), %where_at, "thread started");
                 self.refresh_reach();
                 self.refresh_marks(index);
                 // Commenting on lines means they were read (ADR 0020).
                 self.mark_seen(index);
                 self.view_mut().clear_selection();
-                self.notice(format!("commented on L{range}"));
+                self.notice(format!("commented on {where_at}"));
             }
             Err(error) => self.notice(format!("cannot save comment: {error}")),
         }

@@ -240,3 +240,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     and `Space F r`, wake `Space a w`, new thread `Space c c`; labels
     are a few words; the tree pane is the files pane; the menu draws
     on `ui.menu` ([0056](decisions/0056-the-leader-trimmed.md)).
+48. **The sidebar.** The left column is the sidebar, the word it had
+    before 0049; the `rail` config node is `sidebar`, the `ui.rail*`
+    theme keys are `ui.sidebar*` with no old spelling accepted, the
+    column's state has its own module, and the files pane's module is
+    `app/files_pane.rs` ([0057](decisions/0057-the-sidebar.md)).

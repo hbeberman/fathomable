@@ -254,13 +254,14 @@ fn key_names_round_trip() -> TestResult {
     Ok(())
 }
 
-/// The pre-0047 `annotation.*` and pre-0049 `ui.sidebar*` spellings are
-/// unknown keys (ADR 0051), named like any other misspelling.
+/// The pre-0047 `annotation.*` spelling and the `ui.rail*` spelling 0049
+/// used until 0057 are unknown keys (ADR 0051), named like any other
+/// misspelling.
 #[test]
 fn retired_key_names_are_unknown() -> TestResult {
     for (written, now) in [
         ("annotation.open", "thread.open"),
-        ("ui.sidebar.dir", "ui.rail.dir"),
+        ("ui.rail.dir", "ui.sidebar.dir"),
     ] {
         let text = format!("colors {{ \"{written}\" fg=\"red\" }}");
         let error = must_fail("old", &[("old", &text)])?;

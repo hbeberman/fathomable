@@ -117,11 +117,11 @@ fn opening_files_builds_the_recent_list() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A rail squeezed past the width of its narrowest name still draws
+/// A sidebar squeezed past the width of its narrowest name still draws
 /// whole rows: the git letter has no column to take, and the marks that
 /// no longer fit take no width either.
 #[test]
-fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
+fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -138,7 +138,7 @@ fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
         ],
     )?;
     // A modified file earns the git letter, and enough changed lines
-    // earn `+n -m` counts wider than the rail itself.
+    // earn `+n -m` counts wider than the sidebar itself.
     fs::write(dir.0.join("README.md"), "# Readme\n\nmore\n")?;
     fs::create_dir_all(dir.0.join("docs/deep"))?;
     fs::write(
@@ -147,7 +147,7 @@ fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
     )?;
     let mut app = app(&dir)?;
     // Opening the nested file unfolds the tree down to it, so the rows
-    // are indented past what a narrow rail can show.
+    // are indented past what a narrow sidebar can show.
     app.open(Path::new("docs/deep/notes.md"));
     app.show_tree();
     assert!(
@@ -163,7 +163,7 @@ fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
         let mut terminal = Terminal::new(TestBackend::new(width, 12))?;
         terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
         let buffer = terminal.backend().buffer().clone();
-        let divider = u16::try_from(app.rail_width())?.saturating_sub(1);
+        let divider = u16::try_from(app.sidebar_width())?.saturating_sub(1);
         if divider >= width {
             continue;
         }
@@ -180,13 +180,13 @@ fn narrow_rail_draws_whole_rows() -> anyhow::Result<()> {
 
 #[test]
 fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
-    let dir = fixture("rail")?;
+    let dir = fixture("sidebar")?;
     let mut app = app(&dir)?;
-    assert_eq!(app.rail_width(), 0);
+    assert_eq!(app.sidebar_width(), 0);
     app.open(Path::new("docs/notes.md"));
     app.toggle_tree_focus();
     assert_eq!(app.focus(), Focus::Tree);
-    assert_eq!(app.rail_width(), 32);
+    assert_eq!(app.sidebar_width(), 32);
     let selected = app
         .tree()
         .and_then(|tree| tree.current())

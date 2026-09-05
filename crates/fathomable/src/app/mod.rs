@@ -1,13 +1,14 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! The workspace app: open documents, rail, popups, and the state every
+//! The workspace app: open documents, sidebar, popups, and the state every
 //! concept module hangs off.
 //!
 //! [`App`] is plain state so the viewer's behaviour is tested without a
 //! terminal. The modules are grouped by concept (ADR 0048): `threads`
 //! holds the thread cursor, the panes, the list, and the store operations;
 //! `draw` renders; `input` binds and dispatches keys and the mouse; `jump`
-//! is auto-jump; `agents` wakes subscribers; `view`, `rail`, `watch`,
-//! `socket`, `commands`, and `clipboard` are what their names say; and
+//! is auto-jump; `agents` wakes subscribers; `sidebar` is the column and
+//! `files_pane` its upper pane; `view`, `watch`, `socket`, `commands`, and
+//! `clipboard` are what their names say; and
 //! [`run`] owns the terminal, the file watcher, and the viewer socket.
 
 pub(crate) mod agents;
@@ -15,12 +16,13 @@ mod checkpoints;
 mod clipboard;
 mod commands;
 mod draw;
+mod files_pane;
 mod goto_file;
 pub(crate) mod input;
 mod jump;
 mod jumplist;
-mod rail;
 pub(crate) mod run;
+mod sidebar;
 mod socket;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -38,7 +40,8 @@ use std::time::{Duration, Instant};
 use crate::app::threads::list::ReviewList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, JumpConfig, MarkdownConfig, RailConfig, ThreadsConfig, ViewerConfig, WatchConfig,
+    AgentsConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, ViewerConfig,
+    WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -76,9 +79,6 @@ impl Toast {
     }
 }
 
-/// Narrowest the tree can be dragged.
-const RAIL_MIN_WIDTH: usize = 8;
-
 /// Fewest text columns a drag leaves the view.
 const TEXT_MIN_WIDTH: usize = 20;
 
@@ -89,19 +89,19 @@ const TREE_SCROLLOFF: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     View,
-    /// The rail's files pane.
+    /// The sidebar's files pane.
     Tree,
     /// The review list (ADR 0025, ADR 0049).
     Review,
-    /// The rail's threads pane (ADR 0027, ADR 0049).
+    /// The sidebar's threads pane (ADR 0027, ADR 0049).
     ThreadsPane,
 }
 
 /// A pane border the mouse is dragging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Border {
-    /// The rule between the rail and the text.
-    Rail,
+    /// The rule between the sidebar and the text.
+    Sidebar,
     /// The rule along the top of the threads pane (ADR 0027).
     ThreadsPane,
 }
@@ -230,8 +230,8 @@ pub(crate) struct App {
     search_origin: Option<jumplist::Position>,
     welcome: View,
     tree: Option<Tree>,
-    /// The rail's panes, scope, split, and sizes (ADR 0049).
-    rail: threads::pane::Rail,
+    /// The sidebar's panes, scope, split, and sizes (ADR 0049, ADR 0057).
+    sidebar: sidebar::Sidebar,
     /// Whether stubs are drawn, and for resolved threads (ADR 0049).
     stubs: threads::stubs::StubState,
     /// The threads expanded in place this session (ADR 0049).
@@ -243,7 +243,7 @@ pub(crate) struct App {
     review: threads::list::ReviewState,
     tree_scroll: usize,
     /// Tree width once dragged; the default follows the terminal.
-    rail_cols: Option<usize>,
+    sidebar_cols: Option<usize>,
     /// The thread and message the thread surfaces show; authoritative
     /// while the pane or the list is open, or the text cursor rests
     /// where `thread_cursor_anchor` says it was set (ADR 0046).
@@ -326,7 +326,7 @@ impl App {
             highlighter,
             markdown,
             viewer,
-            rail,
+            sidebar,
             threads,
             agents,
             config_path,
@@ -347,13 +347,13 @@ impl App {
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             tree: None,
-            rail: threads::pane::Rail::new(rail),
+            sidebar: sidebar::Sidebar::new(sidebar),
             stubs: threads::stubs::StubState::from_config(&threads),
             expanded: HashSet::new(),
             cycle: None,
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
-            rail_cols: None,
+            sidebar_cols: None,
             thread_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
             review_list: ReviewList::default(),
@@ -1162,7 +1162,7 @@ impl App {
     /// column, the threads pane's rule follows the row.
     pub(crate) fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
-            Some(Border::Rail) => self.rail_cols = Some(column + 1),
+            Some(Border::Sidebar) => self.sidebar_cols = Some(column + 1),
             Some(Border::ThreadsPane) => self.drag_threads_pane_to(row),
             None => return,
         }
@@ -1190,7 +1190,7 @@ impl App {
     }
 
     pub(crate) fn tree(&self) -> Option<&Tree> {
-        self.tree.as_ref().filter(|_| self.rail.tree)
+        self.tree.as_ref().filter(|_| self.sidebar.tree)
     }
 
     pub(crate) fn tree_scroll(&self) -> usize {
@@ -1271,21 +1271,6 @@ impl App {
             .is_some_and(|doc| doc.deleted == Some(Deleted::Info))
     }
 
-    /// The rail's width in columns, 0 when neither of its panes is shown
-    /// (ADR 0049).
-    pub(crate) fn rail_width(&self) -> usize {
-        if !self.rail.tree && !self.rail.threads {
-            return 0;
-        }
-        let widest = self.width.saturating_sub(TEXT_MIN_WIDTH);
-        self.rail_cols
-            .map_or_else(
-                || self.rail.config.width.min(self.width / 3),
-                |cols| cols.min(widest),
-            )
-            .max(RAIL_MIN_WIDTH)
-    }
-
     /// Rows available to panes once the status line is taken.
     pub(crate) fn pane_rows(&self) -> usize {
         self.height.saturating_sub(1).max(1)
@@ -1322,10 +1307,10 @@ impl App {
 
     fn relayout(&mut self) {
         let rows = self.text_rows();
-        let rail = self.rail_width();
+        let sidebar = self.sidebar_width();
         let text_width = self
             .width
-            .saturating_sub(rail)
+            .saturating_sub(sidebar)
             .saturating_sub(crate::app::draw::gutter_width(self.view()))
             .max(1);
         self.view_mut().resize(text_width, rows);
@@ -1638,7 +1623,7 @@ impl App {
         }
     }
 
-    // ----- rail -----
+    // ----- sidebar -----
 
     fn ensure_tree(&mut self) -> bool {
         if self.tree.is_some() {
@@ -1656,7 +1641,7 @@ impl App {
         }
     }
 
-    /// What a start shows: the file named, else the rail with both panes
+    /// What a start shows: the file named, else the sidebar with both panes
     /// and the tree focused (ADR 0012, ADR 0049).
     pub(crate) fn start_on(&mut self, open: Option<&Path>) {
         if let Some(path) = open {
@@ -1669,7 +1654,7 @@ impl App {
 
     /// Show and focus the tree, as a workspace start does (ADR 0012).
     pub(crate) fn show_tree(&mut self) {
-        if !self.rail.tree {
+        if !self.sidebar.tree {
             self.toggle_tree_focus();
         }
     }
@@ -1677,11 +1662,11 @@ impl App {
     /// Open and focus the files pane, or hand focus back: the tree's
     /// `Esc` and the text's `h` at column 0 (ADR 0056 unbound `Space e`).
     pub(crate) fn toggle_tree_focus(&mut self) {
-        if !self.rail.tree {
+        if !self.sidebar.tree {
             if !self.ensure_tree() {
                 return;
             }
-            self.rail.tree = true;
+            self.sidebar.tree = true;
             self.reveal_current();
             self.focus = Focus::Tree;
         } else if self.focus == Focus::Tree {
@@ -1694,10 +1679,10 @@ impl App {
     }
 
     /// `Space p f`: hide the files pane, or show it again without taking
-    /// the keys; the threads pane keeps the rail either way.
+    /// the keys; the threads pane keeps the sidebar either way.
     pub(crate) fn toggle_tree_shown(&mut self) {
-        if self.rail.tree {
-            self.rail.tree = false;
+        if self.sidebar.tree {
+            self.sidebar.tree = false;
             if self.focus == Focus::Tree {
                 self.focus = Focus::View;
             }
@@ -1705,7 +1690,7 @@ impl App {
             if !self.ensure_tree() {
                 return;
             }
-            self.rail.tree = true;
+            self.sidebar.tree = true;
             self.reveal_current();
         }
         self.relayout();
@@ -1846,8 +1831,8 @@ pub(crate) struct Options {
     pub(crate) markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
     pub(crate) viewer: ViewerConfig,
-    /// The rail's width and split (ADR 0049).
-    pub(crate) rail: RailConfig,
+    /// The sidebar's width and split (ADR 0049).
+    pub(crate) sidebar: SidebarConfig,
     /// How threads show in the text (ADR 0049).
     pub(crate) threads: ThreadsConfig,
     /// Subscriptions and the wake command (ADR 0040).
@@ -1872,7 +1857,7 @@ impl Options {
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
-            rail: RailConfig::default(),
+            sidebar: SidebarConfig::default(),
             threads: ThreadsConfig::default(),
             agents: AgentsConfig::default(),
             config_path: PathBuf::from("config.kdl"),

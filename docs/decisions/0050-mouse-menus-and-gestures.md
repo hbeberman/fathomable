@@ -8,7 +8,7 @@ related_resources:
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable/src/app/view.rs
-  - crates/fathomable/src/app/rail.rs
+  - crates/fathomable/src/app/files_pane.rs
   - crates/fathomable/src/app/threads/pane.rs
   - crates/fathomable/src/app/threads/list.rs
   - crates/fathomable/src/app/run.rs

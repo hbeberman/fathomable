@@ -118,7 +118,8 @@ The `Space` menu, from any pane:
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
 | `Space w w`, `Space Space` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
-| `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the rail) |
+| `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
+| `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
 | `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
 | `Space c x` | threads: toggle stubs for resolved threads (hidden by default) |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
@@ -129,7 +130,7 @@ The `Space` menu, from any pane:
 | `Space ?` | all keys |
 | `:` | the command line, from any pane |
 
-Threads pane (the rail's lower pane; its header reads `threads · file 3`
+Threads pane (the sidebar's lower pane; its header reads `threads · file 3`
 or `threads · workspace 12`):
 
 | Keys | Action |
@@ -191,7 +192,7 @@ under the pointer — over the tree it steps one row per tick, showing
 each file it lands on — and a click focuses the pane. A click in the
 tree stays in the tree: it expands a directory or shows a file like the
 wheel does, and only `Enter` moves focus to the view. A click on a stub
-expands its thread. Drag the rail's divider or the threads pane's rule
+expands its thread. Drag the sidebar's divider or the threads pane's rule
 to resize them.
 
 A **right-click** opens a menu of what the pointer is on, each entry
@@ -297,14 +298,14 @@ places its cursor. Submit, cancel, or clear an empty draft and the rows
 go: a reply becomes the newest message under the cursor, a new comment
 becomes a stub.
 
-The left column is the **rail**: the **files pane** above the **threads
+The left column is the **sidebar**: the **files pane** above the **threads
 pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
-the rail drawn while either is. The threads pane lists this file's
+the sidebar drawn while either is. The threads pane lists this file's
 threads in line order or, after `s`, the whole workspace's by file and
 line, resolved ones hidden until `x` shows them: `●` open or `✓`
 resolved in the gutter colour, `L3-5` or `guide.md:3`, the first line of
 the newest message, `↩n` when replied, and the age at the edge. Beside
-the files pane it keeps `rail.split` rows (8 by default; drag its rule to
+the files pane it keeps `sidebar.split` rows (8 by default; drag its rule to
 change that for the session), and alone it takes the whole column. The
 highlighted row is the thread under the cursor, so reading the file
 walks the pane; `j`/`k` step the cursor and the text follows, another
@@ -331,7 +332,7 @@ newest message; `s` sorts by file and line instead. Resolved threads
 are hidden until `x` shows them dimmed (the threads pane shares the
 flag). Every entry header carries the path, the lines, the state, and
 the age, then the comment and replies in full. It takes the text column
-the way a document does; the rail stays beside it. The newest message
+the way a document does; the sidebar stays beside it. The newest message
 in the selected thread starts highlighted; `j`/`k` move between
 threads, `l`/`h` move between their messages, `Ctrl-d`/`Ctrl-u` move by
 half a page of rows, `z` folds an entry, and `e` edits a highlighted
@@ -472,7 +473,7 @@ viewer {
     seen-idle 5000          // ms alone with a file before it counts as seen
 }
 
-rail {
+sidebar {
     width 32                // columns for the files and threads panes
     split 8                 // rows the threads pane keeps under the files pane
 }

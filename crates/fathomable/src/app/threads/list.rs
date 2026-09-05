@@ -5,7 +5,7 @@
 //!
 //! The list keeps only its own state — whether it is open, the scroll,
 //! and the folds; the sort, the resolved flag, and the file filter are
-//! the [`ReviewState`] the rail's threads pane shares. Its rows are
+//! the [`ReviewState`] the sidebar's threads pane shares. Its rows are
 //! computed from the store on every draw and key by
 //! [`App::review_rows`], so a reload or a change of state needs
 //! nothing invalidated.
@@ -49,7 +49,7 @@ impl ReviewSort {
 }
 
 /// What the review shows (ADR 0049), shared by the review list and the
-/// rail's threads pane.
+/// sidebar's threads pane.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReviewState {
     pub(crate) sort: ReviewSort,
@@ -312,7 +312,7 @@ impl App {
 
     /// Columns the list has: the text column without the tree.
     pub(crate) fn column_width(&self) -> usize {
-        self.width.saturating_sub(self.rail_width()).max(1)
+        self.width.saturating_sub(self.sidebar_width()).max(1)
     }
 
     /// The rows and entries for a list `width` cells wide, in review

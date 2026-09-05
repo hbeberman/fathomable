@@ -172,7 +172,7 @@ pub(crate) enum Where {
     View,
     /// The file tree.
     Tree,
-    /// The rail's threads pane.
+    /// The sidebar's threads pane.
     ThreadsPane,
     /// The review list.
     Review,
@@ -273,6 +273,8 @@ actions! {
     WindowUp,
     WindowRight,
     WindowNext,
+    WindowFiles,
+    WindowThreads,
     PaneScope,
     ReviewResolved,
     ReviewSort,
@@ -717,6 +719,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::WindowNext,
         "Space menu",
         "next pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('w'), c('f')]],
+        A::WindowFiles,
+        "Space menu",
+        "window: files pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('w'), c('t')]],
+        A::WindowThreads,
+        "Space menu",
+        "window: threads pane",
     ),
     bind(
         W::Any,
@@ -1572,7 +1588,7 @@ mod tests {
         assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["i", "r"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('w')]),
-            ["h", "j", "k", "l", "w"]
+            ["h", "j", "k", "l", "w", "f", "t"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "t"]);
         assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);

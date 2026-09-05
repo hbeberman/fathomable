@@ -6,8 +6,9 @@
 //! rather than being ignored, so typos surface immediately. `theme`, the
 //! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
-//! `agents` block (ADR 0040), the `rail` and `threads` blocks and the
-//! reserved, still empty `checkpoints` block (ADR 0049) are understood; a
+//! `agents` block (ADR 0040), the `sidebar` (ADR 0057; `rail` in 0049) and
+//! `threads` blocks and the reserved, still empty `checkpoints` block
+//! (ADR 0049) are understood; a
 //! `follow` block from before the rename is an error that names where
 //! each setting went.
 //!
@@ -38,7 +39,7 @@ pub struct Config {
     watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
-    rail: RailConfig,
+    sidebar: SidebarConfig,
     threads: ThreadsConfig,
     agents: AgentsConfig,
 }
@@ -61,17 +62,17 @@ impl Default for ThreadsConfig {
     }
 }
 
-/// The `rail { ... }` block (ADR 0049): the left column that holds the
-/// tree pane and the threads pane.
+/// The `sidebar { ... }` block (ADR 0049, named by ADR 0057): the left
+/// column that holds the files pane and the threads pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RailConfig {
-    /// Columns the rail takes, clamped to a third of the terminal.
+pub struct SidebarConfig {
+    /// Columns the sidebar takes, clamped to a third of the terminal.
     pub width: usize,
-    /// Rows the threads pane takes under the tree.
+    /// Rows the threads pane takes under the files pane.
     pub split: usize,
 }
 
-impl Default for RailConfig {
+impl Default for SidebarConfig {
     fn default() -> Self {
         Self {
             width: 32,
@@ -500,24 +501,24 @@ impl Config {
                         });
                     }
                 }
-                "rail" => {
+                "sidebar" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
                             path: None,
                             line,
-                            message: "`rail` takes a block of settings".to_owned(),
+                            message: "`sidebar` takes a block of settings".to_owned(),
                         });
                     };
                     for child in children.nodes() {
                         let line = Some(line_of(child.span().offset()));
                         match child.name().value() {
-                            "width" => config.rail.width = cells(child, line, "column count")?,
-                            "split" => config.rail.split = cells(child, line, "row count")?,
+                            "width" => config.sidebar.width = cells(child, line, "column count")?,
+                            "split" => config.sidebar.split = cells(child, line, "row count")?,
                             other => {
                                 return Err(ConfigError {
                                     path: None,
                                     line,
-                                    message: format!("unknown rail setting `{other}`"),
+                                    message: format!("unknown sidebar setting `{other}`"),
                                 });
                             }
                         }
@@ -584,10 +585,10 @@ impl Config {
         &self.viewer
     }
 
-    /// The rail's width and split (ADR 0049).
+    /// The sidebar's width and split (ADR 0049, ADR 0057).
     #[must_use]
-    pub fn rail(&self) -> &RailConfig {
-        &self.rail
+    pub fn sidebar(&self) -> &SidebarConfig {
+        &self.sidebar
     }
 
     /// How threads show in the text (ADR 0049).
@@ -743,7 +744,7 @@ watch {
 viewer {
     seen-idle 10
 }
-rail {
+sidebar {
     width 40
     split 12
 }
@@ -763,12 +764,12 @@ checkpoints {
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
         assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
-        assert_eq!(config.rail().width, 40);
-        assert_eq!(config.rail().split, 12);
+        assert_eq!(config.sidebar().width, 40);
+        assert_eq!(config.sidebar().split, 12);
         assert!(!config.threads().stubs);
         assert!(config.threads().stubs_resolved);
         assert_eq!(Config::default().threads(), &ThreadsConfig::default());
-        assert_eq!(Config::default().rail(), &RailConfig::default());
+        assert_eq!(Config::default().sidebar(), &SidebarConfig::default());
     }
 
     /// A `follow` block from before ADR 0047 is refused with the new home

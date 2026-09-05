@@ -70,7 +70,11 @@ is the **rail**, holding the **tree pane** and the **threads pane**; the
 thread pane and the file-threads pane are gone; the `Space A` view is
 the **review list**; **stub**, **checkpoint**, and **jumplist** join the
 table and the `ui.sidebar.*` theme keys become `ui.rail.*` with one
-release of the old spelling.
+release of the old spelling. Amended 2026-09-05 by
+[0057](0057-the-sidebar.md): the left column is the **sidebar** after
+all, holding the **files pane** and the **threads pane**; rail retires,
+and the `rail` config node and `ui.rail.*` keys go back to `sidebar`
+and `ui.sidebar.*` with no old spelling kept.
 
 The renames that carry it, each landing as one commit:
 

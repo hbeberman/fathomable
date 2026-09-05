@@ -21,7 +21,9 @@ a theme file sets. Amended 2026-09-04 by
 [0049](0049-inline-threads-and-the-rail.md): `ui.sidebar*` is `ui.rail*`
 on the same terms. Amended 2026-09-04 by
 [0051](0051-retire-one-release-compatibility.md): both old spellings are
-unknown keys now, and `--doctor` no longer reports them.
+unknown keys now, and `--doctor` no longer reports them. Amended
+2026-09-05 by [0057](0057-the-sidebar.md): `ui.rail*` is `ui.sidebar*`
+again, and `ui.rail*` is an unknown key.
 
 ## Context
 
@@ -100,7 +102,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.warning` | the `deleted` banner over a file that is gone ([0028](0028-live-workspace.md)) |
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
-| `ui.rail`, `ui.rail.selected`, `ui.rail.dir` | the rail's background, the tree pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.sidebar*` before [0049](0049-inline-threads-and-the-rail.md) |
+| `ui.sidebar`, `ui.sidebar.selected`, `ui.sidebar.dir` | the sidebar's background, the files pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.rail*` between [0049](0049-inline-threads-and-the-rail.md) and [0057](0057-the-sidebar.md) |
 | `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, key labels (0012); the space menu drew on it before [0056](0056-the-leader-trimmed.md) |
 | `ui.menu` | the `Space` menu and the right-click menu's surface; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |

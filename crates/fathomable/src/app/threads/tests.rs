@@ -708,13 +708,13 @@ fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
 
     // Dragging the tree's divider resizes the tree.
     app.toggle_tree_focus();
-    let width = app.rail_width();
+    let width = app.sidebar_width();
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, width - 1, 3));
-    assert_eq!(app.dragging(), Some(Border::Rail));
+    assert_eq!(app.dragging(), Some(Border::Sidebar));
     crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 44, 3));
-    assert_eq!(app.rail_width(), 45);
+    assert_eq!(app.sidebar_width(), 45);
     crate::app::input::mouse::handle_mouse(&mut app, mouse(drag, 2, 3));
-    assert_eq!(app.rail_width(), 8, "no narrower than the minimum");
+    assert_eq!(app.sidebar_width(), 8, "no narrower than the minimum");
     crate::app::input::mouse::handle_mouse(&mut app, mouse(up, 2, 3));
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 3, 0));
     assert_eq!(app.focus(), Focus::Tree, "the header row focuses the tree");
@@ -979,7 +979,7 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
 
 /// The review is an inbox (ADR 0049): threads an agent spoke in last
 /// come first, newest first, then the rest; `s` orders by file and
-/// line instead, and the rail's threads pane follows the same order
+/// line instead, and the sidebar's threads pane follows the same order
 /// in workspace scope.
 #[test]
 fn the_review_orders_by_newest_agent_reply_then_by_file() -> anyhow::Result<()> {
@@ -1352,7 +1352,7 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
 
     draw(&mut app, "text")?;
     app.show_tree();
-    draw(&mut app, "rail")?;
+    draw(&mut app, "sidebar")?;
     app.expand_thread(id);
     draw(&mut app, "thread")?;
     app.thread_reply();

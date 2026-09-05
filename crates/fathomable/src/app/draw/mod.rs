@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
-//! Draw the app with ratatui: rail, gutter and text, thread surfaces,
+//! Draw the app with ratatui: sidebar, gutter and text, thread surfaces,
 //! popups, and the status line; `gutter`, `info`, and `message` build the
 //! rows the frame draws.
 
@@ -58,9 +58,9 @@ pub(crate) struct Theme {
     pub(crate) mode_normal: Style,
     pub(crate) mode_select: Style,
     pub(crate) mode_input: Style,
-    pub(crate) rail: Style,
-    pub(crate) rail_selected: Style,
-    pub(crate) rail_dir: Style,
+    pub(crate) sidebar: Style,
+    pub(crate) sidebar_selected: Style,
+    pub(crate) sidebar_dir: Style,
     pub(crate) popup: Style,
     pub(crate) popup_key: Style,
     /// The `Space` menu and the right-click menu (ADR 0056).
@@ -106,9 +106,9 @@ impl Theme {
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
-            rail: style(Key::UiRail),
-            rail_selected: style(Key::UiRailSelected),
-            rail_dir: style(Key::UiRailDir),
+            sidebar: style(Key::UiSidebar),
+            sidebar_selected: style(Key::UiSidebarSelected),
+            sidebar_dir: style(Key::UiSidebarDir),
             popup: style(Key::UiPopup),
             popup_key: style(Key::UiPopupKey),
             menu: style(Key::UiMenu),
@@ -193,19 +193,19 @@ fn u16_of(value: usize) -> u16 {
 pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = frame.area();
     let rows = app.pane_rows();
-    let rail = app.rail_width();
+    let sidebar = app.sidebar_width();
     let view = app.view();
     let gutter = gutter_width(view);
     let pane_height = u16_of(rows).min(area.height);
-    let rail_area = Rect {
-        width: u16_of(rail),
+    let sidebar_area = Rect {
+        width: u16_of(sidebar),
         height: pane_height,
         ..area
     };
     // The text column: the view, the draft written in its rows.
     let text_area = Rect {
-        x: area.x + rail_area.width,
-        width: area.width.saturating_sub(rail_area.width),
+        x: area.x + sidebar_area.width,
+        width: area.width.saturating_sub(sidebar_area.width),
         height: pane_height,
         ..area
     };
@@ -215,7 +215,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         ..area
     };
 
-    draw_rail(frame, app, theme, rail_area);
+    draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     let text_area = draw_checkpoint_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
@@ -508,8 +508,8 @@ fn tree_lines<'a>(
         .map_or_else(|| "/".to_owned(), |n| n.to_string_lossy().into_owned());
     let mut out = Vec::with_capacity(rows);
     // The header carries the repo's summed `+n -m` (ADR 0017).
-    let header_style = theme.rail_dir.add_modifier(Modifier::BOLD);
-    // A rail too narrow for the whole name cuts it rather than spilling
+    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    // A sidebar too narrow for the whole name cuts it rather than spilling
     // over the divider.
     let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
     let mut header_width = display_width(&title);
@@ -557,12 +557,12 @@ fn tree_lines<'a>(
             if row.is_dir() { "/" } else { "" }
         );
         let mut style = if row.is_dir() {
-            theme.rail_dir
+            theme.sidebar_dir
         } else {
-            theme.rail
+            theme.sidebar
         };
         if index == tree.cursor() {
-            style = style.patch(theme.rail_selected);
+            style = style.patch(theme.sidebar_selected);
             if !focused {
                 style = style.remove_modifier(Modifier::BOLD);
             }
@@ -576,7 +576,7 @@ fn tree_lines<'a>(
         };
         let (letter, mut tail) = tree_marks(app, row, theme, style, badge);
         // The marks follow the name directly, one space apart, and the
-        // rest of the row is padded; a narrow rail drops the marks.
+        // rest of the row is padded; a narrow sidebar drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
         if tail_width == 0 || inner <= tail_width + 1 {
             tail.clear();
@@ -584,7 +584,7 @@ fn tree_lines<'a>(
         }
         let name = fit(&text, inner - tail_width).trim_end().to_owned();
         // The git letter takes the gutter column ahead of the indent, which
-        // is the name's leading space; a rail too narrow to hold any of
+        // is the name's leading space; a sidebar too narrow to hold any of
         // the name has no such column to take.
         let letter = letter.filter(|_| !name.is_empty());
         let used = display_width(&name) + tail_width;
@@ -673,9 +673,9 @@ fn tree_marks<'a>(
     (letter, tail)
 }
 
-/// The rail (ADR 0049): the files pane on top, the threads pane along
+/// The sidebar (ADR 0049): the files pane on top, the threads pane along
 /// the bottom, either one alone when the other is hidden.
-fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if area.width == 0 {
         return;
     }
@@ -700,7 +700,7 @@ fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 width,
                 usize::from(tree_area.height),
             ))
-            .style(theme.rail),
+            .style(theme.sidebar),
             tree_area,
         );
     }
@@ -712,7 +712,7 @@ fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 width,
                 usize::from(pane_area.height),
             ))
-            .style(theme.rail),
+            .style(theme.sidebar),
             pane_area,
         );
     }
@@ -735,9 +735,9 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
         "─".repeat(inner),
         theme.info,
     )]));
-    let scope = app.rail_scope();
+    let scope = app.sidebar_scope();
     let entries = app.threads_pane_rows();
-    let header_style = theme.rail_dir.add_modifier(Modifier::BOLD);
+    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
     let title = format!(" threads · {} {}", scope.word(), entries.len());
     let keys = "s x ";
     let mut header = Vec::new();
@@ -770,9 +770,9 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
         .skip(app.threads_pane_scroll())
         .take(rows.saturating_sub(2))
     {
-        let mut style = theme.rail;
+        let mut style = theme.sidebar;
         if selected == Some(index) {
-            style = style.patch(theme.rail_selected);
+            style = style.patch(theme.sidebar_selected);
             if !focused {
                 style = style.remove_modifier(Modifier::BOLD);
             }
@@ -810,7 +810,7 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
     while out.len() < rows {
         out.push(with_divider(vec![Span::styled(
             " ".repeat(inner),
-            theme.rail,
+            theme.sidebar,
         )]));
     }
     out
@@ -1365,7 +1365,7 @@ pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
     Grid::bottom(
         entries,
         &bindings::menu_title(app.prefix()),
-        app.rail_width(),
+        app.sidebar_width(),
         0,
         app.column_width(),
         app.pane_rows(),

@@ -34,14 +34,14 @@ pub(crate) struct Press {
 
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
-/// rail's divider or the threads pane's rule drags that border.
+/// sidebar's divider or the threads pane's rule drags that border.
 pub(crate) fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     app.with_navigation_watch(|app| mouse_event(app, event))
 }
 
-/// The mouse over the rail: the threads pane along its bottom (ADR 0027,
+/// The mouse over the sidebar: the threads pane along its bottom (ADR 0027,
 /// ADR 0049) takes what lands on it; the tree above pages the viewer.
-fn rail_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) {
+fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) {
     let tree_rows = app.tree_rows();
     if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
         threads_pane_mouse(app, kind, column, row, row - tree_rows);
@@ -96,8 +96,8 @@ fn threads_pane_mouse(
         MouseEventKind::Down(MouseButton::Left) if pane_row == 1 => {
             app.threads_pane_focus();
             // The header ends in `s x ` before the divider: the `x` sits
-            // three cells in from the rail's edge.
-            if column + 3 == app.rail_width() {
+            // three cells in from the sidebar's edge.
+            if column + 3 == app.sidebar_width() {
                 app.review_toggle_resolved();
             } else {
                 app.threads_pane_toggle_scope();
@@ -127,7 +127,7 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             let width = app.column_width();
             let rows = app.review_rows(width);
             let header = draw::review_header(app, &rows.entries);
-            if let Some(action) = header.action_at(width, column - app.rail_width()) {
+            if let Some(action) = header.action_at(width, column - app.sidebar_width()) {
                 return app.act(action);
             }
         }
@@ -278,7 +278,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         app.cancel_delete();
     }
     let rows = app.pane_rows();
-    let rail = app.rail_width();
+    let sidebar = app.sidebar_width();
     if app.dragging().is_some() {
         match event.kind {
             MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
@@ -287,8 +287,8 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         }
         return Effect::None;
     }
-    if left && row < rows && rail > 0 && column + 1 == rail {
-        app.begin_drag(Border::Rail);
+    if left && row < rows && sidebar > 0 && column + 1 == sidebar {
+        app.begin_drag(Border::Sidebar);
         return Effect::None;
     }
     // The draft keeps the keys, and the right button while it is open
@@ -296,8 +296,8 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if right && matches!(app.popup(), Some(Popup::Compose(_))) {
         return Effect::None;
     }
-    if column < rail {
-        rail_mouse(app, event.kind, column, row);
+    if column < sidebar {
+        sidebar_mouse(app, event.kind, column, row);
         return Effect::None;
     }
     if app.review_list().is_open() {
@@ -311,8 +311,8 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
 /// an expanded thread's header, or begins a selection gesture; a drag
 /// extends the selection.
 fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Effect {
-    let rail = app.rail_width();
-    let gutter = rail + crate::app::draw::gutter_width(app.view());
+    let sidebar = app.sidebar_width();
+    let gutter = sidebar + crate::app::draw::gutter_width(app.view());
     let in_gutter = column < gutter;
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
@@ -321,7 +321,7 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
     let top = app.text_top();
     let Some(text_row) = row.checked_sub(top) else {
         if left && app.checkpoint_chrome() && row + 1 == top {
-            return checkpoint_header_click(app, column - rail);
+            return checkpoint_header_click(app, column - sidebar);
         }
         return Effect::None;
     };

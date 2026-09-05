@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0027-revisiting-threads.md
 //! The threads pane (ADR 0027, reshaped by ADR 0049): the lower pane of
-//! the rail, listing this file's threads in line order or the whole
+//! the sidebar, listing this file's threads in line order or the whole
 //! workspace's by file and line, resolved ones hidden until asked for.
 //!
 //! The pane keeps no selection of its own. The highlighted row is the
@@ -13,37 +13,10 @@
 use std::path::PathBuf;
 
 use fathomable_core::annotations::{LineRange, ThreadId};
-use fathomable_core::config::RailConfig;
 
 use crate::app::threads::words::Words;
 use crate::app::threads::{Mark, ThreadState};
 use crate::app::{App, Focus};
-
-/// The rail's state (ADR 0049): which of its panes are shown, what the
-/// threads pane lists, the split a drag set, and the configured sizes.
-#[derive(Debug)]
-pub(crate) struct Rail {
-    /// The files pane is shown.
-    pub(crate) tree: bool,
-    /// The threads pane is shown.
-    pub(crate) threads: bool,
-    pub(crate) scope: PaneScope,
-    /// Rows a drag gave the threads pane, over `config.split`.
-    pub(crate) split: Option<usize>,
-    pub(crate) config: RailConfig,
-}
-
-impl Rail {
-    pub(crate) fn new(config: RailConfig) -> Self {
-        Self {
-            tree: false,
-            threads: false,
-            scope: PaneScope::default(),
-            split: None,
-            config,
-        }
-    }
-}
 
 /// Rows the pane needs before its entries: the rule and the header.
 const CHROME_ROWS: usize = 2;
@@ -133,20 +106,20 @@ impl PaneRow {
 }
 
 impl App {
-    /// Whether the pane is shown in the rail.
+    /// Whether the pane is shown in the sidebar.
     pub(crate) fn threads_pane_shown(&self) -> bool {
-        self.rail.threads
+        self.sidebar.threads
     }
 
     /// Which threads the pane lists.
-    pub(crate) fn rail_scope(&self) -> PaneScope {
-        self.rail.scope
+    pub(crate) fn sidebar_scope(&self) -> PaneScope {
+        self.sidebar.scope
     }
 
     /// The threads the pane lists, in its order, resolved ones only when
     /// the review shows them.
     pub(crate) fn threads_pane_ids(&self) -> Vec<ThreadId> {
-        match self.rail.scope {
+        match self.sidebar.scope {
             // Line order, resolved ones when the review shows them.
             PaneScope::File => {
                 let order = self.file_threads();
@@ -203,11 +176,11 @@ impl App {
             .collect()
     }
 
-    /// Rows the pane takes at the bottom of the rail: 0 when hidden, the
-    /// whole column when the tree is hidden, else the split `rail.split`
+    /// Rows the pane takes at the bottom of the sidebar: 0 when hidden, the
+    /// whole column when the tree is hidden, else the split `sidebar.split`
     /// or a drag set, kept between one entry and the tree's minimum.
     pub(crate) fn threads_pane_height(&self) -> usize {
-        if !self.rail.threads {
+        if !self.sidebar.threads {
             return 0;
         }
         let rows = self.pane_rows();
@@ -216,9 +189,9 @@ impl App {
         }
         let tallest = rows.saturating_sub(TREE_MIN_ROWS);
         let least = MIN_ROWS.min(tallest);
-        self.rail
+        self.sidebar
             .split
-            .unwrap_or(self.rail.config.split)
+            .unwrap_or(self.sidebar.config.split)
             .clamp(least, tallest)
     }
 
@@ -253,13 +226,13 @@ impl App {
     }
 
     /// `Space p t`: hide the pane, or show it again without taking the
-    /// keys; the tree keeps the rail if it is shown.
+    /// keys; the tree keeps the sidebar if it is shown.
     pub(crate) fn toggle_threads_pane_shown(&mut self) {
-        if !self.rail.threads {
+        if !self.sidebar.threads {
             self.show_threads_pane();
             return;
         }
-        self.rail.threads = false;
+        self.sidebar.threads = false;
         if self.focus == Focus::ThreadsPane {
             self.focus = Focus::View;
         }
@@ -268,8 +241,8 @@ impl App {
 
     /// Show the pane without taking the keys, as a workspace start does.
     pub(crate) fn show_threads_pane(&mut self) {
-        if !self.rail.threads {
-            self.rail.threads = true;
+        if !self.sidebar.threads {
+            self.sidebar.threads = true;
             self.relayout();
         }
     }
@@ -303,11 +276,11 @@ impl App {
 
     /// `s`: list this file, or the whole workspace.
     pub(crate) fn threads_pane_toggle_scope(&mut self) {
-        self.rail.scope = match self.rail.scope {
+        self.sidebar.scope = match self.sidebar.scope {
             PaneScope::File => PaneScope::Workspace,
             PaneScope::Workspace => PaneScope::File,
         };
-        self.notice(format!("threads: {}", self.rail.scope.word()));
+        self.notice(format!("threads: {}", self.sidebar.scope.word()));
     }
 
     /// A click on the pane's rule row or header: the keys come here.
@@ -341,19 +314,19 @@ impl App {
 
     /// The pane's rule was dragged to screen row `row`.
     pub(crate) fn drag_threads_pane_to(&mut self, row: usize) {
-        self.rail.split = Some(self.pane_rows().saturating_sub(row));
+        self.sidebar.split = Some(self.pane_rows().saturating_sub(row));
     }
 
     /// Land the cursor on `id` from the pane: the file opens if it is
     /// elsewhere and the keys stay with the pane.
     fn land_in_pane(&mut self, id: ThreadId) {
-        if self.land_on_thread(id) && self.rail.threads {
+        if self.land_on_thread(id) && self.sidebar.threads {
             self.focus = Focus::ThreadsPane;
         }
     }
 
     fn empty_pane_notice(&self) -> &'static str {
-        match self.rail.scope {
+        match self.sidebar.scope {
             PaneScope::File => "no threads in this file",
             PaneScope::Workspace => "no threads in the workspace",
         }
@@ -412,7 +385,7 @@ mod tests {
         Ok(())
     }
 
-    fn rail_column(app: &App) -> anyhow::Result<Vec<String>> {
+    fn sidebar_column(app: &App) -> anyhow::Result<Vec<String>> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = crate::app::draw::Theme::from_core(&core);
         let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
@@ -420,7 +393,7 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         Ok((0..buffer.area.height)
             .map(|y| {
-                (0..u16::try_from(app.rail_width()).unwrap_or(0))
+                (0..u16::try_from(app.sidebar_width()).unwrap_or(0))
                     .map(|x| buffer[(x, y)].symbol().to_owned())
                     .collect::<String>()
             })
@@ -454,7 +427,7 @@ mod tests {
 
         // The drawn pane: rule, header with the scope and count, one row
         // per thread with the glyph, place, and the newest message.
-        let column = rail_column(&app)?;
+        let column = sidebar_column(&app)?;
         let top = app.tree_rows();
         assert!(column[top].starts_with("───"), "rule: {:?}", column[top]);
         assert!(
@@ -500,7 +473,7 @@ mod tests {
         // the place saying which file.
         answer_later(&mut app, 0)?;
         press(&mut app, "s");
-        assert_eq!(app.rail_scope(), PaneScope::Workspace);
+        assert_eq!(app.sidebar_scope(), PaneScope::Workspace);
         let rows = app.threads_pane_rows();
         assert_eq!(
             rows.iter()
@@ -508,7 +481,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["README.md:7", "guide.md:3"]
         );
-        let column = rail_column(&app)?;
+        let column = sidebar_column(&app)?;
         assert!(
             column[app.tree_rows() + 1].contains("threads · workspace 2"),
             "{:?}",
@@ -546,26 +519,26 @@ mod tests {
         Ok(())
     }
 
-    /// The pane shows with the tree hidden and takes the whole rail;
+    /// The pane shows with the tree hidden and takes the whole sidebar;
     /// beside the tree its split is fixed whatever the thread count, and
     /// only a drag changes it. `Space w h` and `Space w l` focus and
     /// return; `Space p f` and `Space p t` show and hide each pane on its
     /// own (ADR 0056).
     #[test]
-    fn the_rail_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
+    fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
         let dir = fixture("split")?;
         let mut app = source_app(&dir)?;
-        assert_eq!(app.rail_width(), 0);
+        assert_eq!(app.sidebar_width(), 0);
         assert_eq!(app.threads_pane_height(), 0);
 
-        // With nothing shown the pane alone fills the rail.
+        // With nothing shown the pane alone fills the sidebar.
         app.focus_threads_pane();
         assert_eq!(app.focus(), Focus::ThreadsPane);
         assert!(app.tree().is_none());
-        assert_eq!(app.rail_width(), 32);
+        assert_eq!(app.sidebar_width(), 32);
         assert_eq!(app.threads_pane_height(), app.pane_rows());
         assert_eq!(app.tree_rows(), 0);
-        let column = rail_column(&app)?;
+        let column = sidebar_column(&app)?;
         assert!(column[1].contains("threads · file 0"), "{:?}", column[1]);
         assert!(
             column[2].contains("no threads in this file"),
@@ -617,7 +590,7 @@ mod tests {
         assert_eq!(app.tree_rows(), top - 4);
 
         // `Space p f` hides the tree and leaves the pane; `Space p t` hides
-        // the pane, and with both gone the rail goes. Both keys show
+        // the pane, and with both gone the sidebar goes. Both keys show
         // their pane again without taking the keys.
         app.focus_threads_pane();
         press(&mut app, " pf");
@@ -628,11 +601,11 @@ mod tests {
             Focus::ThreadsPane,
             "the keys stay with the pane"
         );
-        assert_eq!(app.rail_width(), 32);
+        assert_eq!(app.sidebar_width(), 32);
         press(&mut app, " pt");
         assert!(!app.threads_pane_shown());
         assert_eq!(app.focus(), Focus::View);
-        assert_eq!(app.rail_width(), 0);
+        assert_eq!(app.sidebar_width(), 0);
         press(&mut app, " pt");
         assert!(app.threads_pane_shown(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");

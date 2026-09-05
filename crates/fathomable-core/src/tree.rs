@@ -71,7 +71,7 @@ pub enum Activation {
     Toggled,
 }
 
-/// The tree over one workspace, shown in the rail's tree pane.
+/// The tree over one workspace, shown in the sidebar's tree pane.
 #[derive(Debug, Clone)]
 pub struct Tree {
     root: Node,

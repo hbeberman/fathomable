@@ -223,7 +223,7 @@ mod tests {
         cursor_on(&mut app, 2, "lib.rs")?;
         let col = app.view().cursor().col;
         let column =
-            u16::try_from(app.rail_width() + crate::app::draw::gutter_width(app.view()) + col)?;
+            u16::try_from(app.sidebar_width() + crate::app::draw::gutter_width(app.view()) + col)?;
         let row = u16::try_from(app.text_top() + 2)?;
         app.view_mut().goto_top();
         let at = |kind, modifiers| MouseEvent {

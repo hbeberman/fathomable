@@ -6,7 +6,7 @@ resource: crates/fathomable/src/app/threads/stubs.rs
 related_resources:
   - crates/fathomable-core/src/layout/mod.rs
   - crates/fathomable/src/app/mod.rs
-  - crates/fathomable/src/app/rail.rs
+  - crates/fathomable/src/app/files_pane.rs
   - crates/fathomable/src/app/view.rs
   - crates/fathomable/src/app/threads/mod.rs
   - crates/fathomable/src/app/threads/cursor.rs
@@ -83,6 +83,10 @@ result.
 
 - The **rail** is the left column. It holds the **tree pane** above the
   **threads pane** as peers. "Sidebar" and "dock" are not used.
+  Amended 2026-09-05 by [0057](0057-the-sidebar.md): the column is the
+  **sidebar** after all, the `rail` node and `ui.rail*` keys with it;
+  the tree pane has been the **files pane** since
+  [0056](0056-the-leader-trimmed.md).
 - A **stub** is the condensed block a thread shows under its last
   anchored row. A stub is **collapsed** (two rows at most) or
   **expanded** (the whole thread).

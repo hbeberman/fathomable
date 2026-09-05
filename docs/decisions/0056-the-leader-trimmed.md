@@ -6,7 +6,7 @@ resource: crates/fathomable/src/app/window.rs
 related_resources:
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/app/input/menu.rs
-  - crates/fathomable/src/app/rail.rs
+  - crates/fathomable/src/app/files_pane.rs
   - crates/fathomable-core/src/theme.rs
   - crates/fathomable-core/themes/default-dark.kdl
   - crates/fathomable-core/themes/default-light.kdl
@@ -18,7 +18,10 @@ tags:
 
 # 0056 The leader, trimmed
 
-Status: accepted (2026-09-04)
+Status: accepted (2026-09-04); amended 2026-09-05 by
+[0057](0057-the-sidebar.md): the rail is the sidebar, and `Space w f`
+and `Space w t` join the window submenu, naming the files pane and the
+threads pane.
 
 ## Context
 

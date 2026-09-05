@@ -193,6 +193,8 @@ impl App {
             Action::WindowUp => self.window_up(),
             Action::WindowRight => self.window_right(),
             Action::WindowNext => self.window_next(),
+            Action::WindowFiles => self.window_files(),
+            Action::WindowThreads => self.window_threads(),
             Action::JumpNewest => self.jump_newest(),
             Action::AutoJumpToggle => self.toggle_auto_jump(),
             Action::Wake => self.wake(),
@@ -565,10 +567,12 @@ mod tests {
     /// current file and takes the keys there; `Space w j` and `Space w k`
     /// step between the panes; `Space w l` returns; `Space Space` cycles,
     /// skipping a hidden pane; a move with nowhere to go does nothing;
-    /// and `Space v s` toggles the view from the files pane (ADR 0056).
+    /// `Space v s` toggles the view from the files pane (ADR 0056); and
+    /// `Space w f` and `Space w t` name a pane, showing it first when it
+    /// is hidden (ADR 0057).
     #[test]
     fn space_w_moves_between_the_panes() -> anyhow::Result<()> {
-        let dir = fixture("rail")?;
+        let dir = fixture("sidebar")?;
         let mut app = source_app(&dir)?;
         app.open(Path::new("docs/guide.md"));
         assert!(app.tree().is_none());
@@ -603,11 +607,27 @@ mod tests {
         press(&mut app, " ww");
         assert_eq!(app.focus(), Focus::View);
         press(&mut app, " pf");
-        assert!(!app.rail.tree);
+        assert!(!app.sidebar.tree);
         press(&mut app, "  ");
         assert_eq!(app.focus(), Focus::ThreadsPane, "a hidden pane is skipped");
         press(&mut app, " wl");
         assert_eq!(app.focus(), Focus::View);
+
+        press(&mut app, " wf");
+        assert!(app.sidebar.tree, "Space w f shows the hidden files pane");
+        assert_eq!(app.focus(), Focus::Tree);
+        press(&mut app, " pt");
+        assert!(!app.sidebar.threads);
+        press(&mut app, " wt");
+        assert!(
+            app.sidebar.threads,
+            "Space w t shows the hidden threads pane"
+        );
+        assert_eq!(app.focus(), Focus::ThreadsPane);
+        press(&mut app, " wt");
+        assert_eq!(app.focus(), Focus::ThreadsPane, "already there");
+        press(&mut app, " wf");
+        assert_eq!(app.focus(), Focus::Tree, "from the threads pane");
         Ok(())
     }
 

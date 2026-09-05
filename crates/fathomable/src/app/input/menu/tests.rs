@@ -60,7 +60,7 @@ fn row_of(app: &App, text: &str) -> anyhow::Result<usize> {
 /// The screen column of text column `col` and the screen row of
 /// rendered row `row`, with the view unscrolled.
 fn at(app: &App, row: usize, col: usize) -> (usize, usize) {
-    let gutter = app.rail_width() + draw::gutter_width(app.view());
+    let gutter = app.sidebar_width() + draw::gutter_width(app.view());
     (gutter + col, app.text_top() + row)
 }
 
@@ -112,8 +112,8 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
     let row = row_of(&app, "alpha beta")?;
     let (column, screen_row) = at(&app, row, 3);
     // A press in the gutter selects the whole line.
-    let rail = app.rail_width();
-    left(&mut app, rail, screen_row);
+    let sidebar = app.sidebar_width();
+    left(&mut app, sidebar, screen_row);
     assert_eq!(app.view().mode(), Mode::Select);
     assert_eq!(app.view().selected_source().as_deref(), Some("alpha beta"));
 
@@ -133,7 +133,7 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
     assert!(app.menu().is_none(), "the menu closes once an entry runs");
 
     // Typing the entry's key runs it too.
-    left(&mut app, rail, screen_row);
+    left(&mut app, sidebar, screen_row);
     right(&mut app, column, screen_row);
     handle_key(&mut app, key('c'));
     assert!(
@@ -312,21 +312,21 @@ fn gutter_double_and_triple_clicks_select() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     let alpha = row_of(&app, "alpha beta")?;
     let gamma = row_of(&app, "gamma")?;
-    let rail = app.rail_width();
+    let sidebar = app.sidebar_width();
     let (_, alpha_row) = at(&app, alpha, 0);
     let (_, gamma_row) = at(&app, gamma, 0);
-    left(&mut app, rail, alpha_row);
+    left(&mut app, sidebar, alpha_row);
     assert_eq!(app.view().selected_source().as_deref(), Some("alpha beta"));
     mouse(
         &mut app,
         MouseEventKind::Drag(MouseButton::Left),
-        rail,
+        sidebar,
         gamma_row,
     );
     mouse(
         &mut app,
         MouseEventKind::Up(MouseButton::Left),
-        rail,
+        sidebar,
         gamma_row,
     );
     assert_eq!(
@@ -469,7 +469,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     left(&mut app, column, screen_row);
     assert!(app.popup().is_none(), "the draft closed");
     let width = app.column_width();
-    let rail = app.rail_width();
+    let sidebar = app.sidebar_width();
 
     // The review list's header: the `sort` hint toggles the order.
     app.toggle_review();
@@ -480,7 +480,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         .find(|&c| header.action_at(width, c) == Some(Action::ReviewSort))
         .context("sort is drawn")?;
     let before = app.review().sort;
-    left(&mut app, rail + col, 0);
+    left(&mut app, sidebar + col, 0);
     assert_ne!(app.review().sort, before, "the sort hint ran");
     Ok(())
 }
@@ -493,10 +493,10 @@ fn the_threads_pane_header_toggles_the_reach() -> anyhow::Result<()> {
     if app.threads_pane_height() == 0 {
         app.toggle_threads_pane_shown();
     }
-    let before = app.rail_scope();
+    let before = app.sidebar_scope();
     let header_row = app.tree_rows() + 1;
     left(&mut app, 1, header_row);
-    assert_ne!(app.rail_scope(), before);
+    assert_ne!(app.sidebar_scope(), before);
     assert_eq!(app.focus(), Focus::ThreadsPane);
     Ok(())
 }

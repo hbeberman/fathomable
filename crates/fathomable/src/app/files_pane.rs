@@ -1,7 +1,8 @@
 // @okf-doc: /decisions/0023-sidebar-paging.md
 //! The files pane's hands on the app: tree operations, and the rule that
 //! the highlighted file is the one the main pane shows (ADR 0023; the
-//! pane is the rail's upper half since ADR 0049).
+//! pane is the sidebar's upper half since ADR 0049, the column named by
+//! ADR 0057).
 
 use fathomable_core::tree::{Activation, Tree};
 use fathomable_core::workspace::Workspace;

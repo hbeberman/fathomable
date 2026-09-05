@@ -265,7 +265,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),
-            rail: config.rail().clone(),
+            sidebar: config.sidebar().clone(),
             threads: config.threads().clone(),
             agents: config.agents().clone(),
             config_path: config_path(cli, dirs),
@@ -384,10 +384,10 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
         config.viewer().max_file_size_mib
     );
     println!("}}");
-    let rail = config.rail();
-    println!("rail {{");
-    println!("    width {}", rail.width);
-    println!("    split {}", rail.split);
+    let sidebar = config.sidebar();
+    println!("sidebar {{");
+    println!("    width {}", sidebar.width);
+    println!("    split {}", sidebar.split);
     println!("}}");
     let threads = config.threads();
     println!("threads {{");

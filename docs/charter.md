@@ -108,8 +108,9 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
   commit it can reach.
 - **Change**: a write the watcher queued for the reader; **last seen** is the
   snapshot "what changed since I looked" is measured from.
-- **Rail**: the left column, holding the **tree pane** and the **threads
-  pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md)).
+- **Sidebar**: the left column, holding the **files pane** and the
+  **threads pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md),
+  named by [0057](decisions/0057-the-sidebar.md)).
 - **Stub**: the condensed block a thread shows under its lines, collapsed
   to two rows or expanded to the whole thread.
 - **Review list**: the `Space t` view of every thread on the work.

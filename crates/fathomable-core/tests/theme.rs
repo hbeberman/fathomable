@@ -257,59 +257,24 @@ fn key_names_round_trip() -> TestResult {
     Ok(())
 }
 
-/// `annotation.*` keys from before ADR 0047 still load as `thread.*`, and
-/// the theme reports each one so `--doctor` can name it.
+/// The pre-0047 `annotation.*` and pre-0049 `ui.sidebar*` spellings are
+/// unknown keys (ADR 0051), named like any other misspelling.
 #[test]
-fn old_annotation_keys_load_as_thread_keys_and_are_reported() -> TestResult {
-    let theme = Theme::resolve(
-        "old",
-        from_map(&[(
-            "old",
-            "colors { \"annotation.open\" fg=\"#ff0000\"\n \"thread.line\" bg=\"#0000ff\" }",
-        )]),
-    )?;
-    assert_eq!(
-        theme.style(Key::ThreadOpen).fg(),
-        Some(Color::Rgb(255, 0, 0))
-    );
-    assert_eq!(
-        theme.style(Key::ThreadLine).bg(),
-        Some(Color::Rgb(0, 0, 255))
-    );
-    let reported: Vec<(&str, &str, &str)> = theme
-        .deprecated_keys()
-        .iter()
-        .map(|k| (k.theme.as_str(), k.written.as_str(), k.now.as_str()))
-        .collect();
-    assert_eq!(reported, [("old", "annotation.open", "thread.open")]);
-    // ADR 0049: the rail's keys were the sidebar's.
-    let theme = Theme::resolve(
-        "rail",
-        from_map(&[(
-            "rail",
-            "colors { \"ui.sidebar.dir\" fg=\"#010203\"\n \"ui.sidebar\" bg=\"#0000ff\" }",
-        )]),
-    )?;
-    assert_eq!(theme.style(Key::UiRailDir).fg(), Some(Color::Rgb(1, 2, 3)));
-    assert_eq!(theme.style(Key::UiRail).bg(), Some(Color::Rgb(0, 0, 255)));
-    let reported: Vec<(&str, &str)> = theme
-        .deprecated_keys()
-        .iter()
-        .map(|k| (k.written.as_str(), k.now.as_str()))
-        .collect();
-    assert_eq!(
-        reported,
-        [("ui.sidebar.dir", "ui.rail.dir"), ("ui.sidebar", "ui.rail")]
-    );
-    let error = must_fail(
-        "bad",
-        &[("bad", "colors { \"annotation.nope\" fg=\"red\" }")],
-    )?;
-    assert!(
-        error
-            .to_string()
-            .contains("unknown theme key `annotation.nope`"),
-        "{error}"
-    );
+fn retired_key_names_are_unknown() -> TestResult {
+    for (written, now) in [
+        ("annotation.open", "thread.open"),
+        ("ui.sidebar.dir", "ui.rail.dir"),
+    ] {
+        let text = format!("colors {{ \"{written}\" fg=\"red\" }}");
+        let error = must_fail("old", &[("old", &text)])?;
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("unknown theme key `{written}`")),
+            "{error}"
+        );
+        let text = format!("colors {{ \"{now}\" fg=\"#010203\" }}");
+        Theme::resolve("new", from_map(&[("new", &text)]))?;
+    }
     Ok(())
 }

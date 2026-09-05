@@ -217,7 +217,7 @@ the viewer only where the terminal forwards it under mouse capture
 (Ghostty, kitty, foot, WezTerm, and Alacritty do).
 Starting on a directory opens the tree; starting on a file opens the file.
 
-## 4. Annotations
+## 4. Threads
 
 Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content, so it follows the lines when text above
@@ -334,7 +334,7 @@ reply that needs an answer.
 Inside a git work tree the bar between the line numbers and the text shows
 what differs from `HEAD`: a green bar for added lines, orange for changed
 ones, and a thin red rule along the top of the line that follows a removal
-(the removed text itself is only shown in the diff view). Annotation marks
+(the removed text itself is only shown in the diff view). Thread marks
 sit at the far left of the gutter: a thread's rows are bracketed `╭`, `│`,
 `╰`, a thread on one row is `•`, and a thread nested inside another
 re-draws the corners on the outer one's line. The rows are the rendered

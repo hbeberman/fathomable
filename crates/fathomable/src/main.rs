@@ -59,7 +59,7 @@ struct Cli {
     doctor: bool,
 
     /// List known workspaces, their viewer records, and their sockets.
-    #[arg(long, alias = "sessions")]
+    #[arg(long)]
     viewers: bool,
 
     /// Name this viewer so an agent can target it (also `:name`).

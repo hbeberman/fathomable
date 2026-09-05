@@ -1491,7 +1491,7 @@ impl App {
                 self.reveal_followed();
                 Response::Done
             }
-            Request::AnnotationsList { since, path } => match &self.store {
+            Request::ThreadsList { since, path } => match &self.store {
                 Some(store) => Response::Threads(
                     store
                         .threads()
@@ -1930,7 +1930,7 @@ impl App {
 /// Everything [`App::new`] needs beyond the workspace and terminal size.
 #[derive(Debug)]
 pub struct Options {
-    /// This viewer's record, already written to the sessions directory.
+    /// This viewer's record, already written to the viewers directory.
     pub record: Record,
     /// Where records and state live, for `:name` to rewrite the record.
     pub dirs: XdgDirs,

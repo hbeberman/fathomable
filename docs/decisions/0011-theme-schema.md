@@ -102,7 +102,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.warning` | the `deleted` banner over a file that is gone ([0028](0028-live-workspace.md)) |
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
-| `ui.rail`, `ui.rail.selected`, `ui.rail.dir` | the rail's background, the tree pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.sidebar*` before [0049](0049-inline-threads-and-the-rail.md), still read for one release |
+| `ui.rail`, `ui.rail.selected`, `ui.rail.dir` | the rail's background, the tree pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.sidebar*` before [0049](0049-inline-threads-and-the-rail.md) |
 | `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
 | `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |

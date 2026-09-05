@@ -397,7 +397,7 @@ fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
 }
 
 /// A thread written against a commit HEAD does not contain is hidden
-/// from the marks and from `annotations_list`; one written against
+/// from the marks and from `threads_list`; one written against
 /// HEAD, or with no commit, shows. An append by another writer reaches
 /// the viewer through the store watch (ADR 0024).
 #[test]
@@ -434,7 +434,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
         "# Readme\nelsewhere\nhello\n",
         2,
     )?;
-    let legacy = store.annotate(
+    let unscoped = store.annotate(
         Draft::new(Path::new("README.md"), LineRange::new(3, 3), "unscoped"),
         text,
         3,
@@ -449,8 +449,8 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.open(Path::new("README.md"));
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here.clone(), legacy.clone()]);
-    let Response::Threads(listed) = app.handle_request(Request::AnnotationsList {
+    assert_eq!(ids, [here.clone(), unscoped.clone()]);
+    let Response::Threads(listed) = app.handle_request(Request::ThreadsList {
         since: None,
         path: None,
     }) else {
@@ -466,7 +466,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.on_changes(vec![store_path.clone()]);
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here, legacy, late]);
+    assert_eq!(ids, [here, unscoped, late]);
     Ok(())
 }
 

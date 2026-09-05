@@ -263,20 +263,6 @@ impl Key {
         }
     }
 
-    /// The name a key was written under before it was renamed, when
-    /// `name` is one: `annotation.*` is `thread.*` (ADR 0047) and
-    /// `ui.sidebar*` is `ui.rail*` (ADR 0049), each still accepted for one
-    /// release and reported by `--doctor`.
-    fn renamed_from(name: &str) -> Option<String> {
-        name.strip_prefix("annotation.")
-            .map(|rest| format!("thread.{rest}"))
-            .or_else(|| {
-                name.strip_prefix("ui.sidebar")
-                    .map(|rest| format!("ui.rail{rest}"))
-            })
-            .filter(|new| Self::parse(new).is_some())
-    }
-
     fn parse(name: &str) -> Option<Self> {
         if let Some(level) = name.strip_prefix("markup.heading.") {
             return level
@@ -298,18 +284,6 @@ pub struct Theme {
     name: String,
     styles: HashMap<Key, Style>,
     syntect: String,
-    deprecated: Vec<DeprecatedKey>,
-}
-
-/// A key a theme file sets under a name that was renamed (ADR 0047, 0049).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeprecatedKey {
-    /// The theme file that sets it.
-    pub theme: String,
-    /// The name as written.
-    pub written: String,
-    /// The name it has now.
-    pub now: String,
 }
 
 impl Theme {
@@ -369,9 +343,7 @@ impl Theme {
         let mut palette: HashMap<String, Option<Color>> = HashMap::new();
         let mut styles: HashMap<Key, Style> = HashMap::new();
         let mut syntect = None;
-        let mut deprecated = Vec::new();
         for file in chain.iter().rev() {
-            deprecated.extend(file.deprecated.iter().cloned());
             for (name, value) in &file.palette {
                 let color = value
                     .resolve(&palette)
@@ -395,7 +367,6 @@ impl Theme {
             name: name.to_owned(),
             styles,
             syntect: syntect.unwrap_or_default(),
-            deprecated,
         })
     }
 
@@ -403,13 +374,6 @@ impl Theme {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    /// Keys any file in the chain sets under a renamed name, root first,
-    /// for `--doctor` to report.
-    #[must_use]
-    pub fn deprecated_keys(&self) -> &[DeprecatedKey] {
-        &self.deprecated
     }
 
     /// The style for `key`. Heading levels fall back to `markup.heading`.
@@ -649,8 +613,6 @@ struct ThemeFile {
     palette: Vec<(String, RawColor)>,
     colors: Vec<(Key, RawStyle)>,
     syntect: Option<String>,
-    /// Keys written under a name renamed by ADR 0047 or 0049.
-    deprecated: Vec<DeprecatedKey>,
 }
 
 impl ThemeFile {
@@ -671,7 +633,6 @@ impl ThemeFile {
             palette: Vec::new(),
             colors: Vec::new(),
             syntect: None,
-            deprecated: Vec::new(),
         };
         for node in doc.nodes() {
             let at = |n: &KdlNode| Location::at(text, n.span().offset());
@@ -705,17 +666,9 @@ impl ThemeFile {
                 "colors" => {
                     for entry in children(node) {
                         let key_name = entry.name().value();
-                        let renamed = Key::renamed_from(key_name);
-                        let key = Key::parse(renamed.as_deref().unwrap_or(key_name)).ok_or_else(
-                            || err(Some(at(entry)), ErrorKind::UnknownKey(key_name.to_owned())),
-                        )?;
-                        if let Some(now) = renamed {
-                            file.deprecated.push(DeprecatedKey {
-                                theme: name.to_owned(),
-                                written: key_name.to_owned(),
-                                now,
-                            });
-                        }
+                        let key = Key::parse(key_name).ok_or_else(|| {
+                            err(Some(at(entry)), ErrorKind::UnknownKey(key_name.to_owned()))
+                        })?;
                         file.colors.push((key, parse_style(entry, text, name)?));
                     }
                 }

@@ -538,7 +538,7 @@ impl Server {
             Ok(paths) => paths.into_iter().next(),
             Err(error) => return failure(error),
         };
-        let request = Request::AnnotationsList {
+        let request = Request::ThreadsList {
             since: p.since,
             path: path.clone(),
         };

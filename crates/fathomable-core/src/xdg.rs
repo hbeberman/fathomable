@@ -74,13 +74,6 @@ impl XdgDirs {
         self.state_dir().join("viewers")
     }
 
-    /// `$XDG_STATE_HOME/fathomable/sessions`, where viewer records lived
-    /// before ADR 0047; still swept of dead records for one release.
-    #[must_use]
-    pub fn old_viewers_dir(&self) -> PathBuf {
-        self.state_dir().join("sessions")
-    }
-
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>`, the per-workspace
     /// state directory (ADR 0005); `hash` is the short SHA-256 of `root`.
     #[must_use]

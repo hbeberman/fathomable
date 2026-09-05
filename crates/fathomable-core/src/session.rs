@@ -9,9 +9,10 @@
 //! find it when no viewer runs. The socket speaks line-delimited JSON: one
 //! [`Request`] per line, answered by one [`Response`] per line. Every
 //! request carries `"v"`; version 2 carries the viewer name in records,
-//! version 1 (ADR 0014) added `open`, `follow`, `annotations_list`, and
-//! `thread_reply` to the v0 `ping` and `session_info` (ADR 0012), which
-//! are still accepted with an older `"v"`. The binary owns the socket and
+//! version 1 (ADR 0014) added `open`, `follow`, `threads_list` (named
+//! `annotations_list` until ADR 0051), and `thread_reply` to the v0 `ping`
+//! and `session_info` (ADR 0012), which are still accepted with an older
+//! `"v"`. The binary owns the socket and
 //! the state behind every operation; this module owns the wire types.
 //!
 //! # Examples
@@ -254,26 +255,24 @@ impl Record {
             .collect()
     }
 
-    /// Remove records whose process is gone, from the viewers directory
-    /// and, for one release, from the `sessions/` directory it replaced
-    /// (ADR 0047). Returns how many were removed.
+    /// Remove records whose process is gone from the viewers directory.
+    /// Returns how many were removed.
     pub fn sweep_dead(dirs: &XdgDirs) -> usize {
+        let dir = dirs.viewers_dir();
         let mut removed = 0;
-        for dir in [dirs.viewers_dir(), dirs.old_viewers_dir()] {
-            for record in Self::list_in(&dir) {
-                if record.is_alive() {
-                    continue;
-                }
-                match fs::remove_dir_all(dir.join(record.id.as_str())) {
-                    Ok(()) => {
-                        removed += 1;
-                        if let Some(socket) = record.socket() {
-                            let _ = fs::remove_file(socket);
-                        }
-                        tracing::info!(id = %record.id, pid = record.pid, "removed dead viewer");
+        for record in Self::list_in(&dir) {
+            if record.is_alive() {
+                continue;
+            }
+            match fs::remove_dir_all(dir.join(record.id.as_str())) {
+                Ok(()) => {
+                    removed += 1;
+                    if let Some(socket) = record.socket() {
+                        let _ = fs::remove_file(socket);
                     }
-                    Err(error) => tracing::warn!(%error, id = %record.id, "cannot remove viewer"),
+                    tracing::info!(id = %record.id, pid = record.pid, "removed dead viewer");
                 }
+                Err(error) => tracing::warn!(%error, id = %record.id, "cannot remove viewer"),
             }
         }
         removed
@@ -384,7 +383,7 @@ pub enum Request {
         paths: Vec<PathBuf>,
     },
     /// Threads, optionally changed since a time or limited to one file.
-    AnnotationsList {
+    ThreadsList {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -468,7 +467,7 @@ pub enum Response {
     /// Answer to [`Request::Open`], [`Request::Follow`], and
     /// [`Request::ThreadReply`]: the operation took effect.
     Done,
-    /// Answer to [`Request::AnnotationsList`].
+    /// Answer to [`Request::ThreadsList`].
     Threads(Vec<Thread>),
     /// The request was refused; the text says why.
     Error(String),
@@ -579,10 +578,9 @@ mod tests {
         )
     }
 
-    /// Dead records are swept from `viewers/` and, for one release, from
-    /// the `sessions/` directory it replaced (ADR 0047).
+    /// Dead records are swept from `viewers/`; live ones stay.
     #[test]
-    fn dead_records_are_swept_from_both_directories() -> std::io::Result<()> {
+    fn dead_records_are_swept() -> std::io::Result<()> {
         use std::ffi::OsString;
         use std::fs;
 
@@ -600,14 +598,11 @@ mod tests {
         // A pid no live process has: the record reads as dead.
         let dead =
             r#"{"id":"1700000000-4000000","pid":4000000,"root":"/w","socket":"","started":1}"#;
-        for dir in [dirs.viewers_dir(), dirs.old_viewers_dir()] {
-            let record_dir = dir.join("1700000000-4000000");
-            fs::create_dir_all(&record_dir)?;
-            fs::write(record_dir.join(super::RECORD_FILE), dead)?;
-        }
+        let record_dir = dirs.viewers_dir().join("1700000000-4000000");
+        fs::create_dir_all(&record_dir)?;
+        fs::write(record_dir.join(super::RECORD_FILE), dead)?;
         record().write(&dirs)?;
-        assert_eq!(Record::sweep_dead(&dirs), 2);
-        assert!(!dirs.old_viewers_dir().join("1700000000-4000000").exists());
+        assert_eq!(Record::sweep_dead(&dirs), 1);
         assert!(!dirs.viewers_dir().join("1700000000-4000000").exists());
         assert_eq!(Record::list(&dirs).len(), 1, "the live record stays");
         fs::remove_dir_all(&state)
@@ -637,7 +632,7 @@ mod tests {
             Request::Follow {
                 paths: vec![PathBuf::from("a.md"), PathBuf::from("b/c.md")],
             },
-            Request::AnnotationsList {
+            Request::ThreadsList {
                 since: Some(7),
                 path: None,
             },

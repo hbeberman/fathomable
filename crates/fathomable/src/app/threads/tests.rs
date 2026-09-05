@@ -1023,21 +1023,21 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     );
     assert_eq!(app.followed(), [PathBuf::from("other.md")]);
 
-    let Response::Threads(all) = app.handle_request(Request::AnnotationsList {
+    let Response::Threads(all) = app.handle_request(Request::ThreadsList {
         since: None,
         path: None,
     }) else {
         anyhow::bail!("no review list");
     };
     assert_eq!(all.len(), 1);
-    let Response::Threads(none) = app.handle_request(Request::AnnotationsList {
+    let Response::Threads(none) = app.handle_request(Request::ThreadsList {
         since: Some(all[0].updated() + 1),
         path: None,
     }) else {
         anyhow::bail!("no review list");
     };
     assert!(none.is_empty());
-    let Response::Threads(elsewhere) = app.handle_request(Request::AnnotationsList {
+    let Response::Threads(elsewhere) = app.handle_request(Request::ThreadsList {
         since: None,
         path: Some(PathBuf::from("other.md")),
     }) else {

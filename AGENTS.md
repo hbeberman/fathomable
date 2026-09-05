@@ -26,6 +26,11 @@ user, system, or repo policy.
   `get_` getters that are not keyed/indexed retrieval.
 - Prefer behavior-level tests at public boundaries. Do not widen production
   visibility solely for tests.
+- A test that reads a tracked repository file locates it with
+  `fathomable_testing::repo_file`, never `env!("CARGO_MANIFEST_DIR")`: the
+  commit hook builds into the shared `target/` from a snapshot it deletes,
+  and Cargo reuses that binary in the repository. The `boundaries` gate
+  rejects the compile-time form.
 - A source file of 1000+ lines keeps a test module that would be 35% or
   more of it in a sibling `tests.rs` (`#[cfg(test)] mod tests;`); the
   `boundaries` gate rejects the inline form.

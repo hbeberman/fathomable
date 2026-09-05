@@ -42,6 +42,12 @@ Two workspace crates:
 
 The `boundaries` gate forbids `fathomable-core` from depending on `ratatui`,
 `crossterm`, or `rmcp`.
+Since 2026-09-05 it also rejects `env!("CARGO_MANIFEST_DIR")` anywhere but
+`fathomable_testing::repo_file`: the commit hook builds the test binaries
+from a snapshot of the index that it deletes afterwards, into the
+repository's own `target/`, and Cargo does not refingerprint on that
+variable, so a compile-time path points at the deleted snapshot on the
+next run in the repository. `repo_file` reads the variable at run time.
 
 ## Consequences
 

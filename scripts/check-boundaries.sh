@@ -19,6 +19,9 @@ Checks:
   - no public glob re-exports under crates/
   - no source file of 1000+ lines whose inline test module is 35% or
     more of it (such tests live in a sibling tests.rs)
+  - no `env!("CARGO_MANIFEST_DIR")` outside fathomable-testing, whose
+    `repo_file` reads the variable at run time (the staged gate builds
+    into the shared target dir from a snapshot it deletes)
   - fathomable-core does not depend on ratatui, crossterm, or rmcp
     (docs/decisions/0002-crate-layout.md)
 
@@ -83,6 +86,12 @@ deny_matches() {
 deny_matches \
     "public unsafe function declaration found" \
     -n --type rust '^[[:space:]]*pub(\([^)]*\))?[^{;]*\bunsafe\b[^{;]*\bfn\b' \
+    crates
+
+deny_matches \
+    "compile-time CARGO_MANIFEST_DIR outside fathomable-testing::repo_file" \
+    -n --type rust -g '!crates/fathomable-testing/src/lib.rs' \
+    'env!\("CARGO_MANIFEST_DIR"\)' \
     crates
 
 log "checking: public glob re-exports and inline test modules"

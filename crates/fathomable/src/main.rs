@@ -380,11 +380,10 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     let names: Vec<String> = markdown.names.iter().map(|n| format!("{n:?}")).collect();
     println!("    names {}", names.join(" "));
     println!("}}");
+    let viewer = config.viewer();
     println!("viewer {{");
-    println!(
-        "    max-file-size-mib {}",
-        config.viewer().max_file_size_mib
-    );
+    println!("    max-file-size-mib {}", viewer.max_file_size_mib);
+    println!("    seen-idle {}", viewer.seen_idle.as_millis());
     println!("}}");
     let sidebar = config.sidebar();
     println!("sidebar {{");

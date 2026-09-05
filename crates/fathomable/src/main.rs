@@ -20,7 +20,7 @@ use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::session::{Id, Marker, Record};
-use fathomable_core::theme::{DEFAULT_THEME, Theme};
+use fathomable_core::theme::Theme;
 use fathomable_core::workspace::Workspace;
 
 /// Read-only terminal workspace viewer and annotation side-car.
@@ -341,77 +341,18 @@ fn list_viewers(dirs: &XdgDirs) -> ExitCode {
 
 /// `--config-show`: the effective settings.
 fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
-    let config = match Config::load(dirs, cli.config.as_deref()) {
+    let mut config = match Config::load(dirs, cli.config.as_deref()) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("fathomable: {error}");
             return ExitCode::FAILURE;
         }
     };
-    let theme = cli
-        .theme
-        .as_deref()
-        .or_else(|| config.theme())
-        .unwrap_or(DEFAULT_THEME);
-    println!("config {}", config_path(cli, dirs).display());
-    println!("theme \"{theme}\"");
-    let jump = config.jump();
-    println!("jump {{");
-    println!("    auto #{}", jump.auto);
-    println!("    debounce {}", jump.debounce.as_millis());
-    println!("    toast {}", jump.toast.as_millis());
-    println!("}}");
-    let watch = config.watch();
-    println!("watch {{");
-    if !watch.ignore.is_empty() {
-        let globs: Vec<String> = watch.ignore.iter().map(|g| format!("{g:?}")).collect();
-        println!("    ignore {}", globs.join(" "));
+    if let Some(theme) = &cli.theme {
+        config.set_theme(theme);
     }
-    println!("    debounce {}", watch.debounce.as_millis());
-    println!("}}");
-    let markdown = config.markdown();
-    let extensions: Vec<String> = markdown
-        .extensions
-        .iter()
-        .map(|e| format!("{e:?}"))
-        .collect();
-    println!("markdown {{");
-    println!("    extensions {}", extensions.join(" "));
-    let names: Vec<String> = markdown.names.iter().map(|n| format!("{n:?}")).collect();
-    println!("    names {}", names.join(" "));
-    println!("}}");
-    let viewer = config.viewer();
-    println!("viewer {{");
-    println!("    max-file-size-mib {}", viewer.max_file_size_mib);
-    println!("    seen-idle {}", viewer.seen_idle.as_millis());
-    println!("}}");
-    let sidebar = config.sidebar();
-    println!("sidebar {{");
-    println!("    width {}", sidebar.width);
-    println!("    split {}", sidebar.split);
-    println!("}}");
-    let threads = config.threads();
-    println!("threads {{");
-    println!("    stubs #{}", threads.stubs);
-    println!("    stubs-resolved #{}", threads.stubs_resolved);
-    println!("}}");
-    let diff = config.diff();
-    println!("diff {{");
-    println!("    context {}", diff.context);
-    println!("    ignore-whitespace #{}", diff.ignore_whitespace);
-    println!("}}");
-    let agents = config.agents();
-    let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();
-    println!("agents {{");
-    println!("    types {}", types.join(" "));
-    println!("    nag-after {}", agents.nag_after);
-    println!("    expire-after {}", agents.expire_after.as_secs() / 3600);
-    println!("    max-lines {}", agents.max_lines);
-    println!("    wake {:?}", agents.wake.as_deref().unwrap_or_default());
-    println!("}}");
-    println!("user {{");
-    println!("    name {:?}", config.user().name);
-    println!("}}");
+    println!("config {}", config_path(cli, dirs).display());
+    print!("{config}");
     ExitCode::SUCCESS
 }
 
@@ -425,10 +366,6 @@ fn config_path(cli: &Cli, dirs: &XdgDirs) -> PathBuf {
 /// Pick the theme: `--theme`, then `config.kdl`, then the built-in default.
 fn load_theme(cli: &Cli, dirs: &XdgDirs) -> anyhow::Result<Theme> {
     let config = Config::load(dirs, cli.config.as_deref())?;
-    let name = cli
-        .theme
-        .as_deref()
-        .or_else(|| config.theme())
-        .unwrap_or(DEFAULT_THEME);
+    let name = cli.theme.as_deref().unwrap_or(config.theme());
     Ok(Theme::load(name, dirs)?)
 }

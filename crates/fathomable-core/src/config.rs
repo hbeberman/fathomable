@@ -9,16 +9,21 @@
 //! `agents` block (ADR 0040), and the `sidebar` (ADR 0057; `rail` in 0049)
 //! and `threads` blocks (ADR 0049) are understood.
 //!
+//! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
+//! with every setting spelled out, which is what `--config-show` prints,
+//! and [`Config::parse`] reads that text to an equal value.
+//!
 //! # Examples
 //!
 //! ```
 //! use fathomable_core::config::Config;
 //!
 //! let config = Config::parse("theme \"default-light\"").unwrap();
-//! assert_eq!(config.theme(), Some("default-light"));
+//! assert_eq!(config.theme(), "default-light");
+//! assert_eq!(Config::parse(&config.to_string()).unwrap(), config);
 //! ```
 
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -29,9 +34,9 @@ use kdl::{KdlDocument, KdlNode, KdlValue};
 use crate::XdgDirs;
 
 /// Settings read from `config.kdl`, with defaults for anything unset.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    theme: Option<String>,
+    theme: String,
     jump: JumpConfig,
     watch: WatchConfig,
     markdown: MarkdownConfig,
@@ -41,6 +46,23 @@ pub struct Config {
     diff: DiffConfig,
     agents: AgentsConfig,
     user: UserConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            theme: crate::theme::DEFAULT_THEME.to_owned(),
+            jump: JumpConfig::default(),
+            watch: WatchConfig::default(),
+            markdown: MarkdownConfig::default(),
+            viewer: ViewerConfig::default(),
+            sidebar: SidebarConfig::default(),
+            threads: ThreadsConfig::default(),
+            diff: DiffConfig::default(),
+            agents: AgentsConfig::default(),
+            user: UserConfig::default(),
+        }
+    }
 }
 
 /// The `diff { ... }` block (ADR 0060): how the diff view compares and
@@ -336,7 +358,7 @@ impl Config {
             let line = Some(line_of(node.span().offset()));
             match node.name().value() {
                 "theme" => {
-                    config.theme = Some(one_string(node, line)?.to_owned());
+                    one_string(node, line)?.clone_into(&mut config.theme);
                 }
                 "jump" => {
                     let Some(children) = node.children() else {
@@ -606,10 +628,15 @@ impl Config {
         Ok(config)
     }
 
-    /// The theme name chosen by the config, if any.
+    /// The theme name: the config's, else the built-in default.
     #[must_use]
-    pub fn theme(&self) -> Option<&str> {
-        self.theme.as_deref()
+    pub fn theme(&self) -> &str {
+        &self.theme
+    }
+
+    /// Choose the theme, as `--theme` does over the file's.
+    pub fn set_theme(&mut self, name: impl Into<String>) {
+        self.theme = name.into();
     }
 
     /// Auto-jump settings, the `jump` block (ADR 0015).
@@ -665,6 +692,112 @@ impl Config {
     pub fn user(&self) -> &UserConfig {
         &self.user
     }
+}
+
+/// The configuration as KDL, one node per block in the order the guide
+/// lists them, every setting written out. [`Config::parse`] reads it back
+/// to an equal value.
+impl fmt::Display for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "theme {}", quoted(&self.theme))?;
+        let jump = &self.jump;
+        writeln!(f, "\njump {{")?;
+        writeln!(f, "    auto #{}", jump.auto)?;
+        writeln!(f, "    debounce {}", jump.debounce.as_millis())?;
+        writeln!(f, "    toast {}", jump.toast.as_millis())?;
+        writeln!(f, "}}")?;
+        let watch = &self.watch;
+        writeln!(f, "\nwatch {{")?;
+        writeln!(f, "    ignore{}", words(&watch.ignore))?;
+        writeln!(f, "    debounce {}", watch.debounce.as_millis())?;
+        writeln!(f, "}}")?;
+        let markdown = &self.markdown;
+        writeln!(f, "\nmarkdown {{")?;
+        writeln!(f, "    extensions{}", words(&markdown.extensions))?;
+        writeln!(f, "    names{}", words(&markdown.names))?;
+        writeln!(f, "}}")?;
+        let viewer = &self.viewer;
+        writeln!(f, "\nviewer {{")?;
+        writeln!(f, "    max-file-size-mib {}", viewer.max_file_size_mib)?;
+        writeln!(f, "    seen-idle {}", viewer.seen_idle.as_millis())?;
+        writeln!(f, "}}")?;
+        let sidebar = &self.sidebar;
+        writeln!(f, "\nsidebar {{")?;
+        writeln!(f, "    width {}", sidebar.width)?;
+        writeln!(f, "    split {}", sidebar.split)?;
+        writeln!(f, "}}")?;
+        let threads = &self.threads;
+        writeln!(f, "\nthreads {{")?;
+        writeln!(f, "    stubs #{}", threads.stubs)?;
+        writeln!(f, "    stubs-resolved #{}", threads.stubs_resolved)?;
+        writeln!(f, "}}")?;
+        let diff = &self.diff;
+        writeln!(f, "\ndiff {{")?;
+        writeln!(f, "    context {}", diff.context)?;
+        writeln!(f, "    ignore-whitespace #{}", diff.ignore_whitespace)?;
+        writeln!(f, "}}")?;
+        let agents = &self.agents;
+        writeln!(f, "\nagents {{")?;
+        writeln!(f, "    types{}", words(&agents.types))?;
+        writeln!(f, "    nag-after {}", agents.nag_after)?;
+        writeln!(
+            f,
+            "    expire-after {}",
+            agents.expire_after.as_secs() / 3600
+        )?;
+        writeln!(f, "    max-lines {}", agents.max_lines)?;
+        writeln!(
+            f,
+            "    wake {}",
+            quoted(agents.wake.as_deref().unwrap_or_default())
+        )?;
+        writeln!(f, "}}")?;
+        writeln!(f, "\nuser {{")?;
+        writeln!(f, "    name {}", quoted(&self.user.name))?;
+        writeln!(f, "}}")
+    }
+}
+
+/// `text` as a quoted KDL string: `"`, `\\`, and control characters
+/// escaped, everything else literal.
+fn quoted(text: &str) -> impl fmt::Display {
+    struct Quoted<'a>(&'a str);
+
+    impl fmt::Display for Quoted<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_char('"')?;
+            for c in self.0.chars() {
+                match c {
+                    '"' => f.write_str("\\\"")?,
+                    '\\' => f.write_str("\\\\")?,
+                    '\n' => f.write_str("\\n")?,
+                    '\r' => f.write_str("\\r")?,
+                    '\t' => f.write_str("\\t")?,
+                    c if c.is_control() => write!(f, "\\u{{{:x}}}", u32::from(c))?,
+                    c => f.write_char(c)?,
+                }
+            }
+            f.write_char('"')
+        }
+    }
+
+    Quoted(text)
+}
+
+/// `items` as quoted KDL strings, each after a space; empty for none.
+fn words(items: &[String]) -> impl fmt::Display {
+    struct Words<'a>(&'a [String]);
+
+    impl fmt::Display for Words<'_> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            for item in self.0 {
+                write!(f, " {}", quoted(item))?;
+            }
+            Ok(())
+        }
+    }
+
+    Words(items)
 }
 
 /// Every positional string argument of `node`.

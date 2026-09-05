@@ -10,7 +10,7 @@ use fathomable_core::XdgDirs;
 use fathomable_core::config::Config;
 use fathomable_core::highlight::{self, Highlighter};
 use fathomable_core::session::Record;
-use fathomable_core::theme::{DEFAULT_THEME, Theme};
+use fathomable_core::theme::Theme;
 use fathomable_core::workspace::Workspace;
 
 /// Print diagnostics. Exit status is failure when any check fails.
@@ -69,7 +69,7 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
             Config::default()
         }
     };
-    let theme_name = config.theme().unwrap_or(DEFAULT_THEME).to_owned();
+    let theme_name = config.theme().to_owned();
     println!(
         "  ok    auto-jump {}",
         if config.jump().auto { "on" } else { "off" }

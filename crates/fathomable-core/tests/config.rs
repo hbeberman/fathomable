@@ -1,9 +1,12 @@
 //! Behaviour of `config.kdl` reading (ADR 0008).
 
+use std::collections::BTreeSet;
 use std::error::Error;
+use std::path::Path;
 
 use fathomable_core::XdgDirs;
 use fathomable_core::config::{Config, ConfigError};
+use fathomable_core::theme::DEFAULT_THEME;
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -16,7 +19,7 @@ fn must_fail(text: &str) -> Result<ConfigError, Box<dyn Error>> {
 #[test]
 fn empty_config_is_default() -> TestResult {
     assert_eq!(Config::parse("")?, Config::default());
-    assert_eq!(Config::default().theme(), None);
+    assert_eq!(Config::default().theme(), DEFAULT_THEME);
     Ok(())
 }
 
@@ -24,7 +27,7 @@ fn empty_config_is_default() -> TestResult {
 fn theme_is_read() -> TestResult {
     assert_eq!(
         Config::parse("theme \"default-light\"")?.theme(),
-        Some("default-light")
+        "default-light"
     );
     Ok(())
 }
@@ -69,7 +72,7 @@ fn missing_file_is_default_and_explicit_path_is_read() -> TestResult {
 
     let path = dir.join("custom.kdl");
     std::fs::write(&path, "theme \"mine\"")?;
-    assert_eq!(Config::load(&dirs, Some(&path))?.theme(), Some("mine"));
+    assert_eq!(Config::load(&dirs, Some(&path))?.theme(), "mine");
 
     std::fs::write(&path, "nope 1")?;
     let error = Config::load(&dirs, Some(&path))
@@ -100,5 +103,74 @@ fn viewer_block_sets_the_size_ceiling_in_mib() -> TestResult {
             .contains("unknown viewer setting `max-bytes`"),
         "{error}"
     );
+    Ok(())
+}
+
+/// The `(block, key)` pairs a KDL config text sets, comments stripped.
+fn keys(text: &str) -> BTreeSet<(String, String)> {
+    let mut block = String::new();
+    let mut keys = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.split("//").next().unwrap_or_default().trim();
+        let Some(name) = line.split_whitespace().next() else {
+            continue;
+        };
+        if name == "}" {
+            block.clear();
+        } else if line.ends_with('{') {
+            name.clone_into(&mut block);
+        } else if !name.starts_with('"') {
+            keys.insert((block.clone(), name.to_owned()));
+        }
+    }
+    keys
+}
+
+/// The text form of a config reads back as an equal value, for the
+/// defaults and for a config with every setting changed.
+#[test]
+fn text_form_round_trips() -> TestResult {
+    let default = Config::default();
+    assert_eq!(Config::parse(&default.to_string())?, default);
+
+    let full = Config::parse(
+        r#"
+theme "mine \"quoted\" \\ back"
+jump { auto #true; debounce 5; toast 0 }
+watch { ignore "target/**" "a b" "c\"d"; debounce 1 }
+markdown { extensions "txt"; names "notes" }
+viewer { max-file-size-mib 1; seen-idle 2 }
+sidebar { width 1; split 2 }
+threads { stubs #false; stubs-resolved #true }
+diff { context 0; ignore-whitespace #true }
+agents { types "qa"; nag-after 0; expire-after 1; max-lines 1; wake "claude -r {id}\n{prompt}\t\u{7f}" }
+user { name "O'Brien" }
+"#,
+    )?;
+    assert_ne!(full, default);
+    let text = full.to_string();
+    assert_eq!(Config::parse(&text)?, full, "{text}");
+    assert_eq!(keys(&text), keys(&default.to_string()));
+    Ok(())
+}
+
+/// The guide's example config names every setting the text form writes,
+/// and no other; the example itself parses and round-trips.
+#[test]
+fn guide_example_matches_the_text_form() -> TestResult {
+    let guide =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md"))?;
+    let section = guide
+        .split("## 7. Configuration and themes")
+        .nth(1)
+        .ok_or("guide section 7 not found")?;
+    let example = section
+        .split("```kdl\n")
+        .nth(1)
+        .and_then(|rest| rest.split("```").next())
+        .ok_or("guide config example not found")?;
+    let config = Config::parse(example)?;
+    assert_eq!(Config::parse(&config.to_string())?, config);
+    assert_eq!(keys(example), keys(&Config::default().to_string()));
     Ok(())
 }

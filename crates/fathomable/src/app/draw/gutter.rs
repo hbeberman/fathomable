@@ -16,7 +16,7 @@ impl App {
     /// current view, or `None` when no thread touches it: the bracket
     /// of the threads on its lines, `│` on a sourceless row a thread
     /// spans, `•` on a detached thread's row (ADR 0039).
-    pub fn note_on_row(&self, row: usize) -> Option<(&'static str, ThreadState)> {
+    pub(crate) fn note_on_row(&self, row: usize) -> Option<(&'static str, ThreadState)> {
         let view = self.view();
         if let Some(anchor) = view.detached_anchor_of_row(row) {
             return self.detached_note(anchor);
@@ -31,7 +31,7 @@ impl App {
     /// Whether the thread cursor's thread (the focused thread, ADR 0033)
     /// covers rendered row `row`:
     /// its lines, or a sourceless row between two of them.
-    pub fn open_thread_on_row(&self, row: usize) -> bool {
+    pub(crate) fn open_thread_on_row(&self, row: usize) -> bool {
         if let Some(lines) = self.view().source_lines_of_row(row) {
             return self.open_thread_in(lines);
         }
@@ -68,7 +68,7 @@ impl App {
     /// with the shortest range decides the bracket, so a nested thread's
     /// corners sit on the outer thread's line; a bracket beats a dot. The
     /// colour is the most urgent state on the row.
-    pub fn note_in(
+    pub(crate) fn note_in(
         &self,
         lines: LineRange,
         above: Option<LineRange>,

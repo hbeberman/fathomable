@@ -53,7 +53,7 @@ use crate::hooks;
 use fathomable_core::clock::now;
 
 /// Run the server on stdin/stdout until the client disconnects.
-pub fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
+pub(crate) fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -71,7 +71,7 @@ pub fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
 }
 
 /// The tool server; see the module docs for what it holds.
-pub struct Server {
+pub(crate) struct Server {
     dirs: XdgDirs,
     agents: AgentsConfig,
     pinned: Mutex<Option<PathBuf>>,
@@ -98,7 +98,7 @@ struct Target {
 
 /// `workspace_switch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct SwitchParams {
+pub(crate) struct SwitchParams {
     /// A workspace root as shown by `workspace_list`, or a viewer name or id
     /// (which selects that viewer's workspace).
     workspace: String,
@@ -106,7 +106,7 @@ pub struct SwitchParams {
 
 /// `open` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct OpenParams {
+pub(crate) struct OpenParams {
     /// Workspace-relative file path.
     path: PathBuf,
     /// First source line to show, 1-based.
@@ -127,7 +127,7 @@ pub struct OpenParams {
 
 /// `follow` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct FollowParams {
+pub(crate) struct FollowParams {
     /// Workspace-relative files you are working on, or directories to
     /// take everything under them, including files not written yet;
     /// replaces the last list. Empty means the whole workspace.
@@ -156,7 +156,7 @@ pub struct FollowParams {
 
 /// `unfollow` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UnfollowParams {
+pub(crate) struct UnfollowParams {
     /// The session id you subscribed with.
     id: String,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
@@ -167,7 +167,7 @@ pub struct UnfollowParams {
 
 /// `threads_list` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ListParams {
+pub(crate) struct ListParams {
     /// Only threads changed at or after this Unix time in seconds.
     #[serde(default)]
     since: Option<u64>,
@@ -187,7 +187,7 @@ pub struct ListParams {
 
 /// `threads_pending` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct PendingParams {
+pub(crate) struct PendingParams {
     /// The session id you subscribed with; defaults to this connection's.
     #[serde(default)]
     id: Option<String>,
@@ -203,7 +203,7 @@ pub struct PendingParams {
 
 /// One reply in a `thread_reply` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
-pub struct ReplyItem {
+pub(crate) struct ReplyItem {
     /// Thread id from `threads_list` or `threads_pending`.
     thread: String,
     /// Reply text; Markdown.
@@ -222,7 +222,7 @@ pub struct ReplyItem {
 
 /// `thread_reply` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct ReplyParams {
+pub(crate) struct ReplyParams {
     /// Thread id from `threads_list` or `threads_pending`, for a
     /// single reply.
     #[serde(default)]
@@ -261,7 +261,7 @@ pub struct ReplyParams {
 
 /// `thread_watch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct WatchParams {
+pub(crate) struct WatchParams {
     /// The thread to watch.
     on: String,
     /// `message` (someone else posts on it) or `resolved`.
@@ -280,7 +280,7 @@ pub struct WatchParams {
 
 /// `thread_unwatch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct UnwatchParams {
+pub(crate) struct UnwatchParams {
     /// The watched thread.
     on: String,
     /// The session id you subscribed with; defaults to this connection's.

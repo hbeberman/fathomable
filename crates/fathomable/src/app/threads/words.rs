@@ -14,7 +14,7 @@ use crate::app::threads::ThreadState;
 /// The placement word, when the lines are not where the comment was
 /// written, and the state word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Words {
+pub(crate) struct Words {
     placement: Option<&'static str>,
     state: ThreadState,
 }
@@ -22,7 +22,7 @@ pub struct Words {
 impl Words {
     /// Words for `thread` at `placement`, known when its file is open.
     #[must_use]
-    pub fn of(placement: Option<Placement>, thread: &Thread) -> Self {
+    pub(crate) fn of(placement: Option<Placement>, thread: &Thread) -> Self {
         let placement = placement.and_then(|placement| match placement {
             Placement::Detached(_) => Some("detached"),
             Placement::Edited(_) => Some("edited"),
@@ -36,19 +36,19 @@ impl Words {
 
     /// `detached` or `edited`, when the lines are not where they were.
     #[must_use]
-    pub fn placement(self) -> Option<&'static str> {
+    pub(crate) fn placement(self) -> Option<&'static str> {
         self.placement
     }
 
     /// The state word's kind: waiting, open, resolved, or auto-resolved.
     #[must_use]
-    pub fn state(self) -> ThreadState {
+    pub(crate) fn state(self) -> ThreadState {
         self.state
     }
 
     /// Whether the thread is resolved, however it is placed.
     #[must_use]
-    pub fn is_resolved(self) -> bool {
+    pub(crate) fn is_resolved(self) -> bool {
         matches!(
             self.state,
             ThreadState::Resolved | ThreadState::AutoResolved
@@ -58,7 +58,7 @@ impl Words {
 
 /// The status word for a kind.
 #[must_use]
-pub fn label(kind: ThreadState) -> &'static str {
+pub(crate) fn label(kind: ThreadState) -> &'static str {
     match kind {
         ThreadState::Waiting => "waiting",
         ThreadState::Open => "open",

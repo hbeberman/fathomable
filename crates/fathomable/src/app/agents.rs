@@ -56,7 +56,7 @@ impl App {
 
     /// `Space w`: wake a subscriber with its pending threads. One
     /// subscriber is woken at once; several open a picker.
-    pub fn wake(&mut self) {
+    pub(crate) fn wake(&mut self) {
         if self.agents.wake.is_none() {
             self.notice("set agents.wake in config.kdl to a command with {id} and {prompt}");
             return;

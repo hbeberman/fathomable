@@ -23,7 +23,7 @@ const MULTI_CLICK: Duration = Duration::from_millis(400);
 /// in a row on that cell, and whether it began in the gutter, which
 /// makes the drag that follows select whole lines.
 #[derive(Debug, Clone, Copy)]
-pub struct Press {
+pub(crate) struct Press {
     at: Instant,
     column: usize,
     row: usize,
@@ -34,7 +34,7 @@ pub struct Press {
 /// Apply a mouse event to whichever pane it lands on: the wheel scrolls
 /// the pane under the pointer, a click focuses it, and a press on the
 /// rail's divider or the threads pane's rule drags that border.
-pub fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
+pub(crate) fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
     app.with_navigation_watch(|app| mouse_event(app, event))
 }
 

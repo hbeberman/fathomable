@@ -30,7 +30,7 @@ use crate::app::threads::{ComposeTarget, message_target};
 /// A thread and a message in it: zero for the opening comment, then the
 /// replies in order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ThreadCursor {
+pub(crate) struct ThreadCursor {
     thread: Option<ThreadId>,
     message: usize,
 }
@@ -38,7 +38,7 @@ pub struct ThreadCursor {
 impl ThreadCursor {
     /// A cursor on `thread` at message `message`.
     #[must_use]
-    pub fn new(thread: ThreadId, message: usize) -> Self {
+    pub(crate) fn new(thread: ThreadId, message: usize) -> Self {
         Self {
             thread: Some(thread),
             message,
@@ -48,19 +48,19 @@ impl ThreadCursor {
     /// The thread the cursor is on, or `None` when there are no threads
     /// to be on.
     #[must_use]
-    pub fn thread(&self) -> Option<&ThreadId> {
+    pub(crate) fn thread(&self) -> Option<&ThreadId> {
         self.thread.as_ref()
     }
 
     /// The highlighted message: zero for the comment, then the replies.
     #[must_use]
-    pub fn message(&self) -> usize {
+    pub(crate) fn message(&self) -> usize {
         self.message
     }
 
     /// The highlighted message as the store names it.
     #[must_use]
-    pub fn target(&self) -> MessageTarget {
+    pub(crate) fn target(&self) -> MessageTarget {
         message_target(self.message)
     }
 }
@@ -70,7 +70,7 @@ impl App {
     /// the list is open or the text cursor has not moved since it was
     /// set, else the thread under the text cursor at its newest message.
     #[must_use]
-    pub fn thread_cursor(&self) -> ThreadCursor {
+    pub(crate) fn thread_cursor(&self) -> ThreadCursor {
         if self.cursor_is_stored() {
             self.thread_cursor.clone()
         } else {
@@ -233,7 +233,7 @@ impl App {
 
     /// `]c` / `[c` in the text, `l` / `h` in the pane: the next or
     /// previous thread of this file.
-    pub fn thread_step_in_file(&mut self, delta: isize) {
+    pub(crate) fn thread_step_in_file(&mut self, delta: isize) {
         let order = self.file_threads();
         if order.is_empty() {
             self.notice("no threads in this file");
@@ -246,7 +246,7 @@ impl App {
 
     /// `]C` / `[C` in the text, `L` / `H` in the pane: the next or
     /// previous thread across the workspace, opening its file.
-    pub fn thread_step_across(&mut self, delta: isize) {
+    pub(crate) fn thread_step_across(&mut self, delta: isize) {
         let order = self.workspace_threads();
         if order.is_empty() {
             self.notice("no threads in the workspace");
@@ -282,7 +282,7 @@ impl App {
 
     /// `j` / `k` in the pane and the list: the next or previous message
     /// of the cursor's thread, without wrapping.
-    pub fn message_step(&mut self, delta: isize) {
+    pub(crate) fn message_step(&mut self, delta: isize) {
         let count = self.cursor_message_count();
         if count == 0 {
             return;
@@ -310,7 +310,7 @@ impl App {
     // ----- actions on the cursor -----
 
     /// `r`: reply to the cursor's thread through the comment box.
-    pub fn thread_reply(&mut self) {
+    pub(crate) fn thread_reply(&mut self) {
         match self.thread_cursor().thread().cloned() {
             Some(id) => self.open_compose(ComposeTarget::Reply(id)),
             None => self.notice("no thread here"),
@@ -318,7 +318,7 @@ impl App {
     }
 
     /// `e`: edit the highlighted message when the user wrote it.
-    pub fn thread_edit_message(&mut self) {
+    pub(crate) fn thread_edit_message(&mut self) {
         let cursor = self.thread_cursor();
         if let Some(id) = cursor.thread().cloned() {
             self.open_compose(ComposeTarget::Edit {
@@ -331,7 +331,7 @@ impl App {
     /// `Space c e`: edit the newest message of the cursor's thread that
     /// the user wrote, wherever the highlight is (ADR 0049). The comment
     /// is always the user's.
-    pub fn thread_edit_newest_own(&mut self) {
+    pub(crate) fn thread_edit_newest_own(&mut self) {
         let Some(id) = self.thread_cursor().thread().cloned() else {
             self.notice("no thread here");
             return;
@@ -353,7 +353,7 @@ impl App {
 
     /// Whether the highlighted message belongs to the user.
     #[must_use]
-    pub fn thread_message_editable(&self) -> bool {
+    pub(crate) fn thread_message_editable(&self) -> bool {
         let cursor = self.thread_cursor();
         cursor
             .thread()
@@ -362,7 +362,7 @@ impl App {
     }
 
     /// `o`: resolve the cursor's thread, or reopen it.
-    pub fn thread_toggle_resolved(&mut self) {
+    pub(crate) fn thread_toggle_resolved(&mut self) {
         let Some(id) = self.thread_cursor().thread().cloned() else {
             self.notice("no thread here");
             return;
@@ -374,7 +374,7 @@ impl App {
     }
 
     /// The first `d`: arm deletion of the cursor's thread (ADR 0034).
-    pub fn thread_arm_delete(&mut self) {
+    pub(crate) fn thread_arm_delete(&mut self) {
         if let Some(id) = self.thread_cursor().thread().cloned() {
             self.arm_delete(id);
         }
@@ -383,7 +383,7 @@ impl App {
     /// Enter in the list: open the file with the thread expanded and the
     /// cursor on the highlighted message (ADR 0049), the list closing as
     /// the document takes the column.
-    pub fn thread_open_in_file(&mut self) {
+    pub(crate) fn thread_open_in_file(&mut self) {
         let cursor = self.thread_cursor();
         let Some(id) = cursor.thread().cloned() else {
             return;

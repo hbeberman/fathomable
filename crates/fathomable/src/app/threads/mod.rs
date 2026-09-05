@@ -42,7 +42,7 @@ use crate::app::{App, Focus, Popup};
 /// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
 /// on one row is their `max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum ThreadState {
+pub(crate) enum ThreadState {
     Resolved,
     AutoResolved,
     Open,
@@ -65,40 +65,40 @@ impl ThreadState {
 
 /// One thread placed in the current text.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mark {
+pub(crate) struct Mark {
     id: ThreadId,
     placement: Placement,
     kind: ThreadState,
 }
 
 impl Mark {
-    pub fn id(&self) -> &ThreadId {
+    pub(crate) fn id(&self) -> &ThreadId {
         &self.id
     }
 
-    pub fn range(&self) -> LineRange {
+    pub(crate) fn range(&self) -> LineRange {
         self.placement.range()
     }
 
-    pub fn kind(&self) -> ThreadState {
+    pub(crate) fn kind(&self) -> ThreadState {
         self.kind
     }
 
     /// Where the thread sits in the current text.
-    pub fn placement(&self) -> Placement {
+    pub(crate) fn placement(&self) -> Placement {
         self.placement
     }
 
     /// Whether the annotated lines are gone: the thread is shown on a
     /// row of its own (ADR 0039), not at its last known range.
-    pub fn is_detached(&self) -> bool {
+    pub(crate) fn is_detached(&self) -> bool {
         self.placement.is_detached()
     }
 }
 
 /// What the comment box will produce on submit.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ComposeTarget {
+pub(crate) enum ComposeTarget {
     /// A new thread on these source lines.
     New(LineRange),
     /// A reply to an existing thread.
@@ -112,7 +112,7 @@ pub enum ComposeTarget {
 
 /// The multi-line comment box (ADR 0005).
 #[derive(Debug)]
-pub struct Compose {
+pub(crate) struct Compose {
     target: ComposeTarget,
     buffer: Buffer,
     /// The text the box opened with, empty for a new comment or reply.
@@ -122,22 +122,22 @@ pub struct Compose {
 }
 
 impl Compose {
-    pub fn target(&self) -> &ComposeTarget {
+    pub(crate) fn target(&self) -> &ComposeTarget {
         &self.target
     }
 
     /// The draft and its cursor (ADR 0018).
-    pub fn buffer(&self) -> &Buffer {
+    pub(crate) fn buffer(&self) -> &Buffer {
         &self.buffer
     }
 
     /// Whether the box is asking for a second Esc.
-    pub fn confirming_discard(&self) -> bool {
+    pub(crate) fn confirming_discard(&self) -> bool {
         self.confirm_discard
     }
 
     /// A mouse click at a wrapped cell moves the cursor there.
-    pub fn place_cursor(&mut self, width: usize, cell: Cell) {
+    pub(crate) fn place_cursor(&mut self, width: usize, cell: Cell) {
         self.confirm_discard = false;
         self.buffer.place_cursor(width, cell);
     }
@@ -166,12 +166,12 @@ impl App {
     }
 
     /// The thread with `id`, if the store has it.
-    pub fn thread(&self, id: &ThreadId) -> Option<&Thread> {
+    pub(crate) fn thread(&self, id: &ThreadId) -> Option<&Thread> {
         self.store.as_ref()?.thread(id)
     }
 
     /// Marks of the current document, oldest thread first.
-    pub fn marks(&self) -> &[Mark] {
+    pub(crate) fn marks(&self) -> &[Mark] {
         self.current
             .and_then(|i| self.docs.get(i))
             .map_or(&[], |doc| doc.marks.as_slice())
@@ -185,7 +185,7 @@ impl App {
 
     /// The most urgent mark overlapping `lines` (a rendered row can carry
     /// several source lines).
-    pub fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
+    pub(crate) fn mark_in(&self, lines: LineRange) -> Option<ThreadState> {
         self.placed_marks()
             .filter(|mark| overlaps(mark.range(), lines))
             .map(Mark::kind)
@@ -193,7 +193,7 @@ impl App {
     }
 
     /// `(open, total)` threads on the current document.
-    pub fn thread_counts(&self) -> (usize, usize) {
+    pub(crate) fn thread_counts(&self) -> (usize, usize) {
         let open = self
             .marks()
             .iter()
@@ -316,7 +316,7 @@ impl App {
     /// The document's threads in line order: by first line, then the
     /// order the store holds them (ADR 0027). This is the order `]c` / `[c`
     /// in the text and `j` / `k` in the threads pane walk.
-    pub fn file_threads(&self) -> Vec<ThreadId> {
+    pub(crate) fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
         marks.sort_by_key(|mark| mark.range().start());
         marks.into_iter().map(|mark| mark.id().clone()).collect()
@@ -352,7 +352,7 @@ impl App {
     #[cfg(test)]
     /// `(current, total)`, 1-based, of the cursor's thread among the
     /// file's, for the pane header.
-    pub fn thread_position(&self) -> Option<(usize, usize)> {
+    pub(crate) fn thread_position(&self) -> Option<(usize, usize)> {
         let cursor = self.thread_cursor();
         let id = cursor.thread()?;
         let order = self.file_threads();
@@ -363,7 +363,7 @@ impl App {
     #[cfg(test)]
     /// `(current, total)`, 1-based, of the cursor's thread among the
     /// workspace's, for the pane header.
-    pub fn thread_position_across(&self) -> Option<(usize, usize)> {
+    pub(crate) fn thread_position_across(&self) -> Option<(usize, usize)> {
         let cursor = self.thread_cursor();
         let id = cursor.thread()?;
         let order = self.workspace_threads();
@@ -373,7 +373,7 @@ impl App {
 
     /// Threads whose range touches the cursor's rendered row, or the
     /// detached threads standing on it (ADR 0039).
-    pub fn threads_at_cursor(&self) -> Vec<ThreadId> {
+    pub(crate) fn threads_at_cursor(&self) -> Vec<ThreadId> {
         let view = self.view();
         // On a thread's stub or expanded rows, that thread (ADR 0049).
         if let Some((stub, _, _)) = self.stub_on_row(view.cursor().row) {
@@ -403,7 +403,7 @@ impl App {
     /// `c`: open the thread on the cursor row when there is one and
     /// nothing is selected (ADR 0027); otherwise the comment box on the
     /// selection, or the cursor line.
-    pub fn start_comment(&mut self) {
+    pub(crate) fn start_comment(&mut self) {
         if self.view().selected_lines().is_some() {
             self.start_new_comment();
             return;
@@ -443,7 +443,7 @@ impl App {
 
     /// `C`: open the comment box on the selection, or the cursor line,
     /// whether or not a thread is already there.
-    pub fn start_new_comment(&mut self) {
+    pub(crate) fn start_new_comment(&mut self) {
         let Some(doc) = self.current.and_then(|index| self.docs.get(index)) else {
             self.notice("open a file to annotate it");
             return;
@@ -537,21 +537,21 @@ impl App {
     }
 
     /// A typed character or a paste, inserted at the cursor.
-    pub fn compose_insert(&mut self, text: &str) {
+    pub(crate) fn compose_insert(&mut self, text: &str) {
         if let Some(compose) = self.compose_mut() {
             compose.buffer.insert(text);
         }
     }
 
     /// A motion or deletion in the comment (ADR 0018).
-    pub fn compose_edit(&mut self, edit: Edit) {
+    pub(crate) fn compose_edit(&mut self, edit: Edit) {
         if let Some(compose) = self.compose_mut() {
             compose.buffer.apply(edit);
         }
     }
 
     /// The draft in the comment box, for the `$EDITOR` hatch.
-    pub fn compose_draft(&self) -> Option<&str> {
+    pub(crate) fn compose_draft(&self) -> Option<&str> {
         match &self.popup {
             Some(Popup::Compose(compose)) => Some(compose.buffer.text()),
             _ => None,
@@ -559,7 +559,7 @@ impl App {
     }
 
     /// Replace the whole draft (back from `$EDITOR`), cursor at the end.
-    pub fn set_compose_text(&mut self, text: &str) {
+    pub(crate) fn set_compose_text(&mut self, text: &str) {
         if let Some(compose) = self.compose_mut() {
             compose.buffer = Buffer::from_text(text);
         }
@@ -567,7 +567,7 @@ impl App {
 
     /// Alt-Up / Alt-Down while replying: scroll the text behind the box,
     /// where the thread is expanded (ADR 0049).
-    pub fn compose_scroll(&mut self, delta: isize) {
+    pub(crate) fn compose_scroll(&mut self, delta: isize) {
         if matches!(self.popup, Some(Popup::Compose(_))) {
             self.view_mut().scroll_by(delta);
         }
@@ -575,7 +575,7 @@ impl App {
 
     /// Esc: drop the comment box; a reply returns to its thread's rows. A
     /// changed draft or edit asks for a second Esc first.
-    pub fn compose_cancel(&mut self) {
+    pub(crate) fn compose_cancel(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
             return;
         };
@@ -604,7 +604,7 @@ impl App {
     }
 
     /// Ctrl-C: wipe a non-empty draft in place; an empty box closes.
-    pub fn compose_clear(&mut self) {
+    pub(crate) fn compose_clear(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
             return;
         };
@@ -624,7 +624,7 @@ impl App {
     }
 
     /// Enter: write the comment, reply, or edit to the store.
-    pub fn compose_submit(&mut self) {
+    pub(crate) fn compose_submit(&mut self) {
         let Some(Popup::Compose(compose)) = self.popup.as_ref() else {
             return;
         };

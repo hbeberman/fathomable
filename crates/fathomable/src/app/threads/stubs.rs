@@ -30,8 +30,8 @@ const STUB_MESSAGES: usize = 2;
 /// (`Space c c`, `Space c x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StubState {
-    pub shown: bool,
-    pub resolved: bool,
+    pub(crate) shown: bool,
+    pub(crate) resolved: bool,
 }
 
 impl StubState {
@@ -46,7 +46,7 @@ impl StubState {
 /// One thread's stub: where it hangs, which messages it shows (oldest
 /// first, zero the comment), and its shape when expanded.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stub {
+pub(crate) struct Stub {
     id: ThreadId,
     anchor: RowAnchor,
     messages: Vec<usize>,
@@ -59,18 +59,18 @@ pub struct Stub {
 }
 
 impl Stub {
-    pub fn id(&self) -> &ThreadId {
+    pub(crate) fn id(&self) -> &ThreadId {
         &self.id
     }
 
     /// The messages shown, as indices into the thread: the comment is 0.
     #[cfg(test)]
-    pub fn messages(&self) -> &[usize] {
+    pub(crate) fn messages(&self) -> &[usize] {
         &self.messages
     }
 
     /// Whether the whole thread shows.
-    pub fn expanded(&self) -> bool {
+    pub(crate) fn expanded(&self) -> bool {
         self.expanded
     }
 
@@ -78,7 +78,7 @@ impl Stub {
     /// stub the message on that row, for an expanded thread the message
     /// whose header or body it is; `None` on the expanded header row.
     #[must_use]
-    pub fn message_of_row(&self, index: usize) -> Option<usize> {
+    pub(crate) fn message_of_row(&self, index: usize) -> Option<usize> {
         if !self.expanded {
             return self.messages.get(index).copied();
         }
@@ -89,7 +89,7 @@ impl Stub {
     /// The row within the block that message `message` starts on, when
     /// the thread is expanded.
     #[must_use]
-    pub fn row_of_message(&self, message: usize) -> Option<usize> {
+    pub(crate) fn row_of_message(&self, message: usize) -> Option<usize> {
         if !self.expanded {
             return None;
         }
@@ -98,7 +98,7 @@ impl Stub {
     }
 
     /// The block as the view lays it out.
-    pub fn block(&self) -> StubBlock {
+    pub(crate) fn block(&self) -> StubBlock {
         StubBlock {
             anchor: self.anchor,
             rows: self.rows,
@@ -110,25 +110,25 @@ impl Stub {
 impl App {
     /// Whether stubs are drawn (`Space c c`).
     #[cfg(test)]
-    pub fn stubs_shown(&self) -> bool {
+    pub(crate) fn stubs_shown(&self) -> bool {
         self.stubs.shown
     }
 
     /// Whether resolved threads get a stub (`Space c x`).
     #[cfg(test)]
-    pub fn stubs_resolved(&self) -> bool {
+    pub(crate) fn stubs_resolved(&self) -> bool {
         self.stubs.resolved
     }
 
     /// Whether `id` is expanded in place.
-    pub fn is_expanded(&self, id: &ThreadId) -> bool {
+    pub(crate) fn is_expanded(&self, id: &ThreadId) -> bool {
         self.expanded.contains(id)
     }
 
     /// The current document's stubs in row order: threads by start line,
     /// then end line, then id, so stacked stubs come one thread after
     /// another and never interleave.
-    pub fn stubs(&self) -> Vec<Stub> {
+    pub(crate) fn stubs(&self) -> Vec<Stub> {
         if !self.stubs.shown {
             return Vec::new();
         }
@@ -191,7 +191,7 @@ impl App {
 
     /// The stub whose row `row` is, with the row's index in the block
     /// and whether it is the block's last row.
-    pub fn stub_on_row(&self, row: usize) -> Option<(Stub, usize, bool)> {
+    pub(crate) fn stub_on_row(&self, row: usize) -> Option<(Stub, usize, bool)> {
         let (block, index) = self.view().stub_slot_of_row(row)?;
         let stub = self.stubs().into_iter().nth(block)?;
         let last = index + 1 == stub.rows;
@@ -200,7 +200,7 @@ impl App {
 
     /// The thread and message an expanded row shows, `None` off the
     /// expanded rows.
-    pub fn expanded_row_message(&self, row: usize) -> Option<(ThreadId, usize)> {
+    pub(crate) fn expanded_row_message(&self, row: usize) -> Option<(ThreadId, usize)> {
         let (stub, index, _) = self.stub_on_row(row)?;
         if !stub.expanded {
             return None;
@@ -222,7 +222,7 @@ impl App {
 
     /// Expand `id` in place, the view staying where it is, and put the
     /// cursor on its newest message.
-    pub fn expand_thread(&mut self, id: ThreadId) {
+    pub(crate) fn expand_thread(&mut self, id: ThreadId) {
         self.refresh_watchers();
         self.expanded.insert(id.clone());
         self.place_stub_rows();
@@ -231,7 +231,7 @@ impl App {
     }
 
     /// Fold `id` back to a stub.
-    pub fn fold_thread(&mut self, id: &ThreadId) {
+    pub(crate) fn fold_thread(&mut self, id: &ThreadId) {
         if self.expanded.remove(id) {
             self.place_stub_rows();
         }
@@ -254,7 +254,7 @@ impl App {
     /// an expanded thread, fold it and expand the next thread covering
     /// the same lines, in line order and wrapping, until the cycle comes
     /// back to where it started, when nothing is expanded.
-    pub fn cycle_expanded(&mut self, covering: Vec<ThreadId>) {
+    pub(crate) fn cycle_expanded(&mut self, covering: Vec<ThreadId>) {
         let Some(current) = self.thread_cursor().thread().cloned() else {
             return;
         };
@@ -286,7 +286,7 @@ impl App {
 
     /// `Space c z`: expand every stub in the file, or fold every expanded
     /// thread when any is.
-    pub fn toggle_expand_all(&mut self) {
+    pub(crate) fn toggle_expand_all(&mut self) {
         let ids: Vec<ThreadId> = self.stubs().into_iter().map(|stub| stub.id).collect();
         if ids.iter().any(|id| self.expanded.contains(id)) {
             for id in &ids {
@@ -300,7 +300,7 @@ impl App {
 
     /// Expand the thread cursor's thread, as `c` does on a fresh row.
     #[cfg(test)]
-    pub fn expand_at_cursor(&mut self) {
+    pub(crate) fn expand_at_cursor(&mut self) {
         if let Some(id) = self.thread_cursor().thread().cloned() {
             self.expand_thread(id);
         }
@@ -308,14 +308,14 @@ impl App {
 
     /// Whether the thread cursor's thread is expanded in place.
     #[cfg(test)]
-    pub fn shows_thread(&self) -> bool {
+    pub(crate) fn shows_thread(&self) -> bool {
         self.thread_cursor()
             .thread()
             .is_some_and(|id| self.is_expanded(id))
     }
 
     /// `Space c c`: draw stubs, or not, for the session.
-    pub fn toggle_stubs(&mut self) {
+    pub(crate) fn toggle_stubs(&mut self) {
         self.stubs.shown = !self.stubs.shown;
         self.place_stub_rows();
         self.push_toast(if self.stubs.shown {
@@ -326,7 +326,7 @@ impl App {
     }
 
     /// `Space c x`: give resolved threads a stub too, or not.
-    pub fn toggle_resolved_stubs(&mut self) {
+    pub(crate) fn toggle_resolved_stubs(&mut self) {
         self.stubs.resolved = !self.stubs.resolved;
         self.place_stub_rows();
         self.push_toast(if self.stubs.resolved {

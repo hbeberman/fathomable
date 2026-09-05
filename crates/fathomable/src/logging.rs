@@ -11,21 +11,21 @@ use fathomable_core::session::Id;
 use tracing_subscriber::EnvFilter;
 
 /// Environment variable that sets the log filter; default `info`.
-pub const LOG_ENV: &str = "FATHOMABLE_LOG";
+pub(crate) const LOG_ENV: &str = "FATHOMABLE_LOG";
 
 /// Where the log for session `id` is written.
-pub fn log_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
+pub(crate) fn log_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
     dirs.log_dir().join(format!("{id}.log"))
 }
 
 /// Where the crash report for session `id` is written (ADR 0022).
-pub fn crash_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
+pub(crate) fn crash_path(dirs: &XdgDirs, id: &Id) -> PathBuf {
     dirs.log_dir().join(format!("{id}.crash"))
 }
 
 /// Keeps the log file open for the lifetime of the process.
 #[must_use = "dropping the guard stops logging"]
-pub struct Guard {
+pub(crate) struct Guard {
     path: PathBuf,
 }
 
@@ -36,7 +36,7 @@ impl fmt::Debug for Guard {
 }
 
 /// Install the global JSON-lines subscriber writing to the session log file.
-pub fn init(dirs: &XdgDirs, id: &Id) -> anyhow::Result<Guard> {
+pub(crate) fn init(dirs: &XdgDirs, id: &Id) -> anyhow::Result<Guard> {
     let log_dir = dirs.log_dir();
     fs::create_dir_all(&log_dir)
         .with_context(|| format!("cannot create log directory {}", log_dir.display()))?;

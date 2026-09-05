@@ -52,25 +52,25 @@ use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 use fathomable_core::{Document, XdgDirs};
 use input::bindings::Chord;
 
-pub use threads::cursor::ThreadCursor;
-pub use threads::{Compose, Mark};
+pub(crate) use threads::cursor::ThreadCursor;
+pub(crate) use threads::{Compose, Mark};
 use view::{HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
 /// How long to wait after a change notification before re-reading, so an
 /// editor's write-then-rename lands as one reload.
 /// Toasts visible at once.
-pub const MAX_TOASTS: usize = 3;
+pub(crate) const MAX_TOASTS: usize = 3;
 
 /// A transient one-line notice about a change (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Toast {
+pub(crate) struct Toast {
     text: String,
     until: Instant,
 }
 
 impl Toast {
-    pub fn text(&self) -> &str {
+    pub(crate) fn text(&self) -> &str {
         &self.text
     }
 }
@@ -91,7 +91,7 @@ const TREE_SCROLLOFF: usize = 2;
 
 /// Which pane receives keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
+pub(crate) enum Focus {
     View,
     /// The rail's tree pane.
     Tree,
@@ -103,7 +103,7 @@ pub enum Focus {
 
 /// A pane border the mouse is dragging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Border {
+pub(crate) enum Border {
     /// The rule between the rail and the text.
     Rail,
     /// The rule along the top of the comment box (ADR 0018).
@@ -114,7 +114,7 @@ pub enum Border {
 
 /// What the file picker lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PickerKind {
+pub(crate) enum PickerKind {
     /// Workspace files, ignore-filtered.
     Files,
     /// Workspace files including ignored ones.
@@ -131,7 +131,7 @@ pub enum PickerKind {
 
 /// The open picker popup.
 #[derive(Debug)]
-pub struct PickerState {
+pub(crate) struct PickerState {
     kind: PickerKind,
     picker: Picker,
     input: String,
@@ -152,28 +152,28 @@ impl PickerState {
         }
     }
 
-    pub fn kind(&self) -> PickerKind {
+    pub(crate) fn kind(&self) -> PickerKind {
         self.kind
     }
 
-    pub fn input(&self) -> &str {
+    pub(crate) fn input(&self) -> &str {
         &self.input
     }
 
-    pub fn matches(&self) -> &[Match] {
+    pub(crate) fn matches(&self) -> &[Match] {
         &self.matches
     }
 
-    pub fn selected(&self) -> usize {
+    pub(crate) fn selected(&self) -> usize {
         self.selected
     }
 
-    pub fn item(&self, m: &Match) -> &str {
+    pub(crate) fn item(&self, m: &Match) -> &str {
         &self.picker.items()[m.index()]
     }
 
     /// Number of candidates before filtering.
-    pub fn total(&self) -> usize {
+    pub(crate) fn total(&self) -> usize {
         self.picker.items().len()
     }
 
@@ -185,7 +185,7 @@ impl PickerState {
 
 /// A popup layered over the panes.
 #[derive(Debug)]
-pub enum Popup {
+pub(crate) enum Popup {
     /// Every key binding.
     Help,
     /// A file, recent-document, or thread picker.
@@ -223,7 +223,7 @@ enum Deleted {
 
 /// All application state.
 #[derive(Debug)]
-pub struct App {
+pub(crate) struct App {
     workspace: Workspace,
     docs: Vec<Doc>,
     current: Option<usize>,
@@ -323,7 +323,7 @@ impl App {
     ///
     /// Threads on files edited while Fathomable was closed are followed
     /// through their last-seen snapshots before anything opens (ADR 0020).
-    pub fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
+    pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
             dirs,
@@ -444,7 +444,7 @@ impl App {
     /// Re-read the thread store after another writer appended to it: a
     /// second viewer, or a headless `--mcp` reply (ADR 0024). Marks and the
     /// expanded threads follow.
-    pub fn reload_store(&mut self) {
+    pub(crate) fn reload_store(&mut self) {
         let Some(path) = self.store.as_ref().map(|store| store.path().to_path_buf()) else {
             return;
         };
@@ -476,12 +476,12 @@ impl App {
     }
 
     /// Where the thread store lives, for the watcher.
-    pub fn store_path(&self) -> Option<&Path> {
+    pub(crate) fn store_path(&self) -> Option<&Path> {
         self.store.as_ref().map(Store::path)
     }
 
     /// `:name`: rename this viewer for agents; empty clears the name.
-    pub fn set_name(&mut self, name: Option<&str>) {
+    pub(crate) fn set_name(&mut self, name: Option<&str>) {
         self.record = self.record.clone().with_name(name.map(str::to_owned));
         match self.record.write(&self.dirs) {
             Ok(()) => self.notice(match self.record.name() {
@@ -494,7 +494,7 @@ impl App {
 
     /// How a root-relative `path` should be coloured and first displayed.
     /// The code highlighter shared by every view and the expanded threads.
-    pub fn highlighter(&self) -> &Highlighter {
+    pub(crate) fn highlighter(&self) -> &Highlighter {
         &self.highlighter
     }
 
@@ -508,34 +508,34 @@ impl App {
 
     /// Whether the whole workspace is watched, or only the visible
     /// document's directory as a fallback.
-    pub fn set_watching_root(&mut self, watching: bool) {
+    pub(crate) fn set_watching_root(&mut self, watching: bool) {
         self.watching_root = watching;
     }
 
     // ----- follow mode (ADR 0015) -----
 
     /// Whether auto-jump is on.
-    pub fn auto_jump(&self) -> bool {
+    pub(crate) fn auto_jump(&self) -> bool {
         self.auto
     }
 
     /// Changed files, newest first.
-    pub fn queue(&self) -> &Queue {
+    pub(crate) fn queue(&self) -> &Queue {
         &self.queue
     }
 
     /// Live toasts, oldest first.
-    pub fn toasts(&self) -> &[Toast] {
+    pub(crate) fn toasts(&self) -> &[Toast] {
         &self.toasts
     }
 
     /// Whether a queued change sits at or under the root-relative `path`.
-    pub fn has_change_under(&self, path: &Path) -> bool {
+    pub(crate) fn has_change_under(&self, path: &Path) -> bool {
         self.queue.iter().any(|c| c.path.starts_with(path))
     }
 
     /// Toggle auto-jump (`Space j a`, `:auto`).
-    pub fn toggle_auto_jump(&mut self) {
+    pub(crate) fn toggle_auto_jump(&mut self) {
         self.auto = !self.auto;
         self.notice(if self.auto {
             "auto-jump on"
@@ -545,19 +545,19 @@ impl App {
     }
 
     /// Drop every queued change (`Space j c`).
-    pub fn clear_queue(&mut self) {
+    pub(crate) fn clear_queue(&mut self) {
         self.queue.clear();
         self.last_change = None;
     }
 
     /// Set auto-jump (`:auto on` / `:auto off`).
-    pub fn set_auto_jump(&mut self, on: bool) {
+    pub(crate) fn set_auto_jump(&mut self, on: bool) {
         self.auto = on;
         self.notice(if on { "auto-jump on" } else { "auto-jump off" });
     }
 
     /// `Space j j`: open the newest change.
-    pub fn jump_newest(&mut self) {
+    pub(crate) fn jump_newest(&mut self) {
         match self.queue.newest().cloned() {
             Some(change) => self.jump_to(&change),
             None => self.notice("no changes"),
@@ -565,7 +565,7 @@ impl App {
     }
 
     /// `]f`: the next older change after the current file, wrapping.
-    pub fn jump_next(&mut self) {
+    pub(crate) fn jump_next(&mut self) {
         let current = self.current.map(|i| self.docs[i].relative.clone());
         match self.queue.after(current.as_deref()).cloned() {
             Some(change) => self.jump_to(&change),
@@ -574,7 +574,7 @@ impl App {
     }
 
     /// `[f`: the next newer change before the current file, wrapping.
-    pub fn jump_prev(&mut self) {
+    pub(crate) fn jump_prev(&mut self) {
         let current = self.current.map(|i| self.docs[i].relative.clone());
         match self.queue.before(current.as_deref()).cloned() {
             Some(change) => self.jump_to(&change),
@@ -609,7 +609,7 @@ impl App {
     /// Files the watcher reported, absolute: a change for each that
     /// exists, a removal for each that does not.
     #[cfg(test)]
-    pub fn on_changes(&mut self, paths: Vec<PathBuf>) {
+    pub(crate) fn on_changes(&mut self, paths: Vec<PathBuf>) {
         let events = paths
             .into_iter()
             .map(|path| {
@@ -629,7 +629,7 @@ impl App {
     /// join the queue; the directories whose listings changed are
     /// re-read in the tree. A platform event-loss notice reconciles the
     /// whole remembered workspace from disk.
-    pub fn on_events(&mut self, events: Vec<watch::Event>) {
+    pub(crate) fn on_events(&mut self, events: Vec<watch::Event>) {
         if events
             .iter()
             .any(|event| matches!(event, watch::Event::Rescan))
@@ -848,7 +848,7 @@ impl App {
 
     /// The fingerprint the file at absolute `path` last had, from its
     /// loaded text or its last-seen snapshot, for rename pairing.
-    pub fn last_seen_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
+    pub(crate) fn last_seen_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
         let relative = path.strip_prefix(self.workspace.root()).ok()?;
         if let Some(text) = self
             .docs
@@ -865,7 +865,7 @@ impl App {
     // ----- git status (ADR 0017) -----
 
     /// Every uncommitted path, in path order.
-    pub fn status(&self) -> &Status {
+    pub(crate) fn status(&self) -> &Status {
         &self.status
     }
 
@@ -886,13 +886,13 @@ impl App {
 
     /// `]g`: the next hunk in this file, or the first hunk of the next
     /// uncommitted file when this one's run out, wrapping.
-    pub fn hunk_next(&mut self) {
+    pub(crate) fn hunk_next(&mut self) {
         self.step_hunk(true);
     }
 
     /// `[g`: the previous hunk, crossing into the last hunk of the
     /// previous uncommitted file.
-    pub fn hunk_prev(&mut self) {
+    pub(crate) fn hunk_prev(&mut self) {
         self.step_hunk(false);
     }
 
@@ -911,12 +911,12 @@ impl App {
     }
 
     /// `]G`: the next uncommitted file in path order, at its first hunk.
-    pub fn dirty_next(&mut self) {
+    pub(crate) fn dirty_next(&mut self) {
         self.step_dirty(true, false);
     }
 
     /// `[G`: the previous uncommitted file, at its first hunk.
-    pub fn dirty_prev(&mut self) {
+    pub(crate) fn dirty_prev(&mut self) {
         self.step_dirty(false, false);
     }
 
@@ -1055,7 +1055,7 @@ impl App {
     }
 
     /// Drop the current file from the queue once its target is on screen.
-    pub fn settle(&mut self) {
+    pub(crate) fn settle(&mut self) {
         let Some(index) = self.current else {
             return;
         };
@@ -1074,7 +1074,7 @@ impl App {
 
     /// Expire toasts, snapshot the current file once it has been idle long
     /// enough, and auto-jump when the guardrails allow it.
-    pub fn tick(&mut self) {
+    pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|toast| toast.until > now);
         if let Some(index) = self.current
@@ -1088,7 +1088,7 @@ impl App {
 
     /// How long until [`App::tick`] has something to do, `None` when
     /// nothing is pending.
-    pub fn tick_in(&self) -> Option<Duration> {
+    pub(crate) fn tick_in(&self) -> Option<Duration> {
         let now = Instant::now();
         let mut next: Option<Duration> = None;
         let mut consider = |d: Duration| {
@@ -1126,7 +1126,7 @@ impl App {
     }
 
     /// Snapshot the visible file before the session ends.
-    pub fn on_quit(&mut self) {
+    pub(crate) fn on_quit(&mut self) {
         if let Some(index) = self.current {
             self.mark_seen(index);
         }
@@ -1139,21 +1139,21 @@ impl App {
         }
     }
 
-    pub fn workspace(&self) -> &Workspace {
+    pub(crate) fn workspace(&self) -> &Workspace {
         &self.workspace
     }
 
     /// Files an agent is following, in the order it gave them.
-    pub fn followed(&self) -> &[PathBuf] {
+    pub(crate) fn followed(&self) -> &[PathBuf] {
         &self.followed
     }
 
-    pub fn focus(&self) -> Focus {
+    pub(crate) fn focus(&self) -> Focus {
         self.focus
     }
 
     /// A click lands in a pane: it takes the keys, when it is on screen.
-    pub fn focus_pane(&mut self, focus: Focus) {
+    pub(crate) fn focus_pane(&mut self, focus: Focus) {
         let present = match focus {
             Focus::View => true,
             Focus::Tree => self.tree().is_some(),
@@ -1166,23 +1166,23 @@ impl App {
     }
 
     /// Whether a document is open, rather than the welcome screen.
-    pub fn has_document(&self) -> bool {
+    pub(crate) fn has_document(&self) -> bool {
         self.current.is_some()
     }
 
     /// The border a drag is moving, while the button is down.
-    pub fn dragging(&self) -> Option<Border> {
+    pub(crate) fn dragging(&self) -> Option<Border> {
         self.drag
     }
 
     /// The mouse went down on a border.
-    pub fn begin_drag(&mut self, border: Border) {
+    pub(crate) fn begin_drag(&mut self, border: Border) {
         self.drag = Some(border);
     }
 
     /// The mouse moved with a border held: the tree's divider follows the
     /// column, the threads pane's rule follows the row.
-    pub fn drag_to(&mut self, column: usize, row: usize) {
+    pub(crate) fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
             Some(Border::Rail) => self.rail_cols = Some(column + 1),
             Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
@@ -1192,64 +1192,64 @@ impl App {
         self.relayout();
     }
 
-    pub fn end_drag(&mut self) {
+    pub(crate) fn end_drag(&mut self) {
         self.drag = None;
     }
 
     /// The cell the pointer was last seen at (ADR 0050).
     #[must_use]
-    pub fn pointer(&self) -> Option<(usize, usize)> {
+    pub(crate) fn pointer(&self) -> Option<(usize, usize)> {
         self.pointer
     }
 
     /// The terminal's size as the app last heard it.
     #[must_use]
-    pub fn size(&self) -> (usize, usize) {
+    pub(crate) fn size(&self) -> (usize, usize) {
         (self.width, self.height)
     }
 
-    pub fn popup(&self) -> Option<&Popup> {
+    pub(crate) fn popup(&self) -> Option<&Popup> {
         self.popup.as_ref()
     }
 
-    pub fn tree(&self) -> Option<&Tree> {
+    pub(crate) fn tree(&self) -> Option<&Tree> {
         self.tree.as_ref().filter(|_| self.rail.tree)
     }
 
-    pub fn tree_scroll(&self) -> usize {
+    pub(crate) fn tree_scroll(&self) -> usize {
         self.tree_scroll
     }
 
     /// The notice on the status line: the answer to the reader's last key,
     /// from the app or from the view. A toast, by contrast, reports what
     /// happened without the reader (ADR 0010).
-    pub fn message(&self) -> Option<&str> {
+    pub(crate) fn message(&self) -> Option<&str> {
         self.message.as_deref().or_else(|| self.view().message())
     }
 
     /// The keys typed so far of a binding that is not complete.
-    pub fn prefix(&self) -> &[Chord] {
+    pub(crate) fn prefix(&self) -> &[Chord] {
         &self.prefix
     }
 
     /// Remember `typed` as the start of a longer binding.
-    pub fn set_prefix(&mut self, typed: Vec<Chord>) {
+    pub(crate) fn set_prefix(&mut self, typed: Vec<Chord>) {
         self.prefix = typed;
     }
 
     /// Take the pending keys, leaving none.
-    pub fn take_prefix(&mut self) -> Vec<Chord> {
+    pub(crate) fn take_prefix(&mut self) -> Vec<Chord> {
         std::mem::take(&mut self.prefix)
     }
 
     /// The visible view: the current document's or the welcome text.
-    pub fn view(&self) -> &View {
+    pub(crate) fn view(&self) -> &View {
         self.current
             .and_then(|i| self.docs.get(i))
             .map_or(&self.welcome, |doc| &doc.view)
     }
 
-    pub fn view_mut(&mut self) -> &mut View {
+    pub(crate) fn view_mut(&mut self) -> &mut View {
         match self.current.and_then(|i| self.docs.get_mut(i)) {
             Some(doc) => &mut doc.view,
             None => &mut self.welcome,
@@ -1257,21 +1257,21 @@ impl App {
     }
 
     /// Root-relative path of the current document, empty when none is open.
-    pub fn current_path(&self) -> &Path {
+    pub(crate) fn current_path(&self) -> &Path {
         self.current
             .and_then(|i| self.docs.get(i))
             .map_or(Path::new(""), |doc| &doc.relative)
     }
 
     /// Absolute path of the current document, for the watcher.
-    pub fn current_abs_path(&self) -> Option<&Path> {
+    pub(crate) fn current_abs_path(&self) -> Option<&Path> {
         self.current
             .and_then(|i| self.docs.get(i))
             .map(|doc| doc.document.path())
     }
 
     /// Whether the current document's file is gone from disk (ADR 0028).
-    pub fn deleted(&self) -> bool {
+    pub(crate) fn deleted(&self) -> bool {
         self.current
             .and_then(|i| self.docs.get(i))
             .is_some_and(|doc| doc.deleted.is_some())
@@ -1279,7 +1279,7 @@ impl App {
 
     /// The banner row over the text: `deleted` while the current file is
     /// gone and its last content is still shown (ADR 0028).
-    pub fn banner(&self) -> Option<&'static str> {
+    pub(crate) fn banner(&self) -> Option<&'static str> {
         self.current
             .and_then(|i| self.docs.get(i))
             .filter(|doc| doc.deleted == Some(Deleted::Banner) && !self.review_list.is_open())
@@ -1296,7 +1296,7 @@ impl App {
 
     /// The rail's width in columns, 0 when neither of its panes is shown
     /// (ADR 0049).
-    pub fn rail_width(&self) -> usize {
+    pub(crate) fn rail_width(&self) -> usize {
         if !self.rail.tree && !self.rail.threads {
             return 0;
         }
@@ -1310,14 +1310,14 @@ impl App {
     }
 
     /// Rows available to panes once the status line is taken.
-    pub fn pane_rows(&self) -> usize {
+    pub(crate) fn pane_rows(&self) -> usize {
         self.height.saturating_sub(1).max(1)
     }
 
     /// Rows the comment box takes along the bottom, 0 when closed: its
     /// wrapped text plus the rule and header, capped, unless its rule was
     /// dragged (ADR 0018).
-    pub fn compose_rows(&self) -> usize {
+    pub(crate) fn compose_rows(&self) -> usize {
         let Some(Popup::Compose(compose)) = &self.popup else {
             return 0;
         };
@@ -1330,7 +1330,7 @@ impl App {
 
     /// Columns the comment's text wraps at: the text column less the
     /// one-space margin.
-    pub fn compose_width(&self) -> usize {
+    pub(crate) fn compose_width(&self) -> usize {
         self.width
             .saturating_sub(self.rail_width())
             .saturating_sub(1)
@@ -1339,7 +1339,7 @@ impl App {
 
     /// The first wrapped row the comment box shows, chosen so the cursor's
     /// row is visible.
-    pub fn compose_first_row(&self) -> usize {
+    pub(crate) fn compose_first_row(&self) -> usize {
         let Some(Popup::Compose(compose)) = &self.popup else {
             return 0;
         };
@@ -1356,7 +1356,7 @@ impl App {
 
     /// A click in the comment box's text: `row` counts from the first
     /// visible wrapped row, `column` from the box's left edge.
-    pub fn compose_click(&mut self, row: usize, column: usize) {
+    pub(crate) fn compose_click(&mut self, row: usize, column: usize) {
         let width = self.compose_width();
         let cell = Cell {
             row: self.compose_first_row() + row,
@@ -1368,7 +1368,7 @@ impl App {
     }
 
     /// Bracketed paste: into the comment box, else nothing to paste into.
-    pub fn paste(&mut self, text: &str) {
+    pub(crate) fn paste(&mut self, text: &str) {
         if matches!(self.popup, Some(Popup::Compose(_))) {
             self.compose_insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
         }
@@ -1376,7 +1376,7 @@ impl App {
 
     /// Rows left to the text once the banner and the checkpoint view's
     /// header and strip are taken.
-    pub fn text_rows(&self) -> usize {
+    pub(crate) fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
             .saturating_sub(if self.checkpoint_chrome() { 2 } else { 0 })
@@ -1384,11 +1384,11 @@ impl App {
     }
 
     /// Rows over the text: the banner and the checkpoint view's header.
-    pub fn text_top(&self) -> usize {
+    pub(crate) fn text_top(&self) -> usize {
         usize::from(self.banner().is_some()) + usize::from(self.checkpoint_chrome())
     }
 
-    pub fn resize(&mut self, width: usize, height: usize) {
+    pub(crate) fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height;
         self.relayout();
@@ -1406,7 +1406,7 @@ impl App {
         self.scroll_tree();
     }
 
-    pub fn clear_message(&mut self) {
+    pub(crate) fn clear_message(&mut self) {
         self.message = None;
     }
 
@@ -1431,7 +1431,7 @@ impl App {
     }
 
     /// Open the root-relative `path`, loading it or switching to it.
-    pub fn open(&mut self, path: &Path) {
+    pub(crate) fn open(&mut self, path: &Path) {
         let relative = self.workspace.relative(&self.workspace.root().join(path));
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
         let index = if let Some(index) = loaded {
@@ -1474,7 +1474,7 @@ impl App {
     }
 
     /// Answer a socket request that needs app state (ADR 0014).
-    pub fn handle_request(&mut self, request: Request) -> Response {
+    pub(crate) fn handle_request(&mut self, request: Request) -> Response {
         match request {
             Request::Ping => Response::Pong,
             Request::SessionInfo => {
@@ -1623,7 +1623,7 @@ impl App {
     }
 
     /// `Alt-Left`: the previous position in the jumplist.
-    pub fn jump_back(&mut self) {
+    pub(crate) fn jump_back(&mut self) {
         let Some(here) = self.position() else {
             return;
         };
@@ -1634,7 +1634,7 @@ impl App {
     }
 
     /// `Alt-Right`: the next position in the jumplist.
-    pub fn jump_forward(&mut self) {
+    pub(crate) fn jump_forward(&mut self) {
         match self.jumplist.forward().cloned() {
             Some(target) => self.go_to_position(&target),
             None => self.notice("at newest position"),
@@ -1738,7 +1738,7 @@ impl App {
 
     /// What a start shows: the file named, else the rail with both panes
     /// and the tree focused (ADR 0012, ADR 0049).
-    pub fn start_on(&mut self, open: Option<&Path>) {
+    pub(crate) fn start_on(&mut self, open: Option<&Path>) {
         if let Some(path) = open {
             self.open(path);
         } else {
@@ -1748,14 +1748,14 @@ impl App {
     }
 
     /// Show and focus the tree, as a workspace start does (ADR 0012).
-    pub fn show_tree(&mut self) {
+    pub(crate) fn show_tree(&mut self) {
         if !self.rail.tree {
             self.toggle_tree_focus();
         }
     }
 
     /// `Space e`: open and focus the tree, or hand focus back.
-    pub fn toggle_tree_focus(&mut self) {
+    pub(crate) fn toggle_tree_focus(&mut self) {
         if !self.rail.tree {
             if !self.ensure_tree() {
                 return;
@@ -1774,7 +1774,7 @@ impl App {
 
     /// `Space E`: hide the tree pane, or show it again without taking
     /// the keys; the threads pane keeps the rail either way.
-    pub fn toggle_tree_shown(&mut self) {
+    pub(crate) fn toggle_tree_shown(&mut self) {
         if self.rail.tree {
             self.rail.tree = false;
             if self.focus == Focus::Tree {
@@ -1829,20 +1829,20 @@ impl App {
 
     // ----- popups -----
 
-    pub fn open_help(&mut self) {
+    pub(crate) fn open_help(&mut self) {
         self.popup = Some(Popup::Help);
     }
 
     /// `:status`: the overlay of session facts (ADR 0021).
-    pub fn open_status(&mut self) {
+    pub(crate) fn open_status(&mut self) {
         self.popup = Some(Popup::Status);
     }
 
-    pub fn close_popup(&mut self) {
+    pub(crate) fn close_popup(&mut self) {
         self.popup = None;
     }
 
-    pub fn open_picker(&mut self, kind: PickerKind) {
+    pub(crate) fn open_picker(&mut self, kind: PickerKind) {
         let items = match kind {
             PickerKind::Files => self.index(Filter::Visible),
             PickerKind::AllFiles => self.index(Filter::All),
@@ -1882,21 +1882,21 @@ impl App {
         }
     }
 
-    pub fn picker_char(&mut self, ch: char) {
+    pub(crate) fn picker_char(&mut self, ch: char) {
         if let Some(picker) = self.picker_mut() {
             picker.input.push(ch);
             picker.requery();
         }
     }
 
-    pub fn picker_backspace(&mut self) {
+    pub(crate) fn picker_backspace(&mut self) {
         if let Some(picker) = self.picker_mut() {
             picker.input.pop();
             picker.requery();
         }
     }
 
-    pub fn picker_move(&mut self, delta: isize) {
+    pub(crate) fn picker_move(&mut self, delta: isize) {
         if let Some(picker) = self.picker_mut() {
             let last = picker.matches.len().saturating_sub(1);
             picker.selected = picker.selected.saturating_add_signed(delta).min(last);
@@ -1904,7 +1904,7 @@ impl App {
     }
 
     /// Enter in the picker: open the file, or show the thread.
-    pub fn picker_confirm(&mut self) {
+    pub(crate) fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
             let m = picker.matches.get(picker.selected)?;
             Some((picker.kind, picker.item(m).to_owned()))
@@ -1929,35 +1929,35 @@ impl App {
 
 /// Everything [`App::new`] needs beyond the workspace and terminal size.
 #[derive(Debug)]
-pub struct Options {
+pub(crate) struct Options {
     /// This viewer's record, already written to the viewers directory.
-    pub record: Record,
+    pub(crate) record: Record,
     /// Where records and state live, for `:name` to rewrite the record.
-    pub dirs: XdgDirs,
+    pub(crate) dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
-    pub store: Option<Store>,
+    pub(crate) store: Option<Store>,
     /// Auto-jump settings (ADR 0015).
-    pub jump: JumpConfig,
+    pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).
-    pub watch: WatchConfig,
+    pub(crate) watch: WatchConfig,
     /// The last-seen snapshot store, or `None` when it could not be opened.
-    pub seen: Option<seen::Store>,
+    pub(crate) seen: Option<seen::Store>,
     /// The checkpoint store (ADR 0049), or `None` when it could not be opened.
-    pub checkpoints: Option<fathomable_core::checkpoints::Store>,
+    pub(crate) checkpoints: Option<fathomable_core::checkpoints::Store>,
     /// Code highlighting for fences and source files (ADR 0016).
-    pub highlighter: Arc<Highlighter>,
+    pub(crate) highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
-    pub markdown: MarkdownConfig,
+    pub(crate) markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
-    pub viewer: ViewerConfig,
+    pub(crate) viewer: ViewerConfig,
     /// The rail's width and split (ADR 0049).
-    pub rail: RailConfig,
+    pub(crate) rail: RailConfig,
     /// How threads show in the text (ADR 0049).
-    pub threads: ThreadsConfig,
+    pub(crate) threads: ThreadsConfig,
     /// Subscriptions and the wake command (ADR 0040).
-    pub agents: AgentsConfig,
+    pub(crate) agents: AgentsConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
-    pub config_path: PathBuf,
+    pub(crate) config_path: PathBuf,
 }
 
 #[cfg(test)]

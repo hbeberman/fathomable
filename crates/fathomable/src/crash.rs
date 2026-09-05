@@ -26,7 +26,7 @@ struct Paths {
 }
 
 /// Install the panic hook and name the files the report points at.
-pub fn arm(report: PathBuf, log: PathBuf) {
+pub(crate) fn arm(report: PathBuf, log: PathBuf) {
     if let Ok(mut paths) = PATHS.lock() {
         *paths = Some(Paths { report, log });
     }
@@ -38,7 +38,7 @@ pub fn arm(report: PathBuf, log: PathBuf) {
 
 /// Record what the viewer is showing, for a report that will probably never
 /// be needed. Called once per frame; the rows are the `:status` overlay's.
-pub fn observe(rows: Vec<(String, String)>) {
+pub(crate) fn observe(rows: Vec<(String, String)>) {
     if let Ok(mut state) = STATE.lock() {
         *state = rows;
     }
@@ -50,7 +50,7 @@ pub fn observe(rows: Vec<(String, String)>) {
 /// An error thrown before the viewer drew anything — a mistyped `--theme`,
 /// an unreadable config — is a mistake to correct, not a crash to report, so
 /// it stays the one line it always was.
-pub fn fatal(error: &anyhow::Error) {
+pub(crate) fn fatal(error: &anyhow::Error) {
     // Usually a no-op: the guard has already restored on the way out. It
     // matters when entering the terminal itself failed partway.
     crate::app::run::restore_terminal();

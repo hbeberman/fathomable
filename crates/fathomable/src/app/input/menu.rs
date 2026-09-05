@@ -17,7 +17,7 @@ use fathomable_core::tree::Tree;
 
 /// One row of a context menu.
 #[derive(Debug, Clone)]
-pub struct Entry {
+pub(crate) struct Entry {
     /// The key as the table spells it, shown beside the label.
     key: String,
     /// The chords that key is, matched against what is typed.
@@ -30,17 +30,17 @@ pub struct Entry {
 
 impl Entry {
     #[must_use]
-    pub fn key(&self) -> &str {
+    pub(crate) fn key(&self) -> &str {
         &self.key
     }
 
     #[must_use]
-    pub fn label(&self) -> &str {
+    pub(crate) fn label(&self) -> &str {
         &self.label
     }
 
     #[must_use]
-    pub fn action(&self) -> Action {
+    pub(crate) fn action(&self) -> Action {
         self.action
     }
 }
@@ -48,7 +48,7 @@ impl Entry {
 /// A context menu: what it acts on, its entries, and the cell it opened
 /// at.
 #[derive(Debug, Clone)]
-pub struct Menu {
+pub(crate) struct Menu {
     title: String,
     place: Where,
     entries: Vec<Entry>,
@@ -83,19 +83,19 @@ impl Menu {
 
     /// The row in the pill colour naming what the menu acts on.
     #[must_use]
-    pub fn title(&self) -> &str {
+    pub(crate) fn title(&self) -> &str {
         &self.title
     }
 
     #[must_use]
-    pub fn entries(&self) -> &[Entry] {
+    pub(crate) fn entries(&self) -> &[Entry] {
         &self.entries
     }
 
     /// What `typed` means here: an entry's whole key fires it, the start
     /// of one waits, anything else is a miss that closes the menu.
     #[must_use]
-    pub fn typed(&self, typed: &[Chord]) -> Match {
+    pub(crate) fn typed(&self, typed: &[Chord]) -> Match {
         if let Some(entry) = self.entries.iter().find(|entry| entry.keys == typed) {
             return Match::Exact(entry.action);
         }
@@ -112,7 +112,7 @@ impl Menu {
     /// Where the menu sits on a `width` by `height` screen: its top-left
     /// corner at the pointer, shifted left or up to stay inside.
     #[must_use]
-    pub fn grid(&self, width: usize, height: usize) -> Grid {
+    pub(crate) fn grid(&self, width: usize, height: usize) -> Grid {
         let (key_width, label_width) = measure(
             self.entries
                 .iter()
@@ -149,22 +149,22 @@ fn measure<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> (usize, usi
 /// `key_width + 2 + label_width + 3` cells wide after one leading cell.
 /// The drawing lays the entries out by it and the mouse reads it back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Grid {
-    pub x: usize,
-    pub y: usize,
-    pub width: usize,
-    pub height: usize,
-    pub rows: usize,
-    pub columns: usize,
-    pub key_width: usize,
-    pub label_width: usize,
-    pub count: usize,
+pub(crate) struct Grid {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) rows: usize,
+    pub(crate) columns: usize,
+    pub(crate) key_width: usize,
+    pub(crate) label_width: usize,
+    pub(crate) count: usize,
 }
 
 impl Grid {
     /// The cells one column of entries takes.
     #[must_use]
-    pub fn column_width(key_width: usize, label_width: usize) -> usize {
+    pub(crate) fn column_width(key_width: usize, label_width: usize) -> usize {
         key_width + 2 + label_width + 3
     }
 
@@ -172,7 +172,7 @@ impl Grid {
     /// `(x, y)` of `pane_width` by `pane_height`: as many columns as
     /// keep the box to eight rows.
     #[must_use]
-    pub fn bottom(
+    pub(crate) fn bottom(
         entries: &[(String, String)],
         title: &str,
         x: usize,
@@ -207,7 +207,7 @@ impl Grid {
     /// title flow into further columns; the box sits a third of the way
     /// down.
     #[must_use]
-    pub fn centred(
+    pub(crate) fn centred(
         rows: &[(String, String)],
         title: &str,
         x: usize,
@@ -237,7 +237,7 @@ impl Grid {
 
     /// Whether the cell is inside the box, title row included.
     #[must_use]
-    pub fn contains(&self, column: usize, row: usize) -> bool {
+    pub(crate) fn contains(&self, column: usize, row: usize) -> bool {
         column >= self.x
             && column < self.x + self.width
             && row >= self.y
@@ -246,7 +246,7 @@ impl Grid {
 
     /// The entry drawn at the cell, if any.
     #[must_use]
-    pub fn entry_at(&self, column: usize, row: usize) -> Option<usize> {
+    pub(crate) fn entry_at(&self, column: usize, row: usize) -> Option<usize> {
         if !self.contains(column, row) || row == self.y {
             return None;
         }
@@ -264,7 +264,7 @@ impl Grid {
 impl App {
     /// The open context menu, if one is.
     #[must_use]
-    pub fn menu(&self) -> Option<&Menu> {
+    pub(crate) fn menu(&self) -> Option<&Menu> {
         match self.popup() {
             Some(Popup::Menu(menu)) => Some(menu),
             _ => None,

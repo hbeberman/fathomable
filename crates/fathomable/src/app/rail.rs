@@ -11,7 +11,10 @@ use super::{App, Focus, TREE_SCROLLOFF};
 
 impl App {
     /// Run `f` on the tree, then keep the cursor on screen.
-    pub fn with_tree(&mut self, f: impl FnOnce(&mut Tree, &mut Workspace) -> Option<Activation>) {
+    pub(crate) fn with_tree(
+        &mut self,
+        f: impl FnOnce(&mut Tree, &mut Workspace) -> Option<Activation>,
+    ) {
         let Some(tree) = self.tree.as_mut() else {
             return;
         };
@@ -23,7 +26,7 @@ impl App {
     }
 
     /// A tree operation that can fail: report the error on the status line.
-    pub fn with_tree_result(
+    pub(crate) fn with_tree_result(
         &mut self,
         f: impl FnOnce(
             &mut Tree,
@@ -45,7 +48,7 @@ impl App {
     }
 
     /// `R` in the tree: re-read directories and drop the picker indexes.
-    pub fn refresh_tree(&mut self) {
+    pub(crate) fn refresh_tree(&mut self) {
         self.file_index = None;
         self.all_index = None;
         self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
@@ -54,7 +57,7 @@ impl App {
 
     /// `Space r .`: show the tree when it is hidden and put its highlight
     /// on the current file, keeping focus where it is (ADR 0049).
-    pub fn reveal_in_tree(&mut self) {
+    pub(crate) fn reveal_in_tree(&mut self) {
         if !self.rail.tree {
             if !self.ensure_tree() {
                 return;
@@ -66,7 +69,7 @@ impl App {
     }
 
     /// `I` in the tree: toggle ignored entries.
-    pub fn toggle_ignored(&mut self) {
+    pub(crate) fn toggle_ignored(&mut self) {
         let filter = match self.tree.as_ref().map(Tree::filter) {
             Some(Filter::Visible) => Filter::All,
             _ => Filter::Visible,
@@ -79,7 +82,7 @@ impl App {
     /// A click on tree pane row `row` (screen coordinates): activate the
     /// row but stay in the tree. A click pages the viewer just as the
     /// wheel does (ADR 0023); only `Enter` commits focus to the view.
-    pub fn tree_click(&mut self, row: usize) {
+    pub(crate) fn tree_click(&mut self, row: usize) {
         let index = self.tree_scroll + row;
         self.with_tree_result(|tree, workspace| {
             if index >= tree.rows().len() {
@@ -94,7 +97,7 @@ impl App {
     /// A right-click on tree row `row` (ADR 0050): the highlight moves
     /// there and the main pane shows the file as the wheel does; a
     /// directory is neither expanded nor collapsed.
-    pub fn tree_point(&mut self, row: usize) {
+    pub(crate) fn tree_point(&mut self, row: usize) {
         let index = self.tree_scroll + row;
         let before = self.tree().map(Tree::cursor);
         self.with_tree(|tree, _| {
@@ -111,7 +114,7 @@ impl App {
 
     /// `y` in the tree (ADR 0050): copy the highlighted row's path,
     /// relative to the workspace root as the tree shows it.
-    pub fn copy_tree_path(&mut self) -> Effect {
+    pub(crate) fn copy_tree_path(&mut self) -> Effect {
         let Some(path) = self
             .tree()
             .and_then(Tree::current)

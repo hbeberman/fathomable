@@ -18,21 +18,21 @@ use tokio::task::JoinHandle;
 
 /// A request the app loop must answer, with the channel to answer on.
 #[derive(Debug)]
-pub struct Envelope {
-    pub request: Request,
-    pub reply: oneshot::Sender<Response>,
+pub(crate) struct Envelope {
+    pub(crate) request: Request,
+    pub(crate) reply: oneshot::Sender<Response>,
 }
 
 /// A bound Unix socket, removed from disk when dropped.
 #[derive(Debug)]
-pub struct Listener {
+pub(crate) struct Listener {
     path: PathBuf,
     listener: UnixListener,
 }
 
 impl Listener {
     /// Bind `path`, creating its directory and replacing a stale file.
-    pub fn bind(path: &Path) -> io::Result<Self> {
+    pub(crate) fn bind(path: &Path) -> io::Result<Self> {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -52,7 +52,7 @@ impl Listener {
     /// Accept connections until dropped. `ping` and `session_info` are
     /// answered from `record`; other requests go to `app` and wait for the
     /// loop's reply.
-    pub fn serve(self, record: Record, app: mpsc::Sender<Envelope>) -> Serving {
+    pub(crate) fn serve(self, record: Record, app: mpsc::Sender<Envelope>) -> Serving {
         let path = self.path.clone();
         let handle = tokio::spawn(async move {
             loop {
@@ -119,7 +119,7 @@ async fn forward(app: &mpsc::Sender<Envelope>, request: Request) -> Response {
 
 /// The running accept loop; dropping it stops serving and unlinks the socket.
 #[derive(Debug)]
-pub struct Serving {
+pub(crate) struct Serving {
     path: PathBuf,
     handle: JoinHandle<()>,
 }

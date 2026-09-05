@@ -9,7 +9,7 @@ use super::App;
 
 impl App {
     /// Run a `:` command the view did not handle itself.
-    pub fn command(&mut self, command: &str) {
+    pub(crate) fn command(&mut self, command: &str) {
         let mut words = command.split_whitespace();
         match (words.next(), words.next(), words.next()) {
             (Some("auto"), None, _) => self.toggle_auto_jump(),
@@ -22,7 +22,7 @@ impl App {
     }
 
     /// The viewer as agents see it: its name when set, then the id.
-    pub fn viewer_label(&self) -> String {
+    pub(crate) fn viewer_label(&self) -> String {
         match self.record.name() {
             Some(name) => format!("{name} ({})", self.viewer_id),
             None => format!("unnamed ({}); set one with :name", self.viewer_id),
@@ -48,7 +48,7 @@ impl App {
     }
 
     /// The rows of the `:status` overlay: label, value.
-    pub fn status_lines(&self) -> Vec<(String, String)> {
+    pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
         let unavailable = || "unavailable (see the log)".to_owned();
         let followed = match self.followed.as_slice() {
             [] => "none".to_owned(),

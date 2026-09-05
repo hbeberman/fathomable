@@ -28,7 +28,7 @@ const MESSAGE_INDENT: usize = 5;
 
 /// How the review is ordered (ADR 0049).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum ReviewSort {
+pub(crate) enum ReviewSort {
     /// Threads whose newest message is not the user's first, newest
     /// first; then the rest by their newest message.
     #[default]
@@ -40,7 +40,7 @@ pub enum ReviewSort {
 impl ReviewSort {
     /// The words the header shows.
     #[must_use]
-    pub fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Recency => "by newest agent reply",
             Self::File => "by file",
@@ -51,28 +51,28 @@ impl ReviewSort {
 /// What the review shows (ADR 0049), shared by the review list and the
 /// rail's threads pane.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ReviewState {
-    pub sort: ReviewSort,
+pub(crate) struct ReviewState {
+    pub(crate) sort: ReviewSort,
     /// Resolved threads are listed too; hidden by default.
-    pub resolved: bool,
+    pub(crate) resolved: bool,
     /// Only the current document's threads (the list's `f`).
-    pub file_only: bool,
+    pub(crate) file_only: bool,
 }
 
 /// The list's state; the rows are derived from the store.
 #[derive(Debug, Default)]
-pub struct ReviewList {
+pub(crate) struct ReviewList {
     open: bool,
     scroll: usize,
     folded: HashSet<ThreadId>,
 }
 
 impl ReviewList {
-    pub fn is_open(&self) -> bool {
+    pub(crate) fn is_open(&self) -> bool {
         self.open
     }
 
-    pub fn scroll(&self) -> usize {
+    pub(crate) fn scroll(&self) -> usize {
         self.scroll
     }
 
@@ -84,7 +84,7 @@ impl ReviewList {
 
 /// One thread in list order, for moving and acting on the selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
+pub(crate) struct Entry {
     id: ThreadId,
     path: PathBuf,
     range: LineRange,
@@ -92,18 +92,18 @@ pub struct Entry {
 }
 
 impl Entry {
-    pub fn id(&self) -> &ThreadId {
+    pub(crate) fn id(&self) -> &ThreadId {
         &self.id
     }
 
-    pub fn kind(&self) -> ThreadState {
+    pub(crate) fn kind(&self) -> ThreadState {
         self.kind
     }
 }
 
 /// One drawn row of the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Row {
+pub(crate) enum Row {
     /// The first row of an entry: path, range, status, age.
     Header {
         entry: usize,
@@ -138,21 +138,21 @@ pub enum Row {
 
 /// The computed list: rows to draw and entries to act on.
 #[derive(Debug, Default)]
-pub struct Rows {
-    pub rows: Vec<Row>,
-    pub entries: Vec<Entry>,
+pub(crate) struct Rows {
+    pub(crate) rows: Vec<Row>,
+    pub(crate) entries: Vec<Entry>,
 }
 
 impl Rows {
     /// The row index of `entry`'s header.
-    pub fn header_row(&self, entry: usize) -> Option<usize> {
+    pub(crate) fn header_row(&self, entry: usize) -> Option<usize> {
         self.rows
             .iter()
             .position(|row| matches!(row, Row::Header { entry: e, .. } if *e == entry))
     }
 
     /// The entry and optional message under `row`.
-    pub fn selection_at(&self, row: usize) -> Option<(usize, Option<usize>)> {
+    pub(crate) fn selection_at(&self, row: usize) -> Option<(usize, Option<usize>)> {
         match self.rows.get(row)? {
             Row::Header { entry, .. } => Some((*entry, None)),
             Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
@@ -188,13 +188,13 @@ fn is_open(kind: ThreadState) -> bool {
 
 impl App {
     /// The list, open or not.
-    pub fn review_list(&self) -> &ReviewList {
+    pub(crate) fn review_list(&self) -> &ReviewList {
         &self.review_list
     }
 
     /// `Space A`: show the list in place of the document, or focus it
     /// when it is open, or close it when it is open and focused.
-    pub fn toggle_review(&mut self) {
+    pub(crate) fn toggle_review(&mut self) {
         if self.review_list.is_open() && self.focus == Focus::Review {
             self.close_review();
         } else if self.review_list.is_open() {
@@ -207,7 +207,7 @@ impl App {
     /// Show the list in place of the document. The pane closes; the
     /// filter and folds are whatever they were last time, and the cursor
     /// is where the reader was (ADR 0046).
-    pub fn open_review(&mut self) {
+    pub(crate) fn open_review(&mut self) {
         if self.store.is_none() {
             self.store_mut();
             return;
@@ -237,7 +237,7 @@ impl App {
     }
 
     /// What the review shows.
-    pub fn review(&self) -> ReviewState {
+    pub(crate) fn review(&self) -> ReviewState {
         self.review
     }
 
@@ -290,7 +290,7 @@ impl App {
     }
 
     /// Esc: back to the document that was showing.
-    pub fn close_review(&mut self) {
+    pub(crate) fn close_review(&mut self) {
         if !self.review_list.open {
             return;
         }
@@ -309,7 +309,7 @@ impl App {
     /// The rows and entries for a list `width` cells wide, in review
     /// order: every entry with its header, then its messages unless
     /// folded, a blank row between entries.
-    pub fn review_rows(&self, width: usize) -> Rows {
+    pub(crate) fn review_rows(&self, width: usize) -> Rows {
         let mut out = Rows::default();
         let body_width = width.saturating_sub(MESSAGE_INDENT).max(1);
         let cursor = self.thread_cursor();
@@ -481,7 +481,7 @@ impl App {
     }
 
     /// `h` / `l`: move between threads by `delta` in the list's order.
-    pub fn review_step(&mut self, delta: isize) {
+    pub(crate) fn review_step(&mut self, delta: isize) {
         let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;
@@ -493,7 +493,7 @@ impl App {
 
     /// `Ctrl-d` / `Ctrl-u`: the message half a page of rows below or
     /// above the highlighted one, the nearest when that row is a heading.
-    pub fn review_page(&mut self, direction: isize) {
+    pub(crate) fn review_page(&mut self, direction: isize) {
         let rows = self.review_rows(self.column_width());
         let Some(entry) = self.selected_index(&rows) else {
             return;
@@ -525,7 +525,7 @@ impl App {
     }
 
     /// `gg` / `G`.
-    pub fn review_goto(&mut self, end: bool) {
+    pub(crate) fn review_goto(&mut self, end: bool) {
         let rows = self.review_rows(self.column_width());
         let target = if end {
             rows.entries.len().saturating_sub(1)
@@ -539,7 +539,7 @@ impl App {
     }
 
     /// The wheel: scroll the rows; the selection stays where it is.
-    pub fn review_scroll(&mut self, delta: isize) {
+    pub(crate) fn review_scroll(&mut self, delta: isize) {
         let rows = self.review_rows(self.column_width());
         let max = rows.rows.len().saturating_sub(self.list_rows());
         self.review_list.scroll = self
@@ -550,7 +550,7 @@ impl App {
     }
 
     /// A click on list row `row` (below the header) selects its message.
-    pub fn review_click(&mut self, row: usize) {
+    pub(crate) fn review_click(&mut self, row: usize) {
         let rows = self.review_rows(self.column_width());
         if let Some((entry, message)) = rows.selection_at(self.review_list.scroll + row) {
             if let Some(message) = message {
@@ -563,13 +563,13 @@ impl App {
     }
 
     /// `f`: narrow to the current file, or widen again.
-    pub fn review_toggle_file(&mut self) {
+    pub(crate) fn review_toggle_file(&mut self) {
         self.review.file_only = !self.review.file_only;
         self.reshow_review();
     }
 
     /// `s` in the list: newest agent reply first, or by file and line.
-    pub fn review_toggle_sort(&mut self) {
+    pub(crate) fn review_toggle_sort(&mut self) {
         self.review.sort = match self.review.sort {
             ReviewSort::Recency => ReviewSort::File,
             ReviewSort::File => ReviewSort::Recency,
@@ -580,7 +580,7 @@ impl App {
 
     /// `x` in the list or the threads pane: list resolved threads too,
     /// or hide them again (ADR 0049).
-    pub fn review_toggle_resolved(&mut self) {
+    pub(crate) fn review_toggle_resolved(&mut self) {
         self.review.resolved = !self.review.resolved;
         self.notice(if self.review.resolved {
             "resolved shown"
@@ -606,7 +606,7 @@ impl App {
     }
 
     /// `z`: fold the selected entry to its header, or unfold it.
-    pub fn review_fold(&mut self) {
+    pub(crate) fn review_fold(&mut self) {
         let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;

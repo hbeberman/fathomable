@@ -24,13 +24,13 @@ use crate::app::{App, Focus};
 #[derive(Debug)]
 pub(crate) struct Rail {
     /// The tree pane is shown.
-    pub tree: bool,
+    pub(crate) tree: bool,
     /// The threads pane is shown.
-    pub threads: bool,
-    pub scope: PaneScope,
+    pub(crate) threads: bool,
+    pub(crate) scope: PaneScope,
     /// Rows a drag gave the threads pane, over `config.split`.
-    pub split: Option<usize>,
-    pub config: RailConfig,
+    pub(crate) split: Option<usize>,
+    pub(crate) config: RailConfig,
 }
 
 impl Rail {
@@ -54,7 +54,7 @@ const TREE_MIN_ROWS: usize = 2;
 
 /// Which threads the pane lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum PaneScope {
+pub(crate) enum PaneScope {
     /// The current document's threads in line order.
     #[default]
     File,
@@ -65,7 +65,7 @@ pub enum PaneScope {
 impl PaneScope {
     /// The word the header shows.
     #[must_use]
-    pub fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             Self::File => "file",
             Self::Workspace => "workspace",
@@ -75,7 +75,7 @@ impl PaneScope {
 
 /// One entry of the pane, ready to draw.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PaneRow {
+pub(crate) struct PaneRow {
     path: PathBuf,
     range: LineRange,
     kind: ThreadState,
@@ -89,35 +89,35 @@ pub struct PaneRow {
 
 impl PaneRow {
     #[cfg(test)]
-    pub fn range(&self) -> LineRange {
+    pub(crate) fn range(&self) -> LineRange {
         self.range
     }
 
-    pub fn kind(&self) -> ThreadState {
+    pub(crate) fn kind(&self) -> ThreadState {
         self.kind
     }
 
     /// Placement and state words (ADR 0032).
-    pub fn words(&self) -> Words {
+    pub(crate) fn words(&self) -> Words {
         self.words
     }
 
-    pub fn summary(&self) -> &str {
+    pub(crate) fn summary(&self) -> &str {
         &self.summary
     }
 
-    pub fn replies(&self) -> usize {
+    pub(crate) fn replies(&self) -> usize {
         self.replies
     }
 
-    pub fn updated(&self) -> u64 {
+    pub(crate) fn updated(&self) -> u64 {
         self.updated
     }
 
     /// Where the thread is, as the scope names it: `L9-11` in the file,
     /// `lib.rs:9` across the workspace.
     #[must_use]
-    pub fn place(&self, scope: PaneScope) -> String {
+    pub(crate) fn place(&self, scope: PaneScope) -> String {
         match scope {
             PaneScope::File => format!("L{}", self.range),
             PaneScope::Workspace => {
@@ -134,18 +134,18 @@ impl PaneRow {
 
 impl App {
     /// Whether the pane is shown in the rail.
-    pub fn threads_pane_shown(&self) -> bool {
+    pub(crate) fn threads_pane_shown(&self) -> bool {
         self.rail.threads
     }
 
     /// Which threads the pane lists.
-    pub fn rail_scope(&self) -> PaneScope {
+    pub(crate) fn rail_scope(&self) -> PaneScope {
         self.rail.scope
     }
 
     /// The threads the pane lists, in its order, resolved ones only when
     /// the review shows them.
-    pub fn threads_pane_ids(&self) -> Vec<ThreadId> {
+    pub(crate) fn threads_pane_ids(&self) -> Vec<ThreadId> {
         match self.rail.scope {
             // Line order, resolved ones when the review shows them.
             PaneScope::File => {
@@ -175,7 +175,7 @@ impl App {
     }
 
     /// The pane's entries, ready to draw.
-    pub fn threads_pane_rows(&self) -> Vec<PaneRow> {
+    pub(crate) fn threads_pane_rows(&self) -> Vec<PaneRow> {
         self.threads_pane_ids()
             .into_iter()
             .filter_map(|id| {
@@ -206,7 +206,7 @@ impl App {
     /// Rows the pane takes at the bottom of the rail: 0 when hidden, the
     /// whole column when the tree is hidden, else the split `rail.split`
     /// or a drag set, kept between one entry and the tree's minimum.
-    pub fn threads_pane_height(&self) -> usize {
+    pub(crate) fn threads_pane_height(&self) -> usize {
         if !self.rail.threads {
             return 0;
         }
@@ -223,7 +223,7 @@ impl App {
     }
 
     /// Rows the tree pane has, 0 when it is hidden.
-    pub fn tree_rows(&self) -> usize {
+    pub(crate) fn tree_rows(&self) -> usize {
         if self.tree().is_none() {
             return 0;
         }
@@ -234,7 +234,7 @@ impl App {
 
     /// The highlighted entry: the thread cursor's thread among the listed
     /// ones (ADR 0046), `None` when it is not listed.
-    pub fn threads_pane_selected(&self) -> Option<usize> {
+    pub(crate) fn threads_pane_selected(&self) -> Option<usize> {
         let order = self.threads_pane_ids();
         let cursor = self.thread_cursor();
         let id = cursor.thread()?;
@@ -242,7 +242,7 @@ impl App {
     }
 
     /// The first entry drawn, chosen so the highlighted one is on screen.
-    pub fn threads_pane_scroll(&self) -> usize {
+    pub(crate) fn threads_pane_scroll(&self) -> usize {
         let body = self
             .threads_pane_height()
             .saturating_sub(CHROME_ROWS)
@@ -254,7 +254,7 @@ impl App {
 
     /// `Space t`: show and focus the pane, or hand the keys back to the
     /// text when it has them; the pane stays either way.
-    pub fn toggle_threads_pane(&mut self) {
+    pub(crate) fn toggle_threads_pane(&mut self) {
         if self.focus == Focus::ThreadsPane {
             self.focus = Focus::View;
         } else {
@@ -264,7 +264,7 @@ impl App {
 
     /// `Space T`: hide the pane, or show it again without taking the
     /// keys; the tree keeps the rail if it is shown.
-    pub fn toggle_threads_pane_shown(&mut self) {
+    pub(crate) fn toggle_threads_pane_shown(&mut self) {
         if !self.rail.threads {
             self.show_threads_pane();
             return;
@@ -277,7 +277,7 @@ impl App {
     }
 
     /// Show the pane without taking the keys, as a workspace start does.
-    pub fn show_threads_pane(&mut self) {
+    pub(crate) fn show_threads_pane(&mut self) {
         if !self.rail.threads {
             self.rail.threads = true;
             self.relayout();
@@ -285,13 +285,13 @@ impl App {
     }
 
     /// Show the pane and give it the keys.
-    pub fn focus_threads_pane(&mut self) {
+    pub(crate) fn focus_threads_pane(&mut self) {
         self.show_threads_pane();
         self.focus = Focus::ThreadsPane;
     }
 
     /// Esc in the pane: the keys go back to the text; the pane stays.
-    pub fn leave_threads_pane(&mut self) {
+    pub(crate) fn leave_threads_pane(&mut self) {
         if self.focus == Focus::ThreadsPane {
             self.focus = Focus::View;
         }
@@ -300,7 +300,7 @@ impl App {
     /// `j` / `k` and the wheel: the next or previous listed thread,
     /// wrapping; the text follows, another file opening in workspace
     /// scope, and the keys stay here.
-    pub fn threads_pane_move(&mut self, delta: isize) {
+    pub(crate) fn threads_pane_move(&mut self, delta: isize) {
         let order = self.threads_pane_ids();
         if order.is_empty() {
             self.notice(self.empty_pane_notice());
@@ -312,7 +312,7 @@ impl App {
     }
 
     /// `s`: list this file, or the whole workspace.
-    pub fn threads_pane_toggle_scope(&mut self) {
+    pub(crate) fn threads_pane_toggle_scope(&mut self) {
         self.rail.scope = match self.rail.scope {
             PaneScope::File => PaneScope::Workspace,
             PaneScope::Workspace => PaneScope::File,
@@ -321,14 +321,14 @@ impl App {
     }
 
     /// A click on the pane's rule row or header: the keys come here.
-    pub fn threads_pane_focus(&mut self) {
+    pub(crate) fn threads_pane_focus(&mut self) {
         self.focus_pane(Focus::ThreadsPane);
     }
 
     /// A click on entry row `row` (counted from the first drawn entry):
     /// the cursor goes to that thread and the keys stay with this pane;
     /// a click past the entries acts as one on the header.
-    pub fn threads_pane_click(&mut self, row: usize) {
+    pub(crate) fn threads_pane_click(&mut self, row: usize) {
         let index = self.threads_pane_scroll() + row;
         match self.threads_pane_ids().into_iter().nth(index) {
             Some(id) => self.land_in_pane(id),
@@ -338,7 +338,7 @@ impl App {
 
     /// Enter: open the file with the cursor's thread expanded and the
     /// keys going to the text (ADR 0049).
-    pub fn threads_pane_open(&mut self) {
+    pub(crate) fn threads_pane_open(&mut self) {
         let Some(id) = self.thread_cursor().thread().cloned() else {
             return;
         };

@@ -14,7 +14,7 @@ use fathomable_core::theme::{DEFAULT_THEME, Theme};
 use fathomable_core::workspace::Workspace;
 
 /// Print diagnostics. Exit status is failure when any check fails.
-pub fn run(dirs: &XdgDirs) -> ExitCode {
+pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
     let mut ok = true;
 
     println!("fathomable {}", env!("CARGO_PKG_VERSION"));

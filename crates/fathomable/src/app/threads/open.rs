@@ -17,7 +17,7 @@ impl App {
     /// thread cursor's, while the text cursor rests on its lines or its
     /// rows (ADR 0049). False when the thread is detached: its last known
     /// range is not its lines, and the gutter already says so.
-    pub fn open_thread_in(&self, lines: LineRange) -> bool {
+    pub(crate) fn open_thread_in(&self, lines: LineRange) -> bool {
         let cursor = self.thread_cursor();
         let Some(shown) = cursor.thread() else {
             return false;

@@ -17,18 +17,18 @@ use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use crate::app::view::{Effect, Mode};
 
 /// Rows a scroll key or wheel notch moves.
-pub const WHEEL_LINES: isize = 3;
+pub(crate) const WHEEL_LINES: isize = 3;
 
 /// Apply a key press to `app`. Going elsewhere switches auto-jump off
 /// (ADR 0031).
-pub fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
+pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
     app.with_navigation_watch(|app| key_event(app, key))
 }
 
 /// The surface a key lands on now, or `None` under a popup that any key
 /// closes.
 #[must_use]
-pub fn place(app: &App) -> Option<Where> {
+pub(crate) fn place(app: &App) -> Option<Where> {
     match app.popup() {
         Some(Popup::Help | Popup::Status | Popup::Menu(_)) => None,
         Some(Popup::Compose(_)) => Some(Where::Box),
@@ -150,7 +150,7 @@ impl App {
     /// Run `action` as the focused surface means it, recording the
     /// position a far move leaves. A search moves the cursor as it is
     /// typed, so its origin is kept from `/` to Enter.
-    pub fn act(&mut self, action: Action) -> Effect {
+    pub(crate) fn act(&mut self, action: Action) -> Effect {
         let input = place(self) == Some(Where::Input);
         let from = match action {
             Action::SearchForward | Action::SearchBackward => {

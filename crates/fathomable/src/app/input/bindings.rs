@@ -15,7 +15,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// A key on its own, without modifiers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Key {
+pub(crate) enum Key {
     Char(char),
     Enter,
     Esc,
@@ -53,17 +53,17 @@ impl fmt::Display for Key {
 /// One key press: a [`Key`] with its modifiers. Shift is not a modifier
 /// here; a shifted letter arrives as its uppercase character.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Chord {
-    pub key: Key,
-    pub ctrl: bool,
-    pub alt: bool,
+pub(crate) struct Chord {
+    pub(crate) key: Key,
+    pub(crate) ctrl: bool,
+    pub(crate) alt: bool,
 }
 
 impl Chord {
     /// The chord a terminal event is, or `None` for a key the viewer
     /// never binds (function keys, media keys).
     #[must_use]
-    pub fn from_event(event: KeyEvent) -> Option<Self> {
+    pub(crate) fn from_event(event: KeyEvent) -> Option<Self> {
         let key = match event.code {
             KeyCode::Char(ch) => Key::Char(ch),
             KeyCode::Enter => Key::Enter,
@@ -88,7 +88,7 @@ impl Chord {
 
     /// Whether this is a bare character: no modifier, not the space bar.
     #[must_use]
-    pub fn is_plain_char(self) -> bool {
+    pub(crate) fn is_plain_char(self) -> bool {
         !self.ctrl && !self.alt && matches!(self.key, Key::Char(ch) if ch != ' ')
     }
 }
@@ -142,12 +142,12 @@ const fn k(key: Key) -> Chord {
 }
 
 /// A key sequence: one chord, or a prefix and what follows it.
-pub type Keys = &'static [Chord];
+pub(crate) type Keys = &'static [Chord];
 
 /// How a sequence is written: bare characters run together (`gg`, `]c`),
 /// anything else is space-separated (`Space j a`, `Ctrl-d`).
 #[must_use]
-pub fn spell(keys: &[Chord]) -> String {
+pub(crate) fn spell(keys: &[Chord]) -> String {
     let separator = if keys.iter().all(|chord| chord.is_plain_char()) {
         ""
     } else {
@@ -164,7 +164,7 @@ pub fn spell(keys: &[Chord]) -> String {
 /// reaches a popup: the comment box, the picker, and the command line
 /// take only their own keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Where {
+pub(crate) enum Where {
     /// The text, in normal or select mode.
     View,
     /// The file tree.
@@ -186,7 +186,7 @@ pub enum Where {
 impl Where {
     /// Whether `Any` bindings apply here: in a pane, not a popup.
     #[must_use]
-    pub fn takes_any(self) -> bool {
+    pub(crate) fn takes_any(self) -> bool {
         !matches!(self, Self::Box | Self::Picker | Self::Input)
     }
 }
@@ -196,14 +196,14 @@ macro_rules! actions {
         /// What a key does. One action can be bound on several surfaces;
         /// `App::act` gives it that surface's meaning.
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub enum Action {
+        pub(crate) enum Action {
             $($(#[$meta])* $name),*
         }
 
         impl Action {
             /// Every action, for the test that each one is bound.
             #[cfg(test)]
-            pub const ALL: &'static [Self] = &[$(Self::$name),*];
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$name),*];
         }
     };
 }
@@ -304,12 +304,12 @@ actions! {
 
 /// One row of the table: the sequences that fire `action` in `place`.
 #[derive(Debug, Clone, Copy)]
-pub struct Binding {
-    pub keys: &'static [Keys],
-    pub place: Where,
-    pub action: Action,
-    pub label: &'static str,
-    pub group: &'static str,
+pub(crate) struct Binding {
+    pub(crate) keys: &'static [Keys],
+    pub(crate) place: Where,
+    pub(crate) action: Action,
+    pub(crate) label: &'static str,
+    pub(crate) group: &'static str,
 }
 
 const fn bind(
@@ -333,7 +333,7 @@ use Key as K;
 use Where as W;
 
 /// Every binding. Order is the help popup's order.
-pub const BINDINGS: &[Binding] = &[
+pub(crate) const BINDINGS: &[Binding] = &[
     // ----- the text -----
     bind(
         W::View,
@@ -1313,7 +1313,7 @@ fn submenu_word(typed: &[Chord]) -> Option<&'static str> {
 /// The breadcrumb row of the which-key menu: the prefix as it is
 /// spelled, then the submenu's word (`Space c · threads`).
 #[must_use]
-pub fn menu_title(typed: &[Chord]) -> String {
+pub(crate) fn menu_title(typed: &[Chord]) -> String {
     match submenu_word(typed) {
         Some(word) => format!("{} · {word}", spell(typed)),
         None => spell(typed),
@@ -1322,11 +1322,11 @@ pub fn menu_title(typed: &[Chord]) -> String {
 
 /// `Ctrl` letters zellij's lock mode owns; the viewer never binds them.
 #[cfg(test)]
-pub const ZELLIJ_LOCKS: [char; 9] = ['g', 'p', 't', 'n', 'h', 's', 'o', 'q', 'b'];
+pub(crate) const ZELLIJ_LOCKS: [char; 9] = ['g', 'p', 't', 'n', 'h', 's', 'o', 'q', 'b'];
 
 /// What a typed sequence is on one surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Match {
+pub(crate) enum Match {
     /// A binding fires.
     Exact(Action),
     /// A longer binding starts this way; wait for more.
@@ -1345,7 +1345,7 @@ fn applicable(place: Where) -> impl Iterator<Item = &'static Binding> {
 
 /// Look `typed` up on `place`.
 #[must_use]
-pub fn lookup(place: Where, typed: &[Chord]) -> Match {
+pub(crate) fn lookup(place: Where, typed: &[Chord]) -> Match {
     let mut prefix = false;
     for binding in applicable(place) {
         for keys in binding.keys {
@@ -1371,7 +1371,7 @@ fn strip_submenu_word<'a>(typed: &[Chord], label: &'a str) -> &'a str {
 /// The which-key entries for `typed` on `place`: the next key of every
 /// binding that continues it, with its label, in table order.
 #[must_use]
-pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
+pub(crate) fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
     menu_entries(place, typed)
         .into_iter()
         .map(|(chord, label)| (chord.to_string(), label))
@@ -1381,7 +1381,7 @@ pub fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
 /// The which-key entries as chords, so a click on a drawn entry can be
 /// the key it shows typed (ADR 0050).
 #[must_use]
-pub fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)> {
+pub(crate) fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)> {
     let mut entries: Vec<(Chord, String)> = Vec::new();
     for binding in applicable(place) {
         for keys in binding.keys {
@@ -1408,7 +1408,7 @@ pub fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)> {
 /// How `action` is spelled on `place`, for a hint bar: its first
 /// sequence there, else its first `Any` sequence.
 #[must_use]
-pub fn hint(place: Where, action: Action) -> Option<String> {
+pub(crate) fn hint(place: Where, action: Action) -> Option<String> {
     first_keys(place, action).map(spell)
 }
 
@@ -1416,7 +1416,7 @@ pub fn hint(place: Where, action: Action) -> Option<String> {
 /// first `Any` one when the place takes those. A menu entry keeps the
 /// chords so a typed key can be matched against them (ADR 0050).
 #[must_use]
-pub fn first_keys(place: Where, action: Action) -> Option<Keys> {
+pub(crate) fn first_keys(place: Where, action: Action) -> Option<Keys> {
     let own = BINDINGS
         .iter()
         .find(|b| b.place == place && b.action == action);
@@ -1436,14 +1436,14 @@ pub fn first_keys(place: Where, action: Action) -> Option<Keys> {
 /// The help popup: one row per binding, keys joined by ` / `, under a
 /// header row per group.
 #[must_use]
-pub fn help() -> Vec<(String, String)> {
+pub(crate) fn help() -> Vec<(String, String)> {
     help_rows().into_iter().map(|(_, row)| row).collect()
 }
 
 /// The help rows with the binding each one stands for, `None` on a
 /// group header, so a click on a row can run it (ADR 0050).
 #[must_use]
-pub fn help_rows() -> Vec<(Option<&'static Binding>, (String, String))> {
+pub(crate) fn help_rows() -> Vec<(Option<&'static Binding>, (String, String))> {
     let mut rows = Vec::with_capacity(BINDINGS.len() + 16);
     let mut group = "";
     for binding in BINDINGS {

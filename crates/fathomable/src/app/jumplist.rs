@@ -12,9 +12,9 @@ use std::path::PathBuf;
 
 /// A place in the workspace: a file and a source line.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Position {
-    pub path: PathBuf,
-    pub line: usize,
+pub(crate) struct Position {
+    pub(crate) path: PathBuf,
+    pub(crate) line: usize,
 }
 
 /// Positions kept at most.
@@ -23,7 +23,7 @@ const CAP: usize = 100;
 /// The positions far moves left, oldest first, and where the reader
 /// stands among them.
 #[derive(Debug, Default)]
-pub struct Jumplist {
+pub(crate) struct Jumplist {
     entries: Vec<Position>,
     /// The entry the reader stands on after going back; `None` at the
     /// tip, where every far move lands.
@@ -32,7 +32,7 @@ pub struct Jumplist {
 
 impl Jumplist {
     /// A far move left `position`: keep it, dropping any forward part.
-    pub fn record(&mut self, position: Position) {
+    pub(crate) fn record(&mut self, position: Position) {
         if let Some(index) = self.index.take() {
             self.entries.truncate(index + 1);
         }
@@ -41,7 +41,7 @@ impl Jumplist {
 
     /// `Alt-Left` from `here`: the previous position, or `None` at the
     /// oldest. The first step back keeps `here` so forward returns to it.
-    pub fn back(&mut self, here: Position) -> Option<&Position> {
+    pub(crate) fn back(&mut self, here: Position) -> Option<&Position> {
         let index = if let Some(index) = self.index {
             index
         } else {
@@ -57,7 +57,7 @@ impl Jumplist {
     }
 
     /// `Alt-Right`: the next position, or `None` at the newest.
-    pub fn forward(&mut self) -> Option<&Position> {
+    pub(crate) fn forward(&mut self) -> Option<&Position> {
         let next = self.index? + 1;
         if next >= self.entries.len() {
             return None;

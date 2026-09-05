@@ -39,7 +39,7 @@ use super::{App, Options, clipboard, input, socket, watch};
 
 /// Run the app until the user quits, showing `open` first when given,
 /// else the tree (ADR 0012).
-pub fn run(
+pub(crate) fn run(
     workspace: Workspace,
     options: Options,
     theme: &Theme,

@@ -55,7 +55,7 @@ use fathomable_core::clock::now;
 
 /// The agent harness whose hook is calling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum Harness {
+pub(crate) enum Harness {
     /// Claude Code: `SessionStart` and `Stop` in `settings.json`.
     Claude,
     /// Codex CLI: `SessionStart` and `Stop` in `hooks.json`.
@@ -493,7 +493,12 @@ fn agents_config(dirs: &XdgDirs) -> AgentsConfig {
 }
 
 /// `fathomable hello`: tell the model its session id and how to subscribe.
-pub fn hello(dirs: &XdgDirs, harness: Harness, id: Option<String>, verbose: bool) -> ExitCode {
+pub(crate) fn hello(
+    dirs: &XdgDirs,
+    harness: Harness,
+    id: Option<String>,
+    verbose: bool,
+) -> ExitCode {
     let mut diag = Diag::new(verbose, "hello", Some(harness));
     let input = read_input(harness, &mut diag);
     input.describe(&mut diag);
@@ -572,7 +577,7 @@ fn bond_session(dirs: &XdgDirs, root: &Path, id: &str, config: &AgentsConfig) {
 }
 
 /// `fathomable pending`: hand the subscriber what it has not seen.
-pub fn pending(
+pub(crate) fn pending(
     dirs: &XdgDirs,
     harness: Option<Harness>,
     id: Option<String>,

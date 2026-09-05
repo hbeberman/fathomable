@@ -17,18 +17,18 @@ const ARMED: &str = "d again to delete this thread · any other key cancels";
 impl App {
     /// The thread a first `d` armed for deletion.
     #[cfg(test)]
-    pub fn delete_armed(&self) -> Option<&ThreadId> {
+    pub(crate) fn delete_armed(&self) -> Option<&ThreadId> {
         self.pending_delete.as_ref()
     }
 
     /// `d` on a surface showing `id`: arm its deletion.
-    pub fn arm_delete(&mut self, id: ThreadId) {
+    pub(crate) fn arm_delete(&mut self, id: ThreadId) {
         self.pending_delete = Some(id);
         self.notice(ARMED);
     }
 
     /// The first `d` on a thread surface: arm the cursor's thread.
-    pub fn arm_delete_here(&mut self) {
+    pub(crate) fn arm_delete_here(&mut self) {
         match self.focus() {
             Focus::ThreadsPane | Focus::Review => self.thread_arm_delete(),
             // In the text, only a thread covering the cursor row is armed
@@ -39,14 +39,14 @@ impl App {
     }
 
     /// The second `d`: delete the armed thread, if one still is.
-    pub fn delete_armed_thread(&mut self) {
+    pub(crate) fn delete_armed_thread(&mut self) {
         if let Some(id) = self.pending_delete.take() {
             self.delete_thread(&id);
         }
     }
 
     /// `Space c d`: delete the cursor's thread outright (ADR 0049).
-    pub fn thread_delete_here(&mut self) {
+    pub(crate) fn thread_delete_here(&mut self) {
         match self.thread_cursor().thread().cloned() {
             Some(id) => self.delete_thread(&id),
             None => self.notice("no thread here"),
@@ -54,7 +54,7 @@ impl App {
     }
 
     /// A click while armed cancels; the click is then handled.
-    pub fn cancel_delete(&mut self) {
+    pub(crate) fn cancel_delete(&mut self) {
         if self.pending_delete.take().is_some() {
             self.notice("delete cancelled");
         }
@@ -62,7 +62,7 @@ impl App {
 
     /// Delete `id`: a tombstone in the store, every document's marks
     /// refreshed, and its rows gone from the text.
-    pub fn delete_thread(&mut self, id: &ThreadId) {
+    pub(crate) fn delete_thread(&mut self, id: &ThreadId) {
         let place = self.review_selected_index();
         let Some(store) = self.store_mut() else {
             return;

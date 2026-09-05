@@ -6,7 +6,7 @@ use std::io::{self, Write};
 /// Copy `text` to the terminal's clipboard with OSC 52.
 ///
 /// No fallback: terminals without OSC 52 ignore the sequence (ADR 0010).
-pub fn copy(text: &str) -> io::Result<()> {
+pub(crate) fn copy(text: &str) -> io::Result<()> {
     let mut out = io::stdout().lock();
     write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
     out.flush()

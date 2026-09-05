@@ -19,7 +19,7 @@ use crate::app::threads::ThreadState;
 
 impl App {
     /// Waiting threads on the current document.
-    pub fn waiting_count(&self) -> usize {
+    pub(crate) fn waiting_count(&self) -> usize {
         self.marks()
             .iter()
             .filter(|mark| mark.kind() == ThreadState::Waiting)
@@ -27,12 +27,12 @@ impl App {
     }
 
     /// Waiting threads across the work in scope.
-    pub fn waiting_total(&self) -> usize {
+    pub(crate) fn waiting_total(&self) -> usize {
         self.waiting_threads().count()
     }
 
     /// Whether a thread on `path` (root-relative) waits on the user.
-    pub fn path_waits(&self, path: &Path) -> bool {
+    pub(crate) fn path_waits(&self, path: &Path) -> bool {
         self.waiting_threads().any(|thread| thread.path() == path)
     }
 
@@ -75,12 +75,12 @@ impl App {
     }
 
     /// `]r`: the next waiting thread, across files, and its pane.
-    pub fn waiting_next(&mut self) {
+    pub(crate) fn waiting_next(&mut self) {
         self.step_waiting(true);
     }
 
     /// `[r`: the previous waiting thread, across files, and its pane.
-    pub fn waiting_prev(&mut self) {
+    pub(crate) fn waiting_prev(&mut self) {
         self.step_waiting(false);
     }
 

@@ -21,7 +21,7 @@ const SCROLLOFF: usize = 3;
 
 /// Editing-style mode shown in the status pill.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mode {
+pub(crate) enum Mode {
     Normal,
     Select,
     Command,
@@ -41,7 +41,7 @@ impl fmt::Display for Mode {
 
 /// Which layout of the document the pane shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Display {
+pub(crate) enum Display {
     /// Rendered Markdown.
     #[default]
     Rendered,
@@ -57,23 +57,23 @@ pub enum Display {
 
 /// A position in rendered coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-pub struct Cursor {
-    pub row: usize,
-    pub col: usize,
+pub(crate) struct Cursor {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
 }
 
 /// A selection between an anchor and a moving head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Selection {
-    pub anchor: Cursor,
-    pub head: Cursor,
+pub(crate) struct Selection {
+    pub(crate) anchor: Cursor,
+    pub(crate) head: Cursor,
     /// Whole lines (`V`) rather than columns (mouse drag).
-    pub linewise: bool,
+    pub(crate) linewise: bool,
 }
 
 impl Selection {
     /// The selection ordered top-left to bottom-right.
-    pub fn ordered(&self) -> (Cursor, Cursor) {
+    pub(crate) fn ordered(&self) -> (Cursor, Cursor) {
         if self.anchor <= self.head {
             (self.anchor, self.head)
         } else {
@@ -82,7 +82,7 @@ impl Selection {
     }
 
     /// Whether rendered cell `(row, col)` is inside the selection.
-    pub fn contains(&self, row: usize, col: usize) -> bool {
+    pub(crate) fn contains(&self, row: usize, col: usize) -> bool {
         let (start, end) = self.ordered();
         if row < start.row || row > end.row {
             return false;
@@ -98,15 +98,15 @@ impl Selection {
 
 /// A search match in rendered coordinates: row and column span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Match {
-    pub row: usize,
-    pub start: usize,
-    pub end: usize,
+pub(crate) struct Match {
+    pub(crate) row: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 /// What the event loop must do after handling input.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Effect {
+pub(crate) enum Effect {
     None,
     Quit,
     Copy(String),
@@ -121,7 +121,7 @@ pub enum Effect {
 /// What `]g` / `[g` did (ADR 0017), so the app can cross into the next
 /// dirty file when the hunks of this one run out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HunkStep {
+pub(crate) enum HunkStep {
     /// The cursor moved to another hunk in this file.
     Moved,
     /// The only next hunk is back at the other end of the file.
@@ -134,19 +134,19 @@ pub enum HunkStep {
 
 /// How a view colours and initially displays its text (ADR 0016).
 #[derive(Debug, Clone)]
-pub struct Syntax {
+pub(crate) struct Syntax {
     /// The shared highlighter.
-    pub highlighter: Arc<Highlighter>,
+    pub(crate) highlighter: Arc<Highlighter>,
     /// Language hint for the source layout: the file extension, or empty.
-    pub hint: String,
+    pub(crate) hint: String,
     /// Whether the file opens rendered as Markdown rather than as source.
-    pub markdown: bool,
+    pub(crate) markdown: bool,
 }
 
 impl Syntax {
     /// Plain Markdown: no colours, rendered first.
     #[must_use]
-    pub fn plain() -> Self {
+    pub(crate) fn plain() -> Self {
         Self {
             highlighter: Arc::new(Highlighter::plain()),
             hint: String::new(),
@@ -156,7 +156,7 @@ impl Syntax {
 }
 
 #[derive(Debug)]
-pub struct View {
+pub(crate) struct View {
     text: String,
     layout: Layout,
     syntax: Syntax,
@@ -198,24 +198,24 @@ pub struct View {
 /// A block of rows inserted under a row for a thread (ADR 0049): where
 /// it hangs, how many rows, and which of them the cursor may rest on.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StubBlock {
-    pub anchor: RowAnchor,
-    pub rows: usize,
+pub(crate) struct StubBlock {
+    pub(crate) anchor: RowAnchor,
+    pub(crate) rows: usize,
     /// Row indices within the block that are stops: an expanded thread's
     /// message rows. A collapsed stub has none.
-    pub stops: Vec<usize>,
+    pub(crate) stops: Vec<usize>,
 }
 
 impl View {
     /// Lay `text` out for a text area of `width` by `height` cells, as
     /// uncoloured Markdown.
-    pub fn new(text: String, width: usize, height: usize) -> Self {
+    pub(crate) fn new(text: String, width: usize, height: usize) -> Self {
         Self::with_syntax(text, width, height, Syntax::plain())
     }
 
     /// Lay `text` out for a text area of `width` by `height` cells,
     /// coloured and initially displayed as `syntax` says.
-    pub fn with_syntax(text: String, width: usize, height: usize, syntax: Syntax) -> Self {
+    pub(crate) fn with_syntax(text: String, width: usize, height: usize, syntax: Syntax) -> Self {
         let display = if syntax.markdown {
             Display::Rendered
         } else {
@@ -258,7 +258,7 @@ impl View {
     /// Lay the document out again with a blank row before each line in
     /// `lines`, for the detached threads anchored there (ADR 0039); a
     /// call that changes nothing keeps the layout.
-    pub fn set_detached_anchors(&mut self, mut lines: Vec<usize>) {
+    pub(crate) fn set_detached_anchors(&mut self, mut lines: Vec<usize>) {
         lines.sort_unstable();
         lines.dedup();
         if lines == self.detached {
@@ -271,7 +271,7 @@ impl View {
     /// Lay the document out again with the stub rows of `blocks` under
     /// their anchors (ADR 0049); a call that changes nothing keeps the
     /// layout.
-    pub fn set_stub_blocks(&mut self, blocks: Vec<StubBlock>) {
+    pub(crate) fn set_stub_blocks(&mut self, blocks: Vec<StubBlock>) {
         if blocks == self.stubs {
             return;
         }
@@ -280,7 +280,7 @@ impl View {
     }
 
     /// The rendered row of stub `index` of block `block`, if laid out.
-    pub fn row_of_stub_slot(&self, block: usize, index: usize) -> Option<usize> {
+    pub(crate) fn row_of_stub_slot(&self, block: usize, index: usize) -> Option<usize> {
         self.layout
             .lines()
             .iter()
@@ -301,13 +301,13 @@ impl View {
 
     /// Jump to `row`, landing on its first column; a row the cursor may
     /// not rest on settles as a motion would.
-    pub fn goto_row(&mut self, row: usize) {
+    pub(crate) fn goto_row(&mut self, row: usize) {
         self.jump_to_row(row);
     }
 
     /// The stub block and index row `row` was inserted for, if it is a
     /// stub row.
-    pub fn stub_slot_of_row(&self, row: usize) -> Option<(usize, usize)> {
+    pub(crate) fn stub_slot_of_row(&self, row: usize) -> Option<(usize, usize)> {
         self.layout.lines().get(row)?.stub_slot()
     }
 
@@ -334,12 +334,12 @@ impl View {
     }
 
     /// The source line the detached row `row` stands before, if it is one.
-    pub fn detached_anchor_of_row(&self, row: usize) -> Option<usize> {
+    pub(crate) fn detached_anchor_of_row(&self, row: usize) -> Option<usize> {
         self.layout.lines().get(row)?.stands_before()
     }
 
     /// Move to the detached row standing before source line `anchor`.
-    pub fn goto_detached_row(&mut self, anchor: usize) {
+    pub(crate) fn goto_detached_row(&mut self, anchor: usize) {
         if let Some(row) = self
             .layout
             .lines()
@@ -350,12 +350,12 @@ impl View {
         }
     }
 
-    pub fn layout(&self) -> &Layout {
+    pub(crate) fn layout(&self) -> &Layout {
         &self.layout
     }
 
     /// The document text as laid out.
-    pub fn text(&self) -> &str {
+    pub(crate) fn text(&self) -> &str {
         &self.text
     }
 
@@ -379,17 +379,17 @@ impl View {
     }
 
     /// Whether the checkpoint diff is shown (ADR 0049).
-    pub fn checkpoint_view(&self) -> bool {
+    pub(crate) fn checkpoint_view(&self) -> bool {
         self.display == Display::Checkpoint
     }
 
     /// The checkpoint diff's sides while it is shown.
-    pub fn checkpoint(&self) -> Option<&CheckDiff> {
+    pub(crate) fn checkpoint(&self) -> Option<&CheckDiff> {
         self.check.as_ref().filter(|_| self.checkpoint_view())
     }
 
     /// `(added, removed)` between the checkpoint diff's sides, while shown.
-    pub fn checkpoint_counts(&self) -> Option<(usize, usize)> {
+    pub(crate) fn checkpoint_counts(&self) -> Option<(usize, usize)> {
         match &self.checkpoint()?.body {
             CheckBody::Diff { base, target } => {
                 Some(Diff::new(base, target.as_deref().unwrap_or(&self.text)).counts())
@@ -399,14 +399,14 @@ impl View {
     }
 
     /// Show the checkpoint diff `check` in place of the document.
-    pub fn show_checkpoint(&mut self, check: CheckDiff) {
+    pub(crate) fn show_checkpoint(&mut self, check: CheckDiff) {
         self.check = Some(check);
         self.display = Display::Checkpoint;
         self.relayout();
     }
 
     /// Leave the checkpoint diff for the rendered view.
-    pub fn leave_checkpoint(&mut self) {
+    pub(crate) fn leave_checkpoint(&mut self) {
         if self.display == Display::Checkpoint {
             self.display = Display::Rendered;
             self.relayout();
@@ -415,18 +415,18 @@ impl View {
 
     /// Note that the reader did something here (ADR 0015 guardrails and
     /// seen-idle).
-    pub fn touch(&mut self) {
+    pub(crate) fn touch(&mut self) {
         self.activity = Instant::now();
     }
 
     /// Time since the reader last did something here.
-    pub fn idle(&self) -> Duration {
+    pub(crate) fn idle(&self) -> Duration {
         self.activity.elapsed()
     }
 
     /// Pretend the reader has been still for `duration`.
     #[cfg(test)]
-    pub fn rest(&mut self, duration: Duration) {
+    pub(crate) fn rest(&mut self, duration: Duration) {
         if let Some(then) = Instant::now().checked_sub(duration) {
             self.activity = then;
         }
@@ -434,12 +434,12 @@ impl View {
 
     /// Whether the diff view is showing the last-seen diff rather than
     /// the `HEAD` one.
-    pub fn diff_seen(&self) -> bool {
+    pub(crate) fn diff_seen(&self) -> bool {
         self.display == Display::DiffSeen
     }
 
     /// Whether 1-based source `line` is within the rows on screen.
-    pub fn line_on_screen(&self, line: usize) -> bool {
+    pub(crate) fn line_on_screen(&self, line: usize) -> bool {
         self.layout
             .index()
             .range_of(line)
@@ -448,7 +448,7 @@ impl View {
     }
 
     /// The 1-based line of the first hunk against `HEAD`.
-    pub fn first_hunk_line(&self) -> Option<usize> {
+    pub(crate) fn first_hunk_line(&self) -> Option<usize> {
         let diff = self.diff.as_ref()?;
         diff.hunks()
             .first()
@@ -456,91 +456,91 @@ impl View {
     }
 
     /// The 1-based line of the last hunk against `HEAD`.
-    pub fn last_hunk_line(&self) -> Option<usize> {
+    pub(crate) fn last_hunk_line(&self) -> Option<usize> {
         let diff = self.diff.as_ref()?;
         diff.hunks()
             .last()
             .map(|hunk| hunk.target_line(diff.new_lines()))
     }
 
-    pub fn index(&self) -> &LineIndex {
+    pub(crate) fn index(&self) -> &LineIndex {
         self.layout.index()
     }
 
-    pub fn cursor(&self) -> Cursor {
+    pub(crate) fn cursor(&self) -> Cursor {
         self.cursor
     }
 
-    pub fn scroll(&self) -> usize {
+    pub(crate) fn scroll(&self) -> usize {
         self.scroll
     }
 
-    pub fn mode(&self) -> Mode {
+    pub(crate) fn mode(&self) -> Mode {
         self.mode
     }
 
-    pub fn input(&self) -> &str {
+    pub(crate) fn input(&self) -> &str {
         &self.input
     }
 
-    pub fn selection(&self) -> Option<Selection> {
+    pub(crate) fn selection(&self) -> Option<Selection> {
         self.selection
     }
 
-    pub fn matches(&self) -> &[Match] {
+    pub(crate) fn matches(&self) -> &[Match] {
         &self.matches
     }
 
-    pub fn message(&self) -> Option<&str> {
+    pub(crate) fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }
 
-    pub fn changed(&self) -> bool {
+    pub(crate) fn changed(&self) -> bool {
         self.changed
     }
 
-    pub fn source_view(&self) -> bool {
+    pub(crate) fn source_view(&self) -> bool {
         self.display == Display::Source
     }
 
-    pub fn diff_view(&self) -> bool {
+    pub(crate) fn diff_view(&self) -> bool {
         matches!(self.display, Display::Diff | Display::DiffSeen)
     }
 
     /// The gutter status of 1-based source line `line` against `HEAD`.
-    pub fn line_status(&self, line: usize) -> Option<LineStatus> {
+    pub(crate) fn line_status(&self, line: usize) -> Option<LineStatus> {
         self.diff.as_ref()?.status(line)
     }
 
     /// Whether 1-based source line `line` is already in the index, so its
     /// change against `HEAD` is staged (ADR 0017). A line the index does
     /// not yet hold shows as unstaged.
-    pub fn line_staged(&self, line: usize) -> bool {
+    pub(crate) fn line_staged(&self, line: usize) -> bool {
         self.unstaged
             .as_ref()
             .is_some_and(|unstaged| unstaged.status(line).is_none())
     }
 
     /// `(added, removed)` lines against `HEAD`, `None` outside git.
-    pub fn diff_counts(&self) -> Option<(usize, usize)> {
+    pub(crate) fn diff_counts(&self) -> Option<(usize, usize)> {
         self.diff.as_ref().map(Diff::counts)
     }
 
     /// Progress through the document as a percentage of rendered lines.
-    pub fn percent(&self) -> usize {
+    pub(crate) fn percent(&self) -> usize {
         let last = self.layout.lines().len().saturating_sub(1);
         (self.cursor.row * 100).checked_div(last).unwrap_or(100)
     }
 
     /// Cursor position in source coordinates: 1-based line and 0-based column.
-    pub fn source_position(&self) -> (usize, usize) {
+    pub(crate) fn source_position(&self) -> (usize, usize) {
         let offset = self.cursor_offset().unwrap_or(0);
         let index = self.layout.index();
         (index.line_of(offset), index.column_of(self.shown(), offset))
     }
 
     /// The source byte offset under the cursor.
-    pub fn cursor_offset(&self) -> Option<usize> {
+    pub(crate) fn cursor_offset(&self) -> Option<usize> {
         self.layout
             .lines()
             .get(self.cursor.row)
@@ -548,14 +548,14 @@ impl View {
     }
 
     /// Re-lay out for a new pane size, keeping the cursor on the same source.
-    pub fn resize(&mut self, width: usize, height: usize) {
+    pub(crate) fn resize(&mut self, width: usize, height: usize) {
         self.width = width;
         self.height = height.max(1);
         self.relayout();
     }
 
     /// Replace the document text after a change on disk (ADR 0010 reload).
-    pub fn reload(&mut self, text: String) {
+    pub(crate) fn reload(&mut self, text: String) {
         self.text = text;
         self.changed = true;
         self.rediff();
@@ -564,7 +564,12 @@ impl View {
 
     /// Set the diff bases, each `None` when it does not exist; the
     /// gutter and the diff view follow.
-    pub fn set_bases(&mut self, seen: Option<String>, index: Option<String>, head: Option<String>) {
+    pub(crate) fn set_bases(
+        &mut self,
+        seen: Option<String>,
+        index: Option<String>,
+        head: Option<String>,
+    ) {
         if seen == self.seen && index == self.index && head == self.head {
             return;
         }
@@ -589,7 +594,7 @@ impl View {
     }
 
     /// Switch between rendered Markdown and the raw source.
-    pub fn toggle_source_view(&mut self) {
+    pub(crate) fn toggle_source_view(&mut self) {
         self.display = match self.display {
             Display::Source => Display::Rendered,
             _ => Display::Source,
@@ -599,7 +604,7 @@ impl View {
 
     /// `gd` / `:diff`: the unified diff against `HEAD`, or back to the
     /// rendered view (ADR 0017).
-    pub fn toggle_diff_view(&mut self) {
+    pub(crate) fn toggle_diff_view(&mut self) {
         if self.display == Display::Diff {
             self.display = Display::Rendered;
         } else if self.head.is_some() {
@@ -613,7 +618,7 @@ impl View {
 
     /// `gD` / `:diff seen`: the unified diff against the last-seen
     /// snapshot (ADR 0015), or back to the rendered view.
-    pub fn toggle_seen_diff_view(&mut self) {
+    pub(crate) fn toggle_seen_diff_view(&mut self) {
         if self.display == Display::DiffSeen {
             self.display = Display::Rendered;
         } else if self.seen.is_some() {
@@ -628,12 +633,12 @@ impl View {
     /// `]g` within the file: the cursor to the next hunk against `HEAD`.
     /// Reports a wrap instead of taking it, so the app can cross into the
     /// next dirty file (ADR 0017).
-    pub fn next_hunk(&mut self) -> HunkStep {
+    pub(crate) fn next_hunk(&mut self) -> HunkStep {
         self.step_hunk(true)
     }
 
     /// `[g` within the file: the cursor to the previous hunk.
-    pub fn prev_hunk(&mut self) -> HunkStep {
+    pub(crate) fn prev_hunk(&mut self) -> HunkStep {
         self.step_hunk(false)
     }
 
@@ -828,33 +833,33 @@ impl View {
         }
     }
 
-    pub fn move_down(&mut self, n: usize) {
+    pub(crate) fn move_down(&mut self, n: usize) {
         self.set_row(self.cursor.row.saturating_add(n));
     }
 
-    pub fn move_up(&mut self, n: usize) {
+    pub(crate) fn move_up(&mut self, n: usize) {
         self.set_row(self.cursor.row.saturating_sub(n));
     }
 
-    pub fn half_page_down(&mut self) {
+    pub(crate) fn half_page_down(&mut self) {
         self.move_down((self.height / 2).max(1));
     }
 
-    pub fn half_page_up(&mut self) {
+    pub(crate) fn half_page_up(&mut self) {
         self.move_up((self.height / 2).max(1));
     }
 
-    pub fn goto_top(&mut self) {
+    pub(crate) fn goto_top(&mut self) {
         self.jump_to_row(0);
     }
 
-    pub fn goto_bottom(&mut self) {
+    pub(crate) fn goto_bottom(&mut self) {
         self.jump_to_row(self.last_row());
     }
 
     /// Whether `h` has nowhere left to go on this row.
     #[must_use]
-    pub fn at_line_start(&self) -> bool {
+    pub(crate) fn at_line_start(&self) -> bool {
         !self
             .columns(self.cursor.row)
             .iter()
@@ -862,7 +867,7 @@ impl View {
     }
 
     /// One cell left; a selection wraps onto the end of the row above.
-    pub fn move_left(&mut self) {
+    pub(crate) fn move_left(&mut self) {
         let columns = self.columns(self.cursor.row);
         if let Some(&col) = columns.iter().rev().find(|&&c| c < self.cursor.col) {
             self.cursor.col = col;
@@ -875,7 +880,7 @@ impl View {
         self.extend_selection();
     }
 
-    pub fn move_right(&mut self) {
+    pub(crate) fn move_right(&mut self) {
         let columns = self.columns(self.cursor.row);
         if let Some(&col) = columns.iter().find(|&&c| c > self.cursor.col) {
             self.cursor.col = col;
@@ -884,20 +889,20 @@ impl View {
         self.extend_selection();
     }
 
-    pub fn line_start(&mut self) {
+    pub(crate) fn line_start(&mut self) {
         self.cursor.col = 0;
         self.want_col = 0;
         self.extend_selection();
     }
 
-    pub fn line_end(&mut self) {
+    pub(crate) fn line_end(&mut self) {
         self.cursor.col = self.columns(self.cursor.row).last().copied().unwrap_or(0);
         self.want_col = usize::MAX;
         self.extend_selection();
     }
 
     /// Scroll the viewport without a cursor jump unless the cursor leaves it.
-    pub fn scroll_by(&mut self, delta: isize) {
+    pub(crate) fn scroll_by(&mut self, delta: isize) {
         self.scroll = self
             .scroll
             .saturating_add_signed(delta)
@@ -914,7 +919,7 @@ impl View {
     }
 
     /// Place the cursor at a screen position (mouse click).
-    pub fn click(&mut self, screen_row: usize, col: usize) {
+    pub(crate) fn click(&mut self, screen_row: usize, col: usize) {
         self.selection = None;
         self.mode = Mode::Normal;
         // A click on a stub row lands on the row it hangs under (ADR 0049).
@@ -924,7 +929,7 @@ impl View {
     }
 
     /// Extend a mouse selection to a screen position (drag).
-    pub fn drag(&mut self, screen_row: usize, col: usize) {
+    pub(crate) fn drag(&mut self, screen_row: usize, col: usize) {
         let anchor = self.cursor;
         let row = self.settle((self.scroll + screen_row).min(self.last_row()), false);
         let col = self
@@ -945,14 +950,14 @@ impl View {
 
     /// Finish a mouse selection: it stays highlighted in select mode so
     /// `y` can copy it or `c` can annotate it (ADR 0013 amends 0010).
-    pub fn release(&mut self) {
+    pub(crate) fn release(&mut self) {
         if self.selection.is_some() {
             self.mode = Mode::Select;
         }
     }
 
     /// A press in the gutter (ADR 0050): select the line under it, whole.
-    pub fn select_line_at(&mut self, screen_row: usize) {
+    pub(crate) fn select_line_at(&mut self, screen_row: usize) {
         self.click(screen_row, 0);
         self.selection = Some(Selection {
             anchor: self.cursor,
@@ -963,7 +968,7 @@ impl View {
     }
 
     /// A drag that began in the gutter (ADR 0050): extend by whole lines.
-    pub fn drag_lines(&mut self, screen_row: usize) {
+    pub(crate) fn drag_lines(&mut self, screen_row: usize) {
         self.drag(screen_row, 0);
         if let Some(selection) = self.selection.as_mut() {
             selection.linewise = true;
@@ -973,7 +978,7 @@ impl View {
     /// A double-click (ADR 0050): select the word under the pointer, a
     /// run of letters, digits, and underscores, else of other non-blank
     /// characters (vim's `iw`). Blank space selects nothing.
-    pub fn select_word_at(&mut self, screen_row: usize, col: usize) {
+    pub(crate) fn select_word_at(&mut self, screen_row: usize, col: usize) {
         self.click(screen_row, col);
         let row = self.cursor.row;
         let Some((start, end)) = self
@@ -996,13 +1001,13 @@ impl View {
 
     /// Shift-click (ADR 0050): extend the selection to the pointer, from
     /// the cursor when there is none. A drag does the same.
-    pub fn extend_to(&mut self, screen_row: usize, col: usize) {
+    pub(crate) fn extend_to(&mut self, screen_row: usize, col: usize) {
         self.drag(screen_row, col);
     }
 
     /// The URL of the rendered link at `(row, col)`, if the cell is one.
     #[must_use]
-    pub fn link_at(&self, row: usize, col: usize) -> Option<&str> {
+    pub(crate) fn link_at(&self, row: usize, col: usize) -> Option<&str> {
         let line = self.layout.lines().get(row)?;
         let mut at = 0;
         for span in line.spans() {
@@ -1020,12 +1025,12 @@ impl View {
 
     /// The URL of the link under the cursor, if any.
     #[must_use]
-    pub fn link_at_cursor(&self) -> Option<&str> {
+    pub(crate) fn link_at_cursor(&self) -> Option<&str> {
         self.link_at(self.cursor.row, self.cursor.col)
     }
 
     /// `gy` (ADR 0050): copy the link under the cursor.
-    pub fn copy_link(&mut self) -> Effect {
+    pub(crate) fn copy_link(&mut self) -> Effect {
         let Some(url) = self.link_at_cursor().map(str::to_owned) else {
             self.message = Some("no link here".to_owned());
             return Effect::None;
@@ -1035,7 +1040,7 @@ impl View {
     }
 
     /// `gx` (ADR 0050): open the link under the cursor.
-    pub fn open_link(&mut self) -> Effect {
+    pub(crate) fn open_link(&mut self) -> Effect {
         let Some(url) = self.link_at_cursor().map(str::to_owned) else {
             self.message = Some("no link here".to_owned());
             return Effect::None;
@@ -1044,7 +1049,7 @@ impl View {
     }
 
     /// Drop the selection and return to normal mode.
-    pub fn clear_selection(&mut self) {
+    pub(crate) fn clear_selection(&mut self) {
         self.selection = None;
         if self.mode == Mode::Select {
             self.mode = Mode::Normal;
@@ -1052,14 +1057,14 @@ impl View {
     }
 
     /// The 1-based source line rendered row `row` came from, if any.
-    pub fn source_line_of_row(&self, row: usize) -> Option<usize> {
+    pub(crate) fn source_line_of_row(&self, row: usize) -> Option<usize> {
         let line = self.layout.lines().get(row)?;
         let range = line.source()?;
         Some(self.layout.index().line_of(range.start))
     }
 
     /// The source line under the cursor, or the nearest one above it.
-    pub fn cursor_source_line(&self) -> Option<usize> {
+    pub(crate) fn cursor_source_line(&self) -> Option<usize> {
         (0..=self.cursor.row)
             .rev()
             .find_map(|row| self.source_line_of_row(row))
@@ -1067,7 +1072,7 @@ impl View {
 
     /// Every source line rendered row `row` came from (a wrapped paragraph
     /// is one row for several lines).
-    pub fn source_lines_of_row(&self, row: usize) -> Option<LineRange> {
+    pub(crate) fn source_lines_of_row(&self, row: usize) -> Option<LineRange> {
         let line = self.layout.lines().get(row)?;
         let range = line.source()?;
         let index = self.layout.index();
@@ -1076,7 +1081,7 @@ impl View {
     }
 
     /// The source lines the selection covers, whichever way it was made.
-    pub fn selected_lines(&self) -> Option<LineRange> {
+    pub(crate) fn selected_lines(&self) -> Option<LineRange> {
         let (start, end) = self.selection?.ordered();
         let first = (start.row..=end.row).find_map(|row| self.source_lines_of_row(row))?;
         let last = (start.row..=end.row)
@@ -1086,19 +1091,19 @@ impl View {
     }
 
     /// `v`: toggle a character selection anchored at the cursor.
-    pub fn select_chars(&mut self) {
+    pub(crate) fn select_chars(&mut self) {
         self.toggle_select(false);
     }
 
     /// `V`: toggle a line selection anchored at the cursor.
-    pub fn select_lines(&mut self) {
+    pub(crate) fn select_lines(&mut self) {
         self.toggle_select(true);
     }
 
     /// `x` (Helix semantics): select the whole cursor line; each further
     /// press takes in one more line below. A `v` selection widens to whole
     /// lines first, keeping its anchor.
-    pub fn extend_line_below(&mut self) {
+    pub(crate) fn extend_line_below(&mut self) {
         if self.mode == Mode::Select
             && let Some(selection) = self.selection.as_mut()
         {
@@ -1140,7 +1145,7 @@ impl View {
 
     /// Copy the selection (`y`) and leave select mode. With nothing
     /// selected, the cursor line (ADR 0050).
-    pub fn yank(&mut self) -> Effect {
+    pub(crate) fn yank(&mut self) -> Effect {
         let whole_line = self.selection.is_none();
         if whole_line {
             self.selection = Some(Selection {
@@ -1170,7 +1175,7 @@ impl View {
     }
 
     /// The source Markdown behind the selection, if any.
-    pub fn selected_source(&self) -> Option<String> {
+    pub(crate) fn selected_source(&self) -> Option<String> {
         let selection = self.selection?;
         let (start, end) = selection.ordered();
         let lines = self.layout.lines();
@@ -1211,7 +1216,7 @@ impl View {
     }
 
     /// Esc: clear input, pending keys, selection, then search highlights.
-    pub fn escape(&mut self) {
+    pub(crate) fn escape(&mut self) {
         self.message = None;
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             self.mode = Mode::Normal;
@@ -1224,22 +1229,22 @@ impl View {
         }
     }
 
-    pub fn clear_highlight(&mut self) {
+    pub(crate) fn clear_highlight(&mut self) {
         self.pattern = None;
         self.matches.clear();
     }
 
-    pub fn clear_message(&mut self) {
+    pub(crate) fn clear_message(&mut self) {
         self.message = None;
     }
 
-    pub fn start_command(&mut self) {
+    pub(crate) fn start_command(&mut self) {
         self.mode = Mode::Command;
         self.input.clear();
         self.message = None;
     }
 
-    pub fn start_search(&mut self, backward: bool) {
+    pub(crate) fn start_search(&mut self, backward: bool) {
         self.mode = Mode::Search { backward };
         self.backward = backward;
         self.input.clear();
@@ -1247,12 +1252,12 @@ impl View {
     }
 
     /// Type into the `:` or `/` line; searches update incrementally.
-    pub fn input_char(&mut self, ch: char) {
+    pub(crate) fn input_char(&mut self, ch: char) {
         self.input.push(ch);
         self.incremental();
     }
 
-    pub fn input_backspace(&mut self) {
+    pub(crate) fn input_backspace(&mut self) {
         self.input.pop();
         self.incremental();
     }
@@ -1275,7 +1280,7 @@ impl View {
     }
 
     /// Enter on the input line.
-    pub fn confirm(&mut self) -> Effect {
+    pub(crate) fn confirm(&mut self) -> Effect {
         match self.mode {
             Mode::Command => {
                 let command = std::mem::take(&mut self.input);
@@ -1328,7 +1333,7 @@ impl View {
     }
 
     /// Move to the rendered line showing source line `line`.
-    pub fn goto_source_line(&mut self, line: usize) {
+    pub(crate) fn goto_source_line(&mut self, line: usize) {
         if let Some(row) = self.row_of_source_line(line) {
             self.jump_to_row(row);
         }
@@ -1337,7 +1342,7 @@ impl View {
     /// An agent's `open` range: the cursor lands on `start`, and the
     /// view scrolls so that `end` is on screen too when the range fits,
     /// without selecting anything (ADR 0014, amended 2026-08-28).
-    pub fn reveal_source_range(&mut self, start: usize, end: usize) {
+    pub(crate) fn reveal_source_range(&mut self, start: usize, end: usize) {
         self.goto_source_line(start);
         let Some(last) = self
             .row_of_source_line(end)
@@ -1353,7 +1358,7 @@ impl View {
     }
 
     /// `n` / `N`: next match in the search direction, flipped by `reverse`.
-    pub fn search_next(&mut self, reverse: bool) {
+    pub(crate) fn search_next(&mut self, reverse: bool) {
         if self.pattern.is_none() {
             self.message = Some("no previous search".to_owned());
             return;

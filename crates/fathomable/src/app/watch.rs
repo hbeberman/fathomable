@@ -27,7 +27,7 @@ use tokio::sync::mpsc;
 
 /// What a settled batch says happened to one path. Paths are absolute.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
+pub(crate) enum Event {
     /// The platform lost events; reconcile from the filesystem.
     Rescan,
     /// The file's content may have changed.
@@ -44,7 +44,7 @@ impl Event {
     /// The path the event lands on: the new name for a rename, or no path
     /// when the whole workspace needs a rescan.
     #[must_use]
-    pub fn path(&self) -> Option<&Path> {
+    pub(crate) fn path(&self) -> Option<&Path> {
         match self {
             Self::Rescan => None,
             Self::Change(path) | Self::Created(path) | Self::Removed(path) => Some(path),
@@ -56,7 +56,7 @@ impl Event {
 /// The size and content hash of a file, for pairing an unpaired
 /// remove-then-create as a rename.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Fingerprint {
+pub(crate) struct Fingerprint {
     size: u64,
     hash: String,
 }
@@ -64,7 +64,7 @@ pub struct Fingerprint {
 impl Fingerprint {
     /// The fingerprint of `bytes`.
     #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Self {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Self {
         Self {
             size: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
             hash: short_hash(bytes),
@@ -83,7 +83,7 @@ impl Fingerprint {
 
 /// One raw watcher notification, before debouncing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Raw {
+pub(crate) enum Raw {
     /// The platform lost events; all remembered state may be stale.
     Rescan,
     /// A file or directory appeared.
@@ -133,18 +133,18 @@ impl Raw {
 
 /// Raw events from the platform watcher, in arrival order.
 #[derive(Debug)]
-pub struct Raws {
+pub(crate) struct Raws {
     rx: mpsc::UnboundedReceiver<Raw>,
 }
 
 impl Raws {
     /// The next event; `None` once the watcher is gone.
-    pub async fn recv(&mut self) -> Option<Raw> {
+    pub(crate) async fn recv(&mut self) -> Option<Raw> {
         self.rx.recv().await
     }
 
     /// An event already waiting, without blocking.
-    pub fn try_recv(&mut self) -> Option<Raw> {
+    pub(crate) fn try_recv(&mut self) -> Option<Raw> {
         self.rx.try_recv().ok()
     }
 }
@@ -153,7 +153,7 @@ impl Raws {
 /// (inotify limits), falls back to the directory of the visible document,
 /// following it as it changes (a rename lands as a directory event, so the
 /// file itself is never watched directly).
-pub struct Watcher {
+pub(crate) struct Watcher {
     inner: notify::RecommendedWatcher,
     target: Option<PathBuf>,
     recursive: bool,
@@ -177,7 +177,7 @@ impl Watcher {
     /// # Errors
     ///
     /// Fails when the platform watcher cannot be created.
-    pub fn new() -> anyhow::Result<(Self, Raws)> {
+    pub(crate) fn new() -> anyhow::Result<(Self, Raws)> {
         let (tx, rx) = mpsc::unbounded_channel::<Raw>();
         let watcher =
             notify::recommended_watcher(
@@ -207,7 +207,7 @@ impl Watcher {
     }
 
     /// Watch everything under `root`; false when the watch cannot be set up.
-    pub fn watch_root(&mut self, root: &Path) -> bool {
+    pub(crate) fn watch_root(&mut self, root: &Path) -> bool {
         match self.inner.watch(root, RecursiveMode::Recursive) {
             Ok(()) => {
                 tracing::info!(root = %root.display(), "watching workspace");
@@ -222,7 +222,7 @@ impl Watcher {
     }
 
     /// Follow the visible document when only its directory is watched.
-    pub fn follow(&mut self, target: Option<&Path>) {
+    pub(crate) fn follow(&mut self, target: Option<&Path>) {
         if self.recursive || target == self.target.as_deref() {
             return;
         }
@@ -239,7 +239,7 @@ impl Watcher {
 
     /// Whether an event on `path` is one this watcher was asked for: in
     /// the fallback mode only the open file and the store count.
-    pub fn is_target(&self, path: &Path) -> bool {
+    pub(crate) fn is_target(&self, path: &Path) -> bool {
         self.recursive
             || self.target.as_deref() == Some(path)
             || self.store.as_deref() == Some(path)
@@ -247,7 +247,7 @@ impl Watcher {
 
     /// Watch the directory holding the thread store, so appends by other
     /// writers are noticed (ADR 0024).
-    pub fn watch_store(&mut self, store: Option<&Path>) {
+    pub(crate) fn watch_store(&mut self, store: Option<&Path>) {
         let Some(dir) = store.and_then(Path::parent) else {
             return;
         };
@@ -265,7 +265,7 @@ impl Watcher {
 
 /// Whether a path under `.git` can move HEAD or the index. Object
 /// writes, reflogs, and lock files churn constantly and change neither.
-pub fn is_git_metadata(relative: &Path) -> bool {
+pub(crate) fn is_git_metadata(relative: &Path) -> bool {
     // Lock files (`HEAD.lock`, `index.lock`) fall through the exact match.
     relative
         .components()
@@ -282,21 +282,21 @@ pub fn is_git_metadata(relative: &Path) -> bool {
 /// Raw events waiting out the hint debounce (ADR 0015), folded into
 /// classified [`Event`]s when it ends.
 #[derive(Debug, Default)]
-pub struct Batch {
+pub(crate) struct Batch {
     raw: Vec<Raw>,
     flush_at: Option<Instant>,
 }
 
 impl Batch {
     /// Adds an event; the first one after a flush starts the quiet period.
-    pub fn push(&mut self, raw: Raw, debounce: Duration) {
+    pub(crate) fn push(&mut self, raw: Raw, debounce: Duration) {
         self.raw.push(raw);
         self.flush_at
             .get_or_insert_with(|| Instant::now() + debounce);
     }
 
     /// Resolves once the quiet period ends; never while the batch is empty.
-    pub async fn settled(&self) {
+    pub(crate) async fn settled(&self) {
         match self.flush_at {
             Some(at) => tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await,
             None => std::future::pending().await,
@@ -306,7 +306,7 @@ impl Batch {
     /// Fold the batch into one event per path. `last_seen` gives the
     /// fingerprint a removed path last had, for pairing an unpaired
     /// remove-then-create as a rename.
-    pub fn take(&mut self, last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Vec<Event> {
+    pub(crate) fn take(&mut self, last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Vec<Event> {
         self.flush_at = None;
         let raw = std::mem::take(&mut self.raw);
         classify(&raw, last_seen)

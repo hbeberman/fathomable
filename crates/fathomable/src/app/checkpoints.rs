@@ -52,27 +52,27 @@ pub(crate) enum CheckBody {
 /// The checkpoint diff a view shows (ADR 0049).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CheckDiff {
-    pub base: Side,
-    pub target: Side,
+    pub(crate) base: Side,
+    pub(crate) target: Side,
     /// `checkpoint 2/3  5m ago · now`, or the two labels when the sides
     /// are not a neighbouring pair of the timeline.
-    pub header: String,
-    pub body: CheckBody,
+    pub(crate) header: String,
+    pub(crate) body: CheckBody,
 }
 
 /// One entry of the strip along the view's bottom.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StripEntry {
-    pub label: String,
-    pub workspace: bool,
+    pub(crate) label: String,
+    pub(crate) workspace: bool,
     /// Whether the checkpoint is one of the two sides shown.
-    pub shown: bool,
+    pub(crate) shown: bool,
 }
 
 impl App {
     /// `Space v r`: the checkpoint diff of the current file on its newest
     /// pair, or back to the rendered view when it is shown.
-    pub fn toggle_checkpoint_view(&mut self) {
+    pub(crate) fn toggle_checkpoint_view(&mut self) {
         if self.view().checkpoint_view() {
             self.view_mut().leave_checkpoint();
             self.relayout();
@@ -98,7 +98,7 @@ impl App {
 
     /// `h`/`l` in the checkpoint view: the earlier or later neighbouring
     /// pair along the timeline.
-    pub fn checkpoint_page(&mut self, delta: isize) {
+    pub(crate) fn checkpoint_page(&mut self, delta: isize) {
         let Some(check) = self.view().checkpoint() else {
             return;
         };
@@ -129,7 +129,7 @@ impl App {
 
     /// `b` / `t` in the checkpoint view: a picker for the base or the
     /// target side.
-    pub fn pick_checkpoint_side(&mut self, target: bool) {
+    pub(crate) fn pick_checkpoint_side(&mut self, target: bool) {
         if !self.view().checkpoint_view() {
             self.notice("not in the checkpoint view; Space v r opens it");
             return;
@@ -144,7 +144,7 @@ impl App {
 
     /// `Space v g`: pick a commit (or anything else) as the base, with the
     /// working file as the target.
-    pub fn checkpoint_against_commit(&mut self) {
+    pub(crate) fn checkpoint_against_commit(&mut self) {
         if !self.has_document() {
             self.notice("no file open");
             return;
@@ -364,7 +364,7 @@ impl App {
     }
 
     /// `Space v c`: checkpoint the current file.
-    pub fn checkpoint_file(&mut self) {
+    pub(crate) fn checkpoint_file(&mut self) {
         let Some(doc) = self.current.and_then(|i| self.docs.get(i)) else {
             self.notice("no file open to checkpoint");
             return;
@@ -379,7 +379,7 @@ impl App {
 
     /// `Space v C`: checkpoint every non-ignored text file whose content
     /// differs from its latest checkpoint, or has none.
-    pub fn checkpoint_workspace(&mut self) {
+    pub(crate) fn checkpoint_workspace(&mut self) {
         if self.checkpoints.is_none() {
             self.notice("checkpoints unavailable; see the log");
             return;

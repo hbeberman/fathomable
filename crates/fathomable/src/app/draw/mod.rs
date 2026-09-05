@@ -38,51 +38,51 @@ use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
 /// Built from a resolved [`fathomable_core::theme::Theme`] (ADR 0011) so the
 /// draw code never touches theme keys directly.
 #[derive(Debug, Clone)]
-pub struct Theme {
-    pub text: Style,
-    pub heading: [Style; 6],
-    pub code: Style,
-    pub code_block: Style,
-    pub link: Style,
-    pub marker: Style,
-    pub quote: Style,
-    pub line_number: Style,
-    pub cursorline: Style,
-    pub selection: Style,
-    pub search_match: Style,
-    pub statusline: Style,
-    pub info: Style,
+pub(crate) struct Theme {
+    pub(crate) text: Style,
+    pub(crate) heading: [Style; 6],
+    pub(crate) code: Style,
+    pub(crate) code_block: Style,
+    pub(crate) link: Style,
+    pub(crate) marker: Style,
+    pub(crate) quote: Style,
+    pub(crate) line_number: Style,
+    pub(crate) cursorline: Style,
+    pub(crate) selection: Style,
+    pub(crate) search_match: Style,
+    pub(crate) statusline: Style,
+    pub(crate) info: Style,
     /// The `deleted` banner (ADR 0028).
-    pub warning: Style,
+    pub(crate) warning: Style,
     /// `(c expand)` on a stub (ADR 0049).
-    pub hint: Style,
-    pub mode_normal: Style,
-    pub mode_select: Style,
-    pub mode_input: Style,
-    pub rail: Style,
-    pub rail_selected: Style,
-    pub rail_dir: Style,
-    pub popup: Style,
-    pub popup_key: Style,
-    pub picker_match: Style,
-    pub picker_selected: Style,
-    pub thread_open: Style,
-    pub thread_resolved: Style,
-    pub thread_waiting: Style,
-    pub thread_line: Style,
-    pub thread_focus: Style,
+    pub(crate) hint: Style,
+    pub(crate) mode_normal: Style,
+    pub(crate) mode_select: Style,
+    pub(crate) mode_input: Style,
+    pub(crate) rail: Style,
+    pub(crate) rail_selected: Style,
+    pub(crate) rail_dir: Style,
+    pub(crate) popup: Style,
+    pub(crate) popup_key: Style,
+    pub(crate) picker_match: Style,
+    pub(crate) picker_selected: Style,
+    pub(crate) thread_open: Style,
+    pub(crate) thread_resolved: Style,
+    pub(crate) thread_waiting: Style,
+    pub(crate) thread_line: Style,
+    pub(crate) thread_focus: Style,
     /// A stub's background (ADR 0049).
-    pub thread_inline: Style,
-    pub diff_plus: Style,
-    pub diff_delta: Style,
-    pub diff_minus: Style,
-    pub git_staged: Style,
-    pub git_unstaged: Style,
+    pub(crate) thread_inline: Style,
+    pub(crate) diff_plus: Style,
+    pub(crate) diff_delta: Style,
+    pub(crate) diff_minus: Style,
+    pub(crate) git_staged: Style,
+    pub(crate) git_unstaged: Style,
 }
 
 impl Theme {
     /// Convert a resolved core theme into ratatui styles.
-    pub fn from_core(theme: &fathomable_core::theme::Theme) -> Self {
+    pub(crate) fn from_core(theme: &fathomable_core::theme::Theme) -> Self {
         use fathomable_core::theme::Key;
         let style = |key: Key| convert_style(theme.style(key));
         Self {
@@ -180,7 +180,7 @@ fn convert_color(color: fathomable_core::theme::Color) -> Color {
 
 /// Width of the gutter: the annotation cell, line numbers, a space, and
 /// the diff bar cell (ADR 0006 order).
-pub fn gutter_width(view: &View) -> usize {
+pub(crate) fn gutter_width(view: &View) -> usize {
     let digits = view.index().line_count().max(1).to_string().len();
     digits + 3
 }
@@ -189,7 +189,7 @@ fn u16_of(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 
-pub fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = frame.area();
     let rows = app.pane_rows();
     let rail = app.rail_width();
@@ -1227,9 +1227,9 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 /// right block is `line:col`, the percentage, and `N word` counts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StatusParts {
-    pub pill: &'static str,
-    pub badges: Vec<&'static str>,
-    pub right: String,
+    pub(crate) pill: &'static str,
+    pub(crate) badges: Vec<&'static str>,
+    pub(crate) right: String,
 }
 
 pub(super) fn status_parts(app: &App) -> StatusParts {

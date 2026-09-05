@@ -12,19 +12,19 @@ use crate::app::App;
 
 /// The pane's content: labelled rows, then a notice below them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Info {
+pub(crate) struct Info {
     /// `(label, value)` rows, drawn with the labels right-aligned.
-    pub rows: Vec<(String, String)>,
+    pub(crate) rows: Vec<(String, String)>,
     /// Lines drawn under the rows: why the file is not shown as text,
     /// and how to change that when it can be changed.
-    pub notice: Vec<String>,
+    pub(crate) notice: Vec<String>,
 }
 
 impl App {
     /// The file-info pane for the current document, or `None` when it is
     /// text and the document itself is shown.
     #[must_use]
-    pub fn info(&self) -> Option<Info> {
+    pub(crate) fn info(&self) -> Option<Info> {
         let doc = self.current.and_then(|index| self.docs.get(index))?;
         // Shown again while its file is gone (ADR 0028): the pane says
         // so instead of the stale content.

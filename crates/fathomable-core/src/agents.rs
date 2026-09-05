@@ -1013,8 +1013,9 @@ impl std::error::Error for RegisterError {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::fs;
     use std::path::{Path, PathBuf};
+
+    use fathomable_testing::TempDir;
     use std::time::Duration;
 
     use crate::annotations::{Author, Draft, LineRange, Reply, Store};
@@ -1026,7 +1027,7 @@ mod tests {
 
     #[test]
     fn a_bond_names_the_session_and_expires_with_the_register() -> TestResult {
-        let dir = TempDir::new("bond")?;
+        let dir = TempDir::new("agents-bond")?;
         let path = dir.0.join("agents.jsonl");
         let day = Duration::from_hours(24);
         let mut register = Register::open(&path, 1_000, day)?;
@@ -1040,24 +1041,6 @@ mod tests {
         let later = Register::open(&path, 1_000 + day.as_secs() + 1, day)?;
         assert_eq!(later.session_for(&mine), None);
         Ok(())
-    }
-
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> std::io::Result<Self> {
-            let dir = std::env::temp_dir()
-                .join(format!("fathomable-agents-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir)?;
-            Ok(Self(dir))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
     }
 
     const TEXT: &str = "one\ntwo\nthree\nfour\n";
@@ -1077,7 +1060,7 @@ mod tests {
 
     #[test]
     fn a_message_is_delivered_once_until_someone_else_speaks() -> TestResult {
-        let dir = TempDir::new("once")?;
+        let dir = TempDir::new("agents-once")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
         reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
@@ -1103,7 +1086,7 @@ mod tests {
 
     #[test]
     fn scope_is_followed_paths_or_own_threads() -> TestResult {
-        let dir = TempDir::new("scope")?;
+        let dir = TempDir::new("agents-scope")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
         reg.subscribe("s-1", "coder", None, None, vec![PathBuf::from("b.md")], 200)?;
@@ -1131,7 +1114,7 @@ mod tests {
     /// name never covers a longer name beside it.
     #[test]
     fn a_followed_directory_covers_what_is_under_it() -> TestResult {
-        let dir = TempDir::new("under")?;
+        let dir = TempDir::new("agents-under")?;
         let mut store = Store::open(dir.0.join("threads.jsonl"))?;
         for path in [
             "src/jokes.rs",
@@ -1163,7 +1146,7 @@ mod tests {
 
     #[test]
     fn nags_count_checks_and_expiry_drops_silent_sessions() -> TestResult {
-        let dir = TempDir::new("nag")?;
+        let dir = TempDir::new("agents-nag")?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
         reg.subscribe("s-1", "coder", None, None, vec![], 200)?;
         assert!(!reg.check("s-1", 3, 201)?);
@@ -1183,7 +1166,7 @@ mod tests {
 
     #[test]
     fn a_watch_fires_once_and_carries_its_reminders() -> TestResult {
-        let dir = TempDir::new("watch")?;
+        let dir = TempDir::new("agents-watch")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let other = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(1, 1), "also"),
@@ -1221,7 +1204,7 @@ mod tests {
     /// never hand either of them over a second time.
     #[test]
     fn a_fired_watch_outranks_the_line_budget() -> TestResult {
-        let dir = TempDir::new("mustshow")?;
+        let dir = TempDir::new("agents-mustshow")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let other = store.annotate(
             Draft::new(Path::new("b.md"), LineRange::new(1, 4), "remind me"),
@@ -1265,7 +1248,7 @@ mod tests {
     /// blob would come back at every turn-end for good.
     #[test]
     fn a_budget_smaller_than_one_thread_still_makes_progress() -> TestResult {
-        let dir = TempDir::new("tiny")?;
+        let dir = TempDir::new("agents-tiny")?;
         let (store, _) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
         reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
@@ -1282,7 +1265,7 @@ mod tests {
 
     #[test]
     fn the_blob_is_bounded_and_says_what_to_call() -> TestResult {
-        let dir = TempDir::new("blob")?;
+        let dir = TempDir::new("agents-blob")?;
         let (mut store, id) = store_with_thread(&dir)?;
         store.reply(
             &id,

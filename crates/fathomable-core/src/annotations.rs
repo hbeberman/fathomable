@@ -1410,6 +1410,8 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use fathomable_testing::TempDir;
+
     use super::{
         Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Party, Placement,
         Reach, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
@@ -1417,24 +1419,18 @@ mod tests {
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
 
-    struct TempFile(PathBuf);
+    /// A store path two directories deep inside a fresh temp dir, so a
+    /// test sees the store create its parents.
+    struct TempFile(
+        PathBuf,
+        #[expect(dead_code, reason = "held for its Drop")] TempDir,
+    );
 
     impl TempFile {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "fathomable-annotations-{name}-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            Self(dir.join("nested").join("threads.jsonl"))
-        }
-    }
-
-    impl Drop for TempFile {
-        fn drop(&mut self) {
-            if let Some(dir) = self.0.parent().and_then(Path::parent) {
-                let _ = fs::remove_dir_all(dir);
-            }
+        fn new(name: &str) -> Result<Self, StoreError> {
+            let dir = TempDir::new(&format!("annotations-{name}"))
+                .map_err(|e| StoreError::io(Path::new(name), e))?;
+            Ok(Self(dir.0.join("nested").join("threads.jsonl"), dir))
         }
     }
 
@@ -1456,7 +1452,7 @@ mod tests {
 
     #[test]
     fn thread_waits_after_agent_reply_until_user_answers() -> Result<(), StoreError> {
-        let file = TempFile::new("waiting");
+        let file = TempFile::new("waiting")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
@@ -1477,7 +1473,7 @@ mod tests {
 
     #[test]
     fn user_messages_can_be_edited_and_other_messages_cannot() -> Result<(), StoreError> {
-        let file = TempFile::new("edit");
+        let file = TempFile::new("edit")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
@@ -1520,7 +1516,7 @@ mod tests {
 
     #[test]
     fn a_deleted_thread_is_gone_and_later_events_on_it_are_ignored() -> Result<(), StoreError> {
-        let file = TempFile::new("delete");
+        let file = TempFile::new("delete")?;
         let mut store = Store::open(&file.0)?;
         let keep = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(1, 1), "keep"),
@@ -1569,7 +1565,7 @@ mod tests {
 
     #[test]
     fn relocate_moves_a_thread_and_the_user_acknowledges_the_edit() -> Result<(), StoreError> {
-        let file = TempFile::new("relocate");
+        let file = TempFile::new("relocate")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename"),
@@ -1613,7 +1609,7 @@ mod tests {
 
     #[test]
     fn move_path_carries_a_thread_to_the_renamed_file() -> Result<(), StoreError> {
-        let file = TempFile::new("move");
+        let file = TempFile::new("move")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("old.md"), LineRange::new(3, 4), "rename"),
@@ -1700,7 +1696,7 @@ mod tests {
     /// newest voice on it (ADR 0040).
     #[test]
     fn pending_follows_the_newest_message() -> Result<(), StoreError> {
-        let file = TempFile::new("pending");
+        let file = TempFile::new("pending")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
@@ -1736,7 +1732,7 @@ mod tests {
 
     #[test]
     fn two_handles_appending_to_one_file_keep_every_line_whole() -> Result<(), StoreError> {
-        let file = TempFile::new("two-writers");
+        let file = TempFile::new("two-writers")?;
         let mut first = Store::open(&file.0)?;
         let id = first.annotate(
             Draft::new(Path::new("README.md"), LineRange::new(3, 3), "one"),
@@ -1761,7 +1757,7 @@ mod tests {
 
     #[test]
     fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
-        let file = TempFile::new("roundtrip");
+        let file = TempFile::new("roundtrip")?;
         let mut store = Store::open(&file.0)?;
         let draft = Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename");
         let id = store.annotate(draft, TEXT, 100)?;
@@ -1809,7 +1805,7 @@ mod tests {
     /// commit is shown everywhere (ADR 0024).
     #[test]
     fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), StoreError> {
-        let file = TempFile::new("scope");
+        let file = TempFile::new("scope")?;
         if let Some(parent) = file.0.parent() {
             fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
         }
@@ -1859,7 +1855,7 @@ mod tests {
     /// and survives a reload (ADR 0035).
     #[test]
     fn a_rescope_moves_the_thread_to_the_new_commit() -> Result<(), StoreError> {
-        let file = TempFile::new("rescope");
+        let file = TempFile::new("rescope")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(1, 1), "hm")
@@ -1881,7 +1877,7 @@ mod tests {
 
     #[test]
     fn store_rejects_bad_ranges_unknown_threads_and_bad_lines() -> Result<(), StoreError> {
-        let file = TempFile::new("errors");
+        let file = TempFile::new("errors")?;
         let mut store = Store::open(&file.0)?;
         let draft = Draft::new(Path::new("a.md"), LineRange::new(9, 9), "x");
         let range_error = store.annotate(draft, TEXT, 1).err();
@@ -1905,7 +1901,7 @@ mod tests {
 
     #[test]
     fn thread_locate_reports_placement() -> Result<(), StoreError> {
-        let file = TempFile::new("placement");
+        let file = TempFile::new("placement")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
             Draft::new(Path::new("a.md"), LineRange::new(5, 5), "gamma?"),

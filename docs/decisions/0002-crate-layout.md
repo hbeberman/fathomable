@@ -17,7 +17,8 @@ Status: accepted (2026-08-26)
 
 Amended 2026-09-03 by [0048](0048-modules-by-concept.md): a third
 workspace member, `fathomable-testing`, holds the test scaffolding shared
-by the app crate's tests; it is never published.
+by the other crates' tests (a dev-dependency of both, permitted by Cargo
+even though it depends on the core); it is never published.
 
 ## Context
 

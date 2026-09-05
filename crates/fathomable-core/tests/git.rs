@@ -3,55 +3,18 @@
 
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use fathomable_core::workspace::{Workspace, open_options};
+use fathomable_testing::TempDir;
+use fathomable_testing::git::{init, stage, write_tree};
 
 type TestResult = Result<(), Box<dyn Error>>;
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(name: &str) -> std::io::Result<Self> {
-        let dir =
-            std::env::temp_dir().join(format!("fathomable-git-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir)?;
-        Ok(Self(dir))
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-/// `git init` that ignores `GIT_*` overrides, as the workspace does.
-fn init(dir: &Path) -> Result<(), Box<dyn Error>> {
-    gix::ThreadSafeRepository::init_opts(
-        dir,
-        gix::create::Kind::WithWorktree,
-        gix::create::Options::default(),
-        open_options(),
-    )?;
-    Ok(())
-}
 
 /// Commit `files` (root-relative path, content) as the only tree of `HEAD`.
 fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
     let repo = gix::open_opts(root, open_options())?;
-    let mut entries = Vec::new();
-    for (name, content) in files {
-        let oid = repo.write_blob(content.as_bytes())?.detach();
-        entries.push(gix::objs::tree::Entry {
-            mode: gix::objs::tree::EntryKind::Blob.into(),
-            filename: (*name).into(),
-            oid,
-        });
-    }
-    entries.sort();
-    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
+    let tree = write_tree(&repo, files)?;
     let signature = gix::actor::SignatureRef {
         name: "test".into(),
         email: "test@example.com".into(),
@@ -64,7 +27,7 @@ fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn plain_directory_has_no_diff_base() -> TestResult {
-    let dir = TempDir::new("plain")?;
+    let dir = TempDir::new("git-plain")?;
     fs::write(dir.0.join("a.md"), "x\n")?;
     let workspace = Workspace::discover(&dir.0)?;
     assert!(!workspace.is_git());
@@ -74,7 +37,7 @@ fn plain_directory_has_no_diff_base() -> TestResult {
 
 #[test]
 fn unborn_head_and_untracked_files_have_an_empty_base() -> TestResult {
-    let dir = TempDir::new("unborn")?;
+    let dir = TempDir::new("git-unborn")?;
     init(&dir.0)?;
     fs::write(dir.0.join("a.md"), "x\n")?;
     let workspace = Workspace::discover(&dir.0)?;
@@ -96,7 +59,7 @@ fn unborn_head_and_untracked_files_have_an_empty_base() -> TestResult {
 
 #[test]
 fn head_text_is_the_committed_content() -> TestResult {
-    let dir = TempDir::new("head")?;
+    let dir = TempDir::new("git-head")?;
     init(&dir.0)?;
     fs::create_dir_all(dir.0.join("docs"))?;
     // Nested paths go through a subtree; build it explicitly.
@@ -154,37 +117,11 @@ fn head_text_is_the_committed_content() -> TestResult {
     Ok(())
 }
 
-/// Write an index holding exactly `files`, as `git add` of them would.
-fn stage(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
-    let repo = gix::open_opts(root, open_options())?;
-    let mut entries = Vec::new();
-    for (name, content) in files {
-        let oid = repo.write_blob(content.as_bytes())?.detach();
-        entries.push(gix::objs::tree::Entry {
-            mode: gix::objs::tree::EntryKind::Blob.into(),
-            filename: (*name).into(),
-            oid,
-        });
-    }
-    entries.sort();
-    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
-    let state = gix::index::State::from_tree(
-        &tree,
-        &repo.objects,
-        gix::validate::path::component::Options::default(),
-    )
-    .map_err(|e| format!("from_tree: {e}"))?;
-    let mut file = gix::index::File::from_state(state, repo.index_path());
-    file.write(gix::index::write::Options::default())
-        .map_err(|e| format!("index write: {e}"))?;
-    Ok(())
-}
-
 #[test]
 fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     use fathomable_core::status::State;
 
-    let dir = TempDir::new("status")?;
+    let dir = TempDir::new("git-status")?;
     init(&dir.0)?;
     let mut workspace = Workspace::discover(&dir.0)?;
     assert!(workspace.status()?.is_empty(), "empty repo is clean");
@@ -320,7 +257,7 @@ fn symlinks_diff_by_target_path_not_followed_content() -> TestResult {
     use fathomable_core::status::State;
     use gix::objs::tree::EntryKind;
 
-    let dir = TempDir::new("symlink")?;
+    let dir = TempDir::new("git-symlink")?;
     init(&dir.0)?;
     fs::write(dir.0.join("a.md"), "one\ntwo\n")?;
     fs::write(dir.0.join("b.md"), "b\n")?;
@@ -382,7 +319,7 @@ fn directory_symlinks_browse_as_dirs_but_status_never_descends() -> TestResult {
     use fathomable_core::status::State;
     use gix::objs::tree::EntryKind;
 
-    let dir = TempDir::new("dirlink")?;
+    let dir = TempDir::new("git-dirlink")?;
     init(&dir.0)?;
     fs::create_dir(dir.0.join("real"))?;
     fs::write(dir.0.join("real/inner.md"), "i\n")?;
@@ -432,16 +369,7 @@ fn commit_on(
     files: &[(&str, &str)],
 ) -> Result<String, Box<dyn Error>> {
     let repo = gix::open_opts(root, open_options())?;
-    let mut entries = Vec::new();
-    for (name, content) in files {
-        entries.push(gix::objs::tree::Entry {
-            mode: gix::objs::tree::EntryKind::Blob.into(),
-            filename: (*name).into(),
-            oid: repo.write_blob(content.as_bytes())?.detach(),
-        });
-    }
-    entries.sort();
-    let tree = repo.write_object(gix::objs::Tree { entries })?.detach();
+    let tree = write_tree(&repo, files)?;
     let signature = gix::actor::SignatureRef {
         name: "test".into(),
         email: "test@example.com".into(),
@@ -455,7 +383,7 @@ fn commit_on(
 /// written on another branch is not on this work (ADR 0024).
 #[test]
 fn reachable_commits_are_head_and_its_ancestors() -> TestResult {
-    let dir = TempDir::new("reachable")?;
+    let dir = TempDir::new("git-reachable")?;
     init(&dir.0)?;
     let plain = Workspace::discover(&dir.0)?;
     assert_eq!(plain.head_commit(), None, "unborn HEAD has no commit");
@@ -491,7 +419,7 @@ fn binary_files_follow_the_diff_attribute_then_the_nul_sniff() -> TestResult {
     use fathomable_core::content::Attr;
     use fathomable_core::status::State;
 
-    let dir = TempDir::new("binary")?;
+    let dir = TempDir::new("git-binary")?;
     init(&dir.0)?;
     let head = [
         (".gitattributes", "*.dat binary\n*.nul diff\n"),

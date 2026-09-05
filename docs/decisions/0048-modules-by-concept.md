@@ -60,8 +60,9 @@ an existing module, which is how the directory got that way.
   (`publish = false`, a dev-dependency of the app crate) holds `TempDir`
   and the git fixtures (`init`, `commit_and_stage`, `stage`, `amend`,
   `write_tree`); the thirteen per-module copies in the app crate are
-  gone. The core crate keeps its own four, since the testing crate
-  depends on the core for the workspace's git open options.
+  gone. Since 2026-09-04 the core crate uses it too, as a
+  dev-dependency: Cargo allows a dev-dependency on a crate that depends
+  on the crate under test, so the core's own copies went the same way.
 
 ## Consequences
 

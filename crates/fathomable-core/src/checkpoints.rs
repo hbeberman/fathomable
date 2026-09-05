@@ -290,31 +290,13 @@ fn hash(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_testing::TempDir;
+
     use super::*;
-
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let dir = std::env::temp_dir().join(format!(
-                "fathomable-checkpoints-{name}-{}",
-                std::process::id()
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir)?;
-            Ok(Self(dir))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn timelines_grow_only_when_content_moves() -> io::Result<()> {
-        let tmp = TempDir::new("timeline")?;
+        let tmp = TempDir::new("checkpoints-timeline")?;
         let mut store = Store::open(&tmp.0)?;
         assert!(store.is_empty());
         let a = Path::new("a.md");
@@ -352,7 +334,7 @@ mod tests {
 
     #[test]
     fn reopening_replays_the_log_and_keeps_one_blob_per_content() -> io::Result<()> {
-        let tmp = TempDir::new("reopen")?;
+        let tmp = TempDir::new("checkpoints-reopen")?;
         let mut store = Store::open(&tmp.0)?;
         store.record(Origin::File, [(Path::new("a.md"), "same\n")])?;
         store.record(Origin::File, [(Path::new("b.md"), "same\n")])?;

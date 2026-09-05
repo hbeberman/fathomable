@@ -603,6 +603,7 @@ dependencies = [
 name = "fathomable-core"
 version = "0.1.0"
 dependencies = [
+ "fathomable-testing",
  "gix",
  "kdl",
  "nucleo-matcher",

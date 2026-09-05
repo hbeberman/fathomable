@@ -230,29 +230,13 @@ fn hash(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use fathomable_testing::TempDir;
+
     use super::*;
-
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> io::Result<Self> {
-            let dir =
-                std::env::temp_dir().join(format!("fathomable-seen-{name}-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir)?;
-            Ok(Self(dir))
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
 
     #[test]
     fn records_and_reads_back_across_reopen() -> io::Result<()> {
-        let tmp = TempDir::new("roundtrip")?;
+        let tmp = TempDir::new("seen-roundtrip")?;
         let mut store = Store::open(&tmp.0)?;
         assert!(store.is_empty());
         assert!(store.record(Path::new("a.md"), "one\n")?);
@@ -277,7 +261,7 @@ mod tests {
 
     #[test]
     fn open_prunes_unreferenced_and_expired() -> io::Result<()> {
-        let tmp = TempDir::new("prune")?;
+        let tmp = TempDir::new("seen-prune")?;
         let mut store = Store::open(&tmp.0)?;
         store.record(Path::new("a.md"), "one\n")?;
         store.record(Path::new("a.md"), "two\n")?;
@@ -311,7 +295,7 @@ mod tests {
 
     #[test]
     fn large_text_is_not_recorded() -> io::Result<()> {
-        let tmp = TempDir::new("large")?;
+        let tmp = TempDir::new("seen-large")?;
         let mut store = Store::open(&tmp.0)?;
         let big = "x".repeat(MAX_BYTES + 1);
         assert!(!store.record(Path::new("big"), &big)?);

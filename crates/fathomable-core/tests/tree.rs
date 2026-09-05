@@ -3,32 +3,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use fathomable_testing::TempDir;
+
 use fathomable_core::tree::{Activation, Row, Tree};
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(name: &str) -> std::io::Result<Self> {
-        let dir =
-            std::env::temp_dir().join(format!("fathomable-tree-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("src/nested"))?;
-        fs::create_dir_all(dir.join(".git"))?;
-        fs::create_dir_all(dir.join(".hidden"))?;
-        fs::write(dir.join("README.md"), "# Readme\n")?;
-        fs::write(dir.join("b.txt"), "")?;
-        fs::write(dir.join("A.txt"), "")?;
-        fs::write(dir.join("src/main.rs"), "")?;
-        fs::write(dir.join("src/nested/deep.rs"), "")?;
-        Ok(Self(dir))
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
+/// A workspace with nested dirs, hidden entries, and mixed-case names.
+fn fixture(name: &str) -> std::io::Result<TempDir> {
+    let dir = TempDir::new(&format!("tree-{name}"))?;
+    fs::create_dir_all(dir.0.join("src/nested"))?;
+    fs::create_dir_all(dir.0.join(".git"))?;
+    fs::create_dir_all(dir.0.join(".hidden"))?;
+    fs::write(dir.0.join("README.md"), "# Readme\n")?;
+    fs::write(dir.0.join("b.txt"), "")?;
+    fs::write(dir.0.join("A.txt"), "")?;
+    fs::write(dir.0.join("src/main.rs"), "")?;
+    fs::write(dir.0.join("src/nested/deep.rs"), "")?;
+    Ok(dir)
 }
 
 fn names(tree: &Tree) -> Vec<String> {
@@ -40,7 +31,7 @@ fn names(tree: &Tree) -> Vec<String> {
 
 #[test]
 fn plain_directory_lists_dirs_first_and_hides_git() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("plain")?;
+    let dir = fixture("plain")?;
     let mut workspace = Workspace::discover(&dir.0)?;
     assert!(!workspace.is_git());
     let entries: Vec<_> = workspace
@@ -64,7 +55,7 @@ fn plain_directory_lists_dirs_first_and_hides_git() -> Result<(), Box<dyn std::e
 
 #[test]
 fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("nav")?;
+    let dir = fixture("nav")?;
     let mut workspace = Workspace::discover(&dir.0)?;
     let mut tree = Tree::new(&mut workspace)?;
     assert_eq!(
@@ -99,7 +90,7 @@ fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("reveal")?;
+    let dir = fixture("reveal")?;
     let mut workspace = Workspace::discover(&dir.0)?;
     let mut tree = Tree::new(&mut workspace)?;
     assert!(tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?);
@@ -119,7 +110,7 @@ fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn refresh_dir_rereads_one_expanded_directory() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("refresh-dir")?;
+    let dir = fixture("refresh-dir")?;
     let mut workspace = Workspace::discover(&dir.0)?;
     let mut tree = Tree::new(&mut workspace)?;
     assert!(tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?);
@@ -175,7 +166,7 @@ fn refresh_dir_rereads_one_expanded_directory() -> Result<(), Box<dyn std::error
 
 #[test]
 fn refresh_dir_brings_a_new_directory_into_view() -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("refresh-new-dir")?;
+    let dir = fixture("refresh-new-dir")?;
     let mut workspace = Workspace::discover(&dir.0)?;
     let mut tree = Tree::new(&mut workspace)?;
     assert!(tree.reveal(&mut workspace, Path::new("src/main.rs"))?);
@@ -222,7 +213,7 @@ fn init_git(dir: &Path) -> std::io::Result<()> {
 #[test]
 fn git_workspace_roots_at_the_repository_and_ignores_files()
 -> Result<(), Box<dyn std::error::Error>> {
-    let dir = TempDir::new("git")?;
+    let dir = fixture("git")?;
     init_git(&dir.0)?;
     fs::write(dir.0.join(".gitignore"), "target/\n*.log\n!keep.log\n")?;
     fs::create_dir_all(dir.0.join("target/debug"))?;

@@ -400,9 +400,6 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("    context {}", diff.context);
     println!("    ignore-whitespace #{}", diff.ignore_whitespace);
     println!("}}");
-    // Reserved by ADR 0049; nothing is settable yet.
-    println!("checkpoints {{");
-    println!("}}");
     let agents = config.agents();
     let types: Vec<String> = agents.types.iter().map(|t| format!("{t:?}")).collect();
     println!("agents {{");

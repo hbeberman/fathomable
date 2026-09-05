@@ -37,6 +37,11 @@ fn unknown_setting_is_an_error_with_a_line() -> TestResult {
         error.to_string().contains("unknown setting `follwo`"),
         "{error}"
     );
+    let error = must_fail("checkpoints {}")?;
+    assert!(
+        error.to_string().contains("unknown setting `checkpoints`"),
+        "{error}"
+    );
     Ok(())
 }
 

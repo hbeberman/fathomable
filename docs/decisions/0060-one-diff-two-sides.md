@@ -140,7 +140,9 @@ diff {
   `jump { auto }` and `Space j a`: the config gives the starting value,
   a key toggles it, the chrome shows the live state. There is no
   setting for the default base: `gd` meaning `HEAD` is a fact of the
-  app, not a preference. The `checkpoints {}` block stays reserved.
+  app, not a preference. The `checkpoints {}` block stays reserved
+  (removed unused 2026-09-05; see
+  [0049](0049-inline-threads-and-the-rail.md)).
 
 ### Amendments
 

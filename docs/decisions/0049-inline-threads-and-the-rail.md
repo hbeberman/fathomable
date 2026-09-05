@@ -348,7 +348,9 @@ Alt-Left / Alt-Right   jumplist back / forward
   [0051](0051-retire-one-release-compatibility.md)).
 - Config nodes `threads { stubs #true; stubs-resolved #false }` and
   `rail { width 32; split 8 }`; `checkpoints {}` is reserved.
-  `--config-show` prints them.
+  `--config-show` prints them. Note (2026-09-05): the reserved
+  `checkpoints` config block was removed unused; a retention setting
+  will add it back.
 
 ### What goes away
 

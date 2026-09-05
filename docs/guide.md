@@ -514,9 +514,6 @@ diff {
     ignore-whitespace #false // start with whitespace ignored (Space d w)
 }
 
-checkpoints {               // reserved; no setting yet
-}
-
 agents {
     types "coder" "reviewer" "planner"   // what an agent may subscribe as
     nag-after 5             // stop-hook checks between reminders; 0 never

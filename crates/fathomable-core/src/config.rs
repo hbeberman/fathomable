@@ -6,9 +6,8 @@
 //! rather than being ignored, so typos surface immediately. `theme`, the
 //! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
-//! `agents` block (ADR 0040), the `sidebar` (ADR 0057; `rail` in 0049) and
-//! `threads` blocks and the reserved, still empty `checkpoints` block
-//! (ADR 0049) are understood.
+//! `agents` block (ADR 0040), and the `sidebar` (ADR 0057; `rail` in 0049)
+//! and `threads` blocks (ADR 0049) are understood.
 //!
 //! # Examples
 //!
@@ -547,27 +546,6 @@ impl Config {
                         }
                     }
                 }
-                "checkpoints" => {
-                    let Some(children) = node.children() else {
-                        return Err(ConfigError {
-                            path: None,
-                            line,
-                            message: "`checkpoints` takes a block of settings".to_owned(),
-                        });
-                    };
-                    // Reserved by ADR 0049: the block parses, but no setting
-                    // exists yet, so any child is a typo.
-                    if let Some(child) = children.nodes().first() {
-                        return Err(ConfigError {
-                            path: None,
-                            line: Some(line_of(child.span().offset())),
-                            message: format!(
-                                "unknown checkpoints setting `{}`",
-                                child.name().value()
-                            ),
-                        });
-                    }
-                }
                 "sidebar" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -831,8 +809,6 @@ threads {
     stubs #false
     stubs-resolved #true
 }
-checkpoints {
-}
 "#,
         )
         .map_err(|e| e.to_string());
@@ -974,30 +950,6 @@ checkpoints {
             ("diff { width 5 }", "unknown diff setting `width`"),
             ("diff { context #true }", "context"),
             ("diff 1", "block"),
-        ] {
-            let error = Config::parse(text)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_default();
-            assert!(error.contains(needle), "{text}: {error}");
-        }
-    }
-
-    /// The `checkpoints` block is reserved (ADR 0049): empty parses, any
-    /// setting inside it is a typo, and it still needs braces.
-    #[test]
-    fn checkpoints_block_is_reserved() {
-        assert_eq!(
-            Config::parse("checkpoints {}").ok(),
-            Some(Config::default()),
-            "an empty block changes nothing"
-        );
-        for (text, needle) in [
-            (
-                "checkpoints { keep 5 }",
-                "unknown checkpoints setting `keep`",
-            ),
-            ("checkpoints 1", "block"),
         ] {
             let error = Config::parse(text)
                 .err()

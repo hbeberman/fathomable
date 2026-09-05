@@ -18,6 +18,7 @@ pub(crate) mod delete;
 pub(crate) mod detached;
 pub(crate) mod draft;
 pub(crate) mod file;
+pub(crate) mod fold;
 pub(crate) mod list;
 pub(crate) mod open;
 pub(crate) mod pane;

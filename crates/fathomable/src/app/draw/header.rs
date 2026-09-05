@@ -269,7 +269,7 @@ pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::
             hints.push(HintOf::keyed(Where::View, Action::EditMessage, "edit"));
         }
         hints.push(HintOf::keyed(Where::View, Action::ToggleResolved, resolve));
-        hints.push(HintOf::keyed(Where::View, Action::Comment, "fold"));
+        hints.push(HintOf::keyed(Where::View, Action::Fold, "fold"));
     }
     Header::new(left, hints)
 }
@@ -446,7 +446,7 @@ mod tests {
 
     /// A key hint is drawn only where the key works (ADR 0064): the
     /// thread keys on the thread cursor's header alone, `e edit` only on
-    /// the user's own message, and none of them, nor `(c expand)`, while
+    /// the user's own message, and none of them, nor `(z expand)`, while
     /// another pane has the keys.
     #[test]
     fn thread_hints_show_only_where_the_keys_work() -> anyhow::Result<()> {
@@ -478,7 +478,7 @@ mod tests {
         assert_eq!(app.thread_cursor().thread(), Some(&theirs));
 
         let rows = screen(&app)?;
-        let with_fold: Vec<&String> = rows.iter().filter(|row| row.contains("c fold")).collect();
+        let with_fold: Vec<&String> = rows.iter().filter(|row| row.contains("z fold")).collect();
         assert_eq!(with_fold.len(), 1, "one keyed header: {rows:?}");
         assert!(
             with_fold[0].contains("waiting"),
@@ -499,23 +499,23 @@ mod tests {
         let rows = screen(&app)?;
         assert!(
             rows.iter()
-                .any(|row| row.contains("e edit") && row.contains("c fold")),
+                .any(|row| row.contains("e edit") && row.contains("z fold")),
             "{rows:?}"
         );
 
         // With the files pane focused none of the keys work, so none show;
-        // a folded stub loses its `(c expand)` the same way.
+        // a folded stub loses its `(z expand)` the same way.
         app.fold_thread(&mine);
         app.fold_thread(&theirs);
         app.view_mut().goto_source_line(3);
-        assert!(screen(&app)?.iter().any(|row| row.ends_with("(c expand)")));
+        assert!(screen(&app)?.iter().any(|row| row.ends_with("(z expand)")));
         app.toggle_tree_focus();
-        assert!(!screen(&app)?.iter().any(|row| row.contains("(c expand)")));
+        assert!(!screen(&app)?.iter().any(|row| row.contains("(z expand)")));
         app.toggle_tree_focus();
         app.goto_message(theirs.clone(), 0);
-        assert!(screen(&app)?.iter().any(|row| row.contains("c fold")));
+        assert!(screen(&app)?.iter().any(|row| row.contains("z fold")));
         app.toggle_tree_focus();
-        assert!(!screen(&app)?.iter().any(|row| row.contains("c fold")));
+        assert!(!screen(&app)?.iter().any(|row| row.contains("z fold")));
         assert!(diff_header(&app, "HEAD · now").hints.is_empty());
         app.toggle_tree_focus();
         assert!(!diff_header(&app, "HEAD · now").hints.is_empty());
@@ -548,7 +548,7 @@ mod tests {
                 (0..buffer.area.width)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
-                    .contains("c fold")
+                    .contains("z fold")
             })
             .ok_or_else(|| anyhow::anyhow!("the header row"))?;
         let gutter_x = text_x - 4;

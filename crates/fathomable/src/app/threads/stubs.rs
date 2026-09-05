@@ -1,8 +1,9 @@
 // @okf-doc: /decisions/0049-inline-threads-and-the-rail.md
 //! Inline stubs (ADR 0049): a thread shows under the last row of its
 //! lines as a block of one or two rows, the newest messages' first line
-//! each, and `c` expands it in place into the whole thread, so a file
-//! reads with its conversation where the lines are.
+//! each, and `c` or `z` expands it in place into the whole thread (`z`
+//! folds it again, ADR 0065), so a file reads with its conversation
+//! where the lines are.
 //!
 //! Stubs are not lines. The view inserts their rows after the row they
 //! hang under, the way a detached thread's row is inserted (ADR 0039),
@@ -392,25 +393,6 @@ impl App {
         }
     }
 
-    /// Expand every stub in the file, or fold every expanded thread when
-    /// any is.
-    #[cfg(test)]
-    pub(crate) fn toggle_expand_all(&mut self) {
-        let ids: Vec<ThreadId> = self
-            .stubs()
-            .iter()
-            .filter_map(|stub| stub.thread().cloned())
-            .collect();
-        if ids.iter().any(|id| self.expanded.contains(id)) {
-            for id in &ids {
-                self.expanded.remove(id);
-            }
-        } else {
-            self.expanded.extend(ids);
-        }
-        self.place_stub_rows();
-    }
-
     /// Expand the thread cursor's thread, as `c` does on a fresh row.
     #[cfg(test)]
     pub(crate) fn expand_at_cursor(&mut self) {
@@ -552,14 +534,14 @@ mod tests {
         assert_eq!(shown[8].trim(), "6", "L6 follows: {:?}", shown[8]);
         // The cursor is on L5, which starts the inner thread: its stub
         // carries the hint on its last row, the outer's does not.
-        assert!(shown[7].ends_with("(c expand)"), "{:?}", shown[7]);
-        assert!(!shown[5].contains("(c expand)"), "{:?}", shown[5]);
-        assert!(!shown[6].contains("(c expand)"), "{:?}", shown[6]);
+        assert!(shown[7].ends_with("(z expand)"), "{:?}", shown[7]);
+        assert!(!shown[5].contains("(z expand)"), "{:?}", shown[5]);
+        assert!(!shown[6].contains("(z expand)"), "{:?}", shown[6]);
         // On L4 only the outer thread covers the cursor.
         app.view_mut().goto_source_line(4);
         let shown = screen(&app)?;
-        assert!(shown[5].ends_with("(c expand)"), "{:?}", shown[5]);
-        assert!(!shown[7].ends_with("(c expand)"), "{:?}", shown[7]);
+        assert!(shown[5].ends_with("(z expand)"), "{:?}", shown[5]);
+        assert!(!shown[7].ends_with("(z expand)"), "{:?}", shown[7]);
 
         // `j` from L5 lands on L6, past three stub rows; `k` comes back.
         app.view_mut().goto_source_line(5);

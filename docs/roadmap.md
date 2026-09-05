@@ -293,3 +293,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     the user's own message, the diff header's keys and `(c expand)` on
     the text alone; a header row inside a thread block paints its
     gutter cells too ([0064](decisions/0064-hints-you-can-press.md)).
+56. **z folds and unfolds.** In the text `z` folds the expanded thread
+    the cursor is on or expands the thread cursor's stub, and does
+    nothing else; `Z` expands every thread in the file or folds them
+    all when any is expanded; `c` keeps its cycle and its comment, and
+    the fold hints name `z`
+    ([0065](decisions/0065-z-folds-and-unfolds.md)).

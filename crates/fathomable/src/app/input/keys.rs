@@ -256,6 +256,10 @@ impl App {
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),
+            // `z` folds or expands the thread here, `Z` the whole file
+            // (ADR 0065).
+            Action::Fold => self.toggle_thread_here(),
+            Action::FoldAll => self.toggle_expand_all(),
             // On an expanded thread's rows the text keeps the thread keys
             // (ADR 0049); elsewhere they act on the thread at the cursor.
             Action::EditMessage => self.thread_edit_message(),

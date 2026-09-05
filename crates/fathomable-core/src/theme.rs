@@ -176,7 +176,7 @@ pub enum Key {
     UiStatuslineInfo,
     /// A banner that warns: the deleted-file row (ADR 0028).
     UiWarning,
-    /// An affordance dimmer than text: `(c expand)` on a stub (ADR 0049).
+    /// An affordance dimmer than text: `(z expand)` on a stub (ADR 0049).
     UiHint,
     /// The background of a pane's header rows (ADR 0059).
     UiHeader,

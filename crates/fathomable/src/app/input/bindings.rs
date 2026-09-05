@@ -296,6 +296,7 @@ actions! {
     Delete,
     DeleteThread,
     Fold,
+    FoldAll,
     FileOnly,
     Newline,
     Backspace,
@@ -484,6 +485,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::NewThread,
         "Threads",
         "always start a new thread",
+    ),
+    bind(
+        W::View,
+        &[&[c('z')]],
+        A::Fold,
+        "Threads",
+        "expand or fold the thread here",
+    ),
+    bind(
+        W::View,
+        &[&[c('Z')]],
+        A::FoldAll,
+        "Threads",
+        "expand every thread in the file, or fold them all",
     ),
     bind(
         W::View,

@@ -57,7 +57,7 @@ pub(crate) struct Theme {
     pub(crate) info: Style,
     /// The `deleted` banner (ADR 0028).
     pub(crate) warning: Style,
-    /// `(c expand)` on a stub (ADR 0049).
+    /// `(z expand)` on a stub (ADR 0049).
     pub(crate) hint: Style,
     /// A pane's header rows and the review list's key bar (ADR 0059).
     pub(crate) header: Style,
@@ -1018,7 +1018,7 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
 /// age, and the first line of the message, on the `thread.inline`
 /// background — or behind a `▎` in the state colour when the theme sets
 /// none. The thread under the cursor reads in the text colour, the
-/// others dimmed; the thread cursor's last row ends with `(c expand)`.
+/// others dimmed; the thread cursor's last row ends with `(z expand)`.
 #[expect(clippy::too_many_arguments, reason = "one row's facts, read once each")]
 fn stub_line<'a>(
     app: &App,
@@ -1055,7 +1055,7 @@ fn stub_line<'a>(
         }
     };
     let covered = app.threads_at_cursor().contains(thread.id());
-    // `c` expands only from the text (ADR 0064).
+    // `z` expands only from the text (ADR 0064).
     let hinted = last
         && covered
         && app.focus() == Focus::View
@@ -1087,7 +1087,7 @@ fn stub_line<'a>(
     let lead = format!(" {author} ");
     // The age in the info colour, as every other row gives it (ADR 0059).
     let age = format!("{}  ", format_age_short(created, now));
-    let hint = if hinted { " (c expand)" } else { "" };
+    let hint = if hinted { " (z expand)" } else { "" };
     let free = width
         .saturating_sub(gutter)
         .saturating_sub(1)

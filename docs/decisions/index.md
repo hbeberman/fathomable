@@ -68,3 +68,4 @@ supersede rather than edit history.
 - [0062 One version, no compatibility before the first tag](0062-one-version-no-compatibility.md)
 - [0063 A comment on the file](0063-a-comment-on-the-file.md)
 - [0064 Hints you can press](0064-hints-you-can-press.md)
+- [0065 z folds and unfolds](0065-z-folds-and-unfolds.md)

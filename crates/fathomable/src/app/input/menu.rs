@@ -364,8 +364,8 @@ impl App {
         if let Some(id) = threads.first() {
             let on_expanded = self.expanded_row_message(view.cursor().row).is_some();
             menu.push(
-                Action::Comment,
-                Action::Comment,
+                Action::Fold,
+                Action::Fold,
                 if on_expanded {
                     "fold thread"
                 } else {

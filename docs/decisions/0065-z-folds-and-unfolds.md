@@ -1,0 +1,61 @@
+---
+type: Decision
+title: z folds and unfolds
+description: In the text `z` is the key that only opens and closes a thread, folding the expanded thread the cursor is on or expanding the thread cursor's stub, and `Z` expands every thread in the file or folds them all when any is expanded; `c` keeps its cycle and its comment, and the fold hints name `z`.
+resource: crates/fathomable/src/app/threads/fold.rs
+related_resources:
+  - crates/fathomable/src/app/threads/stubs.rs
+  - crates/fathomable/src/app/input/bindings.rs
+  - crates/fathomable/src/app/draw/header.rs
+tags:
+  - decision
+  - annotations
+  - input
+---
+
+# 0065 z folds and unfolds
+
+Status: accepted (2026-09-05)
+
+## Context
+
+[0049](0049-inline-threads-and-the-rail.md) made `c` the key that
+expands a stub in place, folds the expanded thread, and walks on to
+the next thread covering the line, and the same `c` comments on a line
+that has no thread. The one key does three things, and which one it
+does depends on the row and on how many threads cover it: a reader who
+wants an open thread closed, and nothing else, has to know that `c`
+folds it and then opens the next one. The review list has had `z` for
+the same act since 0049, folding the selected entry to its header and
+unfolding it again, and `Space c z`, which once expanded or folded the
+whole file, was unbound the same day because nobody reached for a
+chord. The user asked for `z` and `Z` in the text: fold and unfold the
+thread here, and every thread in the file.
+
+## Decision
+
+- **`z` opens and closes one thread.** On an expanded thread's rows it
+  folds that thread back to its stub. On a row a thread covers it
+  expands the thread cursor's thread, the one the stub hint marks.
+  Elsewhere it does nothing. It never cycles and never starts a
+  comment.
+- **`Z` opens and closes the file.** It expands every stub in the file,
+  or, when any thread is expanded, folds every one.
+- **`c` is unchanged.** It still expands, cycles through the covering
+  threads, and comments where there is none (0049, 0063), so a reader
+  who learned it loses nothing.
+- **The hints name `z`.** A stub's last row ends with `(z expand)`, the
+  thread header reads `r reply · e edit · o resolve · z fold`, and the
+  right-click menu's `expand thread` / `fold thread` entry shows `z`.
+  Under [0064](0064-hints-you-can-press.md) the hint is the key that
+  does only that.
+- The review list keeps its `z`; the two surfaces agree on the letter.
+
+## Consequences
+
+- `Action::Fold` is bound on the text as well as the review list, and
+  `Action::FoldAll` is new; `App::act` gives each surface its meaning.
+- `toggle_thread_here` and `toggle_expand_all` live in
+  `app/threads/fold.rs`, the latter no longer a test-only helper.
+- `docs/guide.md` gains the `z`, `Z` row and says which key walks on
+  and which only closes.

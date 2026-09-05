@@ -107,6 +107,7 @@ Text:
 | `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
+| `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
 | `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
@@ -288,22 +289,24 @@ it to `none` gets a `▎` at the left edge instead). Stubs are not lines:
 one lands on the row above, and they carry no line number. Stubs of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour and, for the
-thread the cursor is on, ends with `(c expand)`; the others are dimmed.
+thread the cursor is on, ends with `(z expand)`; the others are dimmed.
 `Space v x` gives resolved threads a stub too, and `Space v t` hides
 stubs altogether; `threads { stubs; stubs-resolved }` sets both
 defaults.
 
-`c` on a line a thread covers **expands** its stub in place, the view
-staying still: a header row with the state, placement, watchers, and
+`c` or `z` on a line a thread covers **expands** its stub in place, the
+view staying still: a header row with the state, placement, watchers, and
 the keys, then every message rendered as Markdown. The keys show only
 on the thread the cursor is on, and only while the text has the keys:
 a hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
-`o` resolves or reopens, `dd` deletes the thread, and `c` on any of its
-rows folds it. When several threads cover the line, `c` again folds the
-expanded one and expands the next in line order, wrapping, and after the
-last leaves none expanded. A click on a stub expands it.
+`o` resolves or reopens, `dd` deletes the thread, and `z` or `c` on any
+of its rows folds it. `z` only opens and closes; `c` walks on: when
+several threads cover the line, `c` again folds the expanded one and
+expands the next in line order, wrapping, and after the last leaves none
+expanded. `Z` expands every thread in the file, or folds them all when
+any is expanded. A click on a stub expands it.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its

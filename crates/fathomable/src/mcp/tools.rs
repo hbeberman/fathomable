@@ -19,9 +19,10 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, Subscriber, WatchWhen};
 use fathomable_core::annotations::{
-    Author, LineRange, Party, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
+use fathomable_core::identity;
 use fathomable_core::session::{Request, Response};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::{Filter, Workspace};
@@ -77,7 +78,8 @@ pub(crate) struct FollowParams {
     /// Your agent type, one of the configured ones; fixed for the session.
     #[serde(default, rename = "type")]
     kind: Option<String>,
-    /// Name to sign as; the client name is recorded alongside it.
+    /// Name to sign as, fixed for the session; without one you are named
+    /// for your harness (Claude, Copilot, Codex).
     #[serde(default)]
     persona: Option<String>,
     /// End the subscription instead: its deliveries and watches are
@@ -93,7 +95,8 @@ pub(crate) struct FollowParams {
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct ThreadsParams {
-    /// Which threads: `open` (the default), `resolved`, or `all`.
+    /// Which threads: `open` (the default), `pending` (open, and the
+    /// user has the last word), `resolved`, or `all`.
     #[serde(default)]
     status: Option<String>,
     /// Only threads on this workspace-relative file, or under this
@@ -109,7 +112,7 @@ pub(crate) struct ThreadsParams {
     limit: Option<usize>,
     /// Your session id, when this connection did not call `follow` and
     /// Fathomable cannot tell your session from the harness; with a
-    /// subscription, the threads waiting on you are marked `pending`.
+    /// subscription, the `pending` threads count as shown to you.
     #[serde(default)]
     id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
@@ -164,9 +167,6 @@ pub(crate) struct ReplyParams {
     /// Answer every pending thread this way in one turn.
     #[serde(default)]
     replies: Vec<ReplyItem>,
-    /// Name to sign as; the client name is recorded alongside it.
-    #[serde(default)]
-    persona: Option<String>,
     /// Your session id, to sign the replies with your subscription when
     /// this connection did not call `follow` and Fathomable cannot tell
     /// your session from the harness that started it.
@@ -209,6 +209,8 @@ const DEFAULT_LIMIT: usize = 50;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Which {
     Open,
+    /// Open, and the user has the last word (ADR 0058).
+    Pending,
     Resolved,
     All,
 }
@@ -218,12 +220,14 @@ impl Which {
         match text {
             None => Ok(Self::Open),
             Some(word) if word == vocab::STATUS_OPEN => Ok(Self::Open),
+            Some(word) if word == vocab::PENDING => Ok(Self::Pending),
             Some(word) if word == vocab::WHEN_RESOLVED => Ok(Self::Resolved),
             Some(word) if word == vocab::STATUS_ALL => Ok(Self::All),
             Some(other) => Err(format!(
-                "`{}` is `{}`, `{}`, or `{}`, not `{other}`",
+                "`{}` is `{}`, `{}`, `{}`, or `{}`, not `{other}`",
                 vocab::STATUS,
                 vocab::STATUS_OPEN,
+                vocab::PENDING,
                 vocab::WHEN_RESOLVED,
                 vocab::STATUS_ALL
             )),
@@ -233,15 +237,64 @@ impl Which {
     fn admits(self, thread: &Thread) -> bool {
         match self {
             Self::Open => thread.status() == Status::Open,
+            Self::Pending => thread.awaits_agent(),
             Self::Resolved => thread.status() == Status::Resolved,
             Self::All => true,
         }
     }
 }
 
+/// The agent that has the last word on a thread (ADR 0058).
+#[derive(Debug, Serialize)]
+struct Answered<'a> {
+    name: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client: Option<&'a str>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    kind: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<&'a str>,
+    /// Whether that reply proposes resolving the thread.
+    proposed: bool,
+}
+
+impl<'a> Answered<'a> {
+    /// The agent with the last word on `thread`, if one has it.
+    fn of(thread: &'a Thread) -> Option<Self> {
+        if thread.status() != Status::Open {
+            return None;
+        }
+        match thread.last_act().0 {
+            Author::User => None,
+            Author::Agent {
+                name,
+                client,
+                id,
+                kind,
+            } => Some(Self {
+                name,
+                client: client.as_deref(),
+                kind: kind.as_deref(),
+                id: id.as_deref(),
+                proposed: thread.proposes_resolution(),
+            }),
+        }
+    }
+
+    /// `name (type)`, as the viewer labels the agent.
+    fn label(&self) -> String {
+        match self.kind {
+            Some(kind) => format!("{} ({kind})", self.name),
+            None => self.name.to_owned(),
+        }
+    }
+}
+
 /// A thread as an agent sees it (ADR 0055): its placement in the
 /// working tree and no anchor hashes. An open thread carries its
-/// snippet and replies; a resolved one only its head.
+/// snippet and replies, and says whose word is last: `pending` when it
+/// is the user's, `answered` naming the agent otherwise (ADR 0058). A
+/// resolved one is only its head.
 #[derive(Debug, Serialize)]
 struct Shown<'a> {
     id: &'a ThreadId,
@@ -265,10 +318,12 @@ struct Shown<'a> {
     edited: Option<u64>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    answered: Option<Answered<'a>>,
 }
 
 impl<'a> Shown<'a> {
-    fn new(thread: &'a Thread, placement: Placement, pending: bool) -> Self {
+    fn new(thread: &'a Thread, placement: Placement) -> Self {
         let open = thread.status() == Status::Open;
         Self {
             id: thread.id(),
@@ -288,12 +343,14 @@ impl<'a> Shown<'a> {
             replies: open.then(|| thread.replies()),
             commit: thread.commit(),
             edited: thread.edited(),
-            pending,
+            pending: thread.awaits_agent(),
+            answered: Answered::of(thread),
         }
     }
 
     /// The one summary line: `id  path:range  status`, then `pending`,
-    /// `edited`, or `detached` when they apply, then the comment's first
+    /// `answered by NAME (type)`, or `proposed by NAME (type)`, then
+    /// `edited` or `detached` when they apply, then the comment's first
     /// line.
     fn line(&self) -> String {
         let mut line = format!(
@@ -306,6 +363,16 @@ impl<'a> Shown<'a> {
         if self.pending {
             line.push(' ');
             line.push_str(vocab::PENDING);
+        } else if let Some(answered) = &self.answered {
+            let verb = if answered.proposed {
+                "proposed"
+            } else {
+                "answered"
+            };
+            line.push(' ');
+            line.push_str(verb);
+            line.push_str(" by ");
+            line.push_str(&answered.label());
         }
         if self.placement != "anchored" {
             line.push(' ');
@@ -461,9 +528,11 @@ impl Server {
     #[tool(
         description = "Subscribe this session to the whole workspace with your `type` (and \
                        the session `id` the hello hook gave you, when asked for it): the \
-                       hooks then hand you every new comment once, as your turns start and \
-                       end. `end: true` ends the subscription, its deliveries, and its \
-                       watches instead. Works with no viewer running.",
+                       hooks then hand you every comment the user has the last word on, \
+                       once, as your turns start and end. You sign as your harness's name \
+                       unless you give a `persona` here, once. `end: true` ends the \
+                       subscription, its deliveries, and its watches instead. Works with no \
+                       viewer running.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -490,7 +559,13 @@ impl Server {
             };
         }
         let client = context.client_info().map(|c| c.name);
-        match self.subscription(&target.root, p.id, p.kind, p.persona, client.as_deref()) {
+        match self.subscription(
+            &target.root,
+            p.id,
+            p.kind,
+            p.persona.as_deref(),
+            client.as_deref(),
+        ) {
             Ok(message) => text(message),
             Err(error) => failure(error),
         }
@@ -498,13 +573,15 @@ impl Server {
 
     #[tool(
         description = "List the threads in the workspace, oldest change first: `status` is \
-                       `open` (the default), `resolved`, or `all`; `path` a file or a \
-                       directory; `since` and `limit` page. Each comes with its placement in \
-                       the working tree and, when you are subscribed, `pending` marks the \
-                       ones waiting on you, which then count as shown to you. Do not poll it \
-                       for comments: the hooks deliver them; call it when a hook lists more \
-                       than it showed, when no hook is installed, or to read history. Works \
-                       with no viewer running.",
+                       `open` (the default), `pending` (open, and the user has the last \
+                       word), `resolved`, or `all`; `path` a file or a directory; `since` \
+                       and `limit` page. Each comes with its placement in the working tree \
+                       and whose word is last: `pending` needs an answer, `answered by` or \
+                       `proposed by` names the agent that gave one and awaits the user. \
+                       When you are subscribed, the pending ones count as shown to you. Do \
+                       not poll it for comments: the hooks deliver them; call it when a hook \
+                       lists more than it showed, when no hook is installed, or to read the \
+                       board. Works with no viewer running.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
     async fn threads(&self, Parameters(p): Parameters<ThreadsParams>) -> CallToolResult {
@@ -596,26 +673,20 @@ impl Server {
         first.extend(selected);
         let threads = first;
 
-        // A thread waiting on the caller is marked, and returning it is
-        // its delivery: the hooks will not hand it over again.
-        let mut pending = Vec::new();
+        // Returning a pending thread to a subscriber is its delivery: the
+        // hooks will not hand it over again (ADR 0055).
         if let Some(subscriber) = &subscriber {
             for thread in register.deliverable(subscriber, threads.iter().copied()) {
                 if let Err(error) = register.deliver(subscriber.id(), thread, when) {
                     return failure(error.to_string());
                 }
             }
-            pending = threads
-                .iter()
-                .filter(|t| t.awaits(Party::Subscriber(subscriber.id())))
-                .map(|t| t.id().clone())
-                .collect();
         }
 
         let mut tree = Tree::new(&target.root);
         let shown: Vec<Shown<'_>> = threads
             .iter()
-            .map(|t| Shown::new(t, tree.place(t), pending.contains(t.id())))
+            .map(|t| Shown::new(t, tree.place(t)))
             .collect();
         if shown.is_empty() {
             lines.push("no threads".to_owned());
@@ -655,12 +726,13 @@ impl Server {
         };
         let client = context.client_info().map(|c| c.name);
         let subscription = self.signature(p.id, &target.root);
+        // The name was fixed at `follow`; without one, the harness names
+        // the agent (ADR 0058).
         let mut author = Author::Agent {
-            name: p
-                .persona
-                .or_else(|| subscription.as_ref().and_then(|(.., name)| name.clone()))
-                .or_else(|| client.clone())
-                .unwrap_or_else(|| "agent".to_owned()),
+            name: subscription
+                .as_ref()
+                .and_then(|(.., name)| name.clone())
+                .unwrap_or_else(|| identity::agent_name(None, client.as_deref())),
             client,
             id: None,
             kind: None,
@@ -729,7 +801,7 @@ impl Server {
         }
         let shown: Vec<Shown<'_>> = answered
             .iter()
-            .map(|t| Shown::new(t, tree.place(t), false))
+            .map(|t| Shown::new(t, tree.place(t)))
             .collect();
         with_summary(json!({ "threads": shown }), lines.join("\n"))
     }
@@ -818,16 +890,22 @@ impl Server {
         root: &Path,
         id: Option<String>,
         kind: Option<String>,
-        persona: Option<String>,
+        persona: Option<&str>,
         client: Option<&str>,
     ) -> Result<String, String> {
         let when = now();
         let types = self.agents.types.join(", ");
+        // The name is fixed here, once (ADR 0058): the persona, else the
+        // harness's name, else the client string.
+        let given = persona.is_some();
+        let name = identity::agent_name(persona, client);
         match (id, kind) {
             (Some(id), Some(kind)) => {
                 let mut register = self.register(root, when)?;
-                self.subscribe(&mut register, &id, &kind, persona, client, when)?;
-                Ok(format!("subscribed {id} as {kind}; {COVERAGE}"))
+                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
+                Ok(format!(
+                    "subscribed {id} as {kind}, signing as {name}; {COVERAGE}"
+                ))
             }
             (None, Some(kind)) => {
                 let mut register = self.register(root, when)?;
@@ -839,10 +917,10 @@ impl Server {
                         vocab::ID
                     ));
                 };
-                self.subscribe(&mut register, &id, &kind, persona, client, when)?;
+                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
                 Ok(format!(
-                    "subscribed {id} (your session, found from the harness) as {kind}; \
-                     {COVERAGE}"
+                    "subscribed {id} (your session, found from the harness) as {kind}, \
+                     signing as {name}; {COVERAGE}"
                 ))
             }
             (Some(_), None) => Err(format!(
@@ -867,21 +945,27 @@ impl Server {
                     return Err(nudge());
                 };
                 let kind = existing.kind().to_owned();
-                let name = persona.or_else(|| existing.name().map(str::to_owned));
-                self.subscribe(&mut register, &id, &kind, name, client, when)?;
-                Ok(format!("still subscribed {id} as {kind}; {COVERAGE}"))
+                let name = if given {
+                    name
+                } else {
+                    existing.name().map_or(name, str::to_owned)
+                };
+                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
+                Ok(format!(
+                    "still subscribed {id} as {kind}, signing as {name}; {COVERAGE}"
+                ))
             }
         }
     }
 
-    /// Subscribe `id` as `kind` in `register` and remember it as this
-    /// connection's signature.
+    /// Subscribe `id` as `kind` in `register`, signing as `name`, and
+    /// remember it as this connection's signature.
     fn subscribe(
         &self,
         register: &mut Register,
         id: &str,
         kind: &str,
-        persona: Option<String>,
+        name: &str,
         client: Option<&str>,
         when: u64,
     ) -> Result<(), String> {
@@ -892,10 +976,10 @@ impl Server {
             ));
         }
         register
-            .subscribe(id, kind, persona.as_deref(), client, when)
+            .subscribe(id, kind, Some(name), client, when)
             .map_err(|e| e.to_string())?;
         if let Ok(mut current) = self.subscriber.lock() {
-            *current = Some((id.to_owned(), kind.to_owned(), persona));
+            *current = Some((id.to_owned(), kind.to_owned(), Some(name.to_owned())));
         }
         Ok(())
     }
@@ -1271,7 +1355,9 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::XdgDirs;
-    use fathomable_core::annotations::{Author, Draft, LineRange, Placement, Status, Store};
+    use fathomable_core::annotations::{
+        Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store,
+    };
     use fathomable_core::config::AgentsConfig;
     use fathomable_testing::TempDir;
     use serde_json::Value;
@@ -1371,7 +1457,7 @@ mod tests {
         assert_eq!(Which::parse(Some("all")), Ok(Which::All));
         assert_eq!(
             Which::parse(Some("closed")),
-            Err("`status` is `open`, `resolved`, or `all`, not `closed`".to_owned())
+            Err("`status` is `open`, `pending`, `resolved`, or `all`, not `closed`".to_owned())
         );
         Ok(())
     }
@@ -1483,7 +1569,9 @@ mod tests {
 
     /// What an agent sees of a thread: placement and current range, no
     /// anchor hashes, the full body only while the thread is open, and
-    /// the `pending` mark only when set.
+    /// `pending` while the user has the last word, `answered by` or
+    /// `proposed by` once an agent has it (ADR 0058), and neither once
+    /// resolved.
     #[test]
     fn shown_threads_carry_placement_and_no_anchor() -> Result<(), Box<dyn std::error::Error>> {
         let dir = testing::bare("mcp-shown")?;
@@ -1502,24 +1590,57 @@ mod tests {
             tree.place(&thread),
             Placement::Anchored(LineRange::new(2, 2))
         );
-        let shown = Shown::new(&thread, tree.place(&thread), true);
+        let shown = Shown::new(&thread, tree.place(&thread));
         assert_eq!(shown.line(), format!("{id}  a.md:2  open pending  why?"));
         let json = serde_json::to_value(&shown)?;
         assert_eq!(json["placement"], "anchored");
         assert_eq!(json["range"], serde_json::to_value(LineRange::new(2, 2))?);
         assert_eq!(json["pending"], true);
+        assert!(json.get("answered").is_none());
         assert_eq!(json["comment"], "why?\nreally");
         assert!(json.get("anchor").is_none());
         assert!(json.get("messages").is_none());
         assert_eq!(json["snippet"], "one");
 
-        store.resolve(&id, 6)?;
+        // An agent's answer names it; a proposal says so; the user's edit
+        // of the comment takes the word back.
+        let bot = Author::agent("Claude").subscribed("s-1", "coder");
+        store.reply(&id, Reply::new(bot.clone(), 6, "because"))?;
         let thread = store.thread(&id).cloned().ok_or("gone")?;
-        let shown = Shown::new(&thread, tree.place(&thread), false);
+        let shown = Shown::new(&thread, tree.place(&thread));
+        assert_eq!(
+            shown.line(),
+            format!("{id}  a.md:2  open answered by Claude (coder)  why?")
+        );
+        let json = serde_json::to_value(&shown)?;
+        assert!(json.get("pending").is_none());
+        assert_eq!(json["answered"]["name"], "Claude");
+        assert_eq!(json["answered"]["type"], "coder");
+        assert_eq!(json["answered"]["id"], "s-1");
+        assert_eq!(json["answered"]["proposed"], false);
+        store.reply(&id, Reply::new(bot, 7, "done").proposing_resolution())?;
+        let thread = store.thread(&id).cloned().ok_or("gone")?;
+        let shown = Shown::new(&thread, tree.place(&thread));
+        assert_eq!(
+            shown.line(),
+            format!("{id}  a.md:2  open proposed by Claude (coder)  why?")
+        );
+        assert_eq!(serde_json::to_value(&shown)?["answered"]["proposed"], true);
+        store.edit(&id, MessageTarget::Comment, "why?\nreally, why?", 8)?;
+        let thread = store.thread(&id).cloned().ok_or("gone")?;
+        let shown = Shown::new(&thread, tree.place(&thread));
+        assert_eq!(shown.line(), format!("{id}  a.md:2  open pending  why?"));
+        assert!(Which::Pending.admits(&thread) && !Which::Resolved.admits(&thread));
+
+        store.resolve(&id, 9)?;
+        let thread = store.thread(&id).cloned().ok_or("gone")?;
+        let shown = Shown::new(&thread, tree.place(&thread));
         assert_eq!(shown.line(), format!("{id}  a.md:2  resolved  why?"));
+        assert!(serde_json::to_value(&shown)?.get("answered").is_none());
+        assert!(!Which::Pending.admits(&thread));
         let json = serde_json::to_value(&shown)?;
         assert_eq!(json["comment"], "why?");
-        assert_eq!(json["messages"], 1);
+        assert_eq!(json["messages"], 3);
         assert!(json.get("pending").is_none());
         assert!(json.get("snippet").is_none());
         assert!(json.get("replies").is_none());
@@ -1528,7 +1649,7 @@ mod tests {
         // viewer has moved.
         fs::write(root.join("a.md"), "nothing\n")?;
         let mut tree = Tree::new(&root);
-        let shown = Shown::new(&thread, tree.place(&thread), false);
+        let shown = Shown::new(&thread, tree.place(&thread));
         assert_eq!(shown.placement, "detached");
         assert_eq!(
             shown.line(),
@@ -1559,13 +1680,16 @@ mod tests {
             &root,
             Some("s1".to_owned()),
             Some("coder".to_owned()),
-            Some("bot".to_owned()),
+            Some("bot"),
             None,
         )?;
-        assert!(note.starts_with("subscribed s1 as coder; "), "{note}");
+        assert!(
+            note.starts_with("subscribed s1 as coder, signing as bot; "),
+            "{note}"
+        );
         let again = server.subscription(&root, None, None, None, None)?;
         assert!(
-            again.starts_with("still subscribed s1 as coder; "),
+            again.starts_with("still subscribed s1 as coder, signing as bot; "),
             "{again}"
         );
         let subscriber = server
@@ -1588,8 +1712,8 @@ mod tests {
     }
 
     /// Words the agent-facing text may backtick that are not tools or
-    /// parameters: the hook, and the config node the guide names.
-    const ALLOWED: [&str; 3] = ["hello", "fathomable", "agents.types"];
+    /// parameters: the hook, and the config nodes the guide names.
+    const ALLOWED: [&str; 4] = ["hello", "fathomable", "agents.types", "user.name"];
 
     fn assert_known(text: &str, site: &str) {
         for ident in vocab::idents(text) {

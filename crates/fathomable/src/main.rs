@@ -268,6 +268,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             sidebar: config.sidebar().clone(),
             threads: config.threads().clone(),
             agents: config.agents().clone(),
+            user: config.user().clone(),
             config_path: config_path(cli, dirs),
         },
         &theme,
@@ -405,6 +406,9 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("    expire-after {}", agents.expire_after.as_secs() / 3600);
     println!("    max-lines {}", agents.max_lines);
     println!("    wake {:?}", agents.wake.as_deref().unwrap_or_default());
+    println!("}}");
+    println!("user {{");
+    println!("    name {:?}", config.user().name);
     println!("}}");
     ExitCode::SUCCESS
 }

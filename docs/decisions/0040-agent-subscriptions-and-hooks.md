@@ -146,6 +146,10 @@ design:
 
 ### Pending
 
+Superseded 2026-09-05 by [0058](0058-the-user-has-the-last-word.md):
+a thread is pending when it is open and the user's act is its newest,
+whoever answered before; a delivery is keyed on that act's time.
+
 - A thread is **pending for subscriber S** when it is open, in the
   current git scope ([0024](0024-workspace-sessions.md)), in S's scope,
   and its newest message — the comment when there are no replies — was

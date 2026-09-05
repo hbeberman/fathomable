@@ -32,7 +32,7 @@ pub(crate) use draft::{Compose, ComposeTarget};
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    Author, LineRange, MessageTarget, Party, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::reanchor::{Mapping, map_range};
@@ -47,13 +47,13 @@ use crate::app::App;
 pub(crate) enum ThreadState {
     Resolved,
     Open,
-    /// Open, and an agent wrote the newest message (ADR 0030).
+    /// Open, and an agent has the last word (ADR 0030, ADR 0058).
     Waiting,
 }
 
 impl ThreadState {
     pub(super) fn of(thread: &Thread) -> Self {
-        if thread.awaits(Party::User) {
+        if thread.awaits_user() {
             return Self::Waiting;
         }
         match thread.status() {

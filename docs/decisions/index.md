@@ -61,3 +61,4 @@ supersede rather than edit history.
 - [0055 Six tools](0055-six-tools.md)
 - [0056 The leader, trimmed](0056-the-leader-trimmed.md)
 - [0057 The sidebar](0057-the-sidebar.md)
+- [0058 The user has the last word](0058-the-user-has-the-last-word.md)

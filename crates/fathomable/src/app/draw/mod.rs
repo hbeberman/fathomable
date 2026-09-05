@@ -1021,10 +1021,18 @@ fn stub_line<'a>(
         .find(|mark| mark.id() == thread.id())
         .map_or(ThreadState::Open, crate::app::threads::Mark::kind);
     let (author, created, body) = match message.checked_sub(1) {
-        None => ("user".to_owned(), thread.created(), thread.comment()),
+        None => (
+            app.user_name().to_owned(),
+            thread.created(),
+            thread.comment(),
+        ),
         Some(index) => {
             let reply = &thread.replies()[index];
-            (author_label(reply.author()), reply.created(), reply.body())
+            (
+                author_label(reply.author(), app.user_name()),
+                reply.created(),
+                reply.body(),
+            )
         }
     };
     let covered = app.threads_at_cursor().contains(thread.id());
@@ -1112,6 +1120,7 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
                 theme,
                 app.highlighter(),
                 thread,
+                app.user_name(),
                 fathomable_core::clock::now(),
                 width,
                 selected,
@@ -1174,12 +1183,13 @@ fn with_gutter<'a>(
     Line::from(spans).style(row_style.patch(inner))
 }
 
-/// How a message's author reads on a stub: the user as `user`, an agent
-/// as `name (type)` when it subscribed with a type.
-fn author_label(author: &fathomable_core::annotations::Author) -> String {
+/// How a message's author reads on a stub: the user by the configured
+/// name (ADR 0058), an agent as `name (type)` when it subscribed with a
+/// type.
+fn author_label(author: &fathomable_core::annotations::Author, user: &str) -> String {
     use fathomable_core::annotations::Author;
     match author {
-        Author::User => "user".to_owned(),
+        Author::User => user.to_owned(),
         Author::Agent {
             name,
             kind: Some(kind),

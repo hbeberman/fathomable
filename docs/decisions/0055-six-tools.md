@@ -48,7 +48,7 @@ recommended answer, and they are recorded below.
 | `workspaces` | `switch` | lists the known workspaces and their viewers, the default marked; with `switch` (a root, or a viewer name or id) pins that one first |
 | `follow` | `id`, `type`, `persona`, `end` | subscribes the session to the workspace; `end: true` ends the subscription, its deliveries, and its watches |
 | `threads` | `status`, `path`, `since`, `limit`, `id` | lists threads; see below |
-| `thread_reply` | `thread`, `body`, `resolve`, `line`, `end_line`, `replies`, `persona`, `id` | answers one thread or several and returns each as it now stands |
+| `thread_reply` | `thread`, `body`, `resolve`, `line`, `end_line`, `replies`, `persona`, `id` | answers one thread or several and returns each as it now stands (`persona` removed 2026-09-05 by [0058](0058-the-user-has-the-last-word.md), which also adds `pending` to `threads`' `status`) |
 | `thread_watch` | `on`, `when`, `remind`, `cancel`, `id` | asks to be woken when `on` moves; `cancel: true` removes the watch |
 | `open` | `path`, `line`, `end_line`, `viewer` | shows a file in the viewer |
 

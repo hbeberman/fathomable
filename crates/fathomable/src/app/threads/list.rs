@@ -413,7 +413,13 @@ impl App {
                 }
             }
         };
-        message(0, "user", thread.created(), thread.comment(), None);
+        message(
+            0,
+            self.user_name(),
+            thread.created(),
+            thread.comment(),
+            None,
+        );
         for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
             message(

@@ -1128,7 +1128,7 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     // The agent proposed; the thread stays open and waiting (ADR 0053).
     assert_eq!(thread.status(), Status::Open);
     assert!(thread.proposes_resolution());
-    assert!(thread.awaits(fathomable_core::annotations::Party::User));
+    assert!(thread.awaits_user());
     assert_eq!(thread.replies()[0].author(), &author);
     assert!(thread.replies()[0].proposes_resolution());
     assert_eq!(

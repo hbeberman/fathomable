@@ -62,7 +62,9 @@ already force-resolved need no migration, since no release exists
   `resolve` says the agent believes the thread is done and that the
   user closes it, and the `hello` example no longer carries `resolve:
   true` on the single-reply form.
-- **A proposed thread is a waiting thread.** Its newest message is an
+- **A proposed thread is a waiting thread.** (And since
+  [0058](0058-the-user-has-the-last-word.md), 2026-09-05, it is pending
+  for no session until the user speaks again.) Its newest message is an
   agent's, so 0030 applies unchanged: the `thread.waiting` colour, the
   `↩` tag on its file, the toast, and `]r`/`[r`. The toast for a
   proposing reply reads `reply on src/lib.rs:42, proposes resolving`.

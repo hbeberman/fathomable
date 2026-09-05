@@ -47,7 +47,10 @@ most recent reply on*, so they can clear what needs them quickly.
   with a final reply is not visited; the resolved section of the thread
   list still shows it. (Amended 2026-09-04 by
   [0053](0053-resolution-is-the-users.md): an agent can no longer
-  resolve, so a reply that proposes resolving waits like any other.)
+  resolve, so a reply that proposes resolving waits like any other.
+  Amended 2026-09-05 by [0058](0058-the-user-has-the-last-word.md):
+  the test is the thread's *last act*, so the user's edit of any
+  message or reopen also ends the wait, being the agent's turn.)
 - **Colour.** A waiting thread has its own mark state, drawn in the
   `annotation.waiting` face wherever a thread's state is coloured: the
   gutter bracket, the file-threads pane's dot, and the thread list's

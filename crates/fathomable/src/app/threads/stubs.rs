@@ -516,7 +516,7 @@ mod tests {
         let shown = screen(&app)?;
         assert!(shown[4].contains("gamma"), "{:?}", shown[4]);
         assert!(
-            shown[5].contains("user") && shown[5].contains("outer thread"),
+            shown[5].contains("User") && shown[5].contains("outer thread"),
             "{:?}",
             shown[5]
         );
@@ -646,7 +646,7 @@ mod tests {
             shown[6]
         );
         assert!(
-            shown[7].contains("user") && shown[8].contains("inner point"),
+            shown[7].contains("User") && shown[8].contains("inner point"),
             "{:?}",
             &shown[7..9]
         );

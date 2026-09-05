@@ -428,6 +428,9 @@ pub struct Reply {
     body: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     proposed_resolved: bool,
+    /// When the user last edited it (ADR 0058); only a user's reply can be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edited: Option<u64>,
 }
 
 impl Reply {
@@ -439,6 +442,7 @@ impl Reply {
             created,
             body: body.into(),
             proposed_resolved: false,
+            edited: None,
         }
     }
 
@@ -471,6 +475,12 @@ impl Reply {
     #[must_use]
     pub fn proposes_resolution(&self) -> bool {
         self.proposed_resolved
+    }
+
+    /// When the user last edited it, in Unix seconds (ADR 0058).
+    #[must_use]
+    pub fn edited(&self) -> Option<u64> {
+        self.edited
     }
 }
 
@@ -521,6 +531,12 @@ pub struct Thread {
     /// workspace had one (ADR 0024); `None` reads as unscoped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
+    /// When the user last edited the comment (ADR 0058).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    comment_edited: Option<u64>,
+    /// When the user last reopened the thread (ADR 0058).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reopened: Option<u64>,
     /// The text the thread was last placed in (ADR 0038). Not sent over
     /// the session socket, where the snippet already travels.
     #[serde(skip)]
@@ -616,26 +632,61 @@ impl Thread {
         self.commit.as_deref()
     }
 
-    /// Whether the thread is open and its newest message is someone
-    /// else's, seen from `party`'s chair.
-    ///
-    /// From the user's chair such a thread is *waiting* (ADR 0030): an
-    /// agent replied last, and only the user's reply, resolve, or reopen
-    /// ends the wait. From a subscriber's chair it is *pending* (ADR
-    /// 0040): only that agent's own reply, or a resolution, ends it. A
-    /// resolved thread never waits on anyone.
+    /// When the user last edited the comment, in Unix seconds (ADR 0058).
     #[must_use]
-    pub fn awaits(&self, party: Party<'_>) -> bool {
-        if self.status != Status::Open {
-            return false;
+    pub fn comment_edited(&self) -> Option<u64> {
+        self.comment_edited
+    }
+
+    /// When the user last reopened the thread, in Unix seconds (ADR 0058).
+    #[must_use]
+    pub fn reopened(&self) -> Option<u64> {
+        self.reopened
+    }
+
+    /// The last act on the thread (ADR 0058): its author and time.
+    ///
+    /// The acts are the comment, written or edited; each reply, written
+    /// or edited; and the most recent reopen. The comment, an edit, and a
+    /// reopen are the user's; a reply is its author's. At a tie a later
+    /// message wins, and a message beats a reopen.
+    #[must_use]
+    pub fn last_act(&self) -> (&Author, u64) {
+        let mut act = (
+            &Author::User,
+            self.comment_edited
+                .map_or(self.created, |at| at.max(self.created)),
+        );
+        for reply in &self.replies {
+            let at = reply
+                .edited
+                .map_or(reply.created, |at| at.max(reply.created));
+            if at >= act.1 {
+                act = (&reply.author, at);
+            }
         }
-        match party {
-            Party::User => self
-                .replies
-                .last()
-                .is_some_and(|reply| !reply.author().is_user()),
-            Party::Subscriber(id) => self.newest().0.id() != Some(id),
+        if let Some(reopened) = self.reopened
+            && reopened > act.1
+        {
+            act = (&Author::User, reopened);
         }
+        act
+    }
+
+    /// Whether the thread is open and an agent has the last word, so it
+    /// is *waiting* on the user (ADR 0030, amended by ADR 0058): only the
+    /// user's reply, edit, reopen, or resolve ends the wait.
+    #[must_use]
+    pub fn awaits_user(&self) -> bool {
+        self.status == Status::Open && !self.last_act().0.is_user()
+    }
+
+    /// Whether the thread is open and the user has the last word, so it
+    /// is *pending* for every subscribed agent (ADR 0058): any agent's
+    /// reply, or a resolution, ends it.
+    #[must_use]
+    pub fn awaits_agent(&self) -> bool {
+        self.status == Status::Open && self.last_act().0.is_user()
     }
 
     /// The newest message: the last reply, or the comment when there
@@ -689,16 +740,6 @@ impl Draft {
         self.commit = commit;
         self
     }
-}
-
-/// Whose chair a thread is looked at from: the user's, or a subscriber's
-/// by its agent session id. See [`Thread::awaits`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Party<'a> {
-    /// The person at the viewer.
-    User,
-    /// A subscribed agent, by the `id` it signs with.
-    Subscriber(&'a str),
 }
 
 /// Which threads the current `HEAD` shows (ADR 0024).
@@ -1208,6 +1249,8 @@ impl Store {
                     status: Status::Open,
                     edited: None,
                     commit,
+                    comment_edited: None,
+                    reopened: None,
                     context,
                 });
             }
@@ -1228,8 +1271,11 @@ impl Store {
             } => {
                 let id = thread.clone();
                 let thread = self.thread_mut(&thread)?;
-                let message = match target {
-                    MessageTarget::Comment => &mut thread.comment,
+                match target {
+                    MessageTarget::Comment => {
+                        thread.comment = body;
+                        thread.comment_edited = Some(created);
+                    }
                     MessageTarget::Reply(index) => {
                         let reply = thread.replies.get_mut(index).ok_or_else(|| StoreError {
                             kind: ErrorKind::UnknownMessage(id.clone(), target),
@@ -1239,10 +1285,10 @@ impl Store {
                                 kind: ErrorKind::MessageNotEditable(id, target),
                             });
                         }
-                        &mut reply.body
+                        reply.body = body;
+                        reply.edited = Some(created);
                     }
-                };
-                *message = body;
+                }
                 thread.updated = thread.updated.max(created);
             }
             Event::Resolve {
@@ -1260,6 +1306,7 @@ impl Store {
                 thread.updated = thread.updated.max(created);
                 thread.status = Status::Open;
                 thread.edited = None;
+                thread.reopened = Some(created);
             }
             Event::Relocate {
                 thread,
@@ -1403,8 +1450,8 @@ mod tests {
     use fathomable_testing::TempDir;
 
     use super::{
-        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Party, Placement,
-        Reach, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
+        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Placement, Reach,
+        Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1449,7 +1496,7 @@ mod tests {
             TEXT,
             10,
         )?;
-        let waiting = |store: &Store| store.thread(&id).is_some_and(|t| t.awaits(Party::User));
+        let waiting = |store: &Store| store.thread(&id).is_some_and(Thread::awaits_user);
         assert!(!waiting(&store), "a fresh comment is the user's own");
         store.reply(&id, Reply::new(Author::agent("claude"), 11, "because"))?;
         assert!(waiting(&store));
@@ -1682,10 +1729,12 @@ mod tests {
         Ok(())
     }
 
-    /// A thread is pending for a subscriber until that subscriber is the
-    /// newest voice on it (ADR 0040).
+    /// A thread is pending for every agent while the user has the last
+    /// word, and waiting on the user while an agent has it (ADR 0058):
+    /// any agent's reply ends the one, and the user's reply, edit, or
+    /// reopen ends the other.
     #[test]
-    fn pending_follows_the_newest_message() -> Result<(), StoreError> {
+    fn the_last_act_decides_whose_turn_it_is() -> Result<(), StoreError> {
         let file = TempFile::new("pending")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
@@ -1693,28 +1742,66 @@ mod tests {
             TEXT,
             10,
         )?;
-        let thread = store
-            .thread(&id)
-            .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(thread.awaits(Party::Subscriber("s-1")));
-        assert_eq!(thread.newest(), (&Author::User, 10));
+        let thread = |store: &Store| {
+            store
+                .thread(&id)
+                .cloned()
+                .ok_or(StoreError::parse(0, "gone".into()))
+        };
+        let t = thread(&store)?;
+        assert!(t.awaits_agent() && !t.awaits_user());
+        assert_eq!(t.last_act(), (&Author::User, 10));
+        assert_eq!(t.newest(), (&Author::User, 10));
+
+        // Any agent's reply is the answer; a second session does not owe one.
         let me = Author::agent("bot").subscribed("s-1", "coder");
         store.reply(&id, Reply::new(me.clone(), 11, "because"))?;
-        let thread = store
-            .thread(&id)
-            .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(!thread.awaits(Party::Subscriber("s-1")));
-        assert!(thread.awaits(Party::Subscriber("s-2")));
-        store.reply(&id, Reply::new(Author::User, 12, "still"))?;
-        let thread = store
-            .thread(&id)
-            .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(thread.awaits(Party::Subscriber("s-1")));
-        store.resolve(&id, 13)?;
-        let thread = store
-            .thread(&id)
-            .ok_or(StoreError::parse(0, "gone".into()))?;
-        assert!(!thread.awaits(Party::Subscriber("s-1")));
+        let t = thread(&store)?;
+        assert!(!t.awaits_agent() && t.awaits_user());
+        assert_eq!(t.last_act(), (&me, 11));
+
+        // An edit of the comment, older than the reply, is the user's word.
+        store.edit(&id, MessageTarget::Comment, "why, exactly?", 12)?;
+        let t = thread(&store)?;
+        assert!(t.awaits_agent());
+        assert_eq!(t.last_act(), (&Author::User, 12));
+        assert_eq!(t.comment_edited(), Some(12));
+        assert_eq!(t.newest(), (&me, 11), "an edit is not a new message");
+
+        store.reply(&id, Reply::new(me.clone(), 13, "ah"))?;
+        store.reply(&id, Reply::new(Author::User, 14, "still"))?;
+        store.edit(&id, MessageTarget::Reply(2), "still, yes", 15)?;
+        let t = thread(&store)?;
+        assert_eq!(t.replies()[2].edited(), Some(15));
+        assert_eq!(t.last_act(), (&Author::User, 15));
+
+        store.reply(
+            &id,
+            Reply::new(me.clone(), 16, "done").proposing_resolution(),
+        )?;
+        assert!(thread(&store)?.awaits_user());
+
+        // Resolving ends both; reopening is the user's act, so the agent's turn.
+        store.resolve(&id, 17)?;
+        let t = thread(&store)?;
+        assert!(!t.awaits_agent() && !t.awaits_user());
+        store.reopen(&id, 18)?;
+        let t = thread(&store)?;
+        assert!(t.awaits_agent() && !t.awaits_user());
+        assert_eq!(t.reopened(), Some(18));
+        assert_eq!(t.last_act(), (&Author::User, 18));
+
+        // At a tie a message beats a reopen.
+        store.reply(&id, Reply::new(me.clone(), 18, "reopened, noted"))?;
+        assert_eq!(thread(&store)?.last_act(), (&me, 18));
+        assert!(thread(&store)?.awaits_user());
+
+        let reloaded = Store::open(&file.0)?;
+        assert_eq!(
+            reloaded.thread(&id),
+            store.thread(&id),
+            "acts survive a reload"
+        );
         Ok(())
     }
 

@@ -342,8 +342,10 @@ file the way `Enter` does to write the reply or edit in the thread's
 rows and bring the list back when the draft closes, `f` narrows the
 list to the file you were reading, and `Esc` goes back to it.
 
-A thread is **waiting** on you when it is open and an agent wrote its
-newest message; your reply, resolve, or reopen ends the wait. Waiting
+A thread is **waiting** on you when it is open and an agent has the
+last word on it; your reply, edit, resolve, or reopen ends the wait,
+and until then no agent is woken for it
+([0058](decisions/0058-the-user-has-the-last-word.md)). Waiting
 threads have their own colour (`thread.waiting`) in the gutter
 bracket, the threads pane, and the review list, the status line
 counts them (`2 waiting`, and `1 proposed` before it while a thread on
@@ -493,6 +495,10 @@ agents {
     max-lines 40            // longest hook prompt before the rest is listed
     wake ""                 // command for Space a w, e.g. "claude -r {id} {prompt}"
 }
+
+user {
+    name "User"             // how your messages are signed, to you and to agents
+}
 ```
 
 Every key is optional; the values above are the defaults and
@@ -591,17 +597,21 @@ repository, and the tools are:
 | --- | --- |
 | `workspaces` | see known workspaces and their viewers; `switch` (a root, or a viewer name or id) pins one for the connection when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness), so the hooks hand it what others write as its turns start and end; a `persona` name is recorded next to the client name; `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
-| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, or *detached* — and its current range, and no anchor hashes; a resolved thread is only its head; when the session is subscribed, a thread whose newest message is someone else's is marked `pending` and counts as shown to it, so the hooks do not repeat it; a fired watch is reported first with the `remind` threads in full; works without a viewer; not for polling — the hooks deliver |
-| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown id, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed, and says so when it is not; works without a viewer |
+| `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness), so the hooks hand it every thread the user has the last word on, as its turns start and end; the session is named here, once: a `persona` when given, else its harness — Claude, Copilot, Codex — else the client string ([0058](decisions/0058-the-user-has-the-last-word.md)); `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
+| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `pending` (open, and the user has the last word), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, or *detached* — and its current range, and no anchor hashes; a resolved thread is only its head; an open thread says whose word is last: `pending` when it is the user's, `answered by name (type)` or `proposed by name (type)` when an agent's ([0058](decisions/0058-the-user-has-the-last-word.md)), and a message the user edited says so; when the session is subscribed, the pending threads count as shown to it, so the hooks do not repeat them; a fired watch is reported first with the `remind` threads in full; works without a viewer; not for polling — the hooks deliver |
+| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown id, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; signed with the session's id, type, and the name fixed at `follow` when the connection subscribed, the session is known from the harness, or `id` is passed, and with the harness's name when it is not, saying so; works without a viewer |
 | `thread_watch` | be woken when thread `on` gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; `cancel` removes the watch instead; fails when a named thread does not exist |
 
 Every tool but `workspaces` accepts an optional `workspace`: a root, or
 a viewer name or id. A subscription covers the whole workspace
 ([0055](decisions/0055-six-tools.md)); agent types are labels the viewer
 shows next to a message (`name (type)`), and the only rule they carry is
-that a session is never woken by its own messages. Every failure names
-the call that fixes it. A thread belongs to the commit it was written against and is shown
+that an agent is woken by the user's word alone: a thread reaches an
+agent while the user's comment, reply, edit, or reopen is the newest
+thing on it, and any agent's answer leaves it waiting on the user until
+they speak again ([0058](decisions/0058-the-user-has-the-last-word.md)).
+The user's own name on every surface comes from `user.name` in the
+config. Every failure names the call that fixes it. A thread belongs to the commit it was written against and is shown
 (here and in the viewer) only while that commit is `HEAD` or one of its
 ancestors, so switching to unrelated work hides it and merging brings it
 along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
@@ -649,9 +659,9 @@ Two subcommands, both reading the harness's hook JSON on stdin:
 
 - `fathomable hello --hook <harness>` (session start) tells the model what
   Fathomable is and that it is already connected as an MCP server, then
-  its workspace, session id, and the whole `agents.types` list as
-  labelled fields, and the `follow`, `thread_reply`, and `thread_watch`
-  calls to make. The tools are spelled as the harness shows them —
+  its workspace, session id, the user's name (`user.name`), and the
+  whole `agents.types` list as labelled fields, and the `follow`,
+  `thread_reply`, and `thread_watch` calls to make. The tools are spelled as the harness shows them —
   `mcp__fathomable__follow` under Claude Code, `fathomable.follow` under
   Codex, the bare name elsewhere — and Copilot's text adds that a
   detached shell finishing brings comments too

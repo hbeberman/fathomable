@@ -45,7 +45,7 @@ use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Blob, Register, Subscriber};
 use fathomable_core::annotations::{Reach, Store, Thread};
 use fathomable_core::bond;
-use fathomable_core::config::{AgentsConfig, Config};
+use fathomable_core::config::{AgentsConfig, Config, UserConfig};
 use fathomable_core::session::{Marker, Record};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
@@ -93,7 +93,13 @@ impl Harness {
 
 /// The hello text: what Fathomable is, the session's facts as labelled
 /// fields, and the calls to make, spelled as `harness` shows them.
-pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[String]) -> String {
+pub(crate) fn hello_text(
+    harness: Harness,
+    root: &Path,
+    id: &str,
+    types: &[String],
+    user: &str,
+) -> String {
     let first = types.first().map_or("coder", String::as_str);
     let extra = harness
         .extra()
@@ -106,6 +112,7 @@ pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[Strin
          look up.\n\
          \n  workspace  {root}\
          \n  session    {id}\
+         \n  user       {user}   ← who leaves the comments\
          \n  types      {types}   ← the whole list; do not look elsewhere\n\
          \nSubscribe before you edit; it covers the whole workspace:\
          \n  {follow} {{ {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
@@ -487,8 +494,13 @@ fn workspace_for(dirs: &XdgDirs, cwd: &Path) -> Option<PathBuf> {
         .max_by_key(|root| root.as_os_str().len())
 }
 
-fn agents_config(dirs: &XdgDirs) -> AgentsConfig {
-    Config::load(dirs, None).map_or_else(|_| AgentsConfig::default(), |c| c.agents().clone())
+/// The `agents` block and the user's name, or their defaults when the
+/// config cannot be read.
+fn agents_config(dirs: &XdgDirs) -> (AgentsConfig, String) {
+    Config::load(dirs, None).map_or_else(
+        |_| (AgentsConfig::default(), UserConfig::default().name),
+        |c| (c.agents().clone(), c.user().name.clone()),
+    )
 }
 
 /// `fathomable hello`: tell the model its session id and how to subscribe.
@@ -519,11 +531,11 @@ pub(crate) fn hello(
         diag.note("silent: no known workspace");
         return ExitCode::SUCCESS;
     };
-    let config = agents_config(dirs);
+    let (config, user) = agents_config(dirs);
     bond_session(dirs, &root, &id, &config);
     describe_state(dirs, &root, &id, &config, &mut diag);
     diag.note("answer: the hello text");
-    let mut text = hello_text(harness, &root, &id, &config.types);
+    let mut text = hello_text(harness, &root, &id, &config.types, &user);
     let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
     let git_root = Workspace::discover(&cwd)
         .ok()
@@ -544,7 +556,7 @@ pub(crate) fn hello(
     // into context the model may not act on would lose it, with the stop
     // hook then silent because it is recorded as delivered.
     if input.source.as_deref() == Some("resume")
-        && let Ok(Some(blob)) = compose(dirs, &root, &id, &config, Occasion::Context)
+        && let Ok(Some(blob)) = compose(dirs, &root, &id, &config, &user, Occasion::Context)
     {
         text.push_str("\n\n");
         text.push_str(&blob);
@@ -608,14 +620,14 @@ pub(crate) fn pending(
         diag.note("silent: no known workspace");
         return ExitCode::SUCCESS;
     };
-    let config = agents_config(dirs);
+    let (config, user) = agents_config(dirs);
     describe_state(dirs, &root, &id, &config, &mut diag);
     let occasion = match input.event {
         Event::Stop => Occasion::TurnEnd,
         Event::Prompt | Event::PostTool | Event::Notification | Event::Other => Occasion::Context,
     };
     diag.note(format!("occasion: {occasion:?}"));
-    let text = match compose(dirs, &root, &id, &config, occasion) {
+    let text = match compose(dirs, &root, &id, &config, &user, occasion) {
         Ok(Some(text)) => text,
         Ok(None) => {
             diag.note("silent: nothing to deliver");
@@ -688,13 +700,14 @@ fn scoped_threads(dirs: &XdgDirs, root: &Path) -> Result<Vec<Thread>, String> {
         .collect())
 }
 
-/// The prompt for subscriber `id`, recording what it contains as
-/// delivered; `None` when there is nothing to say.
+/// The prompt for subscriber `id`, naming the user `user`, recording
+/// what it contains as delivered; `None` when there is nothing to say.
 pub(crate) fn compose(
     dirs: &XdgDirs,
     root: &Path,
     id: &str,
     config: &AgentsConfig,
+    user: &str,
     occasion: Occasion,
 ) -> Result<Option<String>, String> {
     let when = now();
@@ -714,7 +727,7 @@ pub(crate) fn compose(
     // actually shows is recorded as delivered and the rest still comes
     // back from `threads`, as the blob's own tail line says.
     blob.fit(&subscriber, config.max_lines);
-    let text = blob.render(&subscriber);
+    let text = blob.render(&subscriber, user);
     for thread in blob.shown() {
         register
             .deliver(id, thread, when)
@@ -806,7 +819,7 @@ mod tests {
     }
 
     /// A subscribed session is handed a thread once; the next check is
-    /// silent until someone else speaks; an unsubscribed one hears nothing.
+    /// silent until the user speaks again; an unsubscribed one hears nothing.
     #[test]
     fn pending_delivers_each_message_once() -> TestResult {
         let dir = fixture("once")?;
@@ -826,39 +839,41 @@ mod tests {
             ..AgentsConfig::default()
         };
         assert_eq!(
-            compose(&dirs, &root, "ghost", &config, Occasion::TurnEnd)?,
+            compose(&dirs, &root, "ghost", &config, "user", Occasion::TurnEnd)?,
             None
         );
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
         register.subscribe("s-1", "coder", Some("bot"), None, when)?;
-        let text =
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
+        let text = compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?
+            .ok_or("nothing delivered")?;
         assert!(text.contains("1 review thread needs your reply"), "{text}");
         assert!(text.contains("user: why?"), "{text}");
         assert_eq!(
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?,
             None,
             "first check is quiet"
         );
-        let nag = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("no reminder")?;
+        let nag = compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?
+            .ok_or("no reminder")?;
         assert!(
             nag.starts_with("FATHOMABLE reminder: 1 thread still unanswered: a.md:1"),
             "{nag}"
         );
         assert_eq!(
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?,
             None
         );
         let me = Author::agent("bot").subscribed("s-1", "coder");
         store.reply(&id, Reply::new(me, 7, "because"))?;
         assert_eq!(
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?,
             None,
             "own reply"
         );
         store.reply(&id, Reply::new(Author::User, 8, "hmm"))?;
-        let again = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing")?;
+        let again =
+            compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?.ok_or("nothing")?;
         assert!(again.contains("user: hmm"), "{again}");
         Ok(())
     }
@@ -888,8 +903,8 @@ mod tests {
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
         register.subscribe("s-1", "coder", Some("bot"), None, when)?;
-        let blob =
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
+        let blob = compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?
+            .ok_or("nothing delivered")?;
         assert!(blob.contains("more; call `threads`"), "{blob}");
         // A thread is shown in full only if it has a `── thread <id>`
         // header; the overflow appears by id alone in the closing list.
@@ -942,10 +957,10 @@ mod tests {
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
         register.subscribe("s-1", "coder", Some("bot"), None, when)?;
-        assert!(compose(&dirs, &root, "s-1", &config, Occasion::Context)?.is_some());
+        assert!(compose(&dirs, &root, "s-1", &config, "user", Occasion::Context)?.is_some());
         for _ in 0..5 {
             assert_eq!(
-                compose(&dirs, &root, "s-1", &config, Occasion::Context)?,
+                compose(&dirs, &root, "s-1", &config, "user", Occasion::Context)?,
                 None,
                 "context neither repeats the blob nor nags"
             );
@@ -953,10 +968,10 @@ mod tests {
         // The cadence is untouched, so it still takes `nag_after`
         // turn-ends to earn the reminder.
         assert_eq!(
-            compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?,
+            compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?,
             None
         );
-        let nag = compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?
+        let nag = compose(&dirs, &root, "s-1", &config, "user", Occasion::TurnEnd)?
             .ok_or("no reminder after two turn-ends")?;
         assert!(nag.starts_with("FATHOMABLE reminder:"), "{nag}");
         Ok(())
@@ -1097,9 +1112,10 @@ mod tests {
             Harness::Copilot,
             Harness::Vscode,
         ] {
-            let text = hello_text(harness, Path::new("/ws"), "s-1", &types);
+            let text = hello_text(harness, Path::new("/ws"), "s-1", &types, "Henry");
             assert!(text.contains("types      coder, qa"), "{text}");
             assert!(text.contains("session    s-1"), "{text}");
+            assert!(text.contains("user       Henry"), "{text}");
             let mut shapes = 0;
             for line in text.lines() {
                 let Some(rest) = line.strip_prefix("  ") else {
@@ -1126,8 +1142,14 @@ mod tests {
                 );
             }
         }
-        assert!(hello_text(Harness::Copilot, Path::new("/ws"), "s", &types).contains("detached"));
-        assert!(!hello_text(Harness::Claude, Path::new("/ws"), "s", &types).contains("detached"));
+        assert!(
+            hello_text(Harness::Copilot, Path::new("/ws"), "s", &types, "user")
+                .contains("detached")
+        );
+        assert!(
+            !hello_text(Harness::Claude, Path::new("/ws"), "s", &types, "user")
+                .contains("detached")
+        );
     }
 
     /// The hello says `resolve` only proposes (ADR 0053), and its
@@ -1136,7 +1158,7 @@ mod tests {
     #[test]
     fn hello_says_resolve_only_proposes() {
         let types = ["coder".to_owned()];
-        let text = hello_text(Harness::Claude, Path::new("/ws"), "s-1", &types);
+        let text = hello_text(Harness::Claude, Path::new("/ws"), "s-1", &types, "user");
         assert!(text.contains("the user closes it"), "{text}");
         let single = text
             .lines()

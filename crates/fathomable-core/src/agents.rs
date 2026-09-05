@@ -7,10 +7,10 @@
 //! hook process may all append. It holds no thread content. Deleting it
 //! forgets every subscription and nothing else.
 //!
-//! A thread is *pending* for a subscriber when it is open and its newest
-//! message is someone else's ([`Thread::awaits`]); it is
-//! *deliverable* when that message has not been shown to the subscriber
-//! yet. [`Blob::render`] renders what a hook hands the model.
+//! A thread is *pending* when it is open and the user has the last word
+//! ([`Thread::awaits_agent`], ADR 0058); it is *deliverable* to a
+//! subscriber when that act has not been shown to it yet.
+//! [`Blob::render`] renders what a hook hands the model.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -21,7 +21,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::annotations::{Party, Status, Thread, ThreadId};
+use crate::annotations::{Author, Status, Thread, ThreadId};
 use crate::bond::{self, Bond, Process};
 use crate::vocabulary as vocab;
 
@@ -170,7 +170,7 @@ enum Event {
         id: String,
         created: u64,
     },
-    /// The newest message of `thread`, written `at`, was shown to `id`.
+    /// The last act on `thread`, made `at`, was shown to `id`.
     Deliver {
         v: u32,
         id: String,
@@ -397,8 +397,8 @@ impl Register {
         })
     }
 
-    /// The threads among `threads` that are pending for `subscriber` and
-    /// whose newest message it has not been shown, oldest first.
+    /// The pending threads among `threads` whose last act `subscriber`
+    /// has not been shown, oldest first.
     pub fn deliverable<'a>(
         &self,
         subscriber: &Subscriber,
@@ -406,16 +406,16 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| t.awaits(Party::Subscriber(&subscriber.id)))
+            .filter(|t| t.awaits_agent())
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
-                self.deliveries.get(&key) != Some(&t.newest().1)
+                self.deliveries.get(&key) != Some(&t.last_act().1)
             })
             .collect()
     }
 
-    /// The threads among `threads` that are pending for `subscriber` and
-    /// were already shown to it: the ones a reminder would name.
+    /// The pending threads among `threads` already shown to `subscriber`:
+    /// the ones a reminder would name.
     pub fn stale<'a>(
         &self,
         subscriber: &Subscriber,
@@ -423,15 +423,15 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| t.awaits(Party::Subscriber(&subscriber.id)))
+            .filter(|t| t.awaits_agent())
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
-                self.deliveries.get(&key) == Some(&t.newest().1)
+                self.deliveries.get(&key) == Some(&t.last_act().1)
             })
             .collect()
     }
 
-    /// Record that `thread`'s newest message was shown to `id`.
+    /// Record that `thread`'s last act was shown to `id`.
     ///
     /// # Errors
     ///
@@ -443,7 +443,7 @@ impl Register {
             v: FORMAT_VERSION,
             id: id.to_owned(),
             thread: thread.id().clone(),
-            at: thread.newest().1,
+            at: thread.last_act().1,
             created: now,
         })
     }
@@ -753,15 +753,17 @@ impl<'a> Blob<'a> {
     /// Call before [`Self::render`], which renders whatever is left.
     pub fn fit(&mut self, subscriber: &Subscriber, max_lines: usize) {
         let mut used = self.header(subscriber).len();
+        // The user's name changes no line count, so any name will do here.
+        let name = "user";
         for (fired, remind) in &self.fired {
-            used += 1 + describe(fired.thread, Some(&watch_head(fired))).len();
+            used += 1 + describe(fired.thread, Some(&watch_head(fired, name)), name).len();
             for thread in remind {
-                used += 1 + describe(thread, None).len();
+                used += 1 + describe(thread, None, name).len();
             }
         }
         let mut keep = 0;
         for thread in &self.fresh {
-            used += 1 + describe(thread, None).len();
+            used += 1 + describe(thread, None, name).len();
             if used > max_lines {
                 break;
             }
@@ -773,21 +775,22 @@ impl<'a> Blob<'a> {
         self.listed = self.fresh.split_off(keep);
     }
 
-    /// Render for `subscriber` everything [`Self::fit`] left in full.
+    /// Render for `subscriber` everything [`Self::fit`] left in full,
+    /// naming the user `user` (ADR 0058).
     #[must_use]
-    pub fn render(&self, subscriber: &Subscriber) -> String {
+    pub fn render(&self, subscriber: &Subscriber, user: &str) -> String {
         let mut out = self.header(subscriber);
         for (fired, remind) in &self.fired {
             out.push(String::new());
-            out.extend(describe(fired.thread, Some(&watch_head(fired))));
+            out.extend(describe(fired.thread, Some(&watch_head(fired, user)), user));
             for thread in remind {
                 out.push(String::new());
-                out.extend(describe(thread, None));
+                out.extend(describe(thread, None, user));
             }
         }
         for thread in &self.fresh {
             out.push(String::new());
-            out.extend(describe(thread, None));
+            out.extend(describe(thread, None, user));
         }
         if !self.listed.is_empty() {
             out.push(String::new());
@@ -855,18 +858,31 @@ impl<'a> Blob<'a> {
 }
 
 /// The line introducing a thread that a watch fired on.
-fn watch_head(fired: &Fired<'_>) -> String {
+fn watch_head(fired: &Fired<'_>, user: &str) -> String {
     format!(
         "watch fired: {} {} ({})",
         fired.thread.id(),
         fired.watch.when(),
-        fired.thread.newest().0
+        who(fired.thread.newest().0, user)
     )
 }
 
+/// How an author reads to the model: the user by the configured name,
+/// an agent as `name (type)` (ADR 0058).
+#[must_use]
+pub fn who(author: &Author, user: &str) -> String {
+    if author.is_user() {
+        user.to_owned()
+    } else {
+        author.to_string()
+    }
+}
+
 /// One thread as the model sees it: a header, up to six snippet lines,
-/// and its newest two messages.
-fn describe(thread: &Thread, head: Option<&str>) -> Vec<String> {
+/// and its newest two messages — plus the message the user edited, when
+/// that edit is the last act and the message is older than those two.
+/// An edited message is marked `[edited]` after its author (ADR 0058).
+fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(head) = head {
         lines.push(format!("── {head}"));
@@ -892,21 +908,28 @@ fn describe(thread: &Thread, head: Option<&str>) -> Vec<String> {
     if snippet.len() > 6 {
         lines.push(format!("        │ … {} more line(s)", snippet.len() - 6));
     }
-    let mut recent: Vec<(String, &str)> = thread
-        .replies()
-        .iter()
-        .rev()
-        .take(2)
-        .map(|r| (r.author().to_string(), r.body()))
-        .collect();
-    recent.reverse();
-    if recent.len() < 2 {
-        recent.insert(0, ("user".to_owned(), thread.comment()));
+    // Every message as (who, body, edited), the comment first.
+    let all: Vec<(String, &str, Option<u64>)> =
+        std::iter::once((user.to_owned(), thread.comment(), thread.comment_edited()))
+            .chain(
+                thread
+                    .replies()
+                    .iter()
+                    .map(|r| (who(r.author(), user), r.body(), r.edited())),
+            )
+            .collect();
+    let from = all.len().saturating_sub(2);
+    let mut shown: Vec<usize> = (from..all.len()).collect();
+    let act = thread.last_act().1;
+    if let Some(edited) = all[..from].iter().rposition(|(_, _, e)| *e == Some(act)) {
+        shown.insert(0, edited);
     }
-    for (who, body) in recent {
+    for index in shown {
+        let (who, body, edited) = &all[index];
+        let mark = if edited.is_some() { " [edited]" } else { "" };
         let mut body = body.lines();
         let first = body.next().unwrap_or_default();
-        lines.push(format!("   {who}: {first}"));
+        lines.push(format!("   {who}{mark}: {first}"));
         for more in body.take(3) {
             lines.push(format!("     {more}"));
         }
@@ -1038,8 +1061,11 @@ mod tests {
         Ok((store, id))
     }
 
+    /// A thread is delivered once per act of the user's; an agent's
+    /// reply, this session's or another's, ends the delivery until the
+    /// user speaks again (ADR 0058).
     #[test]
-    fn a_message_is_delivered_once_until_someone_else_speaks() -> TestResult {
+    fn a_message_is_delivered_once_until_the_user_speaks() -> TestResult {
         let dir = TempDir::new("agents-once")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
@@ -1056,6 +1082,11 @@ mod tests {
         assert!(reg.stale(&sub, store.threads()).is_empty());
         let other = Author::agent("rev").subscribed("s-2", "reviewer");
         store.reply(&id, Reply::new(other, 203, "not quite"))?;
+        assert!(
+            reg.deliverable(&sub, store.threads()).is_empty(),
+            "another agent's answer is an answer"
+        );
+        store.reply(&id, Reply::new(Author::User, 204, "and?"))?;
         assert_eq!(reg.deliverable(&sub, store.threads()).len(), 1);
         // Reloading keeps the delivery and the subscription.
         let again = Register::open(dir.0.join("agents.jsonl"), 300, DAY)?;
@@ -1065,7 +1096,7 @@ mod tests {
     }
 
     /// A subscription covers the whole workspace (ADR 0055): a thread on
-    /// any file is deliverable once someone else has the last word. A
+    /// any file is deliverable while the user has the last word. A
     /// second `subscribe` refreshes the record and cannot change the type,
     /// and a register line written with a follow list still loads.
     #[test]
@@ -1211,7 +1242,7 @@ mod tests {
         };
         blob.fit(&sub, 1);
         assert!(blob.listed.is_empty(), "a fired watch was listed away");
-        let text = blob.render(&sub);
+        let text = blob.render(&sub, "user");
         assert!(text.contains("watch fired:"), "{text}");
         assert!(text.contains(&format!("── thread {other} ")), "{text}");
         assert!(!text.contains("more; call `threads`"), "{text}");
@@ -1250,6 +1281,7 @@ mod tests {
                 "hm\nsecond line",
             ),
         )?;
+        store.reply(&id, Reply::new(Author::User, 151, "and?"))?;
         for n in 0..5 {
             store.annotate(
                 Draft::new(Path::new("b.md"), LineRange::new(1, 4), format!("note {n}")),
@@ -1268,7 +1300,7 @@ mod tests {
         blob.fit(&sub, 20);
         // The header still counts every thread that needs a reply, the
         // ones named by id alone included.
-        let text = blob.render(&sub);
+        let text = blob.render(&sub, "user");
         assert!(
             text.starts_with("FATHOMABLE: 6 review threads need your reply (you are bot (coder)).")
         );
@@ -1291,12 +1323,12 @@ mod tests {
         );
         let empty = Blob::default();
         assert!(empty.is_empty());
-        assert_eq!(empty.render(&sub), "");
+        assert_eq!(empty.render(&sub, "user"), "");
         let reminder = Blob {
             reminder: store.threads().iter().take(2).collect(),
             ..Blob::default()
         };
-        let text = reminder.render(&sub);
+        let text = reminder.render(&sub, "user");
         assert_eq!(text.lines().count(), 1);
         assert!(text.contains("2 threads still unanswered: a.md:2-3, b.md:1-4"));
         Ok(())

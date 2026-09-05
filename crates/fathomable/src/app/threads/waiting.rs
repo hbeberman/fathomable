@@ -1,9 +1,9 @@
 // @okf-doc: /decisions/0030-waiting-threads.md
 //! Threads waiting on the user (ADR 0030).
 //!
-//! A thread *waits* when it is open and an agent wrote its newest message
-//! ([`Thread::awaits`]); the user's reply, resolve, or reopen ends
-//! the wait, so nothing is tracked per viewer. This module counts the
+//! A thread *waits* when it is open and an agent has the last word on it
+//! ([`Thread::awaits_user`], ADR 0058); the user's reply, edit, resolve,
+//! or reopen ends the wait, so nothing is tracked per viewer. This module counts the
 //! waiting threads for the status line and the files pane, raises a toast
 //! when a store reload turns a thread waiting, and walks them with
 //! `]r` / `[r`: the current document's below (above) the cursor first,
@@ -12,7 +12,7 @@
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{Party, Store, Thread, ThreadId};
+use fathomable_core::annotations::{Store, Thread, ThreadId};
 
 use crate::app::App;
 use crate::app::threads::ThreadState;
@@ -40,7 +40,7 @@ impl App {
         self.store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.includes(thread) && thread.awaits(Party::User))
+            .filter(|thread| self.reach.includes(thread) && thread.awaits_user())
     }
 
     /// The ids of the store's waiting threads, for the reload diff.
@@ -48,7 +48,7 @@ impl App {
         store
             .threads()
             .iter()
-            .filter(|thread| thread.awaits(Party::User))
+            .filter(|thread| thread.awaits_user())
             .map(|thread| thread.id().clone())
             .collect()
     }
@@ -62,7 +62,7 @@ impl App {
         let arrived: Vec<String> = store
             .threads()
             .iter()
-            .filter(|thread| thread.awaits(Party::User) && !before.contains(thread.id()))
+            .filter(|thread| thread.awaits_user() && !before.contains(thread.id()))
             .map(|thread| format!("{}:{}", thread.path().display(), thread.range().start()))
             .collect();
         let text = match arrived.as_slice() {

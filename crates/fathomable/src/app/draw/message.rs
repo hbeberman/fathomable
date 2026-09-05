@@ -81,18 +81,20 @@ pub(crate) fn message_line<'a>(
 
 /// The rows of `thread` expanded in place (ADR 0049): the comment and
 /// each reply as a message, author row then body, with no snippet and
-/// no END row; `selected` is the message the cursor is on.
+/// no END row; `selected` is the message the cursor is on, and `user`
+/// names the user (ADR 0058).
 pub(crate) fn expanded_lines<'a>(
     theme: &Theme,
     highlighter: &Highlighter,
     thread: &Thread,
+    user: &str,
     now: u64,
     width: usize,
     selected: Option<usize>,
 ) -> Vec<Line<'a>> {
     let mut out = Vec::new();
     let comment = Message {
-        author: "user",
+        author: user,
         created: thread.created(),
         body: thread.comment(),
         badge: None,

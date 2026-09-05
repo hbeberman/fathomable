@@ -245,3 +245,11 @@ Milestones are ordered; each is usable on its own. Details live in the
     theme keys are `ui.sidebar*` with no old spelling accepted, the
     column's state has its own module, and the files pane's module is
     `app/files_pane.rs` ([0057](decisions/0057-the-sidebar.md)).
+49. **The user has the last word.** A thread is pending only while the
+    user's act — comment, reply, edit, or reopen — is its newest, so an
+    answer from any session leaves it waiting on the user; `threads`
+    says `answered by` or `proposed by`, takes `status "pending"`, and
+    marks edited messages; an agent is named once at `follow` from its
+    harness, `thread_reply` loses `persona`, and the user is named by
+    `user { name }`, `User` by default
+    ([0058](decisions/0058-the-user-has-the-last-word.md)).

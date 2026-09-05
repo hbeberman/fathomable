@@ -42,6 +42,23 @@ pub struct Config {
     sidebar: SidebarConfig,
     threads: ThreadsConfig,
     agents: AgentsConfig,
+    user: UserConfig,
+}
+
+/// The `user { ... }` block (ADR 0058): how the person at the viewer is
+/// named wherever a message's author is shown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserConfig {
+    /// The name the user's messages carry; `User` by default.
+    pub name: String,
+}
+
+impl Default for UserConfig {
+    fn default() -> Self {
+        Self {
+            name: crate::identity::DEFAULT_USER_NAME.to_owned(),
+        }
+    }
 }
 
 /// The `threads { ... }` block (ADR 0049): how threads show in the text.
@@ -455,6 +472,38 @@ impl Config {
                         }
                     }
                 }
+                "user" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`user` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        match child.name().value() {
+                            "name" => {
+                                let name = one_string(child, line)?.trim();
+                                if name.is_empty() {
+                                    return Err(ConfigError {
+                                        path: None,
+                                        line,
+                                        message: "`user.name` must not be empty".to_owned(),
+                                    });
+                                }
+                                name.clone_into(&mut config.user.name);
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown user setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 "threads" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -607,6 +656,12 @@ impl Config {
     #[must_use]
     pub fn agents(&self) -> &AgentsConfig {
         &self.agents
+    }
+
+    /// The `user` block: how the person at the viewer is named (ADR 0058).
+    #[must_use]
+    pub fn user(&self) -> &UserConfig {
+        &self.user
     }
 }
 
@@ -863,6 +918,26 @@ checkpoints {
             ("agents { types 1 }", "takes strings"),
             ("agents { nag-after -1 }", "non-negative"),
             ("agents \"x\"", "block"),
+        ] {
+            let error = Config::parse(text)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(error.contains(needle), "{text}: {error}");
+        }
+    }
+
+    /// The `user` block names the person at the viewer (ADR 0058): `User`
+    /// unless set, never blank.
+    #[test]
+    fn user_block_names_the_user() {
+        assert_eq!(Config::default().user().name, "User");
+        let config = Config::parse("user { name \"Henry\" }").unwrap_or_default();
+        assert_eq!(config.user().name, "Henry");
+        for (text, needle) in [
+            ("user { name \"  \" }", "must not be empty"),
+            ("user { nope 1 }", "unknown user setting"),
+            ("user \"x\"", "block"),
         ] {
             let error = Config::parse(text)
                 .err()

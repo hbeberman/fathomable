@@ -40,8 +40,8 @@ use std::time::{Duration, Instant};
 use crate::app::threads::list::ReviewList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, ViewerConfig,
-    WatchConfig,
+    AgentsConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
+    ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -286,6 +286,8 @@ pub(crate) struct App {
     viewer: ViewerConfig,
     /// Subscriptions and the wake command (ADR 0040).
     agents: AgentsConfig,
+    /// How the person at the viewer is named (ADR 0058).
+    user: UserConfig,
     /// Who watches which thread, refreshed with the store (ADR 0040).
     watchers: Vec<(ThreadId, String)>,
     /// The config file the over-limit notice names (ADR 0026).
@@ -329,6 +331,7 @@ impl App {
             sidebar,
             threads,
             agents,
+            user,
             config_path,
         } = options;
         let ignore = match Ignore::new(&watch.ignore) {
@@ -380,6 +383,7 @@ impl App {
             markdown,
             viewer,
             agents,
+            user,
             watchers: Vec::new(),
             config_path,
             ignore,
@@ -483,6 +487,11 @@ impl App {
 
     /// How a root-relative `path` should be coloured and first displayed.
     /// The code highlighter shared by every view and the expanded threads.
+    /// The name the user's messages carry (ADR 0058).
+    pub(crate) fn user_name(&self) -> &str {
+        &self.user.name
+    }
+
     pub(crate) fn highlighter(&self) -> &Highlighter {
         &self.highlighter
     }
@@ -1837,6 +1846,8 @@ pub(crate) struct Options {
     pub(crate) threads: ThreadsConfig,
     /// Subscriptions and the wake command (ADR 0040).
     pub(crate) agents: AgentsConfig,
+    /// How the person at the viewer is named (ADR 0058).
+    pub(crate) user: UserConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
     pub(crate) config_path: PathBuf,
 }
@@ -1860,6 +1871,7 @@ impl Options {
             sidebar: SidebarConfig::default(),
             threads: ThreadsConfig::default(),
             agents: AgentsConfig::default(),
+            user: UserConfig::default(),
             config_path: PathBuf::from("config.kdl"),
         }
     }

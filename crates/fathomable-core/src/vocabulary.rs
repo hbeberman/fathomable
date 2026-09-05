@@ -35,13 +35,16 @@ pub const TYPE: &str = "type";
 pub const END: &str = "end";
 /// Whether `thread_watch` cancels the watch instead (ADR 0055).
 pub const CANCEL: &str = "cancel";
-/// Which threads `threads` lists: `open`, `resolved`, or `all`.
+/// Which threads `threads` lists: `open`, `pending`, `resolved`, or `all`.
 pub const STATUS: &str = "status";
-/// The field that marks a thread waiting on the caller (ADR 0055).
+/// The field that marks a thread the user has the last word on, and the
+/// `status` that lists only those (ADR 0055, ADR 0058).
 pub const PENDING: &str = "pending";
+/// The field naming the agent that has the last word on a thread (ADR 0058).
+pub const ANSWERED: &str = "answered";
 /// A workspace-relative file path.
 pub const PATH: &str = "path";
-/// A name to sign as.
+/// A name to sign as, given once at `follow` (ADR 0058).
 pub const PERSONA: &str = "persona";
 /// A first line.
 pub const LINE: &str = "line";
@@ -101,7 +104,7 @@ pub const THREADS: Tool = Tool {
 pub const THREAD_REPLY: Tool = Tool {
     name: "thread_reply",
     params: &[
-        THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, PERSONA, ID, WORKSPACE,
+        THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, ID, WORKSPACE,
     ],
 };
 /// Be woken when another thread moves, or cancel the watch.
@@ -130,6 +133,7 @@ pub fn is_known(ident: &str) -> bool {
         STATUS_OPEN,
         STATUS_ALL,
         PENDING,
+        ANSWERED,
     ]
     .contains(&ident)
         || ALL

@@ -57,6 +57,9 @@ Deferred, not rejected:
 - Multiple panes inside Fathomable (v1 is one pane; the layout is designed so
   splitting can be added).
 - HTTP transport for the MCP server.
+- Agents conversing with each other through threads: a thread reaches an
+  agent on the user's word alone
+  ([0058](decisions/0058-the-user-has-the-last-word.md)).
 - macOS and Windows. Linux is the only supported platform.
 
 ## Principles
@@ -94,15 +97,17 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
 - **Agent session**: the harness session an agent runs in, identified by the
   `id` the `hello` hook gives it.
 - **Subscriber**: an agent session that registered with `follow`, so the
-  hooks hand it what others write; its **coverage** is the files it follows.
+  hooks hand it every thread the user has the last word on.
 - **Thread**: a comment on a line range of a document plus the replies
   (human or agent) attached to it. The opening message is the **comment**.
 - **Anchor**: the durable identity of a thread's range, derived from line
   content hashes so it survives re-renders.
 - **Placement**: where a thread's lines are now: anchored, edited, or
   detached.
-- **Waiting** / **pending**: a thread whose newest message is someone
-  else's, seen from the user's chair or from an agent's.
+- **Waiting** / **pending**: an open thread whose last act — comment,
+  reply, edit, or reopen — is an agent's, seen from the user's chair; or
+  the user's, seen from an agent's
+  ([0058](decisions/0058-the-user-has-the-last-word.md)).
 - **Mark**: a thread placed in the text as the viewer draws it (code only).
 - **Reach**: the threads the current `HEAD` shows, those written against a
   commit it can reach.

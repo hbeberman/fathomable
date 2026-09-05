@@ -94,6 +94,7 @@ impl App {
             &root,
             id,
             &self.agents,
+            &self.user.name,
             hooks::Occasion::TurnEnd,
         ) {
             Ok(Some(prompt)) => prompt,

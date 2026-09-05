@@ -178,6 +178,8 @@ pub enum Key {
     UiWarning,
     /// An affordance dimmer than text: `(c expand)` on a stub (ADR 0049).
     UiHint,
+    /// The background of a pane's header rows (ADR 0059).
+    UiHeader,
     UiSidebar,
     UiSidebarSelected,
     UiSidebarDir,
@@ -210,7 +212,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 36] = [
+    const NAMED: [(&'static str, Self); 37] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -222,6 +224,7 @@ impl Key {
         ("ui.statusline.info", Self::UiStatuslineInfo),
         ("ui.warning", Self::UiWarning),
         ("ui.hint", Self::UiHint),
+        ("ui.header", Self::UiHeader),
         ("ui.sidebar", Self::UiSidebar),
         ("ui.sidebar.selected", Self::UiSidebarSelected),
         ("ui.sidebar.dir", Self::UiSidebarDir),

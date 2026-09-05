@@ -433,9 +433,10 @@ impl App {
         out.rows.push(Row::Blank);
     }
 
-    /// Rows the list has for its entries: the column minus its header.
+    /// Rows the list has for its entries: the column minus its header
+    /// and its key bar (ADR 0059).
     fn list_rows(&self) -> usize {
-        self.text_rows().saturating_sub(1).max(1)
+        self.text_rows().saturating_sub(2).max(1)
     }
 
     /// The cursor's entry, or the first entry when the cursor's thread

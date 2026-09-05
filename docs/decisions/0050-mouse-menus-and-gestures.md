@@ -152,7 +152,10 @@ same day; the choices are below.
   expanded thread's in the text, and the comment box's. Each header is
   built once as words and hints (`Header` in `draw`) and both the
   drawing and the mouse read it, so a hint the row was too narrow to
-  show is not clickable either.
+  show is not clickable either. Amended 2026-09-05 by
+  [0059](0059-headers-and-the-key-bar.md): the review list's keys are
+  on a bar along its bottom row, which takes clicks as the header did,
+  and a click on the header's sort word switches the sort.
 - A click on the threads pane's header text toggles its reach between
   the file and the workspace, as `s` does.
 - In the checkpoint header a click on the base name opens the base

@@ -13,6 +13,7 @@ use super::super::keys::handle_key;
 use super::super::mouse::handle_mouse;
 use super::Menu;
 use crate::app::draw;
+use crate::app::draw::header;
 use crate::app::threads::ComposeTarget;
 use crate::app::view::{Effect, Mode};
 use crate::app::{App, Focus, PickerKind, Popup};
@@ -447,7 +448,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         .thread()
         .and_then(|id| app.thread(id))
         .context("the thread")?;
-    let header = draw::expanded_header(&app, thread);
+    let header = header::expanded_header(&app, thread);
     let width = app.view().layout().width();
     let col = (0..width)
         .find(|&c| header.action_at(width, c) == Some(Action::Reply))
@@ -459,7 +460,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         Some(Popup::Compose(compose)) if matches!(compose.target(), ComposeTarget::Reply(_))
     ));
     // The draft's author row in the thread (ADR 0054): `Esc` cancels.
-    let compose = app.draft().map(draw::draft_header).context("a draft")?;
+    let compose = app.draft().map(header::draft_header).context("a draft")?;
     let width = app.view().layout().width();
     let col = (0..width)
         .find(|&c| compose.action_at(width, c) == Some(Action::Escape))
@@ -471,17 +472,27 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     let width = app.column_width();
     let sidebar = app.sidebar_width();
 
-    // The review list's header: the `sort` hint toggles the order.
+    // The review list's key bar: the `sort` hint toggles the order
+    // (ADR 0059).
     app.toggle_review();
     assert_eq!(app.focus(), Focus::Review);
     let list_rows = app.review_rows(app.column_width());
-    let header = draw::review_header(&app, &list_rows.entries);
+    let bar = header::review_footer(&app, &list_rows.entries);
+    let col = (0..width)
+        .find(|&c| bar.action_at(width, c) == Some(Action::ReviewSort))
+        .context("sort is drawn on the bar")?;
+    let before = app.review().sort;
+    let bar_row = app.pane_rows() - 1;
+    left(&mut app, sidebar + col, bar_row);
+    assert_ne!(app.review().sort, before, "the sort hint ran");
+
+    // The header's sort word, at the right edge, toggles it back.
+    let header = header::review_header(&app, &list_rows.entries);
     let col = (0..width)
         .find(|&c| header.action_at(width, c) == Some(Action::ReviewSort))
-        .context("sort is drawn")?;
-    let before = app.review().sort;
+        .context("the sort word is drawn")?;
     left(&mut app, sidebar + col, 0);
-    assert_ne!(app.review().sort, before, "the sort hint ran");
+    assert_eq!(app.review().sort, before, "the sort word ran");
     Ok(())
 }
 

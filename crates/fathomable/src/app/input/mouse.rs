@@ -14,6 +14,7 @@ use super::super::{App, Border, Focus, Popup};
 use super::bindings::{self, Where};
 use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
+use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
 use crate::app::view::Effect;
 
@@ -111,28 +112,34 @@ fn threads_pane_mouse(
     }
 }
 
-/// The mouse over the review list (ADR 0025): the wheel scrolls, a click
-/// selects the entry under the pointer, a click on a header hint runs
-/// it, and a right-click on an entry opens its menu. Row 0 is the list
-/// header.
+/// The mouse over the review list (ADR 0025, ADR 0059): the wheel
+/// scrolls, a click selects the entry under the pointer, a click on the
+/// header's sort word or a key-bar hint runs it, and a right-click on an
+/// entry opens its menu. Row 0 is the list header and the column's last
+/// row is the key bar; unfocused, a click on either focuses the list.
 fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
+    let bar = app.pane_rows().saturating_sub(1);
     match kind {
         MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
         MouseEventKind::ScrollUp => app.review_scroll(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row == 0 => {
+        MouseEventKind::Down(MouseButton::Left) if row == 0 || row == bar => {
             if app.focus() != Focus::Review {
                 app.focus_pane(Focus::Review);
                 return Effect::None;
             }
             let width = app.column_width();
             let rows = app.review_rows(width);
-            let header = draw::review_header(app, &rows.entries);
+            let header = if row == 0 {
+                header::review_header(app, &rows.entries)
+            } else {
+                header::review_footer(app, &rows.entries)
+            };
             if let Some(action) = header.action_at(width, column - app.sidebar_width()) {
                 return app.act(action);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => app.review_click(row - 1),
-        MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
+        MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
             app.open_review_menu(row - 1, column, row);
         }
         _ => {}
@@ -148,7 +155,7 @@ fn checkpoint_header_click(app: &mut App, column: usize) -> Effect {
         return Effect::None;
     };
     app.focus_pane(Focus::View);
-    let header = draw::checkpoint_header(&text);
+    let header = header::checkpoint_header(&text);
     if let Some(action) = header.action_at(app.column_width(), column) {
         return app.act(action);
     }
@@ -339,7 +346,7 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         {
             match draft_row {
                 DraftRow::Author => {
-                    let header = app.draft().map(draw::draft_header);
+                    let header = app.draft().map(header::draft_header);
                     let width = app.view().layout().width();
                     if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
                         return app.act(action);
@@ -359,7 +366,7 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
                 // that thread (ADR 0050).
                 let header = app
                     .thread(&id)
-                    .map(|thread| draw::expanded_header(app, thread));
+                    .map(|thread| header::expanded_header(app, thread));
                 let width = app.view().layout().width();
                 if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
                     let newest = app.newest_message(&id);

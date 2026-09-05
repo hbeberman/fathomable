@@ -35,6 +35,7 @@ colors {
     "ui.statusline.info"   fg="dim"
     "ui.warning"           fg="white" bg="red" mods="bold"
     "ui.hint"              fg="#a0a8b0"
+    "ui.header"            bg="surface"
 
     "ui.sidebar"              fg="fg" bg="paper"
     "ui.sidebar.selected"     bg="surface" mods="bold"

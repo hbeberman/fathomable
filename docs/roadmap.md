@@ -253,3 +253,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     harness, `thread_reply` loses `persona`, and the user is named by
     `user { name }`, `User` by default
     ([0058](decisions/0058-the-user-has-the-last-word.md)).
+50. **Headers and the key bar.** Every pane header and the review
+    list's entry headers draw on the new `ui.header` surface; the review
+    list's keys move from its header to a bar along its bottom row so
+    they survive a half-width terminal; the header's counts are dotted
+    with the sort word at the right edge, where a click switches the
+    sort; a stub's age reads in the info colour; the `proposed` wording
+    stays ([0059](decisions/0059-headers-and-the-key-bar.md)).

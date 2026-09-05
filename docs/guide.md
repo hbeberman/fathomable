@@ -141,9 +141,11 @@ or `threads · workspace 12`):
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
-Review list (`Space r`; its header reads `review  4 open  1 proposed
-resolved hidden  by newest agent reply`, the proposal count only while
-there is one):
+Review list (`Space r`; its header reads `review  4 open · 1 proposed
+· resolved hidden` with the sort word at its right edge, the proposal
+count only while there is one; the keys below sit on a bar along the
+list's bottom row, and the header, the bar, and each entry's header
+draw on the `ui.header` surface every pane header shares):
 
 | Keys | Action |
 | --- | --- |
@@ -207,9 +209,10 @@ outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
 at once. The `Space` menu and `Space ?` take clicks too, as do the key
-hints at the right edge of the threads pane, review list, checkpoint,
-expanded thread, and draft author rows; a click on the threads pane
-header toggles its reach, and on the checkpoint header's base or target
+hints at the right edge of the threads pane, checkpoint, expanded
+thread, and draft author rows and on the review list's key bar; a click
+on the threads pane header toggles its reach, on the review list's sort
+word switches the sort, and on the checkpoint header's base or target
 name opens that picker.
 
 Selecting with the mouse: drag over text for a character selection; a

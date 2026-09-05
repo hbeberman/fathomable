@@ -227,8 +227,11 @@ result.
   swapped. `]r`/`[r` in the text gain `Tab`/`Shift-Tab` aliases, the
   next thing that needs the reader being the most-used motion.
 - The header reads `review  4 open  resolved hidden  by newest agent
-  reply` with `s sort  x resolved  f file  z fold` at the right. The
-  sort, the resolved flag, and the file filter are one `ReviewState` on
+  reply` with `s sort  x resolved  f file  z fold` at the right.
+  Amended 2026-09-05 by [0059](0059-headers-and-the-key-bar.md): the
+  header reads `review  4 open · resolved hidden` with the sort word
+  at the right edge, and the keys are on a bar along the list's bottom
+  row. The sort, the resolved flag, and the file filter are one `ReviewState` on
   `App` that the threads pane reads: its `s` switches scope, its `x` is
   the same resolved flag.
 

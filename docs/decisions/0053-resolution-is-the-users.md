@@ -81,8 +81,9 @@ already force-resolved need no migration, since no release exists
   `threads_pending` describe such a thread as `open, proposed`.
 - **The counts.** The status line's thread block reads `1 proposed  2
   waiting  3/5 threads` while the current document has proposals, the
-  review list's header reads `review  4 open  1 proposed  resolved
-  hidden`, and `:status` adds a `proposed` row with the workspace
+  review list's header reads `review  4 open · 1 proposed · resolved
+  hidden` (dotted since [0059](0059-headers-and-the-key-bar.md)), and
+  `:status` adds a `proposed` row with the workspace
   total. A proposal is also counted as waiting; the two numbers answer
   different questions (what needs an answer; what only needs a nod).
 

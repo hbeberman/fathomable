@@ -4,6 +4,7 @@
 //! rows the frame draws.
 
 pub(crate) mod gutter;
+pub(crate) mod header;
 pub(crate) mod info;
 pub(crate) mod message;
 
@@ -20,15 +21,18 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
+use crate::app::draw::header::{
+    Header, Tone, checkpoint_header, draft_header, expanded_header, review_footer, review_header,
+};
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
 use crate::app::threads::list::{Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
-use crate::app::threads::words::{Words, label};
-use crate::app::threads::{Compose, ComposeTarget, ThreadState};
+use crate::app::threads::words::label;
+use crate::app::threads::{Compose, ThreadState};
 use crate::app::view::{Mode, View};
 
-use crate::app::input::bindings::{self, Action, Where};
+use crate::app::input::bindings;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, Menu};
 use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
@@ -55,6 +59,8 @@ pub(crate) struct Theme {
     pub(crate) warning: Style,
     /// `(c expand)` on a stub (ADR 0049).
     pub(crate) hint: Style,
+    /// A pane's header rows and the review list's key bar (ADR 0059).
+    pub(crate) header: Style,
     pub(crate) mode_normal: Style,
     pub(crate) mode_select: Style,
     pub(crate) mode_input: Style,
@@ -103,6 +109,7 @@ impl Theme {
             info: style(Key::UiStatuslineInfo),
             warning: style(Key::UiWarning),
             hint: style(Key::UiHint),
+            header: style(Key::UiHeader),
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
@@ -737,7 +744,11 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
     )]));
     let scope = app.sidebar_scope();
     let entries = app.threads_pane_rows();
-    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
+    // The title row is a bar on `ui.header` (ADR 0059).
+    let header_style = theme
+        .sidebar_dir
+        .add_modifier(Modifier::BOLD)
+        .patch(theme.header);
     let title = format!(" threads · {} {}", scope.word(), entries.len());
     let keys = "s x ";
     let mut header = Vec::new();
@@ -746,7 +757,10 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
             fit(&title, inner - display_width(keys)),
             header_style,
         ));
-        header.push(Span::styled(keys.to_owned(), theme.info));
+        header.push(Span::styled(
+            keys.to_owned(),
+            theme.info.patch(theme.header),
+        ));
     } else {
         header.push(Span::styled(fit(&title, inner), header_style));
     }
@@ -1061,12 +1075,14 @@ fn stub_line<'a>(
         Span::styled(" ", row_style)
     };
     let now = fathomable_core::clock::now();
-    let lead = format!(" {author} {}  ", format_age_short(created, now));
+    let lead = format!(" {author} ");
+    // The age in the info colour, as every other row gives it (ADR 0059).
+    let age = format!("{}  ", format_age_short(created, now));
     let hint = if hinted { " (c expand)" } else { "" };
     let free = width
         .saturating_sub(gutter)
         .saturating_sub(1)
-        .saturating_sub(1 + display_width(&lead))
+        .saturating_sub(1 + display_width(&lead) + display_width(&age))
         .saturating_sub(display_width(hint));
     let first = body.lines().next().unwrap_or("");
     let text = if display_width(first) > free && free > 0 {
@@ -1086,6 +1102,7 @@ fn stub_line<'a>(
         edge,
         Span::styled("●".to_owned(), mark_style(theme, kind).patch(row_style)),
         Span::styled(lead, theme.popup_key.patch(row_style)),
+        Span::styled(age, theme.info.patch(row_style)),
         Span::styled(text, text_style),
         Span::styled(hint.to_owned(), theme.hint.patch(row_style)),
     ];
@@ -1587,7 +1604,11 @@ fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: 
         format!(" {}", app.current_path().display()),
         theme.popup_key,
     )];
-    let mut lines = vec![header_line(theme, header, &[], width), Line::default()];
+    // The path row is the pane's header, on `ui.header` (ADR 0059).
+    let mut lines = vec![
+        padded_line(header, width).style(theme.header),
+        Line::default(),
+    ];
     for (label, value) in &info.rows {
         lines.push(Line::from(vec![
             Span::styled(format!("  {label:>label_width$}"), theme.popup_key),
@@ -1615,10 +1636,17 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let list = app.review_list();
     let Rows { rows: all, entries } = app.review_rows(width);
     let now = fathomable_core::clock::now();
+    // The header, the entries between, and the key bar on the last row
+    // (ADR 0059); one row shows the header alone.
     let mut lines = vec![review_header(app, &entries).line(theme, width)];
-    let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
-    for row in all.iter().skip(scroll).take(rows - 1) {
+    let body = rows.saturating_sub(2);
+    let scroll = list.scroll().min(all.len().saturating_sub(body));
+    for row in all.iter().skip(scroll).take(body) {
         lines.push(list_row(theme, row, now, width));
+    }
+    if rows >= 2 {
+        lines.resize_with(rows - 1, Line::default);
+        lines.push(review_footer(app, &entries).line(theme, width));
     }
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
@@ -1658,7 +1686,14 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 Span::styled(status, status_style),
                 Span::styled(format!("  {}{fold}", format_age(*updated, now)), theme.info),
             ];
-            list_selection_line(theme, spans, width, *selected)
+            // The row is a bar on `ui.header` (ADR 0059); the selection
+            // colour wins on the selected entry.
+            let style = if *selected {
+                theme.picker_selected
+            } else {
+                theme.header
+            };
+            padded_line(spans, width).style(style)
         }
         Row::Message {
             author,
@@ -1700,356 +1735,22 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
 
 fn list_selection_line<'a>(
     theme: &Theme,
-    mut spans: Vec<Span<'a>>,
+    spans: Vec<Span<'a>>,
     width: usize,
     selected: bool,
 ) -> Line<'a> {
     if selected {
-        let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
-        spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
-        Line::from(spans).style(theme.picker_selected)
+        padded_line(spans, width).style(theme.picker_selected)
     } else {
         Line::from(spans)
     }
 }
 
-/// How `action` is spelled on `place`, for a hint; a binding the table
-/// lacks shows as nothing rather than a made-up key.
-fn key_of(place: Where, action: Action) -> String {
-    bindings::hint(place, action).unwrap_or_default()
-}
-
-/// Two actions' keys as `a/b`, the way paired hints read.
-fn pair(place: Where, a: Action, b: Action) -> String {
-    format!("{}/{}", key_of(place, a), key_of(place, b))
-}
-
-/// A header hint: the key, then what it does. Either may be empty.
-type Hint<'a> = (&'a str, &'a str);
-
-/// The colour a word of a header's left part takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Tone {
-    Key,
-    Info,
-    Mark(ThreadState),
-}
-
-/// A header hint with what a click on it runs (ADR 0050): nothing for
-/// words alone, two actions for an `a/b` pair split at the slash.
-#[derive(Debug, Clone)]
-pub(crate) struct HintOf {
-    key: String,
-    what: &'static str,
-    actions: Vec<Action>,
-}
-
-impl HintOf {
-    fn new(key: impl Into<String>, what: &'static str, actions: &[Action]) -> Self {
-        Self {
-            key: key.into(),
-            what,
-            actions: actions.to_vec(),
-        }
-    }
-
-    fn keyed(place: Where, action: Action, what: &'static str) -> Self {
-        Self::new(key_of(place, action), what, &[action])
-    }
-
-    fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
-        Self::new(pair(place, a, b), what, &[a, b])
-    }
-
-    fn width(&self) -> usize {
-        hint_width(&(self.key.as_str(), self.what))
-    }
-}
-
-/// A pane header: the words on the left and the hints at the right
-/// edge, built once so the drawing and the mouse agree on where each
-/// hint is (ADR 0050).
-#[derive(Debug, Clone)]
-pub(crate) struct Header {
-    left: Vec<(String, Tone)>,
-    hints: Vec<HintOf>,
-}
-
-impl Header {
-    fn new(left: Vec<(String, Tone)>, hints: Vec<HintOf>) -> Self {
-        Self { left, hints }
-    }
-
-    /// The cells the left part takes.
-    pub(crate) fn left_width(&self) -> usize {
-        self.left.iter().map(|(text, _)| display_width(text)).sum()
-    }
-
-    /// The hints that fit after the left part on `width` cells, and the
-    /// column the first starts at.
-    fn shown(&self, width: usize) -> Option<(usize, &[HintOf])> {
-        let used = self.left_width();
-        let free = width.saturating_sub(used);
-        let width_of = |shown: &[HintOf]| {
-            shown.iter().map(HintOf::width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
-        };
-        let shown = (1..=self.hints.len())
-            .rev()
-            .map(|n| &self.hints[..n])
-            .find(|shown| free >= width_of(shown) + 3)?;
-        Some((used + (free - width_of(shown) - 1), shown))
-    }
-
-    /// The action a click at `column` on a `width`-cell header runs: the
-    /// hint under the pointer, its left or right half for a pair.
-    pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
-        let (mut at, shown) = self.shown(width)?;
-        for (i, hint) in shown.iter().enumerate() {
-            if i > 0 {
-                at += 3;
-            }
-            let end = at + hint.width();
-            if column >= at && column < end {
-                let offset = column - at;
-                let slash = hint
-                    .key
-                    .find('/')
-                    .map(|byte| display_width(&hint.key[..byte]));
-                return match (hint.actions.as_slice(), slash) {
-                    ([first, second], Some(slash)) => {
-                        Some(if offset <= slash { *first } else { *second })
-                    }
-                    (actions, _) => actions.first().copied(),
-                };
-            }
-            at = end;
-        }
-        None
-    }
-
-    /// The header as one drawn line.
-    fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
-        let left = self
-            .left
-            .iter()
-            .map(|(text, tone)| {
-                let style = match tone {
-                    Tone::Key => theme.popup_key,
-                    Tone::Info => theme.info,
-                    Tone::Mark(state) => mark_style(theme, *state),
-                };
-                Span::styled(text.clone(), style)
-            })
-            .collect();
-        let hints: Vec<Hint<'_>> = self
-            .hints
-            .iter()
-            .map(|hint| (hint.key.as_str(), hint.what))
-            .collect();
-        header_line(theme, left, &hints, width)
-    }
-}
-
-/// The checkpoint view's header (ADR 0049): the pair's names, then the
-/// paging, side, and close keys.
-pub(crate) fn checkpoint_header(text: &str) -> Header {
-    Header::new(
-        vec![(format!(" {text}"), Tone::Key)],
-        vec![
-            HintOf::paired(Where::View, Action::MoveLeft, Action::MoveRight, "page"),
-            HintOf::keyed(Where::View, Action::CheckpointBase, "base"),
-            HintOf::keyed(Where::View, Action::CheckpointTarget, "target"),
-            HintOf::keyed(Where::View, Action::CheckpointDiff, "close"),
-        ],
-    )
-}
-
-/// An expanded thread's header row in the text (ADR 0049): the state,
-/// the placement, who watches it, and the thread keys.
-pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
-    let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
-    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-    let tone = Tone::Mark(words.state());
-    let mut left = vec![(" ● ".to_owned(), tone)];
-    if let Some(placement) = words.placement() {
-        left.push((placement.to_owned(), tone));
-        left.push((" · ".to_owned(), Tone::Info));
-    }
-    left.push((label(words.state()).to_owned(), tone));
-    if words.proposed() {
-        left.push((" · proposed".to_owned(), tone));
-    }
-    let watchers = app.watchers_of(thread.id());
-    if !watchers.is_empty() {
-        left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
-    }
-    let resolve = if words.is_resolved() {
-        "reopen"
-    } else {
-        "resolve"
-    };
-    Header::new(
-        left,
-        vec![
-            HintOf::keyed(Where::View, Action::Reply, "reply"),
-            HintOf::keyed(Where::View, Action::EditMessage, "edit"),
-            HintOf::keyed(Where::View, Action::ToggleResolved, resolve),
-            HintOf::keyed(Where::View, Action::Comment, "fold"),
-        ],
-    )
-}
-
-/// The review list's header (ADR 0025, ADR 0049): the counts and the
-/// sort, then the list keys while it has focus.
-pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Entry]) -> Header {
-    let review = app.review();
-    let open = entries
-        .iter()
-        .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
-        .count();
-    let resolved = entries.len() - open;
-    let proposed = entries.iter().filter(|entry| entry.proposed()).count();
-    let mut left = vec![
-        (" review ".to_owned(), Tone::Key),
-        (format!(" {open} open"), Tone::Info),
-    ];
-    if proposed > 0 {
-        left.push((format!("  {proposed} proposed"), Tone::Info));
-    }
-    left.push((
-        if review.resolved {
-            format!("  {resolved} resolved")
-        } else {
-            "  resolved hidden".to_owned()
-        },
-        Tone::Info,
-    ));
-    if review.file_only {
-        left.push((format!("  {}", app.current_path().display()), Tone::Info));
-    }
-    left.push((format!("  {}", review.sort.label()), Tone::Info));
-    let place = Where::Review;
-    let hints = if app.focus() == Focus::Review {
-        let mut hints = vec![
-            HintOf::keyed(place, Action::ReviewSort, "sort"),
-            HintOf::keyed(place, Action::ReviewResolved, "resolved"),
-            HintOf::keyed(place, Action::FileOnly, "file"),
-            HintOf::keyed(place, Action::Fold, "fold"),
-            HintOf::keyed(place, Action::Confirm, "open"),
-            HintOf::keyed(place, Action::Reply, "reply"),
-        ];
-        if app.thread_message_editable() {
-            hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
-        }
-        hints.push(HintOf::keyed(place, Action::ToggleResolved, "resolve"));
-        if entries.len() > 1 {
-            hints.push(HintOf::paired(
-                place,
-                Action::ThreadPrev,
-                Action::ThreadNext,
-                "threads",
-            ));
-        }
-        if app.cursor_message_count() > 1 {
-            hints.push(HintOf::paired(
-                place,
-                Action::MoveDown,
-                Action::MoveUp,
-                "messages",
-            ));
-        }
-        hints.push(HintOf::keyed(place, Action::Escape, ""));
-        hints
-    } else {
-        vec![HintOf::new("", "click or Space w h to focus", &[])]
-    };
-    Header::new(left, hints)
-}
-
-/// The draft's author row (ADR 0054): ` user  draft` as a message's
-/// author row reads, then the draft keys, or the discard question.
-pub(crate) fn draft_header(compose: &Compose) -> Header {
-    let place = Where::Draft;
-    let hints = if compose.confirming_discard() {
-        vec![
-            HintOf::keyed(place, Action::Escape, "again to discard"),
-            HintOf::new("", "any key keeps the draft", &[]),
-        ]
-    } else {
-        vec![
-            HintOf::keyed(
-                place,
-                Action::Confirm,
-                if matches!(compose.target(), ComposeTarget::Edit { .. }) {
-                    "save"
-                } else {
-                    "submit"
-                },
-            ),
-            HintOf::keyed(place, Action::Newline, "newline"),
-            HintOf::paired(place, Action::ScrollUp, Action::ScrollDown, "scroll"),
-            HintOf::keyed(place, Action::EditDraft, "$EDITOR"),
-            HintOf::keyed(place, Action::Escape, ""),
-        ]
-    };
-    Header::new(
-        vec![
-            (" user".to_owned(), Tone::Key),
-            ("  draft".to_owned(), Tone::Info),
-        ],
-        hints,
-    )
-}
-
-/// The columns a hint takes: key, action, and the space between when both
-/// are present.
-fn hint_width(&(key, what): &Hint<'_>) -> usize {
-    display_width(key) + display_width(what) + usize::from(!key.is_empty() && !what.is_empty())
-}
-
-/// A popup header: `left` spans, then `hints` right-aligned, joined by
-/// ` · `, the key dim and its action dimmer still. When the row is too
-/// narrow the list loses items from its end until it fits, rather than
-/// vanishing whole.
-fn header_line<'a>(
-    theme: &Theme,
-    left: Vec<Span<'a>>,
-    hints: &[Hint<'_>],
-    width: usize,
-) -> Line<'a> {
-    let used: usize = left.iter().map(|s| display_width(&s.content)).sum();
-    let mut spans = left;
-    let free = width.saturating_sub(used);
-    let width_of = |shown: &[Hint<'_>]| {
-        shown.iter().map(hint_width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
-    };
-    let Some(shown) = (1..=hints.len())
-        .rev()
-        .map(|n| &hints[..n])
-        .find(|shown| free >= width_of(shown) + 3)
-    else {
-        // No room for the keys; the row still fills out so its
-        // background reaches the right edge.
-        spans.push(Span::raw(" ".repeat(free)));
-        return Line::from(spans);
-    };
-    let faint = theme.info.add_modifier(Modifier::DIM);
-    spans.push(Span::raw(" ".repeat(free - width_of(shown) - 1)));
-    for (i, &(key, what)) in shown.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" · ", faint));
-        }
-        if !key.is_empty() {
-            spans.push(Span::styled(key.to_owned(), theme.info));
-        }
-        if !key.is_empty() && !what.is_empty() {
-            spans.push(Span::styled(" ", faint));
-        }
-        if !what.is_empty() {
-            spans.push(Span::styled(what.to_owned(), faint));
-        }
-    }
-    spans.push(Span::raw(" "));
+/// `spans` padded to `width` cells so a row's background reaches the
+/// right edge.
+fn padded_line(mut spans: Vec<Span<'_>>, width: usize) -> Line<'_> {
+    let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
+    spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
     Line::from(spans)
 }
 

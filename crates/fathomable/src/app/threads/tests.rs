@@ -1427,8 +1427,11 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
         Some(Row::Header { proposed: true, .. })
     ));
     let screen = render(&app)?;
-    assert!(screen.contains("1 open  1 proposed"), "{screen}");
+    assert!(screen.contains("1 open · 1 proposed"), "{screen}");
     assert!(screen.contains("waiting · proposed"), "{screen}");
+    // The keys are on the bar along the list's bottom row (ADR 0059).
+    let bar = screen.lines().nth(app.pane_rows() - 1).unwrap_or_default();
+    assert!(bar.contains("s sort · x resolved"), "{screen}");
     app.close_review();
 
     // Only the newest reply is read: a plain reply withdraws the proposal.

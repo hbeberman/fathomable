@@ -378,6 +378,7 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
+    use fathomable_core::annotations::{Author, Reply, Thread};
     use fathomable_testing::TempDir;
 
     use crate::app::testing::{self, press, source_app};
@@ -399,6 +400,25 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
+    }
+
+    /// A user reply to the thread of mark `index`, dated after every
+    /// thread's `updated`. That field has one-second resolution, so a
+    /// thread written in a later second than another sorts before it in
+    /// the review's order and one written in the same second ties; the
+    /// dated answer makes the order the test's, not the clock's.
+    fn answer_later(app: &mut App, index: usize) -> anyhow::Result<()> {
+        let id = app.marks()[index].id().clone();
+        let store = app.store_mut().ok_or_else(|| anyhow::anyhow!("no store"))?;
+        let later = store
+            .threads()
+            .iter()
+            .map(Thread::updated)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        store.reply(&id, Reply::new(Author::User, later, "later"))?;
+        Ok(())
     }
 
     fn rail_column(app: &App) -> anyhow::Result<Vec<String>> {
@@ -485,7 +505,9 @@ mod tests {
         press(&mut app, "x");
         assert_eq!(app.threads_pane_rows().len(), 1);
 
-        // `s` lists the workspace: files by path, the place says which.
+        // `s` lists the workspace in the review's order, newest first,
+        // the place saying which file.
+        answer_later(&mut app, 0)?;
         press(&mut app, "s");
         assert_eq!(app.rail_scope(), PaneScope::Workspace);
         let rows = app.threads_pane_rows();

@@ -46,6 +46,18 @@ impl TempDir {
     }
 }
 
+/// A tracked file of this repository, named by its path from the root,
+/// for the gates that read the docs. The root comes from the manifest
+/// directory Cargo (and nextest) hand the test process, so a test binary
+/// built from a staged snapshot of the tree still reads the file where
+/// it runs; the compile-time directory is the fallback outside Cargo.
+#[must_use]
+pub fn repo_file(relative: &str) -> PathBuf {
+    let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
+        .map_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")), PathBuf::from);
+    manifest.join("../..").join(relative)
+}
+
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

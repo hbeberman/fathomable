@@ -1660,7 +1660,7 @@ mod tests {
     /// the tables stays hand-written.
     #[test]
     fn guide_key_tables_name_only_bound_keys() -> std::io::Result<()> {
-        let guide = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md");
+        let guide = fathomable_testing::repo_file("docs/guide.md");
         let text = std::fs::read_to_string(guide)?;
         let start = text
             .find("## 3. Keys")

@@ -1781,7 +1781,7 @@ mod tests {
     /// first column, and only known words in its second.
     #[test]
     fn guide_tool_table_matches_the_vocabulary() -> std::io::Result<()> {
-        let guide = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md");
+        let guide = fathomable_testing::repo_file("docs/guide.md");
         let text = fs::read_to_string(&guide)?;
         let mut rows = text
             .lines()

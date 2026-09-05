@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// The append-only event log inside the store directory.
-pub const INDEX_FILE: &str = "index.jsonl";
+pub(crate) const INDEX_FILE: &str = "index.jsonl";
 
 /// Which key made a checkpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -93,7 +93,7 @@ pub const MIB: u64 = 1024 * 1024;
 
 /// The default `viewer.max-file-size-mib`: roomy enough for any log or
 /// lock file, small enough that a stray dump cannot stall the viewer.
-pub const DEFAULT_MAX_MIB: u64 = 64;
+pub(crate) const DEFAULT_MAX_MIB: u64 = 64;
 
 /// What a loaded file holds.
 #[derive(Debug, Clone, PartialEq, Eq)]

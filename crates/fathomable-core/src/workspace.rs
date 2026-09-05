@@ -728,7 +728,7 @@ impl Workspace {
     /// # Errors
     ///
     /// Returns [`WorkspaceError`] when the directory cannot be read.
-    pub fn list_dir_with(
+    pub(crate) fn list_dir_with(
         &mut self,
         relative: &Path,
         filter: Filter,

@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// The application subdirectory under each XDG base directory.
-pub const APP_DIR: &str = "fathomable";
+pub(crate) const APP_DIR: &str = "fathomable";
 
 /// The longest path a Unix socket can be bound to on Linux: `sun_path`
 /// holds 108 bytes including the terminator, so binding a path of 108
@@ -112,7 +112,7 @@ impl XdgDirs {
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, the
     /// marker that names the root behind the hash (ADR 0024).
     #[must_use]
-    pub fn workspace_file(&self, root: &Path) -> PathBuf {
+    pub(crate) fn workspace_file(&self, root: &Path) -> PathBuf {
         self.workspace_dir(root)
             .join(crate::session::WORKSPACE_FILE)
     }

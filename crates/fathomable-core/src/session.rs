@@ -36,13 +36,13 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub(crate) const PROTOCOL_VERSION: u32 = 1;
 
 /// File name of the record inside a session directory.
-pub const RECORD_FILE: &str = "session.json";
+pub(crate) const RECORD_FILE: &str = "session.json";
 
 /// File name of the workspace marker inside a workspace state directory.
-pub const WORKSPACE_FILE: &str = "workspace.json";
+pub(crate) const WORKSPACE_FILE: &str = "workspace.json";
 
 /// A session identifier: `<unix-seconds>-<pid>`, unique per host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

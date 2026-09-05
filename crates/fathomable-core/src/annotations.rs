@@ -42,10 +42,10 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 1;
 
 /// File name of the thread store inside a workspace state directory.
-pub const THREADS_FILE: &str = "threads.jsonl";
+pub(crate) const THREADS_FILE: &str = "threads.jsonl";
 
 /// Hex characters kept from a SHA-256 digest; 64 bits is plenty to tell
 /// lines of one file apart and keeps the JSONL readable.
@@ -53,7 +53,7 @@ const HASH_CHARS: usize = 16;
 
 /// Short content hash of one line, ignoring trailing whitespace.
 #[must_use]
-pub fn line_hash(line: &str) -> String {
+pub(crate) fn line_hash(line: &str) -> String {
     short_hash(line.trim_end().as_bytes())
 }
 

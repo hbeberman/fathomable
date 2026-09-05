@@ -26,7 +26,7 @@ use crate::bond::{self, Bond, Process};
 use crate::vocabulary as vocab;
 
 /// File name of the register inside the workspace state directory.
-pub const AGENTS_FILE: &str = "agents.jsonl";
+pub(crate) const AGENTS_FILE: &str = "agents.jsonl";
 
 /// The `v` field written to each register line; [`Register::open`]
 /// refuses a file of another version (ADR 0062). Bump it when a line's

@@ -55,7 +55,7 @@ impl Default for Compare {
 }
 
 /// Context lines `git diff` shows, the default for [`Compare`].
-pub const DEFAULT_CONTEXT: usize = 3;
+pub(crate) const DEFAULT_CONTEXT: usize = 3;
 
 /// How a line of the new text differs from the old text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -242,7 +242,7 @@ impl Diff {
 
     /// Number of lines in the old text.
     #[must_use]
-    pub fn old_lines(&self) -> usize {
+    pub(crate) fn old_lines(&self) -> usize {
         self.old_lines
     }
 

@@ -273,7 +273,7 @@ impl Server {
             match call(viewer, request).await? {
                 Response::Done => count += 1,
                 Response::Error(message) => return Err(message),
-                other => return Err(format!("unexpected reply {other:?}")),
+                Response::Threads(_) => return Err("unexpected reply Threads".to_owned()),
             }
         }
         Ok(count)

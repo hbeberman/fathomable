@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0051-retire-one-release-compatibility.md
-//! The session socket: parse protocol lines, answer liveness directly, and
-//! hand everything else to the app loop.
+//! The session socket: parse protocol lines and hand each request to the
+//! app loop.
 //!
 //! Only same-user peers are served (ADR 0014): `$XDG_RUNTIME_DIR` is
 //! private already, and the peer-uid check makes that explicit.
@@ -10,7 +10,7 @@ use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::session::{Record, Request, Response};
+use fathomable_core::session::{Request, Response};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
@@ -54,10 +54,9 @@ impl Listener {
         })
     }
 
-    /// Accept connections until dropped. `ping` and `session_info` are
-    /// answered from `record`; other requests go to `app` and wait for the
-    /// loop's reply.
-    pub(crate) fn serve(self, record: Record, app: mpsc::Sender<Envelope>) -> Serving {
+    /// Accept connections until dropped; every request goes to `app` and
+    /// waits for the loop's reply.
+    pub(crate) fn serve(self, app: mpsc::Sender<Envelope>) -> Serving {
         let path = self.path.clone();
         let uid = self.uid;
         let handle = tokio::spawn(async move {
@@ -68,7 +67,7 @@ impl Listener {
                             tracing::warn!("refused socket peer with another uid");
                             continue;
                         }
-                        tokio::spawn(connection(stream, record.clone(), app.clone()));
+                        tokio::spawn(connection(stream, app.clone()));
                     }
                     Err(error) => {
                         tracing::warn!(%error, "socket accept failed");
@@ -86,19 +85,12 @@ fn same_user(stream: &UnixStream, uid: u32) -> bool {
     stream.peer_cred().is_ok_and(|peer| peer.uid() == uid)
 }
 
-async fn connection(stream: UnixStream, record: Record, app: mpsc::Sender<Envelope>) {
+async fn connection(stream: UnixStream, app: mpsc::Sender<Envelope>) {
     let (reader, mut writer) = stream.into_split();
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         tracing::debug!(request = %line, "socket request");
         let response = match line.parse::<Request>() {
-            Ok(Request::Ping) => Response::Pong,
-            // The TUI adds the follow state (ADR 0015); the socket alone still
-            // answers when the loop is gone.
-            Ok(Request::SessionInfo) => match forward(&app, Request::SessionInfo).await {
-                Response::Error(_) => Response::Session(record.clone(), None),
-                answer => answer,
-            },
             Ok(request) => forward(&app, request).await,
             Err(error) => Response::Error(error.to_string()),
         };

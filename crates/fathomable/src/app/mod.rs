@@ -50,7 +50,7 @@ use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::seen;
-use fathomable_core::session::{FollowState, Record, Request, Response};
+use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::status::Status;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
@@ -1129,13 +1129,6 @@ impl App {
         }
     }
 
-    /// The follow state for `session_info`.
-    fn follow_state(&self) -> FollowState {
-        FollowState {
-            auto_jump: self.auto,
-        }
-    }
-
     pub(crate) fn workspace(&self) -> &Workspace {
         &self.workspace
     }
@@ -1402,10 +1395,6 @@ impl App {
     /// Answer a socket request that needs app state (ADR 0014).
     pub(crate) fn handle_request(&mut self, request: Request) -> Response {
         match request {
-            Request::Ping => Response::Pong,
-            Request::SessionInfo => {
-                Response::Session(self.record.clone(), Some(self.follow_state()))
-            }
             Request::Open {
                 path,
                 line,

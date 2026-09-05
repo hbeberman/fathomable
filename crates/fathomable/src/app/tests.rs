@@ -1039,19 +1039,11 @@ fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
 }
 
 #[test]
-fn agent_open_queues_a_settled_range_and_session_info_reports_state() -> anyhow::Result<()> {
+fn agent_open_queues_a_settled_range() -> anyhow::Result<()> {
     use fathomable_core::session::{Request, Response};
 
     let dir = fixture("agent")?;
     let mut app = app(&dir)?;
-    let state = match app.handle_request(Request::SessionInfo) {
-        Response::Session(_, state) => state,
-        _ => None,
-    };
-    assert_eq!(
-        state,
-        Some(fathomable_core::session::FollowState { auto_jump: false })
-    );
     let response = app.handle_request(Request::Open {
         path: PathBuf::from("README.md"),
         line: Some(1),

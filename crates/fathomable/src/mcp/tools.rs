@@ -1044,7 +1044,7 @@ impl Server {
             Some(viewer) => match call(viewer, &request).await? {
                 Response::Threads(threads) => Ok(threads),
                 Response::Error(message) => Err(message),
-                other => Err(format!("unexpected reply {other:?}")),
+                Response::Done => Err("unexpected reply Done".to_owned()),
             },
             None => headless_list(&self.dirs, &target.root),
         }

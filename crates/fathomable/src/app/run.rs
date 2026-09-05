@@ -246,7 +246,7 @@ fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<
         return None;
     };
     match socket::Listener::bind(path) {
-        Ok(listener) => Some(listener.serve(record.clone(), app)),
+        Ok(listener) => Some(listener.serve(app)),
         Err(error) => {
             tracing::warn!(%error, path = %path.display(), "cannot listen on the viewer socket");
             None

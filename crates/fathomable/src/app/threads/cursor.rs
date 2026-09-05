@@ -309,7 +309,7 @@ impl App {
 
     // ----- actions on the cursor -----
 
-    /// `r`: reply to the cursor's thread through the comment box.
+    /// `r`: reply to the cursor's thread in a draft under it (ADR 0054).
     pub(crate) fn thread_reply(&mut self) {
         match self.thread_cursor().thread().cloned() {
             Some(id) => self.open_compose(ComposeTarget::Reply(id)),

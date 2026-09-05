@@ -14,6 +14,7 @@ use super::super::{App, Border, Focus, Popup};
 use super::bindings::{self, Where};
 use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
+use crate::app::threads::draft::DraftRow;
 use crate::app::view::Effect;
 
 /// Presses on one cell closer together than this are one gesture.
@@ -259,27 +260,6 @@ fn which_key_click(app: &mut App, column: usize, row: usize) -> Option<Effect> {
     Some(keys::typed(app, place, entries[index].0))
 }
 
-/// The mouse over the comment box: a hint on the header runs its key
-/// (ADR 0050), a click in the text places the cursor. Row 0 is the rule,
-/// row 1 the header.
-fn compose_mouse(app: &mut App, kind: MouseEventKind, column: usize, box_row: usize) -> Effect {
-    if kind != MouseEventKind::Down(MouseButton::Left) {
-        return Effect::None;
-    }
-    if box_row == 1 {
-        let header = match app.popup() {
-            Some(Popup::Compose(compose)) => draw::compose_header(app, compose),
-            _ => return Effect::None,
-        };
-        if let Some(action) = header.action_at(app.column_width(), column) {
-            return app.act(action);
-        }
-    } else if box_row >= 2 {
-        app.compose_click(box_row - 2, column);
-    }
-    Effect::None
-}
-
 fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let row = usize::from(event.row);
     let column = usize::from(event.column);
@@ -299,8 +279,6 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     let rows = app.pane_rows();
     let rail = app.rail_width();
-    let box_rows = app.compose_rows();
-    let box_top = rows.saturating_sub(box_rows);
     if app.dragging().is_some() {
         match event.kind {
             MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
@@ -309,21 +287,12 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         }
         return Effect::None;
     }
-    if left && row < rows {
-        if rail > 0 && column + 1 == rail {
-            app.begin_drag(Border::Rail);
-            return Effect::None;
-        }
-        if box_rows > 0 && column >= rail && row == box_top {
-            app.begin_drag(Border::Compose);
-            return Effect::None;
-        }
+    if left && row < rows && rail > 0 && column + 1 == rail {
+        app.begin_drag(Border::Rail);
+        return Effect::None;
     }
-    if box_rows > 0 && column >= rail && row > box_top && row < rows {
-        return compose_mouse(app, event.kind, column - rail, row - box_top);
-    }
-    // The comment box keeps the keys, and the right button while it is
-    // open (ADR 0050); the rest of the mouse works around it.
+    // The draft keeps the keys, and the right button while it is open
+    // (ADR 0050); the rest of the mouse works around it.
     if right && matches!(app.popup(), Some(Popup::Compose(_))) {
         return Effect::None;
     }
@@ -363,17 +332,34 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         return Effect::None;
     }
     if left {
+        // A click on the draft places its cursor or runs a hint on its
+        // author row, the keys staying where they were (ADR 0054).
+        if text_row < text_rows
+            && let Some(draft_row) = app.draft_row_of(app.view().scroll() + text_row)
+        {
+            match draft_row {
+                DraftRow::Author => {
+                    let header = app.draft().map(draw::draft_header);
+                    let width = app.view().layout().width();
+                    if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
+                        return app.act(action);
+                    }
+                }
+                DraftRow::Text(index) => app.draft_place_cursor(index, col),
+            }
+            return Effect::None;
+        }
         app.focus_pane(Focus::View);
         if text_row < text_rows
             && let Some((stub, index, _)) = app.stub_on_row(app.view().scroll() + text_row)
+            && let Some(id) = stub.thread().cloned()
         {
-            let id = stub.id().clone();
             if stub.expanded() && index == 0 {
                 // A hint on an expanded thread's header runs its key on
                 // that thread (ADR 0050).
                 let header = app
                     .thread(&id)
-                    .map(|thread| draw::expanded_header(app, &stub, thread));
+                    .map(|thread| draw::expanded_header(app, thread));
                 let width = app.view().layout().width();
                 if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
                     let newest = app.newest_message(&id);

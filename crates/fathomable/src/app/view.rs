@@ -305,6 +305,17 @@ impl View {
         self.jump_to_row(row);
     }
 
+    /// Scroll just enough to show `row`, the cursor staying where it is:
+    /// for the draft's cursor, which is not the text cursor (ADR 0054).
+    pub(crate) fn reveal_row(&mut self, row: usize) {
+        if row < self.scroll {
+            self.scroll = row;
+        } else if row >= self.scroll + self.height {
+            self.scroll = row + 1 - self.height;
+        }
+        self.scroll = self.scroll.min(self.max_scroll());
+    }
+
     /// The stub block and index row `row` was inserted for, if it is a
     /// stub row.
     pub(crate) fn stub_slot_of_row(&self, row: usize) -> Option<(usize, usize)> {

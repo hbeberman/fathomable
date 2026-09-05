@@ -217,3 +217,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     list count proposals, and `o` closes it; the agent force-resolve
     and the `auto-resolved` state go
     ([0053](decisions/0053-resolution-is-the-users.md)).
+45. **The draft is written in the thread.** A reply is written at the
+    bottom of its thread's expanded rows, an edit in place of the
+    message it edits, and a new comment in a draft block under its
+    lines; the review list opens the file to write and comes back
+    after; the bottom comment box, its cap, and its drag go
+    ([0054](decisions/0054-the-draft-is-written-in-the-thread.md)).

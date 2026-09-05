@@ -12,15 +12,17 @@
 //! threads produce rows, under which row, in what order, with which
 //! messages, and which rows are stops is decided here from the marks;
 //! the view keeps only the anchors, counts, and stops, and the drawing
-//! asks back for the words.
+//! asks back for the words. The draft (ADR 0054) is rows too: a reply's
+//! at the bottom of its thread's block, an edit's in place of the
+//! message it edits, and a new comment's in a draft block of its own.
 
-use fathomable_core::annotations::ThreadId;
+use fathomable_core::annotations::{LineRange, ThreadId};
 use fathomable_core::config::ThreadsConfig;
 use fathomable_core::layout::RowAnchor;
 
 use crate::app::App;
 use crate::app::draw::message::expanded_rows;
-use crate::app::threads::{Mark, ThreadState};
+use crate::app::threads::{ComposeTarget, Mark, ThreadState};
 use crate::app::view::StubBlock;
 
 /// Messages a collapsed stub shows: the newest two.
@@ -43,11 +45,20 @@ impl StubState {
     }
 }
 
-/// One thread's stub: where it hangs, which messages it shows (oldest
-/// first, zero the comment), and its shape when expanded.
+/// What a block of rows stands for: a thread, or the comment being
+/// written on lines that have no thread yet (ADR 0054).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Subject {
+    Thread(ThreadId),
+    Draft(LineRange),
+}
+
+/// One block's stub: what it stands for, where it hangs, which messages
+/// it shows (oldest first, zero the comment), and its shape when
+/// expanded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Stub {
-    id: ThreadId,
+    subject: Subject,
     anchor: RowAnchor,
     messages: Vec<usize>,
     expanded: bool,
@@ -56,11 +67,35 @@ pub(crate) struct Stub {
     /// Row indices within the block the cursor may rest on: an expanded
     /// thread's message rows. Empty for a collapsed stub.
     stops: Vec<usize>,
+    /// The block row of the draft's author row, while this block holds
+    /// the draft (ADR 0054), and the rows of the message it stands in
+    /// for: none for a reply or a new comment.
+    draft: Option<(usize, usize)>,
 }
 
 impl Stub {
-    pub(crate) fn id(&self) -> &ThreadId {
-        &self.id
+    /// What the block stands for.
+    pub(crate) fn subject(&self) -> &Subject {
+        &self.subject
+    }
+
+    /// The thread the block shows, `None` for a draft block.
+    pub(crate) fn thread(&self) -> Option<&ThreadId> {
+        match &self.subject {
+            Subject::Thread(id) => Some(id),
+            Subject::Draft(_) => None,
+        }
+    }
+
+    /// The block row of the draft's author row, when the draft is here.
+    pub(crate) fn draft_row(&self) -> Option<usize> {
+        self.draft.map(|(row, _)| row)
+    }
+
+    /// The draft's author row and the rows of the message it replaces,
+    /// when the draft is here.
+    pub(crate) fn draft_slot(&self) -> Option<(usize, usize)> {
+        self.draft
     }
 
     /// The messages shown, as indices into the thread: the comment is 0.
@@ -129,23 +164,31 @@ impl App {
     /// then end line, then id, so stacked stubs come one thread after
     /// another and never interleave.
     pub(crate) fn stubs(&self) -> Vec<Stub> {
-        if !self.stubs.shown {
-            return Vec::new();
-        }
         let width = self.view().layout().width();
+        let draft = self
+            .draft()
+            .map(|compose| (compose.target().clone(), self.draft_rows()));
+        let holds_draft = |id: &ThreadId| {
+            draft
+                .as_ref()
+                .is_some_and(|(target, _)| target.thread() == Some(id))
+        };
         let mut marks: Vec<&Mark> = self
             .marks()
             .iter()
             .filter(|mark| {
                 // A resolved thread has no stub unless asked for, but an
-                // expanded one always has its rows.
-                self.stubs.resolved
-                    || matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting)
-                    || self.expanded.contains(mark.id())
+                // expanded one always has its rows, and the thread the
+                // draft is written in has them even with stubs hidden.
+                (self.stubs.shown
+                    && (self.stubs.resolved
+                        || matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting)
+                        || self.expanded.contains(mark.id())))
+                    || holds_draft(mark.id())
             })
             .collect();
         marks.sort_by_key(|mark| (mark.range().start(), mark.range().end(), mark.id().clone()));
-        marks
+        let mut stubs: Vec<Stub> = marks
             .into_iter()
             .filter_map(|mark| {
                 let thread = self.thread(mark.id())?;
@@ -156,30 +199,68 @@ impl App {
                 };
                 let count = thread.replies().len() + 1;
                 let expanded = self.expanded.contains(mark.id());
-                let (messages, rows, stops) = if expanded {
+                let (messages, rows, stops, slot) = if expanded {
                     let (rows, stops) = expanded_rows(thread, width, self.highlighter());
                     // The header row comes first; the stops follow it.
-                    (
-                        (0..count).collect(),
-                        rows + 1,
-                        stops.into_iter().map(|stop| stop + 1).collect(),
-                    )
+                    let mut rows = rows + 1;
+                    let mut stops: Vec<usize> = stops.into_iter().map(|stop| stop + 1).collect();
+                    let slot = match &draft {
+                        Some((target, draft_rows)) if target.thread() == Some(mark.id()) => {
+                            match target.edited_message() {
+                                // A reply is written after the last message.
+                                None => {
+                                    let at = rows;
+                                    rows += draft_rows;
+                                    Some((at, 0))
+                                }
+                                // An edit stands in for its message; the
+                                // stops after it move by the difference.
+                                Some(message) => {
+                                    let at = stops[message];
+                                    let end = stops.get(message + 1).copied().unwrap_or(rows);
+                                    let taken = end - at;
+                                    for stop in stops.iter_mut().skip(message + 1) {
+                                        *stop = *stop + draft_rows - taken;
+                                    }
+                                    rows = rows + draft_rows - taken;
+                                    Some((at, taken))
+                                }
+                            }
+                        }
+                        _ => None,
+                    };
+                    ((0..count).collect(), rows, stops, slot)
                 } else {
                     let messages: Vec<usize> =
                         (count.saturating_sub(STUB_MESSAGES)..count).collect();
                     let rows = messages.len();
-                    (messages, rows, Vec::new())
+                    (messages, rows, Vec::new(), None)
                 };
                 Some(Stub {
-                    id: mark.id().clone(),
+                    subject: Subject::Thread(mark.id().clone()),
                     anchor,
                     messages,
                     expanded,
                     rows,
                     stops,
+                    draft: slot,
                 })
             })
-            .collect()
+            .collect();
+        // A new comment's draft block hangs under its lines, after any
+        // thread's stub on the same row (ADR 0054).
+        if let Some((ComposeTarget::New(range), draft_rows)) = draft {
+            stubs.push(Stub {
+                subject: Subject::Draft(range),
+                anchor: RowAnchor::Line(range.end()),
+                messages: Vec::new(),
+                expanded: true,
+                rows: 1 + draft_rows,
+                stops: Vec::new(),
+                draft: Some((1, 0)),
+            });
+        }
+        stubs
     }
 
     /// Lay the current document out again with its stub rows in place;
@@ -206,7 +287,7 @@ impl App {
             return None;
         }
         let message = stub.message_of_row(index)?;
-        Some((stub.id, message))
+        Some((stub.thread()?.clone(), message))
     }
 
     /// The rendered row message `message` of the expanded `id` starts on.
@@ -215,7 +296,7 @@ impl App {
             .stubs()
             .into_iter()
             .enumerate()
-            .find(|(_, stub)| stub.id() == id)?;
+            .find(|(_, stub)| stub.thread() == Some(id))?;
         let index = stub.row_of_message(message)?;
         self.view().row_of_stub_slot(block, index)
     }
@@ -287,7 +368,11 @@ impl App {
     /// `Space c z`: expand every stub in the file, or fold every expanded
     /// thread when any is.
     pub(crate) fn toggle_expand_all(&mut self) {
-        let ids: Vec<ThreadId> = self.stubs().into_iter().map(|stub| stub.id).collect();
+        let ids: Vec<ThreadId> = self
+            .stubs()
+            .iter()
+            .filter_map(|stub| stub.thread().cloned())
+            .collect();
         if ids.iter().any(|id| self.expanded.contains(id)) {
             for id in &ids {
                 self.expanded.remove(id);

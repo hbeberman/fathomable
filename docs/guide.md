@@ -153,7 +153,7 @@ there is one):
 | `s`, `x`, `f`, `z` | sort by newest agent reply or by file and line; show or hide resolved threads (the threads pane shares the flag); only this file; fold the entry |
 | `Esc` | close the list, back to the document (`Space A` does too) |
 
-Comment and edit box:
+The draft, a comment, reply, or edit written in the thread's rows:
 
 | Keys | Action |
 | --- | --- |
@@ -161,7 +161,7 @@ Comment and edit box:
 | `Alt-Enter` / `Ctrl-Enter` | newline |
 | arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
 | `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
-| paste, click, `Alt-j` `Alt-k` / `Alt-Down` `Alt-Up` | insert at the cursor, place the cursor, scroll the text behind the box |
+| paste, click, `Alt-j` `Alt-k` / `Alt-Down` `Alt-Up` | insert at the cursor, place the cursor, scroll the text around the draft |
 | `Ctrl-e` | edit the draft in `$VISUAL` / `$EDITOR` |
 | `Ctrl-c` | clear the draft (empty closes) |
 | `Esc` | cancel (twice after a change) |
@@ -206,7 +206,7 @@ selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
 at once. The `Space` menu and `Space ?` take clicks too, as do the key
 hints at the right edge of the threads pane, review list, checkpoint,
-expanded thread, and comment box headers; a click on the threads pane
+expanded thread, and draft author rows; a click on the threads pane
 header toggles its reach, and on the checkpoint header's base or target
 name opens that picker.
 
@@ -283,6 +283,20 @@ expanded one and expands the next in line order, wrapping, and after the
 last leaves none expanded. `Space c z` expands every stub in the file or
 folds them all; a click on a stub expands it.
 
+Writing happens in the same rows: the **draft** is not a box along the
+bottom but rows of the text. A reply is written at the end of its
+thread's expanded rows, under a ` user  draft` row that carries the
+draft keys at its right edge (or `Esc again to discard` once you have
+pressed Esc on a changed draft); an edit replaces the message it edits,
+seeded with its text; and a new comment (`c` on a line with no thread,
+`C`, or `Space c n`) gets a block of its own under its lines, headed
+`comment on L3-5`. The draft wraps at the text width and grows with
+what you type, the view scrolling just enough to keep its cursor on
+screen while the text cursor stays on the message; a click in the draft
+places its cursor. Submit, cancel, or clear an empty draft and the rows
+go: a reply becomes the newest message under the cursor, a new comment
+becomes a stub.
+
 The left column is the **rail**: the tree pane above the **threads
 pane**, each shown or hidden on its own (`Space e`/`E`, `Space t`/`T`),
 the rail drawn while either is. The threads pane lists this file's
@@ -322,9 +336,10 @@ in the selected thread starts highlighted; `h`/`l` move between
 threads, `j`/`k` move between their messages, `Ctrl-d`/`Ctrl-u` move by
 half a page of rows, `z` folds an entry, and `e` edits a highlighted
 message you wrote. `Enter` opens the file with the thread expanded and
-the cursor on that message, `r` and `o` reply and resolve in place, `f`
-narrows the list to the file you were reading, and `Esc` goes back to
-it.
+the cursor on that message, `o` resolves in place, `r` and `e` open the
+file the way `Enter` does to write the reply or edit in the thread's
+rows and bring the list back when the draft closes, `f` narrows the
+list to the file you were reading, and `Esc` goes back to it.
 
 A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting

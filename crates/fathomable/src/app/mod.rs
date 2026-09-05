@@ -41,7 +41,6 @@ use fathomable_core::config::{
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
-use fathomable_core::editor::Cell;
 use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
@@ -82,11 +81,6 @@ const RAIL_MIN_WIDTH: usize = 8;
 /// Fewest text columns a drag leaves the view.
 const TEXT_MIN_WIDTH: usize = 20;
 
-/// Most rows the comment box grows to on its own before it scrolls.
-const COMPOSE_MAX_ROWS: usize = 8;
-/// Rule, header, and one line of text.
-const COMPOSE_MIN_ROWS: usize = 3;
-
 /// Rows kept visible above and below the tree cursor.
 const TREE_SCROLLOFF: usize = 2;
 
@@ -107,8 +101,6 @@ pub(crate) enum Focus {
 pub(crate) enum Border {
     /// The rule between the rail and the text.
     Rail,
-    /// The rule along the top of the comment box (ADR 0018).
-    Compose,
     /// The rule along the top of the threads pane (ADR 0027).
     ThreadsPane,
 }
@@ -191,7 +183,8 @@ pub(crate) enum Popup {
     Help,
     /// A file, recent-document, or thread picker.
     Picker(PickerState),
-    /// The comment box (ADR 0013).
+    /// The draft being written in the text (ADR 0013, 0054): a popup
+    /// only in that it takes the keys.
     Compose(Compose),
     /// The `:status` overlay (ADR 0021).
     Status,
@@ -260,8 +253,6 @@ pub(crate) struct App {
     /// The review list shown in place of the document (ADR 0025).
     review_list: ReviewList,
     /// File-threads pane height once dragged; the default follows its
-    /// Comment box height once dragged; the default follows its text.
-    compose_rows: Option<usize>,
     /// The border a mouse drag is moving.
     drag: Option<Border>,
     /// The cell the pointer was last seen at, for hover (ADR 0050).
@@ -367,7 +358,6 @@ impl App {
             thread_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
             review_list: ReviewList::default(),
-            compose_rows: None,
             drag: None,
             pointer: None,
             press: None,
@@ -1186,7 +1176,6 @@ impl App {
     pub(crate) fn drag_to(&mut self, column: usize, row: usize) {
         match self.drag {
             Some(Border::Rail) => self.rail_cols = Some(column + 1),
-            Some(Border::Compose) => self.compose_rows = Some(self.pane_rows().saturating_sub(row)),
             Some(Border::ThreadsPane) => self.drag_threads_pane_to(row),
             None => return,
         }
@@ -1315,60 +1304,7 @@ impl App {
         self.height.saturating_sub(1).max(1)
     }
 
-    /// Rows the comment box takes along the bottom, 0 when closed: its
-    /// wrapped text plus the rule and header, capped, unless its rule was
-    /// dragged (ADR 0018).
-    pub(crate) fn compose_rows(&self) -> usize {
-        let Some(Popup::Compose(compose)) = &self.popup else {
-            return 0;
-        };
-        let tallest = self.pane_rows().saturating_sub(1);
-        let wanted = self.compose_rows.unwrap_or_else(|| {
-            (compose.buffer().rows(self.compose_width()).len() + 2).min(COMPOSE_MAX_ROWS)
-        });
-        wanted.clamp(COMPOSE_MIN_ROWS.min(tallest), tallest)
-    }
-
-    /// Columns the comment's text wraps at: the text column less the
-    /// one-space margin.
-    pub(crate) fn compose_width(&self) -> usize {
-        self.width
-            .saturating_sub(self.rail_width())
-            .saturating_sub(1)
-            .max(1)
-    }
-
-    /// The first wrapped row the comment box shows, chosen so the cursor's
-    /// row is visible.
-    pub(crate) fn compose_first_row(&self) -> usize {
-        let Some(Popup::Compose(compose)) = &self.popup else {
-            return 0;
-        };
-        let width = self.compose_width();
-        let body = self.compose_rows().saturating_sub(2).max(1);
-        let total = compose.buffer().rows(width).len();
-        compose
-            .buffer()
-            .cursor_cell(width)
-            .row
-            .saturating_sub(body - 1)
-            .min(total.saturating_sub(body))
-    }
-
-    /// A click in the comment box's text: `row` counts from the first
-    /// visible wrapped row, `column` from the box's left edge.
-    pub(crate) fn compose_click(&mut self, row: usize, column: usize) {
-        let width = self.compose_width();
-        let cell = Cell {
-            row: self.compose_first_row() + row,
-            column: column.saturating_sub(1),
-        };
-        if let Some(Popup::Compose(compose)) = &mut self.popup {
-            compose.place_cursor(width, cell);
-        }
-    }
-
-    /// Bracketed paste: into the comment box, else nothing to paste into.
+    /// Bracketed paste: into the draft, else nothing to paste into.
     pub(crate) fn paste(&mut self, text: &str) {
         if matches!(self.popup, Some(Popup::Compose(_))) {
             self.compose_insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
@@ -1393,6 +1329,8 @@ impl App {
         self.width = width;
         self.height = height;
         self.relayout();
+        // Message and draft rows wrap at the new width (ADR 0049, 0054).
+        self.place_stub_rows();
     }
 
     fn relayout(&mut self) {

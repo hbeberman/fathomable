@@ -16,8 +16,11 @@ use crate::app::testing::{self, app};
 use fathomable_core::editor::{Cursor, Edit, Motion};
 
 use super::{ComposeTarget, ThreadState};
+use crate::app::draw::message::MESSAGE_INDENT;
+use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::Row;
-use crate::app::{App, Border, Popup};
+use crate::app::threads::stubs::Subject;
+use crate::app::{App, Popup};
 
 fn type_in(app: &mut App, text: &str) {
     for ch in text.chars() {
@@ -190,7 +193,7 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     app.view_mut().select_lines();
     app.start_comment();
     let Some(Popup::Compose(compose)) = app.popup() else {
-        anyhow::bail!("comment box did not open");
+        anyhow::bail!("the draft did not open");
     };
     assert_eq!(compose.target(), &ComposeTarget::New(LineRange::new(3, 5)));
     type_in(&mut app, "tighten\nthis");
@@ -322,6 +325,30 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         !screen.contains("─── END ───") && !rows.iter().any(|row| row.contains("▼")),
         "no END row and no overflow:\n{screen}"
     );
+
+    // A reply is written under the last message: the author row with
+    // the draft keys, then the text indented as a body is (ADR 0054).
+    app.thread_reply();
+    type_in(&mut app, "in the thread");
+    let rows = render(&app)?;
+    let screen = rows.join("\n");
+    let last = rows
+        .iter()
+        .position(|row| row.contains("line 12"))
+        .context("the reply's last row")?;
+    assert!(
+        rows[last + 1].contains(" user  draft") && rows[last + 1].contains("submit"),
+        "the author row follows the last message:\n{screen}"
+    );
+    assert!(
+        rows[last + 2].contains("   in the thread"),
+        "the draft's text follows the author row:\n{screen}"
+    );
+    assert!(
+        !screen.contains("───") && !screen.contains("reply on L"),
+        "no box and no rule along the bottom:\n{screen}"
+    );
+    app.compose_cancel();
     Ok(())
 }
 
@@ -510,9 +537,35 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
                     message: MessageTarget::Comment,
                 }
     ));
+    // The list gave the column to the file, where the draft stands in
+    // for the comment's 31 rows and the replies keep theirs (ADR 0054).
+    assert!(!app.review_list().is_open(), "the list closed to write");
+    assert!(app.shows_thread(), "the thread is expanded in the text");
+    let stub = app
+        .stubs()
+        .into_iter()
+        .next()
+        .context("the thread's block")?;
+    assert_eq!(stub.draft_slot(), Some((1, 31)));
+    assert_eq!(app.draft_rows(), 31, "the author row and thirty lines");
+    assert_eq!(
+        stub.row_of_message(1),
+        Some(32),
+        "the agent's reply follows the draft"
+    );
     app.set_compose_text("revised opening");
+    assert_eq!(app.draft_rows(), 2);
+    assert_eq!(
+        app.stubs()[0].row_of_message(1),
+        Some(3),
+        "the replies move up with the shorter draft"
+    );
     app.compose_submit();
-    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(
+        app.focus(),
+        Focus::Review,
+        "the list comes back with the keys"
+    );
     assert!(app.review_list().is_open());
     assert_eq!(
         app.thread(&id).map(Thread::comment),
@@ -666,20 +719,24 @@ fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 3, 0));
     assert_eq!(app.focus(), Focus::Tree, "the header row focuses the tree");
 
-    // The comment box keeps the keys but lets the mouse through.
+    // The draft keeps the keys but lets the mouse through; opening it
+    // scrolled the view to show its rows at the thread's end (ADR 0054).
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
     app.thread_reply();
     assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+    let (row, _) = app.draft_cursor_cell().context("the draft's cursor")?;
+    let shown = app.view().scroll();
+    assert!(shown > 0 && row < shown + app.text_rows(), "revealed");
     crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, 2));
     assert_eq!(
         app.view().scroll(),
-        3,
-        "the wheel scrolls the text behind the box"
+        shown + 3,
+        "the wheel scrolls the text under the draft"
     );
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 20, 0));
     assert!(
         matches!(app.popup(), Some(Popup::Compose(_))),
-        "a click away leaves the box open"
+        "a click away leaves the draft open"
     );
     Ok(())
 }
@@ -1094,7 +1151,7 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
 
 fn draft(app: &App) -> anyhow::Result<(String, Cursor)> {
     let Some(Popup::Compose(compose)) = app.popup() else {
-        anyhow::bail!("comment box is not open");
+        anyhow::bail!("no draft is open");
     };
     Ok((
         compose.buffer().text().to_owned(),
@@ -1132,12 +1189,22 @@ fn the_comment_box_edits_around_a_cursor_and_takes_pastes() -> anyhow::Result<()
             Cursor { line: 1, column: 8 }
         )
     );
-    // The box is two rows over the rule and header until dragged; with
-    // a 100-column pane nothing wraps.
-    assert_eq!(app.compose_rows(), 4);
-    assert_eq!(app.compose_first_row(), 0);
+    // The draft is a block under L1 (ADR 0054): a header, the author
+    // row, and one row per line; with a 100-column pane nothing wraps,
+    // and the cursor sits after `line two`.
+    let stubs = app.stubs();
+    assert_eq!(stubs.len(), 1);
+    assert!(matches!(stubs[0].subject(), Subject::Draft(range) if *range == LineRange::new(1, 1)));
+    assert_eq!(app.draft_rows(), 3);
+    let author = app.draft_author_row().context("the author row")?;
+    assert_eq!(
+        app.draft_cursor_cell(),
+        Some((author + 2, MESSAGE_INDENT + 8))
+    );
     app.compose_submit();
     assert!(app.popup().is_none());
+    assert!(app.draft_author_row().is_none(), "the draft block is gone");
+    assert!(matches!(app.stubs()[0].subject(), Subject::Thread(_)));
     Ok(())
 }
 
@@ -1178,7 +1245,7 @@ fn ctrl_c_clears_the_draft_and_closes_an_empty_box() -> anyhow::Result<()> {
     app.start_comment();
     type_in(&mut app, "wipe me");
     app.compose_clear();
-    assert_eq!(draft(&app)?.0, "", "the box stays open, emptied");
+    assert_eq!(draft(&app)?.0, "", "the draft stays open, emptied");
     app.compose_clear();
     assert!(app.popup().is_none());
     assert_eq!(app.thread_counts(), (0, 0));
@@ -1186,21 +1253,39 @@ fn ctrl_c_clears_the_draft_and_closes_an_empty_box() -> anyhow::Result<()> {
 }
 
 #[test]
-fn a_long_comment_wraps_and_scrolls_to_the_cursor() -> anyhow::Result<()> {
+fn a_long_draft_wraps_in_its_block_and_the_view_reveals_its_cursor() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-wrap", testing::README)?;
     let mut app = app(&dir)?;
+    app.resize(100, 12);
     app.view_mut().select_lines();
     app.start_comment();
-    let width = app.compose_width();
+    let width = app.draft_width();
     type_in(&mut app, &"x".repeat(width * 10));
-    // Ten wrapped rows exceed the cap: eight rows, cursor row last.
-    assert_eq!(app.compose_rows(), 8);
-    assert_eq!(app.compose_first_row(), 4);
+    // Ten wrapped rows under the block's header and author row.
+    assert_eq!(app.draft_rows(), 11);
+    let author = app.draft_author_row().context("the author row")?;
+    assert_eq!(app.draft_row_of(author), Some(DraftRow::Author));
+    assert_eq!(app.draft_row_of(author + 3), Some(DraftRow::Text(2)));
+    assert_eq!(app.draft_row_of(author + 10), Some(DraftRow::Text(9)));
+    assert_eq!(app.draft_row_of(author + 11), None);
+    // The draft's cursor is at the end of the last row, and the view
+    // scrolled to show it while the text cursor stayed on L1 (ADR 0054).
+    let (row, col) = app.draft_cursor_cell().context("the cursor")?;
+    assert_eq!((row, col), (author + 10, MESSAGE_INDENT + width));
+    let scroll = app.view().scroll();
+    assert!(scroll > 0, "the view scrolled");
+    assert!(row >= scroll && row < scroll + app.text_rows(), "revealed");
+    assert_eq!(app.view().cursor_source_line(), Some(1));
+    // Up on the only line goes to its start, and the view follows the
+    // draft's cursor back up; a click lands on the wrapped cell under
+    // the pointer.
     app.compose_edit(Edit::Move(Motion::Up));
-    assert_eq!(app.compose_first_row(), 0);
-    // A click lands on the wrapped cell under the pointer; dragging the
-    // box's rule gives it the rows the pointer leaves below.
-    app.compose_click(2, 6);
+    assert_eq!(
+        app.draft_cursor_cell().map(|(row, _)| row),
+        Some(author + 1)
+    );
+    assert!(app.view().scroll() <= author + 1, "revealed again");
+    app.draft_place_cursor(2, MESSAGE_INDENT + 5);
     assert_eq!(
         draft(&app)?.1,
         Cursor {
@@ -1208,10 +1293,10 @@ fn a_long_comment_wraps_and_scrolls_to_the_cursor() -> anyhow::Result<()> {
             column: width * 2 + 5
         }
     );
-    app.begin_drag(Border::Compose);
-    app.drag_to(0, app.pane_rows() - 12);
-    app.end_drag();
-    assert_eq!(app.compose_rows(), 12);
+    assert_eq!(
+        app.draft_cursor_cell(),
+        Some((author + 3, MESSAGE_INDENT + 5))
+    );
     Ok(())
 }
 

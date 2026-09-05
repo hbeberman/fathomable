@@ -385,6 +385,7 @@ mod tests {
 
     use super::PaneScope;
     use crate::app::input::keys;
+    use crate::app::threads::stubs::Stub;
     use crate::app::threads::{ComposeTarget, ThreadState};
     use crate::app::{App, Border, Focus, Popup};
 
@@ -545,6 +546,10 @@ mod tests {
         assert!(
             matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
         );
+        // The draft is written at the end of the thread's rows in the
+        // text, after its header and two one-line messages (ADR 0054).
+        assert!(app.shows_thread());
+        assert_eq!(app.stubs().iter().find_map(Stub::draft_slot), Some((5, 0)));
         app.compose_insert("ok");
         app.compose_submit();
         assert_eq!(app.focus(), Focus::ThreadsPane);

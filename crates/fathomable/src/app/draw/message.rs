@@ -15,7 +15,7 @@ use ratatui::text::{Line, Span};
 use crate::app::draw::{Theme, face_style, format_age};
 
 /// Cells a message body sits in from the pane's left edge.
-const MESSAGE_INDENT: usize = 3;
+pub(crate) const MESSAGE_INDENT: usize = 3;
 
 /// One message of a thread: the comment or a reply.
 struct Message<'a> {
@@ -61,7 +61,7 @@ fn message_lines<'a>(
 
 /// One row of a message, padded to the text width so the thread's
 /// background reaches the right edge however short the row is.
-fn message_line<'a>(
+pub(crate) fn message_line<'a>(
     theme: &Theme,
     mut spans: Vec<Span<'a>>,
     width: usize,

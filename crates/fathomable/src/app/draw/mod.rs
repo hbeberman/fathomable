@@ -21,9 +21,9 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::info::Info;
-use crate::app::draw::message::expanded_lines;
+use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
 use crate::app::threads::list::{Row, Rows};
-use crate::app::threads::stubs::Stub;
+use crate::app::threads::stubs::{Stub, Subject};
 use crate::app::threads::words::{Words, label};
 use crate::app::threads::{Compose, ComposeTarget, ThreadState};
 use crate::app::view::{Mode, View};
@@ -201,20 +201,12 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         height: pane_height,
         ..area
     };
-    // The text column: the view, with the comment box along the bottom
-    // while a message is written.
-    let column = Rect {
+    // The text column: the view, the draft written in its rows.
+    let text_area = Rect {
         x: area.x + rail_area.width,
         width: area.width.saturating_sub(rail_area.width),
         height: pane_height,
         ..area
-    };
-    // The comment box grows up from the status line, pushing the thread
-    // pane up so a reply is written under the thread it answers.
-    let box_rows = app.compose_rows().min(usize::from(column.height));
-    let text_area = Rect {
-        height: column.height.saturating_sub(u16_of(box_rows)),
-        ..column
     };
     let status_area = Rect {
         y: area.y + pane_height,
@@ -252,8 +244,18 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Picker(picker)) => {
             draw_picker(frame, theme, area, picker);
         }
-        Some(Popup::Compose(compose)) => {
-            draw_compose(frame, app, theme, column, compose, box_rows);
+        Some(Popup::Compose(_)) => {
+            // The terminal cursor sits on the draft's cell in the text
+            // (ADR 0054), when its row is on screen.
+            if let Some((row, col)) = app.draft_cursor_cell()
+                && let Some(screen_row) = row.checked_sub(view.scroll())
+                && screen_row < usize::from(text_area.height)
+            {
+                frame.set_cursor_position((
+                    text_area.x + u16_of(gutter + col),
+                    text_area.y + u16_of(screen_row),
+                ));
+            }
         }
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
@@ -1016,13 +1018,13 @@ fn stub_line<'a>(
     width: usize,
 ) -> Line<'a> {
     let digits = gutter - 3;
-    let Some(thread) = app.thread(stub.id()) else {
+    let Some(thread) = stub.thread().and_then(|id| app.thread(id)) else {
         return Line::from("");
     };
     let kind = app
         .marks()
         .iter()
-        .find(|mark| mark.id() == stub.id())
+        .find(|mark| mark.id() == thread.id())
         .map_or(ThreadState::Open, crate::app::threads::Mark::kind);
     let (author, created, body) = match message.checked_sub(1) {
         None => ("user".to_owned(), thread.created(), thread.comment()),
@@ -1031,8 +1033,8 @@ fn stub_line<'a>(
             (author_label(reply.author()), reply.created(), reply.body())
         }
     };
-    let covered = app.threads_at_cursor().contains(stub.id());
-    let hinted = last && covered && app.thread_cursor().thread() == Some(stub.id());
+    let covered = app.threads_at_cursor().contains(thread.id());
+    let hinted = last && covered && app.thread_cursor().thread() == Some(thread.id());
     let row_style = theme.thread_inline;
     let text_style = if covered {
         theme
@@ -1088,24 +1090,67 @@ fn stub_line<'a>(
     Line::from(spans).style(row_style)
 }
 
-/// The rows of `stub`'s thread expanded in place (ADR 0049), at the text
+/// The rows of `stub`'s block expanded in place (ADR 0049), at the text
 /// width: a header with the state, placement, and watchers on the left
-/// and the keys on the right, then every message as the pane drew them.
+/// and the keys on the right, then every message as the pane drew them,
+/// the draft in its place among them (ADR 0054); for a draft block, a
+/// header naming the lines and the draft.
 fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
-    let Some(thread) = app.thread(stub.id()) else {
-        return Vec::new();
+    let draft = app
+        .draft()
+        .map(|compose| draft_lines(app, theme, compose, width));
+    let mut lines = match stub.subject() {
+        Subject::Draft(range) => vec![
+            Header::new(
+                vec![(format!(" comment on L{range}"), Tone::Key)],
+                Vec::new(),
+            )
+            .line(theme, width),
+        ],
+        Subject::Thread(id) => {
+            let Some(thread) = app.thread(id) else {
+                return Vec::new();
+            };
+            let cursor = app.thread_cursor();
+            let selected = (cursor.thread() == Some(id)).then_some(cursor.message());
+            let mut lines = vec![expanded_header(app, thread).line(theme, width)];
+            lines.extend(expanded_lines(
+                theme,
+                app.highlighter(),
+                thread,
+                fathomable_core::clock::now(),
+                width,
+                selected,
+            ));
+            lines
+        }
     };
-    let cursor = app.thread_cursor();
-    let selected = (cursor.thread() == Some(stub.id())).then_some(cursor.message());
-    let mut lines = vec![expanded_header(app, stub, thread).line(theme, width)];
-    lines.extend(expanded_lines(
-        theme,
-        app.highlighter(),
-        thread,
-        fathomable_core::clock::now(),
-        width,
-        selected,
-    ));
+    if let (Some((at, replaces)), Some(draft)) = (stub.draft_slot(), draft) {
+        let end = (at + replaces).min(lines.len());
+        lines.splice(at.min(lines.len())..end, draft);
+    }
+    lines
+}
+
+/// The draft's rows (ADR 0054): the author row with the draft keys, then
+/// the text wrapped at the draft's width and indented as a body is.
+fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) -> Vec<Line<'a>> {
+    let mut lines = vec![draft_header(compose).line(theme, width)];
+    let buffer = compose.buffer();
+    let text_width = app.draft_width();
+    let indent = " ".repeat(MESSAGE_INDENT);
+    let rows = buffer.rows(text_width);
+    if rows.is_empty() {
+        lines.push(message_line(theme, vec![Span::raw(indent)], width, false));
+        return lines;
+    }
+    for row in rows {
+        let spans = vec![
+            Span::raw(indent.clone()),
+            Span::styled(buffer.row_text(row).to_owned(), theme.text),
+        ];
+        lines.push(message_line(theme, spans, width, false));
+    }
     lines
 }
 
@@ -1529,47 +1574,6 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }
 
-/// The comment box: grows up from the status line (ADR 0005, 0013), the
-/// draft wrapped and scrolled so the cursor's row is visible (ADR 0018).
-fn draw_compose(
-    frame: &mut Frame<'_>,
-    app: &App,
-    theme: &Theme,
-    pane: Rect,
-    compose: &Compose,
-    rows: usize,
-) {
-    let width = usize::from(pane.width);
-    if rows < 3 {
-        return;
-    }
-    let body_rows = rows - 2;
-    let text_width = app.compose_width();
-    let buffer = compose.buffer();
-    let wrapped = buffer.rows(text_width);
-    let first = app.compose_first_row();
-    let mut lines = vec![
-        rule_line(theme, width),
-        compose_header(app, compose).line(theme, width),
-    ];
-    for row in wrapped.iter().skip(first).take(body_rows) {
-        let text = buffer.row_text(*row);
-        lines.push(Line::from(Span::raw(fit(&format!(" {text}"), width))));
-    }
-    let area = Rect {
-        x: pane.x,
-        y: pane.y + pane.height - u16_of(rows),
-        width: pane.width,
-        height: u16_of(rows),
-    };
-    frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
-    let cell = buffer.cursor_cell(text_width);
-    let col = (1 + cell.column).min(width.saturating_sub(1));
-    let row = 2 + cell.row.saturating_sub(first).min(body_rows - 1);
-    frame.set_cursor_position((area.x + u16_of(col), area.y + u16_of(row)));
-}
-
 /// The file-info pane (ADR 0026): the path as a header, the labelled
 /// rows with their labels right-aligned, then the notice.
 fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: &Info) {
@@ -1863,12 +1867,8 @@ pub(crate) fn checkpoint_header(text: &str) -> Header {
 
 /// An expanded thread's header row in the text (ADR 0049): the state,
 /// the placement, who watches it, and the thread keys.
-pub(crate) fn expanded_header(
-    app: &App,
-    stub: &Stub,
-    thread: &fathomable_core::annotations::Thread,
-) -> Header {
-    let mark = app.marks().iter().find(|mark| mark.id() == stub.id());
+pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
+    let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
     let tone = Tone::Mark(words.state());
     let mut left = vec![(" ● ".to_owned(), tone)];
@@ -1967,29 +1967,10 @@ pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Ent
     Header::new(left, hints)
 }
 
-/// The comment box's header (ADR 0018): what is being written and the
-/// box keys, or the discard question.
-pub(crate) fn compose_header(app: &App, compose: &Compose) -> Header {
-    let title = match compose.target() {
-        ComposeTarget::New(range) => format!(" comment on L{range}"),
-        ComposeTarget::Reply(id) => {
-            let range = app
-                .marks()
-                .iter()
-                .find(|m| m.id() == id)
-                .map_or_else(String::new, |m| format!(" on L{}", m.range()));
-            format!(" reply{range}")
-        }
-        ComposeTarget::Edit { thread, .. } => {
-            let range = app
-                .marks()
-                .iter()
-                .find(|mark| mark.id() == thread)
-                .map_or_else(String::new, |mark| format!(" on L{}", mark.range()));
-            format!(" edit message{range}")
-        }
-    };
-    let place = Where::Box;
+/// The draft's author row (ADR 0054): ` user  draft` as a message's
+/// author row reads, then the draft keys, or the discard question.
+pub(crate) fn draft_header(compose: &Compose) -> Header {
+    let place = Where::Draft;
     let hints = if compose.confirming_discard() {
         vec![
             HintOf::keyed(place, Action::Escape, "again to discard"),
@@ -2012,7 +1993,13 @@ pub(crate) fn compose_header(app: &App, compose: &Compose) -> Header {
             HintOf::keyed(place, Action::Escape, ""),
         ]
     };
-    Header::new(vec![(title, Tone::Key)], hints)
+    Header::new(
+        vec![
+            (" user".to_owned(), Tone::Key),
+            ("  draft".to_owned(), Tone::Info),
+        ],
+        hints,
+    )
 }
 
 /// The columns a hint takes: key, action, and the space between when both
@@ -2065,11 +2052,6 @@ fn header_line<'a>(
     }
     spans.push(Span::raw(" "));
     Line::from(spans)
-}
-
-/// A full-width rule marking the top edge of a bottom-anchored popup.
-fn rule_line<'a>(theme: &Theme, width: usize) -> Line<'a> {
-    Line::from(Span::styled("─".repeat(width), theme.info))
 }
 
 /// `created` relative to `now` when recent, otherwise the UTC date.

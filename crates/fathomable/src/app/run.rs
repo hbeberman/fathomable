@@ -107,7 +107,7 @@ impl TerminalGuard {
         )
         .context("cannot enter alternate screen")?;
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
-        // the comment box (ADR 0013); terminals without it still get Alt-Enter.
+        // the draft (ADR 0013); terminals without it still get Alt-Enter.
         let enhanced = matches!(
             crossterm::terminal::supports_keyboard_enhancement(),
             Ok(true)
@@ -192,7 +192,7 @@ fn spawn_input() -> anyhow::Result<Input> {
     Ok(Input { events, state })
 }
 
-/// `Ctrl-e` in the comment box: hand the draft to `$VISUAL` or `$EDITOR`
+/// `Ctrl-e` in the draft: hand it to `$VISUAL` or `$EDITOR`
 /// on a temporary file and load the result back (ADR 0018). The comment
 /// is not submitted; the socket and watcher wait while the editor runs.
 async fn edit_draft(

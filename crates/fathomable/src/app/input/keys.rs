@@ -5,7 +5,7 @@
 //! [`handle_key`] keeps the keys typed so far as the app's prefix; a
 //! sequence the table calls a prefix waits, one it calls a miss is
 //! dropped (and cancels an armed delete), and a match runs
-//! [`App::act`]. Text entry — the comment box, the picker, the command
+//! [`App::act`]. Text entry — the draft, the picker, the command
 //! line — takes the characters the table leaves alone.
 
 use crossterm::event::KeyEvent;
@@ -31,7 +31,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
 pub(crate) fn place(app: &App) -> Option<Where> {
     match app.popup() {
         Some(Popup::Help | Popup::Status | Popup::Menu(_)) => None,
-        Some(Popup::Compose(_)) => Some(Where::Box),
+        Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
         None => Some(match app.focus() {
             Focus::View if matches!(app.view().mode(), Mode::Command | Mode::Search { .. }) => {
@@ -103,7 +103,7 @@ const DELETE_PREFIX: Chord = Chord {
 /// drops it.
 fn fallback(app: &mut App, place: Where, chord: Chord) -> Effect {
     match (place, chord.key) {
-        (Where::Box, Key::Char(ch)) if !chord.ctrl && !chord.alt => {
+        (Where::Draft, Key::Char(ch)) if !chord.ctrl && !chord.alt => {
             app.compose_insert(ch.encode_utf8(&mut [0; 4]));
         }
         (Where::Picker, Key::Char(ch)) if !chord.ctrl && !chord.alt => app.picker_char(ch),
@@ -229,7 +229,7 @@ impl App {
                     Where::Tree => self.act_tree(action),
                     Where::ThreadsPane => self.act_threads_pane(action),
                     Where::Review => self.act_list(action),
-                    Where::Box => self.act_box(action),
+                    Where::Draft => self.act_box(action),
                     Where::Picker => self.act_picker(action),
                     Where::Input => self.act_input(action),
                     Where::Any => Effect::None,
@@ -386,7 +386,7 @@ impl App {
         Effect::None
     }
 
-    /// Keys in the comment box (ADR 0018): readline-style motion and
+    /// Keys in the draft (ADR 0018): readline-style motion and
     /// kills; the keys that scroll the thread above a reply.
     fn act_box(&mut self, action: Action) -> Effect {
         match action {
@@ -538,7 +538,7 @@ mod tests {
             Some(Popup::Compose(compose)) => compose.buffer().text().to_owned(),
             _ => String::new(),
         };
-        assert_eq!(draft, "answer", "the box is seeded with the reply");
+        assert_eq!(draft, "answer", "the draft is seeded with the reply");
         app.close_popup();
 
         // From the tree the same keys reach the same thread.

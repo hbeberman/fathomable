@@ -13,6 +13,10 @@ tags:
 
 Status: accepted (2026-08-27)
 
+The "Drawing and mouse" section is superseded on 2026-09-04 by
+[0054](0054-the-draft-is-written-in-the-thread.md): the draft is written
+in the thread's rows in the text, with no box, cap, or drag.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

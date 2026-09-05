@@ -452,8 +452,11 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         })
         .context("the thread is expanded")?;
     let (stub, _, _) = app.stub_on_row(header_row).context("a stub")?;
-    let thread = app.thread(stub.id()).context("the thread")?;
-    let header = draw::expanded_header(&app, &stub, thread);
+    let thread = stub
+        .thread()
+        .and_then(|id| app.thread(id))
+        .context("the thread")?;
+    let header = draw::expanded_header(&app, thread);
     let width = app.view().layout().width();
     let col = (0..width)
         .find(|&c| header.action_at(width, c) == Some(Action::Reply))
@@ -464,20 +467,18 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         app.popup(),
         Some(Popup::Compose(compose)) if matches!(compose.target(), ComposeTarget::Reply(_))
     ));
-    // The comment box's own header: `Esc` cancels.
-    let rows = app.pane_rows();
-    let box_top = rows - app.compose_rows();
-    let compose = match app.popup() {
-        Some(Popup::Compose(compose)) => draw::compose_header(&app, compose),
-        _ => unreachable!(),
-    };
-    let width = app.column_width();
+    // The draft's author row in the thread (ADR 0054): `Esc` cancels.
+    let compose = app.draft().map(draw::draft_header).context("a draft")?;
+    let width = app.view().layout().width();
     let col = (0..width)
         .find(|&c| compose.action_at(width, c) == Some(Action::Escape))
         .context("Esc is drawn")?;
+    let author_row = app.draft_author_row().context("the author row")?;
+    let (column, screen_row) = at(&app, author_row - app.view().scroll(), col);
+    left(&mut app, column, screen_row);
+    assert!(app.popup().is_none(), "the draft closed");
+    let width = app.column_width();
     let rail = app.rail_width();
-    left(&mut app, rail + col, box_top + 1);
-    assert!(app.popup().is_none(), "the box closed");
 
     // The review list's header: the `sort` hint toggles the order.
     app.toggle_review();

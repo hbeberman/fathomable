@@ -161,7 +161,7 @@ pub(crate) fn spell(keys: &[Chord]) -> String {
 
 /// Which surface a binding lives on: the pane that has focus, the popup
 /// that is open, or [`Where::Any`] for every pane at once. `Any` never
-/// reaches a popup: the comment box, the picker, and the command line
+/// reaches a popup: the draft, the picker, and the command line
 /// take only their own keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Where {
@@ -173,8 +173,8 @@ pub(crate) enum Where {
     ThreadsPane,
     /// The review list.
     Review,
-    /// The comment box.
-    Box,
+    /// The draft being written in the text (ADR 0054).
+    Draft,
     /// The file, recent, or wake picker.
     Picker,
     /// The `:` and `/` input line.
@@ -187,7 +187,7 @@ impl Where {
     /// Whether `Any` bindings apply here: in a pane, not a popup.
     #[must_use]
     pub(crate) fn takes_any(self) -> bool {
-        !matches!(self, Self::Box | Self::Picker | Self::Input)
+        !matches!(self, Self::Draft | Self::Picker | Self::Input)
     }
 }
 
@@ -1123,16 +1123,16 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Review list",
         "back to the text",
     ),
-    // ----- the comment box -----
+    // ----- the draft -----
     bind(
-        W::Box,
+        W::Draft,
         &[&[k(K::Enter)]],
         A::Confirm,
-        "Comment box",
+        "Draft",
         "submit, or save",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[
             &[alt(K::Enter)],
             &[Chord {
@@ -1142,115 +1142,103 @@ pub(crate) const BINDINGS: &[Binding] = &[
             }],
         ],
         A::Newline,
-        "Comment box",
+        "Draft",
         "newline",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[alt(K::Char('k'))], &[alt(K::Up)]],
         A::ScrollUp,
-        "Comment box",
-        "scroll the thread above up",
+        "Draft",
+        "scroll the text up",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[alt(K::Char('j'))], &[alt(K::Down)]],
         A::ScrollDown,
-        "Comment box",
-        "scroll the thread above down",
+        "Draft",
+        "scroll the text down",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[ctrl('e')]],
         A::EditDraft,
-        "Comment box",
+        "Draft",
         "edit the draft in $EDITOR",
     ),
-    bind(W::Box, &[&[k(K::Left)]], A::MoveLeft, "Comment box", "left"),
+    bind(W::Draft, &[&[k(K::Left)]], A::MoveLeft, "Draft", "left"),
+    bind(W::Draft, &[&[k(K::Right)]], A::MoveRight, "Draft", "right"),
+    bind(W::Draft, &[&[k(K::Up)]], A::MoveUp, "Draft", "up"),
+    bind(W::Draft, &[&[k(K::Down)]], A::MoveDown, "Draft", "down"),
     bind(
-        W::Box,
-        &[&[k(K::Right)]],
-        A::MoveRight,
-        "Comment box",
-        "right",
-    ),
-    bind(W::Box, &[&[k(K::Up)]], A::MoveUp, "Comment box", "up"),
-    bind(W::Box, &[&[k(K::Down)]], A::MoveDown, "Comment box", "down"),
-    bind(
-        W::Box,
+        W::Draft,
         &[&[k(K::Home)], &[ctrl('a')]],
         A::LineStart,
-        "Comment box",
+        "Draft",
         "line start",
     ),
+    bind(W::Draft, &[&[k(K::End)]], A::LineEnd, "Draft", "line end"),
     bind(
-        W::Box,
-        &[&[k(K::End)]],
-        A::LineEnd,
-        "Comment box",
-        "line end",
-    ),
-    bind(
-        W::Box,
+        W::Draft,
         &[&[alt(K::Char('b'))]],
         A::WordBack,
-        "Comment box",
+        "Draft",
         "word back",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[alt(K::Char('f'))]],
         A::WordForward,
-        "Comment box",
+        "Draft",
         "word forward",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[k(K::Backspace)]],
         A::Backspace,
-        "Comment box",
+        "Draft",
         "delete back",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[k(K::Delete)]],
         A::DeleteForward,
-        "Comment box",
+        "Draft",
         "delete forward",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[ctrl('w')]],
         A::DeleteWordBack,
-        "Comment box",
+        "Draft",
         "delete the word back",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[ctrl('u')]],
         A::DeleteToLineStart,
-        "Comment box",
+        "Draft",
         "delete to line start",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[ctrl('k')]],
         A::DeleteToLineEnd,
-        "Comment box",
+        "Draft",
         "delete to line end",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[ctrl('c')]],
         A::ClearDraft,
-        "Comment box",
+        "Draft",
         "clear the draft; empty closes",
     ),
     bind(
-        W::Box,
+        W::Draft,
         &[&[k(K::Esc)]],
         A::Escape,
-        "Comment box",
+        "Draft",
         "cancel; twice after a change",
     ),
     // ----- the picker -----
@@ -1499,7 +1487,7 @@ mod tests {
             Where::Tree,
             Where::ThreadsPane,
             Where::Review,
-            Where::Box,
+            Where::Draft,
             Where::Picker,
             Where::Input,
         ];
@@ -1565,7 +1553,7 @@ mod tests {
             );
             assert_eq!(lookup(place, &[c(' ')]), Match::Prefix, "{place:?}");
         }
-        for place in [Where::Box, Where::Picker, Where::Input] {
+        for place in [Where::Draft, Where::Picker, Where::Input] {
             assert_eq!(lookup(place, &[k(Key::Esc)]), Match::Exact(Action::Escape));
             assert_eq!(lookup(place, &[c(' ')]), Match::Miss, "{place:?}");
         }
@@ -1610,7 +1598,7 @@ mod tests {
             ["s", "d", "D", "c", "C", "r", "g"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
-        assert!(menu(Where::Box, &[c(' ')]).is_empty());
+        assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
 
     /// A submenu's entries drop the word the breadcrumb already says:
@@ -1717,7 +1705,7 @@ mod tests {
             hint(Where::Review, Action::CommandLine).as_deref(),
             Some(":")
         );
-        assert_eq!(hint(Where::Box, Action::CommandLine), None);
+        assert_eq!(hint(Where::Draft, Action::CommandLine), None);
         assert!(help().iter().any(|(keys, _)| keys == "j / Down"));
     }
 }

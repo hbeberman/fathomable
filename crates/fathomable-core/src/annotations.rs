@@ -259,7 +259,7 @@ impl fmt::Display for ThreadId {
 /// An agent carries the name it goes by plus, when the reply arrived over
 /// MCP, the client implementation the host reported (ADR 0014). On the wire
 /// an author is a plain string unless it has a client, in which case it is
-/// `{"name":..,"client":..}`; older files therefore still load.
+/// `{"name":..,"client":..}`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(from = "AuthorWire", into = "AuthorWire")]
 pub enum Author {
@@ -279,8 +279,7 @@ pub enum Author {
 }
 
 impl Default for Author {
-    /// The user: what a record written before ADR 0061 means by saying
-    /// nothing.
+    /// The user, when a record says nothing.
     fn default() -> Self {
         Self::User
     }
@@ -821,16 +820,15 @@ enum Event {
         snippet: String,
         anchor: Anchor,
         created: u64,
-        /// Who wrote the comment; absent, and the user's, on records
-        /// written before ADR 0061.
+        /// Who wrote the comment; written only for an agent (ADR 0061).
         #[serde(default, skip_serializing_if = "Author::is_user")]
         author: Author,
         comment: String,
         /// `None` for a workspace outside git, which reads as unscoped.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
-        /// The window the lines were placed in (ADR 0038); absent on
-        /// records written before it.
+        /// The window the lines were placed in (ADR 0038); `None` when
+        /// the range ran past the text at capture.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<Context>,
     },
@@ -1919,8 +1917,7 @@ mod tests {
 
     /// An agent's comment is the agent's act, so its thread waits on the
     /// user from birth; the record says who only for an agent, so a
-    /// user's record, and every record written before ADR 0061, loads
-    /// as the user's.
+    /// record that says nothing loads as the user's.
     #[test]
     fn an_agents_comment_is_its_own_act() -> Result<(), StoreError> {
         let file = TempFile::new("agent-comment")?;

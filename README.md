@@ -2,6 +2,8 @@
 
 Read-only terminal workspace viewer and annotation side-car for
 agent-driven work. New here? Read the [setup guide](docs/guide.md).
+Linux only: viewer liveness and the session bonds that let a headless
+`--mcp` learn its session read `/proc`.
 
 ## Local workflow
 

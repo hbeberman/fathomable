@@ -51,6 +51,13 @@ rejected for good (record rejections in the [charter](charter.md)).
   change hint and nothing is kept. The timestamped delta window comes
   back with the animation.
 - **macOS / Windows support.** Origin: charter; Linux only for now.
+  `Record::is_alive` (`session.rs`) stats `/proc/<pid>`, so elsewhere
+  every viewer reads as dead and `sweep_dead` removes live records; the
+  session bonds of [0041](decisions/0041-session-bonds.md) walk
+  `/proc/<pid>/stat` and never form. A portable liveness check needs
+  `kill(pid, 0)`, which the standard library does not expose: `libc` or
+  `nix` is a dependency decision under
+  [0001](decisions/0001-dependency-policy.md).
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

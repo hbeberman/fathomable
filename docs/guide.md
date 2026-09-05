@@ -16,7 +16,10 @@ page holds what to type. Linux only for now (see the
 
 ## 1. Install
 
-Requires a stable Rust toolchain (1.88 or newer).
+Requires a stable Rust toolchain (1.88 or newer) and Linux: whether a
+viewer is alive and which harness session a headless `--mcp` serves are
+both read from `/proc`, so on another OS every viewer looks dead and
+the tools ask for the session `id` every time.
 
 ```sh
 git clone <this repository> fathomable

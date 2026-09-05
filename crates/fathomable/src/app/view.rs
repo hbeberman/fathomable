@@ -857,33 +857,42 @@ impl View {
         self.jump_to_row(self.last_row());
     }
 
-    /// Whether `h` has nowhere left to go on this row.
-    #[must_use]
-    pub(crate) fn at_line_start(&self) -> bool {
-        !self
-            .columns(self.cursor.row)
-            .iter()
-            .any(|&c| c < self.cursor.col)
+    /// The nearest row the cursor may rest on before `row`, if any.
+    fn stop_before(&self, row: usize) -> Option<usize> {
+        (0..row).rev().find(|&r| self.is_stop_row(r))
     }
 
-    /// One cell left; a selection wraps onto the end of the row above.
+    /// The nearest row the cursor may rest on after `row`, if any.
+    fn stop_after(&self, row: usize) -> Option<usize> {
+        (row + 1..self.layout.lines().len()).find(|&r| self.is_stop_row(r))
+    }
+
+    /// One grapheme left; at the first column the cursor wraps onto the
+    /// last column of the row above, as Helix does (ADR 0010, amended
+    /// 2026-09-04).
     pub(crate) fn move_left(&mut self) {
         let columns = self.columns(self.cursor.row);
         if let Some(&col) = columns.iter().rev().find(|&&c| c < self.cursor.col) {
             self.cursor.col = col;
-        } else if self.mode == Mode::Select && self.cursor.row > 0 {
-            self.cursor.row -= 1;
-            self.cursor.col = self.columns(self.cursor.row).last().copied().unwrap_or(0);
+        } else if let Some(row) = self.stop_before(self.cursor.row) {
+            self.cursor.row = row;
+            self.cursor.col = self.columns(row).last().copied().unwrap_or(0);
             self.ensure_visible();
         }
         self.want_col = self.cursor.col;
         self.extend_selection();
     }
 
+    /// One grapheme right; at the last column the cursor wraps onto the
+    /// first column of the row below.
     pub(crate) fn move_right(&mut self) {
         let columns = self.columns(self.cursor.row);
         if let Some(&col) = columns.iter().find(|&&c| c > self.cursor.col) {
             self.cursor.col = col;
+        } else if let Some(row) = self.stop_after(self.cursor.row) {
+            self.cursor.row = row;
+            self.cursor.col = 0;
+            self.ensure_visible();
         }
         self.want_col = self.cursor.col;
         self.extend_selection();
@@ -1570,19 +1579,72 @@ mod tests {
     }
 
     #[test]
-    fn left_at_column_zero_stops_unless_selecting() {
+    fn horizontal_motion_wraps_across_rows() {
         let mut v = view();
+        // Row 2 is "alpha beta"; row 1 is blank, row 3 is blank.
         v.move_down(2);
-        assert!(v.at_line_start());
         v.move_left();
-        assert_eq!(v.cursor().row, 2, "normal mode stays put at column 0");
+        assert_eq!(
+            (v.cursor().row, v.cursor().col),
+            (1, 0),
+            "h wraps onto the blank row above"
+        );
+        v.move_left();
+        assert_eq!(v.cursor().row, 0);
+        assert_eq!(
+            v.cursor().col,
+            v.columns(0).last().copied().unwrap_or(0),
+            "onto the last column"
+        );
+        v.move_left();
+        assert_eq!(
+            v.cursor().col,
+            v.columns(0).last().copied().unwrap_or(0) - 1
+        );
+        v.goto_top();
+        v.move_left();
+        assert_eq!(
+            (v.cursor().row, v.cursor().col),
+            (0, 0),
+            "nothing above the first row"
+        );
+        v.move_down(2);
+        v.line_end();
         v.move_right();
-        assert!(!v.at_line_start());
+        assert_eq!(
+            (v.cursor().row, v.cursor().col),
+            (3, 0),
+            "l wraps onto the row below"
+        );
+        v.move_right();
+        assert_eq!((v.cursor().row, v.cursor().col), (4, 0));
+        v.goto_bottom();
+        v.line_end();
+        let end = v.cursor().col;
+        v.move_right();
+        assert_eq!(
+            (v.cursor().row, v.cursor().col),
+            (8, end),
+            "nothing below the last row"
+        );
+    }
+
+    #[test]
+    fn selection_grows_across_a_wrap() {
+        let mut v = view();
+        // Row 2 is "alpha beta"; select from its last word across the
+        // blank row into "- one".
+        v.move_down(2);
+        v.line_end();
+        v.move_left();
+        v.move_left();
+        v.move_left();
         v.select_chars();
-        v.move_left();
-        v.move_left();
-        assert_eq!(v.cursor().row, 1, "a selection wraps onto the row above");
-        assert_eq!(v.cursor().col, v.columns(1).last().copied().unwrap_or(0));
+        for _ in 0..9 {
+            v.move_right();
+        }
+        assert_eq!(v.cursor().row, 4);
+        assert_eq!(v.yank(), Effect::Copy("beta\n\n- one".to_owned()));
     }
 
     #[test]

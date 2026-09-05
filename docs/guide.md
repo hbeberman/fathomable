@@ -85,7 +85,7 @@ Text:
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` `h` `l`, arrows | move; `h` or `Left` at column 0 focuses the tree (a selection wraps to the line above instead) |
+| `j` `k` `h` `l`, arrows | move; `h` at the first column wraps onto the end of the row above and `l` at the last onto the start of the row below |
 | `0` `$`, `Home` `End` | line start / end |
 | `gg`, `ge` / `G` | top / bottom |
 | `Ctrl-d` `Ctrl-u` | half page down / up |

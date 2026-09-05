@@ -247,16 +247,6 @@ impl App {
             Action::CheckpointTarget => self.pick_checkpoint_side(true),
             Action::CopyLink => return self.view_mut().copy_link(),
             Action::OpenLink => return self.view_mut().open_link(),
-            // At column 0, `h` steps back into the tree; a selection wraps
-            // instead (see `View::move_left`).
-            Action::MoveLeft
-                if self.view().mode() == Mode::Normal
-                    && self.tree().is_some()
-                    && self.view().at_line_start() =>
-            {
-                self.toggle_tree_focus();
-                return Effect::None;
-            }
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),

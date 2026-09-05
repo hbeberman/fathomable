@@ -338,31 +338,27 @@ fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
 }
 
 #[test]
-fn left_at_column_zero_hands_focus_to_the_tree() -> anyhow::Result<()> {
+fn left_at_column_zero_keeps_focus_in_the_text() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::input::keys;
     let dir = fixture("left")?;
     let mut app = app(&dir)?;
-    app.open(Path::new("docs/notes.md"));
-    let left = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
-    keys::handle_key(&mut app, left);
-    assert_eq!(app.focus(), Focus::View, "no tree, nothing to focus");
+    app.open(Path::new("README.md"));
     app.toggle_tree_focus();
     app.toggle_tree_focus();
-    assert_eq!(app.focus(), Focus::View);
-    keys::handle_key(
-        &mut app,
-        KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE),
-    );
-    keys::handle_key(&mut app, left);
-    assert_eq!(app.focus(), Focus::View, "a selection keeps focus");
-    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(app.focus(), Focus::View, "the tree is open without focus");
+    app.view_mut().move_down(2);
     keys::handle_key(
         &mut app,
         KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE),
     );
-    assert_eq!(app.focus(), Focus::Tree);
+    assert_eq!(
+        app.focus(),
+        Focus::View,
+        "h wraps instead of focusing the tree"
+    );
+    assert_eq!(app.view().cursor().row, 1);
     Ok(())
 }
 

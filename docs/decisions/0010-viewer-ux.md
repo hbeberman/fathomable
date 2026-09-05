@@ -46,6 +46,15 @@ viewer, the layout engine, and later themes agree.
   `gg`/`G` go to the first and last rendered line.
 - Synthesised lines (table rules, block spacing) are valid cursor rows; they
   simply carry no source range.
+- Amended 2026-09-04: **`h` and `l` wrap.** At the first column `h` moves
+  onto the last column of the rendered row above and at the last column
+  `l` onto the first column of the row below, as Helix does, in every
+  mode; a blank or synthesised row is one stop with column 0, so a
+  selection that crosses a paragraph break passes through it. `h` at
+  column 0 no longer focuses the tree ([0012](0012-workspace-mode.md));
+  `Space e` and the mouse reach it. The user chose the wrap on 2026-09-04
+  because a fragment inside a paragraph could not be selected across
+  its rows with the keyboard.
 
 ### Gutter
 

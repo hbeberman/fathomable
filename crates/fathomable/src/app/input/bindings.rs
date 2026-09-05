@@ -348,14 +348,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('h')], &[k(K::Left)]],
         A::MoveLeft,
         "Move",
-        "left; at column 0, focus the tree",
+        "left, wrapping onto the row above",
     ),
     bind(
         W::View,
         &[&[c('l')], &[k(K::Right)]],
         A::MoveRight,
         "Move",
-        "right",
+        "right, wrapping onto the row below",
     ),
     bind(
         W::View,

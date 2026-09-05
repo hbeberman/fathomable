@@ -48,9 +48,6 @@ audit:
 deny:
     make deny
 
-features:
-    make features
-
 udeps:
     make udeps
 

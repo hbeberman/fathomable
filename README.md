@@ -34,13 +34,12 @@ The canonical gate enforces both OKF structure and maintained local links.
 - formatting: `cargo fmt --check`
 - linting: `cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code`
 - tests: `cargo nextest run --all-targets --all-features`
-- doctests: `scripts/test-doctests.sh` (all library targets, default and all features)
+- doctests: `scripts/test-doctests.sh` (all library targets)
 - rustdoc: `RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features`
 - OKF documentation: `python3 scripts/okf-lint.py --repo-root . docs`
 - documentation links: `lychee --offline --no-progress docs README.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md`
 - public API scan: `scripts/check-public-api.sh`
 - dependency audit: `cargo audit`
-- feature powerset: `cargo hack check --feature-powerset --no-dev-deps`
 - unused dependencies: `cargo +nightly udeps --all-targets --all-features`
 - mutation testing: `cargo mutants --workspace --all-features`
 - perf tracing: `just perf [path]` profiles the release binary until it exits; artifacts and text reports are written under `target/perf/`. Pass a file or a workspace directory.

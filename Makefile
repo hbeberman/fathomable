@@ -10,7 +10,7 @@ export PERF_BIN
 export PERF_PATH
 
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
-	docs-check boundaries public-api audit deny features udeps mutants mutants-file \
+	docs-check boundaries public-api audit deny udeps mutants mutants-file \
 	perf install-commit-hooks build-deps clean install
 
 help:
@@ -21,7 +21,7 @@ help:
 		'fmt-check         Check formatting without writing' \
 		'clippy            Run Clippy with warnings denied' \
 		'test              Run the full test suite' \
-		'doctest           Run documentation tests with default and all features' \
+		'doctest           Run documentation tests' \
 		'doc               Build rustdoc with warnings denied' \
 		'okf               Validate the Open Knowledge Format documentation bundle' \
 		'links             Check maintained local documentation links and anchors' \
@@ -30,7 +30,6 @@ help:
 		'public-api        Check public API shape' \
 		'audit             Audit dependencies' \
 		'deny              Check licenses, sources, and bans with cargo-deny' \
-		'features          Check feature combinations' \
 		'udeps             Check unused dependencies' \
 		'mutants           Run mutation testing' \
 		'mutants-file      Mutate FILE=<path>' \
@@ -84,8 +83,13 @@ audit:
 deny:
 	cargo deny check
 
-features:
-	cargo hack check --feature-powerset --no-dev-deps
+# No crate declares [features] yet. When one does, bring back the
+# feature checks: a `features` target running
+# `cargo hack check --feature-powerset --no-dev-deps` (cargo-hack in
+# scripts/setup-build-deps.sh and the CI tool list), a second
+# `cargo nextest run --all-targets` without --all-features in
+# scripts/gates.sh and CI, and the default-feature doctest run in
+# scripts/test-doctests.sh.
 
 udeps:
 	cargo +nightly udeps --all-targets --all-features

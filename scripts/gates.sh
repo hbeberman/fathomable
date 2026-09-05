@@ -40,8 +40,7 @@ run() {
 
 run "fmt"              cargo fmt --check
 run "clippy"           cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code
-run "nextest-all-features" cargo nextest run --all-targets --all-features
-run "nextest-default"      cargo nextest run --all-targets
+run "nextest"          cargo nextest run --all-targets --all-features
 run "doctest"          scripts/test-doctests.sh
 run "okf"              python3 scripts/okf-lint.py --repo-root . docs
 run "links"            lychee --offline --no-progress docs README.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md
@@ -50,5 +49,4 @@ run "rustdoc"          env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-fea
 run "public-api"       scripts/check-public-api.sh "${script_args[@]}"
 run "audit"            cargo audit
 run "deny"             cargo deny check
-run "feature-powerset" cargo hack check --feature-powerset --no-dev-deps
 run "unused-dependencies" cargo +nightly udeps --all-targets --all-features

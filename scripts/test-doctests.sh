@@ -48,5 +48,4 @@ fi
 
 for package in "${packages[@]}"; do
     cargo test --doc --package "$package" --all-features
-    cargo test --doc --package "$package"
 done

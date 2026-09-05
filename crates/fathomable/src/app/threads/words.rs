@@ -1,22 +1,24 @@
 // @okf-doc: /decisions/0032-placement-and-state.md
-//! The two words that describe a thread (ADR 0032).
+//! The words that describe a thread (ADR 0032, ADR 0053).
 //!
 //! A [`ThreadState`] is the *state* and the one colour a thread has (ADR
-//! 0039). The expanded thread's header and the threads pane say more: the
+//! 0039). The expanded thread's header and the review list say more: the
 //! *placement* word (`detached`, `edited`) when the lines moved or went,
-//! then the state word (`waiting`, `open`, `resolved`, `auto-resolved`)
-//! always, so where a thread's lines are never hides what it needs.
+//! then the state word (`waiting`, `open`, `resolved`) always, then
+//! `proposed` when an agent's newest reply proposes resolving, so where
+//! a thread's lines are never hides what it needs.
 
 use fathomable_core::annotations::{Placement, Thread};
 
 use crate::app::threads::ThreadState;
 
 /// The placement word, when the lines are not where the comment was
-/// written, and the state word.
+/// written, the state word, and whether `proposed` follows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Words {
     placement: Option<&'static str>,
     state: ThreadState,
+    proposed: bool,
 }
 
 impl Words {
@@ -31,6 +33,7 @@ impl Words {
         Self {
             placement,
             state: ThreadState::of(thread),
+            proposed: thread.proposes_resolution(),
         }
     }
 
@@ -40,19 +43,23 @@ impl Words {
         self.placement
     }
 
-    /// The state word's kind: waiting, open, resolved, or auto-resolved.
+    /// The state word's kind: waiting, open, or resolved.
     #[must_use]
     pub(crate) fn state(self) -> ThreadState {
         self.state
     }
 
+    /// Whether `proposed` follows the state word: the thread is open and
+    /// an agent's newest reply proposes resolving it (ADR 0053).
+    #[must_use]
+    pub(crate) fn proposed(self) -> bool {
+        self.proposed
+    }
+
     /// Whether the thread is resolved, however it is placed.
     #[must_use]
     pub(crate) fn is_resolved(self) -> bool {
-        matches!(
-            self.state,
-            ThreadState::Resolved | ThreadState::AutoResolved
-        )
+        self.state == ThreadState::Resolved
     }
 }
 
@@ -63,6 +70,5 @@ pub(crate) fn label(kind: ThreadState) -> &'static str {
         ThreadState::Waiting => "waiting",
         ThreadState::Open => "open",
         ThreadState::Resolved => "resolved",
-        ThreadState::AutoResolved => "auto-resolved",
     }
 }

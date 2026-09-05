@@ -42,7 +42,7 @@ theme, and docs use these words and no other for these ideas.
 | comment plus replies | **thread** | annotation (user-visible), note |
 | the opening message | **comment** | — |
 | a thread placed in text | **mark** (code only) | — |
-| four-way state | **`ThreadState`** (`waiting`, `open`, `resolved`, `auto-resolved`) | `MarkKind`, kind |
+| four-way state | **`ThreadState`** (`waiting`, `open`, `resolved`, `auto-resolved`; three-way since [0053](0053-resolution-is-the-users.md) dropped `auto-resolved`) | `MarkKind`, kind |
 | where a thread's lines are | **placement** (`anchored`, `edited`, `detached`) | — |
 | newest message is someone else's | **waiting** (user's chair), **pending** (agent's chair); `Thread::awaits(Party)` | `awaits_user`, `pending_for` |
 | git reachability filter | **reach** (`Reach`, `reachable`) | `Scope`, "in scope" |

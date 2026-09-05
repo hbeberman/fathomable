@@ -89,6 +89,8 @@ pub(crate) struct Entry {
     path: PathBuf,
     range: LineRange,
     kind: ThreadState,
+    /// An agent's newest reply proposes resolving it (ADR 0053).
+    proposed: bool,
 }
 
 impl Entry {
@@ -98,6 +100,10 @@ impl Entry {
 
     pub(crate) fn kind(&self) -> ThreadState {
         self.kind
+    }
+
+    pub(crate) fn proposed(&self) -> bool {
+        self.proposed
     }
 }
 
@@ -110,6 +116,8 @@ pub(crate) enum Row {
         path: PathBuf,
         range: LineRange,
         kind: ThreadState,
+        /// The state word is followed by `proposed` (ADR 0053).
+        proposed: bool,
         updated: u64,
         selected: bool,
         folded: bool,
@@ -269,6 +277,7 @@ impl App {
                     path: thread.path().to_path_buf(),
                     range,
                     kind,
+                    proposed: thread.proposes_resolution(),
                 };
                 Some((entry, theirs, thread.updated()))
             })
@@ -366,6 +375,7 @@ impl App {
             path: entry.path.clone(),
             range: entry.range,
             kind: entry.kind,
+            proposed: entry.proposed,
             updated: thread.updated(),
             selected: selected && folded,
             folded,

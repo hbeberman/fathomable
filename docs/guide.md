@@ -138,8 +138,9 @@ or `threads · workspace 12`):
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space T` hides and shows it) |
 
-Review list (`Space A`; its header reads `review  4 open  resolved hidden
-by newest agent reply`):
+Review list (`Space A`; its header reads `review  4 open  1 proposed
+resolved hidden  by newest agent reply`, the proposal count only while
+there is one):
 
 | Keys | Action |
 | --- | --- |
@@ -241,8 +242,12 @@ lists, emphasis, `inline code`, and fenced blocks coloured by their
 language, with a newline kept as a line break as in a GitHub comment;
 the text in `threads.jsonl` is the source you typed. Where the lines
 went and what state the thread is in are separate: an expanded thread's
-header reads `detached · auto-resolved` or `edited · waiting`,
-placement first, and a thread at its own lines shows the state alone. Edits made while Fathomable was not
+header reads `detached · resolved` or `edited · waiting`, placement
+first, and a thread at its own lines shows the state alone. A third
+word, `proposed`, follows when an agent's newest reply proposes
+resolving the thread (`waiting · proposed`): only you resolve, so the
+thread stays open and waiting until your `o` accepts the proposal or
+your reply keeps it going. Edits made while Fathomable was not
 running are followed too, on the next start, through the file's last-seen
 snapshot (section 5); commenting snapshots the file so there is always
 one. A file too large to snapshot, or whose snapshot was deleted, is
@@ -325,9 +330,11 @@ A thread is **waiting** on you when it is open and an agent wrote its
 newest message; your reply, resolve, or reopen ends the wait. Waiting
 threads have their own colour (`thread.waiting`) in the gutter
 bracket, the threads pane, and the review list, the status line
-counts them (`2 waiting`), the tree tags their files `↩`, and a reply
-landing while you read raises a toast (`reply on src/lib.rs:42`, or
-`reply on src/lib.rs:42, resolved` when the agent resolved it). `]r`
+counts them (`2 waiting`, and `1 proposed` before it while a thread on
+the document carries a proposal; `:status` has both totals), the tree
+tags their files `↩`, and a reply landing while you read raises a toast
+(`reply on src/lib.rs:42`, or `reply on src/lib.rs:42, proposes
+resolving` when the agent proposed closing it). `]r`
 and `[r` step through them — this file first, then the others in path
 order, wrapping — and expand each one, so holding `]r` reads every
 reply that needs an answer.
@@ -572,7 +579,7 @@ repository, and the tools are:
 | `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
 | `threads_list` | read the threads in the workspace, optionally `since` a Unix time or on one `path` — a file, or a directory to read the whole subtree — at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer; fails when `path` is neither |
 | `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |
-| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), optionally resolving each; `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
+| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`); `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
 | `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; fails when a named thread does not exist |
 
 Every tool accepts an optional `workspace`: a root, or a viewer name or

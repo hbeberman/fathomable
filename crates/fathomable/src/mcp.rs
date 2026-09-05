@@ -208,7 +208,8 @@ pub(crate) struct ReplyItem {
     thread: String,
     /// Reply text; Markdown.
     body: String,
-    /// Also resolve the thread.
+    /// Propose resolving the thread: the reply is badged and the thread
+    /// stays open, waiting for the user to close it.
     #[serde(default)]
     resolve: bool,
     /// First line the thread's lines are on now, when you rewrote them;
@@ -230,7 +231,8 @@ pub(crate) struct ReplyParams {
     /// Reply text for a single reply; Markdown.
     #[serde(default)]
     body: Option<String>,
-    /// Also resolve the thread (single reply).
+    /// Propose resolving the thread (single reply): the reply is badged
+    /// and the thread stays open, waiting for the user to close it.
     #[serde(default)]
     resolve: bool,
     /// First line the thread's lines are on now, when you rewrote them
@@ -657,7 +659,8 @@ impl Server {
 
     #[tool(
         description = "Reply to one thread (`thread`, `body`) or to several at once \
-                       (`replies`), each optionally resolving its thread. Prefer one call \
+                       (`replies`). `resolve: true` says you believe the thread is done; \
+                       it stays open and the user closes it. Prefer one call \
                        with `replies` for everything `threads_pending` handed you. If you \
                        rewrote the lines a thread is on, pass `line` and `end_line` so it \
                        follows them. Works with no viewer running; signs with your \
@@ -999,7 +1002,11 @@ impl Server {
             Ok(Response::Done) => Ok(format!(
                 "replied to {}{}",
                 item.thread,
-                if item.resolve { " and resolved it" } else { "" }
+                if item.resolve {
+                    ", proposing to resolve it"
+                } else {
+                    ""
+                }
             )),
             Ok(Response::Error(message)) | Err(message) => {
                 Err(format!("{}: {message}", item.thread))
@@ -1329,19 +1336,14 @@ fn headless_reply(
     if let Some(lines) = lines {
         follow_reply_lines(&mut store, root, thread, lines, when)?;
     }
-    let reply = Reply::new(author.clone(), when, body);
+    let reply = Reply::new(author, when, body);
     let reply = if resolve {
         reply.proposing_resolution()
     } else {
         reply
     };
     store.reply(thread, reply).map_err(|e| e.to_string())?;
-    if resolve {
-        store
-            .resolve(thread, author, when)
-            .map_err(|e| e.to_string())?;
-    }
-    tracing::info!(%thread, resolve, "agent reply added headlessly");
+    tracing::info!(%thread, proposes = resolve, "agent reply added headlessly");
     Ok(())
 }
 
@@ -1611,7 +1613,9 @@ mod tests {
         )?;
         let again = headless_list(&dirs, &root, None, Some(Path::new("a.md")))?;
         assert_eq!(again[0].replies().len(), 1);
-        assert_eq!(again[0].status(), Status::AutoResolved);
+        // The agent proposed; only the user resolves (ADR 0053).
+        assert_eq!(again[0].status(), Status::Open);
+        assert!(again[0].proposes_resolution());
         // A directory filter reads every thread under it, and only those.
         fs::create_dir_all(root.join("src"))?;
         fs::write(root.join("src/b.md"), "one\ntwo\n")?;

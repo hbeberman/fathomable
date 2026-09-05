@@ -899,9 +899,9 @@ fn describe(thread: &Thread, head: Option<&str>) -> Vec<String> {
         thread.path().display(),
         thread.range(),
         match thread.status() {
+            Status::Open if thread.proposes_resolution() => "open, proposed",
             Status::Open => "open",
             Status::Resolved => "resolved",
-            Status::AutoResolved => "auto-resolved",
         },
         if messages == 1 { "" } else { "s" }
     ));
@@ -1189,7 +1189,7 @@ mod tests {
         assert_eq!(fired.len(), 1);
         assert_eq!(fired[0].watch.on(), &other);
         assert_eq!(reg.watches().len(), 1);
-        store.resolve(&id, Author::User, 207)?;
+        store.resolve(&id, 207)?;
         let fired = reg.fire("s-1", store.threads(), 208)?;
         assert_eq!(fired.len(), 1);
         assert_eq!(fired[0].watch.remind(), std::slice::from_ref(&other));
@@ -1220,7 +1220,7 @@ mod tests {
             &other,
             Reply::new(Author::agent("bot").subscribed("s-1", "coder"), 202, "mine"),
         )?;
-        store.resolve(&id, Author::User, 203)?;
+        store.resolve(&id, 203)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
         let fired = reg.fire("s-1", store.threads(), 204)?;
         assert_eq!(fired.len(), 1);

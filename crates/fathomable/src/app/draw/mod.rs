@@ -871,7 +871,7 @@ fn status_style(theme: &Theme, status: LineStatus) -> Style {
 fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
     match kind {
         ThreadState::Open => theme.thread_open,
-        ThreadState::Resolved | ThreadState::AutoResolved => theme.thread_resolved,
+        ThreadState::Resolved => theme.thread_resolved,
         ThreadState::Waiting => theme.thread_waiting,
     }
 }
@@ -1272,6 +1272,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         let _ = write!(right, "  +{added} -{removed}");
     }
     let counts = [
+        (app.proposed_count(), "proposed"),
         (app.waiting_count(), "waiting"),
         (app.thread_counts().1, "threads"),
         (app.followed().len(), "followed"),
@@ -1625,6 +1626,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             path,
             range,
             kind,
+            proposed,
             updated,
             selected,
             folded,
@@ -1632,6 +1634,12 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             ..
         } => {
             let (status, status_style) = (label(*kind), mark_style(theme, *kind));
+            // The third word (ADR 0053), in the state's colour.
+            let status = if *proposed {
+                format!("{status} · proposed")
+            } else {
+                status.to_owned()
+            };
             let fold = if *folded { "  ▸" } else { "" };
             // Every header carries the path (ADR 0049), so either order
             // reads on its own.
@@ -1644,7 +1652,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                     format!("  L{range}  "),
                     if *dim { theme.info } else { theme.text },
                 ),
-                Span::styled(status.to_owned(), status_style),
+                Span::styled(status, status_style),
                 Span::styled(format!("  {}{fold}", format_age(*updated, now)), theme.info),
             ];
             list_selection_line(theme, spans, width, *selected)
@@ -1869,6 +1877,9 @@ pub(crate) fn expanded_header(
         left.push((" · ".to_owned(), Tone::Info));
     }
     left.push((label(words.state()).to_owned(), tone));
+    if words.proposed() {
+        left.push((" · proposed".to_owned(), tone));
+    }
     let watchers = app.watchers_of(thread.id());
     if !watchers.is_empty() {
         left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
@@ -1898,18 +1909,22 @@ pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Ent
         .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
         .count();
     let resolved = entries.len() - open;
+    let proposed = entries.iter().filter(|entry| entry.proposed()).count();
     let mut left = vec![
         (" review ".to_owned(), Tone::Key),
         (format!(" {open} open"), Tone::Info),
-        (
-            if review.resolved {
-                format!("  {resolved} resolved")
-            } else {
-                "  resolved hidden".to_owned()
-            },
-            Tone::Info,
-        ),
     ];
+    if proposed > 0 {
+        left.push((format!("  {proposed} proposed"), Tone::Info));
+    }
+    left.push((
+        if review.resolved {
+            format!("  {resolved} resolved")
+        } else {
+            "  resolved hidden".to_owned()
+        },
+        Tone::Info,
+    ));
     if review.file_only {
         left.push((format!("  {}", app.current_path().display()), Tone::Info));
     }

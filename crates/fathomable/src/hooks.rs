@@ -111,8 +111,9 @@ pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[Strin
          \n  {follow} {{ {paths}: [\"<files you will edit>\"], {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
          \nComments then reach you as your turns start and end. Never poll; after a wait, \
          just end your turn.{extra}\
-         \nAnswer one thread, or several in one call:\
-         \n  {reply} {{ {thread}: \"<thread id>\", {body}: \"…\", {resolve}: true }}\
+         \nAnswer one thread, or several in one call; `{resolve}: true` says you believe \
+         the thread is done, and the user closes it:\
+         \n  {reply} {{ {thread}: \"<thread id>\", {body}: \"…\" }}\
          \n  {reply} {{ {replies}: [ {{ {thread}, {body}, {resolve} }}, … ] }}\
          \nBe woken when a thread you are not following moves:\
          \n  {watch} {{ {on}: \"<thread id>\", {when}: \"{message}\" }}",
@@ -1129,6 +1130,21 @@ mod tests {
         }
         assert!(hello_text(Harness::Copilot, Path::new("/ws"), "s", &types).contains("detached"));
         assert!(!hello_text(Harness::Claude, Path::new("/ws"), "s", &types).contains("detached"));
+    }
+
+    /// The hello says `resolve` only proposes (ADR 0053), and its
+    /// single-reply example no longer carries it, so an agent copying
+    /// the example does not propose closing every thread it answers.
+    #[test]
+    fn hello_says_resolve_only_proposes() {
+        let types = ["coder".to_owned()];
+        let text = hello_text(Harness::Claude, Path::new("/ws"), "s-1", &types);
+        assert!(text.contains("the user closes it"), "{text}");
+        let single = text
+            .lines()
+            .find(|line| line.contains("<thread id>"))
+            .unwrap_or_default();
+        assert!(!single.contains("resolve"), "{single}");
     }
 
     /// A workspace that contains the cwd only by prefix — neither the

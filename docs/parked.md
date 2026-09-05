@@ -56,8 +56,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   open the user's editor, read the result back as replies. Origin: comment
   box discussion, [0005](decisions/0005-annotations.md). The draft-only
   hatch shipped in [0018](decisions/0018-comment-editor.md).
-- **Discouraging agent force-resolve.** Beyond the `auto_resolved` flag,
-  whether to warn or rate-limit. Origin: 0005.
 
 ## Mouse follow-ups
 

@@ -56,3 +56,4 @@ supersede rather than edit history.
 - [0050 Mouse menus and gestures](0050-mouse-menus-and-gestures.md)
 - [0051 Retire the one-release compatibility](0051-retire-one-release-compatibility.md)
 - [0052 File references open in the viewer](0052-goto-file.md)
+- [0053 Resolution is the user's](0053-resolution-is-the-users.md)

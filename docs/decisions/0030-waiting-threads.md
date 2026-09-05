@@ -45,7 +45,9 @@ most recent reply on*, so they can clear what needs them quickly.
   persists, and two viewers on one store agree. A resolved or
   auto-resolved thread is never waiting, so an agent's force-resolve
   with a final reply is not visited; the resolved section of the thread
-  list still shows it.
+  list still shows it. (Amended 2026-09-04 by
+  [0053](0053-resolution-is-the-users.md): an agent can no longer
+  resolve, so a reply that proposes resolving waits like any other.)
 - **Colour.** A waiting thread has its own mark state, drawn in the
   `annotation.waiting` face wherever a thread's state is coloured: the
   gutter bracket, the file-threads pane's dot, and the thread list's

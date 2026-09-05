@@ -211,3 +211,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     under the cursor names, at that line, in the viewer; a scheme keeps
     a link external for `gx`; `Alt-Left` is the way back
     ([0052](decisions/0052-goto-file.md)).
+44. **Resolution is the user's.** An agent's `resolve` proposes closing a
+    thread and nothing more: the thread stays open and waiting, its
+    headers read `waiting · proposed`, the status line and the review
+    list count proposals, and `o` closes it; the agent force-resolve
+    and the `auto-resolved` state go
+    ([0053](decisions/0053-resolution-is-the-users.md)).

@@ -33,7 +33,10 @@ across many agent sessions, in files any agent can read.
   (`user` or an agent-supplied name), timestamp, and body.
 - Resolution: an agent reply may carry `proposed_resolved`; only the user
   resolves. As an escape hatch an agent may force-resolve, and the thread is
-  then marked `auto_resolved` and shown distinctly in the TUI.
+  then marked `auto_resolved` and shown distinctly in the TUI. (Amended
+  2026-09-04 by [0053](0053-resolution-is-the-users.md): the escape
+  hatch and `auto_resolved` are gone; an agent's `resolve` only
+  proposes.)
 - Anchors are content hashes (`sha2`) of each annotated line plus a small
   context of neighboring lines. On refresh the anchor is re-located by hash;
   when the exact lines are gone the annotation is shown as detached at its

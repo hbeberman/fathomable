@@ -472,7 +472,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
 /// a resolved one, stay scoped to the dropped commit (ADR 0035).
 #[test]
 fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
-    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{Draft, LineRange, Store, Thread};
 
     let dir = fixture("rescope")?;
     git::init(&dir.0)?;
@@ -492,7 +492,7 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
     let kept = store.annotate(at(1, "kept"), text, 1)?;
     let gone = store.annotate(at(3, "lines gone"), text, 2)?;
     let done = store.annotate(at(1, "resolved"), text, 3)?;
-    store.resolve(&done, Author::User, 4)?;
+    store.resolve(&done, 4)?;
 
     let mut app = app_with(
         &dir,

@@ -484,7 +484,10 @@ pub enum MessageTarget {
     Reply(usize),
 }
 
-/// Whether a thread is open or how it was closed.
+/// Whether a thread is open or resolved.
+///
+/// Only the user resolves (ADR 0053); an agent's reply can propose it,
+/// see [`Thread::proposes_resolution`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -492,8 +495,6 @@ pub enum Status {
     Open,
     /// Resolved by the user.
     Resolved,
-    /// Force-resolved by an agent (ADR 0005 `auto_resolved`).
-    AutoResolved,
 }
 
 /// An annotation with its replies and status.
@@ -589,10 +590,17 @@ impl Thread {
         &self.replies
     }
 
-    /// Open, resolved, or auto-resolved.
+    /// Open or resolved.
     #[must_use]
     pub fn status(&self) -> Status {
         self.status
+    }
+
+    /// Whether the thread is open and its newest reply proposes resolving
+    /// it (ADR 0053), so the user's `o` is all it needs.
+    #[must_use]
+    pub fn proposes_resolution(&self) -> bool {
+        self.status == Status::Open && self.replies.last().is_some_and(Reply::proposes_resolution)
     }
 
     /// When the lines under the thread were last rewritten, if the user
@@ -773,10 +781,10 @@ enum Event {
         body: String,
         created: u64,
     },
+    /// The user resolved the thread; only the user can (ADR 0053).
     Resolve {
         v: u32,
         thread: ThreadId,
-        by: Author,
         created: u64,
     },
     Reopen {
@@ -1020,17 +1028,16 @@ impl Store {
         })
     }
 
-    /// Resolve the thread `id`; an agent author marks it auto-resolved.
+    /// Resolve the thread `id`, as the user.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the thread is unknown or the file cannot
     /// be appended to.
-    pub fn resolve(&mut self, id: &ThreadId, by: Author, now: u64) -> Result<(), StoreError> {
+    pub fn resolve(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
         self.commit(Event::Resolve {
             v: FORMAT_VERSION,
             thread: id.clone(),
-            by,
             created: now,
         })
     }
@@ -1247,21 +1254,12 @@ impl Store {
                 thread.updated = thread.updated.max(created);
             }
             Event::Resolve {
-                thread,
-                by,
-                created,
-                ..
+                thread, created, ..
             } => {
                 let thread = self.thread_mut(&thread)?;
                 thread.updated = thread.updated.max(created);
-                if by.is_user() {
-                    thread.edited = None;
-                }
-                thread.status = if by.is_user() {
-                    Status::Resolved
-                } else {
-                    Status::AutoResolved
-                };
+                thread.edited = None;
+                thread.status = Status::Resolved;
             }
             Event::Reopen {
                 thread, created, ..
@@ -1466,7 +1464,7 @@ mod tests {
         store.reply(&id, Reply::new(Author::User, 12, "ok"))?;
         assert!(!waiting(&store));
         store.reply(&id, Reply::new(Author::agent("claude"), 13, "done"))?;
-        store.resolve(&id, Author::User, 14)?;
+        store.resolve(&id, 14)?;
         assert!(!waiting(&store), "a resolved thread never waits");
         Ok(())
     }
@@ -1722,7 +1720,7 @@ mod tests {
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
         assert!(thread.awaits(Party::Subscriber("s-1")));
-        store.resolve(&id, Author::User, 13)?;
+        store.resolve(&id, 13)?;
         let thread = store
             .thread(&id)
             .ok_or(StoreError::parse(0, "gone".into()))?;
@@ -1770,8 +1768,8 @@ mod tests {
             TEXT,
             102,
         )?;
-        store.resolve(&other, Author::agent("bot"), 103)?;
-        store.resolve(&id, Author::User, 104)?;
+        store.resolve(&other, 103)?;
+        store.resolve(&id, 104)?;
         store.reopen(&id, 105)?;
 
         let again = Store::open(&file.0)?;
@@ -1784,11 +1782,12 @@ mod tests {
         assert_eq!(thread.status(), Status::Open);
         assert_eq!(thread.replies().len(), 1);
         assert!(thread.replies()[0].proposes_resolution());
+        assert!(thread.proposes_resolution());
         assert_eq!(thread.replies()[0].author().to_string(), "claude");
         assert_eq!(thread.updated(), 105);
         assert_eq!(
             again.thread(&other).map(super::Thread::status),
-            Some(Status::AutoResolved)
+            Some(Status::Resolved)
         );
         assert_eq!(again.thread(&other).map(super::Thread::updated), Some(103));
         assert_eq!(again.for_path(Path::new("README.md")).count(), 1);

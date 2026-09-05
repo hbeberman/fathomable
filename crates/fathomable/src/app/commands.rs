@@ -134,6 +134,7 @@ impl App {
                 if self.auto { "on" } else { "off" }.to_owned(),
             ),
             ("changes".to_owned(), self.queue.len().to_string()),
+            ("proposed".to_owned(), self.proposed_total().to_string()),
             ("waiting".to_owned(), self.waiting_total().to_string()),
             ("followed".to_owned(), followed),
             ("subscribers".to_owned(), subscribers),

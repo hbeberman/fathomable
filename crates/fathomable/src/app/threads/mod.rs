@@ -18,6 +18,7 @@ pub(crate) mod detached;
 pub(crate) mod list;
 pub(crate) mod open;
 pub(crate) mod pane;
+pub(crate) mod proposed;
 pub(crate) mod reach;
 pub(crate) mod reanchor;
 pub(crate) mod stubs;
@@ -44,7 +45,6 @@ use crate::app::{App, Focus, Popup};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ThreadState {
     Resolved,
-    AutoResolved,
     Open,
     /// Open, and an agent wrote the newest message (ADR 0030).
     Waiting,
@@ -58,7 +58,6 @@ impl ThreadState {
         match thread.status() {
             Status::Open => Self::Open,
             Status::Resolved => Self::Resolved,
-            Status::AutoResolved => Self::AutoResolved,
         }
     }
 }
@@ -733,8 +732,9 @@ impl App {
         }
     }
 
-    /// A reply arriving over the socket (ADR 0014), optionally resolving the
-    /// thread; the open panel is refreshed when it shows that thread.
+    /// A reply arriving over the socket (ADR 0014), optionally proposing
+    /// that the thread be resolved (ADR 0053); the thread stays open either
+    /// way, and the open panel is refreshed when it shows that thread.
     pub(super) fn agent_reply(
         &mut self,
         id: &ThreadId,
@@ -755,23 +755,20 @@ impl App {
         if let Some(lines) = lines {
             crate::app::threads::open::follow_reply_lines(store, &root, id, lines, when)?;
         }
-        let reply = Reply::new(author.clone(), when, body);
+        let reply = Reply::new(author, when, body);
         let reply = if resolve {
             reply.proposing_resolution()
         } else {
             reply
         };
         store.reply(id, reply).map_err(|e| e.to_string())?;
-        if resolve {
-            store.resolve(id, author, when).map_err(|e| e.to_string())?;
-        }
-        tracing::info!(%id, resolve, "agent reply added");
+        tracing::info!(%id, proposes = resolve, "agent reply added");
         // The toast a store reload would raise (ADR 0030), for the viewer
-        // the reply came through; a resolving reply says so (ADR 0032).
+        // the reply came through; a proposing reply says so (ADR 0053).
         if let Some(thread) = store.thread(id) {
             let place = format!("{}:{}", thread.path().display(), thread.range().start());
             self.push_toast(if resolve {
-                format!("reply on {place}, resolved")
+                format!("reply on {place}, proposes resolving")
             } else {
                 format!("reply on {place}")
             });
@@ -815,7 +812,7 @@ impl App {
         };
         let open = store.thread(id).is_some_and(|t| t.status() == Status::Open);
         let result = if open {
-            store.resolve(id, Author::User, now())
+            store.resolve(id, now())
         } else {
             store.reopen(id, now())
         };

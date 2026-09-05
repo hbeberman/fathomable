@@ -302,7 +302,7 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
     let screen = rows.join("\n");
     assert!(
         rows.iter()
-            .any(|row| row.contains("auto-resolved") && row.contains("fold")),
+            .any(|row| row.contains("waiting · proposed") && row.contains("fold")),
         "header carries the state and the keys:\n{screen}"
     );
     assert!(
@@ -1061,12 +1061,15 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     assert_eq!(reply, Response::Done);
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
-        Some("reply on README.md:3, resolved")
+        Some("reply on README.md:3, proposes resolving")
     );
     let thread = app
         .thread(&id)
         .ok_or_else(|| anyhow::anyhow!("thread lost"))?;
-    assert_eq!(thread.status(), Status::AutoResolved);
+    // The agent proposed; the thread stays open and waiting (ADR 0053).
+    assert_eq!(thread.status(), Status::Open);
+    assert!(thread.proposes_resolution());
+    assert!(thread.awaits(fathomable_core::annotations::Party::User));
     assert_eq!(thread.replies()[0].author(), &author);
     assert!(thread.replies()[0].proposes_resolution());
     assert_eq!(
@@ -1074,7 +1077,9 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
         "reviewer (claude-code)"
     );
     app.open(Path::new("README.md"));
-    assert_eq!(app.thread_counts(), (0, 1));
+    assert_eq!(app.thread_counts(), (1, 1));
+    assert_eq!(app.proposed_count(), 1);
+    assert_eq!(app.waiting_count(), 1);
 
     let reply = app.handle_request(Request::ThreadReply {
         thread: serde_json::from_str(r#""9-9-9""#)?,
@@ -1281,5 +1286,86 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
     app.thread_reply();
     type_in(&mut app, "a reply from the list");
     draw(&mut app, "compose over list")?;
+    Ok(())
+}
+
+/// An agent's `resolve` only proposes (ADR 0053): the thread stays
+/// open and waiting, the status line and the review header count it,
+/// the entry header reads `waiting · proposed`, a later plain reply
+/// withdraws it, and the user's `o` is what closes the thread.
+#[test]
+fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    let dir = testing::workspace("threads-proposed", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(80, 24);
+    app.start_comment();
+    type_in(&mut app, "rename this");
+    app.compose_submit();
+    let id = app.marks()[0].id().clone();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let render = |app: &App| -> anyhow::Result<String> {
+        let mut terminal = Terminal::new(TestBackend::new(80, 24))?;
+        terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
+        let buffer = terminal.backend().buffer().clone();
+        Ok((0..buffer.area.height)
+            .map(|y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n"))
+    };
+
+    app.agent_reply(&id, Author::agent("bot"), "done".to_owned(), true, None)
+        .map_err(anyhow::Error::msg)?;
+    let thread = app.thread(&id).context("thread lost")?;
+    assert_eq!(thread.status(), Status::Open, "an agent cannot resolve");
+    assert!(thread.proposes_resolution());
+    assert_eq!(app.proposed_count(), 1);
+    assert_eq!(app.proposed_total(), 1);
+    assert_eq!(app.waiting_count(), 1, "a proposal is still waiting");
+    let screen = render(&app)?;
+    assert!(screen.contains("1 proposed  1 waiting"), "{screen}");
+
+    app.open_review();
+    let rows = app.review_rows(60);
+    assert_eq!(rows.entries.len(), 1, "a proposed thread is not hidden");
+    assert!(rows.entries[0].proposed());
+    assert!(matches!(
+        rows.rows.first(),
+        Some(Row::Header { proposed: true, .. })
+    ));
+    let screen = render(&app)?;
+    assert!(screen.contains("1 open  1 proposed"), "{screen}");
+    assert!(screen.contains("waiting · proposed"), "{screen}");
+    app.close_review();
+
+    // Only the newest reply is read: a plain reply withdraws the proposal.
+    app.agent_reply(
+        &id,
+        Author::agent("bot"),
+        "one more thing".to_owned(),
+        false,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
+    assert_eq!(app.proposed_count(), 0);
+    assert_eq!(app.waiting_count(), 1);
+    app.agent_reply(&id, Author::agent("bot"), "done now".to_owned(), true, None)
+        .map_err(anyhow::Error::msg)?;
+    assert_eq!(app.proposed_count(), 1);
+
+    // The user's `o` accepts it.
+    app.thread_toggle_resolved();
+    assert_eq!(app.message(), Some("resolved"));
+    let thread = app.thread(&id).context("thread lost")?;
+    assert_eq!(thread.status(), Status::Resolved);
+    assert!(!thread.proposes_resolution());
+    assert_eq!(app.proposed_count(), 0);
+    assert_eq!(app.waiting_count(), 0);
     Ok(())
 }

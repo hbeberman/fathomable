@@ -692,24 +692,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('A')]],
+        &[&[c(' '), c('t')]],
         A::Review,
         "Space menu",
         "review list: open, or close",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('t')]],
+        &[&[c(' '), c('T')]],
         A::ThreadsPaneFocus,
         "Space menu",
         "threads pane: focus, or return",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('T')]],
-        A::ThreadsPaneToggle,
-        "Space menu",
-        "threads pane: hide, or show again",
     ),
     bind(
         W::Any,
@@ -787,6 +780,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::DeleteThread,
         "Space menu",
         "threads: delete the thread here",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('p')]],
+        A::ThreadsPaneToggle,
+        "Space menu",
+        "threads: hide the pane, or show it again",
     ),
     bind(
         W::Any,
@@ -1591,7 +1591,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "z", "x", "n", "r", "o", "e", "d"]
+            ["c", "z", "x", "n", "r", "o", "e", "d", "p"]
         );
         assert_eq!(
             keys(Where::Review, &[c(' '), c('v')]),

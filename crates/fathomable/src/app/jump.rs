@@ -217,7 +217,7 @@ mod tests {
         // Back on, opening the review list is leaving too.
         app.set_auto_jump(true);
         press_key(&mut app, KeyCode::Char(' '));
-        press_key(&mut app, KeyCode::Char('A'));
+        press_key(&mut app, KeyCode::Char('t'));
         assert!(!app.auto_jump());
 
         // And so is starting a selection.

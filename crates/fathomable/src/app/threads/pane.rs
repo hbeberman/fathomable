@@ -252,7 +252,7 @@ impl App {
             .saturating_sub(body - 1)
     }
 
-    /// `Space t`: show and focus the pane, or hand the keys back to the
+    /// `Space T`: show and focus the pane, or hand the keys back to the
     /// text when it has them; the pane stays either way.
     pub(crate) fn toggle_threads_pane(&mut self) {
         if self.focus == Focus::ThreadsPane {
@@ -262,7 +262,7 @@ impl App {
         }
     }
 
-    /// `Space T`: hide the pane, or show it again without taking the
+    /// `Space c p`: hide the pane, or show it again without taking the
     /// keys; the tree keeps the rail if it is shown.
     pub(crate) fn toggle_threads_pane_shown(&mut self) {
         if !self.rail.threads {
@@ -558,7 +558,7 @@ mod tests {
 
     /// The pane shows with the tree hidden and takes the whole rail;
     /// beside the tree its split is fixed whatever the thread count, and
-    /// only a drag changes it. `Space e`, `E`, `t`, and `T` show, hide,
+    /// only a drag changes it. `Space e`, `E`, `T`, and `c p` show, hide,
     /// and focus each pane on its own.
     #[test]
     fn the_rail_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
@@ -567,8 +567,8 @@ mod tests {
         assert_eq!(app.rail_width(), 0);
         assert_eq!(app.threads_pane_height(), 0);
 
-        // `Space t` with nothing shown: the pane alone fills the rail.
-        press(&mut app, " t");
+        // `Space T` with nothing shown: the pane alone fills the rail.
+        press(&mut app, " T");
         assert_eq!(app.focus(), Focus::ThreadsPane);
         assert!(app.tree().is_none());
         assert_eq!(app.rail_width(), 32);
@@ -582,8 +582,8 @@ mod tests {
             column[2]
         );
 
-        // `Space t` again hands the keys back; the pane stays.
-        press(&mut app, " t");
+        // `Space T` again hands the keys back; the pane stays.
+        press(&mut app, " T");
         assert_eq!(app.focus(), Focus::View);
         assert!(app.threads_pane_shown());
 
@@ -623,7 +623,7 @@ mod tests {
         assert_eq!(app.threads_pane_height(), 12);
         assert_eq!(app.tree_rows(), top - 4);
 
-        // `Space E` hides the tree and leaves the pane; `Space T` hides
+        // `Space E` hides the tree and leaves the pane; `Space c p` hides
         // the pane, and with both gone the rail goes. Both keys show
         // their pane again without taking the keys.
         app.focus_threads_pane();
@@ -636,11 +636,11 @@ mod tests {
             "the keys stay with the pane"
         );
         assert_eq!(app.rail_width(), 32);
-        press(&mut app, " T");
+        press(&mut app, " cp");
         assert!(!app.threads_pane_shown());
         assert_eq!(app.focus(), Focus::View);
         assert_eq!(app.rail_width(), 0);
-        press(&mut app, " T");
+        press(&mut app, " cp");
         assert!(app.threads_pane_shown(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
         press(&mut app, " E");

@@ -112,7 +112,7 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
   pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md)).
 - **Stub**: the condensed block a thread shows under its lines, collapsed
   to two rows or expanded to the whole thread.
-- **Review list**: the `Space A` view of every thread on the work.
+- **Review list**: the `Space t` view of every thread on the work.
 - **Checkpoint**: a content of one file the reader recorded on purpose, on
   that file's **checkpoint timeline**; a **workspace checkpoint** records
   every file that moved. Last seen is automatic; a checkpoint is not.

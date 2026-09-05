@@ -759,7 +759,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
 }
 
 /// Esc leaves a pane where it is; its Space key focuses it or hands
-/// the keys back, and the capital hides it (ADR 0010, ADR 0049).
+/// the keys back, and `Space E` or `Space c p` hides it (ADR 0010, ADR 0049).
 #[test]
 fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -777,32 +777,33 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
         press(app, KeyCode::Char(ch));
     };
 
-    space(&mut app, 't');
+    space(&mut app, 'T');
     assert_eq!(app.focus(), Focus::ThreadsPane);
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.focus(), Focus::View);
     assert!(app.threads_pane_shown(), "Esc leaves the pane open");
-    space(&mut app, 't');
+    space(&mut app, 'T');
     assert_eq!(
         app.focus(),
         Focus::ThreadsPane,
-        "Space t returns to the pane"
+        "Space T returns to the pane"
     );
-    space(&mut app, 't');
-    assert_eq!(app.focus(), Focus::View, "Space t on the pane hands back");
-    assert!(app.threads_pane_shown());
     space(&mut app, 'T');
-    assert!(!app.threads_pane_shown(), "Space T hides it");
+    assert_eq!(app.focus(), Focus::View, "Space T on the pane hands back");
+    assert!(app.threads_pane_shown());
+    space(&mut app, 'c');
+    press(&mut app, KeyCode::Char('p'));
+    assert!(!app.threads_pane_shown(), "Space c p hides it");
 
-    space(&mut app, 'A');
+    space(&mut app, 't');
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Review);
-    space(&mut app, 'A');
+    space(&mut app, 't');
     assert!(
         !app.review_list().is_open(),
-        "Space A on the focused list closes it"
+        "Space t on the focused list closes it"
     );
-    space(&mut app, 'A');
+    space(&mut app, 't');
     press(&mut app, KeyCode::Esc);
     assert!(
         !app.review_list().is_open(),

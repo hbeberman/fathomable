@@ -177,7 +177,10 @@ result.
 - `Space e` shows and focuses the tree pane, or returns focus when it
   is focused; `Space E` hides it and leaves the threads pane, and shows
   it again without taking the keys. `Space t` / `Space T` do the same
-  for the threads pane. `Space r` opens the rail
+  for the threads pane. Amended 2026-09-04: **`Space t` is the review
+  list**, the one place that shows every thread, so the lowercase key
+  reaches it; `Space T` focuses the threads pane or returns, and `Space
+  c p` hides or shows it. `Space A` is unbound. `Space r` opens the rail
   submenu: `r` re-reads the directories, `i` toggles ignored entries,
   `.` reveals the current file in the tree, expanding to it and moving
   the tree highlight. `R` and `I` in the tree pane stay as aliases.
@@ -277,15 +280,16 @@ result.
 
 ```
 Space e / E       tree pane: focus or return / hide
-Space t / T       threads pane: focus or return / hide
+Space t           review list (s sort, x resolved, f file, z fold)
+Space T           threads pane: focus or return
 Space r r/i/.     rail: re-read the tree, toggle ignored, reveal this file
 Space f / F       file picker / with ignored
 Space o           recent files
-Space A           review list (s sort, x resolved, f file, z fold)
 Space c c         toggle stub visibility
 Space c z         expand / fold all stubs
 Space c x         toggle resolved stubs
 Space c n/r/o/e/d new thread here, reply, resolve or reopen, edit, delete
+Space c p         threads pane: hide / show
 Space v s/d/D     source, git diff, diff last seen (gs gd gD stay)
 Space v r         checkpoint diff (h/l page, b base, t target)
 Space v c / C     checkpoint this file / the workspace

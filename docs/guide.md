@@ -114,11 +114,12 @@ The `Space` menu, from any pane:
 | --- | --- |
 | `Space e`, `Space E` | tree pane: show and focus or return focus; hide or show again without taking the keys (the threads pane keeps the rail) |
 | `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
-| `Space A` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
-| `Space t`, `Space T` | threads pane: show and focus or return focus; hide or show again without taking the keys |
+| `Space t` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
+| `Space T` | threads pane: show and focus, or return focus |
 | `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
 | `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
+| `Space c p` | threads: hide the pane, or show it again without taking the keys |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space v r`, `Space v g` | view: toggle the checkpoint diff (`CHECK`), opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
@@ -136,9 +137,9 @@ or `threads · workspace 12`):
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads (the review list shares the flag) |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
-| `Esc` | back to the text; the pane stays (`Space T` hides and shows it) |
+| `Esc` | back to the text; the pane stays (`Space c p` hides and shows it) |
 
-Review list (`Space A`; its header reads `review  4 open  1 proposed
+Review list (`Space t`; its header reads `review  4 open  1 proposed
 resolved hidden  by newest agent reply`, the proposal count only while
 there is one):
 
@@ -151,7 +152,7 @@ there is one):
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `s`, `x`, `f`, `z` | sort by newest agent reply or by file and line; show or hide resolved threads (the threads pane shares the flag); only this file; fold the entry |
-| `Esc` | close the list, back to the document (`Space A` does too) |
+| `Esc` | close the list, back to the document (`Space t` does too) |
 
 The draft, a comment, reply, or edit written in the thread's rows:
 
@@ -298,7 +299,7 @@ go: a reply becomes the newest message under the cursor, a new comment
 becomes a stub.
 
 The left column is the **rail**: the tree pane above the **threads
-pane**, each shown or hidden on its own (`Space e`/`E`, `Space t`/`T`),
+pane**, each shown or hidden on its own (`Space e`/`E`, `Space T`/`c p`),
 the rail drawn while either is. The threads pane lists this file's
 threads in line order or, after `s`, the whole workspace's by file and
 line, resolved ones hidden until `x` shows them: `●` open or `✓`
@@ -324,7 +325,7 @@ uppercase crosses files: `]c`/`[c` step to the previous or next thread
 of this file, wrapping, and `]C`/`[C` across the workspace, files in
 path order, opening the file they land in.
 
-`Space A` shows the whole review at once as an inbox: every thread on
+`Space t` shows the whole review at once as an inbox: every thread on
 the current work (the ones whose commit `HEAD` can reach), the ones an
 agent spoke in last at the top, newest first, then the rest by their
 newest message; `s` sorts by file and line instead. Resolved threads

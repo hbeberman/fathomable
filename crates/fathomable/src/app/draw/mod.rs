@@ -375,7 +375,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
         ("Space e", "browse the tree".to_owned()),
-        ("Space A", "review the threads".to_owned()),
+        ("Space t", "review the threads".to_owned()),
         ("Space ?", "list every key".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -1948,7 +1948,7 @@ pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Ent
         hints.push(HintOf::keyed(place, Action::Escape, ""));
         hints
     } else {
-        vec![HintOf::new("", "click or Space A to focus", &[])]
+        vec![HintOf::new("", "click or Space t to focus", &[])]
     };
     Header::new(left, hints)
 }

@@ -19,7 +19,9 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+        # rust-toolchain.toml pins the version; name it here so the pinned
+        # toolchain is the one that gets clippy and rustfmt.
+        run: rustup toolchain install 1.97.0 --profile minimal --component clippy,rustfmt
       - name: Install nightly Rust for public API scan
         run: rustup toolchain install nightly --profile minimal
       - name: Install system tools

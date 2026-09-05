@@ -8,9 +8,7 @@
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
 //! `agents` block (ADR 0040), the `sidebar` (ADR 0057; `rail` in 0049) and
 //! `threads` blocks and the reserved, still empty `checkpoints` block
-//! (ADR 0049) are understood; a
-//! `follow` block from before the rename is an error that names where
-//! each setting went.
+//! (ADR 0049) are understood.
 //!
 //! # Examples
 //!
@@ -284,16 +282,6 @@ impl Default for WatchConfig {
     }
 }
 
-/// Where each setting of the retired `follow` block lives now (ADR 0047).
-const FOLLOW_MOVED: [(&str, &str); 6] = [
-    ("auto", "jump.auto"),
-    ("jump-debounce", "jump.debounce"),
-    ("toast", "jump.toast"),
-    ("ignore", "watch.ignore"),
-    ("hint-debounce", "watch.debounce"),
-    ("seen-idle", "viewer.seen-idle"),
-];
-
 impl Config {
     /// The defaults, as if `config.kdl` were empty.
     #[must_use]
@@ -399,38 +387,6 @@ impl Config {
                             }
                         }
                     }
-                }
-                "follow" => {
-                    // The block before ADR 0047: say where each setting went.
-                    let moved: Vec<String> = node
-                        .children()
-                        .map(|children| {
-                            children
-                                .nodes()
-                                .iter()
-                                .map(|child| {
-                                    let name = child.name().value();
-                                    FOLLOW_MOVED
-                                        .iter()
-                                        .find(|(old, _)| *old == name)
-                                        .map_or_else(
-                                            || format!("`{name}` is unknown"),
-                                            |(_, new)| format!("`{name}` is now `{new}`"),
-                                        )
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    let detail = if moved.is_empty() {
-                        "its settings are now `jump`, `watch`, and `viewer.seen-idle`".to_owned()
-                    } else {
-                        moved.join(", ")
-                    };
-                    return Err(ConfigError {
-                        path: None,
-                        line,
-                        message: format!("`follow` moved: {detail}"),
-                    });
                 }
                 "markdown" => {
                     let Some(children) = node.children() else {
@@ -893,26 +849,6 @@ checkpoints {
         assert!(config.threads().stubs_resolved);
         assert_eq!(Config::default().threads(), &ThreadsConfig::default());
         assert_eq!(Config::default().sidebar(), &SidebarConfig::default());
-    }
-
-    /// A `follow` block from before ADR 0047 is refused with the new home
-    /// of each setting it holds.
-    #[test]
-    fn a_follow_block_names_where_each_setting_went() {
-        let error = Config::parse(
-            "follow {
-    auto #true
-    hint-debounce 50
-    bogus 1
-}",
-        )
-        .err()
-        .map(|e| e.to_string())
-        .unwrap_or_default();
-        assert_eq!(
-            error,
-            "config line 1: `follow` moved: `auto` is now `jump.auto`, `hint-debounce` is now `watch.debounce`, `bogus` is unknown"
-        );
     }
 
     #[test]

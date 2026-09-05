@@ -1151,6 +1151,72 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// An agent starts a thread over the socket (ADR 0061): the comment is
+/// the agent's, so the thread waits on the user from birth, the viewer
+/// toasts it and names the agent on the comment, the user cannot edit
+/// that comment, and the cursor stays where it was. A bad path or range
+/// is refused.
+#[test]
+fn socket_requests_start_a_thread() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-socket-start", testing::README)?;
+    let mut app = app(&dir)?;
+    let before = app.view().cursor_source_line();
+    let author = Author::agent("reviewer").subscribed("s-1", "coder");
+    let reply = app.handle_request(Request::ThreadStart {
+        path: PathBuf::from("README.md"),
+        range: LineRange::new(2, 3),
+        author: author.clone(),
+        body: "look here".to_owned(),
+    });
+    let Response::Threads(started) = reply else {
+        anyhow::bail!("start answered {reply:?}");
+    };
+    assert_eq!(started.len(), 1);
+    let id = started[0].id().clone();
+    assert_eq!(started[0].author(), &author);
+    assert_eq!(started[0].comment(), "look here");
+    assert_eq!(started[0].range(), LineRange::new(2, 3));
+    assert!(started[0].awaits_user() && !started[0].awaits_agent());
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("comment on README.md:2 from reviewer (coder)")
+    );
+    assert_eq!(app.view().cursor_source_line(), before);
+    assert_eq!(app.waiting_count(), 1);
+    assert_eq!(
+        app.message_for(&id, MessageTarget::Comment),
+        Some(("look here", false))
+    );
+    // The review list names the agent on the comment's row.
+    app.open_review();
+    let rows = app.review_rows(100);
+    assert!(
+        rows.rows.iter().any(|row| matches!(
+            row,
+            Row::Message { author, message: 0, .. } if author == "reviewer"
+        )),
+        "{:?}",
+        rows.rows
+    );
+
+    for (path, range, wrong) in [
+        ("missing.md", LineRange::new(1, 1), "cannot read"),
+        ("README.md", LineRange::new(400, 401), "past the end"),
+    ] {
+        let reply = app.handle_request(Request::ThreadStart {
+            path: PathBuf::from(path),
+            range,
+            author: author.clone(),
+            body: "?".to_owned(),
+        });
+        assert!(
+            matches!(&reply, Response::Error(message) if message.contains(wrong)),
+            "{path}: {reply:?}"
+        );
+    }
+    Ok(())
+}
+
 fn draft(app: &App) -> anyhow::Result<(String, Cursor)> {
     let Some(Popup::Compose(compose)) = app.popup() else {
         anyhow::bail!("no draft is open");

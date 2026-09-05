@@ -19,11 +19,11 @@
 //!
 //! ```no_run
 //! use std::path::Path;
-//! use fathomable_core::annotations::{Draft, LineRange, Store};
+//! use fathomable_core::annotations::{Author, Draft, LineRange, Store};
 //!
 //! let mut store = Store::open("/tmp/threads.jsonl")?;
 //! let text = "# Title\n\nalpha\nbeta\n";
-//! let draft = Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename these");
+//! let draft = Draft::new(Author::User, Path::new("README.md"), LineRange::new(3, 4), "rename these");
 //! let id = store.annotate(draft, text, 1_700_000_000)?;
 //! assert_eq!(store.thread(&id).map(|t| t.snippet()), Some("alpha\nbeta"));
 //! # Ok::<(), fathomable_core::annotations::StoreError>(())
@@ -277,6 +277,14 @@ pub enum Author {
     },
 }
 
+impl Default for Author {
+    /// The user: what a record written before ADR 0061 means by saying
+    /// nothing.
+    fn default() -> Self {
+        Self::User
+    }
+}
+
 impl Author {
     /// An agent known only by `name`.
     #[must_use]
@@ -520,6 +528,10 @@ pub struct Thread {
     anchor: Anchor,
     created: u64,
     updated: u64,
+    /// Who wrote the comment (ADR 0061); the user unless the record says
+    /// otherwise, so it is written only for an agent.
+    #[serde(default, skip_serializing_if = "Author::is_user")]
+    author: Author,
     comment: String,
     replies: Vec<Reply>,
     status: Status,
@@ -548,6 +560,12 @@ impl Thread {
     #[must_use]
     pub fn id(&self) -> &ThreadId {
         &self.id
+    }
+
+    /// Who wrote the comment that opened the thread (ADR 0061).
+    #[must_use]
+    pub fn author(&self) -> &Author {
+        &self.author
     }
 
     /// Workspace-relative path of the annotated file.
@@ -653,7 +671,7 @@ impl Thread {
     #[must_use]
     pub fn last_act(&self) -> (&Author, u64) {
         let mut act = (
-            &Author::User,
+            &self.author,
             self.comment_edited
                 .map_or(self.created, |at| at.max(self.created)),
         );
@@ -711,9 +729,10 @@ impl Thread {
     }
 }
 
-/// What the user supplies to start a thread.
+/// What starts a thread: who is commenting, where, and what they say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Draft {
+    author: Author,
     path: PathBuf,
     range: LineRange,
     comment: String,
@@ -721,10 +740,14 @@ pub struct Draft {
 }
 
 impl Draft {
-    /// A comment on `range` of the workspace-relative `path`.
+    /// `author`'s comment on `range` of the workspace-relative `path`.
+    ///
+    /// The viewer passes the user; an agent's `thread_start` passes the
+    /// agent (ADR 0061).
     #[must_use]
-    pub fn new(path: &Path, range: LineRange, comment: impl Into<String>) -> Self {
+    pub fn new(author: Author, path: &Path, range: LineRange, comment: impl Into<String>) -> Self {
         Self {
+            author,
             path: path.to_path_buf(),
             range,
             comment: comment.into(),
@@ -791,6 +814,10 @@ enum Event {
         snippet: String,
         anchor: Anchor,
         created: u64,
+        /// Who wrote the comment; absent, and the user's, on records
+        /// written before ADR 0061.
+        #[serde(default, skip_serializing_if = "Author::is_user")]
+        author: Author,
         comment: String,
         /// Absent in version 1 records, which read as unscoped.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1017,6 +1044,7 @@ impl Store {
             snippet,
             anchor,
             created: now,
+            author: draft.author,
             comment: draft.comment,
             commit: draft.commit,
             context,
@@ -1231,6 +1259,7 @@ impl Store {
                 snippet,
                 anchor,
                 created,
+                author,
                 comment,
                 commit,
                 context,
@@ -1244,6 +1273,7 @@ impl Store {
                     anchor,
                     created,
                     updated: created,
+                    author,
                     comment,
                     replies: Vec::new(),
                     status: Status::Open,
@@ -1492,7 +1522,12 @@ mod tests {
         let file = TempFile::new("waiting")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(3, 3),
+                "why?",
+            ),
             TEXT,
             10,
         )?;
@@ -1513,7 +1548,12 @@ mod tests {
         let file = TempFile::new("edit")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(3, 3),
+                "why?",
+            ),
             TEXT,
             10,
         )?;
@@ -1556,12 +1596,22 @@ mod tests {
         let file = TempFile::new("delete")?;
         let mut store = Store::open(&file.0)?;
         let keep = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "keep"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "keep",
+            ),
             TEXT,
             10,
         )?;
         let gone = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "gone"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(3, 3),
+                "gone",
+            ),
             TEXT,
             11,
         )?;
@@ -1605,7 +1655,12 @@ mod tests {
         let file = TempFile::new("relocate")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename"),
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 4),
+                "rename",
+            ),
             TEXT,
             100,
         )?;
@@ -1649,7 +1704,12 @@ mod tests {
         let file = TempFile::new("move")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("old.md"), LineRange::new(3, 4), "rename"),
+            Draft::new(
+                Author::User,
+                Path::new("old.md"),
+                LineRange::new(3, 4),
+                "rename",
+            ),
             TEXT,
             100,
         )?;
@@ -1738,7 +1798,12 @@ mod tests {
         let file = TempFile::new("pending")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(3, 3), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(3, 3),
+                "why?",
+            ),
             TEXT,
             10,
         )?;
@@ -1805,12 +1870,65 @@ mod tests {
         Ok(())
     }
 
+    /// An agent's comment is the agent's act, so its thread waits on the
+    /// user from birth; the record says who only for an agent, so a
+    /// user's record, and every record written before ADR 0061, loads
+    /// as the user's.
+    #[test]
+    fn an_agents_comment_is_its_own_act() -> Result<(), StoreError> {
+        let file = TempFile::new("agent-comment")?;
+        let mut store = Store::open(&file.0)?;
+        let bot = Author::agent("bot").subscribed("s-1", "coder");
+        let theirs = store.annotate(
+            Draft::new(bot.clone(), Path::new("a.md"), LineRange::new(3, 3), "look"),
+            TEXT,
+            10,
+        )?;
+        let mine = store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(4, 4),
+                "why?",
+            ),
+            TEXT,
+            11,
+        )?;
+        let reloaded = Store::open(&file.0)?;
+        for store in [&store, &reloaded] {
+            let t = store
+                .thread(&theirs)
+                .ok_or(StoreError::parse(0, "gone".into()))?;
+            assert_eq!(t.author(), &bot);
+            assert_eq!(t.last_act(), (&bot, 10));
+            assert!(t.awaits_user() && !t.awaits_agent());
+            let t = store
+                .thread(&mine)
+                .ok_or(StoreError::parse(0, "gone".into()))?;
+            assert_eq!(t.author(), &Author::User);
+            assert!(t.awaits_agent() && !t.awaits_user());
+        }
+        let lines: Vec<String> = std::fs::read_to_string(&file.0)
+            .map_err(|e| StoreError::parse(0, e.to_string()))?
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert!(lines[0].contains("\"author\""), "{}", lines[0]);
+        assert!(!lines[1].contains("\"author\""), "{}", lines[1]);
+        Ok(())
+    }
+
     #[test]
     fn two_handles_appending_to_one_file_keep_every_line_whole() -> Result<(), StoreError> {
         let file = TempFile::new("two-writers")?;
         let mut first = Store::open(&file.0)?;
         let id = first.annotate(
-            Draft::new(Path::new("README.md"), LineRange::new(3, 3), "one"),
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "one",
+            ),
             TEXT,
             100,
         )?;
@@ -1834,14 +1952,24 @@ mod tests {
     fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
         let file = TempFile::new("roundtrip")?;
         let mut store = Store::open(&file.0)?;
-        let draft = Draft::new(Path::new("README.md"), LineRange::new(3, 4), "rename");
+        let draft = Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 4),
+            "rename",
+        );
         let id = store.annotate(draft, TEXT, 100)?;
         store.reply(
             &id,
             Reply::new(Author::agent("claude"), 101, "done").proposing_resolution(),
         )?;
         let other = store.annotate(
-            Draft::new(Path::new("docs/guide.md"), LineRange::new(1, 1), "hmm"),
+            Draft::new(
+                Author::User,
+                Path::new("docs/guide.md"),
+                LineRange::new(1, 1),
+                "hmm",
+            ),
             TEXT,
             102,
         )?;
@@ -1898,7 +2026,7 @@ mod tests {
         let legacy = store.threads()[0].id().clone();
         assert_eq!(store.thread(&legacy).and_then(Thread::commit), None);
         let scoped = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "new")
+            Draft::new(Author::User, Path::new("a.md"), LineRange::new(2, 2), "new")
                 .at_commit(Some("abc123".to_owned())),
             TEXT,
             2,
@@ -1934,7 +2062,7 @@ mod tests {
         let file = TempFile::new("rescope")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "hm")
+            Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), "hm")
                 .at_commit(Some("old".to_owned())),
             TEXT,
             10,
@@ -1955,7 +2083,7 @@ mod tests {
     fn store_rejects_bad_ranges_unknown_threads_and_bad_lines() -> Result<(), StoreError> {
         let file = TempFile::new("errors")?;
         let mut store = Store::open(&file.0)?;
-        let draft = Draft::new(Path::new("a.md"), LineRange::new(9, 9), "x");
+        let draft = Draft::new(Author::User, Path::new("a.md"), LineRange::new(9, 9), "x");
         let range_error = store.annotate(draft, TEXT, 1).err();
         assert!(range_error.is_some_and(|e| e.to_string().contains('9')));
         let ghost = super::ThreadId("nope".to_owned());
@@ -1980,7 +2108,12 @@ mod tests {
         let file = TempFile::new("placement")?;
         let mut store = Store::open(&file.0)?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(5, 5), "gamma?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(5, 5),
+                "gamma?",
+            ),
             TEXT,
             1,
         )?;

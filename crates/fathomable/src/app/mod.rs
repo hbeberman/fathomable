@@ -1435,6 +1435,15 @@ impl App {
                 Ok(thread) => Response::Threads(vec![thread]),
                 Err(error) => Response::Error(error),
             },
+            Request::ThreadStart {
+                path,
+                range,
+                author,
+                body,
+            } => match self.agent_start(&path, range, author, body) {
+                Ok(thread) => Response::Threads(vec![thread]),
+                Err(error) => Response::Error(error),
+            },
         }
     }
 

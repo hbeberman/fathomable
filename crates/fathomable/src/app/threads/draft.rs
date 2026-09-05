@@ -491,7 +491,8 @@ impl App {
             .unwrap_or_default()
             .to_owned();
         // The thread belongs to the work it was written against (ADR 0024).
-        let draft = Draft::new(&path, range, comment).at_commit(self.workspace.head_commit());
+        let draft =
+            Draft::new(Author::User, &path, range, comment).at_commit(self.workspace.head_commit());
         let Some(store) = self.store_mut() else {
             return;
         };

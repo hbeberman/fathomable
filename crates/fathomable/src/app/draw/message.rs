@@ -94,7 +94,11 @@ pub(crate) fn expanded_lines<'a>(
 ) -> Vec<Line<'a>> {
     let mut out = Vec::new();
     let comment = Message {
-        author: user,
+        author: if thread.author().is_user() {
+            user
+        } else {
+            thread.author().name()
+        },
         created: thread.created(),
         body: thread.comment(),
         badge: None,

@@ -62,6 +62,8 @@ pub const BODY: &str = "body";
 pub const RESOLVE: &str = "resolve";
 /// Several replies in one call.
 pub const REPLIES: &str = "replies";
+/// Several comments in one `thread_start` call (ADR 0061).
+pub const COMMENTS: &str = "comments";
 /// The thread a watch is on.
 pub const ON: &str = "on";
 /// What a watch waits for.
@@ -107,19 +109,25 @@ pub const THREAD_REPLY: Tool = Tool {
         THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, ID, WORKSPACE,
     ],
 };
+/// Start a thread, or several, on lines of a file (ADR 0061).
+pub const THREAD_START: Tool = Tool {
+    name: "thread_start",
+    params: &[PATH, LINE, END_LINE, BODY, COMMENTS, ID, WORKSPACE],
+};
 /// Be woken when another thread moves, or cancel the watch.
 pub const THREAD_WATCH: Tool = Tool {
     name: "thread_watch",
     params: &[ON, WHEN, REMIND, CANCEL, ID, WORKSPACE],
 };
 
-/// Every tool, in the order the guide lists them (ADR 0055).
-pub const ALL: [Tool; 6] = [
+/// Every tool, in the order the guide lists them (ADR 0055, 0061).
+pub const ALL: [Tool; 7] = [
     WORKSPACES,
     OPEN,
     FOLLOW,
     THREADS,
     THREAD_REPLY,
+    THREAD_START,
     THREAD_WATCH,
 ];
 

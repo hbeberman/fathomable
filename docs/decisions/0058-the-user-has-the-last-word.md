@@ -60,7 +60,9 @@ done".
 
 - A thread's **last act** is the newest of: the comment, written or
   edited; each reply, written or edited; and the most recent reopen.
-  The act's author is the user for the comment, an edit, and a reopen,
+  The act's author is the user for a comment the user wrote (an agent
+  may start a thread since [0061](0061-agents-start-threads.md),
+  2026-09-05), an edit, and a reopen,
   and the reply's author for a reply. A later act in the thread wins a
   tie. `Thread::last_act()` returns the author and the time.
 - A thread is **pending** when it is open and its last act is the

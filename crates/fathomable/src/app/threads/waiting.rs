@@ -211,7 +211,12 @@ mod tests {
         answered: bool,
     ) -> anyhow::Result<()> {
         let id = store.annotate(
-            Draft::new(Path::new(path), LineRange::new(line, line), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new(path),
+                LineRange::new(line, line),
+                "why?",
+            ),
             text,
             10,
         )?;

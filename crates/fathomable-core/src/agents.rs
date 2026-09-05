@@ -909,15 +909,18 @@ fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
         lines.push(format!("        │ … {} more line(s)", snippet.len() - 6));
     }
     // Every message as (who, body, edited), the comment first.
-    let all: Vec<(String, &str, Option<u64>)> =
-        std::iter::once((user.to_owned(), thread.comment(), thread.comment_edited()))
-            .chain(
-                thread
-                    .replies()
-                    .iter()
-                    .map(|r| (who(r.author(), user), r.body(), r.edited())),
-            )
-            .collect();
+    let all: Vec<(String, &str, Option<u64>)> = std::iter::once((
+        who(thread.author(), user),
+        thread.comment(),
+        thread.comment_edited(),
+    ))
+    .chain(
+        thread
+            .replies()
+            .iter()
+            .map(|r| (who(r.author(), user), r.body(), r.edited())),
+    )
+    .collect();
     let from = all.len().saturating_sub(2);
     let mut shown: Vec<usize> = (from..all.len()).collect();
     let act = thread.last_act().1;
@@ -1054,7 +1057,12 @@ mod tests {
     ) -> Result<(Store, crate::annotations::ThreadId), Box<dyn Error>> {
         let mut store = Store::open(dir.0.join("threads.jsonl"))?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(2, 3), "tighten this"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(2, 3),
+                "tighten this",
+            ),
             TEXT,
             100,
         )?;
@@ -1105,6 +1113,7 @@ mod tests {
         let (mut store, id) = store_with_thread(&dir)?;
         let other = store.annotate(
             Draft::new(
+                Author::User,
                 Path::new("elsewhere/b.md"),
                 LineRange::new(1, 1),
                 "and this?",
@@ -1175,7 +1184,12 @@ mod tests {
         let dir = TempDir::new("agents-watch")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let other = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "also"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "also",
+            ),
             TEXT,
             101,
         )?;
@@ -1213,7 +1227,12 @@ mod tests {
         let dir = TempDir::new("agents-mustshow")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let other = store.annotate(
-            Draft::new(Path::new("b.md"), LineRange::new(1, 4), "remind me"),
+            Draft::new(
+                Author::User,
+                Path::new("b.md"),
+                LineRange::new(1, 4),
+                "remind me",
+            ),
             TEXT,
             160,
         )?;
@@ -1284,7 +1303,12 @@ mod tests {
         store.reply(&id, Reply::new(Author::User, 151, "and?"))?;
         for n in 0..5 {
             store.annotate(
-                Draft::new(Path::new("b.md"), LineRange::new(1, 4), format!("note {n}")),
+                Draft::new(
+                    Author::User,
+                    Path::new("b.md"),
+                    LineRange::new(1, 4),
+                    format!("note {n}"),
+                ),
                 TEXT,
                 160 + n,
             )?;

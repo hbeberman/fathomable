@@ -43,6 +43,9 @@ recommended answer, and they are recorded below.
 
 ### The six
 
+(A seventh, `thread_start`, joined them on 2026-09-05 by
+[0061](0061-agents-start-threads.md).)
+
 | Tool | Parameters | Does |
 |---|---|---|
 | `workspaces` | `switch` | lists the known workspaces and their viewers, the default marked; with `switch` (a root, or a viewer name or id) pins that one first |

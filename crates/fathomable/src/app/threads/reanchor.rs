@@ -124,7 +124,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use fathomable_core::annotations::{Anchor, Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{Anchor, Author, Draft, LineRange, Store, Thread};
     use fathomable_core::context::Context;
     use fathomable_core::seen;
 
@@ -147,7 +147,7 @@ mod tests {
     fn annotate_then_edit_offline(dir: &TempDir, edited: &str) -> anyhow::Result<App> {
         fs::write(dir.0.join("ws/a.txt"), ORIGINAL)?;
         Store::open(dir.0.join("state/threads.jsonl"))?.annotate(
-            Draft::new(Path::new("a.txt"), LineRange::new(2, 2), "hm"),
+            Draft::new(Author::User, Path::new("a.txt"), LineRange::new(2, 2), "hm"),
             ORIGINAL,
             1,
         )?;
@@ -185,7 +185,7 @@ mod tests {
     fn annotate_without_snapshot_then_edit(dir: &TempDir, edited: &str) -> anyhow::Result<App> {
         fs::write(dir.0.join("ws/a.txt"), ORIGINAL)?;
         Store::open(dir.0.join("state/threads.jsonl"))?.annotate(
-            Draft::new(Path::new("a.txt"), LineRange::new(2, 2), "hm"),
+            Draft::new(Author::User, Path::new("a.txt"), LineRange::new(2, 2), "hm"),
             ORIGINAL,
             1,
         )?;

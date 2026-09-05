@@ -39,7 +39,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// The oldest protocol version still accepted, for `ping` and `session_info`.
 const OLDEST_VERSION: u32 = 0;
@@ -406,6 +406,18 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lines: Option<LineRange>,
     },
+    /// Start a thread on `range` of `path` as `author` (ADR 0061);
+    /// answered with the new thread.
+    ThreadStart {
+        /// Workspace-relative path of the file.
+        path: PathBuf,
+        /// The lines the comment is on.
+        range: LineRange,
+        /// Who is commenting.
+        author: Author,
+        /// The comment text.
+        body: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -472,7 +484,7 @@ pub enum Response {
     /// Answer to [`Request::Open`]: the operation took effect.
     Done,
     /// Answer to [`Request::ThreadsList`], and to [`Request::ThreadReply`]
-    /// with the one thread replied to.
+    /// and [`Request::ThreadStart`] with the one thread written.
     Threads(Vec<Thread>),
     /// The request was refused; the text says why.
     Error(String),
@@ -651,13 +663,19 @@ mod tests {
                 resolve: true,
                 lines: Some(LineRange::new(4, 6)),
             },
+            Request::ThreadStart {
+                path: PathBuf::from("src/lib.rs"),
+                range: LineRange::new(9, 11),
+                author: Author::agent("reviewer").subscribed("s-1", "coder"),
+                body: "look here".to_owned(),
+            },
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":3,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":4,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
-        assert_eq!(Request::Ping.to_line(), r#"{"v":3,"op":"ping"}"#);
+        assert_eq!(Request::Ping.to_line(), r#"{"v":4,"op":"ping"}"#);
         Ok(())
     }
 
@@ -671,16 +689,16 @@ mod tests {
             r#"{"v":0,"op":"session_info"}"#.parse::<Request>().ok(),
             Some(Request::SessionInfo)
         );
-        let too_old = r#"{"v":2,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 3")));
-        let too_new = r#"{"v":4,"op":"ping"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("version 4")));
+        let too_old = r#"{"v":3,"op":"threads_list"}"#.parse::<Request>().err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 4")));
+        let too_new = r#"{"v":5,"op":"ping"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("version 5")));
         // `follow` left the wire with version 3 (ADR 0055).
         assert_eq!(
-            r#"{"v":3,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
+            r#"{"v":4,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
             None
         );
-        assert_eq!(r#"{"v":3,"op":"dance"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":4,"op":"dance"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
     }
 

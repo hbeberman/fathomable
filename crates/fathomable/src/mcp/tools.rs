@@ -1,6 +1,7 @@
 // @okf-doc: /decisions/0055-six-tools.md
 //! The six tools an agent calls (ADR 0055): `workspaces`, `open`,
-//! `follow`, `threads`, `thread_reply`, and `thread_watch`.
+//! `follow`, `threads`, `thread_reply`, and `thread_watch`; the seventh,
+//! `thread_start`, is [`super::start`] (ADR 0061).
 //!
 //! Each pair of calls with a natural undo is one tool with a flag, a
 //! subscription always covers the whole workspace, and one `threads`
@@ -296,7 +297,7 @@ impl<'a> Answered<'a> {
 /// is the user's, `answered` naming the agent otherwise (ADR 0058). A
 /// resolved one is only its head.
 #[derive(Debug, Serialize)]
-struct Shown<'a> {
+pub(super) struct Shown<'a> {
     id: &'a ThreadId,
     path: &'a Path,
     range: LineRange,
@@ -323,7 +324,7 @@ struct Shown<'a> {
 }
 
 impl<'a> Shown<'a> {
-    fn new(thread: &'a Thread, placement: Placement) -> Self {
+    pub(super) fn new(thread: &'a Thread, placement: Placement) -> Self {
         let open = thread.status() == Status::Open;
         Self {
             id: thread.id(),
@@ -401,13 +402,13 @@ const fn status_word(status: Status) -> &'static str {
 
 /// The files of one workspace as they are now, read once each, so that
 /// every thread's placement is computed against the same text.
-struct Tree<'a> {
+pub(super) struct Tree<'a> {
     root: &'a Path,
     texts: HashMap<PathBuf, Option<String>>,
 }
 
 impl<'a> Tree<'a> {
-    fn new(root: &'a Path) -> Self {
+    pub(super) fn new(root: &'a Path) -> Self {
         Self {
             root,
             texts: HashMap::new(),
@@ -416,7 +417,7 @@ impl<'a> Tree<'a> {
 
     /// Where `thread` sits in its file now; detached at its last known
     /// range when the file cannot be read.
-    fn place(&mut self, thread: &Thread) -> Placement {
+    pub(super) fn place(&mut self, thread: &Thread) -> Placement {
         let text = self
             .texts
             .entry(thread.path().to_path_buf())
@@ -725,21 +726,10 @@ impl Server {
             Err(error) => return failure(error),
         };
         let client = context.client_info().map(|c| c.name);
-        let subscription = self.signature(p.id, &target.root);
         // The name was fixed at `follow`; without one, the harness names
         // the agent (ADR 0058).
-        let mut author = Author::Agent {
-            name: subscription
-                .as_ref()
-                .and_then(|(.., name)| name.clone())
-                .unwrap_or_else(|| identity::agent_name(None, client.as_deref())),
-            client,
-            id: None,
-            kind: None,
-        };
-        if let Some((id, kind, _)) = &subscription {
-            author = author.subscribed(id, kind);
-        }
+        let signed = self.signer(p.id, &target.root, client);
+        let author = signed.author;
         let mut items = p.replies;
         match (p.thread, p.body) {
             (Some(thread), Some(body)) => items.insert(
@@ -791,7 +781,7 @@ impl Server {
             }
         }
         lines.extend(shown_lines(&answered, &mut tree, "replied to"));
-        if subscription.is_none() {
+        if !signed.subscribed {
             lines.push(format!(
                 "signed as {author} with no subscription; call `{}` with `{}` to be told \
                  about answers",
@@ -1140,7 +1130,7 @@ fn refusal(item: &ReplyItem, all: &[Thread], tree: &mut Tree<'_>) -> Option<Stri
 }
 
 /// The summary line of each thread in `threads`, prefixed with `verb`.
-fn shown_lines(threads: &[Thread], tree: &mut Tree<'_>, verb: &str) -> Vec<String> {
+pub(super) fn shown_lines(threads: &[Thread], tree: &mut Tree<'_>, verb: &str) -> Vec<String> {
     threads
         .iter()
         .map(|thread| {
@@ -1171,7 +1161,7 @@ fn thread_id(text: &str) -> Result<ThreadId, String> {
 ///
 /// A path that exists nowhere is matched by its last component against
 /// the workspace, so a wrong directory is answered with the right one.
-fn check_path(root: &Path, path: Option<&Path>) -> Result<Option<PathBuf>, String> {
+pub(super) fn check_path(root: &Path, path: Option<&Path>) -> Result<Option<PathBuf>, String> {
     let Some(path) = path else {
         return Ok(None);
     };
@@ -1312,13 +1302,13 @@ fn text(summary: String) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(summary)])
 }
 
-fn with_summary(value: Value, summary: String) -> CallToolResult {
+pub(super) fn with_summary(value: Value, summary: String) -> CallToolResult {
     let mut result = CallToolResult::structured(value);
     result.content = vec![ContentBlock::text(summary)];
     result
 }
 
-fn failure(message: impl Into<String>) -> CallToolResult {
+pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
 }
 
@@ -1333,9 +1323,10 @@ pub(super) fn instructions() -> String {
          carrying `{replies}`; it returns each thread as it now stands. `{list}` lists the \
          open threads, marks the ones waiting on you, and takes `{status}` for resolved \
          ones: call it when a hook says more are pending, when no hook is installed, or to \
-         read history. `{open}` shows a file in the viewer; everything else works with no \
-         viewer running. `{watch}` wakes you when another thread moves; `{workspaces}` \
-         lists and pins workspaces.",
+         read history. `{start}` opens threads of your own on lines the user should look \
+         at. `{open}` shows a file in the viewer; everything else works with no viewer \
+         running. `{watch}` wakes you when another thread moves; `{workspaces}` lists and \
+         pins workspaces.",
         follow = vocab::FOLLOW.name,
         kind = vocab::TYPE,
         id = vocab::ID,
@@ -1344,6 +1335,7 @@ pub(super) fn instructions() -> String {
         list = vocab::THREADS.name,
         status = vocab::STATUS,
         open = vocab::OPEN.name,
+        start = vocab::THREAD_START.name,
         watch = vocab::THREAD_WATCH.name,
         workspaces = vocab::WORKSPACES.name,
     )
@@ -1441,7 +1433,12 @@ mod tests {
         let root = dir.0.join("ws");
         let dirs = dirs(&dir);
         let id = Store::open(dirs.threads_file(&root))?.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
             "one\n",
             5,
         )?;
@@ -1472,7 +1469,12 @@ mod tests {
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\ntwo\n")?;
         let id = Store::open(dirs.threads_file(&root))?.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(2, 2),
+                "why?",
+            ),
             "one\ntwo\n",
             5,
         )?;
@@ -1521,18 +1523,28 @@ mod tests {
         fs::write(root.join("a.md"), "one\ntwo\n")?;
         let mut store = Store::open(dirs.threads_file(&root))?;
         let open = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
             "one\ntwo\n",
             5,
         )?;
         let resolved = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "fine"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(2, 2),
+                "fine",
+            ),
             "one\ntwo\n",
             6,
         )?;
         store.resolve(&resolved, 7)?;
         let gone = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(2, 2), "old"),
+            Draft::new(Author::User, Path::new("a.md"), LineRange::new(2, 2), "old"),
             "one\nthree\n",
             8,
         )?;
@@ -1580,7 +1592,12 @@ mod tests {
         fs::write(root.join("a.md"), "zero\none\ntwo\n")?;
         let mut store = Store::open(dirs.threads_file(&root))?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?\nreally"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?\nreally",
+            ),
             "one\ntwo\n",
             5,
         )?;
@@ -1729,7 +1746,7 @@ mod tests {
     /// not list. This is what makes every other check mean something.
     #[test]
     fn vocabulary_matches_the_tool_schema() -> Result<(), String> {
-        let live = Server::tool_router().list_all();
+        let live = Server::router().list_all();
         assert_eq!(live.len(), vocab::ALL.len());
         for tool in vocab::ALL {
             let found = live

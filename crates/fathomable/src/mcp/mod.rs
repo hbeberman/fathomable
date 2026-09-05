@@ -21,6 +21,7 @@
 //! behaves the same under the legacy `initialize` flow and discovery-first
 //! startup.
 
+mod start;
 mod tools;
 
 use std::env;
@@ -30,9 +31,10 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::Register;
-use fathomable_core::annotations::{Reach, Store};
+use fathomable_core::annotations::{Author, Reach, Store};
 use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
+use fathomable_core::identity;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
 use fathomable_core::vocabulary as vocab;
@@ -89,6 +91,14 @@ impl std::fmt::Debug for Server {
     }
 }
 
+/// How a message from this connection is signed, and whether a
+/// subscription stands behind it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Signature {
+    author: Author,
+    subscribed: bool,
+}
+
 /// A workspace an agent can address: its root and the viewers showing it.
 #[derive(Debug, Clone)]
 struct Target {
@@ -110,7 +120,7 @@ impl Server {
             pinned: Mutex::new(None),
             subscriber: Mutex::new(None),
             ancestors: bond::ancestors(),
-            tool_router: Self::tool_router(),
+            tool_router: Self::router(),
         }
     }
 
@@ -132,6 +142,34 @@ impl Server {
         given
             .or_else(|| self.subscriber_id())
             .or_else(|| register.session_for(&self.ancestors).map(str::to_owned))
+    }
+
+    /// Every tool: the six of ADR 0055 and `thread_start` (ADR 0061).
+    fn router() -> ToolRouter<Self> {
+        Self::tool_router() + Self::tool_router_start()
+    }
+
+    /// Who a reply or a comment from this connection is: the name fixed
+    /// at `follow`, the subscription's id and type when there is one, and
+    /// the harness's name otherwise (ADR 0058).
+    fn signer(&self, given: Option<String>, root: &Path, client: Option<String>) -> Signature {
+        let subscription = self.signature(given, root);
+        let mut author = Author::Agent {
+            name: subscription
+                .as_ref()
+                .and_then(|(.., name)| name.clone())
+                .unwrap_or_else(|| identity::agent_name(None, client.as_deref())),
+            client,
+            id: None,
+            kind: None,
+        };
+        if let Some((id, kind, _)) = &subscription {
+            author = author.subscribed(id, kind);
+        }
+        Signature {
+            author,
+            subscribed: subscription.is_some(),
+        }
     }
 
     /// The `(id, type, persona)` a reply from this connection is signed
@@ -406,7 +444,7 @@ mod tests {
     #[test]
     fn follow_schema_lists_the_configured_types() -> Result<(), String> {
         let types = ["coder".to_owned(), "qa".to_owned()];
-        let tools = with_types(Server::tool_router().list_all(), &types);
+        let tools = with_types(Server::router().list_all(), &types);
         let follow = tools
             .iter()
             .find(|t| t.name == "follow")

@@ -122,6 +122,9 @@ pub(crate) fn hello_text(
          the thread is done, and the user closes it:\
          \n  {reply} {{ {thread}: \"<thread id>\", {body}: \"…\" }}\
          \n  {reply} {{ {replies}: [ {{ {thread}, {body}, {resolve} }}, … ] }}\
+         \nStart threads of your own on lines the user should look at; they wait on \
+         the user:\
+         \n  {start} {{ {comments}: [ {{ {path}, {line}, {end_line}, {body} }}, … ] }}\
          \nBe woken when a thread you are not following moves:\
          \n  {watch} {{ {on}: \"<thread id>\", {when}: \"{message}\" }}",
         root = root.display(),
@@ -134,6 +137,11 @@ pub(crate) fn hello_text(
         body = vocab::BODY,
         resolve = vocab::RESOLVE,
         replies = vocab::REPLIES,
+        start = harness.tool(vocab::THREAD_START),
+        comments = vocab::COMMENTS,
+        path = vocab::PATH,
+        line = vocab::LINE,
+        end_line = vocab::END_LINE,
         watch = harness.tool(vocab::THREAD_WATCH),
         on = vocab::ON,
         when = vocab::WHEN,
@@ -830,7 +838,12 @@ mod tests {
         assert_eq!(workspace_for(&dirs, Path::new("/nowhere")), None);
         let mut store = Store::open(dirs.threads_file(&root))?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
             "one\n",
             5,
         )?;
@@ -891,7 +904,12 @@ mod tests {
         let mut ids = Vec::new();
         for n in 0..4 {
             ids.push(store.annotate(
-                Draft::new(Path::new("a.md"), LineRange::new(1, 3), format!("why {n}?")),
+                Draft::new(
+                    Author::User,
+                    Path::new("a.md"),
+                    LineRange::new(1, 3),
+                    format!("why {n}?"),
+                ),
                 text,
                 5,
             )?);
@@ -946,7 +964,12 @@ mod tests {
         Marker::new(root.clone()).write(&dirs)?;
         let mut store = Store::open(dirs.threads_file(&root))?;
         store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
             "one\n",
             5,
         )?;
@@ -1134,7 +1157,7 @@ mod tests {
                     "{harness:?} hello calls unknown `{call}`"
                 );
             }
-            assert_eq!(shapes, 4, "{harness:?}: {text}");
+            assert_eq!(shapes, 5, "{harness:?}: {text}");
             for ident in vocab::idents(&text) {
                 assert!(
                     ident == "fathomable" || vocab::is_known(ident),

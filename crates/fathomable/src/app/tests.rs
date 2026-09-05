@@ -398,7 +398,7 @@ fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
 /// the viewer through the store watch (ADR 0024).
 #[test]
 fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<()> {
-    use fathomable_core::annotations::{Draft, LineRange, Store};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
     use fathomable_core::session::{Request, Response};
 
     let dir = fixture("scope")?;
@@ -412,8 +412,13 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     let text = "# Readme\n\nhello\n";
     let mut store = Store::open(&store_path)?;
     let here = store.annotate(
-        Draft::new(Path::new("README.md"), LineRange::new(1, 1), "on this work")
-            .at_commit(Some(head)),
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(1, 1),
+            "on this work",
+        )
+        .at_commit(Some(head)),
         text,
         1,
     )?;
@@ -422,6 +427,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     // (ADR 0035).
     store.annotate(
         Draft::new(
+            Author::User,
             Path::new("README.md"),
             LineRange::new(2, 2),
             "on other work",
@@ -431,7 +437,12 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
         2,
     )?;
     let unscoped = store.annotate(
-        Draft::new(Path::new("README.md"), LineRange::new(3, 3), "unscoped"),
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "unscoped",
+        ),
         text,
         3,
     )?;
@@ -456,7 +467,12 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
-        Draft::new(Path::new("README.md"), LineRange::new(3, 3), "late"),
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "late",
+        ),
         text,
         4,
     )?;
@@ -472,7 +488,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
 /// a resolved one, stay scoped to the dropped commit (ADR 0035).
 #[test]
 fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
-    use fathomable_core::annotations::{Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
 
     let dir = fixture("rescope")?;
     git::init(&dir.0)?;
@@ -486,8 +502,13 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
     let store_path = dir.0.join(".state/threads.jsonl");
     let mut store = Store::open(&store_path)?;
     let at = |line: usize, comment: &str| {
-        Draft::new(Path::new("README.md"), LineRange::new(line, line), comment)
-            .at_commit(Some(first.clone()))
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(line, line),
+            comment,
+        )
+        .at_commit(Some(first.clone()))
     };
     let kept = store.annotate(at(1, "kept"), text, 1)?;
     let gone = store.annotate(at(3, "lines gone"), text, 2)?;

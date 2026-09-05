@@ -1041,7 +1041,7 @@ fn stub_line<'a>(
         .map_or(ThreadState::Open, crate::app::threads::Mark::kind);
     let (author, created, body) = match message.checked_sub(1) {
         None => (
-            app.user_name().to_owned(),
+            author_label(thread.author(), app.user_name()),
             thread.created(),
             thread.comment(),
         ),

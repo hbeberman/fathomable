@@ -32,7 +32,7 @@ pub(crate) use draft::{Compose, ComposeTarget};
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    Author, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::reanchor::{Mapping, map_range};
@@ -405,6 +405,43 @@ impl App {
             .ok_or_else(|| format!("thread {id} vanished after the reply"))
     }
 
+    /// An agent starts a thread on `range` of `path` (ADR 0061): the
+    /// comment is stamped with `HEAD` as the user's is, the viewer
+    /// toasts it and refreshes its marks, and nothing moves or is marked
+    /// seen. Answers with the thread as it stands.
+    pub(super) fn agent_start(
+        &mut self,
+        path: &Path,
+        range: LineRange,
+        author: Author,
+        body: String,
+    ) -> Result<Thread, String> {
+        let text = std::fs::read_to_string(self.workspace.root().join(path))
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        let label = author.to_string();
+        let draft = Draft::new(author, path, range, body).at_commit(self.workspace.head_commit());
+        let store = self
+            .store
+            .as_mut()
+            .ok_or("threads unavailable; see the log")?;
+        let id = store
+            .annotate(draft, &text, now())
+            .map_err(|e| e.to_string())?;
+        tracing::info!(%id, path = %path.display(), %range, %label, "agent thread started");
+        self.refresh_reach();
+        self.refresh_all_marks();
+        self.push_toast(format!(
+            "comment on {}:{} from {label}",
+            path.display(),
+            range.start()
+        ));
+        self.store
+            .as_ref()
+            .and_then(|store| store.thread(&id))
+            .cloned()
+            .ok_or_else(|| format!("thread {id} vanished after the comment"))
+    }
+
     /// Move the cursor to the first line of `id`, when the document has it.
     pub(super) fn goto_thread(&mut self, id: &ThreadId) {
         let Some(mark) = self.marks().iter().find(|mark| mark.id() == id) else {
@@ -422,7 +459,7 @@ impl App {
     pub(super) fn message_for(&self, id: &ThreadId, target: MessageTarget) -> Option<(&str, bool)> {
         let thread = self.thread(id)?;
         match target {
-            MessageTarget::Comment => Some((thread.comment(), true)),
+            MessageTarget::Comment => Some((thread.comment(), thread.author().is_user())),
             MessageTarget::Reply(index) => thread
                 .replies()
                 .get(index)

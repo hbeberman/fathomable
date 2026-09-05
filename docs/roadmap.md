@@ -267,3 +267,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     whitespace toggle backed by `diff { context; ignore-whitespace }`;
     `Space v` is source view and the stub toggles
     ([0060](decisions/0060-one-diff-two-sides.md)).
+52. **Agents start threads.** A seventh tool, `thread_start`, opens a
+    thread on a line range of a file, one or several per call, signed
+    and stamped with `HEAD` as a reply and a user's comment are; a
+    thread records its comment's author, so an agent's thread waits on
+    the user from birth and reaches no agent until the user speaks;
+    the viewer names the author on the comment's rows
+    ([0061](decisions/0061-agents-start-threads.md)).

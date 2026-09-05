@@ -139,7 +139,7 @@ mod tests {
 
     use fathomable_core::XdgDirs;
     use fathomable_core::agents::{Register, WatchWhen};
-    use fathomable_core::annotations::{Draft, LineRange, Store};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
     use fathomable_core::config::AgentsConfig;
     use fathomable_core::workspace::Workspace;
 
@@ -167,7 +167,12 @@ mod tests {
         fs::write(root.join("a.md"), "one\n")?;
         let mut store = Store::open(dirs.threads_file(&root))?;
         let id = store.annotate(
-            Draft::new(Path::new("a.md"), LineRange::new(1, 1), "why?"),
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
             "one\n",
             now(),
         )?;

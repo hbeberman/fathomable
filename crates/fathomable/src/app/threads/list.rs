@@ -413,13 +413,13 @@ impl App {
                 }
             }
         };
-        message(
-            0,
-            self.user_name(),
-            thread.created(),
-            thread.comment(),
-            None,
-        );
+        // The comment's author as a reply's is shown (ADR 0061).
+        let comment_author = if thread.author().is_user() {
+            self.user_name()
+        } else {
+            thread.author().name()
+        };
+        message(0, comment_author, thread.created(), thread.comment(), None);
         for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
             message(

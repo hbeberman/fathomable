@@ -170,7 +170,7 @@ t, e = annotate(3, "docs/plan.md", 3, 5, "Step 2 first: a failing test for the e
 events.append(e); ids["plan-open"] = t
 t, e = annotate(4, "src/main.rs", 4, 5, "Fine as it is.")
 events.append(e); ids["main-resolved"] = t
-events.append({"event": "resolve", "v": 2, "thread": t, "by": "user", "created": now - 400})
+events.append({"event": "resolve", "v": 2, "thread": t, "created": now - 400})
 t, e = annotate(5, "README.md", 3, 3, "This paragraph was rewritten; the thread no longer matches any line.", detached=True)
 events.append(e); ids["readme-detached"] = t
 

@@ -96,9 +96,10 @@ Text:
 | `h` `l`, `b` `t` in the checkpoint diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the commits that touched it, `HEAD`, and the working file |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
-| `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
+| `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
 | `gy` `gx` | copy the link under the cursor; open it with `xdg-open` |
+| `gf`, Ctrl-click | open the file named under the cursor in the viewer, at its line: a Markdown link to a path, or a bare `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns |
 | `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
@@ -194,7 +195,8 @@ to resize them.
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new
 thread, copy, and clear; on a line a thread covers, expand or fold,
-reply, resolve or reopen, edit, and delete; on a link, copy or open it;
+reply, resolve or reopen, edit, and delete; on a link, copy or open it,
+and on a link or a path that names a file, open it in the viewer;
 on any line, comment, select, and copy. In the tree it offers open,
 checkpoint, copy path, re-read, and ignored; on a threads pane or review
 list entry, go to, reply, resolve, edit, and delete. A right-click
@@ -212,8 +214,9 @@ press or drag in the gutter selects whole lines; a double-click selects
 the word and a triple-click the line; Shift-click extends the
 selection to the pointer where the terminal passes Shift through (most
 keep it for their own selection). Every gesture ends in `SEL` mode, so
-`y`, `c`, `C`, and the right-click menu apply. The right button reaches
-the viewer only where the terminal forwards it under mouse capture
+`y`, `c`, `C`, and the right-click menu apply. A Ctrl-click places the
+cursor and runs `gf` there. The right button and the Ctrl modifier reach
+the viewer only where the terminal forwards them under mouse capture
 (Ghostty, kitty, foot, WezTerm, and Alacritty do).
 Starting on a directory opens the tree; starting on a file opens the file.
 

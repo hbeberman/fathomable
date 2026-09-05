@@ -143,6 +143,7 @@ fn is_far_move(action: Action) -> bool {
             | Action::DirtyPrev
             | Action::ChangeNext
             | Action::ChangePrev
+            | Action::GotoFile
     )
 }
 
@@ -247,6 +248,7 @@ impl App {
             Action::CheckpointTarget => self.pick_checkpoint_side(true),
             Action::CopyLink => return self.view_mut().copy_link(),
             Action::OpenLink => return self.view_mut().open_link(),
+            Action::GotoFile => self.goto_file(),
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),

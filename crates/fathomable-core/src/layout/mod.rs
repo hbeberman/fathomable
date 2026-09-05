@@ -288,6 +288,25 @@ impl Line {
         out
     }
 
+    /// The byte offset in [`Self::text`] of the grapheme under display
+    /// column `col`, or `None` past the end of the line.
+    #[must_use]
+    pub fn byte_at(&self, col: usize) -> Option<usize> {
+        let mut cells = 0;
+        let mut bytes = 0;
+        for span in &self.spans {
+            for (offset, grapheme) in text::graphemes(&span.text) {
+                let width = display_width(grapheme);
+                if col < cells + width {
+                    return Some(bytes + offset);
+                }
+                cells += width;
+            }
+            bytes += span.text.len();
+        }
+        None
+    }
+
     /// The source byte offset under display column `col`, if any.
     ///
     /// Falls back to the nearest span with a source range so that clicking on

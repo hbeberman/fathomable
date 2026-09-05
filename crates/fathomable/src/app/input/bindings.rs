@@ -231,6 +231,7 @@ actions! {
     Yank,
     CopyLink,
     OpenLink,
+    GotoFile,
     CopyPath,
     Comment,
     NewThread,
@@ -456,6 +457,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::OpenLink,
         "Links",
         "open the link here",
+    ),
+    bind(
+        W::View,
+        &[&[c('g'), c('f')]],
+        A::GotoFile,
+        "Links",
+        "open the file named here in the viewer, at its line",
     ),
     bind(
         W::View,

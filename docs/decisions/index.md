@@ -55,3 +55,4 @@ supersede rather than edit history.
 - [0049 Inline threads, the rail, checkpoints, and the jumplist](0049-inline-threads-and-the-rail.md)
 - [0050 Mouse menus and gestures](0050-mouse-menus-and-gestures.md)
 - [0051 Retire the one-release compatibility](0051-retire-one-release-compatibility.md)
+- [0052 File references open in the viewer](0052-goto-file.md)

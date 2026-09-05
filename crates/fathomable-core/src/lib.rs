@@ -20,6 +20,7 @@ pub mod editor;
 pub mod follow;
 pub mod highlight;
 pub mod layout;
+pub mod link;
 pub mod picker;
 pub mod reanchor;
 pub mod seen;

@@ -394,6 +394,9 @@ impl App {
             menu.push(Action::CopyLink, Action::CopyLink, "copy link");
             menu.push(Action::OpenLink, Action::OpenLink, "open link");
         }
+        if self.file_here() {
+            menu.push(Action::GotoFile, Action::GotoFile, "open in viewer");
+        }
         if threads.is_empty() {
             menu.push(Action::Comment, Action::Comment, "comment on line");
         } else {

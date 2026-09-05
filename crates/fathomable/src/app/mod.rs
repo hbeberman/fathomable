@@ -15,6 +15,7 @@ mod checkpoints;
 mod clipboard;
 mod commands;
 mod draw;
+mod goto_file;
 pub(crate) mod input;
 mod jump;
 mod jumplist;

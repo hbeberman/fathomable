@@ -206,3 +206,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     of the old `sessions/` directory go before any release exists; the
     socket op `annotations_list` is `threads_list`
     ([0051](decisions/0051-retire-one-release-compatibility.md)).
+43. **File references open in the viewer.** `gf`, a Ctrl-click, and the
+    context menu open the file a Markdown link or a bare `path:line`
+    under the cursor names, at that line, in the viewer; a scheme keeps
+    a link external for `gx`; `Alt-Left` is the way back
+    ([0052](decisions/0052-goto-file.md)).

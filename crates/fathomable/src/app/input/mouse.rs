@@ -391,6 +391,12 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         if text_row >= text_rows {
             return Effect::None;
         }
+        // A Ctrl-click opens the file named under the pointer (ADR 0052).
+        if event.modifiers.contains(KeyModifiers::CONTROL) {
+            app.view_mut().click(text_row, col);
+            app.act(bindings::Action::GotoFile);
+            return Effect::None;
+        }
         let count = press(app, column, row, in_gutter);
         let shift = event.modifiers.contains(KeyModifiers::SHIFT);
         let view = app.view_mut();

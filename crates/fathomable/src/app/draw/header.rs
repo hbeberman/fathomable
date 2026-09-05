@@ -522,6 +522,57 @@ mod tests {
         Ok(())
     }
 
+    /// A header row inside a thread block paints its gutter cells on
+    /// `ui.header` too (ADR 0064): the first cell of the row and the
+    /// first cell of the words share a background, and a message row's
+    /// gutter stays on `thread.inline`.
+    #[test]
+    fn a_thread_header_reaches_the_left_edge() -> anyhow::Result<()> {
+        use crate::app::testing::{self, source_app};
+
+        let dir = testing::workspace("header-edge", testing::README)?;
+        let mut app = source_app(&dir)?;
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("mine");
+        app.compose_submit();
+        let id = app.file_threads()[0].clone();
+        app.goto_message(id, 0);
+        let theme = theme()?;
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
+        terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+        let buffer = terminal.backend().buffer().clone();
+        let text_x = buffer.area.width - u16::try_from(app.view().layout().width())?;
+        let header_y = (0..buffer.area.height)
+            .find(|&y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains("c fold")
+            })
+            .ok_or_else(|| anyhow::anyhow!("the header row"))?;
+        let gutter_x = text_x - 4;
+        assert_eq!(
+            buffer[(gutter_x, header_y)].bg,
+            theme.header.bg.unwrap_or_default(),
+            "the gutter cell is on ui.header"
+        );
+        assert_eq!(
+            buffer[(gutter_x, header_y)].bg,
+            buffer[(text_x, header_y)].bg
+        );
+        assert_eq!(
+            buffer[(gutter_x, header_y + 1)].bg,
+            theme.thread_inline.bg.unwrap_or_default(),
+            "a message row's gutter stays on thread.inline"
+        );
+        assert_ne!(
+            theme.header.bg, theme.thread_inline.bg,
+            "the test can tell them apart"
+        );
+        Ok(())
+    }
+
     #[test]
     fn a_header_keeps_its_hints_at_the_right_edge() -> anyhow::Result<()> {
         let header = Header::new(

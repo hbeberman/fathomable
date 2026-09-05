@@ -1195,7 +1195,9 @@ fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) ->
 
 /// An expanded thread's row with the gutter in front of it: the bracket
 /// of a thread spanning the row, blanks for the number and the bar, on
-/// the `thread.inline` background.
+/// the `thread.inline` background; a header row on `ui.header` paints
+/// its gutter cells on that surface too, so it reaches the left edge
+/// (ADR 0064).
 fn with_gutter<'a>(
     app: &App,
     theme: &Theme,
@@ -1203,7 +1205,12 @@ fn with_gutter<'a>(
     row: usize,
     digits: usize,
 ) -> Line<'a> {
-    let row_style = theme.thread_inline;
+    let inner = line.style;
+    let row_style = if inner == theme.header {
+        theme.thread_inline.patch(inner)
+    } else {
+        theme.thread_inline
+    };
     let note = app.note_on_row(row).map_or_else(
         || Span::styled(" ", row_style),
         |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
@@ -1214,9 +1221,8 @@ fn with_gutter<'a>(
         Span::styled(" ", row_style),
         Span::styled(" ", row_style),
     ];
-    let inner = line.style;
     spans.extend(line.spans);
-    Line::from(spans).style(row_style.patch(inner))
+    Line::from(spans).style(theme.thread_inline.patch(inner))
 }
 
 /// How a message's author reads on a stub: the user by the configured

@@ -6,7 +6,7 @@ resource: crates/fathomable/src/app/threads/proposed.rs
 related_resources:
   - crates/fathomable-core/src/annotations.rs
   - crates/fathomable-core/src/agents.rs
-  - crates/fathomable/src/mcp.rs
+  - crates/fathomable/src/mcp/tools.rs
   - crates/fathomable/src/hooks.rs
   - crates/fathomable/src/app/threads/mod.rs
   - crates/fathomable/src/app/threads/words.rs

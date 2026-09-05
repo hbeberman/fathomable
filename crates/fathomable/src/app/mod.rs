@@ -274,8 +274,6 @@ pub(crate) struct App {
     store: Option<Store>,
     /// Which threads the current `HEAD` shows (ADR 0024).
     reach: Reach,
-    /// Files an agent said it is working on (ADR 0014 `follow`).
-    followed: Vec<PathBuf>,
     record: Record,
     dirs: XdgDirs,
     jump: JumpConfig,
@@ -373,7 +371,6 @@ impl App {
             viewer_id: record.id().to_string(),
             store,
             reach: Reach::everything(),
-            followed: Vec::new(),
             record,
             dirs,
             auto: jump.auto,
@@ -1134,11 +1131,6 @@ impl App {
         &self.workspace
     }
 
-    /// Files an agent is following, in the order it gave them.
-    pub(crate) fn followed(&self) -> &[PathBuf] {
-        &self.followed
-    }
-
     pub(crate) fn focus(&self) -> Focus {
         self.focus
     }
@@ -1424,12 +1416,6 @@ impl App {
                 line,
                 end_line,
             } => self.open_for_agent(&path, line, end_line),
-            Request::Follow { paths } => {
-                tracing::info!(count = paths.len(), "agent follow list replaced");
-                self.followed = paths;
-                self.reveal_followed();
-                Response::Done
-            }
             Request::ThreadsList { since, path } => match &self.store {
                 Some(store) => Response::Threads(
                     store
@@ -1450,7 +1436,7 @@ impl App {
                 resolve,
                 lines,
             } => match self.agent_reply(&thread, author, body, resolve, lines) {
-                Ok(()) => Response::Done,
+                Ok(thread) => Response::Threads(vec![thread]),
                 Err(error) => Response::Error(error),
             },
         }
@@ -1738,31 +1724,6 @@ impl App {
             && let Err(error) = tree.reveal(&mut self.workspace, &path)
         {
             tracing::debug!(%error, "cannot reveal current file in tree");
-        }
-    }
-
-    /// Show every followed file the tree does not list yet (ADR 0028):
-    /// its parents expand without moving the cursor, unless the tree pane
-    /// has focus, in which case the cursor lands on it and pages the
-    /// viewer to it as the tree keys do (ADR 0023).
-    fn reveal_followed(&mut self) {
-        if self.tree.is_none() {
-            return;
-        }
-        for path in self.followed.clone() {
-            if self.tree.as_ref().is_some_and(|tree| tree.contains(&path)) {
-                continue;
-            }
-            if self.focus == Focus::Tree {
-                self.with_tree_result(|tree, workspace| {
-                    tree.reveal(workspace, &path).map(|_| None)
-                });
-                self.show_highlight();
-            } else {
-                self.with_tree_result(|tree, workspace| {
-                    tree.expand_to(workspace, &path).map(|_| None)
-                });
-            }
         }
     }
 

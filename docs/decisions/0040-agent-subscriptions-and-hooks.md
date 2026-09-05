@@ -315,6 +315,14 @@ and the model no longer polls `threads_pending` for comments. The
 "no per-tool-call nudges" above is superseded: the delivery ledger
 makes such a hook silent unless a new message exists.
 
+Note (2026-09-04): [0055](0055-six-tools.md) makes every subscription
+cover the whole workspace: `follow` takes no `paths`, `Subscriber` has
+no follow list, and the scope of "Subscriptions" above is the git
+reach alone. `unfollow` is `follow` with `end`, `threads_pending` and
+`annotations_list` are one `threads` tool that marks and delivers the
+pending threads it returns, `thread_unwatch` is `thread_watch` with
+`cancel`, and the blob's overflow line names `threads`.
+
 ## Consequences
 
 - An agent's turn ends normally unless it registered, someone else

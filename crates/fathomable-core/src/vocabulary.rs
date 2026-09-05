@@ -20,17 +20,25 @@ pub struct Tool {
     pub params: &'static [&'static str],
 }
 
-/// The `workspace` parameter every tool but `workspace_list` takes: a
+/// The `workspace` parameter every tool but `workspaces` takes: a
 /// root, or a viewer name or id (ADR 0047).
 pub const WORKSPACE: &str = "workspace";
+/// The workspace `workspaces` pins (ADR 0055).
+pub const SWITCH: &str = "switch";
 /// A viewer name or id.
 pub const VIEWER: &str = "viewer";
 /// A harness session id.
 pub const ID: &str = "id";
 /// An agent type, `kind` in Rust.
 pub const TYPE: &str = "type";
-/// The files a session follows.
-pub const PATHS: &str = "paths";
+/// Whether `follow` ends the subscription instead (ADR 0055).
+pub const END: &str = "end";
+/// Whether `thread_watch` cancels the watch instead (ADR 0055).
+pub const CANCEL: &str = "cancel";
+/// Which threads `threads` lists: `open`, `resolved`, or `all`.
+pub const STATUS: &str = "status";
+/// The field that marks a thread waiting on the caller (ADR 0055).
+pub const PENDING: &str = "pending";
 /// A workspace-relative file path.
 pub const PATH: &str = "path";
 /// A name to sign as.
@@ -60,43 +68,34 @@ pub const REMIND: &str = "remind";
 
 /// The `when` of a watch that fires on a new message.
 pub const WHEN_MESSAGE: &str = "message";
-/// The `when` of a watch that fires on a resolve.
+/// The `when` of a watch that fires on a resolve, and the `status` of
+/// the threads the user closed.
 pub const WHEN_RESOLVED: &str = "resolved";
+/// The `status` of the threads still waiting: the default.
+pub const STATUS_OPEN: &str = "open";
+/// The `status` that lists open and resolved threads alike.
+pub const STATUS_ALL: &str = "all";
 
-/// List the known workspaces and their viewers.
-pub const WORKSPACE_LIST: Tool = Tool {
-    name: "workspace_list",
-    params: &[],
-};
-/// Pin a workspace for later calls.
-pub const WORKSPACE_SWITCH: Tool = Tool {
-    name: "workspace_switch",
-    params: &[WORKSPACE],
+/// List the known workspaces and their viewers; pin one with `switch`.
+pub const WORKSPACES: Tool = Tool {
+    name: "workspaces",
+    params: &[SWITCH],
 };
 /// Show a file in the viewer.
 pub const OPEN: Tool = Tool {
     name: "open",
     params: &[PATH, LINE, END_LINE, WORKSPACE, VIEWER],
 };
-/// Name the files being edited and subscribe.
+/// Subscribe the session to the workspace, or end the subscription.
 pub const FOLLOW: Tool = Tool {
     name: "follow",
-    params: &[PATHS, ID, TYPE, PERSONA, WORKSPACE, VIEWER],
+    params: &[ID, TYPE, PERSONA, END, WORKSPACE],
 };
-/// End a subscription.
-pub const UNFOLLOW: Tool = Tool {
-    name: "unfollow",
-    params: &[ID, WORKSPACE],
-};
-/// Read threads.
-pub const THREADS_LIST: Tool = Tool {
-    name: "threads_list",
-    params: &[SINCE, PATH, LIMIT, WORKSPACE],
-};
-/// The threads waiting on a subscriber.
-pub const THREADS_PENDING: Tool = Tool {
-    name: "threads_pending",
-    params: &[ID, LIMIT, WORKSPACE],
+/// Read threads: open by default, the ones waiting on the caller
+/// flagged and delivered.
+pub const THREADS: Tool = Tool {
+    name: "threads",
+    params: &[STATUS, PATH, SINCE, LIMIT, ID, WORKSPACE],
 };
 /// Answer one thread or several.
 pub const THREAD_REPLY: Tool = Tool {
@@ -105,36 +104,34 @@ pub const THREAD_REPLY: Tool = Tool {
         THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, PERSONA, ID, WORKSPACE,
     ],
 };
-/// Be woken when another thread moves.
+/// Be woken when another thread moves, or cancel the watch.
 pub const THREAD_WATCH: Tool = Tool {
     name: "thread_watch",
-    params: &[ON, WHEN, REMIND, ID, WORKSPACE],
-};
-/// Cancel a watch.
-pub const THREAD_UNWATCH: Tool = Tool {
-    name: "thread_unwatch",
-    params: &[ON, ID, WORKSPACE],
+    params: &[ON, WHEN, REMIND, CANCEL, ID, WORKSPACE],
 };
 
-/// Every tool, in the order the guide lists them.
-pub const ALL: [Tool; 10] = [
-    WORKSPACE_LIST,
-    WORKSPACE_SWITCH,
+/// Every tool, in the order the guide lists them (ADR 0055).
+pub const ALL: [Tool; 6] = [
+    WORKSPACES,
     OPEN,
     FOLLOW,
-    UNFOLLOW,
-    THREADS_LIST,
-    THREADS_PENDING,
+    THREADS,
     THREAD_REPLY,
     THREAD_WATCH,
-    THREAD_UNWATCH,
 ];
 
-/// Whether `ident` is a tool name, a parameter name, or a `when` value.
+/// Whether `ident` is a tool name, a parameter name, a `when` or
+/// `status` value, or the `pending` field.
 #[must_use]
 pub fn is_known(ident: &str) -> bool {
-    ident == WHEN_MESSAGE
-        || ident == WHEN_RESOLVED
+    [
+        WHEN_MESSAGE,
+        WHEN_RESOLVED,
+        STATUS_OPEN,
+        STATUS_ALL,
+        PENDING,
+    ]
+    .contains(&ident)
         || ALL
             .iter()
             .any(|t| t.name == ident || t.params.contains(&ident))

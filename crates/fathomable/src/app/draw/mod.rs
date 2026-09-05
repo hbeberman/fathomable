@@ -1320,7 +1320,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         (app.proposed_count(), "proposed"),
         (app.waiting_count(), "waiting"),
         (app.thread_counts().1, "threads"),
-        (app.followed().len(), "followed"),
     ];
     for (count, word) in counts {
         if count > 0 {

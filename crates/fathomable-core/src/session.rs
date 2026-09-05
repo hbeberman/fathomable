@@ -8,11 +8,12 @@
 //! itself is marked by a [`Marker`] beside its thread store so an agent can
 //! find it when no viewer runs. The socket speaks line-delimited JSON: one
 //! [`Request`] per line, answered by one [`Response`] per line. Every
-//! request carries `"v"`; version 2 carries the viewer name in records,
-//! version 1 (ADR 0014) added `open`, `follow`, `threads_list` (named
-//! `annotations_list` until ADR 0051), and `thread_reply` to the v0 `ping`
-//! and `session_info` (ADR 0012), which are still accepted with an older
-//! `"v"`. The binary owns the socket and
+//! request carries `"v"`; version 3 (ADR 0055) dropped `follow` and made
+//! `thread_reply` answer with the thread, version 2 carries the viewer
+//! name in records, version 1 (ADR 0014) added `open`, `follow`,
+//! `threads_list` (named `annotations_list` until ADR 0051), and
+//! `thread_reply` to the v0 `ping` and `session_info` (ADR 0012), which
+//! are still accepted with an older `"v"`. The binary owns the socket and
 //! the state behind every operation; this module owns the wire types.
 //!
 //! # Examples
@@ -38,7 +39,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// The oldest protocol version still accepted, for `ping` and `session_info`.
 const OLDEST_VERSION: u32 = 0;
@@ -378,11 +379,6 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         end_line: Option<usize>,
     },
-    /// Record the files an agent is working on; replaces the previous list.
-    Follow {
-        /// Workspace-relative paths; empty clears the list.
-        paths: Vec<PathBuf>,
-    },
     /// Threads, optionally changed since a time or limited to one file.
     ThreadsList {
         /// Only threads changed at or after this Unix time.
@@ -392,8 +388,9 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
-    /// Append a reply to a thread, optionally resolving it. `lines`, when
-    /// given, says where the thread's lines are now (ADR 0033): the
+    /// Append a reply to a thread, optionally proposing to resolve it;
+    /// answered with the thread as it then stands (ADR 0055). `lines`,
+    /// when given, says where the thread's lines are now (ADR 0033): the
     /// thread is re-anchored there before the reply is added.
     ThreadReply {
         /// The thread to reply to.
@@ -472,10 +469,10 @@ pub enum Response {
     /// state when the TUI answered (ADR 0015), `None` when the socket
     /// answered alone.
     Session(Record, Option<FollowState>),
-    /// Answer to [`Request::Open`], [`Request::Follow`], and
-    /// [`Request::ThreadReply`]: the operation took effect.
+    /// Answer to [`Request::Open`]: the operation took effect.
     Done,
-    /// Answer to [`Request::ThreadsList`].
+    /// Answer to [`Request::ThreadsList`], and to [`Request::ThreadReply`]
+    /// with the one thread replied to.
     Threads(Vec<Thread>),
     /// The request was refused; the text says why.
     Error(String),
@@ -637,9 +634,6 @@ mod tests {
                 line: Some(3),
                 end_line: None,
             },
-            Request::Follow {
-                paths: vec![PathBuf::from("a.md"), PathBuf::from("b/c.md")],
-            },
             Request::ThreadsList {
                 since: Some(7),
                 path: None,
@@ -660,10 +654,10 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":2,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":3,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
-        assert_eq!(Request::Ping.to_line(), r#"{"v":2,"op":"ping"}"#);
+        assert_eq!(Request::Ping.to_line(), r#"{"v":3,"op":"ping"}"#);
         Ok(())
     }
 
@@ -677,11 +671,16 @@ mod tests {
             r#"{"v":0,"op":"session_info"}"#.parse::<Request>().ok(),
             Some(Request::SessionInfo)
         );
-        let too_old = r#"{"v":1,"op":"follow","paths":[]}"#.parse::<Request>().err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 2")));
-        let too_new = r#"{"v":3,"op":"ping"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("version 3")));
-        assert_eq!(r#"{"v":2,"op":"dance"}"#.parse::<Request>().ok(), None);
+        let too_old = r#"{"v":2,"op":"threads_list"}"#.parse::<Request>().err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("needs protocol version 3")));
+        let too_new = r#"{"v":4,"op":"ping"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("version 4")));
+        // `follow` left the wire with version 3 (ADR 0055).
+        assert_eq!(
+            r#"{"v":3,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
+            None
+        );
+        assert_eq!(r#"{"v":3,"op":"dance"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
     }
 

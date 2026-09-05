@@ -134,7 +134,7 @@ mod tests {
             resolve: false,
             lines: Some(LineRange::new(3, 6)),
         });
-        assert_eq!(reply, Response::Done);
+        assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
         assert_eq!(app.marks()[0].range(), LineRange::new(3, 6));
         assert!(app.marks()[0].placement().is_edited());
         app.threads_pane_open();

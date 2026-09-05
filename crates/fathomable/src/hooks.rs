@@ -107,8 +107,8 @@ pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[Strin
          \n  workspace  {root}\
          \n  session    {id}\
          \n  types      {types}   ← the whole list; do not look elsewhere\n\
-         \nSubscribe before you edit:\
-         \n  {follow} {{ {paths}: [\"<files you will edit>\"], {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
+         \nSubscribe before you edit; it covers the whole workspace:\
+         \n  {follow} {{ {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
          \nComments then reach you as your turns start and end. Never poll; after a wait, \
          just end your turn.{extra}\
          \nAnswer one thread, or several in one call; `{resolve}: true` says you believe \
@@ -120,7 +120,6 @@ pub(crate) fn hello_text(harness: Harness, root: &Path, id: &str, types: &[Strin
         root = root.display(),
         types = types.join(", "),
         follow = harness.tool(vocab::FOLLOW),
-        paths = vocab::PATHS,
         kind = vocab::TYPE,
         id_key = vocab::ID,
         reply = harness.tool(vocab::THREAD_REPLY),
@@ -419,11 +418,10 @@ fn describe_state(dirs: &XdgDirs, root: &Path, id: &str, config: &AgentsConfig, 
         .iter()
         .map(|s| {
             format!(
-                "{} {} client {} paths {} seen {}",
+                "{} {} client {} seen {}",
                 s.id(),
                 s.label(),
                 s.client().unwrap_or("?"),
-                s.paths().len(),
                 ago(s.seen(), when)
             )
         })
@@ -714,7 +712,7 @@ pub(crate) fn compose(
     }
     // Split the overflow off before rendering, so that only what the blob
     // actually shows is recorded as delivered and the rest still comes
-    // back from `threads_pending`, as the blob's own tail line says.
+    // back from `threads`, as the blob's own tail line says.
     blob.fit(&subscriber, config.max_lines);
     let text = blob.render(&subscriber);
     for thread in blob.shown() {
@@ -833,7 +831,7 @@ mod tests {
         );
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
-        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, when)?;
         let text =
             compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
         assert!(text.contains("1 review thread needs your reply"), "{text}");
@@ -866,9 +864,9 @@ mod tests {
     }
 
     /// A blob past `max-lines` lists the rest and tells the model to call
-    /// `threads_pending` — so the rest must still be deliverable there.
+    /// `threads` — so the rest must still be deliverable there.
     #[test]
-    fn overflow_threads_survive_for_threads_pending() -> TestResult {
+    fn overflow_threads_survive_for_the_threads_tool() -> TestResult {
         let dir = fixture("overflow")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
@@ -889,10 +887,10 @@ mod tests {
         };
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
-        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, when)?;
         let blob =
             compose(&dirs, &root, "s-1", &config, Occasion::TurnEnd)?.ok_or("nothing delivered")?;
-        assert!(blob.contains("more; call `threads_pending`"), "{blob}");
+        assert!(blob.contains("more; call `threads`"), "{blob}");
         // A thread is shown in full only if it has a `── thread <id>`
         // header; the overflow appears by id alone in the closing list.
         let listed: Vec<_> = ids
@@ -913,8 +911,8 @@ mod tests {
         for id in &listed {
             assert!(
                 deliverable.contains(id),
-                "{id} was listed as \"more; call threads_pending\" but is already \
-                 recorded as delivered, so threads_pending will not return it"
+                "{id} was listed as \"more; call threads\" but is already \
+                 recorded as delivered, so threads will not return it"
             );
         }
         Ok(())
@@ -943,7 +941,7 @@ mod tests {
         };
         let when = now();
         let mut register = Register::open(dirs.agents_file(&root), when, config.expire_after)?;
-        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, when)?;
         assert!(compose(&dirs, &root, "s-1", &config, Occasion::Context)?.is_some());
         for _ in 0..5 {
             assert_eq!(

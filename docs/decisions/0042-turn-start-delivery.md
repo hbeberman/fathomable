@@ -125,6 +125,9 @@ before its next step of the same turn.
   and post-tool-use lines; `scripts/demo-repo.sh` installs all three
   for Claude.
 
+Note (2026-09-04): [0055](0055-six-tools.md) folds `threads_pending`
+into `threads`; the overflow a hook lists by id is fetched with that.
+
 ## Consequences
 
 - On Claude Code a comment posted during a background wait is in

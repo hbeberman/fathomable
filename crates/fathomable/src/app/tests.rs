@@ -793,46 +793,6 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
 }
 
 #[test]
-fn followed_files_are_revealed_in_the_tree() -> anyhow::Result<()> {
-    use fathomable_core::session::Request;
-    let dir = fixture("follow-reveal")?;
-    let mut app = app(&dir)?;
-    app.show_tree();
-    app.focus_pane(Focus::View);
-    let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
-    assert!(!has(&app, "docs/guide.md"));
-
-    // The view has focus: parents expand, the cursor stays put.
-    app.handle_request(Request::Follow {
-        paths: vec![PathBuf::from("docs/guide.md")],
-    });
-    assert!(has(&app, "docs/guide.md"));
-    assert_eq!(app.tree().map(Tree::cursor), Some(0));
-    assert!(!app.has_document());
-
-    // The tree has focus: the cursor lands on it and shows it.
-    app.with_tree(|tree, _| {
-        tree.collapse();
-        None
-    });
-    assert!(!has(&app, "docs/notes.md"));
-    app.focus_pane(Focus::Tree);
-    app.handle_request(Request::Follow {
-        paths: vec![PathBuf::from("docs/notes.md")],
-    });
-    assert!(has(&app, "docs/notes.md"));
-    assert_eq!(
-        app.tree()
-            .and_then(Tree::current)
-            .map(|row| row.path().to_path_buf()),
-        Some(PathBuf::from("docs/notes.md"))
-    );
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-    assert_eq!(app.focus(), Focus::Tree);
-    Ok(())
-}
-
-#[test]
 fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
     let dir = fixture("tree-watch")?;
     let mut app = app(&dir)?;

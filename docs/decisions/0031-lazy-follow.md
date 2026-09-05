@@ -66,6 +66,10 @@ one key.
 No configuration changes: `follow.auto` still sets the starting state
 and `follow.jump-debounce` the quiet period.
 
+Note (2026-09-04): [0055](0055-six-tools.md) drops the agent's follow
+list, so "Bursts" is amended: after a quiet period auto-jump opens the
+newest entry, as before this record.
+
 ## Consequences
 
 - `app/jump.rs`, which this record backs, holds the tick, the

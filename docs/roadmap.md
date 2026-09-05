@@ -223,3 +223,12 @@ Milestones are ordered; each is usable on its own. Details live in the
     lines; the review list opens the file to write and comes back
     after; the bottom comment box, its cap, and its drag go
     ([0054](decisions/0054-the-draft-is-written-in-the-thread.md)).
+46. **Six tools.** The agent surface is `workspaces`, `follow`,
+    `threads`, `thread_reply`, `thread_watch`, and `open`; a
+    subscription covers the whole workspace and `follow` takes no
+    paths; `threads` lists open threads by default, delivers the ones
+    waiting on the caller, and widens to resolved ones; every thread an
+    agent sees carries its placement and no anchor hashes;
+    `thread_reply` answers with the updated thread and refuses a
+    detached thread without a line; failures name the call that fixes
+    them ([0055](decisions/0055-six-tools.md)).

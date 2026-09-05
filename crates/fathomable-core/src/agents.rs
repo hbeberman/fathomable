@@ -39,7 +39,6 @@ pub struct Subscriber {
     kind: String,
     name: Option<String>,
     client: Option<String>,
-    paths: Vec<PathBuf>,
     created: u64,
     seen: u64,
     checks: u32,
@@ -70,12 +69,6 @@ impl Subscriber {
         self.client.as_deref()
     }
 
-    /// The files it follows; empty means the whole workspace.
-    #[must_use]
-    pub fn paths(&self) -> &[PathBuf] {
-        &self.paths
-    }
-
     /// When it subscribed, in Unix seconds.
     #[must_use]
     pub fn created(&self) -> u64 {
@@ -95,15 +88,6 @@ impl Subscriber {
             Some(name) => format!("{name} ({})", self.kind),
             None => self.kind.clone(),
         }
-    }
-
-    /// Whether `thread` is in this subscriber's scope: on a followed
-    /// file, under a followed directory, or on a thread it has posted in.
-    #[must_use]
-    pub fn covers(&self, thread: &Thread) -> bool {
-        self.paths.is_empty()
-            || self.paths.iter().any(|p| thread.path().starts_with(p))
-            || thread.has_reply_from(&self.id)
     }
 }
 
@@ -174,7 +158,6 @@ enum Event {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         client: Option<String>,
-        paths: Vec<PathBuf>,
         created: u64,
     },
     Unsubscribe {
@@ -352,8 +335,8 @@ impl Register {
         })
     }
 
-    /// Subscribe `id` as `kind` following `paths`, or refresh the paths of
-    /// an existing subscription.
+    /// Subscribe `id` as `kind` to the whole workspace (ADR 0055), or
+    /// refresh an existing subscription's name and client.
     ///
     /// # Errors
     ///
@@ -365,7 +348,6 @@ impl Register {
         kind: &str,
         name: Option<&str>,
         client: Option<&str>,
-        paths: Vec<PathBuf>,
         now: u64,
     ) -> Result<(), RegisterError> {
         if let Some(existing) = self.subscriber(id)
@@ -381,7 +363,6 @@ impl Register {
             kind: kind.to_owned(),
             name: name.map(str::to_owned),
             client: client.map(str::to_owned),
-            paths,
             created: now,
         })
     }
@@ -425,7 +406,7 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| subscriber.covers(t) && t.awaits(Party::Subscriber(&subscriber.id)))
+            .filter(|t| t.awaits(Party::Subscriber(&subscriber.id)))
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
                 self.deliveries.get(&key) != Some(&t.newest().1)
@@ -442,7 +423,7 @@ impl Register {
     ) -> Vec<&'a Thread> {
         threads
             .into_iter()
-            .filter(|t| subscriber.covers(t) && t.awaits(Party::Subscriber(&subscriber.id)))
+            .filter(|t| t.awaits(Party::Subscriber(&subscriber.id)))
             .filter(|t| {
                 let key = (subscriber.id.clone(), t.id().clone());
                 self.deliveries.get(&key) == Some(&t.newest().1)
@@ -623,7 +604,6 @@ impl Register {
                 kind,
                 name,
                 client,
-                paths,
                 created,
                 ..
             } => match self.subscribers.iter_mut().find(|s| s.id == id) {
@@ -633,7 +613,6 @@ impl Register {
                             kind: ErrorKind::KindFixed(id, existing.kind.clone()),
                         });
                     }
-                    existing.paths = paths;
                     existing.seen = existing.seen.max(created);
                     if name.is_some() {
                         existing.name = name;
@@ -647,7 +626,6 @@ impl Register {
                     kind,
                     name,
                     client,
-                    paths,
                     created,
                     seen: created,
                     checks: 0,
@@ -736,7 +714,7 @@ pub struct Blob<'a> {
     /// Fresh threads past the line budget, named by id alone.
     ///
     /// [`Blob::fit`] fills this; a caller must not record these as
-    /// delivered, so that `threads_pending` still returns them.
+    /// delivered, so that `threads` still returns them.
     pub listed: Vec<&'a Thread>,
 }
 
@@ -751,7 +729,7 @@ impl<'a> Blob<'a> {
     ///
     /// Exactly the threads a caller records as delivered. What
     /// [`Self::fit`] moved to [`Self::listed`] is not among them, so it
-    /// stays deliverable through `threads_pending`.
+    /// stays deliverable through `threads`.
     pub fn shown(&self) -> impl Iterator<Item = &'a Thread> + '_ {
         self.fired
             .iter()
@@ -816,7 +794,7 @@ impl<'a> Blob<'a> {
             out.push(format!(
                 "{} more; call `{}`:",
                 self.listed.len(),
-                vocab::THREADS_PENDING.name
+                vocab::THREADS.name
             ));
             for thread in &self.listed {
                 out.push(format!(
@@ -865,13 +843,12 @@ impl<'a> Blob<'a> {
             format!(
                 "Act on each, then answer every thread in ONE `{reply}` call with \
                  `{replies}` (pass `{line}`/`{end_line}` if you moved the lines). Full \
-                 history: `{list}`; more pending: `{pending}`.",
+                 history and anything more pending: `{list}`.",
                 reply = vocab::THREAD_REPLY.name,
                 replies = vocab::REPLIES,
                 line = vocab::LINE,
                 end_line = vocab::END_LINE,
-                list = vocab::THREADS_LIST.name,
-                pending = vocab::THREADS_PENDING.name,
+                list = vocab::THREADS.name,
             ),
         ]
     }
@@ -1015,14 +992,15 @@ impl std::error::Error for RegisterError {
 #[cfg(test)]
 mod tests {
     use std::error::Error;
-    use std::path::{Path, PathBuf};
+    use std::fs;
+    use std::path::Path;
 
     use fathomable_testing::TempDir;
     use std::time::Duration;
 
-    use crate::annotations::{Author, Draft, LineRange, Reply, Store};
+    use crate::annotations::{Author, Draft, LineRange, Reply, Store, ThreadId};
 
-    use super::{Blob, Register, WatchWhen};
+    use super::{Blob, Register, Subscriber, WatchWhen};
     use crate::bond::Process;
 
     type TestResult = Result<(), Box<dyn Error>>;
@@ -1065,7 +1043,7 @@ mod tests {
         let dir = TempDir::new("agents-once")?;
         let (mut store, id) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, 200)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
         let due = reg.deliverable(&sub, store.threads());
         assert_eq!(due.len(), 1);
@@ -1086,62 +1064,57 @@ mod tests {
         Ok(())
     }
 
+    /// A subscription covers the whole workspace (ADR 0055): a thread on
+    /// any file is deliverable once someone else has the last word. A
+    /// second `subscribe` refreshes the record and cannot change the type,
+    /// and a register line written with a follow list still loads.
     #[test]
-    fn scope_is_followed_paths_or_own_threads() -> TestResult {
+    fn a_subscription_covers_the_whole_workspace() -> TestResult {
         let dir = TempDir::new("agents-scope")?;
         let (mut store, id) = store_with_thread(&dir)?;
-        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", None, None, vec![PathBuf::from("b.md")], 200)?;
+        let other = store.annotate(
+            Draft::new(
+                Path::new("elsewhere/b.md"),
+                LineRange::new(1, 1),
+                "and this?",
+            ),
+            TEXT,
+            150,
+        )?;
+        let path = dir.0.join("agents.jsonl");
+        fs::write(
+            &path,
+            "{\"event\":\"subscribe\",\"v\":1,\"id\":\"s-1\",\"kind\":\"coder\",\"paths\":[\"a.md\"],\"created\":200}\n",
+        )?;
+        let mut reg = Register::open(&path, 200, DAY)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
-        assert!(reg.deliverable(&sub, store.threads()).is_empty());
+        let mut pending: Vec<&ThreadId> = reg
+            .deliverable(&sub, store.threads())
+            .iter()
+            .map(|t| t.id())
+            .collect();
+        pending.sort_unstable();
+        let mut both = vec![&id, &other];
+        both.sort_unstable();
+        assert_eq!(pending, both, "the old follow list is ignored");
         let me = Author::agent("bot").subscribed("s-1", "coder");
         store.reply(&id, Reply::new(me, 201, "I was here"))?;
-        store.reply(&id, Reply::new(Author::User, 202, "and?"))?;
-        assert_eq!(reg.deliverable(&sub, store.threads()).len(), 1);
-        reg.subscribe("s-1", "coder", None, None, vec![], 203)?;
-        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
-        assert!(sub.paths().is_empty());
         assert_eq!(
-            reg.subscribe("s-1", "reviewer", None, None, vec![], 204)
+            reg.deliverable(&sub, store.threads()),
+            [store.thread(&other).ok_or("gone")?]
+        );
+        store.reply(&id, Reply::new(Author::User, 202, "and?"))?;
+        assert_eq!(reg.deliverable(&sub, store.threads()).len(), 2);
+        reg.subscribe("s-1", "coder", Some("bot"), None, 203)?;
+        assert_eq!(
+            reg.subscriber("s-1").and_then(Subscriber::name),
+            Some("bot")
+        );
+        assert_eq!(
+            reg.subscribe("s-1", "reviewer", None, None, 204)
                 .err()
                 .map(|e| e.to_string()),
             Some("session s-1 is subscribed as coder; a type cannot change".to_owned())
-        );
-        Ok(())
-    }
-
-    /// A followed directory covers every thread under it, so an agent
-    /// working in a subtree subscribes once and still hears about files
-    /// it has not written yet. Matching is by path component: a followed
-    /// name never covers a longer name beside it.
-    #[test]
-    fn a_followed_directory_covers_what_is_under_it() -> TestResult {
-        let dir = TempDir::new("agents-under")?;
-        let mut store = Store::open(dir.0.join("threads.jsonl"))?;
-        for path in [
-            "src/jokes.rs",
-            "src/deep/jokes.rs",
-            "srcs/other.rs",
-            "top.rs",
-        ] {
-            store.annotate(
-                Draft::new(Path::new(path), LineRange::new(1, 1), "look"),
-                TEXT,
-                100,
-            )?;
-        }
-        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", None, None, vec![PathBuf::from("src")], 200)?;
-        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
-        let mut covered: Vec<&Path> = reg
-            .deliverable(&sub, store.threads())
-            .iter()
-            .map(|t| t.path())
-            .collect();
-        covered.sort_unstable();
-        assert_eq!(
-            covered,
-            [Path::new("src/deep/jokes.rs"), Path::new("src/jokes.rs")]
         );
         Ok(())
     }
@@ -1150,7 +1123,7 @@ mod tests {
     fn nags_count_checks_and_expiry_drops_silent_sessions() -> TestResult {
         let dir = TempDir::new("agents-nag")?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", None, None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", None, None, 200)?;
         assert!(!reg.check("s-1", 3, 201)?);
         assert!(!reg.check("s-1", 3, 202)?);
         assert!(reg.check("s-1", 3, 203)?);
@@ -1176,7 +1149,7 @@ mod tests {
             101,
         )?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", None, None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", None, None, 200)?;
         reg.watch("s-1", &id, WatchWhen::Resolved, vec![other.clone()], 201)?;
         reg.watch("s-1", &other, WatchWhen::Message, vec![], 201)?;
         assert!(reg.fire("s-1", store.threads(), 202)?.is_empty());
@@ -1202,7 +1175,7 @@ mod tests {
 
     /// A fired watch and the threads it reminds of are shown in full
     /// however tight the budget: the watch is spent when it fires, and a
-    /// reminded thread need not be pending, so `threads_pending` could
+    /// reminded thread need not be pending, so `threads` could
     /// never hand either of them over a second time.
     #[test]
     fn a_fired_watch_outranks_the_line_budget() -> TestResult {
@@ -1214,7 +1187,7 @@ mod tests {
             160,
         )?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, 200)?;
         reg.watch("s-1", &id, WatchWhen::Resolved, vec![other.clone()], 201)?;
         // The subscriber itself spoke last on the reminded thread, so it
         // is not pending and `deliverable` would never return it.
@@ -1241,7 +1214,7 @@ mod tests {
         let text = blob.render(&sub);
         assert!(text.contains("watch fired:"), "{text}");
         assert!(text.contains(&format!("── thread {other} ")), "{text}");
-        assert!(!text.contains("more; call `threads_pending`"), "{text}");
+        assert!(!text.contains("more; call `threads`"), "{text}");
         Ok(())
     }
 
@@ -1253,7 +1226,7 @@ mod tests {
         let dir = TempDir::new("agents-tiny")?;
         let (store, _) = store_with_thread(&dir)?;
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, 200)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
         let mut blob = Blob {
             fresh: reg.deliverable(&sub, store.threads()),
@@ -1285,7 +1258,7 @@ mod tests {
             )?;
         }
         let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
-        reg.subscribe("s-1", "coder", Some("bot"), None, vec![], 200)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, 200)?;
         let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
         let fresh = reg.deliverable(&sub, store.threads());
         let mut blob = Blob {
@@ -1302,7 +1275,7 @@ mod tests {
         assert!(text.contains("thread_reply"));
         assert!(text.contains("x (reviewer): hm"));
         assert!(text.contains("     second line"));
-        assert!(text.contains("more; call `threads_pending`"));
+        assert!(text.contains("more; call `threads`"));
         assert!(text.lines().count() <= 20 + 6, "{text}");
         // Every tool or parameter the blob names is one the vocabulary
         // knows, which the fathomable crate checks against the schema.

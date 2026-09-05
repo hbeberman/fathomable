@@ -1072,14 +1072,6 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     assert_eq!(app.current_path(), Path::new("other.md"));
     assert_eq!(app.view().cursor_source_line(), Some(3));
 
-    assert_eq!(
-        app.handle_request(Request::Follow {
-            paths: vec![PathBuf::from("other.md")]
-        }),
-        Response::Done
-    );
-    assert_eq!(app.followed(), [PathBuf::from("other.md")]);
-
     let Response::Threads(all) = app.handle_request(Request::ThreadsList {
         since: None,
         path: None,
@@ -1115,7 +1107,13 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
         resolve: true,
         lines: None,
     });
-    assert_eq!(reply, Response::Done);
+    // Answered with the thread as it now stands (ADR 0055).
+    let Response::Threads(answered) = reply else {
+        anyhow::bail!("reply answered {reply:?}");
+    };
+    assert_eq!(answered.len(), 1);
+    assert_eq!(answered[0].id(), &id);
+    assert_eq!(answered[0].replies().len(), 1);
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
         Some("reply on README.md:3, proposes resolving")

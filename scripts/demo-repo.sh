@@ -180,7 +180,7 @@ with open(os.path.join(state, "threads.jsonl"), "a") as f:
         f.write(json.dumps(e, separators=(",", ":")) + "\n")
 with open(os.path.join(state, "agents.jsonl"), "a") as f:
     f.write(json.dumps({"event": "subscribe", "v": 1, "id": agent, "kind": "coder",
-                        "name": "demo", "paths": [], "created": now}) + "\n")
+                        "name": "demo", "created": now}) + "\n")
     f.write(json.dumps({"event": "watch", "v": 1, "id": agent, "on": ids["plan-open"],
                         "when": "resolved", "remind": [ids["lib-open"]], "created": now}) + "\n")
 

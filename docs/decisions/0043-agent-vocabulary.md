@@ -97,6 +97,10 @@ hook cadence differ per host.
   root it says so — comments left at the cwd will not reach the
   session — and names `fathomable --register`.
 
+Note (2026-09-04): [0055](0055-six-tools.md) brings the vocabulary to
+six tools, and the `hello` body's `follow` call shape carries `type`
+and `id` only.
+
 ## Consequences
 
 - A tool or parameter rename is now a one-place edit in the vocabulary

@@ -2,7 +2,7 @@
 type: Decision
 title: MCP server and socket protocol v1
 description: The stdio MCP server built on rmcp 3 against the 2026-07-28 spec, the v1 session socket operations it forwards, per-request agent identity, and session binding.
-resource: crates/fathomable/src/mcp.rs
+resource: crates/fathomable/src/mcp/mod.rs
 related_resources:
   - crates/fathomable/src/app/socket.rs
 tags:
@@ -125,6 +125,13 @@ read and gains `limit`.
 - The TUI removes its session record and socket on SIGTERM and SIGHUP as
   well as on clean quit (`tokio` `signal` feature), so `session_list` stays
   accurate for agents.
+
+Note (2026-09-04): [0055](0055-six-tools.md) reduces the tool surface
+to six — `workspaces`, `open`, `follow`, `threads`, `thread_reply`,
+`thread_watch` — and takes `follow` off the socket: protocol version 3
+has no `follow` request and answers `thread_reply` with the thread. The
+tools live in `mcp/tools.rs`; this record keeps the transport in
+`mcp/mod.rs`.
 
 ## Consequences
 

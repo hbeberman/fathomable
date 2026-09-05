@@ -176,7 +176,7 @@ mod tests {
             when,
             AgentsConfig::default().expire_after,
         )?;
-        register.subscribe("s-1", "coder", Some("bot"), None, vec![], when)?;
+        register.subscribe("s-1", "coder", Some("bot"), None, when)?;
         register.watch("s-1", &id, WatchWhen::Resolved, vec![], when)?;
         let workspace = Workspace::discover(&root)?;
         let options = Options {
@@ -211,7 +211,7 @@ mod tests {
             "{:?}",
             app.message()
         );
-        register.subscribe("s-2", "reviewer", None, None, vec![], when)?;
+        register.subscribe("s-2", "reviewer", None, None, when)?;
         app.wake();
         assert!(matches!(app.popup(), Some(Popup::Picker(p)) if p.kind() == PickerKind::Wake));
         app.picker_confirm();

@@ -363,7 +363,7 @@ impl App {
         body: String,
         resolve: bool,
         lines: Option<LineRange>,
-    ) -> Result<(), String> {
+    ) -> Result<Thread, String> {
         let root = self.workspace.root().to_path_buf();
         let store = self
             .store
@@ -397,7 +397,12 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
-        Ok(())
+        // Answered with the thread as it now stands (ADR 0055).
+        self.store
+            .as_ref()
+            .and_then(|store| store.thread(id))
+            .cloned()
+            .ok_or_else(|| format!("thread {id} vanished after the reply"))
     }
 
     /// Move the cursor to the first line of `id`, when the document has it.

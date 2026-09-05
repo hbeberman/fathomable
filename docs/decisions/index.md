@@ -58,3 +58,4 @@ supersede rather than edit history.
 - [0052 File references open in the viewer](0052-goto-file.md)
 - [0053 Resolution is the user's](0053-resolution-is-the-users.md)
 - [0054 The draft is written in the thread](0054-the-draft-is-written-in-the-thread.md)
+- [0055 Six tools](0055-six-tools.md)

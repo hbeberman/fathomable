@@ -68,17 +68,9 @@ impl App {
         result
     }
 
-    /// The change auto-jump would take next: the newest on the agent's
-    /// follow list, else the newest.
+    /// The change auto-jump would take next: the newest (ADR 0055).
     fn auto_target(&self) -> Option<&Change> {
-        self.queue
-            .iter()
-            .find(|change| {
-                self.followed
-                    .iter()
-                    .any(|followed| change.path.starts_with(followed))
-            })
-            .or_else(|| self.queue.newest())
+        self.queue.newest()
     }
 
     /// Jump when the queue is quiet and the guards allow it.
@@ -138,12 +130,11 @@ fn left(before: Place, after: Place) -> bool {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use crossterm::event::KeyCode;
     use fathomable_core::annotations::Store;
     use fathomable_core::config::JumpConfig;
-    use fathomable_core::session::{Request, Response};
 
     use super::RECENT_ACTIVITY;
     use crate::app::{App, Options};
@@ -279,47 +270,6 @@ mod tests {
         assert!(app.view().scroll() > before, "off-screen hunk scrolls");
         assert!(app.queue().is_empty());
         assert!(app.auto_jump());
-        Ok(())
-    }
-
-    #[test]
-    fn a_burst_lands_on_the_followed_file_first() -> anyhow::Result<()> {
-        let dir = fixture("burst")?;
-        let mut app = app(&dir)?;
-        let response = app.handle_request(Request::Follow {
-            paths: vec![PathBuf::from("notes.md")],
-        });
-        assert_eq!(response, Response::Done);
-        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
-        changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\n")?;
-        assert_eq!(
-            app.queue().newest().map(|c| c.path.as_path()),
-            Some(Path::new("guide.md"))
-        );
-        app.tick();
-        assert_eq!(
-            app.current_path(),
-            Path::new("notes.md"),
-            "followed beats newest"
-        );
-        assert_eq!(app.queue().len(), 1, "the rest of the burst stays queued");
-        // A followed directory pulls the same way for the files under it.
-        fs::create_dir_all(dir.0.join("deep"))?;
-        assert_eq!(
-            app.handle_request(Request::Follow {
-                paths: vec![PathBuf::from("deep")],
-            }),
-            Response::Done
-        );
-        changed(&dir, &mut app, "deep/inner.md", "inner\n\none\ntwo\n")?;
-        changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\nthree\n")?;
-        app.view_mut().rest(RECENT_ACTIVITY);
-        app.tick();
-        assert_eq!(
-            app.current_path(),
-            Path::new("deep/inner.md"),
-            "a followed directory beats newest"
-        );
         Ok(())
     }
 }

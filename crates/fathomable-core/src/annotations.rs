@@ -649,14 +649,6 @@ impl Thread {
             })
     }
 
-    /// Whether subscriber `id` has posted in the thread.
-    #[must_use]
-    pub fn has_reply_from(&self, id: &str) -> bool {
-        self.replies
-            .iter()
-            .any(|reply| reply.author().id() == Some(id))
-    }
-
     /// Where the thread sits in `text` now.
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
@@ -1713,8 +1705,6 @@ mod tests {
             .ok_or(StoreError::parse(0, "gone".into()))?;
         assert!(!thread.awaits(Party::Subscriber("s-1")));
         assert!(thread.awaits(Party::Subscriber("s-2")));
-        assert!(thread.has_reply_from("s-1"));
-        assert!(!thread.has_reply_from("s-2"));
         store.reply(&id, Reply::new(Author::User, 12, "still"))?;
         let thread = store
             .thread(&id)

@@ -588,21 +588,19 @@ repository, and the tools are:
 
 | Tool | Use |
 | --- | --- |
-| `workspace_list`, `workspace_switch` | see known workspaces and their viewers; pin one when the cwd heuristic is wrong |
+| `workspaces` | see known workspaces and their viewers; `switch` (a root, or a viewer name or id) pins one for the connection when the cwd heuristic is wrong |
 | `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | tell the viewer(s) which files the agent is editing (shown as `N followed` in the status line and listed in `:status`); with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness) it also subscribes the session, so the hooks hand it what others write as its turns start and end; works without a viewer; a path is a file or a directory, and a directory covers every thread under it, including on files not written yet; fails, changing nothing, when a path is neither, naming same-named paths elsewhere (matching is by path component, so a bare file name never covers the same file in a subdirectory); the reply lists the paths now followed, a directory with a trailing slash; a later `follow` on a subscribed connection updates its coverage to the new paths |
-| `unfollow` | end a subscription by `id`, forgetting its deliveries and watches |
-| `threads_list` | read the threads in the workspace, optionally `since` a Unix time or on one `path` — a file, or a directory to read the whole subtree — at most `limit` (50) oldest-change-first with a note on how to page; works without a viewer; fails when `path` is neither |
-| `threads_pending` | the threads waiting on a subscribed session — open, in its scope, newest message someone else's — each returned once, plus fired watches; for the overflow a hook lists by id, or the hookless way to read comments — not for polling |
-| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`); `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed; works without a viewer |
-| `thread_watch`, `thread_unwatch` | be woken when another thread gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; fails when a named thread does not exist |
+| `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness), so the hooks hand it what others write as its turns start and end; a `persona` name is recorded next to the client name; `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
+| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, or *detached* — and its current range, and no anchor hashes; a resolved thread is only its head; when the session is subscribed, a thread whose newest message is someone else's is marked `pending` and counts as shown to it, so the hooks do not repeat it; a fired watch is reported first with the `remind` threads in full; works without a viewer; not for polling — the hooks deliver |
+| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown id, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; a `persona` name is recorded next to the client name; signed with the session's id and type when the connection subscribed, the session is known from the harness, or `id` is passed, and says so when it is not; works without a viewer |
+| `thread_watch` | be woken when thread `on` gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; `cancel` removes the watch instead; fails when a named thread does not exist |
 
-Every tool accepts an optional `workspace`: a root, or a viewer name or
-id. A subscription's coverage is what it follows (none means all): a
-followed file, or anything under a followed directory, plus every
-thread it has posted in; agent types are labels the viewer
+Every tool but `workspaces` accepts an optional `workspace`: a root, or
+a viewer name or id. A subscription covers the whole workspace
+([0055](decisions/0055-six-tools.md)); agent types are labels the viewer
 shows next to a message (`name (type)`), and the only rule they carry is
-that a session is never woken by its own messages. A thread belongs to the commit it was written against and is shown
+that a session is never woken by its own messages. Every failure names
+the call that fixes it. A thread belongs to the commit it was written against and is shown
 (here and in the viewer) only while that commit is `HEAD` or one of its
 ancestors, so switching to unrelated work hides it and merging brings it
 along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
@@ -688,7 +686,7 @@ Two subcommands, both reading the harness's hook JSON on stdin:
   hearing you.
 
 `agents.max-lines` bounds the newly pending threads only. Past it they
-are named by id and place under `N more; call threads_pending`, and are
+are named by id and place under `N more; call threads`, and are
 deliberately *not* recorded as delivered, so that call returns them in
 full. A fired watch and the threads it reminds of are always shown
 whole: the watch is spent when it fires and a reminded thread need not
@@ -762,8 +760,8 @@ echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --v
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-`:status` inside the app shows the subscribed agents (`name (type) id`
-and what each follows), the open document, the terminal size, the
+`:status` inside the app shows the subscribed agents (`name (type) id`),
+the open document, the terminal size, the
 viewer name and id, the socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
 swept away by the next start.

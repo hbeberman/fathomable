@@ -35,13 +35,7 @@ impl App {
             [] => "none".to_owned(),
             all => all
                 .iter()
-                .map(|s| {
-                    let coverage = match s.paths().len() {
-                        0 => "whole workspace".to_owned(),
-                        n => format!("{n} file(s)"),
-                    };
-                    format!("{} {}: {coverage}", s.label(), s.id())
-                })
+                .map(|s| format!("{} {}", s.label(), s.id()))
                 .collect::<Vec<_>>()
                 .join("; "),
         }
@@ -50,21 +44,6 @@ impl App {
     /// The rows of the `:status` overlay: label, value.
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
         let unavailable = || "unavailable (see the log)".to_owned();
-        let followed = match self.followed.as_slice() {
-            [] => "none".to_owned(),
-            paths => paths
-                .iter()
-                .map(|p| {
-                    // A followed directory covers what is under it: say so.
-                    if self.workspace.root().join(p).is_dir() {
-                        format!("{}/", p.display())
-                    } else {
-                        p.display().to_string()
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        };
         let view = self.view();
         let (line, column) = view.source_position();
         let base = if view.diff_view() {
@@ -136,7 +115,6 @@ impl App {
             ("changes".to_owned(), self.queue.len().to_string()),
             ("proposed".to_owned(), self.proposed_total().to_string()),
             ("waiting".to_owned(), self.waiting_total().to_string()),
-            ("followed".to_owned(), followed),
             ("subscribers".to_owned(), subscribers),
         ]
     }

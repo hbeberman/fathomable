@@ -242,6 +242,12 @@ const FOLLOW_MOVED: [(&str, &str); 6] = [
 ];
 
 impl Config {
+    /// The defaults, as if `config.kdl` were empty.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     /// Read `$XDG_CONFIG_HOME/fathomable/config.kdl`, or `path` if given.
     ///
     /// A missing file yields the defaults.

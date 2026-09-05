@@ -142,6 +142,14 @@ pub struct Queue {
 }
 
 impl Queue {
+    /// An empty queue.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            changes: Vec::new(),
+        }
+    }
+
     /// Record a change, moving an already queued path to the front with the
     /// new target.
     pub fn push(&mut self, change: Change) {

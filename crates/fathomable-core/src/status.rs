@@ -167,6 +167,14 @@ pub struct Status {
 }
 
 impl Status {
+    /// A clean tree: no entries.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
     /// Build from entries in any order; duplicates keep the last.
     #[must_use]
     pub fn from_entries(mut entries: Vec<Entry>) -> Self {

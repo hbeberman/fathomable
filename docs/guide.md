@@ -266,6 +266,10 @@ found. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
 (`~/.local/state/...` by default), one append-only JSON line per event.
+Each line carries the format version this build writes; a file of
+another version is refused with the line to blame and the path to
+delete, and there is no migration before the first tag
+([0062](decisions/0062-one-version-no-compatibility.md)).
 
 Every open thread shows a **stub** under the last of its lines: one row
 per message for its newest two, each with the state glyph, the author
@@ -644,7 +648,9 @@ along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
 or rebase that drops that commit does not lose an open thread: while its
 lines are still in the working tree it moves to the new `HEAD`
 ([0035](decisions/0035-threads-follow-head.md)). Details and the wire
-protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md).
+protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md);
+[0062](decisions/0062-one-version-no-compatibility.md) trims it to
+the requests that have a client and one protocol version.
 
 ### Hooks: comments reach the agent
 

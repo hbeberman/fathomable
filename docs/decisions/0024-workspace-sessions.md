@@ -2,7 +2,8 @@
 type: Decision
 title: Workspace sessions, viewers, and git-scoped threads
 description: A session is the annotation state of one workspace; running viewers are displays of it, agents bind lazily by directory, and a thread belongs to the commit it was written against.
-resource: crates/fathomable-core/src/session.rs
+related_resources:
+  - crates/fathomable-core/src/session.rs
 tags:
   - decision
   - sessions
@@ -21,6 +22,9 @@ mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
 `Scope` is `Reach`, *local*/*global* are *in file*/*across the
 workspace*, and the `session` tool parameter is `workspace`; the text
 below keeps the old words where it describes what was decided then.
+`session.rs` is backed by [0062](0062-one-version-no-compatibility.md)
+since 2026-09-05, which also retired `session_info` and the per-viewer
+follow state it reported.
 
 ## Context
 

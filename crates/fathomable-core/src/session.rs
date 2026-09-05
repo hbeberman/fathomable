@@ -1,4 +1,4 @@
-// @okf-doc: /decisions/0024-workspace-sessions.md
+// @okf-doc: /decisions/0062-one-version-no-compatibility.md
 //! Viewer records, workspace markers, and the v2 socket protocol.
 //!
 //! A workspace's annotation state is the workspace's; a running TUI is a

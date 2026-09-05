@@ -133,6 +133,10 @@ has no `follow` request and answers `thread_reply` with the thread. The
 tools live in `mcp/tools.rs`; this record keeps the transport in
 `mcp/mod.rs`.
 
+Note (2026-09-05): [0062](0062-one-version-no-compatibility.md) takes
+`ping` and `session_info` off the socket, refuses every protocol
+version but the one the binary speaks, and restarts the number at 1.
+
 ## Consequences
 
 - The tool surface is a pure function of the request plus the socket reply,

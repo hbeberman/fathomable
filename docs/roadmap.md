@@ -274,3 +274,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     the user from birth and reaches no agent until the user speaks;
     the viewer names the author on the comment's rows
     ([0061](decisions/0061-agents-start-threads.md)).
+53. **One version, no compatibility.** The socket drops `ping` and
+    `session_info`, refuses every protocol version but its own, and
+    restarts at v1; the thread store and the agent register read the
+    format version they write and refuse another, naming the file to
+    delete; a `follow` config block is an unknown setting; nothing
+    written before the first tag is owed a reader
+    ([0062](decisions/0062-one-version-no-compatibility.md)).

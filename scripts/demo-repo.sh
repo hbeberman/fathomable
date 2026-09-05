@@ -147,7 +147,7 @@ def annotate(n, path, start, end, comment, detached=False):
     if after: ctx["after"] = after
     tid = f"{now}-demo-{n}"
     event = {
-        "event": "annotate", "v": 2, "id": tid, "path": path,
+        "event": "annotate", "v": 1, "id": tid, "path": path,
         "range": {"start": start, "end": end}, "snippet": "\n".join(body),
         "anchor": anchor, "created": now - 600 + n, "comment": comment,
         "commit": head,
@@ -163,14 +163,14 @@ t, e = annotate(1, "src/lib.rs", 9, 11, "This splits on a single space; two spac
 events.append(e); ids["lib-open"] = t
 t, e = annotate(2, "README.md", 14, 16, "Please update this table once the fix lands.")
 events.append(e); ids["readme-replied"] = t
-events.append({"event": "reply", "v": 2, "thread": t,
+events.append({"event": "reply", "v": 1, "thread": t,
                "author": {"name": "rev", "id": "other", "kind": "reviewer"},
                "created": now - 500, "body": "Agreed; the coder should do this after fixing word_count."})
 t, e = annotate(3, "docs/plan.md", 3, 5, "Step 2 first: a failing test for the empty string proves the fix.")
 events.append(e); ids["plan-open"] = t
 t, e = annotate(4, "src/main.rs", 4, 5, "Fine as it is.")
 events.append(e); ids["main-resolved"] = t
-events.append({"event": "resolve", "v": 2, "thread": t, "created": now - 400})
+events.append({"event": "resolve", "v": 1, "thread": t, "created": now - 400})
 t, e = annotate(5, "README.md", 3, 3, "This paragraph was rewritten; the thread no longer matches any line.", detached=True)
 events.append(e); ids["readme-detached"] = t
 

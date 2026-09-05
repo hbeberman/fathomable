@@ -28,9 +28,16 @@ use crate::vocabulary as vocab;
 /// File name of the register inside the workspace state directory.
 pub const AGENTS_FILE: &str = "agents.jsonl";
 
-/// The `v` field written to each register line. Bump it when a line's
-/// shape changes so an older viewer can refuse a newer file (ADR 0040).
+/// The `v` field written to each register line; [`Register::open`]
+/// refuses a file of another version (ADR 0062). Bump it when a line's
+/// shape changes.
 const FORMAT_VERSION: u32 = 1;
+
+/// The `v` of one register line, read before the event itself.
+#[derive(Deserialize)]
+struct Stamp {
+    v: u32,
+}
 
 /// A harness session that subscribed to the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,6 +263,11 @@ impl Register {
         for (index, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
+            }
+            let Stamp { v } = serde_json::from_str(line)
+                .map_err(|error| RegisterError::parse(index + 1, error.to_string()))?;
+            if v != FORMAT_VERSION {
+                return Err(RegisterError::version(&register.path, index + 1, v));
             }
             let event: Event = serde_json::from_str(line)
                 .map_err(|error| RegisterError::parse(index + 1, error.to_string()))?;
@@ -953,6 +965,7 @@ pub struct Fired<'a> {
 enum ErrorKind {
     Io(PathBuf, io::Error),
     Parse(usize, String),
+    Version(PathBuf, usize, u32),
     UnknownSubscriber(String),
     UnknownWatch(String, ThreadId),
     KindFixed(String, String),
@@ -977,6 +990,12 @@ impl RegisterError {
         }
     }
 
+    fn version(path: &Path, line: usize, found: u32) -> Self {
+        Self {
+            kind: ErrorKind::Version(path.to_path_buf(), line, found),
+        }
+    }
+
     /// Whether the cause was an I/O failure.
     #[must_use]
     pub fn is_io(&self) -> bool {
@@ -989,6 +1008,12 @@ impl fmt::Display for RegisterError {
         match &self.kind {
             ErrorKind::Io(path, error) => write!(f, "{}: {error}", path.display()),
             ErrorKind::Parse(line, message) => write!(f, "{AGENTS_FILE} line {line}: {message}"),
+            ErrorKind::Version(path, line, found) => write!(
+                f,
+                "{AGENTS_FILE} line {line}: format version {found}, this build writes \
+                 {FORMAT_VERSION}; delete {} to start over",
+                path.display()
+            ),
             ErrorKind::UnknownSubscriber(id) => {
                 write!(
                     f,
@@ -1030,6 +1055,32 @@ mod tests {
     use crate::bond::Process;
 
     type TestResult = Result<(), Box<dyn Error>>;
+
+    /// A register of another format version is refused with the line,
+    /// both versions, and the path to delete (ADR 0062).
+    #[test]
+    fn a_register_of_another_format_version_is_refused() -> TestResult {
+        let dir = TempDir::new("agents-version")?;
+        let path = dir.0.join("agents.jsonl");
+        let stale = r#"{"event":"subscribe","v":0,"id":"s-1","kind":"coder","created":1}"#;
+        fs::write(&path, format!("{stale}\n"))?;
+        let error = Register::open(&path, 1_000, DAY)
+            .err()
+            .map(|e| e.to_string());
+        assert_eq!(
+            error,
+            Some(format!(
+                "agents.jsonl line 1: format version 0, this build writes 1; delete {} to start over",
+                path.display()
+            ))
+        );
+        fs::write(
+            &path,
+            format!("{}\n", stale.replace(r#""v":0"#, r#""v":1"#)),
+        )?;
+        assert_eq!(Register::open(&path, 1_000, DAY)?.subscribers().len(), 1);
+        Ok(())
+    }
 
     #[test]
     fn a_bond_names_the_session_and_expires_with_the_register() -> TestResult {

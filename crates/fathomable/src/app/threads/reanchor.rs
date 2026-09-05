@@ -235,7 +235,7 @@ mod tests {
             dir.0.join("state/threads.jsonl"),
             format!(
                 concat!(
-                    r#"{{"event":"annotate","v":2,"id":"old","path":"a.txt","#,
+                    r#"{{"event":"annotate","v":1,"id":"old","path":"a.txt","#,
                     r#""range":{{"start":2,"end":2}},"snippet":"two","anchor":{anchor},"#,
                     r#""created":1,"comment":"hm"}}"#,
                     "\n"

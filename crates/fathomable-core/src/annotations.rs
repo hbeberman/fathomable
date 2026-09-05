@@ -40,8 +40,9 @@ use serde::{Deserialize, Serialize};
 use crate::context::Context;
 use sha2::{Digest, Sha256};
 
-/// The record format version written in every event line.
-pub const FORMAT_VERSION: u32 = 2;
+/// The format version written in every event line; [`Store::open`]
+/// refuses a file of another (ADR 0062).
+pub const FORMAT_VERSION: u32 = 1;
 
 /// File name of the thread store inside a workspace state directory.
 pub const THREADS_FILE: &str = "threads.jsonl";
@@ -802,6 +803,12 @@ impl Reach {
     }
 }
 
+/// The `v` of one event line, read before the event itself.
+#[derive(Deserialize)]
+struct Stamp {
+    v: u32,
+}
+
 /// One line of the JSONL file.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -819,7 +826,7 @@ enum Event {
         #[serde(default, skip_serializing_if = "Author::is_user")]
         author: Author,
         comment: String,
-        /// Absent in version 1 records, which read as unscoped.
+        /// `None` for a workspace outside git, which reads as unscoped.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
         /// The window the lines were placed in (ADR 0038); absent on
@@ -929,8 +936,9 @@ impl Store {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the file cannot be read, a line is not a
-    /// known event, or an event refers to a thread the file never created.
+    /// Returns [`StoreError`] when the file cannot be read, a line is of
+    /// another format version or not a known event, or an event refers to
+    /// a thread the file never created.
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StoreError> {
         let path = path.into();
         let mut store = Self {
@@ -946,6 +954,11 @@ impl Store {
         for (index, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
+            }
+            let Stamp { v } = serde_json::from_str(line)
+                .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
+            if v != FORMAT_VERSION {
+                return Err(StoreError::version(&store.path, index + 1, v));
             }
             let event: Event = serde_json::from_str(line)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
@@ -1401,6 +1414,7 @@ impl Store {
 enum ErrorKind {
     Io(PathBuf, io::Error),
     Parse(usize, String),
+    Version(PathBuf, usize, u32),
     UnknownThread(ThreadId),
     UnknownMessage(ThreadId, MessageTarget),
     MessageNotEditable(ThreadId, MessageTarget),
@@ -1426,6 +1440,12 @@ impl StoreError {
         }
     }
 
+    fn version(path: &Path, line: usize, found: u32) -> Self {
+        Self {
+            kind: ErrorKind::Version(path.to_path_buf(), line, found),
+        }
+    }
+
     /// Whether the cause was an I/O failure.
     #[must_use]
     pub fn is_io(&self) -> bool {
@@ -1437,7 +1457,13 @@ impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             ErrorKind::Io(path, error) => write!(f, "{}: {error}", path.display()),
-            ErrorKind::Parse(line, message) => write!(f, "threads.jsonl line {line}: {message}"),
+            ErrorKind::Parse(line, message) => write!(f, "{THREADS_FILE} line {line}: {message}"),
+            ErrorKind::Version(path, line, found) => write!(
+                f,
+                "{THREADS_FILE} line {line}: format version {found}, this build writes \
+                 {FORMAT_VERSION}; delete {} to start over",
+                path.display()
+            ),
             ErrorKind::UnknownThread(id) => write!(f, "unknown thread {id}"),
             ErrorKind::UnknownMessage(id, target) => {
                 write!(f, "unknown message {target:?} in thread {id}")
@@ -1490,6 +1516,36 @@ mod tests {
                 .map_err(|e| StoreError::io(Path::new(name), e))?;
             Ok(Self(dir.0.join("nested").join("threads.jsonl"), dir))
         }
+    }
+
+    /// A file of another format version is refused with the line, both
+    /// versions, and the path to delete; a missing file and one of the
+    /// current version open (ADR 0062).
+    #[test]
+    fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
+        let file = TempFile::new("version")?;
+        assert!(Store::open(&file.0)?.threads().is_empty());
+        if let Some(parent) = file.0.parent() {
+            fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
+        }
+        let stale = concat!(
+            r#"{"event":"annotate","v":0,"id":"1-1-1","path":"a.md","range":[1,1],"#,
+            r##""snippet":"# Title","anchor":{"lines":["x"]},"created":1,"comment":"old"}"##,
+            "\n"
+        );
+        fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
+        let error = Store::open(&file.0).err().map(|e| e.to_string());
+        assert_eq!(
+            error,
+            Some(format!(
+                "threads.jsonl line 1: format version 0, this build writes 1; delete {} to start over",
+                file.0.display()
+            ))
+        );
+        let current = stale.replace(r#""v":0"#, r#""v":1"#);
+        fs::write(&file.0, current).map_err(|e| StoreError::io(&file.0, e))?;
+        assert_eq!(Store::open(&file.0)?.threads().len(), 1);
+        Ok(())
     }
 
     #[test]
@@ -1990,14 +2046,14 @@ mod tests {
 
         let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
         assert_eq!(raw.lines().count(), 6);
-        assert!(raw.lines().all(|line| line.contains("\"v\":2")));
+        assert!(raw.lines().all(|line| line.contains("\"v\":1")));
         assert!(raw.contains("\"author\":\"claude\""));
         Ok(())
     }
 
     /// A thread carries the commit it was written against; the scope hides
-    /// it where that commit is not reachable, and a version 1 record with no
-    /// commit is shown everywhere (ADR 0024).
+    /// it where that commit is not reachable, and a record with no commit
+    /// is shown everywhere (ADR 0024).
     #[test]
     fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), StoreError> {
         let file = TempFile::new("scope")?;

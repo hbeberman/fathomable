@@ -25,7 +25,6 @@ code {
 colors {
     "ui.text"              fg="fg" bg="paper"
     "ui.linenr"            fg="trim"
-    "ui.cursorline"        bg="surface"
     "ui.selection"         bg="select"
     "ui.search.match"      fg="black" bg="yellow"
     "ui.statusline"        bg="surface"

@@ -47,7 +47,6 @@ pub(crate) struct Theme {
     pub(crate) marker: Style,
     pub(crate) quote: Style,
     pub(crate) line_number: Style,
-    pub(crate) cursorline: Style,
     pub(crate) selection: Style,
     pub(crate) search_match: Style,
     pub(crate) statusline: Style,
@@ -96,7 +95,6 @@ impl Theme {
             marker: style(Key::MarkupList),
             quote: style(Key::MarkupQuote),
             line_number: style(Key::UiLinenr),
-            cursorline: style(Key::UiCursorline),
             selection: style(Key::UiSelection),
             search_match: style(Key::UiSearchMatch),
             statusline: style(Key::UiStatusline),
@@ -881,7 +879,6 @@ fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
 fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Vec<Line<'a>> {
     let view = app.view();
     let digits = gutter - 3;
-    let cursor = view.cursor();
     let selection = view.selection();
     let lines = view.layout().lines();
     let width = gutter + view.layout().width();
@@ -897,14 +894,12 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
                 let body = expanded
                     .entry(block)
                     .or_insert_with(|| expanded_block_lines(app, theme, &stub, width - gutter));
-                let is_cursor = row == cursor.row;
                 out.push(with_gutter(
                     app,
                     theme,
                     body.get(index).cloned().unwrap_or_default(),
                     row,
                     digits,
-                    is_cursor,
                 ));
             } else {
                 out.push(stub_line(
@@ -913,7 +908,6 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             }
             continue;
         }
-        let is_cursor = row == cursor.row;
         // The note cell brackets a thread's rows (ADR 0027).
         let note = app.note_on_row(row);
         let mut row_style = Style::default();
@@ -923,9 +917,6 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         // The open thread's own lines stand out from the rest (ADR 0033).
         if app.open_thread_on_row(row) {
             row_style = row_style.patch(theme.thread_focus);
-        }
-        if is_cursor {
-            row_style = row_style.patch(theme.cursorline);
         }
         let number = line
             .source_line()
@@ -1156,19 +1147,15 @@ fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) ->
 
 /// An expanded thread's row with the gutter in front of it: the bracket
 /// of a thread spanning the row, blanks for the number and the bar, on
-/// the `thread.inline` background, the cursor row tinted as any other.
+/// the `thread.inline` background.
 fn with_gutter<'a>(
     app: &App,
     theme: &Theme,
     line: Line<'a>,
     row: usize,
     digits: usize,
-    is_cursor: bool,
 ) -> Line<'a> {
-    let mut row_style = theme.thread_inline;
-    if is_cursor {
-        row_style = row_style.patch(theme.cursorline);
-    }
+    let row_style = theme.thread_inline;
     let note = app.note_on_row(row).map_or_else(
         || Span::styled(" ", row_style),
         |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),

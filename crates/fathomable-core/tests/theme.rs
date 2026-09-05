@@ -62,10 +62,7 @@ fn user_file_shadows_builtin_and_inherits_default_dark_implicitly() -> TestResul
     );
     // Unset keys come from the built-in default-dark, not from built-in light.
     let dark = Theme::resolve("default-dark", |_| Ok(None))?;
-    assert_eq!(
-        theme.style(Key::UiCursorline),
-        dark.style(Key::UiCursorline)
-    );
+    assert_eq!(theme.style(Key::UiLinenr), dark.style(Key::UiLinenr));
     assert_eq!(theme.syntect(), dark.syntect());
     Ok(())
 }
@@ -76,7 +73,7 @@ fn inherits_chain_overrides_parent_and_reuses_its_palette() -> TestResult {
         (
             "base",
             r##"palette { accent "#ff0000" }
-colors { "ui.linenr" fg="accent"; "ui.cursorline" bg="accent" }"##,
+colors { "ui.linenr" fg="accent"; "ui.selection" bg="accent" }"##,
         ),
         (
             "child",
@@ -92,7 +89,7 @@ colors { "ui.linenr" fg="#00ff00" }"##,
     );
     // The parent's key resolved against the parent's palette, not the child's.
     assert_eq!(
-        theme.style(Key::UiCursorline).bg(),
+        theme.style(Key::UiSelection).bg(),
         Some(Color::Rgb(0xff, 0, 0))
     );
     Ok(())

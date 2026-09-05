@@ -53,7 +53,6 @@ code {
 }
 
 colors {
-    "ui.cursorline"        bg="#2a2a2a"
     "ui.search.match"      fg="black" bg="yellow"
     "ui.statusline.normal" fg="black" bg="#7aa6da" mods="bold"
     "diff.plus"            "red"
@@ -93,8 +92,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | --- | --- |
 | `ui.text` | body text |
 | `ui.linenr` | gutter line numbers |
-| `ui.cursorline` | the cursor row |
-| `ui.selection` | mouse or `V` selection |
+| `ui.selection` | mouse or `V` selection; `ui.cursorline`, the cursor row, was removed on 2026-09-04 ([0010](0010-viewer-ux.md)) |
 | `ui.search.match` | search highlights |
 | `ui.statusline` | status line background |
 | `ui.statusline.normal`, `.select`, `.input` | mode pills |

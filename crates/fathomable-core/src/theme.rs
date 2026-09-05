@@ -167,7 +167,6 @@ impl Style {
 pub enum Key {
     UiText,
     UiLinenr,
-    UiCursorline,
     UiSelection,
     UiSearchMatch,
     UiStatusline,
@@ -209,10 +208,9 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 36] = [
+    const NAMED: [(&'static str, Self); 35] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
-        ("ui.cursorline", Self::UiCursorline),
         ("ui.selection", Self::UiSelection),
         ("ui.search.match", Self::UiSearchMatch),
         ("ui.statusline", Self::UiStatusline),
@@ -256,7 +254,7 @@ impl Key {
             .chain((1..=6).map(Self::MarkupHeadingLevel))
     }
 
-    /// The key as written in a theme file, e.g. `ui.cursorline`.
+    /// The key as written in a theme file, e.g. `ui.linenr`.
     #[must_use]
     pub fn as_str(&self) -> String {
         match self {

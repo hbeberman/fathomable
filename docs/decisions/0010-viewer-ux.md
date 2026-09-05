@@ -42,6 +42,11 @@ viewer, the layout engine, and later themes agree.
   as in Vim (`curswant`).
 - The cursor line is highlighted subtly (theme key `ui.cursorline`); the
   cursor cell itself uses the terminal cursor.
+  - Amended 2026-09-04: **the cursor row is not tinted.** The terminal
+    cursor alone marks the position; `ui.cursorline` leaves the theme
+    vocabulary ([0011](0011-theme-schema.md)) and a theme naming it is
+    an unknown key. The user dropped the tint on 2026-09-04 because it
+    read as a second highlight beside the thread and selection tints.
 - `scrolloff` is 3 rendered lines. `Ctrl-d`/`Ctrl-u` move half a page,
   `gg`/`G` go to the first and last rendered line.
 - Synthesised lines (table rules, block spacing) are valid cursor rows; they

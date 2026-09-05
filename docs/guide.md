@@ -775,6 +775,10 @@ Codex CLI, in `~/.codex/hooks.json` (then trust it with `/hooks`):
 }
 ```
 
+Copilot and VS Code are experimental: Copilot's hook input was captured
+from CLI 1.0.82, but the tool name its model sees was never checked, and
+VS Code has not been tried at all, so a wrong tool name there shows up
+as a hook that says nothing. Claude Code and Codex are the tested paths.
 Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
 (or `.github/hooks/fathomable.json` once the folder is trusted); use
 `--hook copilot` in the CLI and `--hook vscode` under VS Code, whose

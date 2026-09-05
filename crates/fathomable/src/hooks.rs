@@ -54,6 +54,11 @@ use serde_json::{Value, json};
 use fathomable_core::clock::now;
 
 /// The agent harness whose hook is calling.
+///
+/// Claude Code and Codex are exercised end to end. Copilot's hook JSON
+/// was captured from CLI 1.0.82, but the tool name its model sees is
+/// unverified; VS Code is unverified entirely (the same hook file is
+/// documented as read by both). Treat those two as experimental.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum Harness {
     /// Claude Code: `SessionStart` and `Stop` in `settings.json`.
@@ -61,8 +66,10 @@ pub(crate) enum Harness {
     /// Codex CLI: `SessionStart` and `Stop` in `hooks.json`.
     Codex,
     /// Copilot CLI: `sessionStart` and `agentStop` in `.github/hooks`.
+    /// Hooks observed; tool naming unverified.
     Copilot,
     /// VS Code agent mode: `SessionStart` and `Stop` in `.github/hooks`.
+    /// Unverified against the real harness.
     Vscode,
 }
 

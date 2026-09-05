@@ -27,7 +27,10 @@ pub(crate) struct Envelope {
 #[derive(Debug)]
 pub(crate) struct Listener {
     path: PathBuf,
-    listener: UnixListener,
+    /// The uid that owns the socket file: this process's own, read back
+    /// from the file it just bound so no `/proc` is needed.
+    uid: u32,
+    socket: UnixListener,
 }
 
 impl Listener {
@@ -42,10 +45,12 @@ impl Listener {
             Err(error) => return Err(error),
         }
         let listener = UnixListener::bind(path)?;
+        let uid = fs::metadata(path)?.uid();
         tracing::info!(path = %path.display(), "listening on the viewer socket");
         Ok(Self {
             path: path.to_path_buf(),
-            listener,
+            uid,
+            socket: listener,
         })
     }
 
@@ -54,11 +59,12 @@ impl Listener {
     /// loop's reply.
     pub(crate) fn serve(self, record: Record, app: mpsc::Sender<Envelope>) -> Serving {
         let path = self.path.clone();
+        let uid = self.uid;
         let handle = tokio::spawn(async move {
             loop {
-                match self.listener.accept().await {
+                match self.socket.accept().await {
                     Ok((stream, _)) => {
-                        if !same_user(&stream) {
+                        if !same_user(&stream, uid) {
                             tracing::warn!("refused socket peer with another uid");
                             continue;
                         }
@@ -75,12 +81,9 @@ impl Listener {
     }
 }
 
-/// Whether the peer runs as the same user as this process.
-fn same_user(stream: &UnixStream) -> bool {
-    let Ok(peer) = stream.peer_cred() else {
-        return false;
-    };
-    fs::metadata("/proc/self").is_ok_and(|me| me.uid() == peer.uid())
+/// Whether the peer runs as `uid`, the user this process runs as.
+fn same_user(stream: &UnixStream, uid: u32) -> bool {
+    stream.peer_cred().is_ok_and(|peer| peer.uid() == uid)
 }
 
 async fn connection(stream: UnixStream, record: Record, app: mpsc::Sender<Envelope>) {

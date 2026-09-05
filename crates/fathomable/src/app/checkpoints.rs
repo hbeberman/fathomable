@@ -18,8 +18,8 @@ use fathomable_core::content;
 use fathomable_core::workspace::Filter;
 
 use super::draw::format_age;
-use super::threads::now;
 use super::{App, PickerKind};
+use fathomable_core::clock::now;
 
 /// Commits touching the file the pickers list, at most (ADR 0049).
 const HISTORY_LIMIT: usize = 50;

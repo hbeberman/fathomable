@@ -13,7 +13,7 @@ use std::fs;
 use fathomable_core::annotations::{Status, Store, ThreadId};
 use fathomable_core::workspace::Workspace;
 
-use crate::app::threads::now;
+use fathomable_core::clock::now;
 
 /// Rescope to `HEAD` every open thread whose commit `HEAD` cannot reach
 /// but whose lines are still in its file on disk. `reachable` is the

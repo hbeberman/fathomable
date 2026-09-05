@@ -9,8 +9,8 @@
 
 use fathomable_core::annotations::ThreadId;
 
-use crate::app::threads::now;
 use crate::app::{App, Focus};
+use fathomable_core::clock::now;
 
 const ARMED: &str = "d again to delete this thread · any other key cancels";
 

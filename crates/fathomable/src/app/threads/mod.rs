@@ -25,12 +25,12 @@ pub(crate) mod waiting;
 pub(crate) mod words;
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use fathomable_core::annotations::{
     Author, Draft, LineRange, MessageTarget, Party, Placement, Reply, Status, Store, Thread,
     ThreadId,
 };
+use fathomable_core::clock::now;
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 use fathomable_core::reanchor::{Mapping, map_range};
@@ -145,13 +145,6 @@ impl Compose {
 
 pub(super) fn overlaps(a: LineRange, b: LineRange) -> bool {
     a.start() <= b.end() && b.start() <= a.end()
-}
-
-/// Seconds since the Unix epoch.
-pub(crate) fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// Convert a zero-based message position into its storage target.

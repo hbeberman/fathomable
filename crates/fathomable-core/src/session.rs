@@ -30,7 +30,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -58,9 +57,7 @@ impl Id {
     /// Mint an id for the current process.
     #[must_use]
     pub fn mint() -> Self {
-        let seconds = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs());
+        let seconds = crate::clock::now();
         Self(format!("{seconds}-{}", std::process::id()))
     }
 
@@ -120,9 +117,7 @@ impl Record {
             pid: std::process::id(),
             root,
             socket: socket.unwrap_or_default(),
-            started: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs()),
+            started: crate::clock::now(),
             name: None,
         }
     }
@@ -301,9 +296,7 @@ impl Marker {
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
-            last_seen: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |elapsed| elapsed.as_secs()),
+            last_seen: crate::clock::now(),
         }
     }
 

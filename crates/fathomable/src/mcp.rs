@@ -46,11 +46,11 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
-use crate::app::threads::now;
 use crate::app::threads::open::follow_reply_lines;
 use crate::app::threads::reach;
 use crate::app::threads::reanchor::follow_snapshots;
 use crate::hooks;
+use fathomable_core::clock::now;
 
 /// Run the server on stdin/stdout until the client disconnects.
 pub fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {

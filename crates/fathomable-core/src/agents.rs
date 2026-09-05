@@ -350,11 +350,6 @@ impl Register {
         })
     }
 
-    /// The watches on `thread`.
-    pub fn watches_on<'a>(&'a self, thread: &'a ThreadId) -> impl Iterator<Item = &'a Watch> + 'a {
-        self.watches.iter().filter(move |w| w.on == *thread)
-    }
-
     /// Subscribe `id` as `kind` following `paths`, or refresh the paths of
     /// an existing subscription.
     ///

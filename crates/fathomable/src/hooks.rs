@@ -51,7 +51,7 @@ use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use serde_json::{Value, json};
 
-use crate::app::threads::now;
+use fathomable_core::clock::now;
 
 /// The agent harness whose hook is calling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -783,7 +783,7 @@ mod tests {
     use super::{
         Diag, Event, Harness, Input, Occasion, compose, hello_text, prefix_warning, workspace_for,
     };
-    use crate::app::threads::now;
+    use fathomable_core::clock::now;
     use fathomable_testing::TempDir;
 
     type TestResult = Result<(), Box<dyn Error>>;

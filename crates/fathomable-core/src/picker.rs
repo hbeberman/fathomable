@@ -37,12 +37,6 @@ impl Match {
         self.index
     }
 
-    /// Match score; higher ranks first.
-    #[must_use]
-    pub fn score(&self) -> u32 {
-        self.score
-    }
-
     /// Character positions in the item that matched the query, ascending.
     #[must_use]
     pub fn positions(&self) -> &[u32] {

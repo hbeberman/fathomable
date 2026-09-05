@@ -26,8 +26,9 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use crate::clock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -86,7 +87,7 @@ impl Store {
             Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
             Err(error) => return Err(error),
         };
-        let cutoff = now().saturating_sub(MAX_AGE.as_secs());
+        let cutoff = clock::now().saturating_sub(MAX_AGE.as_secs());
         let mut entries = BTreeMap::new();
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             match serde_json::from_str::<Entry>(line) {
@@ -165,7 +166,7 @@ impl Store {
         let entry = Entry {
             path: path.to_path_buf(),
             sha256,
-            at: now(),
+            at: clock::now(),
         };
         if let Some(log) = self.log.as_mut() {
             let mut line = serde_json::to_string(&entry)?;
@@ -225,12 +226,6 @@ fn hash(text: &str) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ use fathomable_core::reanchor::{Mapping, map_range};
 use fathomable_core::seen;
 
 use crate::app::App;
-use crate::app::threads::now;
+use fathomable_core::clock::now;
 
 impl App {
     /// Follow every thread that no longer locates in its file from the

@@ -760,7 +760,7 @@ fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -
     }
     let focused = app.focus() == Focus::ThreadsPane;
     let selected = app.threads_pane_selected();
-    let now = crate::app::threads::now();
+    let now = fathomable_core::clock::now();
     for (index, row) in entries
         .iter()
         .enumerate()
@@ -1056,7 +1056,7 @@ fn stub_line<'a>(
     } else {
         Span::styled(" ", row_style)
     };
-    let now = crate::app::threads::now();
+    let now = fathomable_core::clock::now();
     let lead = format!(" {author} {}  ", format_age_short(created, now));
     let hint = if hinted { " (c expand)" } else { "" };
     let free = width
@@ -1102,7 +1102,7 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
         theme,
         app.highlighter(),
         thread,
-        crate::app::threads::now(),
+        fathomable_core::clock::now(),
         width,
         selected,
     ));
@@ -1610,7 +1610,7 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     let list = app.review_list();
     let Rows { rows: all, entries } = app.review_rows(width);
-    let now = crate::app::threads::now();
+    let now = fathomable_core::clock::now();
     let mut lines = vec![review_header(app, &entries).line(theme, width)];
     let scroll = list.scroll().min(all.len().saturating_sub(rows - 1));
     for row in all.iter().skip(scroll).take(rows - 1) {

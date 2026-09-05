@@ -30,8 +30,8 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::clock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -227,7 +227,7 @@ impl Store {
         if refs.is_empty() {
             return Ok(0);
         }
-        let created = now();
+        let created = clock::now();
         let event = Event {
             kind: EVENT_NAME.to_owned(),
             id: event_id(created, &refs),
@@ -286,12 +286,6 @@ fn hash(text: &str) -> String {
         let _ = write!(out, "{byte:02x}");
     }
     out
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

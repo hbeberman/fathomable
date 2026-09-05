@@ -8,9 +8,9 @@ use std::process::{Command, Stdio};
 use fathomable_core::agents::{Register, Subscriber};
 use fathomable_core::annotations::ThreadId;
 
-use crate::app::threads::now;
 use crate::app::{App, PickerKind};
 use crate::hooks;
+use fathomable_core::clock::now;
 
 impl App {
     /// The live subscribers of this workspace, read from the register.
@@ -142,8 +142,8 @@ mod tests {
     use fathomable_core::config::AgentsConfig;
     use fathomable_core::workspace::Workspace;
 
-    use crate::app::threads::now;
     use crate::app::{App, Options, PickerKind, Popup};
+    use fathomable_core::clock::now;
     use fathomable_testing::TempDir;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;

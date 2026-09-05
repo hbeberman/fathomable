@@ -211,16 +211,17 @@ fn hints_width(shown: &[HintOf]) -> usize {
     shown.iter().map(HintOf::width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
 }
 
-/// The checkpoint view's header (ADR 0049): the pair's names, then the
-/// paging, side, and close keys.
-pub(crate) fn checkpoint_header(text: &str) -> Header {
+/// A diff's header (ADR 0049, ADR 0060): the pair's names, then the
+/// paging, side, whitespace, and close keys.
+pub(crate) fn diff_header(text: &str) -> Header {
     Header::new(
         vec![(format!(" {text}"), Tone::Key)],
         vec![
             HintOf::paired(Where::View, Action::MoveLeft, Action::MoveRight, "page"),
-            HintOf::keyed(Where::View, Action::CheckpointBase, "base"),
-            HintOf::keyed(Where::View, Action::CheckpointTarget, "target"),
-            HintOf::keyed(Where::View, Action::CheckpointDiff, "close"),
+            HintOf::keyed(Where::View, Action::DiffBase, "base"),
+            HintOf::keyed(Where::View, Action::DiffTarget, "target"),
+            HintOf::keyed(Where::View, Action::DiffWhitespace, "whitespace"),
+            HintOf::keyed(Where::View, Action::Escape, "close"),
         ],
     )
 }

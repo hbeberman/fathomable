@@ -22,7 +22,7 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::header::{
-    Header, Tone, checkpoint_header, draft_header, expanded_header, review_footer, review_header,
+    Header, Tone, diff_header, draft_header, expanded_header, review_footer, review_header,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
@@ -224,7 +224,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
-    let text_area = draw_checkpoint_chrome(frame, app, theme, text_area);
+    let text_area = draw_diff_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     frame.render_widget(
         status_line(app, theme, usize::from(area.width)),
@@ -308,27 +308,32 @@ fn draw_banner(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect)
     }
 }
 
-/// The checkpoint view's header over the text and the strip of the file's
-/// checkpoints under it (ADR 0049); the rows between are returned.
-fn draw_checkpoint_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
-    let Some(check) = app
-        .view()
-        .checkpoint()
-        .filter(|_| app.checkpoint_chrome() && area.height > 2)
+/// A diff's header over the text and, while the file has checkpoints,
+/// the strip of them under it (ADR 0049, ADR 0060); the rows between
+/// are returned.
+fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
+    let rows = app.diff_chrome_rows();
+    let Some(header) = app
+        .diff_header()
+        .filter(|_| rows > 0 && usize::from(area.height) > rows)
     else {
         return area;
     };
     let width = usize::from(area.width);
     frame.render_widget(
-        Paragraph::new(checkpoint_header(&check.header).line(theme, width)).style(theme.info),
+        Paragraph::new(diff_header(&header).line(theme, width)).style(theme.info),
         Rect { height: 1, ..area },
     );
+    let strip = app.checkpoint_strip();
+    if rows < 2 || strip.is_empty() {
+        return Rect {
+            y: area.y + 1,
+            height: area.height - 1,
+            ..area
+        };
+    }
     let faint = theme.info.add_modifier(Modifier::DIM);
     let mut spans = vec![Span::styled(" checkpoints ", faint)];
-    let strip = app.checkpoint_strip();
-    if strip.is_empty() {
-        spans.push(Span::styled("none yet · Space v c", faint));
-    }
     for (i, entry) in strip.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw("  "));
@@ -1285,12 +1290,13 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 
 /// The status line's words (ADR 0010, amended by 0046's session): the
 /// pill says one thing, the mode or the focused pane; the badges after
-/// the path say how the text is shown and whether auto-jump is on; the
+/// the path say how the text is shown (`SRC`, or `DIFF` and the base,
+/// ADR 0060) and whether auto-jump is on; the
 /// right block is `line:col`, the percentage, and `N word` counts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct StatusParts {
     pub(crate) pill: &'static str,
-    pub(crate) badges: Vec<&'static str>,
+    pub(crate) badges: Vec<String>,
     pub(crate) right: String,
 }
 
@@ -1308,24 +1314,18 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         },
     };
     let mut badges = Vec::new();
-    if view.checkpoint_view() {
-        badges.push("CHECK");
+    if let Some(diff) = view.diff() {
+        badges.push(diff.badge.clone());
     } else if view.source_view() {
-        badges.push("SRC");
-    } else if view.diff_view() {
-        badges.push(if view.diff_seen() {
-            "DIFF seen"
-        } else {
-            "DIFF"
-        });
+        badges.push("SRC".to_owned());
     }
     if app.auto_jump() {
-        badges.push("AUTO");
+        badges.push("AUTO".to_owned());
     }
     let (line, col) = view.source_position();
     let mut right = format!(" {line}:{col}  {}%", view.percent());
-    let counts = if view.checkpoint_view() {
-        view.checkpoint_counts()
+    let counts = if view.diff_view() {
+        view.pair_counts()
     } else {
         view.diff_counts()
     };
@@ -1534,8 +1534,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
         super::PickerKind::Wake => "wake",
-        super::PickerKind::CheckBase => "base",
-        super::PickerKind::CheckTarget => "target",
+        super::PickerKind::DiffBase => "base",
+        super::PickerKind::DiffTarget => "target",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),

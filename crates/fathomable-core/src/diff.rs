@@ -23,6 +23,40 @@
 use std::fmt;
 use std::ops::Range;
 
+/// How lines are compared (ADR 0060): exactly, or with whitespace
+/// ignored as `git diff -w` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Whitespace {
+    /// Lines match only when identical.
+    #[default]
+    Exact,
+    /// Lines match when they are identical once every whitespace
+    /// character is removed.
+    Ignore,
+}
+
+/// How a diff is computed and listed (ADR 0060): the whitespace rule and
+/// the unchanged lines shown around each hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Compare {
+    /// Unchanged lines listed around each hunk; three by default.
+    pub context: usize,
+    /// The whitespace rule.
+    pub whitespace: Whitespace,
+}
+
+impl Default for Compare {
+    fn default() -> Self {
+        Self {
+            context: DEFAULT_CONTEXT,
+            whitespace: Whitespace::Exact,
+        }
+    }
+}
+
+/// Context lines `git diff` shows, the default for [`Compare`].
+pub const DEFAULT_CONTEXT: usize = 3;
+
 /// How a line of the new text differs from the old text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LineStatus {
@@ -161,10 +195,32 @@ impl Diff {
     /// extra line.
     #[must_use]
     pub fn new(old: &str, new: &str) -> Self {
+        Self::compare(old, new, Whitespace::Exact)
+    }
+
+    /// Compare `old` with `new` under `whitespace` (ADR 0060). With
+    /// [`Whitespace::Ignore`] two lines that differ only in whitespace
+    /// are the same line; the listing still shows the new text as it is.
+    #[must_use]
+    pub fn compare(old: &str, new: &str, whitespace: Whitespace) -> Self {
         let a: Vec<&str> = old.lines().collect();
         let b: Vec<&str> = new.lines().collect();
         let mut hunks = Vec::new();
-        myers(&a, &b, 0, 0, &mut hunks);
+        match whitespace {
+            Whitespace::Exact => myers(&a, &b, 0, 0, &mut hunks),
+            Whitespace::Ignore => {
+                let squeeze = |lines: &[&str]| -> Vec<String> {
+                    lines
+                        .iter()
+                        .map(|line| line.split_whitespace().collect())
+                        .collect()
+                };
+                let (a, b) = (squeeze(&a), squeeze(&b));
+                let a: Vec<&str> = a.iter().map(String::as_str).collect();
+                let b: Vec<&str> = b.iter().map(String::as_str).collect();
+                myers(&a, &b, 0, 0, &mut hunks);
+            }
+        }
         Self {
             hunks,
             old_lines: a.len(),

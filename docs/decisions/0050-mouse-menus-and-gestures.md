@@ -20,7 +20,9 @@ tags:
 
 # 0050 Mouse menus and gestures
 
-Status: accepted (2026-09-04)
+Status: accepted (2026-09-04); amended 2026-09-05 by
+[0060](0060-one-diff-two-sides.md): the checkpoint header is every
+diff's header, and its clicks work in any diff.
 
 ## Context
 

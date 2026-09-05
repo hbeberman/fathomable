@@ -63,3 +63,4 @@ supersede rather than edit history.
 - [0057 The sidebar](0057-the-sidebar.md)
 - [0058 The user has the last word](0058-the-user-has-the-last-word.md)
 - [0059 Headers and the key bar](0059-headers-and-the-key-bar.md)
+- [0060 One diff, two sides](0060-one-diff-two-sides.md)

@@ -13,7 +13,10 @@ tags:
 
 # 0010 Viewer UX conventions
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-05 by
+[0060](0060-one-diff-two-sides.md): the diff badge names its base
+(`DIFF HEAD`, `DIFF seen`, `DIFF cp 2/3`, `DIFF a1b2c3d`), and `CHECK`
+is gone.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

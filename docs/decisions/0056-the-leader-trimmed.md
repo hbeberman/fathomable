@@ -21,7 +21,9 @@ tags:
 Status: accepted (2026-09-04); amended 2026-09-05 by
 [0057](0057-the-sidebar.md): the rail is the sidebar, and `Space w f`
 and `Space w t` join the window submenu, naming the files pane and the
-threads pane.
+threads pane; amended 2026-09-05 by [0060](0060-one-diff-two-sides.md):
+the comparisons and the checkpoint marks move to a `Space d` diff
+submenu, `Space v` is `s` / `t` / `x`, and `Space c` loses `x`.
 
 ## Context
 

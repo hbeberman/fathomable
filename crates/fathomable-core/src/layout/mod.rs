@@ -28,7 +28,7 @@ mod wrap;
 
 use std::ops::Range;
 
-use crate::diff::DiffKind;
+use crate::diff::{Compare, DiffKind};
 use crate::highlight::Highlighter;
 use crate::theme::Color;
 
@@ -51,9 +51,6 @@ pub fn wrap_text(text: &str, width: usize) -> Vec<String> {
         .map(Line::text)
         .collect()
 }
-
-/// Unchanged lines shown around each hunk in the diff view, as `git diff`.
-const DIFF_CONTEXT: usize = 3;
 
 /// What a single newline inside a paragraph means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -435,18 +432,19 @@ impl Layout {
     }
 
     /// wrap under a blank diff-sign cell. When the texts are identical the
-    /// layout is one sourceless notice line.
+    /// layout is one sourceless notice line. `compare` sets the whitespace
+    /// rule and the context lines (ADR 0060).
     #[must_use]
-    pub fn diff(old: &str, new: &str, width: usize) -> Self {
+    pub fn diff(old: &str, new: &str, width: usize, compare: Compare) -> Self {
         let index = LineIndex::new(new);
-        let diff = crate::diff::Diff::new(old, new);
+        let diff = crate::diff::Diff::compare(old, new, compare.whitespace);
         let mut lines = Vec::new();
         if diff.is_empty() {
             let chunk = Chunk::new("no changes against the diff base", Style::marker(), None);
             lines.extend(wrap_hard(&chunk, width));
             return Self::finish(lines, width, index);
         }
-        for entry in diff.unified(old, new, DIFF_CONTEXT) {
+        for entry in diff.unified(old, new, compare.context) {
             let (face, sign) = match entry.kind() {
                 DiffKind::Header => (Face::DiffHeader, ""),
                 DiffKind::Context => (Face::Text, " "),

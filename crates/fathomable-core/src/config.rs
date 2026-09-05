@@ -41,8 +41,43 @@ pub struct Config {
     viewer: ViewerConfig,
     sidebar: SidebarConfig,
     threads: ThreadsConfig,
+    diff: DiffConfig,
     agents: AgentsConfig,
     user: UserConfig,
+}
+
+/// The `diff { ... }` block (ADR 0060): how the diff view compares and
+/// lists two texts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffConfig {
+    /// Unchanged lines shown around each hunk; three, as `git diff`.
+    pub context: usize,
+    /// Whether the session starts with whitespace ignored (`Space d w`).
+    pub ignore_whitespace: bool,
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            context: crate::diff::DEFAULT_CONTEXT,
+            ignore_whitespace: false,
+        }
+    }
+}
+
+impl DiffConfig {
+    /// The whitespace rule and context the block asks for.
+    #[must_use]
+    pub fn compare(&self) -> crate::diff::Compare {
+        crate::diff::Compare {
+            context: self.context,
+            whitespace: if self.ignore_whitespace {
+                crate::diff::Whitespace::Ignore
+            } else {
+                crate::diff::Whitespace::Exact
+            },
+        }
+    }
 }
 
 /// The `user { ... }` block (ADR 0058): how the person at the viewer is
@@ -529,6 +564,33 @@ impl Config {
                         }
                     }
                 }
+                "diff" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`diff` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        match child.name().value() {
+                            "context" => {
+                                config.diff.context = cells(child, line, "context")?;
+                            }
+                            "ignore-whitespace" => {
+                                config.diff.ignore_whitespace = one_bool(child, line)?;
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown diff setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 "checkpoints" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -644,6 +706,12 @@ impl Config {
     #[must_use]
     pub fn threads(&self) -> &ThreadsConfig {
         &self.threads
+    }
+
+    /// The `diff` block (ADR 0060).
+    #[must_use]
+    pub fn diff(&self) -> &DiffConfig {
+        &self.diff
     }
 
     /// Which files render as Markdown (ADR 0016).
@@ -938,6 +1006,38 @@ checkpoints {
             ("user { name \"  \" }", "must not be empty"),
             ("user { nope 1 }", "unknown user setting"),
             ("user \"x\"", "block"),
+        ] {
+            let error = Config::parse(text)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(error.contains(needle), "{text}: {error}");
+        }
+    }
+
+    /// The `diff` block (ADR 0060) sets the context lines and whether the
+    /// session starts with whitespace ignored; anything else is a typo.
+    #[test]
+    fn diff_block_sets_context_and_whitespace() {
+        let config =
+            Config::parse("diff { context 5; ignore-whitespace #true }").unwrap_or_default();
+        assert_eq!(config.diff().context, 5);
+        assert!(config.diff().ignore_whitespace);
+        assert_eq!(
+            config.diff().compare(),
+            crate::diff::Compare {
+                context: 5,
+                whitespace: crate::diff::Whitespace::Ignore,
+            }
+        );
+        assert_eq!(
+            Config::default().diff().compare(),
+            crate::diff::Compare::default()
+        );
+        for (text, needle) in [
+            ("diff { width 5 }", "unknown diff setting `width`"),
+            ("diff { context #true }", "context"),
+            ("diff 1", "block"),
         ] {
             let error = Config::parse(text)
                 .err()

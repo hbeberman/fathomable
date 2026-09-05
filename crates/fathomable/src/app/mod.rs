@@ -15,6 +15,7 @@ pub(crate) mod agents;
 mod checkpoints;
 mod clipboard;
 mod commands;
+mod diff;
 mod draw;
 mod files_pane;
 mod goto_file;
@@ -40,7 +41,7 @@ use std::time::{Duration, Instant};
 use crate::app::threads::list::ReviewList;
 use fathomable_core::annotations::{self, Reach, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
+    AgentsConfig, DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
     ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
@@ -117,10 +118,10 @@ pub(crate) enum PickerKind {
     Recent,
     /// Subscribed agents to wake with `Space a w` (ADR 0040).
     Wake,
-    /// The base side of the checkpoint diff (ADR 0049).
-    CheckBase,
-    /// The target side of the checkpoint diff (ADR 0049).
-    CheckTarget,
+    /// The base side of the diff (ADR 0060).
+    DiffBase,
+    /// The target side of the diff (ADR 0060).
+    DiffTarget,
 }
 
 /// The open picker popup.
@@ -299,10 +300,13 @@ pub(crate) struct App {
     seen: Option<seen::Store>,
     /// The reader's checkpoints (ADR 0049).
     checkpoints: Option<fathomable_core::checkpoints::Store>,
-    /// What each item of an open side picker names (ADR 0049).
-    check_choices: Vec<(String, checkpoints::Side)>,
-    /// The target `Space v g` fixes for the next base choice.
-    check_target_next: Option<checkpoints::Side>,
+    /// What each item of an open side picker names (ADR 0060).
+    diff_choices: Vec<(String, diff::Side)>,
+    /// The target `Space d g` fixes for the next base choice.
+    diff_target_next: Option<diff::Side>,
+    /// How diffs are compared this session: the config's start, then
+    /// `Space d w` (ADR 0060).
+    compare: fathomable_core::diff::Compare,
     /// When the queue last changed, for the auto-jump debounce.
     last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
@@ -330,6 +334,7 @@ impl App {
             viewer,
             sidebar,
             threads,
+            diff,
             agents,
             user,
             config_path,
@@ -391,8 +396,9 @@ impl App {
             toasts: Vec::new(),
             seen,
             checkpoints,
-            check_choices: Vec::new(),
-            check_target_next: None,
+            diff_choices: Vec::new(),
+            diff_target_next: None,
+            compare: diff.compare(),
             last_change: None,
             watching_root: false,
             status: Status::default(),
@@ -1292,18 +1298,18 @@ impl App {
         }
     }
 
-    /// Rows left to the text once the banner and the checkpoint view's
-    /// header and strip are taken.
+    /// Rows left to the text once the banner and the diff's header and
+    /// strip are taken.
     pub(crate) fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
-            .saturating_sub(if self.checkpoint_chrome() { 2 } else { 0 })
+            .saturating_sub(self.diff_chrome_rows())
             .max(1)
     }
 
-    /// Rows over the text: the banner and the checkpoint view's header.
+    /// Rows over the text: the banner and the diff's header.
     pub(crate) fn text_top(&self) -> usize {
-        usize::from(self.banner().is_some()) + usize::from(self.checkpoint_chrome())
+        usize::from(self.banner().is_some()) + usize::from(self.diff_chrome_rows() > 0)
     }
 
     pub(crate) fn resize(&mut self, width: usize, height: usize) {
@@ -1366,12 +1372,13 @@ impl App {
                 Ok(document) => {
                     // A binary or over-limit file has no text: the view is
                     // empty and the file-info pane draws instead (ADR 0026).
-                    let view = View::with_syntax(
+                    let mut view = View::with_syntax(
                         document.text().unwrap_or_default().to_owned(),
                         1,
                         1,
                         self.syntax_for(&relative),
                     );
+                    view.set_compare(self.compare);
                     self.docs.push(Doc {
                         document,
                         relative: relative.clone(),
@@ -1746,7 +1753,7 @@ impl App {
                 .iter()
                 .map(|s| format!("{}  {}", s.label(), s.id()))
                 .collect(),
-            PickerKind::CheckBase | PickerKind::CheckTarget => self.checkpoint_choices(),
+            PickerKind::DiffBase | PickerKind::DiffTarget => self.diff_choices(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
@@ -1809,8 +1816,8 @@ impl App {
                     self.wake_subscriber(id);
                 }
             }
-            Some((kind @ (PickerKind::CheckBase | PickerKind::CheckTarget), item)) => {
-                self.choose_checkpoint_side(kind, &item);
+            Some((kind @ (PickerKind::DiffBase | PickerKind::DiffTarget), item)) => {
+                self.choose_diff_side(kind, &item);
             }
             None => {}
         }
@@ -1844,6 +1851,8 @@ pub(crate) struct Options {
     pub(crate) sidebar: SidebarConfig,
     /// How threads show in the text (ADR 0049).
     pub(crate) threads: ThreadsConfig,
+    /// How diffs are compared and listed (ADR 0060).
+    pub(crate) diff: DiffConfig,
     /// Subscriptions and the wake command (ADR 0040).
     pub(crate) agents: AgentsConfig,
     /// How the person at the viewer is named (ADR 0058).
@@ -1870,6 +1879,7 @@ impl Options {
             viewer: ViewerConfig::default(),
             sidebar: SidebarConfig::default(),
             threads: ThreadsConfig::default(),
+            diff: DiffConfig::default(),
             agents: AgentsConfig::default(),
             user: UserConfig::default(),
             config_path: PathBuf::from("config.kdl"),

@@ -267,6 +267,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             viewer: config.viewer().clone(),
             sidebar: config.sidebar().clone(),
             threads: config.threads().clone(),
+            diff: config.diff().clone(),
             agents: config.agents().clone(),
             user: config.user().clone(),
             config_path: config_path(cli, dirs),
@@ -394,6 +395,11 @@ fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
     println!("threads {{");
     println!("    stubs #{}", threads.stubs);
     println!("    stubs-resolved #{}", threads.stubs_resolved);
+    println!("}}");
+    let diff = config.diff();
+    println!("diff {{");
+    println!("    context {}", diff.context);
+    println!("    ignore-whitespace #{}", diff.ignore_whitespace);
     println!("}}");
     // Reserved by ADR 0049; nothing is settable yet.
     println!("checkpoints {{");

@@ -260,3 +260,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     with the sort word at the right edge, where a click switches the
     sort; a stub's age reads in the info colour; the `proposed` wording
     stays ([0059](decisions/0059-headers-and-the-key-bar.md)).
+51. **One diff, two sides.** The `HEAD`, last-seen, and checkpoint diffs
+    are one diff view with a base and a target, each with the pair
+    header and the `b` / `t` pickers; the badge reads `DIFF` and the
+    base; `Space d` holds the comparisons, the checkpoint marks, and a
+    whitespace toggle backed by `diff { context; ignore-whitespace }`;
+    `Space v` is source view and the stub toggles
+    ([0060](decisions/0060-one-diff-two-sides.md)).

@@ -28,8 +28,8 @@ use crate::app::view::StubBlock;
 /// Messages a collapsed stub shows: the newest two.
 const STUB_MESSAGES: usize = 2;
 
-/// Whether stubs are drawn at all (`threads { stubs }`), and whether
-/// resolved threads get one (`Space c x`).
+/// Whether stubs are drawn at all (`threads { stubs }`, `Space v t`), and
+/// whether resolved threads get one (`Space v x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StubState {
     pub(crate) shown: bool,
@@ -149,7 +149,7 @@ impl App {
         self.stubs.shown
     }
 
-    /// Whether resolved threads get a stub (`Space c x`).
+    /// Whether resolved threads get a stub (`Space v x`).
     #[cfg(test)]
     pub(crate) fn stubs_resolved(&self) -> bool {
         self.stubs.resolved
@@ -400,7 +400,19 @@ impl App {
             .is_some_and(|id| self.is_expanded(id))
     }
 
-    /// `Space c x`: give resolved threads a stub too, or not.
+    /// `Space v t`: draw stubs under threads' lines, or not (ADR 0060);
+    /// the runtime switch for `threads { stubs }`.
+    pub(crate) fn toggle_stubs(&mut self) {
+        self.stubs.shown = !self.stubs.shown;
+        self.place_stub_rows();
+        self.push_toast(if self.stubs.shown {
+            "stubs shown".to_owned()
+        } else {
+            "stubs hidden".to_owned()
+        });
+    }
+
+    /// `Space v x`: give resolved threads a stub too, or not.
     pub(crate) fn toggle_resolved_stubs(&mut self) {
         self.stubs.resolved = !self.stubs.resolved;
         self.place_stub_rows();
@@ -564,8 +576,8 @@ mod tests {
         Ok(())
     }
 
-    /// `threads { stubs #false }` draws no stubs; resolved threads have
-    /// none until `Space c x`.
+    /// `threads { stubs #false }` and `Space v t` draw no stubs; resolved
+    /// threads have none until `Space v x`.
     #[test]
     fn the_toggles_hide_stubs_and_resolved_ones() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-toggles", testing::README)?;
@@ -577,13 +589,12 @@ mod tests {
         press(&mut app, " co");
         assert_eq!(app.view().layout().lines().len(), 9, "resolved: no stub");
         assert!(app.stubs().iter().all(|stub| stub.messages().len() == 1));
-        press(&mut app, " cx");
+        press(&mut app, " vx");
         assert_eq!(app.view().layout().lines().len(), 10);
         assert!(app.stubs_resolved());
-        press(&mut app, " cx");
+        press(&mut app, " vx");
         assert_eq!(app.view().layout().lines().len(), 9);
-        app.stubs.shown = false;
-        app.place_stub_rows();
+        press(&mut app, " vt");
         assert!(!app.stubs_shown());
         assert_eq!(app.view().layout().lines().len(), 8);
         assert!(app.note_on_row(2).is_some(), "the gutter mark stays");

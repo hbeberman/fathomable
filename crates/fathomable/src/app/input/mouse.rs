@@ -147,15 +147,15 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
     Effect::None
 }
 
-/// A click on the checkpoint header (ADR 0050): a hint runs its key;
-/// the base name, before the ` · `, opens the base picker and the
+/// A click on a diff's header (ADR 0050, ADR 0060): a hint runs its
+/// key; the base name, before the ` · `, opens the base picker and the
 /// target name the target picker.
-fn checkpoint_header_click(app: &mut App, column: usize) -> Effect {
-    let Some(text) = app.view().checkpoint().map(|check| check.header.clone()) else {
+fn diff_header_click(app: &mut App, column: usize) -> Effect {
+    let Some(text) = app.diff_header() else {
         return Effect::None;
     };
     app.focus_pane(Focus::View);
-    let header = header::checkpoint_header(&text);
+    let header = header::diff_header(&text);
     if let Some(action) = header.action_at(app.column_width(), column) {
         return app.act(action);
     }
@@ -165,8 +165,8 @@ fn checkpoint_header_click(app: &mut App, column: usize) -> Effect {
             .find(" · ")
             .map(|byte| 1 + display_width(&text[..byte]));
         let action = match split {
-            Some(split) if column > split + 1 => bindings::Action::CheckpointTarget,
-            _ => bindings::Action::CheckpointBase,
+            Some(split) if column > split + 1 => bindings::Action::DiffTarget,
+            _ => bindings::Action::DiffBase,
         };
         return app.act(action);
     }
@@ -324,11 +324,11 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
     let left = event.kind == MouseEventKind::Down(MouseButton::Left);
-    // The banner and the checkpoint header take rows over the text.
+    // The banner and the diff header take rows over the text.
     let top = app.text_top();
     let Some(text_row) = row.checked_sub(top) else {
-        if left && app.checkpoint_chrome() && row + 1 == top {
-            return checkpoint_header_click(app, column - sidebar);
+        if left && app.diff_chrome_rows() > 0 && row + 1 == top {
+            return diff_header_click(app, column - sidebar);
         }
         return Effect::None;
     };

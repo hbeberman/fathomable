@@ -9,12 +9,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::LineRange;
-use fathomable_core::diff::{Diff, LineStatus};
+use fathomable_core::diff::{Compare, Diff, LineStatus};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
-use super::checkpoints::{CheckBody, CheckDiff};
+use super::diff::{DiffBody, DiffView, Side, Text};
 
 /// Rendered lines kept visible above and below the cursor.
 const SCROLLOFF: usize = 3;
@@ -47,12 +47,9 @@ pub(crate) enum Display {
     Rendered,
     /// The raw source (`gs`, ADR 0010).
     Source,
-    /// A unified diff against `HEAD` (`gd`, ADR 0006, ADR 0017).
+    /// A unified diff between two sides (ADR 0060): `HEAD`, the
+    /// last-seen snapshot, a checkpoint, a commit, or the working file.
     Diff,
-    /// A unified diff against the last-seen snapshot (ADR 0015).
-    DiffSeen,
-    /// The checkpoint diff between two chosen sides (ADR 0049).
-    Checkpoint,
 }
 
 /// A position in rendered coordinates.
@@ -170,8 +167,10 @@ pub(crate) struct View {
     index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
     head: Option<String>,
-    /// The checkpoint diff's sides while it is shown (ADR 0049).
-    check: Option<CheckDiff>,
+    /// The diff's sides while it is shown (ADR 0060).
+    diff_shown: Option<DiffView>,
+    /// How diffs are compared and listed (ADR 0060).
+    compare: Compare,
     /// The working tree against `HEAD`: the gutter, `]g`, and the counts.
     diff: Option<Diff>,
     /// The working tree against the index: which hunks are not yet staged.
@@ -235,7 +234,8 @@ impl View {
             seen: None,
             index: None,
             head: None,
-            check: None,
+            diff_shown: None,
+            compare: Compare::default(),
             diff: None,
             unstaged: None,
             activity: Instant::now(),
@@ -370,58 +370,118 @@ impl View {
         &self.text
     }
 
-    /// The text the layout's source ranges index: the checkpoint diff's
-    /// target when that is not the working file, else the text.
+    /// The text the layout's source ranges index: the diff's target
+    /// when that is not the working file, else the text.
     fn shown(&self) -> &str {
-        match (&self.display, &self.check) {
-            (
-                Display::Checkpoint,
-                Some(CheckDiff {
-                    body:
-                        CheckBody::Diff {
-                            target: Some(target),
-                            ..
-                        },
-                    ..
-                }),
-            ) => target,
+        match self.diff().map(|d| &d.body) {
+            Some(DiffBody::Diff { target, .. }) => self.text_of(target).unwrap_or(&self.text),
             _ => &self.text,
         }
     }
 
-    /// Whether the checkpoint diff is shown (ADR 0049).
-    pub(crate) fn checkpoint_view(&self) -> bool {
-        self.display == Display::Checkpoint
-    }
-
-    /// The checkpoint diff's sides while it is shown.
-    pub(crate) fn checkpoint(&self) -> Option<&CheckDiff> {
-        self.check.as_ref().filter(|_| self.checkpoint_view())
-    }
-
-    /// `(added, removed)` between the checkpoint diff's sides, while shown.
-    pub(crate) fn checkpoint_counts(&self) -> Option<(usize, usize)> {
-        match &self.checkpoint()?.body {
-            CheckBody::Diff { base, target } => {
-                Some(Diff::new(base, target.as_deref().unwrap_or(&self.text)).counts())
-            }
-            CheckBody::Notice(_) => None,
+    /// The text a diff side reads: the view's own copies, or the text
+    /// fetched for it; `None` when the copy does not exist.
+    fn text_of<'a>(&'a self, text: &'a Text) -> Option<&'a str> {
+        match text {
+            Text::Working => Some(&self.text),
+            Text::Head => self.head.as_deref(),
+            Text::Seen => self.seen.as_deref(),
+            Text::Owned(owned) => Some(owned),
         }
     }
 
-    /// Show the checkpoint diff `check` in place of the document.
-    pub(crate) fn show_checkpoint(&mut self, check: CheckDiff) {
-        self.check = Some(check);
-        self.display = Display::Checkpoint;
+    fn source_layout(&self) -> Layout {
+        Layout::source_with(
+            &self.text,
+            self.width,
+            &self.syntax.hint,
+            &self.syntax.highlighter,
+        )
+    }
+
+    fn rendered_layout(&self) -> Layout {
+        Layout::render_with(&self.text, self.width, &self.syntax.highlighter)
+    }
+
+    /// The layout of the home display.
+    fn home_layout(&self) -> Layout {
+        match self.home() {
+            Display::Source => self.source_layout(),
+            _ => self.rendered_layout(),
+        }
+    }
+
+    /// The display the file returns to when a diff closes: rendered for
+    /// Markdown, source for anything else.
+    fn home(&self) -> Display {
+        if self.syntax.markdown {
+            Display::Rendered
+        } else {
+            Display::Source
+        }
+    }
+
+    /// The diff's sides while one is shown (ADR 0060).
+    pub(crate) fn diff(&self) -> Option<&DiffView> {
+        self.diff_shown.as_ref().filter(|_| self.diff_view())
+    }
+
+    /// The base of the diff shown, if one is.
+    #[cfg(test)]
+    pub(crate) fn diff_base(&self) -> Option<&Side> {
+        self.diff().map(|d| &d.base)
+    }
+
+    /// `(added, removed)` between the diff's sides, while one is shown.
+    pub(crate) fn pair_counts(&self) -> Option<(usize, usize)> {
+        match &self.diff()?.body {
+            DiffBody::Diff { base, target } => Some(
+                Diff::compare(
+                    self.text_of(base)?,
+                    self.text_of(target)?,
+                    self.compare.whitespace,
+                )
+                .counts(),
+            ),
+            DiffBody::Notice(_) => None,
+        }
+    }
+
+    /// Show `diff` in place of the document.
+    pub(crate) fn show_diff(&mut self, diff: DiffView) {
+        self.diff_shown = Some(diff);
+        self.display = Display::Diff;
         self.relayout();
     }
 
-    /// Leave the checkpoint diff for the rendered view.
-    pub(crate) fn leave_checkpoint(&mut self) {
-        if self.display == Display::Checkpoint {
-            self.display = Display::Rendered;
+    /// Leave the diff for the file's home display.
+    pub(crate) fn leave_diff(&mut self) {
+        if self.display == Display::Diff {
+            self.display = self.home();
             self.relayout();
         }
+    }
+
+    /// Compare diffs as `compare` says from now on (ADR 0060); an open
+    /// diff relays out.
+    pub(crate) fn set_compare(&mut self, compare: Compare) {
+        if self.compare == compare {
+            return;
+        }
+        self.compare = compare;
+        if self.diff_view() {
+            self.relayout();
+        }
+    }
+
+    /// Whether the file has a `HEAD` text to diff against.
+    pub(crate) fn has_head(&self) -> bool {
+        self.head.is_some()
+    }
+
+    /// Whether the file has a last-seen snapshot to diff against.
+    pub(crate) fn has_seen(&self) -> bool {
+        self.seen.is_some()
     }
 
     /// Note that the reader did something here (ADR 0015 guardrails and
@@ -441,12 +501,6 @@ impl View {
         if let Some(then) = Instant::now().checked_sub(duration) {
             self.activity = then;
         }
-    }
-
-    /// Whether the diff view is showing the last-seen diff rather than
-    /// the `HEAD` one.
-    pub(crate) fn diff_seen(&self) -> bool {
-        self.display == Display::DiffSeen
     }
 
     /// Whether 1-based source `line` is within the rows on screen.
@@ -515,7 +569,7 @@ impl View {
     }
 
     pub(crate) fn diff_view(&self) -> bool {
-        matches!(self.display, Display::Diff | Display::DiffSeen)
+        self.display == Display::Diff
     }
 
     /// The gutter status of 1-based source line `line` against `HEAD`.
@@ -613,32 +667,34 @@ impl View {
         self.relayout();
     }
 
-    /// `gd` / `:diff`: the unified diff against `HEAD`, or back to the
-    /// rendered view (ADR 0017).
-    pub(crate) fn toggle_diff_view(&mut self) {
-        if self.display == Display::Diff {
-            self.display = Display::Rendered;
+    /// `gd` / `:diff`: the diff `HEAD · now` (ADR 0017, ADR 0060), or
+    /// back to the file when that pair is shown.
+    pub(crate) fn toggle_head_diff(&mut self) {
+        if self
+            .diff()
+            .is_some_and(|d| d.is_pair(&Side::Head, &Side::Working))
+        {
+            self.leave_diff();
         } else if self.head.is_some() {
-            self.display = Display::Diff;
+            self.show_diff(DiffView::head());
         } else {
             self.message = Some("no diff base: not in a git repository".to_owned());
-            return;
         }
-        self.relayout();
     }
 
-    /// `gD` / `:diff seen`: the unified diff against the last-seen
-    /// snapshot (ADR 0015), or back to the rendered view.
-    pub(crate) fn toggle_seen_diff_view(&mut self) {
-        if self.display == Display::DiffSeen {
-            self.display = Display::Rendered;
+    /// `gD` / `:diff seen`: the diff `last seen · now` (ADR 0015, ADR
+    /// 0060), or back to the file when that pair is shown.
+    pub(crate) fn toggle_seen_diff(&mut self) {
+        if self
+            .diff()
+            .is_some_and(|d| d.is_pair(&Side::Seen, &Side::Working))
+        {
+            self.leave_diff();
         } else if self.seen.is_some() {
-            self.display = Display::DiffSeen;
+            self.show_diff(DiffView::seen());
         } else {
             self.message = Some("no last-seen snapshot of this file yet".to_owned());
-            return;
         }
-        self.relayout();
     }
 
     /// `]g` within the file: the cursor to the next hunk against `HEAD`.
@@ -720,32 +776,23 @@ impl View {
             None => self.source_position(),
         };
         let screen_row = self.cursor.row.saturating_sub(self.scroll);
-        let base = match self.display {
-            Display::Diff => self.head.as_deref(),
-            Display::DiffSeen => self.seen.as_deref(),
-            _ => None,
-        };
-        self.layout = match (self.display, base) {
-            (Display::Checkpoint, _) => match self.check.as_ref().map(|check| &check.body) {
-                Some(CheckBody::Diff { base, target }) => {
-                    Layout::diff(base, target.as_deref().unwrap_or(&self.text), self.width)
+        let layout = match self.display {
+            Display::Diff => match self.diff_shown.as_ref().map(|d| &d.body) {
+                Some(DiffBody::Diff { base, target }) => {
+                    match (self.text_of(base), self.text_of(target)) {
+                        (Some(old), Some(new)) => Layout::diff(old, new, self.width, self.compare),
+                        // A side that has gone (no `HEAD` after a base
+                        // refresh) keeps the display; the layout falls back.
+                        _ => self.home_layout(),
+                    }
                 }
-                Some(CheckBody::Notice(text)) => Layout::notice(text, self.width),
-                None => Layout::notice("no checkpoint diff", self.width),
+                Some(DiffBody::Notice(text)) => Layout::notice(text, self.width),
+                None => Layout::notice("no diff", self.width),
             },
-            (Display::Source, _) => Layout::source_with(
-                &self.text,
-                self.width,
-                &self.syntax.hint,
-                &self.syntax.highlighter,
-            ),
-            (Display::Diff | Display::DiffSeen, Some(base)) => {
-                Layout::diff(base, &self.text, self.width)
-            }
-            _ => Layout::render_with(&self.text, self.width, &self.syntax.highlighter),
-        }
-        .with_rows_before(&self.detached)
-        .with_rows_after(
+            Display::Source => self.source_layout(),
+            Display::Rendered => self.rendered_layout(),
+        };
+        self.layout = layout.with_rows_before(&self.detached).with_rows_after(
             &self
                 .stubs
                 .iter()
@@ -1236,7 +1283,10 @@ impl View {
     }
 
     /// Esc: clear input, pending keys, selection, then search highlights.
-    pub(crate) fn escape(&mut self) {
+    /// `Esc`: clear the input, else the selection, else the search
+    /// highlight; whether there was one to clear, so the app can take
+    /// the next step of the cascade (leaving a diff, ADR 0060).
+    pub(crate) fn escape(&mut self) -> bool {
         self.message = None;
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             self.mode = Mode::Normal;
@@ -1244,9 +1294,12 @@ impl View {
         } else if self.selection.is_some() {
             self.selection = None;
             self.mode = Mode::Normal;
-        } else {
+        } else if self.pattern.is_some() {
             self.clear_highlight();
+        } else {
+            return false;
         }
+        true
     }
 
     pub(crate) fn clear_highlight(&mut self) {
@@ -1330,14 +1383,6 @@ impl View {
             }
             "source" => {
                 self.toggle_source_view();
-                Effect::None
-            }
-            "diff" => {
-                self.toggle_diff_view();
-                Effect::None
-            }
-            "diff seen" => {
-                self.toggle_seen_diff_view();
                 Effect::None
             }
             "" => Effect::None,
@@ -1519,7 +1564,7 @@ mod tests {
 
     use fathomable_core::annotations::LineRange;
 
-    use super::{Cursor, Effect, HunkStep, Mode, View};
+    use super::{Cursor, Effect, HunkStep, Mode, Side, View};
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
@@ -1867,7 +1912,7 @@ mod tests {
         assert_eq!(v.diff_counts(), None);
         assert_eq!(v.line_status(1), None);
         assert_eq!(v.next_hunk(), HunkStep::NoBase);
-        v.toggle_diff_view();
+        v.toggle_head_diff();
         assert!(!v.diff_view(), "no base, no diff view");
         assert_eq!(v.message(), Some("no diff base: not in a git repository"));
 
@@ -1896,7 +1941,7 @@ mod tests {
         assert_eq!(v.prev_hunk(), HunkStep::Wrapped);
         v.goto_source_line(9);
 
-        v.toggle_diff_view();
+        v.toggle_head_diff();
         assert!(v.diff_view());
         assert_eq!(v.source_position().0, 9, "toggle keeps the source line");
         let texts: Vec<String> = v
@@ -1911,14 +1956,18 @@ mod tests {
         for ch in "diff".chars() {
             v.input_char(ch);
         }
-        v.confirm();
+        assert!(
+            matches!(v.confirm(), Effect::Command(c) if c == "diff"),
+            ":diff is the app's to run"
+        );
+        v.toggle_head_diff();
         assert!(!v.diff_view());
 
         // A reload against the same base re-diffs; an identical text is clean.
         v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
         assert_eq!(v.diff_counts(), Some((0, 0)));
         assert_eq!(v.next_hunk(), HunkStep::Clean);
-        v.toggle_diff_view();
+        v.toggle_head_diff();
         assert_eq!(v.layout().lines().len(), 1);
         v.set_bases(None, None, None);
         assert_eq!(v.diff_counts(), None);
@@ -1929,7 +1978,7 @@ mod tests {
     #[test]
     fn head_and_seen_diffs_toggle_independently() {
         let mut v = view();
-        v.toggle_seen_diff_view();
+        v.toggle_seen_diff();
         assert!(!v.diff_view(), "never seen: no seen diff");
         assert!(v.message().is_some_and(|m| m.contains("last-seen")));
 
@@ -1942,15 +1991,15 @@ mod tests {
         );
         assert_eq!(v.first_hunk_line(), Some(2));
 
-        v.toggle_diff_view();
+        v.toggle_head_diff();
         assert!(v.diff_view());
-        assert!(!v.diff_seen());
-        v.toggle_diff_view();
+        assert_eq!(v.diff_base(), Some(&Side::Head));
+        v.toggle_head_diff();
         assert!(!v.diff_view(), "gd is a toggle");
 
-        v.toggle_seen_diff_view();
+        v.toggle_seen_diff();
         assert!(v.diff_view());
-        assert!(v.diff_seen());
+        assert_eq!(v.diff_base(), Some(&Side::Seen));
         let texts: Vec<String> = v
             .layout()
             .lines()
@@ -1958,18 +2007,24 @@ mod tests {
             .map(fathomable_core::layout::Line::text)
             .collect();
         assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
-        v.toggle_diff_view();
-        assert!(
-            v.diff_view() && !v.diff_seen(),
+        v.toggle_head_diff();
+        assert_eq!(
+            v.diff_base(),
+            Some(&Side::Head),
             "gd from the seen diff goes to HEAD"
         );
         v.start_command();
         for ch in "diff seen".chars() {
             v.input_char(ch);
         }
-        assert_eq!(v.confirm(), Effect::None);
-        assert!(v.diff_seen(), ":diff seen from the HEAD diff goes to seen");
-        v.toggle_seen_diff_view();
+        assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff seen"));
+        v.toggle_seen_diff();
+        assert_eq!(
+            v.diff_base(),
+            Some(&Side::Seen),
+            "gD from the HEAD diff goes to seen"
+        );
+        v.toggle_seen_diff();
         assert!(!v.diff_view());
 
         v.start_command();

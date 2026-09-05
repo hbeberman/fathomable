@@ -16,6 +16,8 @@ impl App {
             (Some("auto"), Some("on"), None) => self.set_auto_jump(true),
             (Some("auto"), Some("off"), None) => self.set_auto_jump(false),
             (Some("status"), None, _) => self.open_status(),
+            (Some("diff"), None, _) => self.toggle_head_diff(),
+            (Some("diff"), Some("seen"), None) => self.toggle_seen_diff(),
             (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),
         }
@@ -46,15 +48,10 @@ impl App {
         let unavailable = || "unavailable (see the log)".to_owned();
         let view = self.view();
         let (line, column) = view.source_position();
-        let base = if view.diff_view() {
-            if view.diff_seen() {
-                ", diff against last seen"
-            } else {
-                ", diff against HEAD"
-            }
-        } else {
-            ""
-        };
+        let base = view
+            .diff()
+            .map(|d| format!(", diff {}", d.header))
+            .unwrap_or_default();
         let deleted = if self.deleted() { ", deleted" } else { "" };
         let document = if self.has_document() {
             format!(

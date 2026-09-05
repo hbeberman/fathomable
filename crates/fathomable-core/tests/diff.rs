@@ -1,7 +1,7 @@
 //! Behaviour of the line diff, the gutter status, and the diff layout
 //! (ADR 0006).
 
-use fathomable_core::diff::{Diff, DiffKind, LineStatus};
+use fathomable_core::diff::{Compare, Diff, DiffKind, LineStatus};
 use fathomable_core::layout::{Face, Layout, Line};
 
 fn statuses(diff: &Diff) -> Vec<Option<LineStatus>> {
@@ -180,7 +180,7 @@ fn unified_listing_groups_nearby_hunks_with_context() {
 fn diff_layout_carries_faces_and_new_text_sources() -> Result<(), Box<dyn std::error::Error>> {
     let old = "# Title\n\nold line\n";
     let new = "# Title\n\nnew line\nextra\n";
-    let layout = Layout::diff(old, new, 40);
+    let layout = Layout::diff(old, new, 40, Compare::default());
     let texts: Vec<String> = layout.lines().iter().map(Line::text).collect();
     assert_eq!(
         texts,
@@ -219,7 +219,7 @@ fn diff_layout_carries_faces_and_new_text_sources() -> Result<(), Box<dyn std::e
     // Column 1 of "+new line" is the first source byte of the line.
     assert_eq!(layout.lines()[4].source_at(1), Some(9));
 
-    let same = Layout::diff(new, new, 40);
+    let same = Layout::diff(new, new, 40, Compare::default());
     assert_eq!(same.lines().len(), 1);
     assert!(same.lines()[0].source().is_none());
     Ok(())
@@ -229,7 +229,7 @@ fn diff_layout_carries_faces_and_new_text_sources() -> Result<(), Box<dyn std::e
 fn diff_layout_wraps_long_lines_under_their_sign() {
     let old = "";
     let new = "abcdefghijklmnopqrstuvwxyz\n";
-    let layout = Layout::diff(old, new, 15);
+    let layout = Layout::diff(old, new, 15, Compare::default());
     let texts: Vec<String> = layout.lines().iter().map(Line::text).collect();
     assert_eq!(texts, ["@@ -0,0 +1 @@", "+abcdefghijklmn", " opqrstuvwxyz"]);
     assert!(layout.lines().iter().all(|line| line.width() <= 15));

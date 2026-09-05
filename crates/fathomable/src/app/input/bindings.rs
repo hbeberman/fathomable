@@ -245,10 +245,12 @@ actions! {
     DiffSeen,
     CheckpointFile,
     CheckpointWorkspace,
-    CheckpointDiff,
-    CheckpointCommit,
-    CheckpointBase,
-    CheckpointTarget,
+    DiffCheckpoint,
+    DiffCommit,
+    DiffBase,
+    DiffTarget,
+    DiffWhitespace,
+    StubsToggle,
     HunkNext,
     HunkPrev,
     DirtyNext,
@@ -575,16 +577,23 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::View,
         &[&[c('b')]],
-        A::CheckpointBase,
+        A::DiffBase,
         "Display",
-        "checkpoint diff: pick the base",
+        "diff: pick the base",
     ),
     bind(
         W::View,
         &[&[c('t')]],
-        A::CheckpointTarget,
+        A::DiffTarget,
         "Display",
-        "checkpoint diff: pick the target",
+        "diff: pick the target",
+    ),
+    bind(
+        W::View,
+        &[&[c('w')]],
+        A::DiffWhitespace,
+        "Display",
+        "diff: ignore whitespace",
     ),
     bind(
         W::View,
@@ -785,13 +794,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('x')]],
-        A::StubResolvedToggle,
-        "Space menu",
-        "threads: toggle resolved stubs",
-    ),
-    bind(
-        W::Any,
         &[&[c(' '), c('v'), c('s')]],
         A::SourceView,
         "Space menu",
@@ -799,45 +801,80 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('d')]],
+        &[&[c(' '), c('v'), c('t')]],
+        A::StubsToggle,
+        "Space menu",
+        "view: toggle thread stubs",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('v'), c('x')]],
+        A::StubResolvedToggle,
+        "Space menu",
+        "view: toggle resolved stubs",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('d')]],
         A::DiffHead,
         "Space menu",
-        "view: diff vs HEAD",
+        "diff: vs HEAD",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('D')]],
+        &[&[c(' '), c('d'), c('D')]],
         A::DiffSeen,
         "Space menu",
-        "view: diff vs last seen",
+        "diff: vs last seen",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('c')]],
+        &[&[c(' '), c('d'), c('r')]],
+        A::DiffCheckpoint,
+        "Space menu",
+        "diff: checkpoint diff",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('g')]],
+        A::DiffCommit,
+        "Space menu",
+        "diff: vs commit…",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('b')]],
+        A::DiffBase,
+        "Space menu",
+        "diff: pick base…",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('t')]],
+        A::DiffTarget,
+        "Space menu",
+        "diff: pick target…",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('c')]],
         A::CheckpointFile,
         "Space menu",
-        "view: checkpoint file",
+        "diff: checkpoint file",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('C')]],
+        &[&[c(' '), c('d'), c('C')]],
         A::CheckpointWorkspace,
         "Space menu",
-        "view: checkpoint workspace",
+        "diff: checkpoint workspace",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('r')]],
-        A::CheckpointDiff,
+        &[&[c(' '), c('d'), c('w')]],
+        A::DiffWhitespace,
         "Space menu",
-        "view: checkpoint diff",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('v'), c('g')]],
-        A::CheckpointCommit,
-        "Space menu",
-        "view: diff vs commit…",
+        "diff: ignore whitespace",
     ),
     bind(
         W::Any,
@@ -1278,6 +1315,7 @@ const SUBMENUS: &[(Keys, &str)] = &[
     (&[c(' '), c('p')], "panes"),
     (&[c(' '), c('c')], "threads"),
     (&[c(' '), c('v')], "view"),
+    (&[c(' '), c('d')], "diff"),
     (&[c(' '), c('j')], "jump"),
     (&[c(' '), c('a')], "agent"),
 ];
@@ -1544,8 +1582,8 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `j`, and `a`
-    /// (ADR 0049, ADR 0056).
+    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `d`, `j`, and
+    /// `a` (ADR 0049, ADR 0056, ADR 0060).
     #[test]
     fn menus_come_from_the_table() {
         let space = menu(Where::View, &[c(' ')]);
@@ -1560,6 +1598,7 @@ mod tests {
             ("p", "panes…"),
             ("c", "threads…"),
             ("v", "view…"),
+            ("d", "diff…"),
             ("j", "jump…"),
             ("a", "agent…"),
         ] {
@@ -1579,11 +1618,12 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "r", "o", "e", "d", "x"]
+            ["c", "r", "o", "e", "d"]
         );
+        assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
-            keys(Where::Review, &[c(' '), c('v')]),
-            ["s", "d", "D", "c", "C", "r", "g"]
+            keys(Where::Review, &[c(' '), c('d')]),
+            ["d", "D", "r", "g", "b", "t", "c", "C", "w"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["i", "r"]);
         assert_eq!(
@@ -1600,8 +1640,8 @@ mod tests {
     }
 
     /// A submenu's entries drop the word the breadcrumb already says:
-    /// `Space c x` reads "toggle resolved stubs", not
-    /// "threads: toggle resolved stubs".
+    /// `Space v x` reads "toggle resolved stubs", not
+    /// "view: toggle resolved stubs".
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
         for (prefix, word) in [
@@ -1610,6 +1650,7 @@ mod tests {
             (c('p'), "panes"),
             (c('c'), "threads"),
             (c('v'), "view"),
+            (c('d'), "diff"),
             (c('j'), "jump"),
             (c('a'), "agent"),
         ] {
@@ -1620,7 +1661,7 @@ mod tests {
                 );
             }
         }
-        let stub = menu(Where::View, &[c(' '), c('c')]);
+        let stub = menu(Where::View, &[c(' '), c('v')]);
         assert!(
             stub.iter()
                 .any(|(key, label)| key == "x" && label == "toggle resolved stubs"),

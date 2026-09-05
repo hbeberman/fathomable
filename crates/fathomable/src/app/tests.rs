@@ -266,7 +266,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
             0 => app.view_mut().toggle_source_view(),
             1 => {
                 app.view_mut().set_bases(None, None, Some(String::new()));
-                app.view_mut().toggle_diff_view();
+                app.view_mut().toggle_head_diff();
             }
             _ => {}
         }
@@ -875,8 +875,8 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
 /// The added lines of the last-seen diff view, or `None` when the
 /// view cannot show one.
 fn seen_diff_added(app: &mut App) -> Option<Vec<String>> {
-    app.view_mut().toggle_seen_diff_view();
-    if !app.view().diff_seen() {
+    app.toggle_seen_diff();
+    if app.view().diff_base() != Some(&crate::app::diff::Side::Seen) {
         return None;
     }
     let added = app
@@ -887,7 +887,7 @@ fn seen_diff_added(app: &mut App) -> Option<Vec<String>> {
         .map(fathomable_core::layout::Line::text)
         .filter(|t| t.starts_with('+'))
         .collect();
-    app.view_mut().toggle_seen_diff_view();
+    app.toggle_seen_diff();
     Some(added)
 }
 

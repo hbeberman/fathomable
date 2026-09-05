@@ -92,8 +92,8 @@ Text:
 | `/` `?`, `n` `N`, `:noh` | search, next / previous match, clear highlight |
 | `:N` | go to source line N |
 | `gs` / `:source` | toggle raw source view |
-| `gd` / `:diff`, `gD` / `:diff seen` | toggle the diff against `HEAD`; against last seen |
-| `h` `l`, `b` `t` in the checkpoint diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the commits that touched it, `HEAD`, and the working file |
+| `gd` / `:diff`, `gD` / `:diff seen` | the diff against `HEAD` (`HEAD · now`); against last seen; the same key again, or `Esc`, closes it |
+| `h` `l`, `b` `t`, `w` in a diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the working file, last seen, `HEAD`, and the commits that touched it; ignore whitespace |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
@@ -106,7 +106,7 @@ Text:
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
 | `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
-| `Esc`, `:q` | clear the input, prefix, selection, or highlight; quit |
+| `Esc`, `:q` | clear the input, prefix, selection, or highlight, else leave the diff; quit |
 
 The `Space` menu, from any pane:
 
@@ -121,10 +121,12 @@ The `Space` menu, from any pane:
 | `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
 | `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
 | `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
-| `Space c x` | threads: toggle stubs for resolved threads (hidden by default) |
-| `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
-| `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
-| `Space v r`, `Space v g` | view: toggle the checkpoint diff (`CHECK`), opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
+| `Space v s`, `Space v t`, `Space v x` | view: toggle source view (as `gs`), thread stubs, stubs for resolved threads (hidden by default) |
+| `Space d d`, `Space d D` | diff: the diff against `HEAD`, against last seen (as `gd` `gD`) |
+| `Space d r`, `Space d g` | diff: the checkpoint diff, opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
+| `Space d b`, `Space d t` | diff: pick the base, the target (as `b` `t` in a diff; from outside one, against the working file) |
+| `Space d c`, `Space d C` | diff: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
+| `Space d w` | diff: ignore whitespace (as `w` in a diff) |
 | `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
 | `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -273,9 +275,9 @@ one lands on the row above, and they carry no line number. Stubs of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour and, for the
 thread the cursor is on, ends with `(c expand)`; the others are dimmed.
-`Space c x` gives resolved threads a stub too; `threads { stubs;
-stubs-resolved }` sets whether stubs are drawn at all and the resolved
-default.
+`Space v x` gives resolved threads a stub too, and `Space v t` hides
+stubs altogether; `threads { stubs; stubs-resolved }` sets both
+defaults.
 
 `c` on a line a thread covers **expands** its stub in place, the view
 staying still: a header row with the state, placement, watchers, and
@@ -373,8 +375,11 @@ ones, so a thread on a long markdown paragraph is bracketed across the rows
 it wraps to, and the blank rows between paragraphs inside a thread draw `│`.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
 for one that is staged; a new untracked file is all thin green. `gd` swaps
-the pane for a unified diff of the file against `HEAD` (`DIFF`), and the
-status line counts `+added -removed` lines.
+the pane for the **diff view** with `HEAD` as its base: a unified diff of
+the file, a header naming the two sides (`HEAD · now`) with the diff keys
+at its right, the badge `DIFF HEAD` after the path, and `+added -removed`
+counts in the status line. `gd` again, or `Esc` once there is nothing
+else to clear, returns to the file.
 
 `]g` and `[g` walk the hunks, and when a file's hunks run out they carry
 on into the next uncommitted file in path order, wrapping at the end, so
@@ -392,14 +397,15 @@ of this within a beat.
 There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit,
 comment on it, or leave it alone for five seconds. It never drives the bar
-or `]g`; `gD` (or `:diff seen`) shows it as `DIFF seen`, and `gD` again
-returns to the rendered view. Snapshots live under
+or `]g`; `gD` (or `:diff seen`) shows it in the diff view as `last seen ·
+now`, badge `DIFF seen`, and `gD` again returns to the file. Snapshots
+live under
 `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at
 any time; they expire after thirty days unless the file has an open
 thread.
 
-A **checkpoint** is a mark you make yourself. `Space v c` records the
-current file's content on that file's timeline; `Space v C` records every
+A **checkpoint** is a mark you make yourself. `Space d c` records the
+current file's content on that file's timeline; `Space d C` records every
 non-ignored text file whose content moved since its last checkpoint, in
 one go, and a toast counts them (`checkpoint: 3 files`; a file the agent
 has not touched gets no new entry). Checkpoints live beside the snapshots
@@ -407,19 +413,28 @@ under `~/.local/state/fathomable/workspaces/<hash>/checkpoints/`, one blob
 per distinct content plus an `index.jsonl` of events; nothing expires, and
 `--doctor` counts them.
 
-`Space v r` opens the **checkpoint diff** (badge `CHECK`): a unified diff
-between two sides of the current file, opened on the newest pair, the
-latest checkpoint against the working file. Its header reads
-`checkpoint 2/3  5m ago · now`; `h` and `l` page to the earlier or later
-pair along the timeline, and a strip along the bottom lists the file's
-checkpoints, `◆` on the workspace-wide ones. `b` and `t` pick the base or
-the target from the file's checkpoints, the commits that touched it (the
-fifty most recent reachable from `HEAD`), `HEAD`, and the working file;
-the header then names both sides (`a1b2c3d · now`). `Space v g` is the
-shortcut for a commit against the working file. With no checkpoint the
-view says so and names `Space v c`; `Space v r` again, `gs`, or `gd`
-leave it. `gd` and `gD` are untouched: checkpoints sit beside git, they
-never replace it ([0049](decisions/0049-inline-threads-and-the-rail.md)).
+`Space d r` opens the diff view on the file's newest checkpoint pair,
+the latest checkpoint against the working file. Its header reads
+`checkpoint 2/3  5m ago · now` and the badge `DIFF cp 2/3`; `h` and `l`
+page to the earlier or later pair along the timeline, and, while the
+file has a checkpoint, a strip along the bottom lists them, `◆` on the
+workspace-wide ones. With no checkpoint the view says so and names
+`Space d c`; `Space d r` again leaves it.
+
+Every diff is the same view with two **sides**, so its keys work in all
+of them. `b` and `t` pick the base or the target from the file's
+checkpoints, the working file, last seen, `HEAD`, and the commits that
+touched it (the fifty most recent reachable from `HEAD`); the header
+names the pair (`a1b2c3d · HEAD`) and the badge the base (`DIFF
+a1b2c3d`). From outside a diff they open one against the working file;
+`Space d g` is the shortcut for a commit against the working file. `w`
+(or `Space d w`) ignores whitespace, so lines that differ only in
+spacing count as unchanged; the header says `· whitespace ignored`
+while it does, and `diff { ignore-whitespace }` sets the start. The
+gutter bar, `]g`, and the file counts always compare against `HEAD`
+exactly: checkpoints and snapshots sit beside git, they never replace
+it ([0049](decisions/0049-inline-threads-and-the-rail.md),
+[0060](decisions/0060-one-diff-two-sides.md)).
 
 ## 6. Following an agent
 
@@ -486,6 +501,11 @@ sidebar {
 threads {
     stubs #true             // a stub under each thread's lines
     stubs-resolved #false   // resolved threads get one too
+}
+
+diff {
+    context 3               // unchanged lines shown around each hunk
+    ignore-whitespace #false // start with whitespace ignored (Space d w)
 }
 
 checkpoints {               // reserved; no setting yet

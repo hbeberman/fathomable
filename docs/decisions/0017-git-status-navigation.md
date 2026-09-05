@@ -11,7 +11,9 @@ tags:
 
 # 0017 Git status as the primary change layer
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-05 by
+[0060](0060-one-diff-two-sides.md): the badge reads `DIFF HEAD`, and the
+diff against `HEAD` is the one diff view with `HEAD` as its base.
 
 ## Context
 

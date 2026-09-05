@@ -201,8 +201,8 @@ impl App {
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
-            // The threads and view submenus (ADR 0049) mean the same
-            // thing everywhere.
+            // The threads, view, and diff submenus (ADR 0049, ADR 0060)
+            // mean the same thing everywhere.
             Action::NewThread => self.start_new_comment(),
             Action::Reply => self.thread_reply(),
             Action::ToggleResolved => self.thread_toggle_resolved(),
@@ -210,12 +210,16 @@ impl App {
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
             Action::DeleteThread => self.thread_delete_here(),
             Action::SourceView => self.view_mut().toggle_source_view(),
-            Action::DiffHead => self.view_mut().toggle_diff_view(),
-            Action::DiffSeen => self.view_mut().toggle_seen_diff_view(),
+            Action::DiffHead => self.toggle_head_diff(),
+            Action::DiffSeen => self.toggle_seen_diff(),
+            Action::DiffCheckpoint => self.toggle_checkpoint_diff(),
+            Action::DiffCommit => self.diff_against_commit(),
+            Action::DiffBase => self.pick_diff_side(false),
+            Action::DiffTarget => self.pick_diff_side(true),
+            Action::DiffWhitespace => self.toggle_whitespace(),
             Action::CheckpointFile => self.checkpoint_file(),
             Action::CheckpointWorkspace => self.checkpoint_workspace(),
-            Action::CheckpointDiff => self.toggle_checkpoint_view(),
-            Action::CheckpointCommit => self.checkpoint_against_commit(),
+            Action::StubsToggle => self.toggle_stubs(),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_tree_focus();
@@ -240,11 +244,11 @@ impl App {
 
     fn act_view(&mut self, action: Action) -> Effect {
         match action {
-            // In the checkpoint diff `h`/`l` page the timeline (ADR 0049).
-            Action::MoveLeft if self.view().checkpoint_view() => self.checkpoint_page(-1),
-            Action::MoveRight if self.view().checkpoint_view() => self.checkpoint_page(1),
-            Action::CheckpointBase => self.pick_checkpoint_side(false),
-            Action::CheckpointTarget => self.pick_checkpoint_side(true),
+            // In a diff `h`/`l` page the checkpoint timeline (ADR 0060).
+            Action::MoveLeft if self.view().diff_view() => self.diff_page(-1),
+            Action::MoveRight if self.view().diff_view() => self.diff_page(1),
+            // `Esc` clears, then leaves the diff (ADR 0060).
+            Action::Escape => self.escape_view(),
             Action::CopyLink => return self.view_mut().copy_link(),
             Action::OpenLink => return self.view_mut().open_link(),
             Action::GotoFile => self.goto_file(),
@@ -288,7 +292,6 @@ impl App {
                     Action::SelectLines => view.select_lines(),
                     Action::ExtendLine => view.extend_line_below(),
                     Action::Yank => return view.yank(),
-                    Action::Escape => view.escape(),
                     _ => {}
                 }
             }
@@ -429,7 +432,9 @@ impl App {
     fn act_input(&mut self, action: Action) -> Effect {
         let view = self.view_mut();
         match action {
-            Action::Escape => view.escape(),
+            Action::Escape => {
+                view.escape();
+            }
             Action::Confirm => return view.confirm(),
             Action::Backspace => view.input_backspace(),
             _ => {}

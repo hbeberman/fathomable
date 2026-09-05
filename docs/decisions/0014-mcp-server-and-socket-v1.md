@@ -23,6 +23,10 @@ mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
 workspace*, and the `session` tool parameter is `workspace`; the text
 below keeps the old words where it describes what was decided then.
 
+Amended 2026-09-04 by [0051](0051-retire-one-release-compatibility.md):
+the socket op `annotations_list` is `threads_list`, the name of the tool
+it serves; the protocol stays v1.
+
 ## Context
 
 [0003](0003-sessions-and-mcp.md) decided that `fathomable --mcp` is a stdio

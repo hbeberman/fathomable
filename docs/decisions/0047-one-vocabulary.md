@@ -116,4 +116,6 @@ The renames that carry it, each landing as one commit:
   be updated, which the [0043](0043-agent-vocabulary.md) table and its
   tests make one sweep.
 - The one-release compatibility (`--sessions`, the `sessions/` sweep,
-  `annotation.*` theme keys) is removed by a later record.
+  `annotation.*` theme keys) is removed by a later record: done on
+  2026-09-04 by [0051](0051-retire-one-release-compatibility.md), which
+  also renamed the socket op `annotations_list` to `threads_list`.

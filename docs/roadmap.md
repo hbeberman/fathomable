@@ -201,3 +201,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     triple-click, and Shift-click select; pane-header hints take
     clicks; `gy`/`gx` copy or open a link
     ([0050](decisions/0050-mouse-menus-and-gestures.md)).
+42. **Retire the one-release compatibility.** The `annotation.*` and
+    `ui.sidebar*` theme keys, the hidden `--sessions` flag, and the sweep
+    of the old `sessions/` directory go before any release exists; the
+    socket op `annotations_list` is `threads_list`
+    ([0051](decisions/0051-retire-one-release-compatibility.md)).

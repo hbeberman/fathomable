@@ -1,4 +1,4 @@
-// @okf-doc: /decisions/0014-mcp-server-and-socket-v1.md
+// @okf-doc: /decisions/0051-retire-one-release-compatibility.md
 //! The session socket: parse protocol lines, answer liveness directly, and
 //! hand everything else to the app loop.
 //!

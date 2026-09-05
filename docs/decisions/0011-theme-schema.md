@@ -19,7 +19,9 @@ Status: accepted (2026-08-26); amended 2026-09-03 by
 the old names still load for one release and `--doctor` names each one
 a theme file sets. Amended 2026-09-04 by
 [0049](0049-inline-threads-and-the-rail.md): `ui.sidebar*` is `ui.rail*`
-on the same terms.
+on the same terms. Amended 2026-09-04 by
+[0051](0051-retire-one-release-compatibility.md): both old spellings are
+unknown keys now, and `--doctor` no longer reports them.
 
 ## Context
 

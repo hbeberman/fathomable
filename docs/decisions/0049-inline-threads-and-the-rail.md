@@ -319,7 +319,9 @@ Alt-Left / Alt-Right   jumplist back / forward
   set `thread.inline` to `none`, in which case stub rows are marked by a
   `▎` in the state colour at their left edge instead. The `ui.sidebar.*`
   keys become `ui.rail.*`, with the old spelling accepted for one
-  release as [0047](0047-one-vocabulary.md) did for `annotation.*`.
+  release as [0047](0047-one-vocabulary.md) did for `annotation.*`
+  (retired 2026-09-04 by
+  [0051](0051-retire-one-release-compatibility.md)).
 - Config nodes `threads { stubs #true; stubs-resolved #false }` and
   `rail { width 32; split 8 }`; `checkpoints {}` is reserved.
   `--config-show` prints them.

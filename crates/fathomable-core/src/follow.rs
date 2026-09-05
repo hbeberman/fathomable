@@ -2,7 +2,7 @@
 //! Follow mode: which changes the viewer reacts to and the queue of
 //! changed files a jump key walks.
 //!
-//! [`Ignore`] is the `follow.ignore` glob list. [`Queue`] keeps one
+//! [`Ignore`] is the `watch.ignore` glob list. [`Queue`] keeps one
 //! [`Change`] per file, newest first; a later change to a queued file
 //! moves it to the front. Stepping newest-first and oldest-first is what
 //! `]f` and `[f` do.
@@ -31,7 +31,7 @@ use gix::bstr::BStr;
 use gix::glob::pattern::Case;
 use gix::glob::wildmatch;
 
-/// The `follow.ignore` globs, matched against root-relative paths.
+/// The `watch.ignore` globs, matched against root-relative paths.
 ///
 /// Patterns use gitignore syntax: `*` does not cross `/`, `**` does, and a
 /// trailing `/` means a directory.
@@ -88,7 +88,7 @@ impl Ignore {
     }
 }
 
-/// A `follow.ignore` glob that cannot be compiled.
+/// A `watch.ignore` glob that cannot be compiled.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownGlob(pub String);
 

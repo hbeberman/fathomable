@@ -474,7 +474,7 @@ Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 theme "default-light"
 
 jump {
-    auto #false             // start with auto-jump on
+    auto #false             // start with auto-jump off; `Space j a` toggles it
     debounce 1000           // ms of quiet before auto-jump moves
     toast 4000              // ms a toast stays; 0 disables toasts
 }

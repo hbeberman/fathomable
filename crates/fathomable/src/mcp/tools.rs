@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0055-six-tools.md
-//! The six tools an agent calls (ADR 0055): `workspaces`, `open`,
-//! `follow`, `threads`, `thread_reply`, and `thread_watch`; the seventh,
-//! `thread_start`, is [`super::start`] (ADR 0061).
+//! Six of the seven tools an agent calls (ADR 0055): `workspaces`,
+//! `open`, `follow`, `threads`, `thread_reply`, and `thread_watch`; the
+//! seventh, `thread_start`, is [`super::start`] (ADR 0061).
 //!
 //! Each pair of calls with a natural undo is one tool with a flag, a
 //! subscription always covers the whole workspace, and one `threads`

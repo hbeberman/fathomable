@@ -5,8 +5,8 @@
 //!
 //! This module is the transport: the server and its state, how a call
 //! finds its workspace, the socket exchange with a viewer, and the store
-//! it falls back to. The six tools themselves are in [`tools`]
-//! (ADR 0055).
+//! it falls back to. The tools themselves are in [`tools`] (ADR 0055)
+//! and, for `thread_start`, in [`start`] (ADR 0061).
 //!
 //! The server holds two pieces of state: the pinned workspace set by
 //! `workspaces`, and the subscriber this connection last registered

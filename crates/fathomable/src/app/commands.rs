@@ -2,7 +2,7 @@
 //! The `:` commands the view hands up to the app, and the `:status` overlay.
 //!
 //! `View::execute` keeps the commands that only touch the pane (`:q`,
-//! `:noh`, `:source`, `:diff`, `:N`); everything else arrives here as
+//! `:noh`, `:source`, `:N`); everything else arrives here as
 //! [`Effect::Command`](crate::app::view::Effect::Command).
 
 use super::App;

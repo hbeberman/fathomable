@@ -183,6 +183,8 @@ pub enum Key {
     UiRailDir,
     UiPopup,
     UiPopupKey,
+    /// The `Space` menu's and the right-click menu's surface (ADR 0056).
+    UiMenu,
     UiPickerMatch,
     UiPickerSelected,
     DiffPlus,
@@ -208,7 +210,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 35] = [
+    const NAMED: [(&'static str, Self); 36] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -225,6 +227,7 @@ impl Key {
         ("ui.rail.dir", Self::UiRailDir),
         ("ui.popup", Self::UiPopup),
         ("ui.popup.key", Self::UiPopupKey),
+        ("ui.menu", Self::UiMenu),
         ("ui.picker.match", Self::UiPickerMatch),
         ("ui.picker.selected", Self::UiPickerSelected),
         ("diff.plus", Self::DiffPlus),

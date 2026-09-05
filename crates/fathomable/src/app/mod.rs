@@ -27,6 +27,7 @@ pub(crate) mod testing;
 pub(crate) mod threads;
 mod view;
 mod watch;
+mod window;
 
 use std::collections::HashSet;
 use std::fs;
@@ -88,7 +89,7 @@ const TREE_SCROLLOFF: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Focus {
     View,
-    /// The rail's tree pane.
+    /// The rail's files pane.
     Tree,
     /// The review list (ADR 0025, ADR 0049).
     Review,
@@ -114,7 +115,7 @@ pub(crate) enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
-    /// Subscribed agents to wake with `Space w` (ADR 0040).
+    /// Subscribed agents to wake with `Space a w` (ADR 0040).
     Wake,
     /// The base side of the checkpoint diff (ADR 0049).
     CheckBase,
@@ -221,7 +222,7 @@ pub(crate) struct App {
     workspace: Workspace,
     docs: Vec<Doc>,
     current: Option<usize>,
-    /// Documents by index, most recently shown first (`Space o`).
+    /// Documents by index, most recently shown first (`Space F r`).
     recent: Vec<usize>,
     jumplist: jumplist::Jumplist,
     /// Where a search started, recorded on the jumplist when it lands
@@ -530,12 +531,6 @@ impl App {
         } else {
             "auto-jump off"
         });
-    }
-
-    /// Drop every queued change (`Space j c`).
-    pub(crate) fn clear_queue(&mut self) {
-        self.queue.clear();
-        self.last_change = None;
     }
 
     /// Set auto-jump (`:auto on` / `:auto off`).
@@ -1679,7 +1674,8 @@ impl App {
         }
     }
 
-    /// `Space e`: open and focus the tree, or hand focus back.
+    /// Open and focus the files pane, or hand focus back: the tree's
+    /// `Esc` and the text's `h` at column 0 (ADR 0056 unbound `Space e`).
     pub(crate) fn toggle_tree_focus(&mut self) {
         if !self.rail.tree {
             if !self.ensure_tree() {
@@ -1697,7 +1693,7 @@ impl App {
         self.relayout();
     }
 
-    /// `Space p e`: hide the tree pane, or show it again without taking
+    /// `Space p f`: hide the files pane, or show it again without taking
     /// the keys; the threads pane keeps the rail either way.
     pub(crate) fn toggle_tree_shown(&mut self) {
         if self.rail.tree {

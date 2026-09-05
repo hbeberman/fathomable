@@ -101,7 +101,8 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
 | `ui.rail`, `ui.rail.selected`, `ui.rail.dir` | the rail's background, the tree pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.sidebar*` before [0049](0049-inline-threads-and-the-rail.md) |
-| `ui.popup`, `ui.popup.key` | space menu and picker surface, key labels (0012) |
+| `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, key labels (0012); the space menu drew on it before [0056](0056-the-leader-trimmed.md) |
+| `ui.menu` | the `Space` menu and the right-click menu's surface; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
 | `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
 | `thread.waiting` | gutter note cell, list rows, and tree-pane tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |

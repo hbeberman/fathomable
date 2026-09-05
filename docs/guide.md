@@ -112,19 +112,20 @@ The `Space` menu, from any pane:
 
 | Keys | Action |
 | --- | --- |
-| `Space e` | tree pane: show and focus, or return focus |
-| `Space f` / `Space F`, `Space o` | file picker (ignored files too), recent files |
-| `Space t` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
-| `Space T` | threads pane: show and focus, or return focus |
-| `Space p e`, `Space p t` | panes: hide the tree pane or the threads pane, or show it again without taking the keys (the other pane keeps the rail) |
-| `Space r r`, `Space r i`, `Space r .` | tree: re-read it, toggle ignored entries, reveal the current file (showing the tree if it is hidden) |
+| `Space f` | file picker |
+| `Space F i`, `Space F r` | files: the picker including ignored files; the recent files |
+| `Space r` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
+| `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
+| `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
+| `Space w w`, `Space Space` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
+| `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the rail) |
+| `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
 | `Space c x` | threads: toggle stubs for resolved threads (hidden by default) |
-| `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space v r`, `Space v g` | view: toggle the checkpoint diff (`CHECK`), opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
-| `Space j j`, `Space j a`, `Space j c` | jump to the newest change, toggle auto-jump, clear the changes |
-| `Space w` | wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
+| `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
+| `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
 | `:` | the command line, from any pane |
 
@@ -139,7 +140,7 @@ or `threads · workspace 12`):
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
-Review list (`Space t`; its header reads `review  4 open  1 proposed
+Review list (`Space r`; its header reads `review  4 open  1 proposed
 resolved hidden  by newest agent reply`, the proposal count only while
 there is one):
 
@@ -152,7 +153,7 @@ there is one):
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `s`, `x`, `f`, `z` | sort by newest agent reply or by file and line; show or hide resolved threads (the threads pane shares the flag); only this file; fold the entry |
-| `Esc` | close the list, back to the document (`Space t` does too) |
+| `Esc` | close the list, back to the document (`Space r` does too) |
 
 The draft, a comment, reply, or edit written in the thread's rows:
 
@@ -167,15 +168,14 @@ The draft, a comment, reply, or edit written in the thread's rows:
 | `Ctrl-c` | clear the draft (empty closes) |
 | `Esc` | cancel (twice after a change) |
 
-Tree and picker:
+Files pane and picker:
 
 | Keys | Action |
 | --- | --- |
 | `j` `k` `h` `l` `Enter` | move (the highlighted file is shown), collapse, expand or open and focus |
 | `gg` `ge` `G` | top / bottom |
-| `R`, `I` | re-read (new, deleted, and renamed files already show on their own); show ignored |
 | `y` | copy the highlighted entry's path, relative to the root |
-| `Esc` | back to the text; the tree stays |
+| `Esc` | back to the text; the pane stays |
 | picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
 
 Copy uses OSC 52, so it lands in the system clipboard through most
@@ -199,8 +199,8 @@ showing the key that does the same: on a selection, comment, new
 thread, copy, and clear; on a line a thread covers, expand or fold,
 reply, resolve or reopen, edit, and delete; on a link, copy or open it,
 and on a link or a path that names a file, open it in the viewer;
-on any line, comment, select, and copy. In the tree it offers open,
-checkpoint, copy path, re-read, and ignored; on a threads pane or review
+on any line, comment, select, and copy. In the files pane it offers open,
+checkpoint, and copy path; on a threads pane or review
 list entry, go to, reply, resolve, edit, and delete. A right-click
 outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
@@ -289,7 +289,7 @@ thread's expanded rows, under a ` user  draft` row that carries the
 draft keys at its right edge (or `Esc again to discard` once you have
 pressed Esc on a changed draft); an edit replaces the message it edits,
 seeded with its text; and a new comment (`c` on a line with no thread,
-`C`, or `Space c n`) gets a block of its own under its lines, headed
+`C`, or `Space c c`) gets a block of its own under its lines, headed
 `comment on L3-5`. The draft wraps at the text width and grows with
 what you type, the view scrolling just enough to keep its cursor on
 screen while the text cursor stays on the message; a click in the draft
@@ -297,14 +297,14 @@ places its cursor. Submit, cancel, or clear an empty draft and the rows
 go: a reply becomes the newest message under the cursor, a new comment
 becomes a stub.
 
-The left column is the **rail**: the tree pane above the **threads
-pane**, each shown or hidden on its own (`Space p e`, `Space p t`),
+The left column is the **rail**: the **files pane** above the **threads
+pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
 the rail drawn while either is. The threads pane lists this file's
 threads in line order or, after `s`, the whole workspace's by file and
 line, resolved ones hidden until `x` shows them: `●` open or `✓`
 resolved in the gutter colour, `L3-5` or `guide.md:3`, the first line of
 the newest message, `↩n` when replied, and the age at the edge. Beside
-the tree it keeps `rail.split` rows (8 by default; drag its rule to
+the files pane it keeps `rail.split` rows (8 by default; drag its rule to
 change that for the session), and alone it takes the whole column. The
 highlighted row is the thread under the cursor, so reading the file
 walks the pane; `j`/`k` step the cursor and the text follows, another
@@ -324,7 +324,7 @@ uppercase crosses files: `]c`/`[c` step to the previous or next thread
 of this file, wrapping, and `]C`/`[C` across the workspace, files in
 path order, opening the file they land in.
 
-`Space t` shows the whole review at once as an inbox: every thread on
+`Space r` shows the whole review at once as an inbox: every thread on
 the current work (the ones whose commit `HEAD` can reach), the ones an
 agent spoke in last at the top, newest first, then the rest by their
 newest message; `s` sorts by file and line instead. Resolved threads
@@ -473,8 +473,8 @@ viewer {
 }
 
 rail {
-    width 32                // columns for the tree and threads panes
-    split 8                 // rows the threads pane keeps under the tree
+    width 32                // columns for the files and threads panes
+    split 8                 // rows the threads pane keeps under the files pane
 }
 
 threads {
@@ -490,7 +490,7 @@ agents {
     nag-after 5             // stop-hook checks between reminders; 0 never
     expire-after 24         // hours a silent subscription lives
     max-lines 40            // longest hook prompt before the rest is listed
-    wake ""                 // command for Space w, e.g. "claude -r {id} {prompt}"
+    wake ""                 // command for Space a w, e.g. "claude -r {id} {prompt}"
 }
 ```
 
@@ -694,7 +694,7 @@ be pending, so neither could be fetched a second time.
 
 In the viewer, an agent's messages are labelled `name (type)`, a thread
 an agent is watching says `watched by name (type)` in its pane header,
-and `:status` lists who is subscribed. `Space w` wakes a subscriber by
+and `:status` lists who is subscribed. `Space a w` wakes a subscriber by
 hand with the same prompt the stop hook would give it, through the
 `agents.wake` command — which runs detached, so it must be
 non-interactive: `codex queue --thread {id} --message {prompt}` or

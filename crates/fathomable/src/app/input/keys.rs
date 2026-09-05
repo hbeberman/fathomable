@@ -182,26 +182,25 @@ impl App {
             return Effect::None;
         };
         match action {
-            Action::TreeToggleFocus => self.toggle_tree_focus(),
             Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
             Action::Review => self.toggle_review(),
-            Action::ThreadsPaneFocus => self.toggle_threads_pane(),
             Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
+            Action::WindowLeft => self.window_left(),
+            Action::WindowDown => self.window_down(),
+            Action::WindowUp => self.window_up(),
+            Action::WindowRight => self.window_right(),
+            Action::WindowNext => self.window_next(),
             Action::JumpNewest => self.jump_newest(),
             Action::AutoJumpToggle => self.toggle_auto_jump(),
-            Action::ClearChanges => self.clear_queue(),
             Action::Wake => self.wake(),
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
-            // The rail, threads, and view submenus (ADR 0049) mean the
-            // same thing everywhere, as do the tree keys they alias.
-            Action::TreeRefresh => self.refresh_tree(),
-            Action::TreeIgnored => self.toggle_ignored(),
-            Action::TreeReveal => self.reveal_in_tree(),
+            // The threads and view submenus (ADR 0049) mean the same
+            // thing everywhere.
             Action::NewThread => self.start_new_comment(),
             Action::Reply => self.thread_reply(),
             Action::ToggleResolved => self.thread_toggle_resolved(),
@@ -551,10 +550,10 @@ mod tests {
         assert_eq!(app.marks()[0].range().start(), 5);
         assert_eq!(app.focus(), Focus::Tree, "focus stays where it was");
 
-        // `Space c n` starts a new thread on the cursor line.
+        // `Space c c` starts a new thread on the cursor line.
         app.toggle_tree_focus();
         app.view_mut().goto_source_line(4);
-        press(&mut app, " cn");
+        press(&mut app, " cc");
         assert!(matches!(
             compose_target(&app),
             Some(ComposeTarget::New(range)) if range.start() == 4
@@ -562,30 +561,53 @@ mod tests {
         Ok(())
     }
 
-    /// `Space r .` shows a hidden tree with its highlight on the current
-    /// file and leaves focus in the text; `Space v s` toggles the view
-    /// from the tree.
+    /// `Space w h` shows a hidden files pane with its highlight on the
+    /// current file and takes the keys there; `Space w j` and `Space w k`
+    /// step between the panes; `Space w l` returns; `Space Space` cycles,
+    /// skipping a hidden pane; a move with nowhere to go does nothing;
+    /// and `Space v s` toggles the view from the files pane (ADR 0056).
     #[test]
-    fn space_r_reveals_and_space_v_toggles_from_any_pane() -> anyhow::Result<()> {
+    fn space_w_moves_between_the_panes() -> anyhow::Result<()> {
         let dir = fixture("rail")?;
         let mut app = source_app(&dir)?;
         app.open(Path::new("docs/guide.md"));
         assert!(app.tree().is_none());
-        press(&mut app, " r.");
-        assert_eq!(app.focus(), Focus::View);
+        press(&mut app, " wl");
+        assert_eq!(app.focus(), Focus::View, "nowhere to go");
+        press(&mut app, " wh");
+        assert_eq!(app.focus(), Focus::Tree);
         let highlighted = app
             .tree()
             .and_then(|tree| tree.current())
             .map(|row| row.path().to_path_buf());
         assert_eq!(highlighted.as_deref(), Some(Path::new("docs/guide.md")));
 
-        app.toggle_tree_focus();
-        assert_eq!(app.focus(), Focus::Tree);
         let before = app.view().source_view();
         press(&mut app, " vs");
         assert_ne!(app.view().source_view(), before);
-        press(&mut app, " rr");
-        assert_eq!(app.message(), Some("tree refreshed"));
+
+        press(&mut app, " wj");
+        assert_eq!(app.focus(), Focus::Tree, "the threads pane is hidden");
+        app.show_threads_pane();
+        press(&mut app, " wj");
+        assert_eq!(app.focus(), Focus::ThreadsPane);
+        press(&mut app, " wk");
+        assert_eq!(app.focus(), Focus::Tree);
+        press(&mut app, " wl");
+        assert_eq!(app.focus(), Focus::View);
+
+        press(&mut app, "  ");
+        assert_eq!(app.focus(), Focus::Tree);
+        press(&mut app, "  ");
+        assert_eq!(app.focus(), Focus::ThreadsPane);
+        press(&mut app, " ww");
+        assert_eq!(app.focus(), Focus::View);
+        press(&mut app, " pf");
+        assert!(!app.rail.tree);
+        press(&mut app, "  ");
+        assert_eq!(app.focus(), Focus::ThreadsPane, "a hidden pane is skipped");
+        press(&mut app, " wl");
+        assert_eq!(app.focus(), Focus::View);
         Ok(())
     }
 
@@ -654,7 +676,7 @@ mod tests {
         press(&mut app, "c");
         let text = screen(&app)?;
         assert!(text.contains(" Space c · threads "), "{text}");
-        assert!(text.contains("reply to the thread here"));
+        assert!(text.contains("new thread"), "{text}");
         press(&mut app, "r");
         assert!(matches!(app.popup(), Some(Popup::Compose(_))) || app.message().is_some());
         Ok(())

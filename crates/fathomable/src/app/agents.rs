@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0040-agent-subscriptions-and-hooks.md
 //! The viewer's side of agent subscriptions (ADR 0040): who is
-//! subscribed, who watches the open thread, and `Space w`, which hands a
+//! subscribed, who watches the open thread, and `Space a w`, which hands a
 //! subscriber its pending threads through the configured wake command.
 
 use std::process::{Command, Stdio};
@@ -54,7 +54,7 @@ impl App {
             .collect()
     }
 
-    /// `Space w`: wake a subscriber with its pending threads. One
+    /// `Space a w`: wake a subscriber with its pending threads. One
     /// subscriber is woken at once; several open a picker.
     pub(crate) fn wake(&mut self) {
         if self.agents.wake.is_none() {
@@ -87,7 +87,7 @@ impl App {
             .find(|s| s.id() == id)
             .map_or_else(|| id.to_owned(), Subscriber::label);
         let root = self.workspace.root().to_path_buf();
-        // `Space w` hands the blob over as the agent's next prompt, so it
+        // `Space a w` hands the blob over as the agent's next prompt, so it
         // forces a turn exactly as the stop hook does.
         let prompt = match hooks::compose(
             &self.dirs,
@@ -155,7 +155,7 @@ mod tests {
         XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
     }
 
-    /// The status row and the thread header read the register; `Space w`
+    /// The status row and the thread header read the register; `Space a w`
     /// refuses without a command, wakes one subscriber directly, and
     /// offers a picker for several.
     #[test]

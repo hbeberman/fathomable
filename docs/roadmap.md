@@ -232,3 +232,11 @@ Milestones are ordered; each is usable on its own. Details live in the
     `thread_reply` answers with the updated thread and refuses a
     detached thread without a line; failures name the call that fixes
     them ([0055](decisions/0055-six-tools.md)).
+47. **The leader, trimmed.** The `Space` menu drops the tree actions,
+    the change-queue clear, and `Space c n`; `Space w` is Helix's
+    window submenu (`h j k l w`) and `Space Space` cycles the panes;
+    `Space p f` and `Space p t` toggle the files pane and the threads
+    pane; the review list is `Space r`, the rarer pickers `Space F i`
+    and `Space F r`, wake `Space a w`, new thread `Space c c`; labels
+    are a few words; the tree pane is the files pane; the menu draws
+    on `ui.menu` ([0056](decisions/0056-the-leader-trimmed.md)).

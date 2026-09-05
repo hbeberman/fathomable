@@ -92,7 +92,7 @@ pub struct AgentsConfig {
     pub expire_after: Duration,
     /// The longest hook prompt, in lines, before the rest is listed.
     pub max_lines: usize,
-    /// The command `Space w` runs to wake a subscriber, with `{id}` and
+    /// The command `Space a w` runs to wake a subscriber, with `{id}` and
     /// `{prompt}` placeholders; `None` disables the key.
     pub wake: Option<String>,
 }

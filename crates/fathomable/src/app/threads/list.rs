@@ -200,7 +200,7 @@ impl App {
         &self.review_list
     }
 
-    /// `Space t`: show the list in place of the document, or focus it
+    /// `Space r`: show the list in place of the document, or focus it
     /// when it is open, or close it when it is open and focused.
     pub(crate) fn toggle_review(&mut self) {
         if self.review_list.is_open() && self.focus == Focus::Review {

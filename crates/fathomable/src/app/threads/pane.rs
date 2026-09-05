@@ -23,7 +23,7 @@ use crate::app::{App, Focus};
 /// threads pane lists, the split a drag set, and the configured sizes.
 #[derive(Debug)]
 pub(crate) struct Rail {
-    /// The tree pane is shown.
+    /// The files pane is shown.
     pub(crate) tree: bool,
     /// The threads pane is shown.
     pub(crate) threads: bool,
@@ -222,7 +222,7 @@ impl App {
             .clamp(least, tallest)
     }
 
-    /// Rows the tree pane has, 0 when it is hidden.
+    /// Rows the files pane has, 0 when it is hidden.
     pub(crate) fn tree_rows(&self) -> usize {
         if self.tree().is_none() {
             return 0;
@@ -250,16 +250,6 @@ impl App {
         self.threads_pane_selected()
             .unwrap_or(0)
             .saturating_sub(body - 1)
-    }
-
-    /// `Space T`: show and focus the pane, or hand the keys back to the
-    /// text when it has them; the pane stays either way.
-    pub(crate) fn toggle_threads_pane(&mut self) {
-        if self.focus == Focus::ThreadsPane {
-            self.focus = Focus::View;
-        } else {
-            self.focus_threads_pane();
-        }
     }
 
     /// `Space p t`: hide the pane, or show it again without taking the
@@ -558,8 +548,9 @@ mod tests {
 
     /// The pane shows with the tree hidden and takes the whole rail;
     /// beside the tree its split is fixed whatever the thread count, and
-    /// only a drag changes it. `Space e`, `T`, `p e`, and `p t` show, hide,
-    /// and focus each pane on its own.
+    /// only a drag changes it. `Space w h` and `Space w l` focus and
+    /// return; `Space p f` and `Space p t` show and hide each pane on its
+    /// own (ADR 0056).
     #[test]
     fn the_rail_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
         let dir = fixture("split")?;
@@ -567,8 +558,8 @@ mod tests {
         assert_eq!(app.rail_width(), 0);
         assert_eq!(app.threads_pane_height(), 0);
 
-        // `Space T` with nothing shown: the pane alone fills the rail.
-        press(&mut app, " T");
+        // With nothing shown the pane alone fills the rail.
+        app.focus_threads_pane();
         assert_eq!(app.focus(), Focus::ThreadsPane);
         assert!(app.tree().is_none());
         assert_eq!(app.rail_width(), 32);
@@ -582,14 +573,16 @@ mod tests {
             column[2]
         );
 
-        // `Space T` again hands the keys back; the pane stays.
-        press(&mut app, " T");
+        // `Space w l` hands the keys back; the pane stays.
+        press(&mut app, " wl");
         assert_eq!(app.focus(), Focus::View);
         assert!(app.threads_pane_shown());
 
         // The tree joins above at the configured split of 8 rows, and a
-        // dozen threads do not grow it.
-        press(&mut app, " e");
+        // dozen threads do not grow it; `Space p f` shows the files pane
+        // and `Space w h` lands on it, the pane to the text's left.
+        press(&mut app, " pf");
+        press(&mut app, " wh");
         assert_eq!(app.focus(), Focus::Tree);
         assert_eq!(app.threads_pane_height(), 8);
         assert_eq!(app.tree_rows(), app.pane_rows() - 8);
@@ -623,11 +616,11 @@ mod tests {
         assert_eq!(app.threads_pane_height(), 12);
         assert_eq!(app.tree_rows(), top - 4);
 
-        // `Space p e` hides the tree and leaves the pane; `Space p t` hides
+        // `Space p f` hides the tree and leaves the pane; `Space p t` hides
         // the pane, and with both gone the rail goes. Both keys show
         // their pane again without taking the keys.
         app.focus_threads_pane();
-        press(&mut app, " pe");
+        press(&mut app, " pf");
         assert!(app.tree().is_none());
         assert!(app.threads_pane_shown());
         assert_eq!(
@@ -643,7 +636,7 @@ mod tests {
         press(&mut app, " pt");
         assert!(app.threads_pane_shown(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
-        press(&mut app, " pe");
+        press(&mut app, " pf");
         assert!(app.tree().is_some(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
         Ok(())

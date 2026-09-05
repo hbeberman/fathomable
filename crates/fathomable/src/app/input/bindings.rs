@@ -257,23 +257,22 @@ actions! {
     ChangePrev,
     JumpNewest,
     AutoJumpToggle,
-    ClearChanges,
     JumpBack,
     JumpForward,
     CommandLine,
     Escape,
     Confirm,
-    TreeToggleFocus,
     TreeToggle,
-    TreeRefresh,
-    TreeIgnored,
-    TreeReveal,
     PickFile,
     PickAnyFile,
     PickRecent,
     Review,
-    ThreadsPaneFocus,
     ThreadsPaneToggle,
+    WindowLeft,
+    WindowDown,
+    WindowUp,
+    WindowRight,
+    WindowNext,
     PaneScope,
     ReviewResolved,
     ReviewSort,
@@ -655,14 +654,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Commands",
         "command line",
     ),
-    // ----- the Space menu -----
-    bind(
-        W::Any,
-        &[&[c(' '), c('e')]],
-        A::TreeToggleFocus,
-        "Space menu",
-        "tree pane: focus, or return",
-    ),
+    // ----- the Space menu (ADR 0056) -----
     bind(
         W::Any,
         &[&[c(' '), c('f')]],
@@ -672,52 +664,108 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('F')]],
+        &[&[c(' '), c('F'), c('i')]],
         A::PickAnyFile,
         "Space menu",
-        "open file (incl. ignored)",
+        "files: open file incl. ignored",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('o')]],
+        &[&[c(' '), c('F'), c('r')]],
         A::PickRecent,
         "Space menu",
-        "recent files",
+        "files: recent files",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('t')]],
+        &[&[c(' '), c('r')]],
         A::Review,
         "Space menu",
-        "review list: open, or close",
+        "review list",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('T')]],
-        A::ThreadsPaneFocus,
+        &[&[c(' '), c('w'), c('h')]],
+        A::WindowLeft,
         "Space menu",
-        "threads pane: focus, or return",
+        "window: left",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('r'), c('r')]],
-        A::TreeRefresh,
+        &[&[c(' '), c('w'), c('j')]],
+        A::WindowDown,
         "Space menu",
-        "tree: re-read it",
+        "window: down",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('r'), c('i')]],
-        A::TreeIgnored,
+        &[&[c(' '), c('w'), c('k')]],
+        A::WindowUp,
         "Space menu",
-        "tree: toggle ignored entries",
+        "window: up",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('r'), c('.')]],
-        A::TreeReveal,
+        &[&[c(' '), c('w'), c('l')]],
+        A::WindowRight,
         "Space menu",
-        "tree: reveal this file",
+        "window: right",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('w'), c('w')], &[c(' '), c(' ')]],
+        A::WindowNext,
+        "Space menu",
+        "next pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('p'), c('f')]],
+        A::TreeToggle,
+        "Space menu",
+        "panes: toggle files pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('p'), c('t')]],
+        A::ThreadsPaneToggle,
+        "Space menu",
+        "panes: toggle threads pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('c')]],
+        A::NewThread,
+        "Space menu",
+        "threads: new thread",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('r')]],
+        A::Reply,
+        "Space menu",
+        "threads: reply",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('o')]],
+        A::ToggleResolved,
+        "Space menu",
+        "threads: resolve or reopen",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('e')]],
+        A::EditNewestOwn,
+        "Space menu",
+        "threads: edit message",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('d')]],
+        A::DeleteThread,
+        "Space menu",
+        "threads: delete thread",
     ),
     bind(
         W::Any,
@@ -728,129 +776,73 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('n')]],
-        A::NewThread,
-        "Space menu",
-        "threads: new thread on the cursor line",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('r')]],
-        A::Reply,
-        "Space menu",
-        "threads: reply to the thread here",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('o')]],
-        A::ToggleResolved,
-        "Space menu",
-        "threads: resolve or reopen the thread here",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('e')]],
-        A::EditNewestOwn,
-        "Space menu",
-        "threads: edit your newest message in the thread here",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('d')]],
-        A::DeleteThread,
-        "Space menu",
-        "threads: delete the thread here",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('p'), c('e')]],
-        A::TreeToggle,
-        "Space menu",
-        "panes: hide the tree pane, or show it again",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('p'), c('t')]],
-        A::ThreadsPaneToggle,
-        "Space menu",
-        "panes: hide the threads pane, or show it again",
-    ),
-    bind(
-        W::Any,
         &[&[c(' '), c('v'), c('s')]],
         A::SourceView,
         "Space menu",
-        "view: toggle source view",
+        "view: source view",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('d')]],
         A::DiffHead,
         "Space menu",
-        "view: toggle the diff against HEAD",
+        "view: diff vs HEAD",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('D')]],
         A::DiffSeen,
         "Space menu",
-        "view: toggle the diff against last seen",
+        "view: diff vs last seen",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('c')]],
         A::CheckpointFile,
         "Space menu",
-        "view: checkpoint this file",
+        "view: checkpoint file",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('C')]],
         A::CheckpointWorkspace,
         "Space menu",
-        "view: checkpoint the workspace",
+        "view: checkpoint workspace",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('r')]],
         A::CheckpointDiff,
         "Space menu",
-        "view: toggle the checkpoint diff",
+        "view: checkpoint diff",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('v'), c('g')]],
         A::CheckpointCommit,
         "Space menu",
-        "view: diff a commit against the working file",
+        "view: diff vs commit…",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('j'), c('j')]],
         A::JumpNewest,
         "Space menu",
-        "jump to newest change",
+        "jump: newest change",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('j'), c('a')]],
         A::AutoJumpToggle,
         "Space menu",
-        "toggle auto-jump",
+        "jump: auto-jump",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('j'), c('c')]],
-        A::ClearChanges,
-        "Space menu",
-        "clear changes",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('w')]],
+        &[&[c(' '), c('a'), c('w')]],
         A::Wake,
         "Space menu",
-        "wake an agent",
+        "agent: wake",
     ),
     bind(
         W::Any,
@@ -902,20 +894,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::Bottom,
         "Tree",
         "bottom",
-    ),
-    bind(
-        W::Tree,
-        &[&[c('R')]],
-        A::TreeRefresh,
-        "Tree",
-        "re-read directories",
-    ),
-    bind(
-        W::Tree,
-        &[&[c('I')]],
-        A::TreeIgnored,
-        "Tree",
-        "show ignored entries",
     ),
     bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
     bind(
@@ -1277,13 +1255,15 @@ pub(crate) const BINDINGS: &[Binding] = &[
 ];
 
 /// The prefixes that are submenus, with the word the parent menu and the
-/// breadcrumb row name them by (ADR 0049).
+/// breadcrumb row name them by (ADR 0049, ADR 0056).
 const SUBMENUS: &[(Keys, &str)] = &[
-    (&[c(' '), c('r')], "tree"),
+    (&[c(' '), c('F')], "files"),
+    (&[c(' '), c('w')], "window"),
     (&[c(' '), c('p')], "panes"),
     (&[c(' '), c('c')], "threads"),
     (&[c(' '), c('v')], "view"),
     (&[c(' '), c('j')], "jump"),
+    (&[c(' '), c('a')], "agent"),
 ];
 
 /// The word `typed` is a submenu for, when it is one.
@@ -1548,7 +1528,8 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `j`, `c`, `v`, `r`, and `p` (ADR 0049).
+    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `j`, and `a`
+    /// (ADR 0049, ADR 0056).
     #[test]
     fn menus_come_from_the_table() {
         let space = menu(Where::View, &[c(' ')]);
@@ -1558,11 +1539,13 @@ mod tests {
                 .any(|(key, label)| key == "?" && label == "all keys")
         );
         for (key, word) in [
-            ("j", "jump…"),
+            ("F", "files…"),
+            ("w", "window…"),
+            ("p", "panes…"),
             ("c", "threads…"),
             ("v", "view…"),
-            ("r", "tree…"),
-            ("p", "panes…"),
+            ("j", "jump…"),
+            ("a", "agent…"),
         ] {
             let entries: Vec<&str> = space
                 .iter()
@@ -1577,17 +1560,26 @@ mod tests {
                 .map(|(key, _)| key)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
+        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["x", "n", "r", "o", "e", "d"]
+            ["c", "r", "o", "e", "d", "x"]
         );
         assert_eq!(
             keys(Where::Review, &[c(' '), c('v')]),
             ["s", "d", "D", "c", "C", "r", "g"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
-        assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["e", "t"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["i", "r"]);
+        assert_eq!(
+            keys(Where::View, &[c(' '), c('w')]),
+            ["h", "j", "k", "l", "w"]
+        );
+        assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "t"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);
+        assert_eq!(
+            lookup(Where::ThreadsPane, &[c(' '), c(' ')]),
+            Match::Exact(Action::WindowNext)
+        );
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
 
@@ -1597,10 +1589,13 @@ mod tests {
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
         for (prefix, word) in [
+            (c('F'), "files"),
+            (c('w'), "window"),
+            (c('p'), "panes"),
             (c('c'), "threads"),
             (c('v'), "view"),
-            (c('r'), "tree"),
-            (c('p'), "panes"),
+            (c('j'), "jump"),
+            (c('a'), "agent"),
         ] {
             for (key, label) in menu(Where::View, &[c(' '), prefix]) {
                 assert!(
@@ -1694,7 +1689,7 @@ mod tests {
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("r"));
-        assert_eq!(hint(Where::Tree, Action::TreeRefresh).as_deref(), Some("R"));
+        assert_eq!(hint(Where::Tree, Action::CopyPath).as_deref(), Some("y"));
         assert_eq!(hint(Where::View, Action::Reply).as_deref(), Some("r"));
         assert_eq!(
             hint(Where::Review, Action::CommandLine).as_deref(),

@@ -63,6 +63,8 @@ pub(crate) struct Theme {
     pub(crate) rail_dir: Style,
     pub(crate) popup: Style,
     pub(crate) popup_key: Style,
+    /// The `Space` menu and the right-click menu (ADR 0056).
+    pub(crate) menu: Style,
     pub(crate) picker_match: Style,
     pub(crate) picker_selected: Style,
     pub(crate) thread_open: Style,
@@ -109,6 +111,7 @@ impl Theme {
             rail_dir: style(Key::UiRailDir),
             popup: style(Key::UiPopup),
             popup_key: style(Key::UiPopupKey),
+            menu: style(Key::UiMenu),
             picker_match: style(Key::UiPickerMatch),
             picker_selected: style(Key::UiPickerSelected),
             thread_open: style(Key::ThreadOpen),
@@ -374,8 +377,8 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let root = app.workspace().root().display().to_string();
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
-        ("Space e", "browse the tree".to_owned()),
-        ("Space t", "review the threads".to_owned()),
+        ("Space w h", "browse the files".to_owned()),
+        ("Space r", "review the threads".to_owned()),
         ("Space ?", "list every key".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -603,7 +606,7 @@ fn tree_lines<'a>(
     out
 }
 
-/// The marks around a tree pane name: the git letter for the gutter column
+/// The marks around a files pane name: the git letter for the gutter column
 /// (ADR 0017; files only, a folder's state is its children's), then the
 /// counts and the follow badge (ADR 0015) that follow the name, each drawn
 /// over the row's background.
@@ -670,7 +673,7 @@ fn tree_marks<'a>(
     (letter, tail)
 }
 
-/// The rail (ADR 0049): the tree pane on top, the threads pane along
+/// The rail (ADR 0049): the files pane on top, the threads pane along
 /// the bottom, either one alone when the other is hidden.
 fn draw_rail(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if area.width == 0 {
@@ -1267,7 +1270,7 @@ pub(super) struct StatusParts {
 pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
     let pill = match app.focus() {
-        Focus::Tree => "TREE",
+        Focus::Tree => "FILES",
         Focus::Review => "REVIEW",
         Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
@@ -1422,7 +1425,7 @@ fn draw_menu(
     }
     let area = grid_rect(grid);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), area);
+    frame.render_widget(Paragraph::new(lines).style(theme.menu), area);
 }
 
 fn grid_rect(grid: Grid) -> Rect {
@@ -1948,7 +1951,7 @@ pub(crate) fn review_header(app: &App, entries: &[crate::app::threads::list::Ent
         hints.push(HintOf::keyed(place, Action::Escape, ""));
         hints
     } else {
-        vec![HintOf::new("", "click or Space t to focus", &[])]
+        vec![HintOf::new("", "click or Space w h to focus", &[])]
     };
     Header::new(left, hints)
 }

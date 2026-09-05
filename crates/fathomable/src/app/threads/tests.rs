@@ -758,8 +758,9 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Esc leaves a pane where it is; its Space key focuses it or hands
-/// the keys back, and `Space p` hides it (ADR 0010, ADR 0049).
+/// Esc leaves a pane where it is; `Space w h` focuses it and `Space w
+/// l` hands the keys back, `Space p t` hides it, and `Space r` opens
+/// and closes the review list (ADR 0010, ADR 0049, ADR 0056).
 #[test]
 fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -777,33 +778,35 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
         press(app, KeyCode::Char(ch));
     };
 
-    space(&mut app, 'T');
+    app.focus_threads_pane();
     assert_eq!(app.focus(), Focus::ThreadsPane);
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.focus(), Focus::View);
     assert!(app.threads_pane_shown(), "Esc leaves the pane open");
-    space(&mut app, 'T');
+    space(&mut app, 'w');
+    press(&mut app, KeyCode::Char('h'));
     assert_eq!(
         app.focus(),
         Focus::ThreadsPane,
-        "Space T returns to the pane"
+        "Space w h lands on the pane while the files pane is hidden"
     );
-    space(&mut app, 'T');
-    assert_eq!(app.focus(), Focus::View, "Space T on the pane hands back");
+    space(&mut app, 'w');
+    press(&mut app, KeyCode::Char('l'));
+    assert_eq!(app.focus(), Focus::View, "Space w l hands back");
     assert!(app.threads_pane_shown());
     space(&mut app, 'p');
     press(&mut app, KeyCode::Char('t'));
     assert!(!app.threads_pane_shown(), "Space p t hides it");
 
-    space(&mut app, 't');
+    space(&mut app, 'r');
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Review);
-    space(&mut app, 't');
+    space(&mut app, 'r');
     assert!(
         !app.review_list().is_open(),
-        "Space t on the focused list closes it"
+        "Space r on the focused list closes it"
     );
-    space(&mut app, 't');
+    space(&mut app, 'r');
     press(&mut app, KeyCode::Esc);
     assert!(
         !app.review_list().is_open(),

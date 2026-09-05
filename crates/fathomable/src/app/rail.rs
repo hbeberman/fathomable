@@ -1,10 +1,10 @@
 // @okf-doc: /decisions/0023-sidebar-paging.md
-//! The tree pane's hands on the app: tree operations, and the rule that
+//! The files pane's hands on the app: tree operations, and the rule that
 //! the highlighted file is the one the main pane shows (ADR 0023; the
 //! pane is the rail's upper half since ADR 0049).
 
 use fathomable_core::tree::{Activation, Tree};
-use fathomable_core::workspace::{Filter, Workspace};
+use fathomable_core::workspace::Workspace;
 
 use super::view::Effect;
 use super::{App, Focus, TREE_SCROLLOFF};
@@ -47,39 +47,7 @@ impl App {
         }
     }
 
-    /// `R` in the tree: re-read directories and drop the picker indexes.
-    pub(crate) fn refresh_tree(&mut self) {
-        self.file_index = None;
-        self.all_index = None;
-        self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
-        self.notice("tree refreshed");
-    }
-
-    /// `Space r .`: show the tree when it is hidden and put its highlight
-    /// on the current file, keeping focus where it is (ADR 0049).
-    pub(crate) fn reveal_in_tree(&mut self) {
-        if !self.rail.tree {
-            if !self.ensure_tree() {
-                return;
-            }
-            self.rail.tree = true;
-            self.relayout();
-        }
-        self.reveal_current();
-    }
-
-    /// `I` in the tree: toggle ignored entries.
-    pub(crate) fn toggle_ignored(&mut self) {
-        let filter = match self.tree.as_ref().map(Tree::filter) {
-            Some(Filter::Visible) => Filter::All,
-            _ => Filter::Visible,
-        };
-        self.with_tree_result(move |tree, workspace| {
-            tree.set_filter(workspace, filter).map(|()| None)
-        });
-    }
-
-    /// A click on tree pane row `row` (screen coordinates): activate the
+    /// A click on files pane row `row` (screen coordinates): activate the
     /// row but stay in the tree. A click pages the viewer just as the
     /// wheel does (ADR 0023); only `Enter` commits focus to the view.
     pub(crate) fn tree_click(&mut self, row: usize) {

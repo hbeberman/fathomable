@@ -426,8 +426,6 @@ impl App {
             );
         }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
-        menu.push(Action::TreeRefresh, Action::TreeRefresh, "re-read the tree");
-        menu.push(Action::TreeIgnored, Action::TreeIgnored, "toggle ignored");
         self.open_menu(menu);
     }
 

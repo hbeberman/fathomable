@@ -152,7 +152,7 @@ pub(crate) fn prefix_warning(root: &Path, cwd: &Path, git_root: Option<&Path>) -
 /// Why a blob is being composed, which decides how hard it lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Occasion {
-    /// A `Stop` hook or the viewer's `Space w`: the blob forces a turn,
+    /// A `Stop` hook or the viewer's `Space a w`: the blob forces a turn,
     /// and a delivered-but-unanswered thread counts toward the nag.
     TurnEnd,
     /// A `SessionStart` resume or a prompt-submit hook: the blob is only

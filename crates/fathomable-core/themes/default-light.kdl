@@ -8,6 +8,7 @@ palette {
     trim     "#a0a0a0"
     paper    "#fafafa"
     surface  "#e8e8e8"
+    menu     "#e3e9f2"
     select   "#cfe3ff"
     blue     "#1f5fbf"
     green    "#3f7d20"
@@ -40,6 +41,7 @@ colors {
     "ui.rail.dir"          fg="blue"
     "ui.popup"             fg="fg" bg="surface"
     "ui.popup.key"         fg="orange" mods="bold"
+    "ui.menu"              fg="fg" bg="menu"
     "ui.picker.match"      fg="orange" mods="bold"
     "ui.picker.selected"   bg="select"
 

@@ -778,8 +778,6 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     fs::write(dir.0.join("build/out"), "")?;
     app.on_events(vec![Event::Created(dir.0.join("build/out"))]);
     assert!(!has(&app, "build"));
-    app.refresh_tree();
-    assert!(has(&app, "build"));
 
     // A rename re-reads both listings.
     fs::rename(dir.0.join("NEW.md"), dir.0.join("docs/MOVED.md"))?;

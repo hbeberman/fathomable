@@ -371,16 +371,7 @@ fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
     assert_eq!(app.focus(), Focus::Tree);
     assert_eq!(app.menu().map(Menu::title), Some("README.md"));
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, l)| l).collect();
-    assert_eq!(
-        labels,
-        [
-            "open",
-            "checkpoint this file",
-            "copy path",
-            "re-read the tree",
-            "toggle ignored"
-        ]
-    );
+    assert_eq!(labels, ["open", "checkpoint this file", "copy path"]);
     let (x, y) = entry_cell(&app, "copy path")?;
     assert_eq!(left(&mut app, x, y), Effect::Copy("README.md".to_owned()));
     assert_eq!(

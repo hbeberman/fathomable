@@ -9,6 +9,7 @@ palette {
     dim      "#8a8a8a"
     trim     "#606060"
     surface  "#303030"
+    menu     "#222a36"
     select   "#264f78"
     blue     "#7aa6da"
     green    "#b9ca4a"
@@ -41,6 +42,7 @@ colors {
     "ui.rail.dir"          fg="blue"
     "ui.popup"             fg="fg" bg="surface"
     "ui.popup.key"         fg="yellow" mods="bold"
+    "ui.menu"              fg="fg" bg="menu"
     "ui.picker.match"      fg="yellow" mods="bold"
     "ui.picker.selected"   bg="select"
 

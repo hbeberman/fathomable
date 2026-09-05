@@ -59,3 +59,4 @@ supersede rather than edit history.
 - [0053 Resolution is the user's](0053-resolution-is-the-users.md)
 - [0054 The draft is written in the thread](0054-the-draft-is-written-in-the-thread.md)
 - [0055 Six tools](0055-six-tools.md)
+- [0056 The leader, trimmed](0056-the-leader-trimmed.md)

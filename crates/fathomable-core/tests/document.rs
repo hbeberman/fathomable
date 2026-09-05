@@ -1,3 +1,5 @@
+//! Behaviour of loading and reloading a document from disk (ADR 0002).
+
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;

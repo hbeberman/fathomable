@@ -33,6 +33,7 @@ use crate::highlight::Highlighter;
 use crate::theme::Color;
 
 use blocks::{Align, Block, Inline, Item, Table};
+#[doc(inline)]
 pub use text::{LineIndex, display_width};
 use wrap::{Chunk, wrap, wrap_hard, wrap_hard_chunks};
 
@@ -185,8 +186,10 @@ pub struct Line {
     stub: Option<(usize, usize)>,
 }
 
-/// Where a block of inserted rows hangs (ADR 0049): under the last row
-/// of a source line, or under the blank row standing before a line.
+/// Where a block of inserted rows hangs (ADR 0049).
+///
+/// A block sits under the last row of a source line, or under the blank
+/// row standing before a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RowAnchor {
     /// The 1-based source line whose last rendered row the block follows.
@@ -957,6 +960,8 @@ fn coloured_chunks(
 }
 
 fn shrink(widths: &mut [usize], avail: usize) {
+    // A column keeps at least one glyph and one space of padding on each
+    // side; narrower columns render as noise, so they win over fitting.
     const MIN: usize = 3;
     while widths.iter().sum::<usize>() > avail {
         let Some((idx, _)) = widths

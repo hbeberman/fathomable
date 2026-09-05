@@ -31,9 +31,10 @@ use gix::bstr::BStr;
 use gix::glob::pattern::Case;
 use gix::glob::wildmatch;
 
-/// The `follow.ignore` globs, matched against root-relative paths with
-/// gitignore syntax (`*` does not cross `/`, `**` does, a trailing `/`
-/// means a directory).
+/// The `follow.ignore` globs, matched against root-relative paths.
+///
+/// Patterns use gitignore syntax: `*` does not cross `/`, `**` does, and a
+/// trailing `/` means a directory.
 #[derive(Debug, Clone, Default)]
 pub struct Ignore {
     patterns: Vec<gix::glob::Pattern>,

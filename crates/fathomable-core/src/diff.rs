@@ -35,8 +35,10 @@ pub enum LineStatus {
     Removed,
 }
 
-/// One contiguous change: a range of old lines replaced by a range of new
-/// lines, either of which may be empty.
+/// One contiguous change: old lines replaced by new lines.
+///
+/// Either range may be empty: a pure insertion has no old lines and a pure
+/// deletion no new ones.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Hunk {
     old: Range<usize>,

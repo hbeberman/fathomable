@@ -137,36 +137,63 @@ impl Content {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Format {
+    /// A WebAssembly module.
     WebAssembly,
+    /// An ELF executable, object, or shared library.
     Elf,
+    /// A Mach-O executable or library.
     MachO,
     /// `MZ`: a Windows executable or DLL.
     Pe,
     /// `CAFEBABE` opens both a Java class and a Mach-O fat binary.
     JavaClassOrMachOFat,
+    /// A PNG image.
     Png,
+    /// A JPEG image.
     Jpeg,
+    /// A GIF image.
     Gif,
+    /// A WebP image.
     WebP,
+    /// A Windows bitmap image.
     Bmp,
+    /// A Windows icon.
     Ico,
+    /// A PDF document.
     Pdf,
+    /// A gzip stream.
     Gzip,
+    /// A Zstandard stream.
     Zstd,
+    /// An xz stream.
     Xz,
+    /// A bzip2 stream.
     Bzip2,
+    /// A zip archive, which also covers jar, docx, and other zip-based files.
     Zip,
+    /// A 7-Zip archive.
     SevenZip,
+    /// A tar archive.
     Tar,
+    /// A `SQLite` database.
     Sqlite,
+    /// A WOFF web font.
     Woff,
+    /// A WOFF2 web font.
     Woff2,
+    /// A TrueType font.
     TrueType,
+    /// An OpenType font.
     OpenType,
+    /// An MP3 audio stream.
     Mp3,
+    /// An Ogg container.
     Ogg,
+    /// A FLAC audio stream.
     Flac,
+    /// A WAV audio file.
     Wav,
+    /// An MP4 container.
     Mp4,
 }
 

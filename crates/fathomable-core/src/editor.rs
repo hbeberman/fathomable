@@ -32,37 +32,55 @@ use unicode_width::UnicodeWidthStr;
 /// Where the cursor sits: a line index and a column counted in graphemes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Cursor {
+    /// The 0-based line.
     pub line: usize,
+    /// The 0-based column, counted in graphemes.
     pub column: usize,
 }
 
 /// A cursor motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Motion {
+    /// One grapheme left, wrapping to the end of the previous line.
     Left,
+    /// One grapheme right, wrapping to the start of the next line.
     Right,
+    /// One line up, keeping the column where it can.
     Up,
+    /// One line down, keeping the column where it can.
     Down,
+    /// To the start of the line.
     LineStart,
+    /// To the end of the line.
     LineEnd,
+    /// To the start of the previous word.
     WordBack,
+    /// To the start of the next word.
     WordForward,
 }
 
 /// An operation on a [`Buffer`] other than inserting text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Edit {
+    /// Move the cursor.
     Move(Motion),
+    /// Insert a line break at the cursor.
     Newline,
+    /// Delete the grapheme before the cursor.
     DeleteBack,
+    /// Delete the grapheme under the cursor.
     DeleteForward,
+    /// Delete back to the start of the previous word.
     DeleteWordBack,
+    /// Delete back to the start of the line.
     DeleteToLineStart,
+    /// Delete forward to the end of the line.
     DeleteToLineEnd,
 }
 
-/// One wrapped row of a buffer laid out at a width: which line it belongs
-/// to and the byte range of that line it shows.
+/// One wrapped row of a buffer laid out at a width.
+///
+/// A row belongs to one line and shows a byte range of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
     line: usize,
@@ -81,7 +99,9 @@ impl Row {
 /// A cell in the wrapped layout: a row index and a display column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Cell {
+    /// The 0-based wrapped row.
     pub row: usize,
+    /// The 0-based display column.
     pub column: usize,
 }
 
@@ -114,11 +134,13 @@ impl Buffer {
         }
     }
 
+    /// The whole text.
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// Whether the buffer holds no text.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.text.is_empty()

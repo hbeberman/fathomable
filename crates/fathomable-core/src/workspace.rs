@@ -704,6 +704,8 @@ impl Workspace {
         Ok(Some(header.size()))
     }
 
+    /// Whether `relative` is excluded by the gitignore rules, as a file or
+    /// as a directory.
     pub fn is_ignored(&mut self, relative: &Path, kind: EntryKind) -> bool {
         let Some(ignore) = self.ignore.as_mut() else {
             return false;

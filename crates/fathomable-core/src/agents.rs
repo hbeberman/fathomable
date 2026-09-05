@@ -28,6 +28,8 @@ use crate::vocabulary as vocab;
 /// File name of the register inside the workspace state directory.
 pub const AGENTS_FILE: &str = "agents.jsonl";
 
+/// The `v` field written to each register line. Bump it when a line's
+/// shape changes so an older viewer can refuse a newer file (ADR 0040).
 const FORMAT_VERSION: u32 = 1;
 
 /// A harness session that subscribed to the workspace.

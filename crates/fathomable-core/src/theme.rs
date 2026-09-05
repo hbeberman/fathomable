@@ -99,17 +99,22 @@ pub enum Color {
 
 /// Text attributes a style may set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-#[expect(missing_docs, reason = "fields are the modifier names from ADR 0011")]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each modifier is an independent on/off attribute a theme may set"
 )]
 pub struct Modifiers {
+    /// Bold weight.
     pub bold: bool,
+    /// Dimmed intensity.
     pub dim: bool,
+    /// Italic slant.
     pub italic: bool,
+    /// Underlined text.
     pub underline: bool,
+    /// Swapped foreground and background.
     pub reversed: bool,
+    /// Struck-through text.
     pub strikethrough: bool,
 }
 

@@ -1,3 +1,5 @@
+//! Behaviour of XDG directory resolution from the environment (ADR 0001).
+
 use std::ffi::OsString;
 use std::path::Path;
 

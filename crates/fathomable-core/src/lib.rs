@@ -31,7 +31,9 @@ pub mod tree;
 pub mod vocabulary;
 pub mod workspace;
 
+#[doc(inline)]
 pub use document::{Document, LoadError};
 mod xdg;
 
+#[doc(inline)]
 pub use xdg::{APP_DIR, XdgDirs};

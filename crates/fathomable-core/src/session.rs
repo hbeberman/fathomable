@@ -279,9 +279,10 @@ impl Record {
     }
 }
 
-/// The marker a viewer leaves beside a workspace's thread store, so the
-/// root behind the state directory's hash is known when no viewer runs
-/// (ADR 0024).
+/// The marker a viewer leaves beside a workspace's thread store (ADR 0024).
+///
+/// It names the root behind the state directory's hash, so the workspace
+/// is known when no viewer runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
     root: PathBuf,
@@ -384,8 +385,10 @@ pub enum Request {
     },
     /// Threads, optionally changed since a time or limited to one file.
     ThreadsList {
+        /// Only threads changed at or after this Unix time.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<u64>,
+        /// Only threads on this workspace-relative path.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         path: Option<PathBuf>,
     },
@@ -393,11 +396,16 @@ pub enum Request {
     /// given, says where the thread's lines are now (ADR 0033): the
     /// thread is re-anchored there before the reply is added.
     ThreadReply {
+        /// The thread to reply to.
         thread: ThreadId,
+        /// Who is replying.
         author: Author,
+        /// The reply text.
         body: String,
+        /// Propose resolving the thread with this reply (ADR 0053).
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         resolve: bool,
+        /// Where the thread's lines are now, if they moved.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lines: Option<LineRange>,
     },

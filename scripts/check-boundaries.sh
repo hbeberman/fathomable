@@ -17,6 +17,8 @@ Runs source-level boundary tripwires for workspace crates.
 Checks:
   - no public unsafe function declarations under crates/
   - no public glob re-exports under crates/
+  - no source file of 1000+ lines whose inline test module is 35% or
+    more of it (such tests live in a sibling tests.rs)
   - fathomable-core does not depend on ratatui, crossterm, or rmcp
     (docs/decisions/0002-crate-layout.md)
 
@@ -83,7 +85,7 @@ deny_matches \
     -n --type rust '^[[:space:]]*pub(\([^)]*\))?[^{;]*\bunsafe\b[^{;]*\bfn\b' \
     crates
 
-log "checking: public glob re-exports"
+log "checking: public glob re-exports and inline test modules"
 scripts/check-rust-source-policy.py
 
 log "checking: fathomable-core terminal and MCP dependencies"

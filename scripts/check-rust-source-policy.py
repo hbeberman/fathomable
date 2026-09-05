@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Apply syntax-aware source policies not represented in public API output."""
+"""Apply syntax-aware source policies not represented in public API output.
+
+Two checks: no public glob re-export anywhere under `crates/`, and no long
+source file that is mostly its own inline test module.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_USE = re.compile(r"\bpub\s+use\s+([^;]*);", re.DOTALL)
+
+# A file at least this long whose trailing `mod tests { … }` is at least
+# this share of it keeps the tests in a sibling `tests.rs`, declared with
+# `#[cfg(test)] mod tests;`, so the production code stays browsable. Both
+# knobs are loose on purpose: the rule bites on files that read as test
+# suites, not on every module with a few tests at the end.
+LONG_FILE_LINES = 1000
+INLINE_TEST_SHARE = 0.35
+INLINE_TESTS = re.compile(r"^#\[cfg\(test\)\]\nmod tests \{", re.MULTILINE)
 
 
 def mask(source: str, start: int, end: int, output: list[str]) -> None:
@@ -110,6 +123,16 @@ def mask_non_code(source: str) -> str:
     return "".join(output)
 
 
+def inline_tests(masked: str) -> tuple[int, int, int] | None:
+    """The (line, test lines, total lines) of a trailing inline test module."""
+    matches = list(INLINE_TESTS.finditer(masked))
+    if not matches:
+        return None
+    start = matches[-1].start()
+    total = masked.count("\n")
+    return masked.count("\n", 0, start) + 1, total - masked.count("\n", 0, start), total
+
+
 def main() -> int:
     errors: list[str] = []
     for path in sorted((REPO_ROOT / "crates").glob("**/*.rs")):
@@ -120,6 +143,15 @@ def main() -> int:
                 continue
             line = masked.count("\n", 0, match.start()) + 1
             errors.append(f"{path.relative_to(REPO_ROOT)}:{line}: public glob re-export")
+        found = inline_tests(masked)
+        if found is not None:
+            line, tests, total = found
+            if total >= LONG_FILE_LINES and tests >= total * INLINE_TEST_SHARE:
+                errors.append(
+                    f"{path.relative_to(REPO_ROOT)}:{line}: the inline test module is "
+                    f"{tests} of {total} lines; move it to a sibling tests.rs "
+                    "declared with `#[cfg(test)] mod tests;`"
+                )
 
     for error in errors:
         print(f"Rust source policy failed: {error}", file=sys.stderr)

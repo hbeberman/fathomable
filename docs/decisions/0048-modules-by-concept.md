@@ -67,6 +67,11 @@ an existing module, which is how the directory got that way.
   and key presses against it, is `app/testing.rs`, compiled for tests
   only; the fourteen per-module `fixture`/`app`/`press` copies it
   replaced went the same day.
+- **Long test modules are sibling files.** A source file of 1000 lines or
+  more keeps a test module that would be 35% or more of it in
+  `<module>/tests.rs`, declared `#[cfg(test)] mod tests;`; the
+  `boundaries` gate (`scripts/check-rust-source-policy.py`) rejects the
+  inline form since 2026-09-04. Shorter files keep their tests inline.
 
 ## Consequences
 

@@ -104,7 +104,7 @@ Text:
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
-| `]r` `[r` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
+| `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
 | `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight; quit |
 
@@ -117,8 +117,8 @@ The `Space` menu, from any pane:
 | `Space t` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
 | `Space T` | threads pane: show and focus, or return focus |
 | `Space p e`, `Space p t` | panes: hide the tree pane or the threads pane, or show it again without taking the keys (the other pane keeps the rail) |
-| `Space r r`, `Space r i`, `Space r .` | rail: re-read the tree, toggle ignored entries, reveal the current file in the tree (showing the tree if it is hidden) |
-| `Space c c`, `Space c z`, `Space c x` | threads: toggle stub visibility for the session; expand every stub or fold every expanded thread; toggle stubs for resolved threads (hidden by default) |
+| `Space r r`, `Space r i`, `Space r .` | tree: re-read it, toggle ignored entries, reveal the current file (showing the tree if it is hidden) |
+| `Space c x` | threads: toggle stubs for resolved threads (hidden by default) |
 | `Space c n`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: start a new thread on the cursor line, reply, resolve or reopen, edit your newest message, delete |
 | `Space v s`, `Space v d`, `Space v D` | view: toggle source view, the diff against `HEAD`, the diff against last seen (as `gs` `gd` `gD`) |
 | `Space v c`, `Space v C` | view: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
@@ -145,8 +145,8 @@ there is one):
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` | previous / next message |
-| `h` `l` / `Left` `Right` | previous / next thread |
+| `j` `k` / `Down` `Up` | next / previous thread, its newest message highlighted |
+| `l` `h` / `Right` `Left` | next / previous message in the thread |
 | `gg` `ge` `G` | first / last thread |
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
@@ -269,9 +269,9 @@ one lands on the row above, and they carry no line number. Stubs of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour and, for the
 thread the cursor is on, ends with `(c expand)`; the others are dimmed.
-`Space c c` hides and shows them for the session and `Space c x` gives
-resolved threads a stub too; `threads { stubs; stubs-resolved }` sets the
-defaults.
+`Space c x` gives resolved threads a stub too; `threads { stubs;
+stubs-resolved }` sets whether stubs are drawn at all and the resolved
+default.
 
 `c` on a line a thread covers **expands** its stub in place, the view
 staying still: a header row with the state, placement, watchers, and
@@ -281,8 +281,7 @@ on the reply, `e` edits the message under the cursor when you wrote it,
 `o` resolves or reopens, `dd` deletes the thread, and `c` on any of its
 rows folds it. When several threads cover the line, `c` again folds the
 expanded one and expands the next in line order, wrapping, and after the
-last leaves none expanded. `Space c z` expands every stub in the file or
-folds them all; a click on a stub expands it.
+last leaves none expanded. A click on a stub expands it.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its
@@ -333,8 +332,8 @@ are hidden until `x` shows them dimmed (the threads pane shares the
 flag). Every entry header carries the path, the lines, the state, and
 the age, then the comment and replies in full. It takes the text column
 the way a document does; the rail stays beside it. The newest message
-in the selected thread starts highlighted; `h`/`l` move between
-threads, `j`/`k` move between their messages, `Ctrl-d`/`Ctrl-u` move by
+in the selected thread starts highlighted; `j`/`k` move between
+threads, `l`/`h` move between their messages, `Ctrl-d`/`Ctrl-u` move by
 half a page of rows, `z` folds an entry, and `e` edits a highlighted
 message you wrote. `Enter` opens the file with the thread expanded and
 the cursor on that message, `o` resolves in place, `r` and `e` open the
@@ -351,9 +350,9 @@ the document carries a proposal; `:status` has both totals), the tree
 tags their files `↩`, and a reply landing while you read raises a toast
 (`reply on src/lib.rs:42`, or `reply on src/lib.rs:42, proposes
 resolving` when the agent proposed closing it). `]r`
-and `[r` step through them — this file first, then the others in path
-order, wrapping — and expand each one, so holding `]r` reads every
-reply that needs an answer.
+and `[r`, or `Tab` and `Shift-Tab`, step through them — this file
+first, then the others in path order, wrapping — and expand each one,
+so holding `Tab` reads every reply that needs an answer.
 
 ## 5. Changes against git
 

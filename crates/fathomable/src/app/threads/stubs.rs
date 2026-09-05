@@ -28,8 +28,8 @@ use crate::app::view::StubBlock;
 /// Messages a collapsed stub shows: the newest two.
 const STUB_MESSAGES: usize = 2;
 
-/// Whether stubs are drawn at all, and whether resolved threads get one
-/// (`Space c c`, `Space c x`).
+/// Whether stubs are drawn at all (`threads { stubs }`), and whether
+/// resolved threads get one (`Space c x`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StubState {
     pub(crate) shown: bool,
@@ -143,7 +143,7 @@ impl Stub {
 }
 
 impl App {
-    /// Whether stubs are drawn (`Space c c`).
+    /// Whether stubs are drawn (`threads { stubs }`).
     #[cfg(test)]
     pub(crate) fn stubs_shown(&self) -> bool {
         self.stubs.shown
@@ -365,8 +365,9 @@ impl App {
         }
     }
 
-    /// `Space c z`: expand every stub in the file, or fold every expanded
-    /// thread when any is.
+    /// Expand every stub in the file, or fold every expanded thread when
+    /// any is.
+    #[cfg(test)]
     pub(crate) fn toggle_expand_all(&mut self) {
         let ids: Vec<ThreadId> = self
             .stubs()
@@ -397,17 +398,6 @@ impl App {
         self.thread_cursor()
             .thread()
             .is_some_and(|id| self.is_expanded(id))
-    }
-
-    /// `Space c c`: draw stubs, or not, for the session.
-    pub(crate) fn toggle_stubs(&mut self) {
-        self.stubs.shown = !self.stubs.shown;
-        self.place_stub_rows();
-        self.push_toast(if self.stubs.shown {
-            "stubs shown".to_owned()
-        } else {
-            "stubs hidden".to_owned()
-        });
     }
 
     /// `Space c x`: give resolved threads a stub too, or not.
@@ -574,8 +564,8 @@ mod tests {
         Ok(())
     }
 
-    /// `Space c c` hides and shows every stub; resolved threads have none
-    /// until `Space c x`.
+    /// `threads { stubs #false }` draws no stubs; resolved threads have
+    /// none until `Space c x`.
     #[test]
     fn the_toggles_hide_stubs_and_resolved_ones() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-toggles", testing::README)?;
@@ -592,13 +582,11 @@ mod tests {
         assert!(app.stubs_resolved());
         press(&mut app, " cx");
         assert_eq!(app.view().layout().lines().len(), 9);
-        press(&mut app, " cc");
+        app.stubs.shown = false;
+        app.place_stub_rows();
         assert!(!app.stubs_shown());
         assert_eq!(app.view().layout().lines().len(), 8);
-        assert!(app.toasts().iter().any(|t| t.text == "stubs hidden"));
         assert!(app.note_on_row(2).is_some(), "the gutter mark stays");
-        press(&mut app, " cc");
-        assert_eq!(app.view().layout().lines().len(), 9);
         Ok(())
     }
 
@@ -716,10 +704,10 @@ mod tests {
         assert!(!app.is_expanded(&inner), "the cycle ends with none");
         assert_eq!(app.view().cursor_source_line(), Some(5));
 
-        // `Space c z` expands every stub, then folds them all.
-        press(&mut app, " cz");
+        // Expanding every stub, then folding them all.
+        app.toggle_expand_all();
         assert!(app.is_expanded(&inner) && app.is_expanded(&outer));
-        press(&mut app, " cz");
+        app.toggle_expand_all();
         assert!(!app.is_expanded(&inner) && !app.is_expanded(&outer));
 
         // A click on a collapsed stub expands it with the cursor on it.

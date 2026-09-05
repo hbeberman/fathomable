@@ -85,7 +85,8 @@ round on 2026-08-27; the choices are recorded below.
 ### Keys and mouse
 
 - `h`/`l` move between entries and select the newest message in each;
-  `j`/`k` move between the selected thread's messages (amended
+  `j`/`k` move between the selected thread's messages (swapped on
+  2026-09-04, [0049](0049-inline-threads-and-the-rail.md); amended
   2026-08-30). `gg`/`G` jump between entries, and `Ctrl-d`/`Ctrl-u` move
   by half a page. The selected message's author and body rows are drawn
   in `ui.picker.selected`; a folded thread highlights its header instead.

@@ -20,6 +20,7 @@ pub(crate) enum Key {
     Enter,
     Esc,
     Tab,
+    BackTab,
     Backspace,
     Delete,
     Up,
@@ -38,6 +39,7 @@ impl fmt::Display for Key {
             Self::Enter => f.write_str("Enter"),
             Self::Esc => f.write_str("Esc"),
             Self::Tab => f.write_str("Tab"),
+            Self::BackTab => f.write_str("Shift-Tab"),
             Self::Backspace => f.write_str("Backspace"),
             Self::Delete => f.write_str("Delete"),
             Self::Up => f.write_str("Up"),
@@ -69,6 +71,7 @@ impl Chord {
             KeyCode::Enter => Key::Enter,
             KeyCode::Esc => Key::Esc,
             KeyCode::Tab => Key::Tab,
+            KeyCode::BackTab => Key::BackTab,
             KeyCode::Backspace => Key::Backspace,
             KeyCode::Delete => Key::Delete,
             KeyCode::Up => Key::Up,
@@ -283,8 +286,6 @@ actions! {
     Reply,
     EditMessage,
     EditNewestOwn,
-    StubToggle,
-    StubExpandAll,
     StubResolvedToggle,
     ToggleResolved,
     Delete,
@@ -537,14 +538,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
-        &[&[c(']'), c('r')]],
+        &[&[c(']'), c('r')], &[k(K::Tab)]],
         A::WaitingNext,
         "Threads",
         "next thread waiting on you, across files",
     ),
     bind(
         W::View,
-        &[&[c('['), c('r')]],
+        &[&[c('['), c('r')], &[k(K::BackTab)]],
         A::WaitingPrev,
         "Threads",
         "previous thread waiting on you, across files",
@@ -702,35 +703,21 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('r'), c('r')]],
         A::TreeRefresh,
         "Space menu",
-        "rail: re-read the tree",
+        "tree: re-read it",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('r'), c('i')]],
         A::TreeIgnored,
         "Space menu",
-        "rail: toggle ignored entries",
+        "tree: toggle ignored entries",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('r'), c('.')]],
         A::TreeReveal,
         "Space menu",
-        "rail: reveal this file in the tree",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('c')]],
-        A::StubToggle,
-        "Space menu",
-        "threads: toggle stub visibility",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('z')]],
-        A::StubExpandAll,
-        "Space menu",
-        "threads: expand or fold every stub",
+        "tree: reveal this file",
     ),
     bind(
         W::Any,
@@ -1006,30 +993,30 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::Review,
         &[&[c('j')], &[k(K::Down)]],
-        A::MoveDown,
-        "Review list",
-        "next message",
-    ),
-    bind(
-        W::Review,
-        &[&[c('k')], &[k(K::Up)]],
-        A::MoveUp,
-        "Review list",
-        "previous message",
-    ),
-    bind(
-        W::Review,
-        &[&[c('l')], &[k(K::Right)]],
         A::ThreadNext,
         "Review list",
         "next thread",
     ),
     bind(
         W::Review,
-        &[&[c('h')], &[k(K::Left)]],
+        &[&[c('k')], &[k(K::Up)]],
         A::ThreadPrev,
         "Review list",
         "previous thread",
+    ),
+    bind(
+        W::Review,
+        &[&[c('l')], &[k(K::Right)]],
+        A::MoveDown,
+        "Review list",
+        "next message",
+    ),
+    bind(
+        W::Review,
+        &[&[c('h')], &[k(K::Left)]],
+        A::MoveUp,
+        "Review list",
+        "previous message",
     ),
     bind(
         W::Review,
@@ -1292,7 +1279,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
 /// The prefixes that are submenus, with the word the parent menu and the
 /// breadcrumb row name them by (ADR 0049).
 const SUBMENUS: &[(Keys, &str)] = &[
-    (&[c(' '), c('r')], "rail"),
+    (&[c(' '), c('r')], "tree"),
     (&[c(' '), c('p')], "panes"),
     (&[c(' '), c('c')], "threads"),
     (&[c(' '), c('v')], "view"),
@@ -1574,7 +1561,7 @@ mod tests {
             ("j", "jump…"),
             ("c", "threads…"),
             ("v", "view…"),
-            ("r", "rail…"),
+            ("r", "tree…"),
             ("p", "panes…"),
         ] {
             let entries: Vec<&str> = space
@@ -1593,7 +1580,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "z", "x", "n", "r", "o", "e", "d"]
+            ["x", "n", "r", "o", "e", "d"]
         );
         assert_eq!(
             keys(Where::Review, &[c(' '), c('v')]),
@@ -1605,14 +1592,14 @@ mod tests {
     }
 
     /// A submenu's entries drop the word the breadcrumb already says:
-    /// `Space c c` reads "toggle stub visibility", not
-    /// "threads: toggle stub visibility".
+    /// `Space c x` reads "toggle resolved stubs", not
+    /// "threads: toggle resolved stubs".
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
         for (prefix, word) in [
             (c('c'), "threads"),
             (c('v'), "view"),
-            (c('r'), "rail"),
+            (c('r'), "tree"),
             (c('p'), "panes"),
         ] {
             for (key, label) in menu(Where::View, &[c(' '), prefix]) {
@@ -1625,7 +1612,7 @@ mod tests {
         let stub = menu(Where::View, &[c(' '), c('c')]);
         assert!(
             stub.iter()
-                .any(|(key, label)| key == "c" && label == "toggle stub visibility"),
+                .any(|(key, label)| key == "x" && label == "toggle resolved stubs"),
             "{stub:?}"
         );
     }

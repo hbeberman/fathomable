@@ -686,11 +686,11 @@ mod tests {
         assert_eq!(app.thread_position(), Some((3, 3)));
         assert_eq!(app.view().cursor_source_line(), Some(7));
 
-        // The list opens on it and `h` steps it back.
+        // The list opens on it and `k` steps it back.
         app.open_review();
         assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
         assert_eq!(app.review_selected_index(), Some(2));
-        press(&mut app, "h");
+        press(&mut app, "k");
         assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
 
         // Enter expands it in the text; the cursor lands on its line.

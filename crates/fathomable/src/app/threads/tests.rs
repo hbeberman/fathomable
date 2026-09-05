@@ -447,7 +447,7 @@ fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
     assert!(app.popup().is_none());
     assert_eq!(app.message(), Some("only your messages can be edited"));
 
-    keys::handle_key(&mut app, key(KeyCode::Char('k')));
+    keys::handle_key(&mut app, key(KeyCode::Char('h')));
     assert_eq!(Some(app.thread_cursor().message()), Some(0));
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(matches!(
@@ -484,10 +484,10 @@ fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
     assert_eq!(app.compose_draft(), Some("user follow-up"));
     app.compose_cancel();
     assert!(app.popup().is_none(), "an unchanged edit closes at once");
-    keys::handle_key(&mut app, key(KeyCode::Char('k')));
+    keys::handle_key(&mut app, key(KeyCode::Char('h')));
     assert_eq!(app.thread_cursor().message(), 1);
-    keys::handle_key(&mut app, key(KeyCode::Char('k')));
-    assert_eq!(app.thread_cursor().message(), 0, "k reaches the comment");
+    keys::handle_key(&mut app, key(KeyCode::Char('h')));
+    assert_eq!(app.thread_cursor().message(), 0, "h reaches the comment");
     keys::handle_key(&mut app, key(KeyCode::Char('G')));
     assert_eq!(app.thread_cursor().message(), 2, "G is the newest");
     Ok(())
@@ -519,13 +519,13 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         "the selected message is visible"
     );
 
-    keys::handle_key(&mut app, key(KeyCode::Char('k')));
+    keys::handle_key(&mut app, key(KeyCode::Char('h')));
     assert_eq!(app.thread_cursor().message(), 1);
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(app.popup().is_none());
     assert_eq!(app.message(), Some("only your messages can be edited"));
 
-    keys::handle_key(&mut app, key(KeyCode::Char('k')));
+    keys::handle_key(&mut app, key(KeyCode::Char('h')));
     assert_eq!(app.thread_cursor().message(), 0);
     keys::handle_key(&mut app, key(KeyCode::Char('e')));
     assert!(matches!(
@@ -572,9 +572,9 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         Some("revised opening")
     );
 
-    keys::handle_key(&mut app, key(KeyCode::Char('l')));
+    keys::handle_key(&mut app, key(KeyCode::Char('j')));
     assert_eq!(app.thread_cursor().message(), 0);
-    keys::handle_key(&mut app, key(KeyCode::Char('h')));
+    keys::handle_key(&mut app, key(KeyCode::Char('k')));
     assert_eq!(
         app.thread_cursor().message(),
         2,

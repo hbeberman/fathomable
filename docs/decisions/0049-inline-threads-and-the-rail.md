@@ -152,6 +152,9 @@ result.
     still shows a resolved thread in grey, so the margin loses nothing.
   - `Space c z` expands every visible stub in the file, or folds every
     expanded one when any is expanded.
+  - Amended 2026-09-04: **`Space c c` and `Space c z` are unbound.**
+    Neither was reached for; `threads { stubs }` still sets whether
+    stubs are drawn, and `c` and a click expand one at a time.
   - `Space c n` starts a new thread on the cursor line (as `C`);
     `Space c r` / `o` / `e` / `d` reply to, resolve or reopen, edit the
     newest own message of, and delete the thread cursor's thread, so a
@@ -183,7 +186,9 @@ result.
   hides nest under a `Space p` **panes** submenu: `Space p e` hides or
   shows the tree pane, `Space p t` the threads pane. `Space E` and
   `Space A` are unbound. `Space r` opens the rail
-  submenu: `r` re-reads the directories, `i` toggles ignored entries,
+  submenu (amended 2026-09-04: its breadcrumb word is **tree**, since
+  every entry acts on the tree pane; the column itself is still the
+  rail): `r` re-reads the directories, `i` toggles ignored entries,
   `.` reveals the current file in the tree, expanding to it and moving
   the tree highlight. `R` and `I` in the tree pane stay as aliases.
   Folding these under `Space e` was rejected: `Space e` stays the
@@ -203,7 +208,8 @@ result.
 
 ### The review list
 
-- `Space A` keeps its placement: the text column, the rail beside it,
+- `Space A` (`Space t` since the 2026-09-04 amendment above) keeps its
+  placement: the text column, the rail beside it,
   pill `REVIEW`. It opens sorted by **newest agent reply first**: threads
   whose newest message is not the user's, newest first, then the rest by
   their newest message. `s` toggles to file and line order, today's
@@ -211,7 +217,11 @@ result.
   them; `Z` goes, `z` still folds the entry. Every entry header carries
   `path  Lstart-end  state  age` in both orders. `f` narrows to the
   current file. `Enter` opens the file with the thread expanded. `r`,
-  `e`, `o`, `dd` as today.
+  `e`, `o`, `dd` as today. Amended 2026-09-04: **`j`/`k` step between
+  threads** and land on the newest message, as an inbox's rows do, and
+  `l`/`h` step between the selected thread's messages; the two pairs
+  swapped. `]r`/`[r` in the text gain `Tab`/`Shift-Tab` aliases, the
+  next thing that needs the reader being the most-used motion.
 - The header reads `review  4 open  resolved hidden  by newest agent
   reply` with `s sort  x resolved  f file  z fold` at the right. The
   sort, the resolved flag, and the file filter are one `ReviewState` on
@@ -285,11 +295,9 @@ Space e           tree pane: focus or return
 Space t           review list (s sort, x resolved, f file, z fold)
 Space T           threads pane: focus or return
 Space p e / t     panes: hide or show the tree pane / the threads pane
-Space r r/i/.     rail: re-read the tree, toggle ignored, reveal this file
+Space r r/i/.     tree: re-read, toggle ignored, reveal this file
 Space f / F       file picker / with ignored
 Space o           recent files
-Space c c         toggle stub visibility
-Space c z         expand / fold all stubs
 Space c x         toggle resolved stubs
 Space c n/r/o/e/d new thread here, reply, resolve or reopen, edit, delete
 Space v s/d/D     source, git diff, diff last seen (gs gd gD stay)
@@ -310,8 +318,8 @@ Alt-Left / Alt-Right   jumplist back / forward
   its group word (`Space c · threads`), in the pill colour, and
   re-renders at every level. The status badge still shows the raw
   prefix. Because the breadcrumb names the submenu, an entry inside one
-  drops that word from its label: `Space c c` reads
-  `toggle stub visibility`, not `threads: toggle stub visibility`.
+  drops that word from its label: `Space c x` reads
+  `toggle resolved stubs`, not `threads: toggle resolved stubs`.
 
 ### Theme and configuration
 

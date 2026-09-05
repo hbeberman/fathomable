@@ -165,6 +165,19 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 }
             }
         }
+        if let Some(socket) = dirs.viewer_socket(workspace.root(), std::process::id()) {
+            let bytes = socket.as_os_str().len();
+            if fathomable_core::socket_path_fits(&socket) {
+                println!("  ok    viewer socket path fits ({bytes} bytes)");
+            } else {
+                ok = false;
+                println!(
+                    "  FAIL  viewer socket path is {bytes} bytes; a Unix socket path holds at most {} (shorten XDG_RUNTIME_DIR): {}",
+                    fathomable_core::SOCKET_PATH_MAX,
+                    socket.display()
+                );
+            }
+        }
         let dir = dirs.seen_dir(workspace.root());
         // Opening prunes, so pin what the viewer pins (ADR 0020).
         let threads =

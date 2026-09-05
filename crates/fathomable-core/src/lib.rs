@@ -37,4 +37,4 @@ pub use document::{Document, LoadError};
 mod xdg;
 
 #[doc(inline)]
-pub use xdg::{APP_DIR, XdgDirs};
+pub use xdg::{APP_DIR, SOCKET_PATH_MAX, XdgDirs, socket_path_fits};

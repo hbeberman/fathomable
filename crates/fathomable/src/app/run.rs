@@ -240,18 +240,35 @@ async fn edit_draft(
     Ok(())
 }
 
-fn serve_socket(record: &Record, app: mpsc::Sender<socket::Envelope>) -> Option<socket::Serving> {
+/// Serve the viewer socket, or say why there is none: the message is
+/// shown in the viewer, since a socket that silently failed leaves the
+/// tools falling back to the store with nothing to tell the user.
+fn serve_socket(
+    record: &Record,
+    app: mpsc::Sender<socket::Envelope>,
+) -> Result<socket::Serving, String> {
     let Some(path) = record.socket() else {
         tracing::warn!("XDG_RUNTIME_DIR unset; no viewer socket");
-        return None;
+        return Err(
+            "no viewer socket: XDG_RUNTIME_DIR is unset; agents use the store only".to_owned(),
+        );
     };
     match socket::Listener::bind(path) {
-        Ok(listener) => Some(listener.serve(app)),
+        Ok(listener) => Ok(listener.serve(app)),
         Err(error) => {
             tracing::warn!(%error, path = %path.display(), "cannot listen on the viewer socket");
-            None
+            Err(format!(
+                "no viewer socket ({error}; {}); agents use the store only",
+                path.display()
+            ))
         }
     }
+}
+
+/// Hold the served socket for the viewer's lifetime, or show the user
+/// why there is none.
+fn keep_socket(app: &mut App, socket: Result<socket::Serving, String>) -> Option<socket::Serving> {
+    socket.map_err(|why| app.notice(why)).ok()
 }
 
 async fn run_async(
@@ -262,7 +279,7 @@ async fn run_async(
 ) -> anyhow::Result<()> {
     let (mut doc_watcher, mut reload_rx) = watch::Watcher::new()?;
     let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
-    let _socket = serve_socket(&options.record, request_tx);
+    let socket = serve_socket(&options.record, request_tx);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
 
@@ -285,6 +302,7 @@ async fn run_async(
     app.set_watching_root(watching);
     doc_watcher.watch_store(app.store_path());
     app.start_on(open);
+    let _socket = keep_socket(&mut app, socket);
 
     let mut batch = watch::Batch::default();
     loop {

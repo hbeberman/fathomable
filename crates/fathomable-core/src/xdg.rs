@@ -8,6 +8,19 @@ use std::path::{Path, PathBuf};
 /// The application subdirectory under each XDG base directory.
 pub const APP_DIR: &str = "fathomable";
 
+/// The longest path a Unix socket can be bound to on Linux: `sun_path`
+/// holds 108 bytes including the terminator, so binding a path of 108
+/// bytes or more fails with "path must be shorter than `SUN_LEN`".
+pub const SOCKET_PATH_MAX: usize = 107;
+
+/// Whether `path` is short enough to bind a Unix socket to
+/// ([`SOCKET_PATH_MAX`]). A viewer whose socket path is longer runs
+/// without a socket, and the tools fall back to the store.
+#[must_use]
+pub fn socket_path_fits(path: &Path) -> bool {
+    path.as_os_str().len() <= SOCKET_PATH_MAX
+}
+
 /// XDG base directories relevant to Fathomable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XdgDirs {
@@ -126,6 +139,7 @@ impl XdgDirs {
 
     /// `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`, one viewer's socket
     /// under its workspace (ADR 0024); `None` when the runtime dir is unset.
+    /// A long runtime dir can push it past [`socket_path_fits`].
     #[must_use]
     pub fn viewer_socket(&self, root: &Path, pid: u32) -> Option<PathBuf> {
         let hash = crate::annotations::short_hash(root.as_os_str().as_encoded_bytes());

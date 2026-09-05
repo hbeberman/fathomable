@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 use std::error::Error;
-use std::path::Path;
 
 use fathomable_core::XdgDirs;
 use fathomable_core::config::{Config, ConfigError};
@@ -158,8 +157,7 @@ user { name "O'Brien" }
 /// and no other; the example itself parses and round-trips.
 #[test]
 fn guide_example_matches_the_text_form() -> TestResult {
-    let guide =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/guide.md"))?;
+    let guide = std::fs::read_to_string(fathomable_testing::repo_file("docs/guide.md"))?;
     let section = guide
         .split("## 7. Configuration and themes")
         .nth(1)

@@ -58,6 +58,19 @@ rejected for good (record rejections in the [charter](charter.md)).
   `kill(pid, 0)`, which the standard library does not expose: `libc` or
   `nix` is a dependency decision under
   [0001](decisions/0001-dependency-policy.md).
+- **Symlink badging in the sidebar.** `Entry::is_symlink` is known to
+  the workspace tree but the sidebar draws a symlink like any other
+  entry. Origin: an untracked to-do list from August 2026, retired on
+  2026-09-05.
+- **File-wide threads on binary files.** A thread anchors to lines
+  ([0005](decisions/0005-annotations.md)) and a binary file has none, so
+  a comment on a whole image or archive has nowhere to go. Origin: the
+  same to-do list.
+- **An edited-message alert for agents.** Editing a comment or reply
+  makes the thread pending again
+  ([0058](decisions/0058-the-user-has-the-last-word.md)), but the
+  delivered text does not say which message changed. Origin: the same
+  to-do list.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

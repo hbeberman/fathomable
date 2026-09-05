@@ -8,11 +8,11 @@ readme.workspace = true
 description = "Test scaffolding shared by the Fathomable crates: temporary workspaces and git fixtures"
 keywords.workspace = true
 categories.workspace = true
-publish = false
+publish.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
-fathomable-core = { version = "0.1.0", path = "../fathomable-core" }
-gix = { version = "0.87", default-features = false, features = ["index", "sha1"] }
+fathomable-core.workspace = true
+gix = { workspace = true, features = ["index", "sha1"] }

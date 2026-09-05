@@ -453,38 +453,22 @@ mod tests {
     use std::path::Path;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use fathomable_core::annotations::{MessageTarget, Store};
-    use fathomable_core::workspace::Workspace;
+    use fathomable_core::annotations::MessageTarget;
     use fathomable_testing::TempDir;
+
+    use crate::app::testing::{self, press, source_app};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
     use super::handle_key;
     use crate::app::threads::{ComposeTarget, ThreadState};
-    use crate::app::{App, Focus, Options, Popup};
+    use crate::app::{App, Focus, Popup};
 
     fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("keys-{name}"))?;
+        let dir = testing::workspace(&format!("keys-{name}"), testing::README)?;
         fs::create_dir_all(dir.0.join("ws/docs"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
         fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n")?;
         Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        app.view_mut().toggle_source_view();
-        Ok(app)
     }
 
     fn annotate(app: &mut App, line: usize, text: &str) {
@@ -492,12 +476,6 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
-    }
-
-    fn press(app: &mut App, keys: &str) {
-        for ch in keys.chars() {
-            handle_key(app, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
     }
 
     fn alt(app: &mut App, code: KeyCode) {
@@ -540,7 +518,7 @@ mod tests {
     #[test]
     fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
         let dir = fixture("threads")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "three");
         annotate(&mut app, 5, "five");
         app.view_mut().goto_source_line(3);
@@ -600,7 +578,7 @@ mod tests {
     #[test]
     fn space_r_reveals_and_space_v_toggles_from_any_pane() -> anyhow::Result<()> {
         let dir = fixture("rail")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         app.open(Path::new("docs/guide.md"));
         assert!(app.tree().is_none());
         press(&mut app, " r.");
@@ -628,7 +606,7 @@ mod tests {
     #[test]
     fn alt_left_and_right_walk_the_positions_far_moves_left() -> anyhow::Result<()> {
         let dir = fixture("jumplist")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "readme");
         app.open(Path::new("docs/guide.md"));
         annotate(&mut app, 1, "guide");
@@ -678,7 +656,7 @@ mod tests {
     #[test]
     fn the_menu_shows_a_breadcrumb_for_the_prefix() -> anyhow::Result<()> {
         let dir = fixture("menu")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         press(&mut app, " ");
         let text = screen(&app)?;
         assert!(text.contains(" Space "), "the Space menu names its prefix");

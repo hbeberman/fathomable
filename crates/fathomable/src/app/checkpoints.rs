@@ -448,19 +448,13 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fathomable_core::checkpoints::Store;
     use fathomable_core::workspace::Workspace;
     use fathomable_testing::{TempDir, git};
 
-    use crate::app::input::keys;
-    use crate::app::{App, Options, PickerKind, Popup};
+    use crate::app::testing::press;
 
-    fn press(app: &mut App, keys: &str) {
-        for ch in keys.chars() {
-            keys::handle_key(app, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
-    }
+    use crate::app::{App, Options, PickerKind, Popup};
 
     fn last_toast(app: &App) -> String {
         app.toasts()

@@ -62,37 +62,11 @@ pub(crate) fn follow_reply_lines(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
 
-    use fathomable_core::annotations::{Author, LineRange, Store};
+    use fathomable_core::annotations::{Author, LineRange};
     use fathomable_core::session::{Request, Response};
-    use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Options};
-    use fathomable_testing::TempDir;
-
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("open-thread-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
-        Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        app.view_mut().toggle_source_view();
-        Ok(app)
-    }
+    use crate::app::testing::{self, source_app};
 
     fn line(n: usize) -> LineRange {
         LineRange::new(n, n)
@@ -100,8 +74,8 @@ mod tests {
 
     #[test]
     fn the_open_threads_lines_are_marked_unless_detached() -> anyhow::Result<()> {
-        let dir = fixture("marked")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("open-thread-marked", testing::README)?;
+        let mut app = source_app(&dir)?;
         app.view_mut().goto_source_line(3);
         app.view_mut().select_lines();
         app.view_mut().move_down(1);
@@ -132,8 +106,8 @@ mod tests {
 
     #[test]
     fn an_agent_reply_with_lines_moves_the_thread() -> anyhow::Result<()> {
-        let dir = fixture("reply")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("open-thread-reply", testing::README)?;
+        let mut app = source_app(&dir)?;
         app.view_mut().goto_source_line(3);
         app.start_new_comment();
         app.compose_insert("expand this");

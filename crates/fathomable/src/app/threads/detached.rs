@@ -54,32 +54,17 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
 
-    use fathomable_core::annotations::{LineRange, Store};
-    use fathomable_core::workspace::Workspace;
+    use fathomable_core::annotations::LineRange;
 
     use crate::app::threads::ThreadState;
-    use crate::app::{App, Options, Popup};
+    use crate::app::{App, Popup};
     use fathomable_testing::TempDir;
 
-    fn fixture(name: &str, readme: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("detached-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(dir.0.join("ws/README.md"), readme)?;
-        Ok(dir)
-    }
+    use crate::app::testing::{self, AppBuilder};
 
     fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 80, 30, options);
-        app.open(Path::new("README.md"));
-        Ok(app)
+        AppBuilder::new(dir).width(80).build()
     }
 
     fn rewrite(dir: &TempDir, readme: &str) -> std::io::Result<()> {
@@ -130,7 +115,7 @@ mod tests {
 
     #[test]
     fn a_detached_thread_gets_a_row_where_its_lines_were() -> anyhow::Result<()> {
-        let dir = fixture("row", BEFORE)?;
+        let dir = testing::workspace("detached-row", BEFORE)?;
         let app = detach(&dir)?;
         let rows = glyphs(&app);
         // one, blank, [detached row], three, blank, four
@@ -145,7 +130,7 @@ mod tests {
 
     #[test]
     fn the_row_is_removed_when_the_thread_re_anchors() -> anyhow::Result<()> {
-        let dir = fixture("back", BEFORE)?;
+        let dir = testing::workspace("detached-back", BEFORE)?;
         let mut app = detach(&dir)?;
         rewrite(&dir, BEFORE)?;
         app.on_changes(vec![dir.0.join("ws/README.md")]);
@@ -162,7 +147,7 @@ mod tests {
 
     #[test]
     fn c_on_the_row_opens_the_thread_and_capital_c_is_refused() -> anyhow::Result<()> {
-        let dir = fixture("keys", BEFORE)?;
+        let dir = testing::workspace("detached-keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
         app.goto_thread(&id);
@@ -179,7 +164,7 @@ mod tests {
 
     #[test]
     fn a_thread_past_the_end_stands_after_the_last_line() -> anyhow::Result<()> {
-        let dir = fixture("end", BEFORE)?;
+        let dir = testing::workspace("detached-end", BEFORE)?;
         let mut app = app(&dir)?;
         annotate(&mut app, 7, 7, "last");
         rewrite(&dir, "one\n\ntwo\n")?;

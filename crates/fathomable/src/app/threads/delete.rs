@@ -92,41 +92,13 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::Path;
 
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
+    use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use fathomable_core::annotations::Store;
-    use fathomable_core::workspace::Workspace;
 
-    use crate::app::input::keys;
-    use crate::app::{App, Focus, Options};
-    use fathomable_testing::TempDir;
+    use crate::app::{App, Focus};
 
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("delete-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
-        Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        app.view_mut().toggle_source_view();
-        Ok(app)
-    }
+    use crate::app::testing::{self, press_key, source_app};
 
     fn annotate(app: &mut App, line: usize, text: &str) {
         app.view_mut().goto_source_line(line);
@@ -135,14 +107,10 @@ mod tests {
         app.compose_submit();
     }
 
-    fn press(app: &mut App, code: KeyCode) {
-        keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
-    }
-
     #[test]
     fn d_d_deletes_from_each_surface_and_any_other_key_cancels() -> anyhow::Result<()> {
-        let dir = fixture("surfaces")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("delete-surfaces", testing::README)?;
+        let mut app = source_app(&dir)?;
         app.show_tree();
         annotate(&mut app, 3, "three");
         annotate(&mut app, 5, "five");
@@ -155,15 +123,15 @@ mod tests {
         app.view_mut().goto_source_line(3);
         app.expand_at_cursor();
         assert_eq!(app.focus(), Focus::View);
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         assert!(app.delete_armed().is_some());
         assert!(app.message().is_some_and(|m| m.starts_with("d again")));
-        press(&mut app, KeyCode::Char('n'));
+        press_key(&mut app, KeyCode::Char('n'));
         assert!(app.delete_armed().is_none());
         assert_eq!(app.message(), Some("delete cancelled"));
         assert_eq!(app.thread_position(), Some((1, 3)), "the `n` was swallowed");
-        press(&mut app, KeyCode::Char('d'));
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 2);
         assert_eq!(app.thread_position(), Some((1, 2)));
         assert_eq!(app.view().cursor_source_line(), Some(3));
@@ -171,7 +139,7 @@ mod tests {
 
         // The threads pane: `d d` on the highlight; a click cancels.
         app.focus_threads_pane();
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         crate::app::input::mouse::handle_mouse(
             &mut app,
             MouseEvent {
@@ -186,12 +154,12 @@ mod tests {
         // The click left the text cursor on L4, between the threads, so
         // `j` in the pane lands on the next one (ADR 0046).
         app.focus_threads_pane();
-        press(&mut app, KeyCode::Char('j'));
+        press_key(&mut app, KeyCode::Char('j'));
         assert_eq!(app.view().cursor_source_line(), Some(5));
-        press(&mut app, KeyCode::Char('j'));
+        press_key(&mut app, KeyCode::Char('j'));
         assert_eq!(app.view().cursor_source_line(), Some(7));
-        press(&mut app, KeyCode::Char('d'));
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         assert_eq!(app.marks().len(), 1);
         assert_eq!(app.marks()[0].range().start(), 5);
         assert_eq!(app.focus(), Focus::ThreadsPane, "one thread left");
@@ -199,8 +167,8 @@ mod tests {
         // The review list: the entry under the selection goes.
         app.open_review();
         assert_eq!(app.focus(), Focus::Review);
-        press(&mut app, KeyCode::Char('d'));
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         assert!(app.marks().is_empty());
         assert!(app.review_rows(80).entries.is_empty());
         app.close_review();
@@ -213,12 +181,12 @@ mod tests {
 
     #[test]
     fn deleting_the_last_thread_leaves_the_text_clean() -> anyhow::Result<()> {
-        let dir = fixture("last")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("delete-last", testing::README)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "only");
         app.expand_at_cursor();
-        press(&mut app, KeyCode::Char('d'));
-        press(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
+        press_key(&mut app, KeyCode::Char('d'));
         assert!(!app.shows_thread());
         assert_eq!(app.focus(), Focus::View);
         Ok(())

@@ -836,7 +836,6 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::annotations::{LineRange, MessageTarget, Status, Store, Thread};
-    use fathomable_core::workspace::Workspace;
 
     use fathomable_core::annotations::Author;
     use fathomable_core::session::{Request, Response};
@@ -846,33 +845,13 @@ mod tests {
     use crate::app::Focus;
     use fathomable_testing::TempDir;
 
+    use crate::app::testing::{self, app};
+
     use fathomable_core::editor::{Cursor, Edit, Motion};
 
     use super::{ComposeTarget, ThreadState};
     use crate::app::threads::list::Row;
-    use crate::app::{App, Border, Options, Popup};
-
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("threads-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
-        Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        Ok(app)
-    }
+    use crate::app::{App, Border, Popup};
 
     fn type_in(app: &mut App, text: &str) {
         for ch in text.chars() {
@@ -898,7 +877,7 @@ mod tests {
     fn app_with_review_messages(
         name: &str,
     ) -> anyhow::Result<(TempDir, App, fathomable_core::annotations::ThreadId)> {
-        let dir = fixture(name)?;
+        let dir = testing::workspace(&format!("threads-{name}"), testing::README)?;
         let mut app = app(&dir)?;
         let opening = (1..=30)
             .map(|line| format!("opening line {line}"))
@@ -930,7 +909,7 @@ mod tests {
     #[test]
     fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
         use crate::app::watch::Event;
-        let dir = fixture("rename")?;
+        let dir = testing::workspace("threads-rename", testing::README)?;
         let mut app = app(&dir)?;
         annotate(&mut app, "keep me")?;
         let id = app.marks()[0].id().clone();
@@ -988,7 +967,7 @@ mod tests {
     #[test]
     fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result<()> {
         use crate::app::watch::Event;
-        let dir = fixture("deleted")?;
+        let dir = testing::workspace("threads-deleted", testing::README)?;
         let mut app = app(&dir)?;
         annotate(&mut app, "still here")?;
         let id = app.marks()[0].id().clone();
@@ -1037,7 +1016,7 @@ mod tests {
 
     #[test]
     fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
-        let dir = fixture("annotate")?;
+        let dir = testing::workspace("threads-annotate", testing::README)?;
         let mut app = app(&dir)?;
         assert_eq!(app.thread_counts(), (0, 0));
         // Rows: 0 "# Readme", 1 blank, 2 "alpha beta gamma" (one paragraph).
@@ -1108,7 +1087,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let dir = fixture("render")?;
+        let dir = testing::workspace("threads-render", testing::README)?;
         let mut app = app(&dir)?;
         app.resize(80, 24);
         app.view_mut().move_down(2);
@@ -1182,7 +1161,7 @@ mod tests {
 
     #[test]
     fn an_expanded_thread_replies_resolves_and_reopens() -> anyhow::Result<()> {
-        let dir = fixture("panel")?;
+        let dir = testing::workspace("threads-panel", testing::README)?;
         let mut app = app(&dir)?;
         app.thread_reply();
         assert_eq!(app.message(), Some("no thread here"));
@@ -1251,7 +1230,7 @@ mod tests {
 
         use crate::app::input::keys;
 
-        let dir = fixture("message-nav")?;
+        let dir = testing::workspace("threads-message-nav", testing::README)?;
         let mut app = app(&dir)?;
         annotate(&mut app, "opening")?;
         let id = app.marks()[0].id().clone();
@@ -1487,7 +1466,7 @@ mod tests {
         let drag = MouseEventKind::Drag(MouseButton::Left);
         let up = MouseEventKind::Up(MouseButton::Left);
 
-        let dir = fixture("mouse")?;
+        let dir = testing::workspace("threads-mouse", testing::README)?;
         let mut app = app(&dir)?;
         app.start_comment();
         let long = (1..=20)
@@ -1542,7 +1521,7 @@ mod tests {
 
     #[test]
     fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
-        let dir = fixture("status")?;
+        let dir = testing::workspace("threads-status", testing::README)?;
         let mut app = app(&dir)?;
         annotate(&mut app, "one")?;
         app.view_mut().toggle_source_view();
@@ -1565,7 +1544,7 @@ mod tests {
 
         use crate::app::input::keys;
 
-        let dir = fixture("toggle")?;
+        let dir = testing::workspace("threads-toggle", testing::README)?;
         let mut app = app(&dir)?;
         annotate(&mut app, "one")?;
         let press = |app: &mut App, code| {
@@ -1613,7 +1592,7 @@ mod tests {
 
     #[test]
     fn annotation_jumps_wrap_and_picker_lists_threads() -> anyhow::Result<()> {
-        let dir = fixture("jumps")?;
+        let dir = testing::workspace("threads-jumps", testing::README)?;
         let mut app = app(&dir)?;
         app.thread_step_in_file(1);
         assert_eq!(app.message(), Some("no threads in this file"));
@@ -1644,7 +1623,7 @@ mod tests {
     /// in line order with the cursor following.
     #[test]
     fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
-        let dir = fixture("walk")?;
+        let dir = testing::workspace("threads-walk", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().goto_bottom();
         app.start_comment();
@@ -1696,7 +1675,7 @@ mod tests {
 
     #[test]
     fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
-        let dir = fixture("list")?;
+        let dir = testing::workspace("threads-list", testing::README)?;
         let mut app = app(&dir)?;
         app.start_comment();
         type_in(&mut app, "top");
@@ -1778,7 +1757,7 @@ mod tests {
     /// in workspace scope.
     #[test]
     fn the_review_orders_by_newest_agent_reply_then_by_file() -> anyhow::Result<()> {
-        let dir = fixture("inbox")?;
+        let dir = testing::workspace("threads-inbox", testing::README)?;
         let mut app = app(&dir)?;
         app.start_comment();
         type_in(&mut app, "top");
@@ -1843,7 +1822,7 @@ mod tests {
 
     #[test]
     fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
-        let dir = fixture("socket")?;
+        let dir = testing::workspace("threads-socket", testing::README)?;
         fs::write(dir.0.join("ws/other.md"), "# Other\n\nline\n")?;
         let mut app = app(&dir)?;
         app.view_mut().move_down(2);
@@ -1955,7 +1934,7 @@ mod tests {
 
     #[test]
     fn the_comment_box_edits_around_a_cursor_and_takes_pastes() -> anyhow::Result<()> {
-        let dir = fixture("editor")?;
+        let dir = testing::workspace("threads-editor", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().select_lines();
         app.start_comment();
@@ -1994,7 +1973,7 @@ mod tests {
 
     #[test]
     fn esc_asks_twice_before_discarding_a_draft() -> anyhow::Result<()> {
-        let dir = fixture("discard")?;
+        let dir = testing::workspace("threads-discard", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().select_lines();
         app.start_comment();
@@ -2020,7 +1999,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_clears_the_draft_and_closes_an_empty_box() -> anyhow::Result<()> {
-        let dir = fixture("clear")?;
+        let dir = testing::workspace("threads-clear", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().select_lines();
         app.start_comment();
@@ -2038,7 +2017,7 @@ mod tests {
 
     #[test]
     fn a_long_comment_wraps_and_scrolls_to_the_cursor() -> anyhow::Result<()> {
-        let dir = fixture("wrap")?;
+        let dir = testing::workspace("threads-wrap", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().select_lines();
         app.start_comment();
@@ -2073,7 +2052,7 @@ mod tests {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let dir = fixture("sizes")?;
+        let dir = testing::workspace("threads-sizes", testing::README)?;
         let mut app = app(&dir)?;
         app.view_mut().move_down(2);
         app.view_mut().select_lines();

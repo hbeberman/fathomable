@@ -1460,6 +1460,8 @@ impl ServerHandler for Server {
 #[cfg(test)]
 mod tests {
     use fathomable_testing::TempDir;
+
+    use crate::app::testing;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1496,13 +1498,6 @@ mod tests {
         assert!(bind(&sessions, Path::new("/tmp")).is_none());
     }
 
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("mcp-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::create_dir_all(dir.0.join("state"))?;
-        Ok(dir)
-    }
-
     fn dirs(dir: &TempDir) -> XdgDirs {
         let state = dir.0.join("state").into_os_string();
         XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
@@ -1516,7 +1511,7 @@ mod tests {
     /// legal entry; `.` segments and the root itself drop out.
     #[test]
     fn paths_are_checked_against_the_workspace() -> std::io::Result<()> {
-        let dir = fixture("paths")?;
+        let dir = testing::bare("mcp-paths")?;
         let root = dir.0.join("ws");
         fs::create_dir_all(root.join("src/deep"))?;
         fs::write(root.join("src/jokes.rs"), "")?;
@@ -1573,7 +1568,7 @@ mod tests {
     /// ids are checked against the store first.
     #[test]
     fn watches_name_only_stored_threads() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = fixture("watch")?;
+        let dir = testing::bare("mcp-watch")?;
         let root = dir.0.join("ws");
         let dirs = dirs(&dir);
         let id = Store::open(dirs.threads_file(&root))?.annotate(
@@ -1592,7 +1587,7 @@ mod tests {
 
     #[test]
     fn headless_reads_and_answers_the_store() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = fixture("headless")?;
+        let dir = testing::bare("mcp-headless")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\ntwo\n")?;
@@ -1652,7 +1647,7 @@ mod tests {
     /// covered. A connection that never subscribed is left alone.
     #[test]
     fn a_second_follow_updates_the_subscription_paths() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = fixture("refollow")?;
+        let dir = testing::bare("mcp-refollow")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\n")?;

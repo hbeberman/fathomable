@@ -140,16 +140,16 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crossterm::event::KeyCode;
     use fathomable_core::annotations::Store;
     use fathomable_core::config::JumpConfig;
     use fathomable_core::session::{Request, Response};
-    use fathomable_core::workspace::Workspace;
 
     use super::RECENT_ACTIVITY;
-    use crate::app::input::keys;
     use crate::app::{App, Options};
     use fathomable_testing::TempDir;
+
+    use crate::app::testing::{AppBuilder, press_key};
 
     /// Sixty paragraphs: more rows than the 30-row test terminal shows.
     fn readme() -> String {
@@ -175,19 +175,19 @@ mod tests {
     /// An app with auto-jump on and no debounce, `README.md` open,
     /// and the reader long still.
     fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(&dir.0)?;
         let jump = JumpConfig {
             auto: true,
             debounce: std::time::Duration::ZERO,
             ..JumpConfig::default()
         };
-        let options = Options {
-            jump,
-            store: Some(Store::open(dir.0.join(".threads.jsonl"))?),
-            ..Options::for_test(dir.0.clone())
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
+        let store = Store::open(dir.0.join(".threads.jsonl"))?;
+        let mut app = AppBuilder::at(&dir.0)
+            .options(|o| Options {
+                jump,
+                store: Some(store),
+                ..o
+            })
+            .build()?;
         app.view_mut().rest(RECENT_ACTIVITY);
         Ok(app)
     }
@@ -197,10 +197,6 @@ mod tests {
         fs::write(&absolute, text)?;
         app.on_changes(vec![absolute]);
         Ok(())
-    }
-
-    fn press(app: &mut App, code: KeyCode) {
-        keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
     }
 
     fn toasts(app: &App) -> Vec<&str> {
@@ -215,13 +211,13 @@ mod tests {
         changed(&dir, &mut app, "guide.md", "guide\n\none\ntwo\n")?;
 
         // Scrolling and searching in place keep auto-jump on.
-        press(&mut app, KeyCode::Char('j'));
-        press(&mut app, KeyCode::Char('G'));
+        press_key(&mut app, KeyCode::Char('j'));
+        press_key(&mut app, KeyCode::Char('G'));
         assert!(app.auto_jump(), "looking around is not leaving");
 
         // Stepping to another file with `]f` is leaving.
-        press(&mut app, KeyCode::Char(']'));
-        press(&mut app, KeyCode::Char('f'));
+        press_key(&mut app, KeyCode::Char(']'));
+        press_key(&mut app, KeyCode::Char('f'));
         assert_ne!(app.current_path(), Path::new("README.md"));
         assert!(!app.auto_jump());
         assert!(toasts(&app).contains(&"auto-jump off"));
@@ -229,14 +225,14 @@ mod tests {
 
         // Back on, opening the review list is leaving too.
         app.set_auto_jump(true);
-        press(&mut app, KeyCode::Char(' '));
-        press(&mut app, KeyCode::Char('A'));
+        press_key(&mut app, KeyCode::Char(' '));
+        press_key(&mut app, KeyCode::Char('A'));
         assert!(!app.auto_jump());
 
         // And so is starting a selection.
-        press(&mut app, KeyCode::Esc);
+        press_key(&mut app, KeyCode::Esc);
         app.set_auto_jump(true);
-        press(&mut app, KeyCode::Char('V'));
+        press_key(&mut app, KeyCode::Char('V'));
         assert!(!app.auto_jump());
         Ok(())
     }

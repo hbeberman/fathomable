@@ -146,14 +146,9 @@ mod tests {
     use fathomable_core::clock::now;
     use fathomable_testing::TempDir;
 
-    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    use crate::app::testing;
 
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("wake-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::create_dir_all(dir.0.join("state"))?;
-        Ok(dir)
-    }
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     fn dirs(dir: &TempDir) -> XdgDirs {
         let state = dir.0.join("state").into_os_string();
@@ -165,7 +160,7 @@ mod tests {
     /// offers a picker for several.
     #[test]
     fn subscribers_show_up_and_space_w_picks_one() -> TestResult {
-        let dir = fixture("status")?;
+        let dir = testing::bare("wake-status")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\n")?;

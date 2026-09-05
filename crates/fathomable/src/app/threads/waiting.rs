@@ -182,39 +182,22 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
-    use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Focus, Options};
+    use crate::app::{App, Focus};
     use fathomable_testing::TempDir;
+
+    use crate::app::testing::{self, app, store_path};
 
     const README: &str = "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n";
     const NOTES: &str = "notes\n\nfirst\nsecond\nthird\n";
 
     fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("waiting-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(dir.0.join("ws/README.md"), README)?;
+        let dir = testing::workspace(&format!("waiting-{name}"), README)?;
         fs::write(dir.0.join("ws/notes.md"), NOTES)?;
         Ok(dir)
-    }
-
-    fn store_path(dir: &TempDir) -> PathBuf {
-        dir.0.join("state/threads.jsonl")
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(store_path(dir))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        Ok(app)
     }
 
     /// A second writer, as a headless `--mcp` reply would be: a thread

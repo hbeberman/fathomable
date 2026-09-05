@@ -127,26 +127,17 @@ mod tests {
     use fathomable_core::annotations::{Anchor, Draft, LineRange, Store, Thread};
     use fathomable_core::context::Context;
     use fathomable_core::seen;
-    use fathomable_core::workspace::Workspace;
 
-    use crate::app::{App, Options};
+    use crate::app::App;
     use fathomable_testing::TempDir;
 
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("reanchor-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        Ok(dir)
-    }
+    use crate::app::testing::{self, AppBuilder};
 
     fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            seen: Some(seen::Store::open(&dir.0.join("state/seen"))?),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        Ok(App::new(workspace, 100, 30, options))
+        AppBuilder::new(dir)
+            .unopened()
+            .seen(dir.0.join("state/seen"))
+            .build()
     }
 
     const ORIGINAL: &str = "one\ntwo\nthree\nfour\n";
@@ -169,7 +160,7 @@ mod tests {
 
     #[test]
     fn thread_edited_offline_follows_through_the_snapshot() -> anyhow::Result<()> {
-        let dir = fixture("edited")?;
+        let dir = testing::bare("reanchor-edited")?;
         let app = annotate_then_edit_offline(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
@@ -183,7 +174,7 @@ mod tests {
 
     #[test]
     fn thread_removed_offline_stays_detached() -> anyhow::Result<()> {
-        let dir = fixture("removed")?;
+        let dir = testing::bare("reanchor-removed")?;
         let app = annotate_then_edit_offline(&dir, "one\nthree\nfour\n")?;
         assert!(app.marks()[0].is_detached());
         Ok(())
@@ -206,7 +197,7 @@ mod tests {
 
     #[test]
     fn without_a_snapshot_the_thread_follows_through_its_window() -> anyhow::Result<()> {
-        let dir = fixture("nosnap")?;
+        let dir = testing::bare("reanchor-nosnap")?;
         let app = annotate_without_snapshot_then_edit(&dir, "zero\none\nTWO\nthree\nfour\n")?;
         let mark = &app.marks()[0];
         assert_eq!(mark.range(), LineRange::new(3, 3));
@@ -225,7 +216,7 @@ mod tests {
 
     #[test]
     fn without_a_snapshot_a_rewrite_around_the_lines_detaches() -> anyhow::Result<()> {
-        let dir = fixture("nosnap-rewrite")?;
+        let dir = testing::bare("reanchor-nosnap-rewrite")?;
         let app = annotate_without_snapshot_then_edit(&dir, "ONE\nTWO\nTHREE\nFOUR\n")?;
         assert!(app.marks()[0].is_detached());
         Ok(())
@@ -233,7 +224,7 @@ mod tests {
 
     #[test]
     fn a_thread_stored_without_a_window_is_given_one_on_start() -> anyhow::Result<()> {
-        let dir = fixture("backfill")?;
+        let dir = testing::bare("reanchor-backfill")?;
         fs::write(dir.0.join("ws/a.txt"), ORIGINAL)?;
         fs::create_dir_all(dir.0.join("state"))?;
         let anchor = serde_json::to_string(

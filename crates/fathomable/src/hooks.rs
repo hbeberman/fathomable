@@ -786,12 +786,13 @@ mod tests {
     use fathomable_core::clock::now;
     use fathomable_testing::TempDir;
 
+    use crate::app::testing;
+
     type TestResult = Result<(), Box<dyn Error>>;
 
     fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("hooks-{name}"))?;
+        let dir = testing::bare(&format!("hooks-{name}"))?;
         fs::create_dir_all(dir.0.join("ws/src"))?;
-        fs::create_dir_all(dir.0.join("state"))?;
         Ok(dir)
     }
 

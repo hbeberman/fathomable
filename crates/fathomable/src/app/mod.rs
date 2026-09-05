@@ -21,6 +21,8 @@ mod jumplist;
 mod rail;
 pub(crate) mod run;
 mod socket;
+#[cfg(test)]
+pub(crate) mod testing;
 pub(crate) mod threads;
 mod view;
 mod watch;
@@ -1985,6 +1987,8 @@ impl Options {
 #[cfg(test)]
 mod tests {
     use fathomable_testing::{TempDir, git};
+
+    use crate::app::testing::AppBuilder;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -1993,7 +1997,7 @@ mod tests {
     use fathomable_core::config::{JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig};
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::tree::Tree;
-    use fathomable_core::workspace::{Workspace, WorkspaceError};
+    use fathomable_core::workspace::Workspace;
 
     use super::input::bindings::Action;
     use super::{App, Focus, Options, PickerKind, Popup};
@@ -2007,13 +2011,16 @@ mod tests {
         Ok(dir)
     }
 
-    fn app(dir: &TempDir) -> Result<App, WorkspaceError> {
+    fn app(dir: &TempDir) -> anyhow::Result<App> {
         app_with(dir, Options::for_test(dir.0.clone()))
     }
 
-    fn app_with(dir: &TempDir, options: Options) -> Result<App, WorkspaceError> {
-        let workspace = Workspace::discover(&dir.0)?;
-        Ok(App::new(workspace, 100, 30, options))
+    /// An `App` on the fixture's root with nothing open, under `options`.
+    fn app_with(dir: &TempDir, options: Options) -> anyhow::Result<App> {
+        AppBuilder::at(&dir.0)
+            .unopened()
+            .options(|_| options)
+            .build()
     }
 
     fn picker_items(app: &App) -> Vec<String> {
@@ -2033,13 +2040,11 @@ mod tests {
         fs::write(dir.0.join("main.rs"), "fn main() {}\n")?;
         fs::write(dir.0.join("LICENSE"), "# Terms\n")?;
         fs::write(dir.0.join("justfile"), "default:\n    make help\n")?;
-        let mut app = app_with(
-            &dir,
-            Options {
-                highlighter: Arc::new(Highlighter::new("base16-ocean.dark")?),
-                ..Options::for_test(dir.0.clone())
-            },
-        )?;
+        let highlighter = Arc::new(Highlighter::new("base16-ocean.dark")?);
+        let mut app = AppBuilder::at(&dir.0)
+            .unopened()
+            .options(|o| Options { highlighter, ..o })
+            .build()?;
         app.open(Path::new("main.rs"));
         assert!(app.view().source_view(), "a .rs file opens as source");
         let coloured = app.view().layout().lines()[0]
@@ -2062,16 +2067,16 @@ mod tests {
         );
 
         // A narrower list flips both.
-        let mut app = app_with(
-            &dir,
-            Options {
+        let mut app = AppBuilder::at(&dir.0)
+            .unopened()
+            .options(|o| Options {
                 markdown: MarkdownConfig {
                     extensions: vec!["rs".to_owned()],
                     names: Vec::new(),
                 },
-                ..Options::for_test(dir.0.clone())
-            },
-        )?;
+                ..o
+            })
+            .build()?;
         app.open(Path::new("LICENSE"));
         assert!(app.view().source_view());
         app.open(Path::new("main.rs"));
@@ -2715,13 +2720,10 @@ mod tests {
             ignore: vec!["build/**".to_owned()],
             ..WatchConfig::default()
         };
-        let mut app = app_with(
-            &dir,
-            Options {
-                watch,
-                ..Options::for_test(dir.0.clone())
-            },
-        )?;
+        let mut app = AppBuilder::at(&dir.0)
+            .unopened()
+            .options(|o| Options { watch, ..o })
+            .build()?;
         app.toggle_tree_focus();
         app.open_picker(PickerKind::Files);
         assert!(!picker_items(&app).iter().any(|p| p == "NEW.md"));

@@ -63,6 +63,10 @@ an existing module, which is how the directory got that way.
   gone. Since 2026-09-04 the core crate uses it too, as a
   dev-dependency: Cargo allows a dev-dependency on a crate that depends
   on the crate under test, so the core's own copies went the same way.
+  The app crate's own scaffolding, an `App` builder on such a temp dir
+  and key presses against it, is `app/testing.rs`, compiled for tests
+  only; the fourteen per-module `fixture`/`app`/`press` copies it
+  replaced went the same day.
 
 ## Consequences
 

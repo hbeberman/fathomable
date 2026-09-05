@@ -485,17 +485,16 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
 
     use anyhow::Context as _;
 
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use fathomable_core::annotations::Store;
     use fathomable_core::tree::Tree;
-    use fathomable_core::workspace::Workspace;
     use fathomable_testing::TempDir;
+
+    use crate::app::testing::{self, app, key};
 
     use super::super::bindings::{self, Action, Where};
     use super::super::keys::handle_key;
@@ -504,35 +503,16 @@ mod tests {
     use crate::app::draw;
     use crate::app::threads::ComposeTarget;
     use crate::app::view::{Effect, Mode};
-    use crate::app::{App, Focus, Options, PickerKind, Popup};
+    use crate::app::{App, Focus, PickerKind, Popup};
 
     const LINK: &str = "https://example.com/guide";
 
     fn fixture(name: &str) -> anyhow::Result<TempDir> {
-        let dir = TempDir::new(&format!("menu-{name}"))?;
+        let readme = format!("# Readme\n\nalpha beta\n\ngamma\n\nsee [the guide]({LINK})\n");
+        let dir = testing::workspace(&format!("menu-{name}"), &readme)?;
         fs::create_dir_all(dir.0.join("ws/docs"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            format!("# Readme\n\nalpha beta\n\ngamma\n\nsee [the guide]({LINK})\n"),
-        )?;
         fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n")?;
         Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        Ok(app)
-    }
-
-    fn key(ch: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
     }
 
     fn mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {

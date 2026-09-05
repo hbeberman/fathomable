@@ -378,37 +378,20 @@ mod tests {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
-    use fathomable_core::annotations::Store;
-    use fathomable_core::workspace::Workspace;
     use fathomable_testing::TempDir;
+
+    use crate::app::testing::{self, press, source_app};
 
     use super::PaneScope;
     use crate::app::input::keys;
     use crate::app::threads::{ComposeTarget, ThreadState};
-    use crate::app::{App, Border, Focus, Options, Popup};
+    use crate::app::{App, Border, Focus, Popup};
 
     fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("threads-pane-{name}"))?;
+        let dir = testing::workspace(&format!("threads-pane-{name}"), testing::README)?;
         fs::create_dir_all(dir.0.join("ws/docs"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
         fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n\nfirst\nsecond\n")?;
         Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        app.view_mut().toggle_source_view();
-        Ok(app)
     }
 
     fn annotate(app: &mut App, line: usize, text: &str) {
@@ -416,12 +399,6 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
-    }
-
-    fn press(app: &mut App, keys: &str) {
-        for ch in keys.chars() {
-            keys::handle_key(app, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
     }
 
     fn rail_column(app: &App) -> anyhow::Result<Vec<String>> {
@@ -445,7 +422,7 @@ mod tests {
     #[test]
     fn the_pane_lists_the_file_or_the_workspace_and_hides_resolved() -> anyhow::Result<()> {
         let dir = fixture("scope")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 7, "seven");
@@ -559,7 +536,7 @@ mod tests {
     #[test]
     fn the_rail_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
         let dir = fixture("split")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         assert_eq!(app.rail_width(), 0);
         assert_eq!(app.threads_pane_height(), 0);
 
@@ -650,7 +627,7 @@ mod tests {
     #[test]
     fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
         let dir = fixture("cursor")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 2, "two");
@@ -711,7 +688,7 @@ mod tests {
     #[test]
     fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
         let dir = fixture("overlap")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         app.show_tree();
         app.show_threads_pane();
         // A long thread over L3-5, then a short one at L4 inside it.
@@ -738,7 +715,7 @@ mod tests {
     #[test]
     fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
         let dir = fixture("mouse")?;
-        let mut app = app(&dir)?;
+        let mut app = source_app(&dir)?;
         app.show_tree();
         app.show_threads_pane();
         annotate(&mut app, 2, "two");

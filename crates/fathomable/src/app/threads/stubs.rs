@@ -340,41 +340,13 @@ impl App {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
 
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
-    use fathomable_core::annotations::Store;
-    use fathomable_core::workspace::Workspace;
-    use fathomable_testing::TempDir;
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-    use crate::app::input::keys;
+    use crate::app::testing::{self, press, source_app};
+
     use crate::app::threads::ComposeTarget;
-    use crate::app::{App, Focus, Options, Popup};
-
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = TempDir::new(&format!("stubs-{name}"))?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        fs::write(
-            dir.0.join("ws/README.md"),
-            "# Readme\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
-        )?;
-        Ok(dir)
-    }
-
-    fn app(dir: &TempDir) -> anyhow::Result<App> {
-        let workspace = Workspace::discover(dir.0.join("ws"))?;
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let options = Options {
-            store: Some(store),
-            ..Options::for_test(dir.0.join("ws"))
-        };
-        let mut app = App::new(workspace, 100, 30, options);
-        app.open(Path::new("README.md"));
-        app.view_mut().toggle_source_view();
-        Ok(app)
-    }
+    use crate::app::{App, Focus, Popup};
 
     fn annotate(app: &mut App, from: usize, to: usize, text: &str) {
         app.view_mut().goto_source_line(from);
@@ -385,12 +357,6 @@ mod tests {
         app.start_new_comment();
         app.compose_insert(text);
         app.compose_submit();
-    }
-
-    fn press(app: &mut App, keys: &str) {
-        for ch in keys.chars() {
-            keys::handle_key(app, KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
-        }
     }
 
     fn click(app: &mut App, column: u16, row: u16) {
@@ -427,8 +393,8 @@ mod tests {
     /// the cursor steps over them and the hint marks only the cursor's.
     #[test]
     fn stubs_hang_under_their_lines_and_the_cursor_skips_them() -> anyhow::Result<()> {
-        let dir = fixture("rows")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("stubs-rows", testing::README)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, 5, "outer thread");
         annotate(&mut app, 5, 5, "inner point");
         app.thread_reply();
@@ -527,8 +493,8 @@ mod tests {
     /// until `Space c x`.
     #[test]
     fn the_toggles_hide_stubs_and_resolved_ones() -> anyhow::Result<()> {
-        let dir = fixture("toggles")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("stubs-toggles", testing::README)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, 3, "three");
         annotate(&mut app, 7, 7, "seven");
         assert_eq!(app.view().layout().lines().len(), 10);
@@ -554,8 +520,8 @@ mod tests {
     /// A detached thread's stub hangs under its own blank row.
     #[test]
     fn a_detached_thread_keeps_its_stub_under_its_row() -> anyhow::Result<()> {
-        let dir = fixture("detached")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("stubs-detached", testing::README)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 4, 4, "on beta");
         fs::write(
             dir.0.join("ws/README.md"),
@@ -577,8 +543,8 @@ mod tests {
     /// threads covering a row and ends with none expanded.
     #[test]
     fn c_expands_in_place_walks_messages_and_cycles() -> anyhow::Result<()> {
-        let dir = fixture("expand")?;
-        let mut app = app(&dir)?;
+        let dir = testing::workspace("stubs-expand", testing::README)?;
+        let mut app = source_app(&dir)?;
         annotate(&mut app, 3, 5, "outer thread");
         annotate(&mut app, 5, 5, "inner point");
         app.thread_reply();

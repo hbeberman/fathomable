@@ -12,7 +12,10 @@ tags:
 
 # 0025 The thread list
 
-Status: accepted (2026-08-27); amended 2026-09-03 by
+Status: accepted (2026-08-27); amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the list is always by file then
+line under file rows, `s` is gone, `z` folds the cursor's file and `Z`
+every file, and the header counts by colour; amended 2026-09-03 by
 [0046](0046-one-thread-cursor.md): the list's selection is the shared
 thread cursor, it no longer remembers a selection across close and open,
 `Ctrl-d`/`Ctrl-u` move by half a page of rows, `PgUp`/`PgDn` are gone,

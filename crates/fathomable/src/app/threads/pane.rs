@@ -1,26 +1,29 @@
 // @okf-doc: /decisions/0027-revisiting-threads.md
-//! The threads pane (ADR 0027, reshaped by ADR 0049): the lower pane of
-//! the sidebar, listing this file's threads in line order or the whole
-//! workspace's by file and line, resolved ones hidden until asked for.
+//! The threads pane (ADR 0027, reshaped by ADR 0049 and ADR 0066): the
+//! lower pane of the sidebar, listing this file's threads in line order
+//! or the whole workspace's grouped by file, two rows per thread,
+//! resolved ones hidden until asked for.
 //!
-//! The pane keeps no selection of its own. The highlighted row is the
+//! The pane keeps no selection of its own. The highlighted entry is the
 //! thread cursor's (ADR 0046), derived on every draw and key from the
 //! marks and the store, so the pane can never disagree with the text or
 //! go stale on a reload. Its state is whether it is shown, its scope,
-//! and the split a drag gave it; the resolved flag is the review's,
-//! shared with the review list.
+//! the files it has folded, and the split a drag gave it; the resolved
+//! flag is the review's, shared with the review list.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
+use crate::app::threads::author_label;
 use crate::app::threads::words::Words;
 use crate::app::threads::{Mark, ThreadState};
 use crate::app::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
 const CHROME_ROWS: usize = 2;
-/// The fewest rows the pane is drawn with: rule, header, one entry.
+/// The fewest rows the pane is drawn with: rule, header, one entry row.
 const MIN_ROWS: usize = 3;
 /// Rows the tree keeps above the pane when both are shown.
 const TREE_MIN_ROWS: usize = 2;
@@ -31,7 +34,8 @@ pub(crate) enum PaneScope {
     /// The current document's threads in line order.
     #[default]
     File,
-    /// Every thread on the work, files by path, threads by line.
+    /// Every thread on the work, files in the files pane's order,
+    /// threads by line, under a row per file.
     Workspace,
 }
 
@@ -46,34 +50,44 @@ impl PaneScope {
     }
 }
 
-/// One entry of the pane, ready to draw.
+/// One thread of the pane, ready to draw as two rows (ADR 0066).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PaneRow {
+pub(crate) struct PaneEntry {
+    id: ThreadId,
     path: PathBuf,
     /// `None` for a thread on the file as a whole (ADR 0063).
     range: Option<LineRange>,
-    kind: ThreadState,
     words: Words,
+    /// Who wrote the newest message, as `name (role)`.
+    author: String,
     /// The first line of the newest message.
     summary: String,
     replies: usize,
     /// When the thread last changed.
     updated: u64,
+    /// The thread is on the current document.
+    current: bool,
+    /// The thread cursor's thread.
+    selected: bool,
 }
 
-impl PaneRow {
+impl PaneEntry {
     #[cfg(test)]
     pub(crate) fn range(&self) -> Option<LineRange> {
         self.range
     }
 
     pub(crate) fn kind(&self) -> ThreadState {
-        self.kind
+        self.words.state()
     }
 
-    /// Placement and state words (ADR 0032).
+    /// Placement and state words, and the circle (ADR 0032, ADR 0066).
     pub(crate) fn words(&self) -> Words {
         self.words
+    }
+
+    pub(crate) fn author(&self) -> &str {
+        &self.author
     }
 
     pub(crate) fn summary(&self) -> &str {
@@ -88,28 +102,74 @@ impl PaneRow {
         self.updated
     }
 
-    /// Where the thread is, as the scope names it: `L9-11` in the file,
-    /// `lib.rs:9` across the workspace; `file` and `lib.rs` for a thread
-    /// on the file as a whole (ADR 0063).
+    pub(crate) fn current(&self) -> bool {
+        self.current
+    }
+
+    pub(crate) fn selected(&self) -> bool {
+        self.selected
+    }
+
+    /// Where the thread is in its file: `L9-11`, or `file` for a thread
+    /// on the file as a whole (ADR 0063). The file itself is on the
+    /// group row (ADR 0066).
     #[must_use]
-    pub(crate) fn place(&self, scope: PaneScope) -> String {
-        match scope {
-            PaneScope::File => self
-                .range
-                .map_or_else(|| "file".to_owned(), |range| format!("L{range}")),
-            PaneScope::Workspace => {
-                let name = self
-                    .path
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                match self.range {
-                    Some(range) => format!("{name}:{}", range.start()),
-                    None => name,
-                }
-            }
+    pub(crate) fn place(&self) -> String {
+        self.range
+            .map_or_else(|| "file".to_owned(), |range| format!("L{range}"))
+    }
+}
+
+/// One entry of the pane: a file's row over its threads, or a thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PaneRow {
+    /// A file with `count` listed threads (ADR 0066); `selected` when
+    /// the cursor's thread is inside it while it is folded.
+    File {
+        path: PathBuf,
+        count: usize,
+        folded: bool,
+        current: bool,
+        selected: bool,
+    },
+    Thread(PaneEntry),
+}
+
+/// One screen row of the pane's body, pointing at its entry in the
+/// rows: a file row, or the first or second row of a thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PaneLine {
+    File(usize),
+    First(usize),
+    Second(usize),
+}
+
+impl PaneLine {
+    fn row(self) -> usize {
+        match self {
+            Self::File(row) | Self::First(row) | Self::Second(row) => row,
         }
     }
+}
+
+/// The screen rows `rows` take: one per file row, two per thread.
+pub(crate) fn pane_lines(rows: &[PaneRow]) -> Vec<PaneLine> {
+    rows.iter()
+        .enumerate()
+        .flat_map(|(index, row)| match row {
+            PaneRow::File { .. } => vec![PaneLine::File(index)],
+            PaneRow::Thread(_) => vec![PaneLine::First(index), PaneLine::Second(index)],
+        })
+        .collect()
+}
+
+/// What a right-click on the pane landed on (ADR 0066).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PanePoint {
+    /// A file row; the cursor is on the file's first thread.
+    File(PathBuf),
+    /// A thread; the cursor is on it.
+    Thread,
 }
 
 impl App {
@@ -123,62 +183,107 @@ impl App {
         self.sidebar.scope
     }
 
-    /// The threads the pane lists, in its order, resolved ones only when
-    /// the review shows them.
-    pub(crate) fn threads_pane_ids(&self) -> Vec<ThreadId> {
-        match self.sidebar.scope {
-            // Line order, resolved ones when the review shows them.
-            PaneScope::File => {
-                let order = self.file_threads();
-                if self.review.resolved {
-                    return order;
-                }
-                order
-                    .into_iter()
-                    .filter(|id| {
-                        self.thread(id).is_some_and(|thread| {
-                            matches!(
-                                self.placement_of(thread).1,
-                                ThreadState::Open | ThreadState::Waiting
-                            )
-                        })
-                    })
-                    .collect()
-            }
-            // The review's order (ADR 0049).
-            PaneScope::Workspace => self
-                .review_entries(false)
-                .into_iter()
-                .map(|entry| entry.id().clone())
-                .collect(),
-        }
+    /// Whether the pane has folded `path` to its row (ADR 0066).
+    pub(crate) fn threads_pane_is_folded(&self, path: &Path) -> bool {
+        self.sidebar.folded.contains(path)
     }
 
-    /// The pane's entries, ready to draw.
-    pub(crate) fn threads_pane_rows(&self) -> Vec<PaneRow> {
-        self.threads_pane_ids()
+    /// The threads the pane lists, in its order, resolved ones only when
+    /// the review shows them: this file's by line, or the workspace's by
+    /// file and line (ADR 0066).
+    #[cfg(test)]
+    pub(crate) fn threads_pane_ids(&self) -> Vec<ThreadId> {
+        self.review_entries(self.sidebar.scope == PaneScope::File)
             .into_iter()
-            .filter_map(|id| {
-                let thread = self.thread(&id)?;
-                let (range, kind) = self.placement_of(thread);
-                let placement = self
-                    .marks()
-                    .iter()
-                    .find(|mark| *mark.id() == id)
-                    .map(Mark::placement);
-                let newest = thread
-                    .replies()
-                    .last()
-                    .map_or(thread.comment(), |reply| reply.body());
-                Some(PaneRow {
-                    path: thread.path().to_path_buf(),
-                    range,
-                    kind,
-                    words: Words::of(placement, thread),
-                    summary: newest.lines().next().unwrap_or("").to_owned(),
-                    replies: thread.replies().len(),
-                    updated: thread.updated(),
-                })
+            .map(|entry| entry.id().clone())
+            .collect()
+    }
+
+    /// The threads `j` / `k` and the wheel stop on: every listed thread,
+    /// a folded file counting once through its first thread (ADR 0066).
+    fn threads_pane_stops(&self) -> Vec<ThreadId> {
+        let mut last_path: Option<PathBuf> = None;
+        let mut out = Vec::new();
+        for entry in self.review_entries(self.sidebar.scope == PaneScope::File) {
+            let folded = self.sidebar.scope == PaneScope::Workspace
+                && self.sidebar.folded.contains(entry.path());
+            let first_of_file = last_path.as_deref() != Some(entry.path());
+            if !folded || first_of_file {
+                out.push(entry.id().clone());
+            }
+            last_path = Some(entry.path().to_path_buf());
+        }
+        out
+    }
+
+    /// The pane's entries, ready to draw: in workspace scope a row per
+    /// file over its threads, a folded file its row alone; in file scope
+    /// the threads alone.
+    pub(crate) fn threads_pane_rows(&self) -> Vec<PaneRow> {
+        let grouped = self.sidebar.scope == PaneScope::Workspace;
+        let cursor = self.thread_cursor().thread().cloned();
+        let entries = self.review_entries(!grouped);
+        let mut out = Vec::new();
+        let mut index = 0;
+        while index < entries.len() {
+            let path = entries[index].path().to_path_buf();
+            let group_end = entries[index..]
+                .iter()
+                .position(|entry| entry.path() != path)
+                .map_or(entries.len(), |len| index + len);
+            let folded = grouped && self.sidebar.folded.contains(&path);
+            if grouped {
+                let selected = folded
+                    && entries[index..group_end]
+                        .iter()
+                        .any(|entry| cursor.as_ref() == Some(entry.id()));
+                out.push(PaneRow::File {
+                    path: path.clone(),
+                    count: group_end - index,
+                    folded,
+                    current: path == self.current_path(),
+                    selected,
+                });
+            }
+            if !folded {
+                for entry in &entries[index..group_end] {
+                    let Some(thread) = self.thread(entry.id()) else {
+                        continue;
+                    };
+                    let (author, body) = thread
+                        .replies()
+                        .last()
+                        .map_or((thread.author(), thread.comment()), |reply| {
+                            (reply.author(), reply.body())
+                        });
+                    out.push(PaneRow::Thread(PaneEntry {
+                        id: entry.id().clone(),
+                        path: path.clone(),
+                        range: entry.range(),
+                        words: entry.words(),
+                        author: author_label(author, self.user_name()),
+                        summary: body.lines().next().unwrap_or("").to_owned(),
+                        replies: thread.replies().len(),
+                        updated: thread.updated(),
+                        current: path == self.current_path(),
+                        selected: cursor.as_ref() == Some(entry.id()),
+                    }));
+                }
+            }
+            index = group_end;
+        }
+        out
+    }
+
+    /// The pane's threads alone, in its order, for tests that read one
+    /// thread's facts.
+    #[cfg(test)]
+    pub(crate) fn threads_pane_entries(&self) -> Vec<PaneEntry> {
+        self.threads_pane_rows()
+            .into_iter()
+            .filter_map(|row| match row {
+                PaneRow::Thread(entry) => Some(entry),
+                PaneRow::File { .. } => None,
             })
             .collect()
     }
@@ -202,6 +307,15 @@ impl App {
             .clamp(least, tallest)
     }
 
+    /// Rows the pane's entries have: the height less the rule and the
+    /// header, and less the key bar while the pane has the keys (ADR
+    /// 0066).
+    pub(crate) fn threads_pane_body_rows(&self) -> usize {
+        self.threads_pane_height()
+            .saturating_sub(CHROME_ROWS)
+            .saturating_sub(usize::from(self.focus == Focus::ThreadsPane))
+    }
+
     /// Rows the files pane has, 0 when it is hidden.
     pub(crate) fn tree_rows(&self) -> usize {
         if self.tree().is_none() {
@@ -214,6 +328,7 @@ impl App {
 
     /// The highlighted entry: the thread cursor's thread among the listed
     /// ones (ADR 0046), `None` when it is not listed.
+    #[cfg(test)]
     pub(crate) fn threads_pane_selected(&self) -> Option<usize> {
         let order = self.threads_pane_ids();
         let cursor = self.thread_cursor();
@@ -221,15 +336,19 @@ impl App {
         order.iter().position(|other| other == id)
     }
 
-    /// The first entry drawn, chosen so the highlighted one is on screen.
-    pub(crate) fn threads_pane_scroll(&self) -> usize {
-        let body = self
-            .threads_pane_height()
-            .saturating_sub(CHROME_ROWS)
-            .max(1);
-        self.threads_pane_selected()
-            .unwrap_or(0)
-            .saturating_sub(body - 1)
+    /// The first screen row of `lines` drawn, chosen so the highlighted
+    /// entry's rows, or its folded file's row, are on screen.
+    pub(crate) fn threads_pane_scroll(&self, rows: &[PaneRow], lines: &[PaneLine]) -> usize {
+        let body = self.threads_pane_body_rows().max(1);
+        let selected = |row: &PaneRow| match row {
+            PaneRow::File { selected, .. } => *selected,
+            PaneRow::Thread(entry) => entry.selected,
+        };
+        let end = lines
+            .iter()
+            .rposition(|line| rows.get(line.row()).is_some_and(selected))
+            .map_or(0, |index| index + 1);
+        end.saturating_sub(body)
     }
 
     /// `Space p t`: hide the pane, or show it again without taking the
@@ -260,6 +379,14 @@ impl App {
         self.focus = Focus::ThreadsPane;
     }
 
+    /// `t` in the files pane, or its menu's `threads` (ADR 0066): the
+    /// pane in file scope on the highlighted file, with the keys.
+    pub(crate) fn threads_on_file(&mut self) {
+        self.show_highlight();
+        self.sidebar.scope = PaneScope::File;
+        self.focus_threads_pane();
+    }
+
     /// Esc in the pane: the keys go back to the text; the pane stays.
     pub(crate) fn leave_threads_pane(&mut self) {
         if self.focus == Focus::ThreadsPane {
@@ -268,10 +395,10 @@ impl App {
     }
 
     /// `j` / `k` and the wheel: the next or previous listed thread,
-    /// wrapping; the text follows, another file opening in workspace
-    /// scope, and the keys stay here.
+    /// wrapping, a folded file counting once; the text follows, another
+    /// file opening in workspace scope, and the keys stay here.
     pub(crate) fn threads_pane_move(&mut self, delta: isize) {
-        let order = self.threads_pane_ids();
+        let order = self.threads_pane_stops();
         if order.is_empty() {
             self.notice(self.empty_pane_notice());
             return;
@@ -290,20 +417,93 @@ impl App {
         self.notice(format!("threads: {}", self.sidebar.scope.word()));
     }
 
+    /// `z` in the pane (ADR 0066): fold the cursor's file to its row, or
+    /// unfold it; in file scope there is nothing to fold.
+    pub(crate) fn threads_pane_fold(&mut self) {
+        if self.sidebar.scope != PaneScope::Workspace {
+            return;
+        }
+        let Some(path) = self
+            .thread_cursor()
+            .thread()
+            .and_then(|id| self.thread(id))
+            .map(|thread| thread.path().to_path_buf())
+        else {
+            return;
+        };
+        self.threads_pane_toggle_fold(&path);
+    }
+
+    /// `Z` in the pane (ADR 0066): fold every listed file, or unfold them
+    /// all when any is folded.
+    pub(crate) fn threads_pane_fold_all(&mut self) {
+        if self.sidebar.scope != PaneScope::Workspace {
+            return;
+        }
+        let listed: HashSet<PathBuf> = self
+            .review_entries(false)
+            .into_iter()
+            .map(|entry| entry.path().to_path_buf())
+            .collect();
+        if listed.iter().any(|path| self.sidebar.folded.contains(path)) {
+            self.sidebar.folded.clear();
+        } else {
+            self.sidebar.folded = listed;
+        }
+    }
+
+    fn threads_pane_toggle_fold(&mut self, path: &Path) {
+        if !self.sidebar.folded.remove(path) {
+            self.sidebar.folded.insert(path.to_path_buf());
+        }
+    }
+
     /// A click on the pane's rule row or header: the keys come here.
     pub(crate) fn threads_pane_focus(&mut self) {
         self.focus_pane(Focus::ThreadsPane);
     }
 
-    /// A click on entry row `row` (counted from the first drawn entry):
-    /// the cursor goes to that thread and the keys stay with this pane;
-    /// a click past the entries acts as one on the header.
+    /// A click on body row `row` (counted from the first drawn row): on
+    /// a file row the file folds or unfolds; on either row of a thread
+    /// the cursor goes to it; the keys stay with this pane. A click past
+    /// the rows acts as one on the header.
     pub(crate) fn threads_pane_click(&mut self, row: usize) {
-        let index = self.threads_pane_scroll() + row;
-        match self.threads_pane_ids().into_iter().nth(index) {
-            Some(id) => self.land_in_pane(id),
+        match self.threads_pane_at(row) {
+            Some(PaneRow::File { path, .. }) => {
+                self.threads_pane_toggle_fold(&path);
+                self.threads_pane_focus();
+            }
+            Some(PaneRow::Thread(entry)) => self.land_in_pane(entry.id),
             None => self.threads_pane_focus(),
         }
+    }
+
+    /// A right-click on body row `row` (ADR 0066): on a file row the
+    /// cursor goes to the file's first thread; on a thread, to it.
+    pub(crate) fn threads_pane_point(&mut self, row: usize) -> Option<PanePoint> {
+        match self.threads_pane_at(row)? {
+            PaneRow::File { path, .. } => {
+                let first = self
+                    .review_entries(false)
+                    .into_iter()
+                    .find(|entry| entry.path() == path)
+                    .map(|entry| entry.id().clone())?;
+                self.land_in_pane(first);
+                Some(PanePoint::File(path))
+            }
+            PaneRow::Thread(entry) => {
+                self.land_in_pane(entry.id);
+                Some(PanePoint::Thread)
+            }
+        }
+    }
+
+    /// The entry drawn on body row `row`.
+    fn threads_pane_at(&self, row: usize) -> Option<PaneRow> {
+        let rows = self.threads_pane_rows();
+        let lines = pane_lines(&rows);
+        let line = lines.get(self.threads_pane_scroll(&rows, &lines) + row)?;
+        rows.get(line.row()).cloned()
     }
 
     /// Enter: open the file with the cursor's thread expanded and the
@@ -338,423 +538,12 @@ impl App {
             PaneScope::Workspace => "no threads in the workspace",
         }
     }
+
+    /// The mark of `id` on the current document, if it is there.
+    pub(crate) fn mark_of(&self, id: &ThreadId) -> Option<&Mark> {
+        self.marks().iter().find(|mark| mark.id() == id)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::Path;
-
-    use crossterm::event::{
-        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-    };
-    use fathomable_core::annotations::{Author, Reply, Thread};
-    use fathomable_testing::TempDir;
-
-    use crate::app::testing::{self, press, source_app};
-
-    use super::PaneScope;
-    use crate::app::input::keys;
-    use crate::app::threads::stubs::Stub;
-    use crate::app::threads::{ComposeTarget, ThreadState};
-    use crate::app::{App, Border, Focus, Popup};
-
-    fn fixture(name: &str) -> std::io::Result<TempDir> {
-        let dir = testing::workspace(&format!("threads-pane-{name}"), testing::README)?;
-        fs::create_dir_all(dir.0.join("ws/docs"))?;
-        fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n\nfirst\nsecond\n")?;
-        Ok(dir)
-    }
-
-    fn annotate(app: &mut App, line: usize, text: &str) {
-        app.view_mut().goto_source_line(line);
-        app.start_new_comment();
-        app.compose_insert(text);
-        app.compose_submit();
-    }
-
-    /// A user reply to the thread of mark `index`, dated after every
-    /// thread's `updated`. That field has one-second resolution, so a
-    /// thread written in a later second than another sorts before it in
-    /// the review's order and one written in the same second ties; the
-    /// dated answer makes the order the test's, not the clock's.
-    fn answer_later(app: &mut App, index: usize) -> anyhow::Result<()> {
-        let id = app.marks()[index].id().clone();
-        let store = app.store_mut().ok_or_else(|| anyhow::anyhow!("no store"))?;
-        let later = store
-            .threads()
-            .iter()
-            .map(Thread::updated)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        store.reply(&id, Reply::new(Author::User, later, "later"))?;
-        Ok(())
-    }
-
-    fn sidebar_column(app: &App) -> anyhow::Result<Vec<String>> {
-        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-        let theme = crate::app::draw::Theme::from_core(&core);
-        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
-        terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
-        let buffer = terminal.backend().buffer().clone();
-        Ok((0..buffer.area.height)
-            .map(|y| {
-                (0..u16::try_from(app.sidebar_width()).unwrap_or(0))
-                    .map(|x| buffer[(x, y)].symbol().to_owned())
-                    .collect::<String>()
-            })
-            .collect())
-    }
-
-    /// The pane lists this file in line order, hides resolved threads
-    /// until `x`, and lists the workspace after `s`, where `j` opens the
-    /// other file and keeps the keys (ADR 0049).
-    #[test]
-    fn the_pane_lists_the_file_or_the_workspace_and_hides_resolved() -> anyhow::Result<()> {
-        let dir = fixture("scope")?;
-        let mut app = source_app(&dir)?;
-        app.show_tree();
-        app.show_threads_pane();
-        annotate(&mut app, 7, "seven");
-        annotate(&mut app, 3, "three");
-        app.open(Path::new("docs/guide.md"));
-        annotate(&mut app, 3, "guide first");
-        app.open(Path::new("README.md"));
-        app.view_mut().goto_source_line(3);
-
-        let rows = app.threads_pane_rows();
-        assert_eq!(
-            rows.iter()
-                .map(|row| (row.place(PaneScope::File), row.summary()))
-                .collect::<Vec<_>>(),
-            [("L3".to_owned(), "three"), ("L7".to_owned(), "seven")]
-        );
-        assert_eq!(app.threads_pane_selected(), Some(0));
-
-        // The drawn pane: rule, header with the scope and count, one row
-        // per thread with the glyph, place, and the newest message.
-        let column = sidebar_column(&app)?;
-        let top = app.tree_rows();
-        assert!(column[top].starts_with("───"), "rule: {:?}", column[top]);
-        assert!(
-            column[top + 1].contains("threads · file 2"),
-            "{:?}",
-            column[top + 1]
-        );
-        assert!(column[top + 1].contains("s x"), "{:?}", column[top + 1]);
-        assert!(
-            column[top + 2].contains("● L3 three"),
-            "{:?}",
-            column[top + 2]
-        );
-        assert!(
-            column[top + 3].contains("● L7 seven"),
-            "{:?}",
-            column[top + 3]
-        );
-        assert!(column[top + 3].contains(" now"), "{:?}", column[top + 3]);
-
-        // A reply becomes the summary and earns the reply count.
-        app.thread_reply();
-        app.compose_insert("answered");
-        app.compose_submit();
-        assert_eq!(app.threads_pane_rows()[0].summary(), "answered");
-        assert_eq!(app.threads_pane_rows()[0].replies(), 1);
-
-        // Resolved threads leave the list until `x` shows them.
-        app.focus_threads_pane();
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        press(&mut app, "o");
-        assert_eq!(app.marks()[1].kind(), ThreadState::Resolved, "L3 resolved");
-        assert_eq!(app.threads_pane_rows().len(), 1);
-        assert_eq!(
-            app.threads_pane_rows()[0].range().map(|r| r.start()),
-            Some(7)
-        );
-        press(&mut app, "x");
-        assert_eq!(app.message(), Some("resolved shown"));
-        assert_eq!(app.threads_pane_rows().len(), 2);
-        assert_eq!(app.threads_pane_rows()[0].kind(), ThreadState::Resolved);
-        press(&mut app, "x");
-        assert_eq!(app.threads_pane_rows().len(), 1);
-
-        // `s` lists the workspace in the review's order, newest first,
-        // the place saying which file.
-        answer_later(&mut app, 0)?;
-        press(&mut app, "s");
-        assert_eq!(app.sidebar_scope(), PaneScope::Workspace);
-        let rows = app.threads_pane_rows();
-        assert_eq!(
-            rows.iter()
-                .map(|row| row.place(PaneScope::Workspace))
-                .collect::<Vec<_>>(),
-            ["README.md:7", "guide.md:3"]
-        );
-        let column = sidebar_column(&app)?;
-        assert!(
-            column[app.tree_rows() + 1].contains("threads · workspace 2"),
-            "{:?}",
-            column[app.tree_rows() + 1]
-        );
-
-        // `j` steps across files and keeps the keys in the pane.
-        app.view_mut().goto_source_line(7);
-        press(&mut app, "j");
-        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
-        assert_eq!(app.view().cursor_source_line(), Some(3));
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        assert_eq!(app.threads_pane_selected(), Some(1));
-        press(&mut app, "j");
-        assert_eq!(app.current_path(), Path::new("README.md"), "wrapped");
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-
-        // Enter opens the thread expanded with the keys in the text; `r`
-        // replies in place with the keys staying here.
-        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::View);
-        assert!(app.shows_thread());
-        app.focus_threads_pane();
-        press(&mut app, "r");
-        assert!(
-            matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
-        );
-        // The draft is written at the end of the thread's rows in the
-        // text, after its header and two one-line messages (ADR 0054).
-        assert!(app.shows_thread());
-        assert_eq!(app.stubs().iter().find_map(Stub::draft_slot), Some((5, 0)));
-        app.compose_insert("ok");
-        app.compose_submit();
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        Ok(())
-    }
-
-    /// The pane shows with the tree hidden and takes the whole sidebar;
-    /// beside the tree its split is fixed whatever the thread count, and
-    /// only a drag changes it. `Space w h` and `Space w l` focus and
-    /// return; `Space p f` and `Space p t` show and hide each pane on its
-    /// own (ADR 0056).
-    #[test]
-    fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
-        let dir = fixture("split")?;
-        let mut app = source_app(&dir)?;
-        assert_eq!(app.sidebar_width(), 0);
-        assert_eq!(app.threads_pane_height(), 0);
-
-        // With nothing shown the pane alone fills the sidebar.
-        app.focus_threads_pane();
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        assert!(app.tree().is_none());
-        assert_eq!(app.sidebar_width(), 32);
-        assert_eq!(app.threads_pane_height(), app.pane_rows());
-        assert_eq!(app.tree_rows(), 0);
-        let column = sidebar_column(&app)?;
-        assert!(column[1].contains("threads · file 0"), "{:?}", column[1]);
-        assert!(
-            column[2].contains("no threads in this file"),
-            "{:?}",
-            column[2]
-        );
-
-        // `Space w l` hands the keys back; the pane stays.
-        press(&mut app, " wl");
-        assert_eq!(app.focus(), Focus::View);
-        assert!(app.threads_pane_shown());
-
-        // The tree joins above at the configured split of 8 rows, and a
-        // dozen threads do not grow it; `Space p f` shows the files pane
-        // and `Space w h` lands on it, the pane to the text's left.
-        press(&mut app, " pf");
-        press(&mut app, " wh");
-        assert_eq!(app.focus(), Focus::Tree);
-        assert_eq!(app.threads_pane_height(), 8);
-        assert_eq!(app.tree_rows(), app.pane_rows() - 8);
-        for line in 1..=8 {
-            annotate(&mut app, line, "many");
-        }
-        assert_eq!(app.threads_pane_rows().len(), 8);
-        assert_eq!(app.threads_pane_height(), 8, "the split is fixed");
-
-        // A drag on the rule changes it for the session.
-        let mouse = |kind, row: usize| MouseEvent {
-            kind,
-            column: 2,
-            row: u16::try_from(row).unwrap_or(u16::MAX),
-            modifiers: KeyModifiers::NONE,
-        };
-        let top = app.tree_rows();
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::Down(MouseButton::Left), top),
-        );
-        assert_eq!(app.dragging(), Some(Border::ThreadsPane));
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::Drag(MouseButton::Left), top - 4),
-        );
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::Up(MouseButton::Left), top - 4),
-        );
-        assert_eq!(app.threads_pane_height(), 12);
-        assert_eq!(app.tree_rows(), top - 4);
-
-        // `Space p f` hides the tree and leaves the pane; `Space p t` hides
-        // the pane, and with both gone the sidebar goes. Both keys show
-        // their pane again without taking the keys.
-        app.focus_threads_pane();
-        press(&mut app, " pf");
-        assert!(app.tree().is_none());
-        assert!(app.threads_pane_shown());
-        assert_eq!(
-            app.focus(),
-            Focus::ThreadsPane,
-            "the keys stay with the pane"
-        );
-        assert_eq!(app.sidebar_width(), 32);
-        press(&mut app, " pt");
-        assert!(!app.threads_pane_shown());
-        assert_eq!(app.focus(), Focus::View);
-        assert_eq!(app.sidebar_width(), 0);
-        press(&mut app, " pt");
-        assert!(app.threads_pane_shown(), "the same key shows it again");
-        assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
-        press(&mut app, " pf");
-        assert!(app.tree().is_some(), "the same key shows it again");
-        assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
-        Ok(())
-    }
-
-    /// A step from any surface moves the one cursor, and every surface
-    /// highlights the same thread (ADR 0046).
-    #[test]
-    fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
-        let dir = fixture("cursor")?;
-        let mut app = source_app(&dir)?;
-        app.show_tree();
-        app.show_threads_pane();
-        annotate(&mut app, 2, "two");
-        annotate(&mut app, 6, "six");
-        annotate(&mut app, 7, "seven");
-        let ids = app.file_threads();
-
-        // Nothing open: the cursor rides the text.
-        app.view_mut().goto_source_line(6);
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
-        assert_eq!(app.threads_pane_selected(), Some(1));
-        app.view_mut().goto_source_line(1);
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[0]));
-
-        // The text: `]c` steps, the threads pane's highlight follows.
-        app.focus_pane(Focus::View);
-        app.view_mut().goto_source_line(2);
-        app.expand_at_cursor();
-        assert_eq!(app.focus(), Focus::View);
-        press(&mut app, "]c");
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
-        assert_eq!(app.threads_pane_selected(), Some(1));
-        assert_eq!(app.thread_position(), Some((2, 3)));
-
-        // The threads pane: `j` steps the same cursor.
-        app.focus_threads_pane();
-        press(&mut app, "j");
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
-        assert_eq!(app.thread_position(), Some((3, 3)));
-        assert_eq!(app.view().cursor_source_line(), Some(7));
-
-        // The list opens on it and `k` steps it back.
-        app.open_review();
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
-        assert_eq!(app.review_selected_index(), Some(2));
-        press(&mut app, "k");
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
-
-        // Enter expands it in the text; the cursor lands on its line.
-        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.focus(), Focus::View);
-        assert_eq!(app.thread_position(), Some((2, 3)));
-        assert_eq!(app.view().cursor_source_line(), Some(6));
-
-        // The cursor stays until the reader moves.
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
-        app.view_mut().goto_source_line(7);
-        assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
-
-        // Esc in the threads pane leaves; the pane stays.
-        app.focus_threads_pane();
-        app.leave_threads_pane();
-        assert_eq!(app.focus(), Focus::View);
-        assert!(app.threads_pane_shown(), "Esc leaves, it does not hide");
-        Ok(())
-    }
-
-    #[test]
-    fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Result<()> {
-        let dir = fixture("overlap")?;
-        let mut app = source_app(&dir)?;
-        app.show_tree();
-        app.show_threads_pane();
-        // A long thread over L3-5, then a short one at L4 inside it.
-        app.view_mut().goto_source_line(3);
-        app.view_mut().select_lines();
-        app.view_mut().move_down(2);
-        app.start_comment();
-        app.compose_insert("long");
-        app.compose_submit();
-        annotate(&mut app, 4, "short");
-        assert_eq!(app.threads_pane_rows().len(), 2);
-        assert_eq!(
-            app.threads_pane_rows()[1].range().map(|r| r.start()),
-            Some(4)
-        );
-
-        // Clicking the second entry highlights it, not the long thread
-        // that also covers L4.
-        app.threads_pane_click(1);
-        assert_eq!(app.threads_pane_selected(), Some(1));
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        app.view_mut().goto_source_line(3);
-        assert_eq!(app.threads_pane_selected(), Some(0));
-        Ok(())
-    }
-
-    #[test]
-    fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
-        let dir = fixture("mouse")?;
-        let mut app = source_app(&dir)?;
-        app.show_tree();
-        app.show_threads_pane();
-        annotate(&mut app, 2, "two");
-        annotate(&mut app, 6, "six");
-        app.view_mut().goto_source_line(1);
-        let mouse = |kind, column: usize, row: usize| MouseEvent {
-            kind,
-            column: u16::try_from(column).unwrap_or(u16::MAX),
-            row: u16::try_from(row).unwrap_or(u16::MAX),
-            modifiers: KeyModifiers::NONE,
-        };
-        let down = MouseEventKind::Down(MouseButton::Left);
-        let top = app.tree_rows();
-        assert_eq!(app.pane_rows() - top, 8);
-
-        // A click on an entry puts the cursor on its thread and the keys
-        // with the pane.
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 3));
-        assert_eq!(app.view().cursor_source_line(), Some(6));
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        // A click on the header focuses the pane.
-        app.focus_pane(Focus::View);
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 1));
-        assert_eq!(app.focus(), Focus::ThreadsPane);
-        // The wheel steps between threads.
-        crate::app::input::mouse::handle_mouse(
-            &mut app,
-            mouse(MouseEventKind::ScrollUp, 2, top + 1),
-        );
-        assert_eq!(app.view().cursor_source_line(), Some(2));
-        // A click on the tree above leaves the pane.
-        crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, 1));
-        assert_eq!(app.focus(), Focus::Tree);
-        Ok(())
-    }
-}
+mod tests;

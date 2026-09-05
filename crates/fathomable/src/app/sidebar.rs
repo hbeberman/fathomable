@@ -4,6 +4,9 @@
 //! ADR 0057). Its state and its width rule live here; the panes' own
 //! code is in `files_pane` and `threads::pane`.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use fathomable_core::config::SidebarConfig;
 
 use super::threads::pane::PaneScope;
@@ -13,8 +16,8 @@ use super::{App, TEXT_MIN_WIDTH};
 const SIDEBAR_MIN_WIDTH: usize = 8;
 
 /// The sidebar's state (ADR 0049, ADR 0057): which of its panes are shown,
-/// what the threads pane lists, the split a drag set, and the configured
-/// sizes.
+/// what the threads pane lists and which files it has folded (ADR 0066),
+/// the split a drag set, and the configured sizes.
 #[derive(Debug)]
 pub(crate) struct Sidebar {
     /// The files pane is shown.
@@ -22,6 +25,8 @@ pub(crate) struct Sidebar {
     /// The threads pane is shown.
     pub(crate) threads: bool,
     pub(crate) scope: PaneScope,
+    /// Files the threads pane has folded to their row (ADR 0066).
+    pub(crate) folded: HashSet<PathBuf>,
     /// Rows a drag gave the threads pane, over `config.split`.
     pub(crate) split: Option<usize>,
     pub(crate) config: SidebarConfig,
@@ -33,6 +38,7 @@ impl Sidebar {
             tree: false,
             threads: false,
             scope: PaneScope::default(),
+            folded: HashSet::new(),
             split: None,
             config,
         }

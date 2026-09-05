@@ -4,13 +4,13 @@
 //! A thread *waits* when it is open and an agent has the last word on it
 //! ([`Thread::awaits_user`], ADR 0058); the user's reply, edit, resolve,
 //! or reopen ends the wait, so nothing is tracked per viewer. This module counts the
-//! waiting threads for the status line and the files pane, raises a toast
+//! waiting threads for the status line, raises a toast
 //! when a store reload turns a thread waiting, and walks them with
 //! `]r` / `[r`: the current document's below (above) the cursor first,
 //! then the other files' in path order, wrapping.
 
 use std::collections::{BTreeSet, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use fathomable_core::annotations::{Store, Thread, ThreadId};
 
@@ -29,11 +29,6 @@ impl App {
     /// Waiting threads across the work in scope.
     pub(crate) fn waiting_total(&self) -> usize {
         self.waiting_threads().count()
-    }
-
-    /// Whether a thread on `path` (root-relative) waits on the user.
-    pub(crate) fn path_waits(&self, path: &Path) -> bool {
-        self.waiting_threads().any(|thread| thread.path() == path)
     }
 
     fn waiting_threads(&self) -> impl Iterator<Item = &Thread> + '_ {
@@ -347,8 +342,6 @@ mod tests {
             Some("2 replies")
         );
         assert_eq!((app.waiting_count(), app.waiting_total()), (1, 2));
-        assert!(app.path_waits(Path::new("notes.md")));
-        assert!(!app.path_waits(Path::new("other.md")));
 
         // ]r lands on README:5 expanded; again crosses into notes.md; a
         // third wraps back with a notice.

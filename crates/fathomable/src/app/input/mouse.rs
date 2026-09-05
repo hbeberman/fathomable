@@ -16,6 +16,7 @@ use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
 use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
+use crate::app::threads::list::Row;
 use crate::app::view::Effect;
 
 /// Presses on one cell closer together than this are one gesture.
@@ -42,11 +43,10 @@ pub(crate) fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
 
 /// The mouse over the sidebar: the threads pane along its bottom (ADR 0027,
 /// ADR 0049) takes what lands on it; the tree above pages the viewer.
-fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) {
+fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
     let tree_rows = app.tree_rows();
     if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
-        threads_pane_mouse(app, kind, column, row, row - tree_rows);
-        return;
+        return threads_pane_mouse(app, kind, column, row, row - tree_rows);
     }
     match kind {
         // One row per tick, not `WHEEL_LINES`: each tick pages the main
@@ -74,20 +74,25 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize)
         }
         _ => {}
     }
+    Effect::None
 }
 
-/// The mouse over the threads pane (ADR 0027): the wheel steps between
-/// threads, a click on an entry goes to it, a click on the header
-/// toggles the reach (or, on its `x`, resolved threads), a right-click
-/// on an entry opens its menu, and the rule drags. Row 0 is the rule,
-/// row 1 the header.
+/// The mouse over the threads pane (ADR 0027, ADR 0066): the wheel
+/// steps between threads, a click on either row of a thread goes to it
+/// and one on a file row folds it, a click on the header toggles the
+/// scope (or, on its resolved count, resolved threads), a click on the
+/// key bar runs its hint, a right-click on a row opens its menu, and
+/// the rule drags. Row 0 is the rule, row 1 the header, and the last
+/// row the key bar while the pane has the keys.
 fn threads_pane_mouse(
     app: &mut App,
     kind: MouseEventKind,
     column: usize,
     row: usize,
     pane_row: usize,
-) {
+) -> Effect {
+    let inner = app.sidebar_width().saturating_sub(1);
+    let bar = app.focus() == Focus::ThreadsPane && pane_row + 1 == app.threads_pane_height();
     match kind {
         MouseEventKind::ScrollDown => app.threads_pane_move(1),
         MouseEventKind::ScrollUp => app.threads_pane_move(-1),
@@ -96,27 +101,34 @@ fn threads_pane_mouse(
         }
         MouseEventKind::Down(MouseButton::Left) if pane_row == 1 => {
             app.threads_pane_focus();
-            // The header ends in `s x ` before the divider: the `x` sits
-            // three cells in from the sidebar's edge.
-            if column + 3 == app.sidebar_width() {
-                app.review_toggle_resolved();
-            } else {
-                app.threads_pane_toggle_scope();
+            let header = header::threads_pane_header(app);
+            match header.action_at(inner, column) {
+                Some(action) => return app.act(action),
+                None => app.threads_pane_toggle_scope(),
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) if bar => {
+            let footer = header::threads_pane_footer(app);
+            if let Some(action) = footer.action_at(inner, column) {
+                return app.act(action);
             }
         }
         MouseEventKind::Down(MouseButton::Left) => app.threads_pane_click(pane_row - 2),
-        MouseEventKind::Down(MouseButton::Right) if pane_row >= 2 => {
+        MouseEventKind::Down(MouseButton::Right) if pane_row >= 2 && !bar => {
             app.open_threads_pane_menu(pane_row - 2, column, row);
         }
         _ => {}
     }
+    Effect::None
 }
 
-/// The mouse over the review list (ADR 0025, ADR 0059): the wheel
-/// scrolls, a click selects the entry under the pointer, a click on the
-/// header's sort word or a key-bar hint runs it, and a right-click on an
-/// entry opens its menu. Row 0 is the list header and the column's last
-/// row is the key bar; unfocused, a click on either focuses the list.
+/// The mouse over the review list (ADR 0025, ADR 0059, ADR 0066): the
+/// wheel scrolls, a click selects the entry under the pointer or folds
+/// the file row it lands on, a click on the header's resolved count, a
+/// key-bar hint, or a hint on the cursor's thread header runs it, and
+/// a right-click on a row opens its menu. Row 0 is the list header and
+/// the column's last row is the key bar; unfocused, a click on either
+/// focuses the list.
 fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
     let bar = app.pane_rows().saturating_sub(1);
     match kind {
@@ -130,7 +142,7 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             let width = app.column_width();
             let rows = app.review_rows(width);
             let header = if row == 0 {
-                header::review_header(app, &rows.entries)
+                header::review_header(app)
             } else {
                 header::review_footer(app, &rows.entries)
             };
@@ -138,7 +150,25 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
                 return app.act(action);
             }
         }
-        MouseEventKind::Down(MouseButton::Left) => app.review_click(row - 1),
+        MouseEventKind::Down(MouseButton::Left) => {
+            // A hint on the cursor's thread header runs its key (ADR 0066).
+            let width = app.column_width();
+            let rows = app.review_rows(width);
+            let now = fathomable_core::clock::now();
+            if let Some(Row::Header {
+                range,
+                words,
+                updated,
+                selected: true,
+                ..
+            }) = rows.rows.get(app.review_list().scroll() + row - 1)
+                && let Some(action) = header::entry_header(app, *range, *words, *updated, true, now)
+                    .action_at(width, column - app.sidebar_width())
+            {
+                return app.act(action);
+            }
+            app.review_click(row - 1);
+        }
         MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
             app.open_review_menu(row - 1, column, row);
         }
@@ -303,9 +333,21 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if right && matches!(app.popup(), Some(Popup::Compose(_))) {
         return Effect::None;
     }
-    if column < sidebar {
-        sidebar_mouse(app, event.kind, column, row);
+    // The status line's waiting and thread counts take a click (ADR
+    // 0066).
+    if left && row == rows {
+        let parts = draw::status_parts(app);
+        let start = app.size().0.saturating_sub(parts.right_width());
+        if let Some(action) = column
+            .checked_sub(start)
+            .and_then(|column| parts.action_at(column))
+        {
+            return app.act(action);
+        }
         return Effect::None;
+    }
+    if column < sidebar {
+        return sidebar_mouse(app, event.kind, column, row);
     }
     if app.review_list().is_open() {
         return review_mouse(app, event.kind, column, row);

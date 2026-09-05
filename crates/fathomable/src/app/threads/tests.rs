@@ -245,9 +245,10 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     assert!(app.marks()[0].is_detached());
     assert_eq!(app.mark_in(LineRange::new(5, 5)), None);
     // Placement and state are told apart (ADR 0032).
-    let rows = app.threads_pane_rows();
+    let rows = app.threads_pane_entries();
     assert_eq!(rows[0].words().placement(), Some("detached"));
     assert_eq!(rows[0].words().state(), ThreadState::Open);
+    assert_eq!(rows[0].words().glyph(), "?");
     Ok(())
 }
 
@@ -750,7 +751,11 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     let parts = crate::app::draw::status_parts(&app);
     assert_eq!(parts.pill, "NOR");
     assert_eq!(parts.badges, ["SRC"]);
-    assert!(parts.right.contains("1 threads"), "{}", parts.right);
+    assert!(
+        parts.right_text().contains("1 threads"),
+        "{}",
+        parts.right_text()
+    );
     app.focus_threads_pane();
     let parts = crate::app::draw::status_parts(&app);
     assert_eq!(parts.pill, "THREADS");
@@ -923,7 +928,7 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
     assert_eq!(rows.entries.len(), 2);
     assert!(matches!(
         rows.rows.first(),
-        Some(Row::Header { path, .. }) if path == Path::new("README.md")
+        Some(Row::File { path, count: 2, .. }) if path == Path::new("README.md")
     ));
     assert!(
         rows.rows
@@ -977,25 +982,34 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The review is an inbox (ADR 0049): threads an agent spoke in last
-/// come first, newest first, then the rest; `s` orders by file and
-/// line instead, and the sidebar's threads pane follows the same order
-/// in workspace scope.
+/// The review lists files in the files pane's order under a row per
+/// file, threads by line within one (ADR 0066); `z` folds the cursor's
+/// file to its row and `Z` every file, a folded file being one stop.
 #[test]
-fn the_review_orders_by_newest_agent_reply_then_by_file() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-inbox", testing::README)?;
+fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-by-file", testing::README)?;
+    fs::create_dir_all(dir.0.join("ws/docs"))?;
+    fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n\nfirst\n")?;
     let mut app = app(&dir)?;
-    app.start_comment();
-    type_in(&mut app, "top");
-    app.compose_submit();
     app.view_mut().goto_bottom();
     app.start_comment();
     type_in(&mut app, "bottom");
     app.compose_submit();
+    app.view_mut().goto_top();
+    app.start_comment();
+    type_in(&mut app, "top");
+    app.compose_submit();
+    app.open(Path::new("docs/guide.md"));
+    app.view_mut().goto_bottom();
+    app.start_comment();
+    type_in(&mut app, "guide");
+    app.compose_submit();
+    let guide = app.file_threads()[0].clone();
+    app.open(Path::new("README.md"));
     let top = app.file_threads()[0].clone();
     let bottom = app.file_threads()[1].clone();
     app.agent_reply(
-        &top,
+        &bottom,
         Author::agent("reviewer"),
         "answered".to_owned(),
         false,
@@ -1009,40 +1023,71 @@ fn the_review_orders_by_newest_agent_reply_then_by_file() -> anyhow::Result<()> 
             .map(|entry| entry.id().clone())
             .collect()
     };
+    let files = |app: &App| -> Vec<String> {
+        app.review_rows(60)
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::File { path, folded, .. } => Some(format!(
+                    "{}{}",
+                    if *folded { "▸ " } else { "" },
+                    path.display()
+                )),
+                _ => None,
+            })
+            .collect()
+    };
     app.open_review();
-    assert_eq!(order(&app), [top.clone(), bottom.clone()], "answered first");
-    app.review_toggle_sort();
-    assert_eq!(app.message(), Some("review by file"));
-    assert_eq!(order(&app), [top.clone(), bottom.clone()], "L1 before L8");
-    // A later reply, a minute on so the second does not tie.
-    let later = app.thread(&top).map_or(0, Thread::updated) + 60;
-    app.store_mut().context("store")?.reply(
-        &bottom,
-        fathomable_core::annotations::Reply::new(
-            Author::agent("reviewer"),
-            later,
-            "answered later".to_owned(),
-        ),
-    )?;
     assert_eq!(
         order(&app),
-        [top.clone(), bottom.clone()],
-        "file order holds"
+        [guide.clone(), top.clone(), bottom.clone()],
+        "the directory first, then lines; the reply does not reorder"
     );
-    app.review_toggle_sort();
-    assert_eq!(
-        order(&app),
-        [bottom.clone(), top.clone()],
-        "newest reply first"
-    );
-    app.close_review();
+    assert_eq!(files(&app), ["docs/guide.md", "README.md"]);
 
-    // The threads pane's workspace scope reads the same order.
-    app.show_threads_pane();
-    app.threads_pane_toggle_scope();
-    assert_eq!(app.threads_pane_ids(), [bottom.clone(), top.clone()]);
-    app.review_toggle_sort();
-    assert_eq!(app.threads_pane_ids(), [top, bottom]);
+    // `z` on README's first thread folds README; the cursor stays inside
+    // and the file row is selected; `k` reaches the guide, `j` comes
+    // back to README once, and Enter still opens the file.
+    app.set_thread_cursor(top.clone());
+    app.review_fold();
+    assert_eq!(files(&app), ["docs/guide.md", "▸ README.md"]);
+    assert!(
+        app.review_rows(60)
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::File { selected: true, .. }))
+    );
+    assert!(
+        !app.review_rows(60)
+            .rows
+            .iter()
+            .any(|row| matches!(row, Row::Header { entry: 1, .. })),
+        "a folded file's threads have no rows"
+    );
+    app.review_step(-1);
+    assert_eq!(app.thread_cursor().thread(), Some(&guide));
+    app.review_step(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&top));
+    app.review_step(1);
+    assert_eq!(
+        app.thread_cursor().thread(),
+        Some(&top),
+        "one stop, no further"
+    );
+    app.review_fold_all();
+    assert_eq!(
+        files(&app),
+        ["docs/guide.md", "README.md"],
+        "any folded: unfold all"
+    );
+    app.review_fold_all();
+    assert_eq!(files(&app), ["▸ docs/guide.md", "▸ README.md"]);
+    app.review_fold();
+    assert_eq!(files(&app), ["▸ docs/guide.md", "README.md"]);
+    // `f` lists one file with no file row.
+    app.review_toggle_file();
+    assert!(files(&app).is_empty());
+    assert_eq!(order(&app), [top.clone(), bottom.clone()]);
     Ok(())
 }
 
@@ -1482,22 +1527,26 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     assert_eq!(app.proposed_total(), 1);
     assert_eq!(app.waiting_count(), 1, "a proposal is still waiting");
     let screen = render(&app)?;
-    assert!(screen.contains("1 proposed  1 waiting"), "{screen}");
+    assert!(screen.contains("1 proposed  ● 1 waiting"), "{screen}");
 
     app.open_review();
     let rows = app.review_rows(60);
     assert_eq!(rows.entries.len(), 1, "a proposed thread is not hidden");
     assert!(rows.entries[0].proposed());
     assert!(matches!(
-        rows.rows.first(),
-        Some(Row::Header { proposed: true, .. })
+        rows.rows.get(1),
+        Some(Row::Header { words, .. }) if words.proposed() && words.glyph() == "◐"
     ));
     let screen = render(&app)?;
-    assert!(screen.contains("1 open · 1 proposed"), "{screen}");
+    assert!(
+        screen.contains("review  ●1"),
+        "a proposal counts as waiting: {screen}"
+    );
+    assert!(screen.contains("◐  L"), "{screen}");
     assert!(screen.contains("waiting · proposed"), "{screen}");
     // The keys are on the bar along the list's bottom row (ADR 0059).
     let bar = screen.lines().nth(app.pane_rows() - 1).unwrap_or_default();
-    assert!(bar.contains("s sort · x resolved"), "{screen}");
+    assert!(bar.contains("x resolved · f file"), "{screen}");
     app.close_review();
 
     // Only the newest reply is read: a plain reply withdraws the proposal.

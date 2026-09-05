@@ -8,7 +8,10 @@
 //! right-click placed, so they are ordinary [`Action`]s run through
 //! [`App::act`]; the menu needs no target of its own.
 
+use std::path::Path;
+
 use super::bindings::{self, Action, Chord, Keys, Match, Where};
+use crate::app::threads::pane::{PanePoint, PaneScope};
 use crate::app::threads::words::Words;
 use crate::app::view::{Effect, Mode};
 use crate::app::{App, Focus, Popup};
@@ -416,6 +419,11 @@ impl App {
             return;
         };
         let is_dir = current.is_dir();
+        let has_threads = !is_dir
+            && self
+                .file_circles()
+                .iter()
+                .any(|(path, _)| path == current.path());
         let mut menu = Menu::new(current.name().to_owned(), Where::Tree, column, row);
         menu.push(Action::Confirm, Action::Confirm, "open");
         if !is_dir {
@@ -425,27 +433,101 @@ impl App {
                 "checkpoint this file",
             );
         }
+        // A file with listed threads offers its two thread views (ADR
+        // 0066).
+        if has_threads {
+            menu.push(Action::ThreadsOnFile, Action::ThreadsOnFile, "threads");
+            menu.push(Action::Review, Action::Review, "review");
+        }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
         self.open_menu(menu);
     }
 
-    /// A right-click on a threads pane entry at screen `(column, row)`:
-    /// the thread cursor moves there, then the thread's menu.
+    /// A right-click on a threads pane row at screen `(column, row)`:
+    /// on a thread the cursor moves there and the thread's menu opens;
+    /// on a file row the cursor goes to its first thread and the file's
+    /// menu opens (ADR 0066).
     pub(super) fn open_threads_pane_menu(&mut self, entry_row: usize, column: usize, row: usize) {
-        self.threads_pane_click(entry_row);
-        if self.thread_cursor().thread().is_some() {
-            let menu = self.thread_menu(Where::ThreadsPane, column, row);
-            self.open_menu(menu);
+        match self.threads_pane_point(entry_row) {
+            Some(PanePoint::File(path)) => {
+                let folded = self.threads_pane_is_folded(&path);
+                let menu = self.file_menu(Where::ThreadsPane, &path, folded, column, row);
+                self.open_menu(menu);
+            }
+            Some(PanePoint::Thread) => {
+                let menu = self.thread_menu(Where::ThreadsPane, column, row);
+                self.open_menu(menu);
+            }
+            None => {}
         }
     }
 
-    /// A right-click on a review list row at screen `(column, row)`.
+    /// A right-click on a review list row at screen `(column, row)`: a
+    /// file row's menu, or the thread's.
     pub(super) fn open_review_menu(&mut self, list_row: usize, column: usize, row: usize) {
+        if let Some(path) = self.review_point(list_row) {
+            let folded = self.review_list().is_folded(&path);
+            let menu = self.file_menu(Where::Review, &path, folded, column, row);
+            self.open_menu(menu);
+            return;
+        }
         self.review_click(list_row);
         if self.thread_cursor().thread().is_some() {
             let menu = self.thread_menu(Where::Review, column, row);
             self.open_menu(menu);
         }
+    }
+
+    /// Whether `place` groups its threads by file now, so a fold has
+    /// something to fold (ADR 0066).
+    fn folds_files(&self, place: Where) -> bool {
+        match place {
+            Where::ThreadsPane => self.sidebar_scope() == PaneScope::Workspace,
+            Where::Review => !self.review().file_only,
+            _ => false,
+        }
+    }
+
+    /// The menu for a file row (ADR 0066): fold or unfold it, fold or
+    /// unfold every file, open the file, and the resolved toggle.
+    fn file_menu(
+        &self,
+        place: Where,
+        path: &Path,
+        folded: bool,
+        column: usize,
+        row: usize,
+    ) -> Menu {
+        let name = path.file_name().map_or_else(
+            || path.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let mut menu = Menu::new(name, place, column, row);
+        menu.push(
+            Action::Fold,
+            Action::Fold,
+            if folded { "unfold" } else { "fold" },
+        );
+        let any_folded = self.review_entries(false).iter().any(|entry| match place {
+            Where::ThreadsPane => self.threads_pane_is_folded(entry.path()),
+            _ => self.review_list().is_folded(entry.path()),
+        });
+        menu.push(
+            Action::FoldAll,
+            Action::FoldAll,
+            if any_folded { "unfold all" } else { "fold all" },
+        );
+        menu.push(Action::Confirm, Action::Confirm, "open file");
+        menu.push(
+            Action::ReviewResolved,
+            Action::ReviewResolved,
+            if self.review().resolved {
+                "hide resolved"
+            } else {
+                "show resolved"
+            },
+        );
+        menu
     }
 
     /// The menu for the thread cursor's thread on a thread surface.
@@ -479,6 +561,9 @@ impl App {
             );
         }
         menu.push(Action::Delete, Action::DeleteThread, "delete thread");
+        if self.folds_files(place) {
+            menu.push(Action::Fold, Action::Fold, "fold file");
+        }
         menu
     }
 }

@@ -15,7 +15,9 @@ tags:
 
 # 0065 z folds and unfolds
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05). Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): in the review list and the threads pane
+`z` folds the cursor's file and `Z` every file.
 
 ## Context
 

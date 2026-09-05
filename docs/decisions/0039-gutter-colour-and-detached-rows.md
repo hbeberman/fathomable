@@ -11,7 +11,9 @@ tags:
 
 # 0039 Gutter colour says status, detached threads get a row
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28). Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): a detached row draws `?` and a one-row
+thread its circle; `•` retires.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

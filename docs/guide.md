@@ -119,7 +119,7 @@ The `Space` menu, from any pane:
 | --- | --- |
 | `Space f` | file picker |
 | `Space F i`, `Space F r` | files: the picker including ignored files; the recent files |
-| `Space r` | the review list: every thread on the work in place of the document, newest agent reply first, resolved hidden; on the focused list, close it |
+| `Space r` | the review list: every thread on the work in place of the document, by file then line under a row per file, resolved hidden; on the focused list, close it |
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
 | `Space w w`, `Space Space` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
@@ -138,32 +138,36 @@ The `Space` menu, from any pane:
 | `Space ?` | all keys |
 | `:` | the command line, from any pane |
 
-Threads pane (the sidebar's lower pane; its header reads `threads · file 3`
-or `threads · workspace 12`):
+Threads pane (the sidebar's lower pane; its header reads `threads ·
+file` or `threads · workspace` with the counts by colour at its right
+edge, `●2 ●1 ○3` for open, waiting, and resolved; while the pane has
+the keys, its bottom row is a key bar naming them):
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` | next / previous thread, wrapping; the text follows, and in workspace scope the file opens |
+| `j` `k` | next / previous thread, wrapping, a folded file counting once; the text follows, and in workspace scope the file opens |
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads (the review list shares the flag) |
+| `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
-Review list (`Space r`; its header reads `review  4 open · 1 proposed
-· resolved hidden` with the sort word at its right edge, the proposal
-count only while there is one; the keys below sit on a bar along the
-list's bottom row, and the header, the bar, and each entry's header
-draw on the `ui.header` surface every pane header shares):
+Review list (`Space r`; its header reads `review  ●2 ●1 ○3`, the counts
+by colour as the threads pane's, then ` · path` while `f` narrows it;
+the keys below sit on a bar along the list's bottom row, and the
+header, the bar, and each thread's header draw on the `ui.header`
+surface every pane header shares):
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` / `Down` `Up` | next / previous thread, its newest message highlighted |
+| `j` `k` / `Down` `Up` | next / previous thread, its newest message highlighted; a folded file counts once |
 | `l` `h` / `Right` `Left` | next / previous message in the thread |
 | `gg` `ge` `G` | first / last thread |
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
-| `s`, `x`, `f`, `z` | sort by newest agent reply or by file and line; show or hide resolved threads (the threads pane shares the flag); only this file; fold the entry |
+| `x`, `f` | show or hide resolved threads (the threads pane shares the flag); only this file |
+| `z`, `Z` | fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
 | `Esc` | close the list, back to the document (`Space r` does too) |
 
 The draft, a comment, reply, or edit written in the thread's rows:
@@ -186,6 +190,7 @@ Files pane and picker:
 | `j` `k` `h` `l` `Enter` | move (the highlighted file is shown), collapse, expand or open and focus |
 | `gg` `ge` `G` | top / bottom |
 | `y` | copy the highlighted entry's path, relative to the root |
+| `t` | the threads pane in file scope on the highlighted file, with the keys |
 | `Esc` | back to the text; the pane stays |
 | picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
 
@@ -211,17 +216,24 @@ thread, copy, and clear; on a line a thread covers, expand or fold,
 reply, resolve or reopen, edit, and delete; on a link, copy or open it,
 and on a link or a path that names a file, open it in the viewer;
 on any line, comment, select, and copy. In the files pane it offers open,
-checkpoint, and copy path; on a threads pane or review
-list entry, go to, reply, resolve, edit, and delete. A right-click
+checkpoint, copy path, and, on a file with threads, `threads` (the
+threads pane on it) and `review`; on a threads pane or review list
+thread, go to, reply, resolve, edit, delete, and fold file; on a file
+row of either, fold or unfold, fold all or unfold all, open file, and
+the resolved toggle. A right-click
 outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
 at once. The `Space` menu and `Space ?` take clicks too, as do the key
-hints at the right edge of the threads pane, checkpoint, expanded
-thread, and draft author rows and on the review list's key bar; a click
-on the threads pane header toggles its reach, on the review list's sort
-word switches the sort, and on the checkpoint header's base or target
-name opens that picker.
+hints at the right edge of the checkpoint, expanded
+thread, and draft author rows and on the review list's and the threads
+pane's key bars; a click on either row of a thread in the threads pane
+lands on it and one on a file row folds or unfolds it; a click
+on the threads pane header's words toggles its scope and one on its
+resolved count toggles `x`, as in the review list's header; on the
+checkpoint header's base or target
+name opens that picker; and on the status line the waiting count opens
+the review list and the thread count focuses the threads pane.
 
 Selecting with the mouse: drag over text for a character selection; a
 press or drag in the gutter selects whole lines; a double-click selects
@@ -249,7 +261,20 @@ as the row is not text. The colour of a mark is the thread's status
 alone: amber while open (`thread.open`), a bold cool colour when it
 waits on you (`thread.waiting`), grey once resolved
 (`thread.resolved`); *edited* and *detached* are words in an expanded
-thread's header, not colours. A comment on the file as a whole
+thread's header, not colours. Every surface that names a thread draws
+one **circle** in that colour, the fill saying where the thread is in
+its life:
+
+| glyph | meaning |
+| --- | --- |
+| `●` | open (amber), or waiting on you (the waiting colour) |
+| `◐` | an agent's newest reply proposes resolving it |
+| `○` | resolved |
+| `?` | the thread's lines are gone (detached) |
+
+The gutter, a stub, an expanded thread's header, the threads pane, the
+review list, the files pane, and the status line's waiting count all
+draw it. A comment on the file as a whole
 (`Space c f`, or an agent's `thread_start` with no `line`) has no
 lines: its stub stands above the first line, its header reads
 `file · open`, and it never moves, detaches, or re-anchors. The lines of the thread the cursor is on
@@ -326,16 +351,28 @@ becomes a stub.
 The left column is the **sidebar**: the **files pane** above the **threads
 pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
 the sidebar drawn while either is. The threads pane lists this file's
-threads in line order or, after `s`, the whole workspace's by file and
-line, resolved ones hidden until `x` shows them: `●` open or `✓`
-resolved in the gutter colour, `L3-5` or `guide.md:3`, the first line of
-the newest message, `↩n` when replied, and the age at the edge. Beside
-the files pane it keeps `sidebar.split` rows (8 by default; drag its rule to
+threads in line order or, after `s`, the whole workspace's grouped by
+file, resolved ones hidden until `x` shows them. Each thread takes two
+rows: its circle, `L3-5` (or `file`), and who wrote its newest message
+(`name (role)`, or the name alone when the column is narrow), with
+`↩n` when replied and the age at the edge; then that message's first
+line, cut with `…`. In workspace scope a row per file in the files
+pane's order sits over its threads with the count at the edge; `z`
+folds a file to `▸ path  n` and `Z` every file, the fold outliving a
+scope or file switch, and the current file's rows carry the focus
+tint. The header counts by colour (`●2 ●1 ○3`; a `◐` thread counts as
+waiting, and the resolved count is dim while hidden), and while the
+pane has the keys its bottom row is a key bar (`s scope · x resolved ·
+z fold · Z fold all`, from the end as the column narrows). Beside the
+files pane it keeps `sidebar.split` rows (8 by default; drag its rule to
 change that for the session), and alone it takes the whole column. The
-highlighted row is the thread under the cursor, so reading the file
+highlighted entry is the thread under the cursor, both rows on the
+selected surface, so reading the file
 walks the pane; `j`/`k` step the cursor and the text follows, another
 file opening in workspace scope, `Enter` opens the file with the thread
-expanded, and `r` and `o` act on the highlight.
+expanded, and `r` and `o` act on the highlight. A file with listed
+threads shows its most urgent circle after its name in the files pane,
+and a collapsed directory its children's.
 
 The text, the threads pane, and the review list show one **thread
 cursor**: a thread and a message in it. Whichever surface you move it
@@ -350,17 +387,22 @@ uppercase crosses files: `]c`/`[c` step to the previous or next thread
 of this file, wrapping, and `]C`/`[C` across the workspace, files in
 path order, opening the file they land in.
 
-`Space r` shows the whole review at once as an inbox: every thread on
-the current work (the ones whose commit `HEAD` can reach), the ones an
-agent spoke in last at the top, newest first, then the rest by their
-newest message; `s` sorts by file and line instead. Resolved threads
+`Space r` shows the whole review at once: the threads pane full
+screen. Every thread on the current work (the ones whose commit `HEAD`
+can reach) sits under a row per file, files in the files pane's order
+and threads by line, each open with its messages under a header that
+reads as the expanded thread in the text does (`●  L14-16  waiting
+10m ago`). Resolved threads
 are hidden until `x` shows them dimmed (the threads pane shares the
-flag). Every entry header carries the path, the lines, the state, and
-the age, then the comment and replies in full. It takes the text column
+flag). It takes the text column
 the way a document does; the sidebar stays beside it. The newest message
-in the selected thread starts highlighted; `j`/`k` move between
-threads, `l`/`h` move between their messages, `Ctrl-d`/`Ctrl-u` move by
-half a page of rows, `z` folds an entry, and `e` edits a highlighted
+in the selected thread starts highlighted, and the thread's header
+carries the thread keys; `j`/`k` move between
+threads (a folded file counting once), `l`/`h` move between their
+messages, `Ctrl-d`/`Ctrl-u` move by
+half a page of rows, `z` folds the cursor's file to its row and `Z`
+every file (the list's folds are its own, apart from the pane's), and
+`e` edits a highlighted
 message you wrote. `Enter` opens the file with the thread expanded and
 the cursor on that message, `o` resolves in place, `r` and `e` open the
 file the way `Enter` does to write the reply or edit in the thread's
@@ -373,9 +415,10 @@ and until then no agent is woken for it
 ([0058](decisions/0058-the-user-has-the-last-word.md)). Waiting
 threads have their own colour (`thread.waiting`) in the gutter
 bracket, the threads pane, and the review list, the status line
-counts them (`2 waiting`, and `1 proposed` before it while a thread on
-the document carries a proposal; `:status` has both totals), the tree
-tags their files `↩`, and a reply landing while you read raises a toast
+counts them (`● 2 waiting` with a teal circle, and `1 proposed` before
+it while a thread on
+the document carries a proposal; `:status` has both totals), the files
+pane's circle after their file turns teal, and a reply landing while you read raises a toast
 (`reply on src/lib.rs:42`, or `reply on src/lib.rs:42, proposes
 resolving` when the agent proposed closing it). `]r`
 and `[r`, or `Tab` and `Shift-Tab`, step through them — this file
@@ -389,7 +432,7 @@ what differs from `HEAD`: a green bar for added lines, orange for changed
 ones, and a thin red rule along the top of the line that follows a removal
 (the removed text itself is only shown in the diff view). Thread marks
 sit at the far left of the gutter: a thread's rows are bracketed `╭`, `│`,
-`╰`, a thread on one row is `•`, and a thread nested inside another
+`╰`, a thread on one row draws its circle, and a thread nested inside another
 re-draws the corners on the outer one's line. The rows are the rendered
 ones, so a thread on a long markdown paragraph is bracketed across the rows
 it wraps to, and the blank rows between paragraphs inside a thread draw `│`.

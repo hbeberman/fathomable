@@ -7,6 +7,7 @@ pub(crate) mod gutter;
 pub(crate) mod header;
 pub(crate) mod info;
 pub(crate) mod message;
+mod threads_pane;
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -22,14 +23,16 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::header::{
-    Header, Tone, diff_header, draft_header, expanded_header, review_footer, review_header,
+    Header, Tone, diff_header, draft_header, entry_header, expanded_header, review_footer,
+    review_header,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
+use crate::app::input::bindings::Action;
 use crate::app::threads::list::{Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
-use crate::app::threads::words::label;
-use crate::app::threads::{Compose, ThreadState};
+use crate::app::threads::words::Words;
+use crate::app::threads::{Compose, Mark, ThreadState, author_label};
 use crate::app::view::{Mode, View};
 
 use crate::app::input::bindings;
@@ -550,6 +553,7 @@ fn tree_lines<'a>(
     header.push(divider.clone());
     out.push(Line::from(header));
     let focused = app.focus() == Focus::Tree;
+    let circles = app.file_circles();
     for (index, row) in tree
         .rows()
         .iter()
@@ -586,7 +590,7 @@ fn tree_lines<'a>(
         } else {
             app.queue().contains(row.path())
         };
-        let (letter, mut tail) = tree_marks(app, row, theme, style, badge);
+        let (letter, mut tail) = tree_marks(app, row, theme, style, badge, &circles);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
@@ -620,14 +624,15 @@ fn tree_lines<'a>(
 
 /// The marks around a files pane name: the git letter for the gutter column
 /// (ADR 0017; files only, a folder's state is its children's), then the
-/// counts and the follow badge (ADR 0015) that follow the name, each drawn
-/// over the row's background.
+/// counts, the follow badge (ADR 0015), and the thread circle (ADR 0066)
+/// that follow the name, each drawn over the row's background.
 fn tree_marks<'a>(
     app: &App,
     row: &fathomable_core::tree::Row,
     theme: &Theme,
     style: Style,
     badge: bool,
+    circles: &[(std::path::PathBuf, Words)],
 ) -> (Option<Span<'a>>, Vec<Span<'a>>) {
     // A collapsed directory folds what is beneath it.
     let git = if row.is_dir() {
@@ -678,9 +683,29 @@ fn tree_marks<'a>(
     if badge {
         tail.push(Span::styled(" ●", on_bg(theme.diff_delta)));
     }
-    // A file with a thread waiting on the user (ADR 0030).
-    if !row.is_dir() && app.path_waits(row.path()) {
-        tail.push(Span::styled(" ↩", on_bg(theme.thread_waiting)));
+    // The most urgent circle of a file's listed threads, or of a folded
+    // directory's (ADR 0066).
+    let circle = if row.is_dir() {
+        (!row.expanded())
+            .then(|| {
+                circles
+                    .iter()
+                    .filter(|(path, _)| path.starts_with(row.path()))
+                    .map(|(_, words)| *words)
+                    .max_by_key(|words| words.urgency())
+            })
+            .flatten()
+    } else {
+        circles
+            .iter()
+            .find(|(path, _)| path == row.path())
+            .map(|(_, words)| *words)
+    };
+    if let Some(words) = circle {
+        tail.push(Span::styled(
+            format!(" {}", words.glyph()),
+            on_bg(mark_style(theme, words.state())),
+        ));
     }
     (letter, tail)
 }
@@ -718,7 +743,7 @@ fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     if pane_area.height > 0 && app.threads_pane_shown() {
         frame.render_widget(
-            Paragraph::new(threads_pane_lines(
+            Paragraph::new(threads_pane::threads_pane_lines(
                 app,
                 theme,
                 width,
@@ -728,111 +753,6 @@ fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             pane_area,
         );
     }
-}
-
-/// The threads pane (ADR 0027, ADR 0049): a rule, a header with the
-/// scope and count and the `s x` keys at the edge, then one row per
-/// thread — status glyph, place, first line of the newest message, and
-/// the reply count and age at the right edge when the column has room.
-fn threads_pane_lines<'a>(app: &App, theme: &Theme, width: usize, rows: usize) -> Vec<Line<'a>> {
-    let inner = width.saturating_sub(1);
-    let divider = Span::styled("│", theme.marker);
-    let with_divider = |spans: Vec<Span<'a>>| {
-        let mut spans = spans;
-        spans.push(divider.clone());
-        Line::from(spans)
-    };
-    let mut out = Vec::with_capacity(rows);
-    out.push(with_divider(vec![Span::styled(
-        "─".repeat(inner),
-        theme.info,
-    )]));
-    let scope = app.sidebar_scope();
-    let entries = app.threads_pane_rows();
-    // The title row is a bar on `ui.header` (ADR 0059).
-    let header_style = theme
-        .sidebar_dir
-        .add_modifier(Modifier::BOLD)
-        .patch(theme.header);
-    let title = format!(" threads · {} {}", scope.word(), entries.len());
-    let keys = "s x ";
-    let mut header = Vec::new();
-    if inner > display_width(&title) + display_width(keys) {
-        header.push(Span::styled(
-            fit(&title, inner - display_width(keys)),
-            header_style,
-        ));
-        header.push(Span::styled(
-            keys.to_owned(),
-            theme.info.patch(theme.header),
-        ));
-    } else {
-        header.push(Span::styled(fit(&title, inner), header_style));
-    }
-    out.push(with_divider(header));
-    if entries.is_empty() {
-        let empty = match scope {
-            crate::app::threads::pane::PaneScope::File => " no threads in this file",
-            crate::app::threads::pane::PaneScope::Workspace => " no threads in the workspace",
-        };
-        out.push(with_divider(vec![Span::styled(
-            fit(empty, inner),
-            theme.info,
-        )]));
-    }
-    let focused = app.focus() == Focus::ThreadsPane;
-    let selected = app.threads_pane_selected();
-    let now = fathomable_core::clock::now();
-    for (index, row) in entries
-        .iter()
-        .enumerate()
-        .skip(app.threads_pane_scroll())
-        .take(rows.saturating_sub(2))
-    {
-        let mut style = theme.sidebar;
-        if selected == Some(index) {
-            style = style.patch(theme.sidebar_selected);
-            if !focused {
-                style = style.remove_modifier(Modifier::BOLD);
-            }
-        }
-        let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
-        let resolved = row.words().is_resolved();
-        let glyph = if resolved { "✓" } else { "●" };
-        let place = format!(" {} ", row.place(scope));
-        let age = format_age_short(row.updated(), now);
-        let tail = if row.replies() > 0 {
-            format!(" ↩{} {age}", row.replies())
-        } else {
-            format!(" {age}")
-        };
-        let lead_width = 1 + display_width(glyph) + display_width(&place);
-        // The tail goes first when the column is narrow; the summary
-        // takes what is left, however little.
-        let tail_width = display_width(&tail);
-        let keep_tail = inner >= lead_width + tail_width + 4;
-        let summary_width = inner
-            .saturating_sub(lead_width)
-            .saturating_sub(if keep_tail { tail_width } else { 0 });
-        let summary = fit(row.summary(), summary_width);
-        let mut spans = vec![
-            Span::styled(" ", style),
-            Span::styled(glyph, on_bg(mark_style(theme, row.kind())).patch(style)),
-            Span::styled(place, style),
-            Span::styled(summary, if resolved { on_bg(theme.info) } else { style }),
-        ];
-        if keep_tail {
-            spans.push(Span::styled(tail, on_bg(theme.info)));
-        }
-        out.push(with_divider(spans));
-    }
-    while out.len() < rows {
-        out.push(with_divider(vec![Span::styled(
-            " ".repeat(inner),
-            theme.sidebar,
-        )]));
-    }
-    out
 }
 
 /// Pad or truncate `text` to exactly `width` cells.
@@ -851,6 +771,19 @@ pub(super) fn fit(text: &str, width: usize) -> String {
         out.push_str(&" ".repeat(width - used));
     }
     out
+}
+
+/// Pad `text` to exactly `width` cells, or cut it to fit with `…` as
+/// its last cell (ADR 0066).
+pub(super) fn fit_ellipsis(text: &str, width: usize) -> String {
+    if display_width(text) <= width || width == 0 {
+        return fit(text, width);
+    }
+    let mut shortened: String = text.chars().collect();
+    while display_width(&shortened) + 1 > width && !shortened.is_empty() {
+        shortened.pop();
+    }
+    fit(&format!("{shortened}…"), width)
 }
 
 pub(super) fn face_style(theme: &Theme, face: &Face_) -> Style {
@@ -1034,11 +967,9 @@ fn stub_line<'a>(
     let Some(thread) = stub.thread().and_then(|id| app.thread(id)) else {
         return Line::from("");
     };
-    let kind = app
-        .marks()
-        .iter()
-        .find(|mark| mark.id() == thread.id())
-        .map_or(ThreadState::Open, crate::app::threads::Mark::kind);
+    let mark = app.mark_of(thread.id());
+    let kind = mark.map_or(ThreadState::Open, Mark::kind);
+    let glyph = mark.map_or("●", Mark::glyph);
     let (author, created, body) = match message.checked_sub(1) {
         None => (
             author_label(thread.author(), app.user_name()),
@@ -1094,22 +1025,14 @@ fn stub_line<'a>(
         .saturating_sub(1 + display_width(&lead) + display_width(&age))
         .saturating_sub(display_width(hint));
     let first = body.lines().next().unwrap_or("");
-    let text = if display_width(first) > free && free > 0 {
-        let mut shortened: String = first.chars().collect();
-        while display_width(&shortened) + 1 > free && !shortened.is_empty() {
-            shortened.pop();
-        }
-        fit(&format!("{shortened}…"), free)
-    } else {
-        fit(first, free)
-    };
+    let text = fit_ellipsis(first, free);
     let spans = vec![
         note,
         Span::styled(" ".repeat(digits), row_style),
         Span::styled(" ", row_style),
         Span::styled(" ", row_style),
         edge,
-        Span::styled("●".to_owned(), mark_style(theme, kind).patch(row_style)),
+        Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
         Span::styled(lead, theme.popup_key.patch(row_style)),
         Span::styled(age, theme.info.patch(row_style)),
         Span::styled(text, text_style),
@@ -1225,22 +1148,6 @@ fn with_gutter<'a>(
     Line::from(spans).style(theme.thread_inline.patch(inner))
 }
 
-/// How a message's author reads on a stub: the user by the configured
-/// name (ADR 0058), an agent as `name (type)` when it subscribed with a
-/// type.
-fn author_label(author: &fathomable_core::annotations::Author, user: &str) -> String {
-    use fathomable_core::annotations::Author;
-    match author {
-        Author::User => user.to_owned(),
-        Author::Agent {
-            name,
-            kind: Some(kind),
-            ..
-        } => format!("{name} ({kind})"),
-        Author::Agent { name, .. } => name.clone(),
-    }
-}
-
 fn grapheme_cells(text: &str) -> impl Iterator<Item = &str> {
     // Splitting at char boundaries is enough for styling; combining marks
     // stay attached to the preceding cell in the terminal.
@@ -1272,7 +1179,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     let hint = change_hint(app);
     // Keep the right-hand block visible by trimming the path from the left.
     let badges: usize = parts.badges.iter().map(|b| display_width(b) + 2).sum();
-    let fixed = display_width(parts.pill) + 3 + badges + display_width(&parts.right) + 8;
+    let fixed = display_width(parts.pill) + 3 + badges + parts.right_width() + 8;
     let path = app.current_path().to_string_lossy();
     let path = truncate_left(&path, width.saturating_sub(fixed));
     let mut left = vec![
@@ -1282,7 +1189,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     if view.changed() {
         left.push(Span::styled(" [+]", theme.info));
     }
-    for badge in parts.badges {
+    for badge in &parts.badges {
         left.push(Span::styled(format!("  {badge}"), theme.info));
     }
     if !app.prefix().is_empty() {
@@ -1296,28 +1203,93 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     } else if let Some(hint) = hint {
         left.push(Span::styled(format!("  {hint}"), theme.diff_delta));
     }
-    let right = parts.right;
     let used: usize = left
         .iter()
         .map(|s| display_width(&s.content))
         .sum::<usize>()
-        + display_width(&right);
+        + parts.right_width();
     let pad = width.saturating_sub(used);
     left.push(Span::raw(" ".repeat(pad)));
-    left.push(Span::raw(right));
+    for segment in parts.right {
+        let style = match segment.tone {
+            StatusTone::Plain => Style::default(),
+            StatusTone::Waiting => mark_style(theme, ThreadState::Waiting),
+        };
+        left.push(Span::styled(segment.text, style));
+    }
     Paragraph::new(Line::from(left)).style(theme.statusline)
 }
 
 /// The status line's words (ADR 0010, amended by 0046's session): the
 /// pill says one thing, the mode or the focused pane; the badges after
 /// the path say how the text is shown (`SRC`, or `DIFF` and the base,
-/// ADR 0060) and whether auto-jump is on; the
-/// right block is `line:col`, the percentage, and `N word` counts.
+/// ADR 0060) and whether auto-jump is on; the right block is
+/// `line:col`, the percentage, and `N word` counts, in segments so the
+/// waiting count draws its teal circle and the counts take clicks
+/// (ADR 0066).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct StatusParts {
+pub(crate) struct StatusParts {
     pub(crate) pill: &'static str,
     pub(crate) badges: Vec<String>,
-    pub(crate) right: String,
+    pub(crate) right: Vec<StatusSegment>,
+}
+
+impl StatusParts {
+    /// The cells the right block takes.
+    pub(crate) fn right_width(&self) -> usize {
+        self.right
+            .iter()
+            .map(|segment| display_width(&segment.text))
+            .sum()
+    }
+
+    /// The right block as one string.
+    #[cfg(test)]
+    pub(crate) fn right_text(&self) -> String {
+        self.right
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect()
+    }
+
+    /// The action a click `column` cells into the right block runs.
+    pub(crate) fn action_at(&self, column: usize) -> Option<Action> {
+        let mut at = 0;
+        for segment in &self.right {
+            let end = at + display_width(&segment.text);
+            if column >= at && column < end {
+                return segment.action;
+            }
+            at = end;
+        }
+        None
+    }
+}
+
+/// One run of the status line's right block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StatusSegment {
+    pub(crate) text: String,
+    tone: StatusTone,
+    /// What a click on it runs (ADR 0066).
+    action: Option<Action>,
+}
+
+impl StatusSegment {
+    fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            tone: StatusTone::Plain,
+            action: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusTone {
+    Plain,
+    /// The waiting circle in `thread.waiting`.
+    Waiting,
 }
 
 pub(super) fn status_parts(app: &App) -> StatusParts {
@@ -1343,7 +1315,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         badges.push("AUTO".to_owned());
     }
     let (line, col) = view.source_position();
-    let mut right = format!(" {line}:{col}  {}%", view.percent());
+    let mut position = format!(" {line}:{col}  {}%", view.percent());
     let counts = if view.diff_view() {
         view.pair_counts()
     } else {
@@ -1351,19 +1323,38 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     };
     if let Some((added, removed)) = counts.filter(|(a, r)| a + r > 0) {
         // Infallible: writing to a `String` cannot fail.
-        let _ = write!(right, "  +{added} -{removed}");
+        let _ = write!(position, "  +{added} -{removed}");
     }
-    let counts = [
-        (app.proposed_count(), "proposed"),
-        (app.waiting_count(), "waiting"),
-        (app.thread_counts().1, "threads"),
-    ];
-    for (count, word) in counts {
-        if count > 0 {
-            let _ = write!(right, "  {count} {word}");
-        }
+    let mut right = vec![StatusSegment::plain(position)];
+    let proposed = app.proposed_count();
+    if proposed > 0 {
+        right.push(StatusSegment::plain(format!("  {proposed} proposed")));
     }
-    right.push_str("  ");
+    let waiting = app.waiting_count();
+    if waiting > 0 {
+        // A teal circle before the count (ADR 0066); a click opens the
+        // review list.
+        right.push(StatusSegment::plain("  "));
+        right.push(StatusSegment {
+            text: "●".to_owned(),
+            tone: StatusTone::Waiting,
+            action: Some(Action::Review),
+        });
+        right.push(StatusSegment {
+            text: format!(" {waiting} waiting"),
+            tone: StatusTone::Plain,
+            action: Some(Action::Review),
+        });
+    }
+    let threads = app.thread_counts().1;
+    if threads > 0 {
+        right.push(StatusSegment {
+            text: format!("  {threads} threads"),
+            tone: StatusTone::Plain,
+            action: Some(Action::WindowThreads),
+        });
+    }
+    right.push(StatusSegment::plain("  "));
     StatusParts {
         pill,
         badges,
@@ -1654,15 +1645,17 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let list = app.review_list();
-    let Rows { rows: all, entries } = app.review_rows(width);
+    let Rows {
+        rows: all, entries, ..
+    } = app.review_rows(width);
     let now = fathomable_core::clock::now();
     // The header, the entries between, and the key bar on the last row
     // (ADR 0059); one row shows the header alone.
-    let mut lines = vec![review_header(app, &entries).line(theme, width)];
+    let mut lines = vec![review_header(app).line(theme, width)];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
-        lines.push(list_row(theme, row, now, width));
+        lines.push(list_row(app, theme, row, now, width));
     }
     if rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
@@ -1671,50 +1664,52 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+fn list_row<'a>(app: &App, theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
-        Row::Header {
+        // A file's row over its threads (ADR 0066): the path in the
+        // directory colour, `▸` when folded, the count at the edge; the
+        // selected surface when the cursor's thread is folded inside.
+        Row::File {
             path,
-            range,
-            kind,
-            proposed,
-            updated,
-            selected,
+            count,
             folded,
-            dim,
+            selected,
             ..
         } => {
-            let (status, status_style) = (label(*kind), mark_style(theme, *kind));
-            // The third word (ADR 0053), in the state's colour.
-            let status = if *proposed {
-                format!("{status} · proposed")
+            let count = format!("{count} ");
+            let name = format!(" {}{}", if *folded { "▸ " } else { "" }, path.display());
+            let name_width = width.saturating_sub(display_width(&count));
+            let mut style = theme.sidebar_dir;
+            if *selected {
+                style = style.patch(theme.picker_selected);
+            }
+            let line = Line::from(vec![
+                Span::styled(fit_ellipsis(&name, name_width), style),
+                Span::styled(count, theme.info.patch(style)),
+            ]);
+            if *selected {
+                line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
             } else {
-                status.to_owned()
-            };
-            let fold = if *folded { "  ▸" } else { "" };
-            // Every header carries the path (ADR 0049), so either order
-            // reads on its own.
-            let spans = vec![
-                Span::styled(
-                    format!(" {}", path.display()),
-                    if *dim { theme.info } else { theme.heading[2] },
-                ),
-                Span::styled(
-                    // A thread on the file as a whole says so (ADR 0063).
-                    range.map_or_else(|| "  file  ".to_owned(), |range| format!("  L{range}  ")),
-                    if *dim { theme.info } else { theme.text },
-                ),
-                Span::styled(status, status_style),
-                Span::styled(format!("  {}{fold}", format_age(*updated, now)), theme.info),
-            ];
-            // The row is a bar on `ui.header` (ADR 0059); the selection
-            // colour wins on the selected entry.
-            let style = if *selected {
-                theme.picker_selected
+                line
+            }
+        }
+        // The header as the expanded thread in the text reads (ADR
+        // 0066), a bar on `ui.header`; the cursor's thread in bold on
+        // the selected surface with its keys.
+        Row::Header {
+            range,
+            words,
+            updated,
+            selected,
+            ..
+        } => {
+            let line =
+                entry_header(app, *range, *words, *updated, *selected, now).line(theme, width);
+            if *selected {
+                line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
             } else {
-                theme.header
-            };
-            padded_line(spans, width).style(style)
+                line
+            }
         }
         Row::Message {
             author,
@@ -1791,7 +1786,7 @@ pub(super) fn format_age(created: u64, now: u64) -> String {
 }
 
 /// `created` relative to `now` in the fewest cells: `now`, `5m`, `2h`, `3d`.
-fn format_age_short(created: u64, now: u64) -> String {
+pub(super) fn format_age_short(created: u64, now: u64) -> String {
     let elapsed = now.saturating_sub(created);
     match elapsed {
         0..60 => "now".to_owned(),
@@ -1845,6 +1840,8 @@ mod tests {
     fn selected_review_messages_fill_the_row() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
+        let dir = crate::app::testing::workspace("draw-list-row", crate::app::testing::README)?;
+        let app = crate::app::testing::app(&dir)?;
         let rows = [
             Row::Message {
                 entry: 0,
@@ -1864,7 +1861,7 @@ mod tests {
             },
         ];
         for row in rows {
-            let line = list_row(&theme, &row, 0, 30);
+            let line = list_row(&app, &theme, &row, 0, 30);
             let width: usize = line
                 .spans
                 .iter()

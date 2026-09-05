@@ -324,6 +324,8 @@ impl App {
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
             Action::CopyPath => return self.copy_tree_path(),
+            // The threads pane in file scope on this file (ADR 0066).
+            Action::ThreadsOnFile => self.threads_on_file(),
             Action::Top => self.with_tree(|tree, _| {
                 tree.goto_top();
                 None
@@ -345,7 +347,7 @@ impl App {
     }
 
     /// Keys in the threads pane (ADR 0027, `d` per ADR 0034, scope and
-    /// resolved toggles per ADR 0049).
+    /// resolved toggles per ADR 0049, folds per ADR 0066).
     fn act_threads_pane(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => self.leave_threads_pane(),
@@ -354,12 +356,14 @@ impl App {
             Action::Confirm => self.threads_pane_open(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
             Action::ReviewResolved => self.review_toggle_resolved(),
+            Action::Fold => self.threads_pane_fold(),
+            Action::FoldAll => self.threads_pane_fold_all(),
             _ => return self.act_on_cursor(action),
         }
         Effect::None
     }
 
-    /// Keys in the review list (ADR 0025, ADR 0049).
+    /// Keys in the review list (ADR 0025, ADR 0049, folds per ADR 0066).
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => self.close_review(),
@@ -373,7 +377,7 @@ impl App {
             Action::Bottom => self.review_goto(true),
             Action::Confirm => self.thread_open_in_file(),
             Action::Fold => self.review_fold(),
-            Action::ReviewSort => self.review_toggle_sort(),
+            Action::FoldAll => self.review_fold_all(),
             Action::ReviewResolved => self.review_toggle_resolved(),
             Action::FileOnly => self.review_toggle_file(),
             _ => return self.act_on_cursor(action),

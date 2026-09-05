@@ -11,7 +11,9 @@ tags:
 
 # 0032 Placement and state
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28). Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the `✓` retires; `Words::glyph()` picks the
+one circle every surface draws.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

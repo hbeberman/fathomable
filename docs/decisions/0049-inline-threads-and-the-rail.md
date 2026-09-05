@@ -34,7 +34,10 @@ tags:
 Status: accepted (2026-09-04); amended 2026-09-05 by
 [0060](0060-one-diff-two-sides.md): the checkpoint diff is the one diff
 view with a checkpoint base, and `Space v r` / `c` / `C` / `g` are
-`Space d r` / `c` / `C` / `g`; amended 2026-09-04 as the work landed:
+`Space d r` / `c` / `C` / `g`; amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the threads pane's rows, order,
+header, and keys and the review list's order, folds, and header are as
+that record says (`s` is gone from both); amended 2026-09-04 as the work landed:
 
 - `dd` on an expanded thread's rows deletes the **thread**, not the
   message under the cursor: the store has no message-delete event

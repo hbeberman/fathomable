@@ -19,7 +19,11 @@ workspace, and the header counts both. Amended 2026-09-04 by
 [0049](0049-inline-threads-and-the-rail.md): the thread pane is gone and `c`
 expands the thread in place; the file-threads pane is the rail's
 **threads pane**, shown whether or not the tree pane is, at a fixed
-split, with a file or workspace scope and a resolved toggle.
+split, with a file or workspace scope and a resolved toggle. Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the
+pane lists two rows per thread grouped by file, the one-row gutter
+glyph is the thread's circle (`•` retires), and the pane's header and
+keys are as that record says.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

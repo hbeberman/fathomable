@@ -22,7 +22,11 @@ tags:
 
 Status: accepted (2026-09-04); amended 2026-09-05 by
 [0060](0060-one-diff-two-sides.md): the checkpoint header is every
-diff's header, and its clicks work in any diff.
+diff's header, and its clicks work in any diff. Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the status line's waiting and thread counts
+take clicks, the threads pane's header counts and file rows take
+clicks and menus, and the files pane's menu gains `threads` and
+`review`.
 
 ## Context
 

@@ -3,10 +3,11 @@
 //!
 //! A [`Header`] is the words on a pane's chrome row and the hints after
 //! them, built once so the drawing and the mouse agree on where each
-//! hint is. The review list's header carries its counts with the sort
-//! word at the right edge; its keys sit on a bar along the list's
-//! bottom row, left-aligned, built by [`review_footer`]. Every header
-//! row draws on `ui.header`.
+//! hint is. The review list's and the threads pane's headers carry
+//! their counts by colour (ADR 0066) as hints, so the resolved count
+//! takes a click; their keys sit on a bar along the bottom row,
+//! left-aligned, built by [`review_footer`] and [`threads_pane_footer`].
+//! Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
 //! and cursor as they are, runs the action it names (ADR 0064): a header
@@ -18,9 +19,9 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::{Theme, mark_style};
+use crate::app::draw::{Theme, format_age, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
-use crate::app::threads::list::Entry;
+use crate::app::threads::list::{Counts, Entry};
 use crate::app::threads::words::{Words, label};
 use crate::app::threads::{Compose, ComposeTarget, ThreadState};
 use crate::app::{App, Focus};
@@ -41,24 +42,37 @@ fn pair(place: Where, a: Action, b: Action) -> String {
 pub(crate) enum Tone {
     Key,
     Info,
+    /// The sidebar's directory colour, bold: the threads pane's title.
+    Dir,
     Mark(ThreadState),
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
-/// words alone, two actions for an `a/b` pair split at the slash.
+/// words alone, two actions for an `a/b` pair split at the slash. A
+/// count (ADR 0066) is a circle in a state's colour with its number
+/// against it.
 #[derive(Debug, Clone)]
 pub(crate) struct HintOf {
     key: String,
-    what: &'static str,
+    what: String,
     actions: Vec<Action>,
+    /// The key's colour when it is not the info colour.
+    tone: Option<Tone>,
+    /// The key reads dim: a count of what is hidden.
+    faint: bool,
+    /// A space between the key and its word.
+    gap: bool,
 }
 
 impl HintOf {
-    fn new(key: impl Into<String>, what: &'static str, actions: &[Action]) -> Self {
+    fn new(key: impl Into<String>, what: impl Into<String>, actions: &[Action]) -> Self {
         Self {
             key: key.into(),
-            what,
+            what: what.into(),
             actions: actions.to_vec(),
+            tone: None,
+            faint: false,
+            gap: true,
         }
     }
 
@@ -70,17 +84,37 @@ impl HintOf {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
+    /// `●2`: the circle in `state`'s colour, the count against it, dim
+    /// when it counts what is hidden (ADR 0066).
+    fn count(
+        glyph: &'static str,
+        state: ThreadState,
+        n: usize,
+        faint: bool,
+        actions: &[Action],
+    ) -> Self {
+        Self {
+            key: glyph.to_owned(),
+            what: n.to_string(),
+            actions: actions.to_vec(),
+            tone: Some(Tone::Mark(state)),
+            faint,
+            gap: false,
+        }
+    }
+
     /// The columns the hint takes: key, action, and the space between
     /// when both are present.
     fn width(&self) -> usize {
         display_width(&self.key)
-            + display_width(self.what)
-            + usize::from(!self.key.is_empty() && !self.what.is_empty())
+            + display_width(&self.what)
+            + usize::from(self.gap && !self.key.is_empty() && !self.what.is_empty())
     }
 }
 
 /// Where a header's hints sit: against the right edge after the words,
-/// or from the left edge along a key bar (ADR 0059).
+/// or from the left edge along a key bar (ADR 0059), or straight after
+/// the words (ADR 0066).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Align {
     Right,
@@ -90,6 +124,8 @@ enum Align {
 /// Cells kept clear around the hints: one before, one after, and one
 /// more so a full row never touches the words.
 const HINT_MARGIN: usize = 3;
+/// A bar has no words to keep clear of: one cell before and one after.
+const BAR_MARGIN: usize = 2;
 
 /// A pane header: the words on the left and the hints after them,
 /// built once so the drawing and the mouse agree on where each hint is
@@ -99,6 +135,8 @@ pub(crate) struct Header {
     left: Vec<(String, Tone)>,
     hints: Vec<HintOf>,
     align: Align,
+    /// What joins the hints: ` · ` for keys, a space for counts.
+    sep: &'static str,
 }
 
 impl Header {
@@ -108,6 +146,7 @@ impl Header {
             left,
             hints,
             align: Align::Right,
+            sep: " · ",
         }
     }
 
@@ -117,6 +156,18 @@ impl Header {
             left: Vec::new(),
             hints,
             align: Align::Left,
+            sep: " · ",
+        }
+    }
+
+    /// Words, then counts against the right edge, a space apart (ADR
+    /// 0066).
+    fn counted(left: Vec<(String, Tone)>, counts: Vec<HintOf>, align: Align) -> Self {
+        Self {
+            left,
+            hints: counts,
+            align,
+            sep: " ",
         }
     }
 
@@ -131,12 +182,18 @@ impl Header {
     fn shown(&self, width: usize) -> Option<(usize, &[HintOf])> {
         let used = self.left_width();
         let free = width.saturating_sub(used);
+        let sep = display_width(self.sep);
+        let margin = if self.left.is_empty() {
+            BAR_MARGIN
+        } else {
+            HINT_MARGIN
+        };
         let shown = (1..=self.hints.len())
             .rev()
             .map(|n| &self.hints[..n])
-            .find(|shown| free >= hints_width(shown) + HINT_MARGIN)?;
+            .find(|shown| free >= hints_width(shown, sep) + margin)?;
         let start = match self.align {
-            Align::Right => used + (free - hints_width(shown) - 1),
+            Align::Right => used + (free - hints_width(shown, sep) - 1),
             Align::Left => used + 1,
         };
         Some((start, shown))
@@ -146,9 +203,10 @@ impl Header {
     /// hint under the pointer, its left or right half for a pair.
     pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
         let (mut at, shown) = self.shown(width)?;
+        let sep = display_width(self.sep);
         for (i, hint) in shown.iter().enumerate() {
             if i > 0 {
-                at += 3;
+                at += sep;
             }
             let end = at + hint.width();
             if column >= at && column < end {
@@ -170,39 +228,43 @@ impl Header {
     }
 
     /// The header as one drawn row on `ui.header`: the words, then the
-    /// hints joined by ` · `, the key dim and its action dimmer still,
-    /// padded to `width` so the surface reaches the right edge.
+    /// hints joined by the separator, the key dim and its action dimmer
+    /// still, padded to `width` so the surface reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
+        let tone_style = |tone: Tone| match tone {
+            Tone::Key => theme.popup_key,
+            Tone::Info => theme.info,
+            Tone::Dir => theme.sidebar_dir.add_modifier(Modifier::BOLD),
+            Tone::Mark(state) => mark_style(theme, state),
+        };
         let mut spans: Vec<Span<'static>> = self
             .left
             .iter()
-            .map(|(text, tone)| {
-                let style = match tone {
-                    Tone::Key => theme.popup_key,
-                    Tone::Info => theme.info,
-                    Tone::Mark(state) => mark_style(theme, *state),
-                };
-                Span::styled(text.clone(), style)
-            })
+            .map(|(text, tone)| Span::styled(text.clone(), tone_style(*tone)))
             .collect();
         let mut at = self.left_width();
         if let Some((start, shown)) = self.shown(width) {
             spans.push(Span::raw(" ".repeat(start - at)));
             at = start;
             let faint = theme.info.add_modifier(Modifier::DIM);
+            let sep = display_width(self.sep);
             for (i, hint) in shown.iter().enumerate() {
                 if i > 0 {
-                    spans.push(Span::styled(" · ", faint));
-                    at += 3;
+                    spans.push(Span::styled(self.sep, faint));
+                    at += sep;
                 }
                 if !hint.key.is_empty() {
-                    spans.push(Span::styled(hint.key.clone(), theme.info));
+                    let mut style = hint.tone.map_or(theme.info, tone_style);
+                    if hint.faint {
+                        style = style.add_modifier(Modifier::DIM);
+                    }
+                    spans.push(Span::styled(hint.key.clone(), style));
                 }
-                if !hint.key.is_empty() && !hint.what.is_empty() {
+                if hint.gap && !hint.key.is_empty() && !hint.what.is_empty() {
                     spans.push(Span::styled(" ", faint));
                 }
                 if !hint.what.is_empty() {
-                    spans.push(Span::styled(hint.what, faint));
+                    spans.push(Span::styled(hint.what.clone(), faint));
                 }
                 at += hint.width();
             }
@@ -212,9 +274,44 @@ impl Header {
     }
 }
 
-/// The cells `shown` hints take with ` · ` between them.
-fn hints_width(shown: &[HintOf]) -> usize {
-    shown.iter().map(HintOf::width).sum::<usize>() + 3 * shown.len().saturating_sub(1)
+/// The cells `shown` hints take with `sep`-wide separators between them.
+fn hints_width(shown: &[HintOf], sep: usize) -> usize {
+    shown.iter().map(HintOf::width).sum::<usize>() + sep * shown.len().saturating_sub(1)
+}
+
+/// The counts by colour (ADR 0066): amber `●` open, teal `●` waiting,
+/// grey `○` resolved, a zero left out; the resolved count is a click on
+/// `x`, and reads dim while resolved threads are hidden.
+fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
+    let mut hints = Vec::new();
+    if counts.open > 0 {
+        hints.push(HintOf::count(
+            "●",
+            ThreadState::Open,
+            counts.open,
+            false,
+            &[],
+        ));
+    }
+    if counts.waiting > 0 {
+        hints.push(HintOf::count(
+            "●",
+            ThreadState::Waiting,
+            counts.waiting,
+            false,
+            &[],
+        ));
+    }
+    if counts.resolved > 0 {
+        hints.push(HintOf::count(
+            "○",
+            ThreadState::Resolved,
+            counts.resolved,
+            !resolved_shown,
+            &[Action::ReviewResolved],
+        ));
+    }
+    hints
 }
 
 /// A diff's header (ADR 0049, ADR 0060): the pair's names, then the
@@ -235,15 +332,29 @@ pub(crate) fn diff_header(app: &App, text: &str) -> Header {
     Header::new(vec![(format!(" {text}"), Tone::Key)], hints)
 }
 
-/// An expanded thread's header row in the text (ADR 0049): the state,
-/// the placement, who watches it, and the thread keys when they act on
-/// this thread (ADR 0064): the thread cursor's, while the text has
-/// focus; `e edit` only when the cursor's message is the user's.
-pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
-    let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
-    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
+/// The thread keys that act on the cursor's thread from `place`, for a
+/// thread's header (ADR 0064): reply, edit when the cursor's message is
+/// the user's, resolve or reopen, fold.
+fn thread_hints(app: &App, place: Where, words: Words) -> Vec<HintOf> {
+    let resolve = if words.is_resolved() {
+        "reopen"
+    } else {
+        "resolve"
+    };
+    let mut hints = vec![HintOf::keyed(place, Action::Reply, "reply")];
+    if app.thread_message_editable() {
+        hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
+    }
+    hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
+    hints.push(HintOf::keyed(place, Action::Fold, "fold"));
+    hints
+}
+
+/// The state words after a thread's circle: the placement, the state,
+/// and `proposed` (ADR 0032, ADR 0053), in the state's colour.
+fn state_words(words: Words) -> Vec<(String, Tone)> {
     let tone = Tone::Mark(words.state());
-    let mut left = vec![(" ● ".to_owned(), tone)];
+    let mut left = Vec::new();
     if let Some(placement) = words.placement() {
         left.push((placement.to_owned(), tone));
         left.push((" · ".to_owned(), Tone::Info));
@@ -252,76 +363,89 @@ pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::
     if words.proposed() {
         left.push((" · proposed".to_owned(), tone));
     }
+    left
+}
+
+/// An expanded thread's header row in the text (ADR 0049): the circle,
+/// the placement and state, who watches it, and the thread keys when
+/// they act on this thread (ADR 0064): the thread cursor's, while the
+/// text has focus; `e edit` only when the cursor's message is the user's.
+pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
+    let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
+    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
+    let mut left = vec![(format!(" {} ", words.glyph()), Tone::Mark(words.state()))];
+    left.extend(state_words(words));
     let watchers = app.watchers_of(thread.id());
     if !watchers.is_empty() {
         left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
     }
-    let resolve = if words.is_resolved() {
-        "reopen"
-    } else {
-        "resolve"
-    };
     let keyed = app.focus() == Focus::View && app.thread_cursor().thread() == Some(thread.id());
-    let mut hints = Vec::new();
-    if keyed {
-        hints.push(HintOf::keyed(Where::View, Action::Reply, "reply"));
-        if app.thread_message_editable() {
-            hints.push(HintOf::keyed(Where::View, Action::EditMessage, "edit"));
-        }
-        hints.push(HintOf::keyed(Where::View, Action::ToggleResolved, resolve));
-        hints.push(HintOf::keyed(Where::View, Action::Fold, "fold"));
-    }
+    let hints = if keyed {
+        thread_hints(app, Where::View, words)
+    } else {
+        Vec::new()
+    };
     Header::new(left, hints)
 }
 
-/// The review list's header (ADR 0025, ADR 0049, ADR 0059): the counts
-/// joined by dots, the path while the list is one file's, and the sort
-/// word at the right edge, where a click switches the sort as `s` does.
-pub(crate) fn review_header(app: &App, entries: &[Entry]) -> Header {
-    let review = app.review();
-    let open = entries
-        .iter()
-        .filter(|entry| matches!(entry.kind(), ThreadState::Open | ThreadState::Waiting))
-        .count();
-    let resolved = entries.len() - open;
-    let proposed = entries.iter().filter(|entry| entry.proposed()).count();
+/// A review list entry's header (ADR 0066): the circle, the lines, the
+/// state words, and the age, as the expanded thread in the text reads;
+/// the cursor's thread carries the thread keys while the list has the
+/// keys.
+pub(crate) fn entry_header(
+    app: &App,
+    range: Option<fathomable_core::annotations::LineRange>,
+    words: Words,
+    updated: u64,
+    selected: bool,
+    now: u64,
+) -> Header {
+    let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut left = vec![
-        (" review ".to_owned(), Tone::Key),
-        (format!(" {open} open"), Tone::Info),
+        (format!(" {}  ", words.glyph()), Tone::Mark(words.state())),
+        (format!("{place}  "), Tone::Info),
     ];
-    if proposed > 0 {
-        left.push((format!(" · {proposed} proposed"), Tone::Info));
-    }
-    left.push((
-        if review.resolved {
-            format!(" · {resolved} resolved")
-        } else {
-            " · resolved hidden".to_owned()
-        },
-        Tone::Info,
-    ));
+    left.extend(state_words(words));
+    left.push((format!("  {}", format_age(updated, now)), Tone::Info));
+    let hints = if selected && app.focus() == Focus::Review {
+        thread_hints(app, Where::Review, words)
+    } else {
+        Vec::new()
+    };
+    Header::new(left, hints)
+}
+
+/// The review list's header (ADR 0025, ADR 0049, ADR 0066): the counts
+/// by colour after the word, the path while the list is one file's.
+pub(crate) fn review_header(app: &App) -> Header {
+    let review = app.review();
+    let mut left = vec![(" review".to_owned(), Tone::Key)];
     if review.file_only {
         left.push((format!(" · {}", app.current_path().display()), Tone::Info));
     }
-    Header::new(
+    left.push((" ".to_owned(), Tone::Info));
+    Header::counted(
         left,
-        vec![HintOf::new(review.sort.label(), "", &[Action::ReviewSort])],
+        count_hints(app.review_counts(review.file_only), review.resolved),
+        Align::Left,
     )
 }
 
-/// The review list's key bar on its bottom row (ADR 0059): the list
-/// keys while it has focus, else how to focus it.
+/// The review list's key bar on its bottom row (ADR 0059, ADR 0066):
+/// the list keys while it has focus, else how to focus it.
 pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     let place = Where::Review;
     let hints = if app.focus() == Focus::Review {
         let mut hints = vec![
-            HintOf::keyed(place, Action::ReviewSort, "sort"),
             HintOf::keyed(place, Action::ReviewResolved, "resolved"),
             HintOf::keyed(place, Action::FileOnly, "file"),
-            HintOf::keyed(place, Action::Fold, "fold"),
-            HintOf::keyed(place, Action::Confirm, "open"),
-            HintOf::keyed(place, Action::Reply, "reply"),
         ];
+        if !app.review().file_only {
+            hints.push(HintOf::keyed(place, Action::Fold, "fold"));
+            hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
+        }
+        hints.push(HintOf::keyed(place, Action::Confirm, "open"));
+        hints.push(HintOf::keyed(place, Action::Reply, "reply"));
         if app.thread_message_editable() {
             hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
         }
@@ -347,6 +471,40 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     } else {
         vec![HintOf::new("", "click or Space w h to focus", &[])]
     };
+    Header::bar(hints)
+}
+
+/// The threads pane's header (ADR 0066): `threads · workspace`, then
+/// the counts by colour against the right edge; a click on the words
+/// switches the scope and one on the resolved count toggles `x`.
+pub(crate) fn threads_pane_header(app: &App) -> Header {
+    let scope = app.sidebar_scope();
+    let left = vec![
+        (" threads".to_owned(), Tone::Dir),
+        (" · ".to_owned(), Tone::Info),
+        (scope.word().to_owned(), Tone::Dir),
+    ];
+    let file_only = scope == crate::app::threads::pane::PaneScope::File;
+    Header::counted(
+        left,
+        count_hints(app.review_counts(file_only), app.review().resolved),
+        Align::Right,
+    )
+}
+
+/// The threads pane's key bar on its bottom row while it has the keys
+/// (ADR 0066): `s scope · x resolved`, and the fold keys in workspace
+/// scope, where they work (ADR 0064).
+pub(crate) fn threads_pane_footer(app: &App) -> Header {
+    let place = Where::ThreadsPane;
+    let mut hints = vec![
+        HintOf::keyed(place, Action::PaneScope, "scope"),
+        HintOf::keyed(place, Action::ReviewResolved, "resolved"),
+    ];
+    if app.sidebar_scope() == crate::app::threads::pane::PaneScope::Workspace {
+        hints.push(HintOf::keyed(place, Action::Fold, "fold"));
+        hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
+    }
     Header::bar(hints)
 }
 
@@ -403,7 +561,7 @@ mod tests {
 
     fn bar() -> Header {
         Header::bar(vec![
-            HintOf::new("s", "sort", &[Action::ReviewSort]),
+            HintOf::new("f", "file", &[Action::FileOnly]),
             HintOf::new("x", "resolved", &[Action::ReviewResolved]),
             HintOf::new("k/j", "threads", &[Action::ThreadPrev, Action::ThreadNext]),
         ])
@@ -414,7 +572,7 @@ mod tests {
         let line = bar().line(&theme()?, 40);
         let text = text(&line);
         assert_eq!(display_width(&text), 40);
-        assert_eq!(text.trim_end(), " s sort · x resolved · k/j threads");
+        assert_eq!(text.trim_end(), " f file · x resolved · k/j threads");
         Ok(())
     }
 
@@ -422,7 +580,7 @@ mod tests {
     fn a_bar_drops_hints_from_the_end_when_narrow() -> anyhow::Result<()> {
         let theme = theme()?;
         let line = bar().line(&theme, 24);
-        assert_eq!(text(&line).trim_end(), " s sort · x resolved");
+        assert_eq!(text(&line).trim_end(), " f file · x resolved");
         let line = bar().line(&theme, 4);
         assert_eq!(text(&line), "    ", "no hint fits");
         Ok(())
@@ -431,9 +589,9 @@ mod tests {
     #[test]
     fn a_click_on_a_bar_hint_runs_it_and_a_pair_splits_at_the_slash() {
         let bar = bar();
-        assert_eq!(bar.action_at(40, 1), Some(Action::ReviewSort));
+        assert_eq!(bar.action_at(40, 1), Some(Action::FileOnly));
         assert_eq!(bar.action_at(40, 10), Some(Action::ReviewResolved));
-        let threads = display_width(" s sort · x resolved · ");
+        let threads = display_width(" f file · x resolved · ");
         assert_eq!(bar.action_at(40, threads), Some(Action::ThreadPrev));
         assert_eq!(bar.action_at(40, threads + 2), Some(Action::ThreadNext));
         assert_eq!(bar.action_at(40, 0), None, "the margin runs nothing");
@@ -577,13 +735,13 @@ mod tests {
     fn a_header_keeps_its_hints_at_the_right_edge() -> anyhow::Result<()> {
         let header = Header::new(
             vec![(" review".to_owned(), Tone::Key)],
-            vec![HintOf::new("by file", "", &[Action::ReviewSort])],
+            vec![HintOf::new("x", "resolved", &[Action::ReviewResolved])],
         );
         let line = header.line(&theme()?, 30);
         let text = text(&line);
         assert_eq!(display_width(&text), 30);
-        assert_eq!(text.trim_end(), " review               by file");
-        assert_eq!(header.action_at(30, 25), Some(Action::ReviewSort));
+        assert_eq!(text.trim_end(), " review            x resolved");
+        assert_eq!(header.action_at(30, 25), Some(Action::ReviewResolved));
         Ok(())
     }
 }

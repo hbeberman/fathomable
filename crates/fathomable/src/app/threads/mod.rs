@@ -40,6 +40,7 @@ use fathomable_core::clock::now;
 use fathomable_core::reanchor::{Mapping, map_range};
 
 use crate::app::App;
+use crate::app::threads::words::Words;
 
 /// A thread's status, which is its colour in the gutter, the file-threads
 /// pane, and the review list (ADR 0039); where the thread is placed is
@@ -70,7 +71,7 @@ impl ThreadState {
 pub(crate) struct Mark {
     id: ThreadId,
     placement: Placement,
-    kind: ThreadState,
+    words: Words,
 }
 
 impl Mark {
@@ -91,7 +92,17 @@ impl Mark {
     }
 
     pub(crate) fn kind(&self) -> ThreadState {
-        self.kind
+        self.words.state()
+    }
+
+    /// The thread's words and circle (ADR 0032, ADR 0066).
+    pub(crate) fn words(&self) -> Words {
+        self.words
+    }
+
+    /// The one circle every surface draws for the thread (ADR 0066).
+    pub(crate) fn glyph(&self) -> &'static str {
+        self.words.glyph()
     }
 
     /// Where the thread sits in the current text.
@@ -103,6 +114,21 @@ impl Mark {
     /// row of its own (ADR 0039), not at its last known range.
     pub(crate) fn is_detached(&self) -> bool {
         self.placement.is_detached()
+    }
+}
+
+/// How a message's author reads on a row: the user by the configured
+/// name (ADR 0058), an agent as `name (type)` when it subscribed with a
+/// type.
+pub(crate) fn author_label(author: &Author, user: &str) -> String {
+    match author {
+        Author::User => user.to_owned(),
+        Author::Agent {
+            name,
+            kind: Some(kind),
+            ..
+        } => format!("{name} ({kind})"),
+        Author::Agent { name, .. } => name.clone(),
     }
 }
 
@@ -233,7 +259,7 @@ impl App {
                 Mark {
                     id: thread.id().clone(),
                     placement,
-                    kind: ThreadState::of(thread),
+                    words: Words::of(Some(placement), thread),
                 }
             })
             .collect();

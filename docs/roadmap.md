@@ -299,3 +299,12 @@ Milestones are ordered; each is usable on its own. Details live in the
     all when any is expanded; `c` keeps its cycle and its comment, and
     the fold hints name `z`
     ([0065](decisions/0065-z-folds-and-unfolds.md)).
+57. **One circle language.** Every surface draws one circle in the
+    state colour (`●` open or waiting, `◐` proposed, `○` resolved, `?`
+    lines gone; `•`, `✓`, and `↩` retire); the threads pane lists two
+    rows per thread grouped by file in the files pane's order, `z`
+    folds a file and `Z` every file, its header counts by colour and
+    its keys sit on a bar while it has focus; the review list is the
+    same view full screen with `s` gone; the files pane, the status
+    line, and the file rows take clicks and menus
+    ([0066](decisions/0066-one-circle-language.md)).

@@ -472,27 +472,119 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     let width = app.column_width();
     let sidebar = app.sidebar_width();
 
-    // The review list's key bar: the `sort` hint toggles the order
+    // The review list's key bar: the `resolved` hint toggles the flag
     // (ADR 0059).
     app.toggle_review();
     assert_eq!(app.focus(), Focus::Review);
     let list_rows = app.review_rows(app.column_width());
     let bar = header::review_footer(&app, &list_rows.entries);
     let col = (0..width)
-        .find(|&c| bar.action_at(width, c) == Some(Action::ReviewSort))
-        .context("sort is drawn on the bar")?;
-    let before = app.review().sort;
+        .find(|&c| bar.action_at(width, c) == Some(Action::ReviewResolved))
+        .context("resolved is drawn on the bar")?;
+    let before = app.review().resolved;
     let bar_row = app.pane_rows() - 1;
     left(&mut app, sidebar + col, bar_row);
-    assert_ne!(app.review().sort, before, "the sort hint ran");
+    assert_ne!(app.review().resolved, before, "the resolved hint ran");
 
-    // The header's sort word, at the right edge, toggles it back.
-    let header = header::review_header(&app, &list_rows.entries);
+    // The header's resolved count, once there is one, toggles it back
+    // (ADR 0066).
+    app.thread_toggle_resolved();
+    let header = header::review_header(&app);
     let col = (0..width)
-        .find(|&c| header.action_at(width, c) == Some(Action::ReviewSort))
-        .context("the sort word is drawn")?;
+        .find(|&c| header.action_at(width, c) == Some(Action::ReviewResolved))
+        .context("the resolved count is drawn")?;
     left(&mut app, sidebar + col, 0);
-    assert_eq!(app.review().sort, before, "the sort word ran");
+    assert_eq!(app.review().resolved, before, "the count ran x");
+    Ok(())
+}
+
+/// The status line's counts take clicks (ADR 0066): the waiting count
+/// opens the review list and the thread count focuses the threads pane.
+#[test]
+fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
+    use fathomable_core::annotations::Author;
+
+    let dir = fixture("status")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    let id = app.file_threads()[0].clone();
+    app.agent_reply(
+        &id,
+        Author::agent("reviewer"),
+        "done".to_owned(),
+        false,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
+    let parts = draw::status_parts(&app);
+    let text = parts.right_text();
+    assert!(text.contains("● 1 waiting"), "{text}");
+    let start = app.size().0 - parts.right_width();
+    let waiting = text.find("1 waiting").context("the count")?;
+    let status_row = app.pane_rows();
+    left(&mut app, start + waiting, status_row);
+    assert!(
+        app.review_list().is_open(),
+        "the waiting count opens the review"
+    );
+    app.close_review();
+    let threads = text.find("1 threads").context("the count")?;
+    left(&mut app, start + threads, status_row);
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    Ok(())
+}
+
+/// A right-click on a file row offers the file's menu, and its `fold`
+/// entry folds the file on the surface it opened for (ADR 0066); the
+/// files pane's menu offers `threads` and `review` on a file with
+/// threads.
+#[test]
+fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
+    let dir = fixture("file-menu")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    app.show_tree();
+    if app.threads_pane_height() == 0 {
+        app.toggle_threads_pane_shown();
+    }
+    app.threads_pane_toggle_scope();
+    let top = app.tree_rows();
+    // The first body row is README's file row.
+    right(&mut app, 2, top + 2);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert_eq!(labels, ["fold", "fold all", "open file", "show resolved"]);
+    let cell = entry_cell(&app, "fold")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.threads_pane_is_folded(std::path::Path::new("README.md")));
+    assert!(
+        !app.review_list()
+            .is_folded(std::path::Path::new("README.md")),
+        "the list keeps its own folds"
+    );
+    right(&mut app, 2, top + 2);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert_eq!(labels[..2], ["unfold", "unfold all"]);
+    app.close_popup();
+
+    // The files pane: `threads` puts the pane in file scope on the file.
+    let readme_row = (0..app.tree_rows())
+        .find(|&row| {
+            app.tree()
+                .and_then(|tree| tree.rows().get(row))
+                .is_some_and(|r| r.name() == "README.md")
+        })
+        .context("README in the tree")?;
+    right(&mut app, 2, readme_row + 1);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert!(labels.contains(&"threads".to_owned()), "{labels:?}");
+    assert!(labels.contains(&"review".to_owned()), "{labels:?}");
+    let cell = entry_cell(&app, "threads")?;
+    left(&mut app, cell.0, cell.1);
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(
+        app.sidebar_scope(),
+        crate::app::threads::pane::PaneScope::File
+    );
     Ok(())
 }
 

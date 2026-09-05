@@ -19,7 +19,9 @@ tags:
 
 # 0059 Headers and the key bar
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05). Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): the review list's header counts by colour and
+has no sort word; the threads pane's keys sit on a bar of its own.
 
 ## Context
 

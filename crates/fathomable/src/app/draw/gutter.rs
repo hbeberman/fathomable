@@ -1,6 +1,7 @@
 // @okf-doc: /decisions/0036-gutter-rows-and-focus-colour.md
-//! The note cell of the gutter (ADR 0027, 0036, 0039): a thread's rows
-//! are bracketed `╭`, `│`, `╰`, and a thread that fits one row is `•`.
+//! The note cell of the gutter (ADR 0027, 0036, 0039, 0066): a thread's
+//! rows are bracketed `╭`, `│`, `╰`, and a thread that fits one row
+//! draws its circle, the one every surface draws.
 //! The bracket is decided per rendered row from the nearest rows above
 //! and below that have source lines, so a one-line thread that wraps
 //! over several rows is bracketed like any other range, and a blank row
@@ -15,7 +16,7 @@ impl App {
     /// The note-cell glyph and colour of rendered row `row` of the
     /// current view, or `None` when no thread touches it: the bracket
     /// of the threads on its lines, `│` on a sourceless row a thread
-    /// spans, `•` on a detached thread's row (ADR 0039).
+    /// spans, `?` on a detached thread's row (ADR 0039, ADR 0066).
     pub(crate) fn note_on_row(&self, row: usize) -> Option<(&'static str, ThreadState)> {
         let view = self.view();
         if let Some(anchor) = view.detached_anchor_of_row(row) {
@@ -61,8 +62,8 @@ impl App {
     /// The note-cell glyph and colour for a rendered row holding `lines`,
     /// between rows holding `above` and `below` (`None` at the edges of
     /// the document or next to a row with no source): `╭` where a thread
-    /// starts, `╰` where one ends, `•` for a thread within the row, `│`
-    /// between. Whether a thread starts or ends on the row is whether it
+    /// starts, `╰` where one ends, the thread's circle for a thread
+    /// within the row (ADR 0066), `│` between. Whether a thread starts or ends on the row is whether it
     /// continues onto the neighbouring row, so a wrapped source line is
     /// bracketed across its rows. The thread that starts or ends here
     /// with the shortest range decides the bracket, so a nested thread's
@@ -76,7 +77,9 @@ impl App {
     ) -> Option<(&'static str, ThreadState)> {
         let kind = self.mark_in(lines)?;
         let mut bracket: Option<(usize, &'static str)> = None;
-        let mut point = false;
+        // The most urgent one-row thread's circle, when a bracket does
+        // not take the cell.
+        let mut point: Option<((ThreadState, u8), &'static str)> = None;
         for mark in self.placed_marks().filter(|mark| mark.covers(lines)) {
             let Some(range) = mark.range() else {
                 continue;
@@ -85,7 +88,10 @@ impl App {
                 |rows: Option<LineRange>| rows.is_some_and(|rows| overlaps(range, rows));
             let glyph = match (continues(above), continues(below)) {
                 (false, false) => {
-                    point = true;
+                    let urgency = mark.words().urgency();
+                    if point.is_none_or(|(loudest, _)| urgency > loudest) {
+                        point = Some((urgency, mark.glyph()));
+                    }
                     continue;
                 }
                 (false, true) => "╭",
@@ -98,8 +104,7 @@ impl App {
         }
         let glyph = match bracket {
             Some((_, glyph)) => glyph,
-            None if point => "•",
-            None => "│",
+            None => point.map_or("│", |(_, glyph)| glyph),
         };
         Some((glyph, kind))
     }
@@ -155,7 +160,7 @@ mod tests {
             .into_iter()
             .map(|row| app.note_on_row(row).map_or(" ", |(glyph, _)| glyph))
             .collect();
-        assert_eq!(glyphs, "╭│╭│╰│•╰");
+        assert_eq!(glyphs, "╭│╭│╰│●╰");
         assert_eq!(app.note_on_row(app.view().layout().lines().len()), None);
         // A one-row thread on a range's first row: the bracket wins.
         annotate(&mut app, 1, 1, "on the start");
@@ -163,7 +168,7 @@ mod tests {
         // A row holding the whole inner thread shows it as a dot.
         let row = |line: usize| Some(LineRange::new(line, line));
         let held = app.note_in(LineRange::new(3, 5), row(2), row(6));
-        assert_eq!(held.map(|(g, _)| g), Some("•"));
+        assert_eq!(held.map(|(g, _)| g), Some("●"));
         Ok(())
     }
 

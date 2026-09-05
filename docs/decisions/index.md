@@ -69,3 +69,4 @@ supersede rather than edit history.
 - [0063 A comment on the file](0063-a-comment-on-the-file.md)
 - [0064 Hints you can press](0064-hints-you-can-press.md)
 - [0065 z folds and unfolds](0065-z-folds-and-unfolds.md)
+- [0066 One circle language and the grouped threads pane](0066-one-circle-language.md)

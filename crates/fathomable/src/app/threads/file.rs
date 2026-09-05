@@ -36,7 +36,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use fathomable_core::annotations::{Author, LineRange, Placement};
     use fathomable_core::layout::RowAnchor;
@@ -44,7 +44,7 @@ mod tests {
 
     use crate::app::testing::{self, press, screen, source_app};
     use crate::app::threads::list::Row;
-    use crate::app::threads::pane::PaneScope;
+    use crate::app::threads::pane::PaneRow;
     use crate::app::threads::stubs::{Stub, Subject};
     use crate::app::threads::{Compose, ComposeTarget, ThreadState};
     use crate::app::{App, Popup};
@@ -137,19 +137,19 @@ mod tests {
         app.open_review();
         let rows = app.review_rows(100);
         assert!(matches!(
-            rows.rows.first(),
-            Some(Row::Header {
-                range: None,
-                kind: ThreadState::Open,
-                ..
-            })
+            rows.rows.get(1),
+            Some(Row::Header { range: None, words, .. }) if words.state() == ThreadState::Open
         ));
         app.close_review();
-        let pane = app.threads_pane_rows();
-        assert_eq!(pane[0].place(PaneScope::File), "file");
-        assert_eq!(pane[0].place(PaneScope::Workspace), "README.md");
+        let pane = app.threads_pane_entries();
+        assert_eq!(pane[0].place(), "file");
         assert_eq!(pane[0].words().placement(), Some("file"));
-        assert_eq!(pane[1].place(PaneScope::File), "L3");
+        assert_eq!(pane[1].place(), "L3");
+        app.threads_pane_toggle_scope();
+        assert!(matches!(
+            app.threads_pane_rows().first(),
+            Some(PaneRow::File { path, count: 2, .. }) if path == Path::new("README.md")
+        ));
         Ok(())
     }
 

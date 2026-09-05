@@ -281,7 +281,9 @@ actions! {
     WindowThreads,
     PaneScope,
     ReviewResolved,
-    ReviewSort,
+    /// `t` in the files pane: the threads pane in file scope on the
+    /// highlighted file (ADR 0066).
+    ThreadsOnFile,
     Wake,
     Help,
     ThreadNext,
@@ -975,6 +977,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
     bind(
         W::Tree,
+        &[&[c('t')]],
+        A::ThreadsOnFile,
+        "Tree",
+        "the threads pane on this file",
+    ),
+    bind(
+        W::Tree,
         &[&[k(K::Esc)]],
         A::Escape,
         "Tree",
@@ -1015,6 +1024,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ReviewResolved,
         "Threads pane",
         "show or hide resolved threads",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('z')]],
+        A::Fold,
+        "Threads pane",
+        "fold or unfold the file",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('Z')]],
+        A::FoldAll,
+        "Threads pane",
+        "fold every file, or unfold them all",
     ),
     bind(
         W::ThreadsPane,
@@ -1135,14 +1158,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('z')]],
         A::Fold,
         "Review list",
-        "fold the entry",
+        "fold or unfold the file",
     ),
     bind(
         W::Review,
-        &[&[c('s')]],
-        A::ReviewSort,
+        &[&[c('Z')]],
+        A::FoldAll,
         "Review list",
-        "newest agent reply first, or by file",
+        "fold every file, or unfold them all",
     ),
     bind(
         W::Review,

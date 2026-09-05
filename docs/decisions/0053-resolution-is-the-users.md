@@ -20,7 +20,9 @@ tags:
 
 # 0053 Resolution is the user's
 
-Status: accepted (2026-09-04)
+Status: accepted (2026-09-04). Amended 2026-09-05 by
+[0066](0066-one-circle-language.md): a proposed thread draws `◐` everywhere and
+counts under the waiting circle in the headers.
 
 ## Context
 

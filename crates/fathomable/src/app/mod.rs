@@ -762,13 +762,12 @@ impl App {
         if self.ignore.is_ignored(path) {
             return;
         }
-        let filter = self.tree.as_ref().map(Tree::filter).unwrap_or_default();
         let kind = if self.workspace.root().join(path).is_dir() {
             EntryKind::Dir
         } else {
             EntryKind::File
         };
-        if filter == Filter::Visible && self.workspace.is_ignored(path, kind) {
+        if self.workspace.is_ignored(path, kind) {
             return;
         }
         let dir = path.parent().unwrap_or(Path::new("")).to_path_buf();

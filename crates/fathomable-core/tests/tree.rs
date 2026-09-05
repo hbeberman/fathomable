@@ -266,9 +266,7 @@ fn git_workspace_roots_at_the_repository_and_ignores_files()
     assert!(all.iter().any(|p| p == "src/nested/deep.rs"));
     assert!(!all.iter().any(|p| p.starts_with(".git/")));
 
-    let mut tree = Tree::new(&mut workspace)?;
+    let tree = Tree::new(&mut workspace)?;
     assert!(!names(&tree).iter().any(|n| n == "target"));
-    tree.set_filter(&mut workspace, Filter::All)?;
-    assert!(names(&tree).iter().any(|n| n == "target"));
     Ok(())
 }

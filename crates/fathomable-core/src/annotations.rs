@@ -1431,15 +1431,6 @@ impl StoreError {
     pub fn is_io(&self) -> bool {
         matches!(self.kind, ErrorKind::Io(..))
     }
-
-    /// Whether the cause was a malformed line; carries its 1-based number.
-    #[must_use]
-    pub fn parse_line(&self) -> Option<usize> {
-        match self.kind {
-            ErrorKind::Parse(line, _) => Some(line),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Display for StoreError {
@@ -2098,7 +2089,10 @@ mod tests {
         let Err(error) = Store::open(&file.0) else {
             return Err(StoreError::parse(0, "accepted garbage".into()));
         };
-        assert_eq!(error.parse_line(), Some(1));
+        assert!(
+            error.to_string().starts_with("threads.jsonl line 1:"),
+            "{error}"
+        );
         assert!(!error.is_io());
         Ok(())
     }

@@ -77,7 +77,6 @@ pub struct Tree {
     root: Node,
     rows: Vec<Row>,
     cursor: usize,
-    filter: Filter,
 }
 
 impl Tree {
@@ -96,7 +95,6 @@ impl Tree {
             },
             rows: Vec::new(),
             cursor: 0,
-            filter: Filter::Visible,
         };
         tree.refresh(workspace)?;
         Ok(tree)
@@ -120,26 +118,6 @@ impl Tree {
         self.rows.get(self.cursor)
     }
 
-    /// Which entries are listed.
-    #[must_use]
-    pub fn filter(&self) -> Filter {
-        self.filter
-    }
-
-    /// Change the filter and re-read expanded directories.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WorkspaceError`] when the root cannot be read.
-    pub fn set_filter(
-        &mut self,
-        workspace: &mut Workspace,
-        filter: Filter,
-    ) -> Result<(), WorkspaceError> {
-        self.filter = filter;
-        self.refresh(workspace)
-    }
-
     /// Re-read every expanded directory, keeping expansion state and the
     /// cursor path where they still exist.
     ///
@@ -155,7 +133,7 @@ impl Tree {
             .filter(|row| row.is_dir && row.expanded)
             .map(|row| row.path.clone())
             .collect();
-        self.root.children = Some(read_children(workspace, Path::new(""), self.filter)?);
+        self.root.children = Some(read_children(workspace, Path::new(""), Filter::Visible)?);
         for path in expanded {
             if let Err(error) = self.expand_path(workspace, &path) {
                 tracing::debug!(%error, "directory gone during refresh");
@@ -190,7 +168,6 @@ impl Tree {
         workspace: &mut Workspace,
         dir: &Path,
     ) -> Result<bool, WorkspaceError> {
-        let filter = self.filter;
         let Some(dir) = listing_of(&self.root, dir) else {
             return Ok(false);
         };
@@ -198,7 +175,7 @@ impl Tree {
         let Some(node) = find_node(&mut self.root, dir) else {
             return Ok(false);
         };
-        let fresh = match read_children(workspace, dir, filter) {
+        let fresh = match read_children(workspace, dir, Filter::Visible) {
             Ok(fresh) => fresh,
             Err(error) if !workspace.root().join(dir).is_dir() => {
                 tracing::debug!(%error, "directory gone; collapsing it");
@@ -395,7 +372,6 @@ impl Tree {
         workspace: &mut Workspace,
         path: &Path,
     ) -> Result<bool, WorkspaceError> {
-        let filter = self.filter;
         let Some(node) = find_node(&mut self.root, path) else {
             return Ok(false);
         };
@@ -403,7 +379,7 @@ impl Tree {
             return Ok(false);
         }
         if node.children.is_none() {
-            node.children = Some(read_children(workspace, path, filter)?);
+            node.children = Some(read_children(workspace, path, Filter::Visible)?);
         }
         node.expanded = true;
         Ok(true)

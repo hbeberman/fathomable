@@ -2,8 +2,8 @@
 type: Decision
 title: Headers and the key bar
 description: Every pane header and the review list's entry headers draw on a new `ui.header` theme surface; the review list's key hints leave its header for a key bar on its bottom row so they survive a half-width terminal; the header's counts are joined by dots with the sort word at the right edge, where a click switches the sort; and a stub's age reads in the info colour, not the author's.
-resource: crates/fathomable/src/app/draw/header.rs
 related_resources:
+  - crates/fathomable/src/app/draw/header.rs
   - crates/fathomable-core/src/theme.rs
   - crates/fathomable-core/themes/default-dark.kdl
   - crates/fathomable-core/themes/default-light.kdl

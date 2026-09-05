@@ -1,5 +1,5 @@
-// @okf-doc: /decisions/0059-headers-and-the-key-bar.md
-//! Pane headers and their key hints (ADR 0050, ADR 0059).
+// @okf-doc: /decisions/0064-hints-you-can-press.md
+//! Pane headers and their key hints (ADR 0050, ADR 0059, ADR 0064).
 //!
 //! A [`Header`] is the words on a pane's chrome row and the hints after
 //! them, built once so the drawing and the mouse agree on where each
@@ -7,6 +7,12 @@
 //! word at the right edge; its keys sit on a bar along the list's
 //! bottom row, left-aligned, built by [`review_footer`]. Every header
 //! row draws on `ui.header`.
+//!
+//! A key hint is drawn only where pressing that key now, with the focus
+//! and cursor as they are, runs the action it names (ADR 0064): a header
+//! whose keys would not work here is its words alone. The binding table
+//! says what a key is called; each header builder here says whether it
+//! works.
 
 use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
@@ -212,22 +218,27 @@ fn hints_width(shown: &[HintOf]) -> usize {
 }
 
 /// A diff's header (ADR 0049, ADR 0060): the pair's names, then the
-/// paging, side, whitespace, and close keys.
-pub(crate) fn diff_header(text: &str) -> Header {
-    Header::new(
-        vec![(format!(" {text}"), Tone::Key)],
+/// paging, side, whitespace, and close keys while the text has focus
+/// (ADR 0064).
+pub(crate) fn diff_header(app: &App, text: &str) -> Header {
+    let hints = if app.focus() == Focus::View {
         vec![
             HintOf::paired(Where::View, Action::MoveLeft, Action::MoveRight, "page"),
             HintOf::keyed(Where::View, Action::DiffBase, "base"),
             HintOf::keyed(Where::View, Action::DiffTarget, "target"),
             HintOf::keyed(Where::View, Action::DiffWhitespace, "whitespace"),
             HintOf::keyed(Where::View, Action::Escape, "close"),
-        ],
-    )
+        ]
+    } else {
+        Vec::new()
+    };
+    Header::new(vec![(format!(" {text}"), Tone::Key)], hints)
 }
 
 /// An expanded thread's header row in the text (ADR 0049): the state,
-/// the placement, who watches it, and the thread keys.
+/// the placement, who watches it, and the thread keys when they act on
+/// this thread (ADR 0064): the thread cursor's, while the text has
+/// focus; `e edit` only when the cursor's message is the user's.
 pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
     let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
@@ -250,15 +261,17 @@ pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::
     } else {
         "resolve"
     };
-    Header::new(
-        left,
-        vec![
-            HintOf::keyed(Where::View, Action::Reply, "reply"),
-            HintOf::keyed(Where::View, Action::EditMessage, "edit"),
-            HintOf::keyed(Where::View, Action::ToggleResolved, resolve),
-            HintOf::keyed(Where::View, Action::Comment, "fold"),
-        ],
-    )
+    let keyed = app.focus() == Focus::View && app.thread_cursor().thread() == Some(thread.id());
+    let mut hints = Vec::new();
+    if keyed {
+        hints.push(HintOf::keyed(Where::View, Action::Reply, "reply"));
+        if app.thread_message_editable() {
+            hints.push(HintOf::keyed(Where::View, Action::EditMessage, "edit"));
+        }
+        hints.push(HintOf::keyed(Where::View, Action::ToggleResolved, resolve));
+        hints.push(HintOf::keyed(Where::View, Action::Comment, "fold"));
+    }
+    Header::new(left, hints)
 }
 
 /// The review list's header (ADR 0025, ADR 0049, ADR 0059): the counts
@@ -429,6 +442,84 @@ mod tests {
             None,
             "a dropped hint is not there"
         );
+    }
+
+    /// A key hint is drawn only where the key works (ADR 0064): the
+    /// thread keys on the thread cursor's header alone, `e edit` only on
+    /// the user's own message, and none of them, nor `(c expand)`, while
+    /// another pane has the keys.
+    #[test]
+    fn thread_hints_show_only_where_the_keys_work() -> anyhow::Result<()> {
+        use fathomable_core::annotations::{Author, LineRange};
+        use fathomable_core::session::{Request, Response};
+
+        use crate::app::testing::{self, screen, source_app};
+
+        let dir = testing::workspace("hints-rule", testing::README)?;
+        let mut app = source_app(&dir)?;
+        // The user's thread on L3, an agent's on L5.
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("mine");
+        app.compose_submit();
+        let started = app.handle_request(Request::ThreadStart {
+            path: std::path::PathBuf::from("README.md"),
+            range: Some(LineRange::new(5, 5)),
+            author: Author::agent("reviewer").subscribed("s-1", "coder"),
+            body: "theirs".to_owned(),
+        });
+        let Response::Threads(started) = started else {
+            anyhow::bail!("{started:?}");
+        };
+        let mine = app.file_threads()[0].clone();
+        let theirs = started[0].id().clone();
+        app.expand_thread(mine.clone());
+        app.goto_message(theirs.clone(), 0);
+        assert_eq!(app.thread_cursor().thread(), Some(&theirs));
+
+        let rows = screen(&app)?;
+        let with_fold: Vec<&String> = rows.iter().filter(|row| row.contains("c fold")).collect();
+        assert_eq!(with_fold.len(), 1, "one keyed header: {rows:?}");
+        assert!(
+            with_fold[0].contains("waiting"),
+            "the cursor's: {:?}",
+            with_fold[0]
+        );
+        assert!(!with_fold[0].contains("e edit"), "not the user's message");
+        let mine_thread = app
+            .thread(&mine)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("mine"))?;
+        let header = expanded_header(&app, &mine_thread);
+        assert!(header.hints.is_empty(), "the other header is words alone");
+        assert_eq!(header.action_at(80, 60), None, "a click there runs nothing");
+
+        // On the user's own message, `e edit` joins the keys.
+        app.goto_message(mine.clone(), 0);
+        let rows = screen(&app)?;
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("e edit") && row.contains("c fold")),
+            "{rows:?}"
+        );
+
+        // With the files pane focused none of the keys work, so none show;
+        // a folded stub loses its `(c expand)` the same way.
+        app.fold_thread(&mine);
+        app.fold_thread(&theirs);
+        app.view_mut().goto_source_line(3);
+        assert!(screen(&app)?.iter().any(|row| row.ends_with("(c expand)")));
+        app.toggle_tree_focus();
+        assert!(!screen(&app)?.iter().any(|row| row.contains("(c expand)")));
+        app.toggle_tree_focus();
+        app.goto_message(theirs.clone(), 0);
+        assert!(screen(&app)?.iter().any(|row| row.contains("c fold")));
+        app.toggle_tree_focus();
+        assert!(!screen(&app)?.iter().any(|row| row.contains("c fold")));
+        assert!(diff_header(&app, "HEAD · now").hints.is_empty());
+        app.toggle_tree_focus();
+        assert!(!diff_header(&app, "HEAD · now").hints.is_empty());
+        Ok(())
     }
 
     #[test]

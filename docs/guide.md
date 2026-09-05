@@ -295,7 +295,9 @@ defaults.
 
 `c` on a line a thread covers **expands** its stub in place, the view
 staying still: a header row with the state, placement, watchers, and
-the keys, then every message rendered as Markdown. Its message rows are
+the keys, then every message rendered as Markdown. The keys show only
+on the thread the cursor is on, and only while the text has the keys:
+a hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
 `o` resolves or reopens, `dd` deletes the thread, and `c` on any of its

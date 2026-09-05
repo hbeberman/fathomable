@@ -155,7 +155,7 @@ fn diff_header_click(app: &mut App, column: usize) -> Effect {
         return Effect::None;
     };
     app.focus_pane(Focus::View);
-    let header = header::diff_header(&text);
+    let header = header::diff_header(app, &text);
     if let Some(action) = header.action_at(app.column_width(), column) {
         return app.act(action);
     }

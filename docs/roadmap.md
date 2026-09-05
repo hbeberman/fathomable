@@ -287,3 +287,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     it as a stub above the first line with `file` as its placement
     word, and every list names it by its path alone
     ([0063](decisions/0063-a-comment-on-the-file.md)).
+55. **Hints you can press.** A key hint is drawn only where pressing
+    the key now runs the action it names: the thread header's keys on
+    the thread cursor's thread while the text has focus, `e edit` on
+    the user's own message, the diff header's keys and `(c expand)` on
+    the text alone; a header row inside a thread block paints its
+    gutter cells too ([0064](decisions/0064-hints-you-can-press.md)).

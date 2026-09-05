@@ -19,3 +19,7 @@ mutants.out*/
 .tmp/
 
 # Installed local Git hooks are written under .git/hooks.
+
+# Python bytecode from the lint scripts
+__pycache__/
+*.pyc

@@ -16,7 +16,8 @@ page holds what to type. Linux only for now (see the
 
 ## 1. Install
 
-Requires a stable Rust toolchain (1.88 or newer) and Linux: whether a
+Requires Rust 1.97 or newer and Linux: `rust-toolchain.toml` pins the
+toolchain, so rustup installs 1.97.0 for you inside the checkout. Whether a
 viewer is alive and which harness session a headless `--mcp` serves are
 both read from `/proc`, so on another OS every viewer looks dead and
 the tools ask for the session `id` every time.

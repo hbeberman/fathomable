@@ -68,8 +68,11 @@ Rules:
 - XDG directory resolution is implemented from environment variables in the
   standard library rather than adding a crate.
 - The toolchain is pinned to a specific stable release in
-  `rust-toolchain.toml` and bumped deliberately. Fathomable is an application
-  and makes no MSRV promise.
+  `rust-toolchain.toml` and bumped deliberately. `rust-version` in
+  `[workspace.package]` mirrors that pin so an older compiler fails with a
+  clear error and the resolver stays MSRV-aware; it is a floor, not a support
+  promise. Fathomable is an application and offers no compatibility guarantee
+  for older toolchains, so the two move together on every bump.
 
 ## Consequences
 

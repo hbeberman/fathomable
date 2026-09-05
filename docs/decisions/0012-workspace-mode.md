@@ -61,7 +61,7 @@ choices were captured in a question round on 2026-08-26.
   closed when it starts on a file. `Space e` opens it and gives it focus,
   and `Ctrl-b` does the same for one-handed use. With the sidebar focused,
   `Space e` or `Esc` returns focus to the view and leaves the tree
-  visible; `Space E` hides it (amended 2026-09-04: and shows it again). Opening a file from the tree also returns
+  visible; `Space E` hides it (amended 2026-09-04: and shows it again; later that day it moved to `Space p e`, [0049](0049-inline-threads-and-the-rail.md)). Opening a file from the tree also returns
   focus to the view. (Amended 2026-09-04 by
   [0049](0049-inline-threads-and-the-rail.md): the sidebar is the **rail**, holding
   the **tree pane** above the **threads pane** at a fixed split;

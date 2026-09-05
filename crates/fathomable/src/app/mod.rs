@@ -1697,7 +1697,7 @@ impl App {
         self.relayout();
     }
 
-    /// `Space E`: hide the tree pane, or show it again without taking
+    /// `Space p e`: hide the tree pane, or show it again without taking
     /// the keys; the threads pane keeps the rail either way.
     pub(crate) fn toggle_tree_shown(&mut self) {
         if self.rail.tree {

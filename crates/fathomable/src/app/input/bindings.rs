@@ -664,13 +664,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('E')]],
-        A::TreeToggle,
-        "Space menu",
-        "tree pane: hide, or show again",
-    ),
-    bind(
-        W::Any,
         &[&[c(' '), c('f')]],
         A::PickFile,
         "Space menu",
@@ -783,10 +776,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('c'), c('p')]],
+        &[&[c(' '), c('p'), c('e')]],
+        A::TreeToggle,
+        "Space menu",
+        "panes: hide the tree pane, or show it again",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('p'), c('t')]],
         A::ThreadsPaneToggle,
         "Space menu",
-        "threads: hide the pane, or show it again",
+        "panes: hide the threads pane, or show it again",
     ),
     bind(
         W::Any,
@@ -1293,6 +1293,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
 /// breadcrumb row name them by (ADR 0049).
 const SUBMENUS: &[(Keys, &str)] = &[
     (&[c(' '), c('r')], "rail"),
+    (&[c(' '), c('p')], "panes"),
     (&[c(' '), c('c')], "threads"),
     (&[c(' '), c('v')], "view"),
     (&[c(' '), c('j')], "jump"),
@@ -1560,7 +1561,7 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `j`, `c`, `v`, and `r` (ADR 0049).
+    /// and the submenus open under `j`, `c`, `v`, `r`, and `p` (ADR 0049).
     #[test]
     fn menus_come_from_the_table() {
         let space = menu(Where::View, &[c(' ')]);
@@ -1574,6 +1575,7 @@ mod tests {
             ("c", "threads…"),
             ("v", "view…"),
             ("r", "rail…"),
+            ("p", "panes…"),
         ] {
             let entries: Vec<&str> = space
                 .iter()
@@ -1591,13 +1593,14 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a", "c"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "z", "x", "n", "r", "o", "e", "d", "p"]
+            ["c", "z", "x", "n", "r", "o", "e", "d"]
         );
         assert_eq!(
             keys(Where::Review, &[c(' '), c('v')]),
             ["s", "d", "D", "c", "C", "r", "g"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('r')]), ["r", "i", "."]);
+        assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["e", "t"]);
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
 
@@ -1606,7 +1609,12 @@ mod tests {
     /// "threads: toggle stub visibility".
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
-        for (prefix, word) in [(c('c'), "threads"), (c('v'), "view"), (c('r'), "rail")] {
+        for (prefix, word) in [
+            (c('c'), "threads"),
+            (c('v'), "view"),
+            (c('r'), "rail"),
+            (c('p'), "panes"),
+        ] {
             for (key, label) in menu(Where::View, &[c(' '), prefix]) {
                 assert!(
                     !label.starts_with(&format!("{word}: ")),

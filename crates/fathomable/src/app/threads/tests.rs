@@ -759,7 +759,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
 }
 
 /// Esc leaves a pane where it is; its Space key focuses it or hands
-/// the keys back, and `Space E` or `Space c p` hides it (ADR 0010, ADR 0049).
+/// the keys back, and `Space p` hides it (ADR 0010, ADR 0049).
 #[test]
 fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -791,9 +791,9 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
     space(&mut app, 'T');
     assert_eq!(app.focus(), Focus::View, "Space T on the pane hands back");
     assert!(app.threads_pane_shown());
-    space(&mut app, 'c');
-    press(&mut app, KeyCode::Char('p'));
-    assert!(!app.threads_pane_shown(), "Space c p hides it");
+    space(&mut app, 'p');
+    press(&mut app, KeyCode::Char('t'));
+    assert!(!app.threads_pane_shown(), "Space p t hides it");
 
     space(&mut app, 't');
     assert!(app.review_list().is_open());

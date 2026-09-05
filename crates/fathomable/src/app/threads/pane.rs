@@ -262,7 +262,7 @@ impl App {
         }
     }
 
-    /// `Space c p`: hide the pane, or show it again without taking the
+    /// `Space p t`: hide the pane, or show it again without taking the
     /// keys; the tree keeps the rail if it is shown.
     pub(crate) fn toggle_threads_pane_shown(&mut self) {
         if !self.rail.threads {
@@ -558,7 +558,7 @@ mod tests {
 
     /// The pane shows with the tree hidden and takes the whole rail;
     /// beside the tree its split is fixed whatever the thread count, and
-    /// only a drag changes it. `Space e`, `E`, `T`, and `c p` show, hide,
+    /// only a drag changes it. `Space e`, `T`, `p e`, and `p t` show, hide,
     /// and focus each pane on its own.
     #[test]
     fn the_rail_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
@@ -623,11 +623,11 @@ mod tests {
         assert_eq!(app.threads_pane_height(), 12);
         assert_eq!(app.tree_rows(), top - 4);
 
-        // `Space E` hides the tree and leaves the pane; `Space c p` hides
+        // `Space p e` hides the tree and leaves the pane; `Space p t` hides
         // the pane, and with both gone the rail goes. Both keys show
         // their pane again without taking the keys.
         app.focus_threads_pane();
-        press(&mut app, " E");
+        press(&mut app, " pe");
         assert!(app.tree().is_none());
         assert!(app.threads_pane_shown());
         assert_eq!(
@@ -636,14 +636,14 @@ mod tests {
             "the keys stay with the pane"
         );
         assert_eq!(app.rail_width(), 32);
-        press(&mut app, " cp");
+        press(&mut app, " pt");
         assert!(!app.threads_pane_shown());
         assert_eq!(app.focus(), Focus::View);
         assert_eq!(app.rail_width(), 0);
-        press(&mut app, " cp");
+        press(&mut app, " pt");
         assert!(app.threads_pane_shown(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
-        press(&mut app, " E");
+        press(&mut app, " pe");
         assert!(app.tree().is_some(), "the same key shows it again");
         assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
         Ok(())

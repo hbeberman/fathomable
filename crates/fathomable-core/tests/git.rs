@@ -368,12 +368,23 @@ fn commit_on(
     parent: Option<gix::ObjectId>,
     files: &[(&str, &str)],
 ) -> Result<String, Box<dyn Error>> {
+    commit_on_at(root, reference, parent, files, "0 +0000")
+}
+
+/// [`commit_on`] with the committer `time` (`"<seconds> +0000"`).
+fn commit_on_at(
+    root: &Path,
+    reference: &str,
+    parent: Option<gix::ObjectId>,
+    files: &[(&str, &str)],
+    time: &str,
+) -> Result<String, Box<dyn Error>> {
     let repo = gix::open_opts(root, open_options())?;
     let tree = write_tree(&repo, files)?;
     let signature = gix::actor::SignatureRef {
         name: "test".into(),
         email: "test@example.com".into(),
-        time: "0 +0000",
+        time,
     };
     let id = repo.commit_as(signature, signature, reference, "commit", tree, parent)?;
     Ok(id.to_hex().to_string())
@@ -401,15 +412,67 @@ fn reachable_commits_are_head_and_its_ancestors() -> TestResult {
     )?;
     let workspace = Workspace::discover(&dir.0)?;
     assert_eq!(workspace.head_commit().as_deref(), Some(second.as_str()));
-    let wanted = [first.as_str(), second.as_str(), elsewhere.as_str(), "nope"];
+    // A well-formed id the object store never held, as after a `gc`.
+    let gone = "0123456789abcdef0123456789abcdef01234567";
+    let wanted = [
+        first.as_str(),
+        second.as_str(),
+        elsewhere.as_str(),
+        gone,
+        "nope",
+    ];
     let reachable = workspace.reachable(wanted).ok_or("git workspace")?;
     assert!(reachable.contains(&first));
     assert!(reachable.contains(&second));
     assert!(!reachable.contains(&elsewhere));
+    assert!(!reachable.contains(gone));
     assert!(!reachable.contains("nope"));
     assert_eq!(
         workspace.reachable(std::iter::empty()).map(|set| set.len()),
         Some(0)
+    );
+    Ok(())
+}
+
+/// The walk is bounded by the oldest wanted commit's time, so a wanted
+/// commit far older than `HEAD` is still met, and one only a rewrite
+/// dropped is still missed, whatever their dates.
+#[test]
+fn reachable_finds_a_wanted_commit_much_older_than_head() -> TestResult {
+    const MONTH: i64 = 30 * 24 * 60 * 60;
+    let dir = TempDir::new("git-reachable-old")?;
+    init(&dir.0)?;
+    let old = commit_on_at(&dir.0, "HEAD", None, &[("a.md", "1\n")], "0 +0000")?;
+    let old_id = gix::ObjectId::from_hex(old.as_bytes())?;
+    let dropped = commit_on_at(
+        &dir.0,
+        "refs/heads/dropped",
+        Some(old_id),
+        &[("a.md", "2\n")],
+        &format!("{MONTH} +0000"),
+    )?;
+    let mut parent = old_id;
+    for (months, text) in (2..).zip(["3\n", "4\n", "5\n"]) {
+        let id = commit_on_at(
+            &dir.0,
+            "HEAD",
+            Some(parent),
+            &[("a.md", text)],
+            &format!("{} +0000", months * MONTH),
+        )?;
+        parent = gix::ObjectId::from_hex(id.as_bytes())?;
+    }
+    let workspace = Workspace::discover(&dir.0)?;
+    let reachable = workspace
+        .reachable([old.as_str(), dropped.as_str()])
+        .ok_or("git workspace")?;
+    assert!(
+        reachable.contains(&old),
+        "the root commit is an ancestor of HEAD"
+    );
+    assert!(
+        !reachable.contains(&dropped),
+        "a commit off HEAD's line is not"
     );
     Ok(())
 }

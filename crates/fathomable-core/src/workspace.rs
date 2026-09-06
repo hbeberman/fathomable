@@ -28,6 +28,8 @@ use std::path::{Path, PathBuf};
 
 use gix::ObjectId;
 use gix::bstr::{BString, ByteSlice};
+use gix::revision::walk::Sorting;
+use gix::traverse::commit::simple::CommitTimeOrder;
 use gix::worktree::stack::state::attributes::Source as AttrSource;
 use gix::worktree::stack::state::ignore::Source;
 
@@ -115,6 +117,24 @@ impl Commit {
     pub fn subject(&self) -> &str {
         &self.subject
     }
+}
+
+/// How far below the oldest wanted commit's committer time a reach walk
+/// still descends, in seconds.
+///
+/// A commit's ancestors are normally older than it, so the walk could
+/// stop at that time exactly; the slack absorbs the clock skew between
+/// the machines that made the commits. Setting it too low hides a thread
+/// whose commit sits under a mis-dated ancestor; setting it high only
+/// walks more of the history a rewrite orphaned.
+const REACH_SLACK: gix::date::SecondsSinceUnixEpoch = 7 * 24 * 60 * 60;
+
+/// The committer time of the commit `hex` names, `None` when the object
+/// store does not hold such a commit.
+fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSinceUnixEpoch> {
+    let id = ObjectId::from_hex(hex.as_bytes()).ok()?;
+    let commit = repo.find_object(id).ok()?.try_into_commit().ok()?;
+    commit.time().ok().map(|time| time.seconds)
 }
 
 /// A workspace root with git ignore evaluation.
@@ -223,8 +243,12 @@ impl Workspace {
 
     /// Which of `wanted` (hex commits) are `HEAD` or one of its ancestors
     /// (ADR 0024). One walk from `HEAD` answers the whole set; it stops as
-    /// soon as every wanted commit has been met. Returns `None` outside git
-    /// or before the first commit, meaning nothing can be scoped.
+    /// soon as every wanted commit has been met, and never descends past
+    /// the committer time of the oldest one, less a week of slack: a
+    /// commit a rewrite dropped costs the history since it was made, not
+    /// the whole history. A commit the object store no longer holds is
+    /// unreachable without a walk. Returns `None` outside git or before
+    /// the first commit, meaning nothing can be scoped.
     #[must_use]
     pub fn reachable<'a>(
         &self,
@@ -237,7 +261,25 @@ impl Workspace {
         if pending.is_empty() {
             return Some(found);
         }
-        let walk = match git.repo.rev_walk([head]).all() {
+        // A commit whose object is gone can be reached by nothing, and
+        // the committer time of the rest bounds the walk: `HEAD`'s history
+        // below the oldest wanted commit cannot hold one of them.
+        let mut oldest = gix::date::SecondsSinceUnixEpoch::MAX;
+        pending.retain(|hex| match commit_time(&git.repo, hex) {
+            Some(seconds) => {
+                oldest = oldest.min(seconds);
+                true
+            }
+            None => false,
+        });
+        if pending.is_empty() {
+            return Some(found);
+        }
+        let sorting = Sorting::ByCommitTimeCutoff {
+            order: CommitTimeOrder::NewestFirst,
+            seconds: oldest.saturating_sub(REACH_SLACK),
+        };
+        let walk = match git.repo.rev_walk([head]).sorting(sorting).all() {
             Ok(walk) => walk,
             Err(error) => {
                 tracing::warn!(%error, "cannot walk history from HEAD");

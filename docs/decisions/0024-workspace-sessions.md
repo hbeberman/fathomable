@@ -122,5 +122,12 @@ Settled in a question round on 2026-08-27; the choices are recorded below.
 - Reachability needs a git ancestry query per thread on HEAD change. It
   uses the existing `gix` access ([0006](0006-git-access.md)) and is
   cached per HEAD.
+- The walk is bounded (2026-09-05). A wanted commit the object store no
+  longer holds is unreachable without a walk, and the walk descends no
+  further than a week below the committer time of the oldest wanted
+  commit. Until then one thread on a commit a rebase or squash dropped,
+  and a resolved thread is never rescoped
+  ([0035](0035-threads-follow-head.md)), made every hook, `threads_list`,
+  and reach refresh walk the whole history.
 - `docs/guide.md` gains `--name`, `:name`, the `viewer` argument, and the
   new socket layout when the milestone ships.

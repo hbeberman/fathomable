@@ -432,6 +432,74 @@ fn commit_and_stage(
 }
 
 #[cfg(unix)]
+/// An index entry whose mtime is not older than the index file's own is
+/// "racily clean": git hashes it rather than trust the stat match, since
+/// a rewrite to the same size in the same second as the `git add` would
+/// otherwise hide. The stat data is planted as git would have written
+/// it, and the mtimes pinned, so the race is the same on every run.
+#[test]
+fn racily_clean_entries_are_hashed_not_trusted() -> TestResult {
+    use std::time::Duration;
+
+    use fathomable_core::status::{State, Status};
+
+    let dir = TempDir::new("git-racy")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("a.md", "hello\n")])?;
+    stage(&dir.0, &[("a.md", "hello\n")])?;
+    let file = dir.0.join("a.md");
+    fs::write(&file, "hello\n")?;
+    let repo = gix::open_opts(&dir.0, open_options()).map_err(|e| format!("open: {e}"))?;
+    let mut index = repo.open_index().map_err(|e| format!("open index: {e}"))?;
+    let at = index
+        .entry_index_by_path("a.md".into())
+        .ok()
+        .ok_or("a.md is in the index")?;
+    index.entries_mut()[at].stat =
+        gix::index::entry::Stat::from_fs(&gix::index::fs::Metadata::from_path_no_follow(&file)?)?;
+    index
+        .write(gix::index::write::Options::default())
+        .map_err(|e| format!("write index: {e}"))?;
+    let written = fs::metadata(&file)
+        .map_err(|e| format!("stat a.md: {e}"))?
+        .modified()?;
+    let index_path = repo.index_path();
+    let pin = |path: &Path, at: std::time::SystemTime| -> TestResult {
+        fs::File::options()
+            .write(true)
+            .open(path)?
+            .set_modified(at)?;
+        Ok(())
+    };
+
+    // Same size, same mtime, index no newer than the file: hashed.
+    fs::write(&file, "jello\n")?;
+    pin(&file, written)?;
+    pin(&index_path, written)?;
+    let dirty = |status: Status| -> Vec<(String, State)> {
+        status
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state()))
+            .collect()
+    };
+    let modified = vec![("a.md".to_owned(), State::Modified)];
+    assert_eq!(dirty(Workspace::discover(&dir.0)?.status()?), modified);
+    assert_eq!(
+        dirty(Workspace::discover(&dir.0)?.status_after(
+            &Status::default(),
+            &[file.strip_prefix(&dir.0)?.to_path_buf()]
+        )?),
+        modified
+    );
+
+    // An index written well after the file: the stat match is trusted
+    // and the file is not read, as git does.
+    pin(&index_path, written + Duration::from_secs(2))?;
+    assert!(Workspace::discover(&dir.0)?.status()?.is_empty());
+    Ok(())
+}
+
 #[test]
 fn symlinks_diff_by_target_path_not_followed_content() -> TestResult {
     use fathomable_core::status::State;

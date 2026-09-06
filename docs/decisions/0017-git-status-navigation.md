@@ -15,7 +15,8 @@ Status: accepted (2026-08-26); amended 2026-09-05 by
 [0060](0060-one-diff-two-sides.md): the badge reads `DIFF HEAD`, and the
 diff against `HEAD` is the one diff view with `HEAD` as its base; amended
 2026-09-06: a file event re-examines only the paths it names, and the
-full walk runs on a thread of its own.
+full walk runs on a thread of its own, and racily clean entries are
+hashed.
 
 ## Context
 
@@ -63,7 +64,9 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   `status` feature, which would pull `blob-diff` and its rename machinery
   that [0006](0006-git-access.md) declined: the index against the `HEAD`
   tree for staged changes, a stat-then-hash pass over index entries for
-  unstaged ones (a size and mtime match is clean, as in git), and the
+  unstaged ones (a size and mtime match is clean, as in git, except for
+  an entry no older than the index file itself, which git calls racily
+  clean and both hash: 2026-09-06), and the
   tree's ignore-aware file walk for untracked paths. The full walk is
   bound by one `stat` per tracked file and one `readdir` per directory
   (a quarter of a second for sixty thousand files), which every write

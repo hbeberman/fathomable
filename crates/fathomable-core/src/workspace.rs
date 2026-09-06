@@ -569,7 +569,10 @@ impl Workspace {
     /// outside git.
     ///
     /// A tracked file whose size and mtime match the index is taken as
-    /// clean without reading it, as git does; anything else is hashed.
+    /// clean without reading it, as git does, unless its mtime is not
+    /// older than the index file's own (racily clean, in git's words: a
+    /// rewrite to the same size within the second of a `git add` would
+    /// hide behind the match); anything else is hashed.
     ///
     /// # Errors
     ///
@@ -607,7 +610,7 @@ impl Workspace {
                 None => Some(State::Added),
             };
             let absolute = self.root.join(gix::path::from_bstr(path.as_bstr()));
-            let worktree = worktree_state(&absolute, entry, hash);
+            let worktree = worktree_state(&absolute, entry, hash, &index);
             if let Some(state) = worktree.or(staged) {
                 dirty.insert(path, (state, staged.is_some()));
             }
@@ -763,7 +766,7 @@ impl Workspace {
                 Some(_) => Some(State::Modified),
                 None => Some(State::Added),
             };
-            return Ok(worktree_state(&absolute, entry, head.hash)
+            return Ok(worktree_state(&absolute, entry, head.hash, index)
                 .or(staged)
                 .map(|state| (state, staged.is_some())));
         }
@@ -1277,24 +1280,32 @@ fn unix_path(relative: &Path) -> std::borrow::Cow<'_, gix::bstr::BStr> {
 /// when they match, otherwise the [`State`] the entry is in.
 ///
 /// A tracked file whose size and mtime match the index is taken as clean
-/// without reading it, as git does; anything else is hashed. A symlink's
-/// blob is its target path, so that is what gets hashed, never the file
-/// the link points at.
+/// without reading it, as git does, unless the entry is racily clean: its
+/// mtime is not older than `index`'s own, so a rewrite to the same size
+/// in the same second could hide behind the match, and the file is
+/// hashed as git would. A symlink's blob is its target path, so that is
+/// what gets hashed, never the file the link points at.
 fn worktree_state(
     absolute: &Path,
     entry: &gix::index::Entry,
     hash: gix::hash::Kind,
+    index: &gix::index::State,
 ) -> Option<State> {
     let is_link = entry.mode == gix::index::entry::Mode::SYMLINK;
     match gix::index::fs::Metadata::from_path_no_follow(absolute) {
         Ok(meta) if meta.is_file() && !is_link => {
-            let fresh = gix::index::entry::Stat::from_fs(&meta)
-                .ok()
-                .is_some_and(|stat| {
-                    stat.size == entry.stat.size
-                        && stat.mtime == entry.stat.mtime
-                        && entry.stat.mtime.secs != 0
-                });
+            let racy = entry.stat.is_racy(
+                index.timestamp(),
+                gix::index::entry::stat::Options::default(),
+            );
+            let fresh = !racy
+                && gix::index::entry::Stat::from_fs(&meta)
+                    .ok()
+                    .is_some_and(|stat| {
+                        stat.size == entry.stat.size
+                            && stat.mtime == entry.stat.mtime
+                            && entry.stat.mtime.secs != 0
+                    });
             if fresh {
                 None
             } else {

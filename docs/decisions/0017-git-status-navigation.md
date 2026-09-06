@@ -14,7 +14,8 @@ tags:
 Status: accepted (2026-08-26); amended 2026-09-05 by
 [0060](0060-one-diff-two-sides.md): the badge reads `DIFF HEAD`, and the
 diff against `HEAD` is the one diff view with `HEAD` as its base; amended
-2026-09-06: a file event re-examines only the paths it names.
+2026-09-06: a file event re-examines only the paths it names, and the
+full walk runs on a thread of its own.
 
 ## Context
 
@@ -63,13 +64,17 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   that [0006](0006-git-access.md) declined: the index against the `HEAD`
   tree for staged changes, a stat-then-hash pass over index entries for
   unstaged ones (a size and mtime match is clean, as in git), and the
-  tree's ignore-aware file walk for untracked paths. It runs on the event
-  loop. The full walk is bound by one `stat` per tracked file and one
-  `readdir` per directory (a quarter of a second for sixty thousand
-  files), which every write burst paid until 2026-09-06; now a burst
-  costs the paths it touched, and the walk is left to the events that
-  can change any path. Moving the walk to a thread is a follow-up if
-  the start-up cost makes itself felt.
+  tree's ignore-aware file walk for untracked paths. The full walk is
+  bound by one `stat` per tracked file and one `readdir` per directory
+  (a quarter of a second for sixty thousand files), which every write
+  burst paid until 2026-09-06; now a burst costs the paths it touched,
+  on the loop, and the walk is left to the events that can change any
+  path. The walk itself runs on a thread of its own (2026-09-06,
+  `app/status_walk.rs`): the loop keeps the set it has, empty at
+  start, until the result lands, then examines the paths that changed
+  meanwhile again on it, so a write during the walk is never lost; a
+  newer walk supersedes an older one still running, and `]g` says the
+  walk is still on when the set is empty.
 - Per-file line counts (`+a -r`) are worktree against `HEAD`, computed in
   the same walk for each dirty path.
 

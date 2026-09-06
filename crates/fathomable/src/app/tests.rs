@@ -772,6 +772,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     // creation whose individual event never arrived.
     fs::write(dir.0.join("MISSED.md"), "# Missed\n")?;
     app.on_events(vec![Event::Rescan]);
+    app.settle_status();
     assert!(has(&app, "MISSED.md"));
     app.open_picker(PickerKind::Files);
     assert!(picker_items(&app).iter().any(|p| p == "MISSED.md"));
@@ -878,6 +879,7 @@ fn a_file_event_refreshes_the_dirty_set_for_its_path_only() -> anyhow::Result<()
 
     // Lost events walk the whole tree again.
     app.on_events(vec![Event::Rescan]);
+    app.settle_status();
     assert_eq!(
         dirty(&app),
         vec![
@@ -901,6 +903,52 @@ fn a_file_event_refreshes_the_dirty_set_for_its_path_only() -> anyhow::Result<()
             ("docs/notes.md".to_owned(), State::Deleted),
             ("moved/guide.md".to_owned(), State::Untracked),
             ("moved/notes.md".to_owned(), State::Untracked),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_write_during_the_full_walk_lands_in_the_set() -> anyhow::Result<()> {
+    use fathomable_core::status::State;
+
+    use super::watch::Event;
+
+    let dir = fixture("status-walk")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("README.md", "# Readme\n\nhello\n")])?;
+    let mut app = app(&dir)?;
+    let dirty = |app: &App| -> Vec<(String, State)> {
+        app.status()
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state()))
+            .collect()
+    };
+    let untracked = |name: &str| (name.to_owned(), State::Untracked);
+    assert_eq!(
+        dirty(&app),
+        vec![untracked("docs/guide.md"), untracked("docs/notes.md")]
+    );
+
+    // Lost events start a walk on its own thread; the set in hand stays
+    // until it lands, and a file written meanwhile is examined again on
+    // the result, whether or not the walk saw it.
+    app.on_events(vec![Event::Rescan]);
+    fs::write(dir.0.join("NEW.md"), "# New\n")?;
+    app.on_events(vec![Event::Created(dir.0.join("NEW.md"))]);
+    assert!(app.status().contains(Path::new("NEW.md")), "seen at once");
+    // A second walk supersedes the first; the earlier result is dropped.
+    app.on_events(vec![Event::Rescan]);
+    fs::write(dir.0.join("docs/guide.md"), "# Guide\n\nmore\n")?;
+    app.on_events(vec![Event::Change(dir.0.join("docs/guide.md"))]);
+    app.settle_status();
+    assert_eq!(
+        dirty(&app),
+        vec![
+            untracked("NEW.md"),
+            untracked("docs/guide.md"),
+            untracked("docs/notes.md"),
         ]
     );
     Ok(())

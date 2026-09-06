@@ -25,6 +25,7 @@ mod jumplist;
 pub(crate) mod run;
 mod sidebar;
 mod socket;
+mod status_walk;
 #[cfg(test)]
 pub(crate) mod testing;
 pub(crate) mod threads;
@@ -314,6 +315,8 @@ pub(crate) struct App {
     /// Whether the dirty set missed a refresh, so the next one must
     /// walk the whole tree rather than build on it.
     status_stale: bool,
+    /// The full walks of the dirty set, off the loop (ADR 0017).
+    walks: status_walk::Walks,
     /// Every uncommitted path (ADR 0017), refreshed on git and file events.
     status: Status,
 }
@@ -405,6 +408,7 @@ impl App {
             last_change: None,
             watching_root: false,
             status_stale: false,
+            walks: status_walk::Walks::new(),
             status: Status::default(),
         };
         app.relayout();
@@ -623,6 +627,7 @@ impl App {
             })
             .collect();
         self.on_events(events);
+        self.settle_status();
     }
 
     /// What one settled watcher batch did (ADR 0028). Loaded documents
@@ -906,24 +911,69 @@ impl App {
         &self.status
     }
 
-    /// Re-read the whole dirty set: at start, after a `.git` or ignore
-    /// rules change, and after lost events. A failure is reported and
-    /// leaves the set as it was, to be walked whole next time.
+    /// Walk the whole dirty set again, on a thread of its own: at start,
+    /// after a `.git` or ignore rules change, and after lost events. The
+    /// set in hand stays until the walk lands (`on_walked`); a failure
+    /// to start is reported and leaves it to be walked next time.
     fn refresh_status(&mut self) {
-        let result = self.workspace.status();
-        self.take_status(result);
+        if !self.workspace.is_git() {
+            self.take_status(Ok(Status::default()));
+            return;
+        }
+        if let Err(error) = self.walks.start(self.workspace.root().to_path_buf()) {
+            self.status_stale = true;
+            self.notice(format!("git status: cannot start the walk: {error}"));
+        }
     }
 
     /// Re-read the dirty set for the root-relative paths a settled batch
     /// named (ADR 0017): the rest is kept, so a burst of writes costs
-    /// the paths it touched, never a walk of the tree.
+    /// the paths it touched, never a walk of the tree. A walk in flight
+    /// examines them again when it lands.
     fn refresh_status_for(&mut self, changed: &[PathBuf]) {
+        self.walks.note_changed(changed);
         if self.status_stale {
-            self.refresh_status();
+            if !self.walks.in_flight() {
+                self.refresh_status();
+            }
             return;
         }
         let result = self.workspace.status_after(&self.status, changed);
         self.take_status(result);
+    }
+
+    /// The next full walk's result, when it lands.
+    pub(crate) async fn next_walk(&mut self) -> status_walk::Walked {
+        self.walks.next().await
+    }
+
+    /// Take a full walk's result: the paths that changed while it ran
+    /// are examined again on it, so nothing written meanwhile is lost.
+    /// An older walk's result, superseded by a newer one, is dropped.
+    pub(crate) fn on_walked(&mut self, walked: status_walk::Walked) {
+        let Some((result, changed)) = self.walks.accept(walked) else {
+            return;
+        };
+        let result = result.and_then(|status| {
+            if changed.is_empty() {
+                Ok(status)
+            } else {
+                self.workspace.status_after(&status, &changed)
+            }
+        });
+        self.take_status(result);
+    }
+
+    /// Wait for every walk in flight and take its result, so a test sees
+    /// the set the loop would show once the walk lands.
+    #[cfg(test)]
+    pub(crate) fn settle_status(&mut self) {
+        while self.walks.in_flight() {
+            let Some(walked) = self.walks.blocking_next() else {
+                return;
+            };
+            self.on_walked(walked);
+        }
     }
 
     fn take_status(&mut self, result: Result<Status, WorkspaceError>) {
@@ -989,7 +1039,11 @@ impl App {
             self.status.before(current.as_deref())
         };
         let Some(entry) = next else {
-            self.notice("nothing uncommitted");
+            self.notice(if self.walks.in_flight() {
+                "git status is still walking the tree"
+            } else {
+                "nothing uncommitted"
+            });
             return;
         };
         let path = entry.path().to_path_buf();

@@ -167,6 +167,7 @@ impl AppBuilder {
             options = adjust(options);
         }
         let mut app = App::new(workspace, self.width, self.height, options);
+        app.settle_status();
         if let Some(path) = &self.open {
             app.open(Path::new(path));
             if self.source_view {

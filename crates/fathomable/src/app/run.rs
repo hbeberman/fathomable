@@ -8,6 +8,7 @@
 
 use std::fs;
 use std::io;
+use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
@@ -356,6 +357,10 @@ async fn run_async(
                 app.tick();
                 Effect::None
             }
+            walked = app.next_walk() => {
+                app.on_walked(walked);
+                Effect::None
+            }
             envelope = request_rx.recv() => {
                 if let Some(socket::Envelope { request, reply }) = envelope {
                     let response = app.handle_request(request);
@@ -372,21 +377,37 @@ async fn run_async(
                 Effect::Quit
             }
         };
-        match effect {
-            Effect::None => {}
-            Effect::Quit => break,
-            Effect::Copy(text) => {
-                tracing::debug!(bytes = text.len(), "copied selection via OSC 52");
-                clipboard::copy(&text).context("cannot write to clipboard")?;
-            }
-            Effect::Open(url) => open_url(&mut app, &url),
-            Effect::Command(command) => app.command(&command),
-            Effect::EditDraft => edit_draft(&mut app, &input, &mut terminal).await?,
+        if perform(&mut app, &input, &mut terminal, effect)
+            .await?
+            .is_break()
+        {
+            break;
         }
     }
     app.on_quit();
     tracing::info!("app closed");
     Ok(())
+}
+
+/// Do what a key asked of the loop; `Break` when the viewer is to quit.
+async fn perform(
+    app: &mut App,
+    input: &Input,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    effect: Effect,
+) -> anyhow::Result<ControlFlow<()>> {
+    match effect {
+        Effect::None => {}
+        Effect::Quit => return Ok(ControlFlow::Break(())),
+        Effect::Copy(text) => {
+            tracing::debug!(bytes = text.len(), "copied selection via OSC 52");
+            clipboard::copy(&text).context("cannot write to clipboard")?;
+        }
+        Effect::Open(url) => open_url(app, &url),
+        Effect::Command(command) => app.command(&command),
+        Effect::EditDraft => edit_draft(app, input, terminal).await?,
+    }
+    Ok(ControlFlow::Continue(()))
 }
 
 /// `gx` (ADR 0050): hand `url` to `xdg-open`, the one process the

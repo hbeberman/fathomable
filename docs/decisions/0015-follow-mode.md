@@ -14,7 +14,8 @@ tags:
 
 # 0015 Follow mode and the last-seen diff base
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-06: `--doctor` reports
+the watch budget.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -198,8 +199,10 @@ than replacing them. Unknown keys are errors as in
 ## Consequences
 
 - The recursive workspace watch replaces the single-directory watch; large
-  trees raise inotify watch counts, which `--doctor` should surface when
-  the watch fails.
+  trees raise inotify watch counts. `--doctor` counts the directories
+  under the root, ignored ones included since the watch takes them too,
+  against `fs.inotify.max_user_watches`, and the viewer says when the
+  watch fails and it follows the open file only (2026-09-06).
 - Snapshot state grows with distinct viewed contents, bounded by the 2 MiB
   cap, the 30-day prune, and content addressing across paths.
 - `Config` gains a `follow` block; `Session` gains the follow source and

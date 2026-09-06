@@ -165,6 +165,7 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 }
             }
         }
+        ok &= watch_budget(&mut workspace);
         if let Some(socket) = dirs.viewer_socket(workspace.root(), std::process::id()) {
             let bytes = socket.as_os_str().len();
             if fathomable_core::socket_path_fits(&socket) {
@@ -220,6 +221,83 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
 }
 
 /// How many crash reports a past run left behind (ADR 0022).
+/// The recursive workspace watch costs one inotify watch per directory,
+/// ignored ones included (ADR 0015): how many the root holds, against
+/// the user's budget, so a watch that fails is not a mystery. Fails when
+/// the tree alone exhausts the budget.
+fn watch_budget(workspace: &mut Workspace) -> bool {
+    use fathomable_core::workspace::EntryKind;
+
+    let root = workspace.root().to_path_buf();
+    let dirs = count_dirs(&root);
+    let mut ignored = 0;
+    let mut heavy: Vec<(usize, String)> = Vec::new();
+    if let Ok(read) = fs::read_dir(&root) {
+        for item in read.flatten() {
+            let name = item.file_name().to_string_lossy().into_owned();
+            let is_dir = item.file_type().is_ok_and(|kind| kind.is_dir());
+            if !is_dir || name == ".git" || !workspace.is_ignored(Path::new(&name), EntryKind::Dir)
+            {
+                continue;
+            }
+            let under = count_dirs(&item.path());
+            ignored += under;
+            heavy.push((under, name));
+        }
+    }
+    heavy.sort_by(|a, b| b.cmp(a));
+    let heavy: Vec<String> = heavy
+        .iter()
+        .take(3)
+        .map(|(_, name)| format!("{name}/"))
+        .collect();
+    let summary = if ignored > 0 {
+        format!(
+            "{dirs} directories to watch ({ignored} under ignored paths: {})",
+            heavy.join(", ")
+        )
+    } else {
+        format!("{dirs} directories to watch")
+    };
+    let budget = fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
+        .ok()
+        .and_then(|text| text.trim().parse::<usize>().ok());
+    match budget {
+        Some(max) if dirs < max => {
+            println!("  ok    {summary}; inotify allows {max} per user");
+            true
+        }
+        Some(max) => {
+            println!(
+                "  FAIL  {summary}, but inotify allows {max} per user: raise fs.inotify.max_user_watches, or the viewer follows the open file only"
+            );
+            false
+        }
+        None => {
+            println!("  ok    {summary}; the inotify budget is unknown here");
+            true
+        }
+    }
+}
+
+/// `root` and every directory under it, symlinks not followed.
+fn count_dirs(root: &Path) -> usize {
+    let mut count = 1;
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(read) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for item in read.flatten() {
+            if item.file_type().is_ok_and(|kind| kind.is_dir()) {
+                count += 1;
+                pending.push(item.path());
+            }
+        }
+    }
+    count
+}
+
 fn crash_reports(log_dir: &Path) -> usize {
     let Ok(entries) = fs::read_dir(log_dir) else {
         return 0;

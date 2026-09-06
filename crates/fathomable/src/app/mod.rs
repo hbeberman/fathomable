@@ -523,8 +523,16 @@ impl App {
 
     /// Whether the whole workspace is watched, or only the visible
     /// document's directory as a fallback.
+    /// Whether the recursive workspace watch is in place; when it is
+    /// not, the user is told, since the tree, the follow queue, and the
+    /// dirty set all go quiet without it (ADR 0015).
     pub(crate) fn set_watching_root(&mut self, watching: bool) {
         self.watching_root = watching;
+        if !watching {
+            self.notice(
+                "cannot watch the workspace; following the open file only (--doctor counts the directories)",
+            );
+        }
     }
 
     // ----- follow mode (ADR 0015) -----

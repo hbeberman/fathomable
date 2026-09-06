@@ -37,7 +37,11 @@ view with a checkpoint base, and `Space v r` / `c` / `C` / `g` are
 `Space d r` / `c` / `C` / `g`; amended 2026-09-05 by
 [0066](0066-one-circle-language.md): the threads pane's rows, order,
 header, and keys and the review list's order, folds, and header are as
-that record says (`s` is gone from both); amended 2026-09-04 as the work landed:
+that record says (`s` is gone from both); amended 2026-09-05 by
+[0067](0067-the-texts-key-bar.md): the expanded thread's header carries
+no keys and the stub no `(c expand)`; the text's keys are on a bar
+along the column's bottom row, and the thread cursor's stub reads bold;
+amended 2026-09-04 as the work landed:
 
 - `dd` on an expanded thread's rows deletes the **thread**, not the
   message under the cursor: the store has no message-delete event

@@ -5,15 +5,16 @@
 //! them, built once so the drawing and the mouse agree on where each
 //! hint is. The review list's and the threads pane's headers carry
 //! their counts by colour (ADR 0066) as hints, so the resolved count
-//! takes a click; their keys sit on a bar along the bottom row,
-//! left-aligned, built by [`review_footer`] and [`threads_pane_footer`].
-//! Every header row draws on `ui.header`.
+//! takes a click. Keys live on a bar along a pane's bottom row,
+//! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
+//! text's in [`super::bar`] (ADR 0067); the diff header alone keeps its
+//! keys at its right edge. Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
-//! and cursor as they are, runs the action it names (ADR 0064): a header
-//! whose keys would not work here is its words alone. The binding table
-//! says what a key is called; each header builder here says whether it
-//! works.
+//! and cursor as they are, runs the action it names (ADR 0064): a bar
+//! whose keys would not work here says how to focus the pane instead.
+//! The binding table says what a key is called; each builder here says
+//! whether it works.
 
 use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
@@ -65,7 +66,7 @@ pub(crate) struct HintOf {
 }
 
 impl HintOf {
-    fn new(key: impl Into<String>, what: impl Into<String>, actions: &[Action]) -> Self {
+    pub(super) fn new(key: impl Into<String>, what: impl Into<String>, actions: &[Action]) -> Self {
         Self {
             key: key.into(),
             what: what.into(),
@@ -76,11 +77,11 @@ impl HintOf {
         }
     }
 
-    fn keyed(place: Where, action: Action, what: &'static str) -> Self {
+    pub(super) fn keyed(place: Where, action: Action, what: &'static str) -> Self {
         Self::new(key_of(place, action), what, &[action])
     }
 
-    fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
+    pub(super) fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
@@ -151,7 +152,7 @@ impl Header {
     }
 
     /// A key bar: no words, the hints from the left edge (ADR 0059).
-    fn bar(hints: Vec<HintOf>) -> Self {
+    pub(super) fn bar(hints: Vec<HintOf>) -> Self {
         Self {
             left: Vec::new(),
             hints,
@@ -332,24 +333,6 @@ pub(crate) fn diff_header(app: &App, text: &str) -> Header {
     Header::new(vec![(format!(" {text}"), Tone::Key)], hints)
 }
 
-/// The thread keys that act on the cursor's thread from `place`, for a
-/// thread's header (ADR 0064): reply, edit when the cursor's message is
-/// the user's, resolve or reopen, fold.
-fn thread_hints(app: &App, place: Where, words: Words) -> Vec<HintOf> {
-    let resolve = if words.is_resolved() {
-        "reopen"
-    } else {
-        "resolve"
-    };
-    let mut hints = vec![HintOf::keyed(place, Action::Reply, "reply")];
-    if app.thread_message_editable() {
-        hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
-    }
-    hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
-    hints.push(HintOf::keyed(place, Action::Fold, "fold"));
-    hints
-}
-
 /// The state words after a thread's circle: the placement, the state,
 /// and `proposed` (ADR 0032, ADR 0053), in the state's colour.
 fn state_words(words: Words) -> Vec<(String, Tone)> {
@@ -367,9 +350,8 @@ fn state_words(words: Words) -> Vec<(String, Tone)> {
 }
 
 /// An expanded thread's header row in the text (ADR 0049): the circle,
-/// the placement and state, who watches it, and the thread keys when
-/// they act on this thread (ADR 0064): the thread cursor's, while the
-/// text has focus; `e edit` only when the cursor's message is the user's.
+/// the placement and state, and who watches it. Its keys are on the
+/// text's key bar (ADR 0067).
 pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
     let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
@@ -379,25 +361,16 @@ pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::
     if !watchers.is_empty() {
         left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
     }
-    let keyed = app.focus() == Focus::View && app.thread_cursor().thread() == Some(thread.id());
-    let hints = if keyed {
-        thread_hints(app, Where::View, words)
-    } else {
-        Vec::new()
-    };
-    Header::new(left, hints)
+    Header::new(left, Vec::new())
 }
 
 /// A review list entry's header (ADR 0066): the circle, the lines, the
-/// state words, and the age, as the expanded thread in the text reads;
-/// the cursor's thread carries the thread keys while the list has the
-/// keys.
+/// state words, and the age, as the expanded thread in the text reads.
+/// Its keys are on the list's key bar (ADR 0067).
 pub(crate) fn entry_header(
-    app: &App,
     range: Option<fathomable_core::annotations::LineRange>,
     words: Words,
     updated: u64,
-    selected: bool,
     now: u64,
 ) -> Header {
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
@@ -407,12 +380,7 @@ pub(crate) fn entry_header(
     ];
     left.extend(state_words(words));
     left.push((format!("  {}", format_age(updated, now)), Tone::Info));
-    let hints = if selected && app.focus() == Focus::Review {
-        thread_hints(app, Where::Review, words)
-    } else {
-        Vec::new()
-    };
-    Header::new(left, hints)
+    Header::new(left, Vec::new())
 }
 
 /// The review list's header (ADR 0025, ADR 0049, ADR 0066): the counts
@@ -469,7 +437,7 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
         hints.push(HintOf::keyed(place, Action::Escape, ""));
         hints
     } else {
-        vec![HintOf::new("", "click or Space w h to focus", &[])]
+        vec![HintOf::new("", "click or Space w l to focus", &[])]
     };
     Header::bar(hints)
 }
@@ -509,10 +477,23 @@ pub(crate) fn threads_pane_footer(app: &App) -> Header {
 }
 
 /// The draft's author row (ADR 0054): ` user  draft` as a message's
-/// author row reads, then the draft keys, or the discard question.
-pub(crate) fn draft_header(compose: &Compose) -> Header {
+/// author row reads. Its keys are on the text's key bar (ADR 0067).
+pub(crate) fn draft_header() -> Header {
+    Header::new(
+        vec![
+            (" user".to_owned(), Tone::Key),
+            ("  draft".to_owned(), Tone::Info),
+        ],
+        Vec::new(),
+    )
+}
+
+/// The draft's keys (ADR 0054), for the text's key bar (ADR 0067):
+/// submit or save, newline, scroll, the editor, and Esc; or the
+/// discard question after an Esc on a changed draft.
+pub(super) fn draft_hints(compose: &Compose) -> Vec<HintOf> {
     let place = Where::Draft;
-    let hints = if compose.confirming_discard() {
+    if compose.confirming_discard() {
         vec![
             HintOf::keyed(place, Action::Escape, "again to discard"),
             HintOf::new("", "any key keeps the draft", &[]),
@@ -533,14 +514,7 @@ pub(crate) fn draft_header(compose: &Compose) -> Header {
             HintOf::keyed(place, Action::EditDraft, "$EDITOR"),
             HintOf::keyed(place, Action::Escape, ""),
         ]
-    };
-    Header::new(
-        vec![
-            (" user".to_owned(), Tone::Key),
-            ("  draft".to_owned(), Tone::Info),
-        ],
-        hints,
-    )
+    }
 }
 
 #[cfg(test)]
@@ -602,81 +576,17 @@ mod tests {
         );
     }
 
-    /// A key hint is drawn only where the key works (ADR 0064): the
-    /// thread keys on the thread cursor's header alone, `e edit` only on
-    /// the user's own message, and none of them, nor `(z expand)`, while
-    /// another pane has the keys.
+    /// The diff header's keys show only while the text has focus (ADR
+    /// 0064); the header keeps them at its right edge (ADR 0067).
     #[test]
-    fn thread_hints_show_only_where_the_keys_work() -> anyhow::Result<()> {
-        use fathomable_core::annotations::{Author, LineRange};
-        use fathomable_core::session::{Request, Response};
+    fn diff_header_keys_need_the_texts_focus() -> anyhow::Result<()> {
+        use crate::app::testing::{self, source_app};
 
-        use crate::app::testing::{self, screen, source_app};
-
-        let dir = testing::workspace("hints-rule", testing::README)?;
+        let dir = testing::workspace("diff-header-keys", testing::README)?;
         let mut app = source_app(&dir)?;
-        // The user's thread on L3, an agent's on L5.
-        app.view_mut().goto_source_line(3);
-        app.start_new_comment();
-        app.compose_insert("mine");
-        app.compose_submit();
-        let started = app.handle_request(Request::ThreadStart {
-            path: std::path::PathBuf::from("README.md"),
-            range: Some(LineRange::new(5, 5)),
-            author: Author::agent("reviewer").subscribed("s-1", "coder"),
-            body: "theirs".to_owned(),
-        });
-        let Response::Threads(started) = started else {
-            anyhow::bail!("{started:?}");
-        };
-        let mine = app.file_threads()[0].clone();
-        let theirs = started[0].id().clone();
-        app.expand_thread(mine.clone());
-        app.goto_message(theirs.clone(), 0);
-        assert_eq!(app.thread_cursor().thread(), Some(&theirs));
-
-        let rows = screen(&app)?;
-        let with_fold: Vec<&String> = rows.iter().filter(|row| row.contains("z fold")).collect();
-        assert_eq!(with_fold.len(), 1, "one keyed header: {rows:?}");
-        assert!(
-            with_fold[0].contains("waiting"),
-            "the cursor's: {:?}",
-            with_fold[0]
-        );
-        assert!(!with_fold[0].contains("e edit"), "not the user's message");
-        let mine_thread = app
-            .thread(&mine)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("mine"))?;
-        let header = expanded_header(&app, &mine_thread);
-        assert!(header.hints.is_empty(), "the other header is words alone");
-        assert_eq!(header.action_at(80, 60), None, "a click there runs nothing");
-
-        // On the user's own message, `e edit` joins the keys.
-        app.goto_message(mine.clone(), 0);
-        let rows = screen(&app)?;
-        assert!(
-            rows.iter()
-                .any(|row| row.contains("e edit") && row.contains("z fold")),
-            "{rows:?}"
-        );
-
-        // With the files pane focused none of the keys work, so none show;
-        // a folded stub loses its `(z expand)` the same way.
-        app.fold_thread(&mine);
-        app.fold_thread(&theirs);
-        app.view_mut().goto_source_line(3);
-        assert!(screen(&app)?.iter().any(|row| row.ends_with("(z expand)")));
-        app.toggle_tree_focus();
-        assert!(!screen(&app)?.iter().any(|row| row.contains("(z expand)")));
-        app.toggle_tree_focus();
-        app.goto_message(theirs.clone(), 0);
-        assert!(screen(&app)?.iter().any(|row| row.contains("z fold")));
-        app.toggle_tree_focus();
-        assert!(!screen(&app)?.iter().any(|row| row.contains("z fold")));
-        assert!(diff_header(&app, "HEAD · now").hints.is_empty());
-        app.toggle_tree_focus();
         assert!(!diff_header(&app, "HEAD · now").hints.is_empty());
+        app.toggle_tree_focus();
+        assert!(diff_header(&app, "HEAD · now").hints.is_empty());
         Ok(())
     }
 
@@ -706,7 +616,7 @@ mod tests {
                 (0..buffer.area.width)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
-                    .contains("z fold")
+                    .contains(" ● open")
             })
             .ok_or_else(|| anyhow::anyhow!("the header row"))?;
         let gutter_x = text_x - 4;

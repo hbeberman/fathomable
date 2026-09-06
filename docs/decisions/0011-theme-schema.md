@@ -24,7 +24,9 @@ on the same terms. Amended 2026-09-04 by
 unknown keys now, and `--doctor` no longer reports them. Amended
 2026-09-05 by [0057](0057-the-sidebar.md): `ui.rail*` is `ui.sidebar*`
 again, and `ui.rail*` is an unknown key. Amended 2026-09-05 by
-[0059](0059-headers-and-the-key-bar.md): `ui.header` is added.
+[0059](0059-headers-and-the-key-bar.md): `ui.header` is added. Amended
+2026-09-05 by [0067](0067-the-texts-key-bar.md): `ui.hint` retires, an
+unknown key now.
 
 ## Context
 
@@ -112,8 +114,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `thread.line` | background of annotated rows (0013) |
 | `thread.focus` | background of the rows of the thread the cursor is on, the thread pane's before [0049](0049-inline-threads-and-the-rail.md) ([0033](0033-open-thread-lines.md)) |
 | `thread.inline` | background of a thread's stub rows under its lines; `none` marks them with `▎` instead ([0049](0049-inline-threads-and-the-rail.md)) |
-| `ui.hint` | an affordance dimmer than text, the `(c expand)` on a stub (0049) |
-| `ui.header` | the background of a pane's header rows: the review list's header, entry headers, and key bar, the threads pane's title, the checkpoint header, an expanded thread's header, the draft's author row, and the file-info pane's path row ([0059](0059-headers-and-the-key-bar.md)) |
+| `ui.header` | the background of a pane's header rows and key bars: the review list's header, entry headers, and key bar, the threads pane's title and key bar, the text's key bar, the checkpoint header, an expanded thread's header, the draft's author row, and the file-info pane's path row ([0059](0059-headers-and-the-key-bar.md), [0067](0067-the-texts-key-bar.md)) |
 | `markup.heading` | all heading levels; `markup.heading.1`…`.6` override one level |
 | `markup.raw.inline`, `markup.raw.block` | inline code, code block lines |
 | `markup.link` | link text |

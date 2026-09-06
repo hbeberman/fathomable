@@ -35,7 +35,6 @@ colors {
     "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
     "ui.statusline.info"   fg="dim"
     "ui.warning"           fg="black" bg="red" mods="bold"
-    "ui.hint"              fg="trim"
     "ui.header"            bg="surface"
 
     "ui.sidebar"              fg="fg"

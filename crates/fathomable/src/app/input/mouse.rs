@@ -16,7 +16,6 @@ use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
 use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
-use crate::app::threads::list::Row;
 use crate::app::view::Effect;
 
 /// Presses on one cell closer together than this are one gesture.
@@ -151,22 +150,6 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // A hint on the cursor's thread header runs its key (ADR 0066).
-            let width = app.column_width();
-            let rows = app.review_rows(width);
-            let now = fathomable_core::clock::now();
-            if let Some(Row::Header {
-                range,
-                words,
-                updated,
-                selected: true,
-                ..
-            }) = rows.rows.get(app.review_list().scroll() + row - 1)
-                && let Some(action) = header::entry_header(app, *range, *words, *updated, true, now)
-                    .action_at(width, column - app.sidebar_width())
-            {
-                return app.act(action);
-            }
             app.review_click(row - 1);
         }
         MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
@@ -352,13 +335,27 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if app.review_list().is_open() {
         return review_mouse(app, event.kind, column, row);
     }
+    // The text's key bar along the column's bottom row (ADR 0067): a
+    // click focuses the text and runs the hint under the pointer.
+    if left && app.text_bar_rows() > 0 && row + 1 == rows {
+        let bar = header_bar(app);
+        app.focus_pane(Focus::View);
+        if let Some(action) = bar.action_at(app.column_width(), column - sidebar) {
+            return app.act(action);
+        }
+        return Effect::None;
+    }
     text_mouse(app, event, column, row)
 }
 
+/// The text's key bar as drawn, for the click under the pointer.
+fn header_bar(app: &App) -> header::Header {
+    crate::app::draw::bar::text_bar(app)
+}
+
 /// The mouse over the text: the wheel scrolls; a right-click opens the
-/// menu; a left press places the cursor, expands a stub, runs a hint on
-/// an expanded thread's header, or begins a selection gesture; a drag
-/// extends the selection.
+/// menu; a left press places the cursor, expands a stub, or begins a
+/// selection gesture; a drag extends the selection.
 fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Effect {
     let sidebar = app.sidebar_width();
     let gutter = sidebar + crate::app::draw::gutter_width(app.view());
@@ -381,47 +378,27 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         return Effect::None;
     }
     if left {
-        // A click on the draft places its cursor or runs a hint on its
-        // author row, the keys staying where they were (ADR 0054).
+        // A click on the draft places its cursor, the keys staying where
+        // they were (ADR 0054); its author row takes nothing.
         if text_row < text_rows
             && let Some(draft_row) = app.draft_row_of(app.view().scroll() + text_row)
         {
-            match draft_row {
-                DraftRow::Author => {
-                    let header = app.draft().map(header::draft_header);
-                    let width = app.view().layout().width();
-                    if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
-                        return app.act(action);
-                    }
-                }
-                DraftRow::Text(index) => app.draft_place_cursor(index, col),
+            if let DraftRow::Text(index) = draft_row {
+                app.draft_place_cursor(index, col);
             }
             return Effect::None;
         }
         app.focus_pane(Focus::View);
         if text_row < text_rows
-            && let Some((stub, index, _)) = app.stub_on_row(app.view().scroll() + text_row)
+            && let Some((stub, _, _)) = app.stub_on_row(app.view().scroll() + text_row)
             && let Some(id) = stub.thread().cloned()
+            && !stub.expanded()
         {
-            if stub.expanded() && index == 0 {
-                // A hint on an expanded thread's header runs its key on
-                // that thread (ADR 0050).
-                let header = app
-                    .thread(&id)
-                    .map(|thread| header::expanded_header(app, thread));
-                let width = app.view().layout().width();
-                if let Some(action) = header.and_then(|header| header.action_at(width, col)) {
-                    let newest = app.newest_message(&id);
-                    app.goto_message(id, newest);
-                    return app.act(action);
-                }
-            } else if !stub.expanded() {
-                // A click on a collapsed stub expands its thread with the
-                // cursor on it (ADR 0049).
-                let newest = app.newest_message(&id);
-                app.goto_message(id, newest);
-                return Effect::None;
-            }
+            // A click on a collapsed stub expands its thread with the
+            // cursor on it (ADR 0049).
+            let newest = app.newest_message(&id);
+            app.goto_message(id, newest);
+            return Effect::None;
         }
         if text_row >= text_rows {
             return Effect::None;

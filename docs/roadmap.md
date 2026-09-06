@@ -308,3 +308,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     same view full screen with `s` gone; the files pane, the status
     line, and the file rows take clicks and menus
     ([0066](decisions/0066-one-circle-language.md)).
+58. **The text's key bar.** The text column's bottom row is a permanent
+    key bar on `ui.header` carrying the thread cursor's keys, the
+    draft's keys, and `Z` for the file, or the focus tip; the thread
+    header, the stub, the draft's author row, and the review list's
+    entry header give up their keys, the cursor's stub reads bold, the
+    diff header alone keeps its keys, and `ui.hint` retires
+    ([0067](decisions/0067-the-texts-key-bar.md)).

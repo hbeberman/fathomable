@@ -24,7 +24,9 @@ tags:
 
 # 0066 One circle language and the grouped threads pane
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05). Amended 2026-09-05 by
+[0067](0067-the-texts-key-bar.md): the review list's cursor entry header
+carries no keys; the list's bar has them.
 
 ## Context
 

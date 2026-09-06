@@ -22,6 +22,9 @@ tags:
 Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0066](0066-one-circle-language.md): the review list's header counts by colour and
 has no sort word; the threads pane's keys sit on a bar of its own.
+Amended 2026-09-05 by [0067](0067-the-texts-key-bar.md): the text column
+has a bar of its own, and the unfocused tip reads `click or Space w l
+to focus`, the key that reaches the text column.
 
 ## Context
 

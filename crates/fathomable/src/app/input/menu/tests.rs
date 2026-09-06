@@ -433,44 +433,27 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     annotate(&mut app)?;
 
-    // The expanded thread's header: the `reply` hint.
+    // The text's key bar (ADR 0067): the expanded thread's `reply` hint.
     let row = row_of(&app, "alpha beta")?;
     app.view_mut().goto_row(row);
     handle_key(&mut app, key('c'));
-    let header_row = (0..app.view().layout().lines().len())
-        .find(|&r| {
-            app.stub_on_row(r)
-                .is_some_and(|(stub, index, _)| stub.expanded() && index == 0)
-        })
-        .context("the thread is expanded")?;
-    let (stub, _, _) = app.stub_on_row(header_row).context("a stub")?;
-    let thread = stub
-        .thread()
-        .and_then(|id| app.thread(id))
-        .context("the thread")?;
-    let header = header::expanded_header(&app, thread);
-    let width = app.view().layout().width();
+    let width = app.column_width();
+    let sidebar = app.sidebar_width();
+    let bar_row = app.pane_rows() - 1;
     let col = (0..width)
-        .find(|&c| header.action_at(width, c) == Some(Action::Reply))
+        .find(|&c| draw::bar::text_bar(&app).action_at(width, c) == Some(Action::Reply))
         .context("reply is drawn")?;
-    let (column, screen_row) = at(&app, header_row - app.view().scroll(), col);
-    left(&mut app, column, screen_row);
+    left(&mut app, sidebar + col, bar_row);
     assert!(matches!(
         app.popup(),
         Some(Popup::Compose(compose)) if matches!(compose.target(), ComposeTarget::Reply(_))
     ));
-    // The draft's author row in the thread (ADR 0054): `Esc` cancels.
-    let compose = app.draft().map(header::draft_header).context("a draft")?;
-    let width = app.view().layout().width();
+    // The draft's keys on the bar (ADR 0054, ADR 0067): `Esc` cancels.
     let col = (0..width)
-        .find(|&c| compose.action_at(width, c) == Some(Action::Escape))
+        .find(|&c| draw::bar::text_bar(&app).action_at(width, c) == Some(Action::Escape))
         .context("Esc is drawn")?;
-    let author_row = app.draft_author_row().context("the author row")?;
-    let (column, screen_row) = at(&app, author_row - app.view().scroll(), col);
-    left(&mut app, column, screen_row);
+    left(&mut app, sidebar + col, bar_row);
     assert!(app.popup().is_none(), "the draft closed");
-    let width = app.column_width();
-    let sidebar = app.sidebar_width();
 
     // The review list's key bar: the `resolved` hint toggles the flag
     // (ADR 0059).

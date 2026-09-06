@@ -176,8 +176,6 @@ pub enum Key {
     UiStatuslineInfo,
     /// A banner that warns: the deleted-file row (ADR 0028).
     UiWarning,
-    /// An affordance dimmer than text: `(z expand)` on a stub (ADR 0049).
-    UiHint,
     /// The background of a pane's header rows (ADR 0059).
     UiHeader,
     UiSidebar,
@@ -212,7 +210,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 37] = [
+    const NAMED: [(&'static str, Self); 36] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -223,7 +221,6 @@ impl Key {
         ("ui.statusline.input", Self::UiStatuslineInput),
         ("ui.statusline.info", Self::UiStatuslineInfo),
         ("ui.warning", Self::UiWarning),
-        ("ui.hint", Self::UiHint),
         ("ui.header", Self::UiHeader),
         ("ui.sidebar", Self::UiSidebar),
         ("ui.sidebar.selected", Self::UiSidebarSelected),

@@ -3,6 +3,7 @@
 //! popups, and the status line; `gutter`, `info`, and `message` build the
 //! rows the frame draws.
 
+pub(crate) mod bar;
 pub(crate) mod gutter;
 pub(crate) mod header;
 pub(crate) mod info;
@@ -60,9 +61,7 @@ pub(crate) struct Theme {
     pub(crate) info: Style,
     /// The `deleted` banner (ADR 0028).
     pub(crate) warning: Style,
-    /// `(z expand)` on a stub (ADR 0049).
-    pub(crate) hint: Style,
-    /// A pane's header rows and the review list's key bar (ADR 0059).
+    /// A pane's header rows and the key bars (ADR 0059, ADR 0067).
     pub(crate) header: Style,
     pub(crate) mode_normal: Style,
     pub(crate) mode_select: Style,
@@ -111,7 +110,6 @@ impl Theme {
             statusline: style(Key::UiStatusline),
             info: style(Key::UiStatuslineInfo),
             warning: style(Key::UiWarning),
-            hint: style(Key::UiHint),
             header: style(Key::UiHeader),
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
@@ -227,6 +225,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
+    let text_area = draw_text_bar(frame, app, theme, text_area);
     let text_area = draw_diff_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     frame.render_widget(
@@ -308,6 +307,27 @@ fn draw_banner(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect)
         y: text_area.y + 1,
         height: text_area.height - 1,
         ..text_area
+    }
+}
+
+/// The text's key bar along the column's bottom row (ADR 0067), while
+/// the column shows a document; the rows above it are returned.
+fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
+    if app.text_bar_rows() == 0 || area.height < 2 {
+        return area;
+    }
+    let width = usize::from(area.width);
+    frame.render_widget(
+        Paragraph::new(bar::text_bar(app).line(theme, width)).style(theme.info),
+        Rect {
+            y: area.y + area.height - 1,
+            height: 1,
+            ..area
+        },
+    );
+    Rect {
+        height: area.height - 1,
+        ..area
     }
 }
 
@@ -843,7 +863,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     for (row, line) in lines.iter().enumerate().skip(view.scroll()).take(rows) {
         // A stub row says what a thread said, under its lines; an
         // expanded thread's rows show the whole of it (ADR 0049).
-        if let Some((stub, index, last)) = app.stub_on_row(row) {
+        if let Some((stub, index, _)) = app.stub_on_row(row) {
             if stub.expanded() {
                 let block = view.stub_slot_of_row(row).map_or(0, |(block, _)| block);
                 let body = expanded
@@ -857,9 +877,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
                     digits,
                 ));
             } else {
-                out.push(stub_line(
-                    app, theme, &stub, index, last, row, gutter, width,
-                ));
+                out.push(stub_line(app, theme, &stub, index, row, gutter, width));
             }
             continue;
         }
@@ -951,14 +969,12 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
 /// age, and the first line of the message, on the `thread.inline`
 /// background — or behind a `▎` in the state colour when the theme sets
 /// none. The thread under the cursor reads in the text colour, the
-/// others dimmed; the thread cursor's last row ends with `(z expand)`.
-#[expect(clippy::too_many_arguments, reason = "one row's facts, read once each")]
+/// others dimmed; the thread cursor's rows read bold (ADR 0067).
 fn stub_line<'a>(
     app: &App,
     theme: &Theme,
     stub: &Stub,
     message: usize,
-    last: bool,
     row: usize,
     gutter: usize,
     width: usize,
@@ -986,11 +1002,8 @@ fn stub_line<'a>(
         }
     };
     let covered = app.threads_at_cursor().contains(thread.id());
-    // `z` expands only from the text (ADR 0064).
-    let hinted = last
-        && covered
-        && app.focus() == Focus::View
-        && app.thread_cursor().thread() == Some(thread.id());
+    // The thread cursor's stub is the marked one (ADR 0067).
+    let marked = covered && app.thread_cursor().thread() == Some(thread.id());
     let row_style = theme.thread_inline;
     let text_style = if covered {
         theme
@@ -1002,6 +1015,11 @@ fn stub_line<'a>(
     .patch(row_style);
     let text_style = if theme.thread_focus.fg.is_none() && covered {
         theme.text.patch(row_style)
+    } else {
+        text_style
+    };
+    let text_style = if marked {
+        text_style.add_modifier(Modifier::BOLD)
     } else {
         text_style
     };
@@ -1018,12 +1036,10 @@ fn stub_line<'a>(
     let lead = format!(" {author} ");
     // The age in the info colour, as every other row gives it (ADR 0059).
     let age = format!("{}  ", format_age_short(created, now));
-    let hint = if hinted { " (z expand)" } else { "" };
     let free = width
         .saturating_sub(gutter)
         .saturating_sub(1)
-        .saturating_sub(1 + display_width(&lead) + display_width(&age))
-        .saturating_sub(display_width(hint));
+        .saturating_sub(1 + display_width(&lead) + display_width(&age));
     let first = body.lines().next().unwrap_or("");
     let text = fit_ellipsis(first, free);
     let spans = vec![
@@ -1036,14 +1052,13 @@ fn stub_line<'a>(
         Span::styled(lead, theme.popup_key.patch(row_style)),
         Span::styled(age, theme.info.patch(row_style)),
         Span::styled(text, text_style),
-        Span::styled(hint.to_owned(), theme.hint.patch(row_style)),
     ];
     Line::from(spans).style(row_style)
 }
 
 /// The rows of `stub`'s block expanded in place (ADR 0049), at the text
-/// width: a header with the state, placement, and watchers on the left
-/// and the keys on the right, then every message as the pane drew them,
+/// width: a header with the state, placement, and watchers, then every
+/// message as the pane drew them,
 /// the draft in its place among them (ADR 0054); for a draft block, a
 /// header naming the lines and the draft.
 fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
@@ -1094,10 +1109,11 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
     lines
 }
 
-/// The draft's rows (ADR 0054): the author row with the draft keys, then
-/// the text wrapped at the draft's width and indented as a body is.
+/// The draft's rows (ADR 0054): the author row, then the text wrapped at
+/// the draft's width and indented as a body is; the draft's keys are on
+/// the text's key bar (ADR 0067).
 fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) -> Vec<Line<'a>> {
-    let mut lines = vec![draft_header(compose).line(theme, width)];
+    let mut lines = vec![draft_header().line(theme, width)];
     let buffer = compose.buffer();
     let text_width = app.draft_width();
     let indent = " ".repeat(MESSAGE_INDENT);
@@ -1655,7 +1671,7 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
-        lines.push(list_row(app, theme, row, now, width));
+        lines.push(list_row(theme, row, now, width));
     }
     if rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
@@ -1664,7 +1680,7 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-fn list_row<'a>(app: &App, theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour, `▸` when folded, the count at the edge; the
@@ -1695,7 +1711,7 @@ fn list_row<'a>(app: &App, theme: &Theme, row: &Row, now: u64, width: usize) -> 
         }
         // The header as the expanded thread in the text reads (ADR
         // 0066), a bar on `ui.header`; the cursor's thread in bold on
-        // the selected surface with its keys.
+        // the selected surface.
         Row::Header {
             range,
             words,
@@ -1703,8 +1719,7 @@ fn list_row<'a>(app: &App, theme: &Theme, row: &Row, now: u64, width: usize) -> 
             selected,
             ..
         } => {
-            let line =
-                entry_header(app, *range, *words, *updated, *selected, now).line(theme, width);
+            let line = entry_header(*range, *words, *updated, now).line(theme, width);
             if *selected {
                 line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
             } else {
@@ -1840,8 +1855,6 @@ mod tests {
     fn selected_review_messages_fill_the_row() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
-        let dir = crate::app::testing::workspace("draw-list-row", crate::app::testing::README)?;
-        let app = crate::app::testing::app(&dir)?;
         let rows = [
             Row::Message {
                 entry: 0,
@@ -1861,7 +1874,7 @@ mod tests {
             },
         ];
         for row in rows {
-            let line = list_row(&app, &theme, &row, 0, 30);
+            let line = list_row(&theme, &row, 0, 30);
             let width: usize = line
                 .spans
                 .iter()

@@ -9,13 +9,13 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fathomable_core::annotations::Store;
 use fathomable_core::seen;
 use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
 
-use crate::app::input::keys;
+use crate::app::input::{keys, mouse};
 use crate::app::{App, Options};
 
 /// The README most tests read: a heading, three words, and a list.
@@ -72,6 +72,19 @@ pub(crate) fn press_key(app: &mut App, code: KeyCode) {
 /// The event for a plain character key.
 pub(crate) fn key(ch: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)
+}
+
+/// A left press at `column`, `row` on the screen.
+pub(crate) fn click(app: &mut App, column: usize, row: usize) {
+    mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        },
+    );
 }
 
 /// An `App` under construction for a test. [`AppBuilder::new`] takes the
@@ -164,13 +177,19 @@ impl AppBuilder {
     }
 }
 
-/// The app drawn on a 100×30 test terminal, one trimmed string per row.
-pub(crate) fn screen(app: &App) -> anyhow::Result<Vec<String>> {
+/// The app drawn on a 100×30 test terminal with the default dark theme,
+/// as the cell buffer, for a test that reads styles.
+pub(crate) fn buffer(app: &App) -> anyhow::Result<ratatui::buffer::Buffer> {
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
     let theme = crate::app::draw::Theme::from_core(&core);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
     terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
-    let buffer = terminal.backend().buffer().clone();
+    Ok(terminal.backend().buffer().clone())
+}
+
+/// The app drawn on a 100×30 test terminal, one trimmed string per row.
+pub(crate) fn screen(app: &App) -> anyhow::Result<Vec<String>> {
+    let buffer = buffer(app)?;
     Ok((0..buffer.area.height)
         .map(|y| {
             (0..buffer.area.width)

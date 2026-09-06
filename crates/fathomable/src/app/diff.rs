@@ -529,11 +529,11 @@ mod tests {
         assert_eq!(header(&app), "HEAD · now");
         assert_eq!(badge(&app), "DIFF HEAD");
         assert_eq!(app.diff_chrome_rows(), 1, "a header, no strip");
-        assert_eq!(app.text_rows(), 30 - 1 - 1);
+        assert_eq!(app.text_rows(), 30 - 1 - 1 - 1, "status, bar, header");
         assert!(shown(&app).iter().any(|l| l.contains("-two")));
         press(&mut app, "gd");
         assert!(!app.view().diff_view(), "gd on its own pair closes");
-        assert_eq!(app.text_rows(), 29);
+        assert_eq!(app.text_rows(), 28);
 
         press(&mut app, "gD");
         assert!(!app.view().diff_view(), "never seen: no seen diff");
@@ -628,7 +628,7 @@ mod tests {
             "{}",
             shown(&app)[0]
         );
-        assert_eq!(app.text_rows(), 30 - 1 - 1, "the header takes a row");
+        assert_eq!(app.text_rows(), 30 - 1 - 1 - 1, "the header takes a row");
         press(&mut app, " dc");
         assert_eq!(
             header(&app),
@@ -638,12 +638,12 @@ mod tests {
         assert_eq!(badge(&app), "DIFF cp 1/1");
         assert_eq!(
             app.text_rows(),
-            30 - 1 - 2,
+            30 - 1 - 1 - 2,
             "header and strip take two rows"
         );
         press(&mut app, " dr");
         assert!(!app.view().diff_view());
-        assert_eq!(app.text_rows(), 29);
+        assert_eq!(app.text_rows(), 28);
 
         fs::write(dir.0.join("a.md"), "four\n")?;
         app.on_changes(vec![dir.0.join("a.md")]);

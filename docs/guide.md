@@ -225,9 +225,10 @@ outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
 at once. The `Space` menu and `Space ?` take clicks too, as do the key
-hints at the right edge of the checkpoint, expanded
-thread, and draft author rows and on the review list's and the threads
-pane's key bars; a click on either row of a thread in the threads pane
+hints at the right edge of the checkpoint header and on the text's,
+the review list's, and the threads pane's key bars (a click on a bar
+that says `click or Space w l to focus` focuses that pane); a click on
+either row of a thread in the threads pane
 lands on it and one on a file row folds or unfolds it; a click
 on the threads pane header's words toggles its scope and one on its
 resolved count toggles `x`, as in the review list's header; on the
@@ -313,17 +314,21 @@ it to `none` gets a `▎` at the left edge instead). Stubs are not lines:
 `j`/`k`, paging, search, `:N`, and selection step over them, a click on
 one lands on the row above, and they carry no line number. Stubs of
 threads stacked on one row follow one another in line order. The stub
-of the thread under the cursor reads in the text colour and, for the
-thread the cursor is on, ends with `(z expand)`; the others are dimmed.
+of the thread under the cursor reads in the text colour, bold for the
+thread the cursor is on; the others are dimmed.
 `Space v x` gives resolved threads a stub too, and `Space v t` hides
 stubs altogether; `threads { stubs; stubs-resolved }` sets both
 defaults.
 
 `c` or `z` on a line a thread covers **expands** its stub in place, the
-view staying still: a header row with the state, placement, watchers, and
-the keys, then every message rendered as Markdown. The keys show only
-on the thread the cursor is on, and only while the text has the keys:
-a hint on the screen always does what it says. Its message rows are
+view staying still: a header row with the state, placement, and
+watchers, then every message rendered as Markdown. The text's keys sit
+on a **key bar** along the bottom row of the text column: while the
+text has the keys it names the keys of the thread the cursor is on (`r reply
+· e edit · o resolve · z fold`, or `z expand` on a stub, `e` only on
+your own message) and `Z fold all` or `Z unfold all` while the file has
+threads; while another pane has the keys it reads `click or Space w l
+to focus`. A hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
 `o` resolves or reopens, `dd` deletes the thread, and `z` or `c` on any
@@ -335,8 +340,9 @@ any is expanded. A click on a stub expands it.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its
-thread's expanded rows, under a ` user  draft` row that carries the
-draft keys at its right edge (or `Esc again to discard` once you have
+thread's expanded rows, under a ` user  draft` row; the draft keys are
+on the text's key bar (`Enter submit · Alt-Enter newline · Alt-k/j
+scroll · Ctrl-e $EDITOR · Esc`, or `Esc again to discard` once you have
 pressed Esc on a changed draft); an edit replaces the message it edits,
 seeded with its text; and a new comment (`c` on a line with no thread,
 `C`, or `Space c c`) gets a block of its own under its lines, headed

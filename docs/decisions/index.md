@@ -70,3 +70,4 @@ supersede rather than edit history.
 - [0064 Hints you can press](0064-hints-you-can-press.md)
 - [0065 z folds and unfolds](0065-z-folds-and-unfolds.md)
 - [0066 One circle language and the grouped threads pane](0066-one-circle-language.md)
+- [0067 The text's key bar](0067-the-texts-key-bar.md)

@@ -23,7 +23,9 @@ tags:
 
 # 0054 The draft is written in the thread
 
-Status: accepted (2026-09-04)
+Status: accepted (2026-09-04). Amended 2026-09-05 by
+[0067](0067-the-texts-key-bar.md): the author row is ` user  draft`
+alone; the draft keys are on the text's key bar.
 
 ## Context
 

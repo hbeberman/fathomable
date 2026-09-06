@@ -1290,13 +1290,26 @@ impl App {
         }
     }
 
-    /// Rows left to the text once the banner and the diff's header and
-    /// strip are taken.
+    /// Rows left to the text once the banner, the diff's header and
+    /// strip, and the key bar are taken.
     pub(crate) fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
             .saturating_sub(self.diff_chrome_rows())
+            .saturating_sub(self.text_bar_rows())
             .max(1)
+    }
+
+    /// The row the text's key bar takes along the column's bottom (ADR
+    /// 0067): one while the column shows a document; the review list and
+    /// the file-info pane have no bar of this kind.
+    pub(crate) fn text_bar_rows(&self) -> usize {
+        usize::from(
+            self.has_document()
+                && !self.review_list().is_open()
+                && self.info().is_none()
+                && self.pane_rows() > 1,
+        )
     }
 
     /// Rows over the text: the banner and the diff's header.

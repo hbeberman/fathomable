@@ -437,9 +437,7 @@ impl App {
 mod tests {
     use std::fs;
 
-    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-
-    use crate::app::testing::{self, press, screen, source_app};
+    use crate::app::testing::{self, click, press, screen, source_app};
 
     use crate::app::threads::ComposeTarget;
     use crate::app::{App, Focus, Popup};
@@ -455,16 +453,25 @@ mod tests {
         app.compose_submit();
     }
 
-    fn click(app: &mut App, column: u16, row: u16) {
-        crate::app::input::mouse::handle_mouse(
-            app,
-            MouseEvent {
-                kind: MouseEventKind::Down(MouseButton::Left),
-                column,
-                row,
-                modifiers: KeyModifiers::NONE,
-            },
-        );
+    /// The stub rows among `rows` whose text, the row's last cell that
+    /// is not blank, reads bold: the thread cursor's (ADR 0067).
+    fn bold_rows(app: &App, rows: &[usize]) -> anyhow::Result<Vec<usize>> {
+        let buffer = testing::buffer(app)?;
+        Ok(rows
+            .iter()
+            .copied()
+            .filter(|&row| {
+                let y = u16::try_from(row).unwrap_or(u16::MAX);
+                (0..buffer.area.width)
+                    .rev()
+                    .find(|&x| buffer[(x, y)].symbol() != " ")
+                    .is_some_and(|x| {
+                        buffer[(x, y)]
+                            .modifier
+                            .contains(ratatui::style::Modifier::BOLD)
+                    })
+            })
+            .collect())
     }
 
     /// Stub rows sit under the last row of their thread, carry no line
@@ -533,15 +540,22 @@ mod tests {
         assert!(shown[7].contains("agent-free reply"), "{:?}", shown[7]);
         assert_eq!(shown[8].trim(), "6", "L6 follows: {:?}", shown[8]);
         // The cursor is on L5, which starts the inner thread: its stub
-        // carries the hint on its last row, the outer's does not.
-        assert!(shown[7].ends_with("(z expand)"), "{:?}", shown[7]);
-        assert!(!shown[5].contains("(z expand)"), "{:?}", shown[5]);
-        assert!(!shown[6].contains("(z expand)"), "{:?}", shown[6]);
+        // rows read bold, the outer's do not, and the bar says `z
+        // expand` (ADR 0067).
+        assert_eq!(
+            bold_rows(&app, &[5, 6, 7])?,
+            [6, 7],
+            "the inner thread's rows"
+        );
+        assert!(
+            shown[app.pane_rows() - 1].contains("z expand"),
+            "{:?}",
+            shown[app.pane_rows() - 1]
+        );
+        assert!(!shown[7].contains("(z expand)"), "{:?}", shown[7]);
         // On L4 only the outer thread covers the cursor.
         app.view_mut().goto_source_line(4);
-        let shown = screen(&app)?;
-        assert!(shown[5].ends_with("(z expand)"), "{:?}", shown[5]);
-        assert!(!shown[7].ends_with("(z expand)"), "{:?}", shown[7]);
+        assert_eq!(bold_rows(&app, &[5, 6, 7])?, [5], "the outer thread's row");
 
         // `j` from L5 lands on L6, past three stub rows; `k` comes back.
         app.view_mut().goto_source_line(5);
@@ -644,9 +658,14 @@ mod tests {
         // Outer's collapsed stub, then inner's header, comment, reply.
         assert!(shown[5].contains("outer thread"), "{:?}", shown[5]);
         assert!(
-            shown[6].contains("open") && shown[6].contains("fold"),
-            "{:?}",
+            shown[6].contains("open") && !shown[6].contains("fold"),
+            "the header is words alone (ADR 0067): {:?}",
             shown[6]
+        );
+        assert!(
+            shown[app.pane_rows() - 1].contains("z fold"),
+            "the bar names the key: {:?}",
+            shown[app.pane_rows() - 1]
         );
         assert!(
             shown[7].contains("User") && shown[8].contains("inner point"),
@@ -719,7 +738,7 @@ mod tests {
             .iter()
             .position(|line| line.contains("inner point"))
             .ok_or_else(|| anyhow::anyhow!("inner's stub"))?;
-        click(&mut app, 60, u16::try_from(row)?);
+        click(&mut app, 60, row);
         assert!(app.is_expanded(&inner));
         assert_eq!(app.thread_cursor().thread(), Some(&inner));
         assert_eq!(

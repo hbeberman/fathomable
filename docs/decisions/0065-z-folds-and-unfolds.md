@@ -17,7 +17,9 @@ tags:
 
 Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0066](0066-one-circle-language.md): in the review list and the threads pane
-`z` folds the cursor's file and `Z` every file.
+`z` folds the cursor's file and `Z` every file. Amended 2026-09-05 by
+[0067](0067-the-texts-key-bar.md): the hints `z expand` and `z fold`
+are on the text's key bar, not the stub or the header.
 
 ## Context
 

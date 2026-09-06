@@ -14,7 +14,10 @@ tags:
 
 # 0064 Hints you can press
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05). Amended 2026-09-05 by
+[0067](0067-the-texts-key-bar.md): the rule stands; the thread header's
+keys and the stub's `(z expand)` moved to the text's key bar, which
+shows the thread cursor's keys while the text has focus.
 
 ## Context
 

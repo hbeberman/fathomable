@@ -300,14 +300,19 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
             .collect())
     };
     app.resize(80, 36);
-    // Every message shows, under a header with the state and the
-    // keys; there is no END row and nothing to scroll (ADR 0049).
+    // Every message shows, under a header with the state; the keys are
+    // on the bar (ADR 0067); there is no END row and nothing to scroll
+    // (ADR 0049).
     let rows = render(&app)?;
     let screen = rows.join("\n");
     assert!(
         rows.iter()
-            .any(|row| row.contains("waiting · proposed") && row.contains("fold")),
-        "header carries the state and the keys:\n{screen}"
+            .any(|row| row.contains("waiting · proposed") && !row.contains("fold")),
+        "header carries the state:\n{screen}"
+    );
+    assert!(
+        rows[app.pane_rows() - 1].contains("z fold"),
+        "the bar carries the keys:\n{screen}"
     );
     assert!(
         rows.iter()
@@ -338,8 +343,12 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         .position(|row| row.contains("line 12"))
         .context("the reply's last row")?;
     assert!(
-        rows[last + 1].contains(" user  draft") && rows[last + 1].contains("submit"),
-        "the author row follows the last message:\n{screen}"
+        rows[last + 1].contains(" user  draft") && !rows[last + 1].contains("submit"),
+        "the author row follows the last message, its keys on the bar (ADR 0067):\n{screen}"
+    );
+    assert!(
+        rows[app.pane_rows() - 1].contains("Enter submit"),
+        "the bar carries the draft's keys:\n{screen}"
     );
     assert!(
         rows[last + 2].contains("   in the thread"),

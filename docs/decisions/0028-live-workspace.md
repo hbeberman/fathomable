@@ -60,8 +60,11 @@ Settled in a question round on 2026-08-28; the choices are below.
   output churning under `target/` is free. With `I` showing ignored
   entries the filter is `All` and such events count.
 - `R` stays as the manual re-read (it also drops the picker indexes);
-  the picker indexes are dropped by an automatic refresh too, so a new
-  file is one `Space f` away.
+  a new file is one `Space f` away because an automatic refresh patches
+  the picker indexes (2026-09-06, `app/file_index.rs`): a path that
+  appears joins them where the walk would have put it, a directory that
+  arrives whole is walked, a path that goes leaves them, and only a
+  rules change or a lost-events rescan walks the tree again.
 - A file the agent `follow`s that is not in the tree is revealed
   (parents expanded) without moving the tree cursor unless the sidebar
   has focus, in which case the cursor moves to it as `Enter` would.

@@ -17,6 +17,7 @@ mod clipboard;
 mod commands;
 mod diff;
 mod draw;
+mod file_index;
 mod files_pane;
 mod goto_file;
 pub(crate) mod input;
@@ -264,8 +265,10 @@ pub(crate) struct App {
     press: Option<input::mouse::Press>,
     focus: Focus,
     popup: Option<Popup>,
-    file_index: Option<Vec<String>>,
-    all_index: Option<Vec<String>>,
+    /// The `Space f` files (ADR 0028), patched as paths come and go.
+    file_index: file_index::FileIndex,
+    /// The same with ignored files, for `I`.
+    all_index: file_index::FileIndex,
     message: Option<String>,
     /// The keys typed so far of a longer binding (ADR 0045).
     prefix: Vec<Chord>,
@@ -376,8 +379,8 @@ impl App {
             press: None,
             focus: Focus::View,
             popup: None,
-            file_index: None,
-            all_index: None,
+            file_index: file_index::FileIndex::new(Filter::Visible),
+            all_index: file_index::FileIndex::new(Filter::All),
             message: None,
             prefix: Vec::new(),
             pending_delete: None,
@@ -725,6 +728,11 @@ impl App {
             }
             self.refresh_reach();
         }
+        if rules_changed {
+            // What the index shows follows the rules: walk it again.
+            self.file_index.clear();
+            self.all_index.clear();
+        }
         if git_changed || rules_changed {
             self.refresh_status();
         } else if !changed.is_empty() {
@@ -736,9 +744,6 @@ impl App {
             self.relayout();
         }
         if !dirs.is_empty() {
-            // A new file is one `Space f` away (ADR 0028).
-            self.file_index = None;
-            self.all_index = None;
             for dir in dirs {
                 self.with_tree_result(|tree, workspace| {
                     tree.refresh_dir(workspace, &dir).map(|_| None)
@@ -770,8 +775,8 @@ impl App {
             }
         }
         self.refresh_status();
-        self.file_index = None;
-        self.all_index = None;
+        self.file_index.clear();
+        self.all_index.clear();
         self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
     }
 
@@ -825,6 +830,8 @@ impl App {
     /// last content under a banner (ADR 0028); a directory takes every
     /// document under it along.
     fn on_removed(&mut self, relative: &Path) {
+        self.file_index.removed(relative);
+        self.all_index.removed(relative);
         if self.queue.remove(relative) {
             tracing::info!(path = %relative.display(), "changed file went away");
         }
@@ -849,6 +856,10 @@ impl App {
     /// loaded document follows with its view intact (ADR 0028).
     fn on_renamed(&mut self, from: &Path, to: &Path) {
         tracing::info!(from = %from.display(), to = %to.display(), "renamed");
+        self.file_index.removed(from);
+        self.all_index.removed(from);
+        self.file_index.seen(&mut self.workspace, to);
+        self.all_index.seen(&mut self.workspace, to);
         let root = self.workspace.root().to_path_buf();
         let is_dir = root.join(to).is_dir();
         let moved = |path: &Path| -> Option<PathBuf> {
@@ -1079,6 +1090,9 @@ impl App {
     }
 
     fn on_change(&mut self, relative: &Path, absolute: &Path) {
+        // A new file is one `Space f` away (ADR 0028).
+        self.file_index.seen(&mut self.workspace, relative);
+        self.all_index.seen(&mut self.workspace, relative);
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
         // Ignore rules come before the `stat`: a build writing under
         // `target/` must cost one cached lookup per path, nothing more.
@@ -1894,16 +1908,10 @@ impl App {
     }
 
     fn index(&mut self, filter: Filter) -> Vec<String> {
-        let slot = match filter {
-            Filter::All => &mut self.all_index,
-            Filter::Visible => &mut self.file_index,
-        };
-        if slot.is_none() {
-            let files = self.workspace.walk_files(filter);
-            tracing::info!(files = files.len(), ?filter, "indexed workspace");
-            *slot = Some(files);
+        match filter {
+            Filter::All => self.all_index.files(&mut self.workspace),
+            Filter::Visible => self.file_index.files(&mut self.workspace),
         }
-        slot.clone().unwrap_or_default()
     }
 
     fn picker_mut(&mut self) -> Option<&mut PickerState> {

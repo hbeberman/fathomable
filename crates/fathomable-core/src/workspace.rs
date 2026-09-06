@@ -1008,8 +1008,15 @@ impl Workspace {
     ///
     /// Directories that cannot be read are logged and skipped.
     pub fn walk_files(&mut self, filter: Filter) -> Vec<String> {
+        self.walk_files_under(Path::new(""), filter)
+    }
+
+    /// The files under root-relative `dir` as [`Workspace::walk_files`]
+    /// lists them, `dir` itself listed first: what a directory that
+    /// arrived whole adds to an index kept in [`walk_order`].
+    pub fn walk_files_under(&mut self, dir: &Path, filter: Filter) -> Vec<String> {
         let mut files: Vec<PathBuf> = Vec::new();
-        self.walk_under(Path::new(""), filter, &mut files);
+        self.walk_under(dir, filter, &mut files);
         files
             .into_iter()
             .map(|path| path.to_string_lossy().into_owned())
@@ -1160,6 +1167,45 @@ pub fn is_rules_file(relative: &Path) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| matches!(name, ".gitignore" | ".gitattributes"))
+}
+
+/// The order [`Workspace::walk_files`] lists root-relative paths in: at
+/// each level a directory's files come before its subdirectories, and
+/// names sort by their lowercase form, then as written. An index kept
+/// in this order takes a new path at its partition point.
+///
+/// ```
+/// use std::cmp::Ordering;
+/// use fathomable_core::workspace::walk_order;
+///
+/// let mut paths = ["src/lib.rs", "Cargo.toml", "src/app/mod.rs", "README.md", "src/b.rs"];
+/// paths.sort_by(|a, b| walk_order(a, b));
+/// assert_eq!(paths, ["Cargo.toml", "README.md", "src/b.rs", "src/lib.rs", "src/app/mod.rs"]);
+/// assert_eq!(walk_order("a/b", "a/b"), Ordering::Equal);
+/// ```
+#[must_use]
+pub fn walk_order(a: &str, b: &str) -> Ordering {
+    let mut left = a.split('/').peekable();
+    let mut right = b.split('/').peekable();
+    loop {
+        let (Some(l), Some(r)) = (left.next(), right.next()) else {
+            return Ordering::Equal;
+        };
+        // The last component is a file, an earlier one a directory.
+        let l_file = left.peek().is_none();
+        let r_file = right.peek().is_none();
+        let step = match (l_file, r_file) {
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            _ => l
+                .to_lowercase()
+                .cmp(&r.to_lowercase())
+                .then_with(|| l.cmp(r)),
+        };
+        if step != Ordering::Equal {
+            return step;
+        }
+    }
 }
 
 /// How every repository is opened: as git would, except that `GIT_DIR`,

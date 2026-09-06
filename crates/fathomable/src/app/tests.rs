@@ -379,6 +379,76 @@ fn picker_filters_and_opens() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The picker's index follows the events rather than being walked
+/// again after each (ADR 0028): a file or a whole directory that
+/// appears is listed where the walk would put it, a removed or renamed
+/// path leaves, and an ignore rules change walks again.
+#[test]
+fn the_picker_index_follows_events() -> anyhow::Result<()> {
+    use super::watch::Event;
+
+    let dir = fixture("picker-index")?;
+    git::init(&dir.0)?;
+    let mut app = app(&dir)?;
+    let listed = |app: &mut App, kind: PickerKind| -> Vec<String> {
+        app.open_picker(kind);
+        let items = picker_items(app);
+        app.close_popup();
+        items
+    };
+    assert_eq!(
+        listed(&mut app, PickerKind::Files),
+        ["README.md", "docs/guide.md", "docs/notes.md"]
+    );
+
+    // A new file, and a directory that arrived whole with one event.
+    fs::write(dir.0.join("Cargo.toml"), "[package]\n")?;
+    fs::create_dir_all(dir.0.join("crates/pipe/src"))?;
+    fs::write(dir.0.join("crates/pipe/src/lib.rs"), "")?;
+    fs::write(dir.0.join("crates/pipe/Cargo.toml"), "")?;
+    app.on_events(vec![
+        Event::Created(dir.0.join("Cargo.toml")),
+        Event::Created(dir.0.join("crates")),
+    ]);
+    assert_eq!(
+        listed(&mut app, PickerKind::Files),
+        [
+            "Cargo.toml",
+            "README.md",
+            "crates/pipe/Cargo.toml",
+            "crates/pipe/src/lib.rs",
+            "docs/guide.md",
+            "docs/notes.md",
+        ]
+    );
+
+    // A rename moves the path; a removal takes a directory's files along.
+    fs::rename(dir.0.join("docs/notes.md"), dir.0.join("NOTES.md"))?;
+    fs::remove_dir_all(dir.0.join("crates"))?;
+    app.on_events(vec![
+        Event::Renamed {
+            from: dir.0.join("docs/notes.md"),
+            to: dir.0.join("NOTES.md"),
+        },
+        Event::Removed(dir.0.join("crates")),
+    ]);
+    assert_eq!(
+        listed(&mut app, PickerKind::Files),
+        ["Cargo.toml", "NOTES.md", "README.md", "docs/guide.md"]
+    );
+
+    // An ignored file is listed only with `I`; a rules change walks again.
+    fs::write(dir.0.join("out.log"), "")?;
+    fs::write(dir.0.join(".gitignore"), "*.log\n")?;
+    app.on_events(vec![
+        Event::Created(dir.0.join(".gitignore")),
+        Event::Created(dir.0.join("out.log")),
+    ]);
+    assert!(!listed(&mut app, PickerKind::Files).contains(&"out.log".to_owned()));
+    assert!(listed(&mut app, PickerKind::AllFiles).contains(&"out.log".to_owned()));
+    Ok(())
+}
+
 #[test]
 fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
     let dir = fixture("touch")?;

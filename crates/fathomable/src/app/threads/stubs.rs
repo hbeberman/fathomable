@@ -548,9 +548,9 @@ mod tests {
             "the inner thread's rows"
         );
         assert!(
-            shown[app.pane_rows() - 1].contains("z expand"),
+            shown[app.text_bar_row()].contains("z expand"),
             "{:?}",
-            shown[app.pane_rows() - 1]
+            shown[app.text_bar_row()]
         );
         assert!(!shown[7].contains("(z expand)"), "{:?}", shown[7]);
         // On L4 only the outer thread covers the cursor.
@@ -663,9 +663,9 @@ mod tests {
             shown[6]
         );
         assert!(
-            shown[app.pane_rows() - 1].contains("z fold"),
+            shown[app.text_bar_row()].contains("z fold"),
             "the bar names the key: {:?}",
-            shown[app.pane_rows() - 1]
+            shown[app.text_bar_row()]
         );
         assert!(
             shown[7].contains("User") && shown[8].contains("inner point"),

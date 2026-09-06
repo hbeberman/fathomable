@@ -1290,26 +1290,35 @@ impl App {
         }
     }
 
-    /// Rows left to the text once the banner, the diff's header and
-    /// strip, and the key bar are taken.
+    /// Rows left to the text once the banner and the diff's header and
+    /// strip are taken. The text's key bar takes none: it replaces the
+    /// bottom text row while it has something to say (ADR 0067).
     pub(crate) fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
             .saturating_sub(self.diff_chrome_rows())
-            .saturating_sub(self.text_bar_rows())
             .max(1)
     }
 
-    /// The row the text's key bar takes along the column's bottom (ADR
-    /// 0067): one while the column shows a document; the review list and
-    /// the file-info pane have no bar of this kind.
-    pub(crate) fn text_bar_rows(&self) -> usize {
-        usize::from(
-            self.has_document()
-                && !self.review_list().is_open()
-                && self.info().is_none()
-                && self.pane_rows() > 1,
-        )
+    /// Whether the text's key bar replaces the bottom text row (ADR
+    /// 0067): the column shows a document, and a draft is open, a thread
+    /// is under the cursor, or the file has a thread to fold. The review
+    /// list and the file-info pane have no bar of this kind.
+    pub(crate) fn text_bar_shown(&self) -> bool {
+        self.has_document()
+            && !self.review_list().is_open()
+            && self.info().is_none()
+            && (self.draft().is_some()
+                || self
+                    .thread_cursor()
+                    .thread()
+                    .is_some_and(|id| self.threads_at_cursor().contains(id))
+                || !self.stubs().is_empty())
+    }
+
+    /// The screen row the text's key bar replaces: the bottom text row.
+    pub(crate) fn text_bar_row(&self) -> usize {
+        self.text_top() + self.text_rows() - 1
     }
 
     /// Rows over the text: the banner and the diff's header.

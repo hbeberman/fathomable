@@ -439,7 +439,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     handle_key(&mut app, key('c'));
     let width = app.column_width();
     let sidebar = app.sidebar_width();
-    let bar_row = app.pane_rows() - 1;
+    let bar_row = app.text_bar_row();
     let col = (0..width)
         .find(|&c| draw::bar::text_bar(&app).action_at(width, c) == Some(Action::Reply))
         .context("reply is drawn")?;
@@ -465,7 +465,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
         .find(|&c| bar.action_at(width, c) == Some(Action::ReviewResolved))
         .context("resolved is drawn on the bar")?;
     let before = app.review().resolved;
-    let bar_row = app.pane_rows() - 1;
+    let bar_row = app.text_bar_row();
     left(&mut app, sidebar + col, bar_row);
     assert_ne!(app.review().resolved, before, "the resolved hint ran");
 

@@ -311,7 +311,7 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         "header carries the state:\n{screen}"
     );
     assert!(
-        rows[app.pane_rows() - 1].contains("z fold"),
+        rows[app.text_bar_row()].contains("z fold"),
         "the bar carries the keys:\n{screen}"
     );
     assert!(
@@ -347,7 +347,7 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         "the author row follows the last message, its keys on the bar (ADR 0067):\n{screen}"
     );
     assert!(
-        rows[app.pane_rows() - 1].contains("Enter submit"),
+        rows[app.text_bar_row()].contains("Enter submit"),
         "the bar carries the draft's keys:\n{screen}"
     );
     assert!(

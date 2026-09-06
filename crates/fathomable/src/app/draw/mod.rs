@@ -225,9 +225,9 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
-    let text_area = draw_text_bar(frame, app, theme, text_area);
     let text_area = draw_diff_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
+    draw_text_bar(frame, app, theme, text_area);
     frame.render_widget(
         status_line(app, theme, usize::from(area.width)),
         status_area,
@@ -310,11 +310,11 @@ fn draw_banner(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect)
     }
 }
 
-/// The text's key bar along the column's bottom row (ADR 0067), while
-/// the column shows a document; the rows above it are returned.
-fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
-    if app.text_bar_rows() == 0 || area.height < 2 {
-        return area;
+/// The text's key bar over the bottom text row (ADR 0067), while it has
+/// something to say; the text does not move for it.
+fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if !app.text_bar_shown() || area.height == 0 {
+        return;
     }
     let width = usize::from(area.width);
     frame.render_widget(
@@ -325,10 +325,6 @@ fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) ->
             ..area
         },
     );
-    Rect {
-        height: area.height - 1,
-        ..area
-    }
 }
 
 /// A diff's header over the text and, while the file has checkpoints,

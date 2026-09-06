@@ -323,12 +323,14 @@ defaults.
 `c` or `z` on a line a thread covers **expands** its stub in place, the
 view staying still: a header row with the state, placement, and
 watchers, then every message rendered as Markdown. The text's keys sit
-on a **key bar** along the bottom row of the text column: while the
-text has the keys it names the keys of the thread the cursor is on (`r reply
-· e edit · o resolve · z fold`, or `z expand` on a stub, `e` only on
-your own message) and `Z fold all` or `Z unfold all` while the file has
-threads; while another pane has the keys it reads `click or Space w l
-to focus`. A hint on the screen always does what it says. Its message rows are
+on a **key bar** that replaces the bottom text row while it has
+something to say (a thread under the cursor, a thread in the file, or a
+draft); the text does not move for it. While the text has the keys it
+names the keys of the thread the cursor is on (`r reply · e edit · o
+resolve · z fold`, or `z expand` on a stub, `e` only on your own
+message) and `Z fold all` or `Z unfold all` while the file has threads;
+while another pane has the keys it reads `click or Space w l to
+focus`. A hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
 `o` resolves or reopens, `dd` deletes the thread, and `z` or `c` on any

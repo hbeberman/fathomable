@@ -335,9 +335,9 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if app.review_list().is_open() {
         return review_mouse(app, event.kind, column, row);
     }
-    // The text's key bar along the column's bottom row (ADR 0067): a
-    // click focuses the text and runs the hint under the pointer.
-    if left && app.text_bar_rows() > 0 && row + 1 == rows {
+    // The text's key bar over the bottom text row (ADR 0067): a click
+    // focuses the text and runs the hint under the pointer.
+    if left && app.text_bar_shown() && row == app.text_bar_row() {
         let bar = header_bar(app);
         app.focus_pane(Focus::View);
         if let Some(action) = bar.action_at(app.column_width(), column - sidebar) {

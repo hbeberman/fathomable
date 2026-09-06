@@ -1,15 +1,15 @@
 // @okf-doc: /decisions/0067-the-texts-key-bar.md
 //! The text column's key bar (ADR 0067).
 //!
-//! The bottom row of the text column is a key bar on `ui.header`
-//! whenever a document is open and the review list is not, as the
-//! review list's and the threads pane's bars are (ADR 0059, ADR 0066).
-//! It is a permanent row, so the text never moves when focus changes:
-//! while another pane has the keys it says how to focus the text, and
-//! a click on it does. With the keys it reads the draft's keys while
-//! one is open, else the thread cursor's keys when the cursor line has
-//! a thread, then `Z` for the file's threads. Every hint drawn works
-//! now (ADR 0064); the rest are left out.
+//! A key bar on `ui.header` replaces the bottom text row while it has
+//! something to say, as the threads pane's bar replaces its bottom row
+//! (ADR 0066); the text never moves for it, and with nothing to say the
+//! row is text. It has something to say while a draft is open, a
+//! thread is under the cursor, or the file has a thread to fold: then,
+//! while another pane has the keys, it says how to focus the text, and
+//! a click on it does; with the keys it reads the draft's keys, else
+//! the thread cursor's keys, then `Z` for the file's threads. Every
+//! hint drawn works now (ADR 0064); the rest are left out.
 
 use crate::app::draw::header::{Header, HintOf, draft_hints};
 use crate::app::input::bindings::{Action, Where};
@@ -82,12 +82,12 @@ mod tests {
 
     use crate::app::Focus;
     use crate::app::draw::header::expanded_header;
-    use crate::app::testing::{self, click, press_key, screen, source_app};
+    use crate::app::testing::{self, click, press_key, screen};
 
-    /// The bar's row on the 100×30 test screen: the last pane row, past
-    /// the sidebar.
+    /// The bar's row on the 100×30 test screen: the bottom text row,
+    /// past the sidebar.
     fn bar(app: &crate::app::App) -> anyhow::Result<String> {
-        Ok(screen(app)?[app.pane_rows() - 1]
+        Ok(screen(app)?[app.text_bar_row()]
             .chars()
             .skip(app.sidebar_width())
             .collect())
@@ -101,9 +101,19 @@ mod tests {
     #[test]
     fn the_bar_reads_the_cursor_threads_keys() -> anyhow::Result<()> {
         let dir = testing::workspace("text-bar", testing::README)?;
-        let mut app = source_app(&dir)?;
-        assert_eq!(bar(&app)?.trim(), "", "no thread, no keys");
-        assert_eq!(app.text_rows(), 30 - 1 - 1, "the bar takes a row");
+        // No toasts: the agent's comment would raise one over the bar.
+        let mut app = testing::AppBuilder::new(&dir)
+            .source_view()
+            .options(|o| crate::app::Options {
+                jump: fathomable_core::config::JumpConfig {
+                    toast: std::time::Duration::ZERO,
+                    ..o.jump
+                },
+                ..o
+            })
+            .build()?;
+        assert!(!app.text_bar_shown(), "no thread, no draft: no bar");
+        assert_eq!(app.text_rows(), 30 - 1, "the bar takes no row");
 
         // The user's thread on L3, an agent's on L5.
         app.view_mut().goto_source_line(3);
@@ -130,9 +140,8 @@ mod tests {
         app.goto_message(theirs.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&theirs));
 
-        let row = bar(&app)?;
         assert_eq!(
-            row.trim(),
+            bar(&app)?.trim(),
             "r reply · o resolve · z fold · Z fold all",
             "the agent's thread: no edit"
         );
@@ -180,7 +189,7 @@ mod tests {
         // text, and one on a hint runs it.
         app.toggle_tree_focus();
         assert_eq!(bar(&app)?.trim(), "click or Space w l to focus");
-        let row = app.pane_rows() - 1;
+        let row = app.text_bar_row();
         let sidebar = app.sidebar_width();
         click(&mut app, sidebar + 3, row);
         assert_eq!(app.focus(), Focus::View);
@@ -189,6 +198,11 @@ mod tests {
         assert!(app.draft().is_some(), "`r reply` on the bar starts a reply");
         press_key(&mut app, KeyCode::Esc);
         assert!(app.draft().is_none());
+
+        // The bar replaces the bottom text row; the text has as many rows
+        // as it had with no bar (ADR 0067).
+        assert!(app.text_bar_shown());
+        assert_eq!(app.text_rows(), 30 - 1, "the text did not move");
         Ok(())
     }
 }

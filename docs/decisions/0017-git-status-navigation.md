@@ -57,7 +57,9 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   after the hint debounce, re-examines only the paths it names
   (`Workspace::status_after`, 2026-09-06): each named path, and under a
   directory among them its tracked files, its entries in the set, and
-  the files it holds on disk; the rest of the set is kept. A save, a
+  the files it holds on disk, reading its `HEAD` subtree once when it
+  holds many tracked files rather than looking each up; the rest of the
+  set is kept, and a change naming the root takes the walk. A save, a
   `git add`, and a commit each update the sidebar within a beat. Outside
   a repository the set is empty and every git feature below is inert.
 - The walk is in-house over `gix`'s `index` feature rather than its

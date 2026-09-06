@@ -647,7 +647,9 @@ impl Workspace {
     /// must have been built against them: a change under `.git`, or to
     /// a file [`is_rules_file`] names, takes the full walk of
     /// [`Workspace::status`] instead (reload the rules with
-    /// [`Workspace::reload_rules`] first). Empty outside git.
+    /// [`Workspace::reload_rules`] first), as does one naming the root.
+    /// A directory with many tracked files has its `HEAD` subtree read
+    /// once rather than looked up per file. Empty outside git.
     ///
     /// # Errors
     ///
@@ -661,10 +663,11 @@ impl Workspace {
         let Some(git) = self.ignore.as_ref() else {
             return Ok(Status::default());
         };
-        if changed
-            .iter()
-            .any(|path| path.starts_with(".git") || is_rules_file(path))
-        {
+        // The root named is the whole tree; a `.git` or rules change can
+        // move any path: the walk is the cheaper answer for both.
+        if changed.iter().any(|path| {
+            path.as_os_str().is_empty() || path.starts_with(".git") || is_rules_file(path)
+        }) {
             return self.status();
         }
         let repo = git.repo.clone();
@@ -676,11 +679,13 @@ impl Workspace {
         let index = repo
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
-        let head = Head {
+        let mut head = Head {
             tree: head_tree_of(&repo).map_err(&fail)?,
             hash: repo.object_hash(),
+            collected: BTreeMap::new(),
+            covered: Vec::new(),
         };
-        let examine = self.paths_to_examine(&index, previous, changed);
+        let examine = self.paths_to_examine(&index, previous, changed, &mut head)?;
         let mut entries: Vec<status::Entry> = previous
             .entries()
             .iter()
@@ -705,13 +710,17 @@ impl Workspace {
 
     /// The paths [`Workspace::status_after`] examines for `changed`: each
     /// path, and under one that is a directory its tracked files, its
-    /// entries in `previous`, and the files it holds on disk.
+    /// entries in `previous`, and the files it holds on disk. A directory
+    /// with many tracked files has its `HEAD` subtree read once into
+    /// `head`, so its files cost a map lookup each rather than a tree
+    /// walk each.
     fn paths_to_examine(
         &mut self,
         index: &gix::index::State,
         previous: &Status,
         changed: &[PathBuf],
-    ) -> BTreeSet<PathBuf> {
+        head: &mut Head<'_>,
+    ) -> Result<BTreeSet<PathBuf>, WorkspaceError> {
         let mut examine: BTreeSet<PathBuf> = BTreeSet::new();
         for path in changed {
             examine.insert(path.clone());
@@ -719,7 +728,14 @@ impl Workspace {
             if !prefix.is_empty() {
                 prefix.push(b'/');
             }
-            for entry in index.prefixed_entries(prefix.as_bstr()).unwrap_or(&[]) {
+            let tracked = index.prefixed_entries(prefix.as_bstr()).unwrap_or(&[]);
+            if tracked.len() >= COLLECT_SUBTREE_FROM {
+                head.collect(path).map_err(|message| WorkspaceError {
+                    path: self.root.join(path),
+                    message,
+                })?;
+            }
+            for entry in tracked {
                 examine.insert(gix::path::from_bstr(entry.path(index)).into_owned());
             }
             for entry in previous.entries() {
@@ -739,7 +755,7 @@ impl Workspace {
                 self.walk_under(path, Filter::Visible, &mut examine);
             }
         }
-        examine
+        Ok(examine)
     }
 
     /// How root-relative `relative` is dirty now, as the full walk of
@@ -1222,19 +1238,65 @@ pub fn open_options() -> gix::open::Options {
     gix::open::Options::default().permissions(permissions)
 }
 
+/// How many tracked files under a changed directory make reading its
+/// `HEAD` subtree once cheaper than looking each up: a lookup decodes a
+/// tree per path component, and from this many on the walk wins.
+const COLLECT_SUBTREE_FROM: usize = 16;
+
 /// `HEAD` as [`Workspace::status_after`] reads it: its tree, `None`
 /// while it is unborn, and the hash the repository keys objects by.
 struct Head<'repo> {
     tree: Option<gix::Tree<'repo>>,
     hash: gix::hash::Kind,
+    /// The blobs of every subtree read whole, by path.
+    collected: BTreeMap<BString, ObjectId>,
+    /// The directory prefixes `collected` covers, each ending in `/`
+    /// (empty for the root).
+    covered: Vec<BString>,
 }
 
 impl Head<'_> {
+    /// Read the subtree at root-relative `dir` once, so every lookup
+    /// under it is a map hit. Nothing under `dir` in `HEAD` still counts
+    /// as covered: such lookups answer `None` without a tree walk.
+    fn collect(&mut self, dir: &Path) -> Result<(), String> {
+        let mut prefix = unix_path(dir).into_owned();
+        if !prefix.is_empty() {
+            prefix.push(b'/');
+        }
+        if let Some(tree) = self.tree.as_ref() {
+            let subtree = if dir.as_os_str().is_empty() {
+                Some(tree.clone())
+            } else {
+                tree.lookup_entry_by_path(dir)
+                    .map_err(|error| format!("cannot look up {} in HEAD: {error}", dir.display()))?
+                    .filter(|entry| entry.mode().is_tree())
+                    .map(|entry| entry.object().map(gix::Object::into_tree))
+                    .transpose()
+                    .map_err(|error| format!("cannot read {} from HEAD: {error}", dir.display()))?
+            };
+            if let Some(subtree) = subtree {
+                collect_blobs(&subtree, &mut prefix.clone(), &mut self.collected)
+                    .map_err(|error| format!("cannot walk HEAD tree: {error}"))?;
+            }
+        }
+        self.covered.push(prefix);
+        Ok(())
+    }
+
     /// The blob or symlink `HEAD` holds at root-relative `relative`.
     fn id_of(&self, relative: &Path) -> Result<Option<ObjectId>, String> {
         let Some(tree) = self.tree.as_ref() else {
             return Ok(None);
         };
+        let path = unix_path(relative);
+        if self
+            .covered
+            .iter()
+            .any(|dir| path.starts_with(dir.as_ref()))
+        {
+            return Ok(self.collected.get(path.as_ref()).copied());
+        }
         let entry = tree
             .lookup_entry_by_path(relative)
             .map_err(|error| format!("cannot look up {} in HEAD: {error}", relative.display()))?;

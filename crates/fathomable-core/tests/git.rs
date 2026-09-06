@@ -432,6 +432,51 @@ fn commit_and_stage(
 }
 
 #[cfg(unix)]
+/// A directory event over many tracked files reads the `HEAD` subtree
+/// once; the answer is the full walk's, and a change naming the root is
+/// the full walk.
+#[test]
+fn a_directory_event_over_many_files_matches_the_walk() -> TestResult {
+    use fathomable_core::status::{State, Status};
+
+    let dir = TempDir::new("git-status-dir")?;
+    init(&dir.0)?;
+    let names: Vec<String> = (0..24).map(|i| format!("many/f{i:02}.md")).collect();
+    let files: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "x\n")).collect();
+    commit(&dir.0, &files)?;
+    stage(&dir.0, &files)?;
+    fs::create_dir_all(dir.0.join("many"))?;
+    for name in &names {
+        fs::write(dir.0.join(name), "x\n")?;
+    }
+    fs::write(dir.0.join("many/f03.md"), "y\n")?;
+    fs::remove_file(dir.0.join("many/f07.md"))?;
+    fs::write(dir.0.join("many/new.md"), "n\n")?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let walked = workspace.status()?;
+    let describe = |status: &Status| -> Vec<(String, State)> {
+        status
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state()))
+            .collect()
+    };
+    assert_eq!(
+        describe(&walked),
+        vec![
+            ("many/f03.md".to_owned(), State::Modified),
+            ("many/f07.md".to_owned(), State::Deleted),
+            ("many/new.md".to_owned(), State::Untracked),
+        ]
+    );
+    let after = workspace.status_after(&Status::default(), &[Path::new("many").to_path_buf()])?;
+    assert_eq!(after, walked);
+    let root = workspace.status_after(&Status::default(), &[Path::new("").to_path_buf()])?;
+    assert_eq!(root, walked);
+    Ok(())
+}
+
 /// An index entry whose mtime is not older than the index file's own is
 /// "racily clean": git hashes it rather than trust the stat match, since
 /// a rewrite to the same size in the same second as the `git add` would

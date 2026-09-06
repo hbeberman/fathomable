@@ -885,6 +885,12 @@ pub fn who(author: &Author, user: &str) -> String {
 /// and its newest two messages — plus the message the user edited, when
 /// that edit is the last act and the message is older than those two.
 /// An edited message is marked `[edited]` after its author (ADR 0058).
+///
+/// A message is shown whole. It is the thing the agent must act on,
+/// and the prompt is self-contained (ADR 0040): a comment cut short
+/// without a word would send the agent off to answer part of it.
+/// [`Blob::fit`] keeps the prompt as a whole within `max-lines` by
+/// listing later threads by id, not by cutting a message.
 fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
     let mut lines = Vec::new();
     if let Some(head) = head {
@@ -938,7 +944,7 @@ fn describe(thread: &Thread, head: Option<&str>, user: &str) -> Vec<String> {
         let mut body = body.lines();
         let first = body.next().unwrap_or_default();
         lines.push(format!("   {who}{mark}: {first}"));
-        for more in body.take(3) {
+        for more in body {
             lines.push(format!("     {more}"));
         }
     }
@@ -1329,6 +1335,31 @@ mod tests {
         assert!(!blob.fresh.is_empty());
         blob.fit(&sub, 1);
         assert_eq!(blob.shown().count(), 1, "the blob showed nothing");
+        Ok(())
+    }
+
+    /// A comment reaches the agent whole, however many lines it has:
+    /// the sixth point of a six-point comment is as much an instruction
+    /// as the first, and nothing marks a cut the agent cannot see.
+    #[test]
+    fn a_long_message_is_delivered_whole() -> TestResult {
+        let dir = TempDir::new("agents-whole")?;
+        let (mut store, id) = store_with_thread(&dir)?;
+        let points: Vec<String> = (1..=6).map(|n| format!("{n}. point {n}")).collect();
+        store.reply(&id, Reply::new(Author::User, 150, points.join("\n")))?;
+        let mut reg = Register::open(dir.0.join("agents.jsonl"), 200, DAY)?;
+        reg.subscribe("s-1", "coder", Some("bot"), None, 200)?;
+        let sub = reg.subscriber("s-1").ok_or("no subscriber")?.clone();
+        let mut blob = Blob {
+            fresh: reg.deliverable(&sub, store.threads()),
+            ..Blob::default()
+        };
+        blob.fit(&sub, 40);
+        let text = blob.render(&sub, "user");
+        assert!(text.contains("   user: 1. point 1"), "{text}");
+        for point in &points[1..] {
+            assert!(text.contains(&format!("     {point}")), "{text}");
+        }
         Ok(())
     }
 

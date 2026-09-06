@@ -66,6 +66,14 @@ rejected for good (record rejections in the [charter](charter.md)).
   ([0005](decisions/0005-annotations.md)) and a binary file has none, so
   a comment on a whole image or archive has nowhere to go. Origin: the
   same to-do list.
+- **`fathomable --unregister [DIR]`.** `--register` writes a workspace
+  marker ([0009](decisions/0009-cli-and-diagnostics.md)); undoing one
+  means deleting a hashed directory under
+  `$XDG_STATE_HOME/fathomable/workspaces/` by hand. A marker on a parent
+  directory such as the home directory catches every session below it
+  by prefix; the `hello` hook now warns about that match
+  ([0043](decisions/0043-agent-vocabulary.md)), but nothing removes the
+  marker. Origin: the 2026-08-29 vocabulary handoff, after it happened.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

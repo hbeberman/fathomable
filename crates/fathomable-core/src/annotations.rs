@@ -1295,12 +1295,24 @@ impl Store {
     }
 
     /// Apply an event in memory, then append it; the file is only written
-    /// when the event is valid.
+    /// when the event is valid, and the memory only kept when the file
+    /// took it, so what the viewer shows is what the next reload reads.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
         let mut line = serde_json::to_string(&event).map_err(|error| StoreError {
             kind: ErrorKind::Parse(0, error.to_string()),
         })?;
+        let before = (self.threads.clone(), self.deleted.clone());
         self.apply(event)?;
+        line.push('\n');
+        if let Err(error) = self.append(&line) {
+            (self.threads, self.deleted) = before;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Append `line`, newline included, to the file.
+    fn append(&self, line: &str) -> Result<(), StoreError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
         }
@@ -1312,7 +1324,6 @@ impl Store {
         // One `write` for line and newline together: with `O_APPEND` each
         // call lands whole, so two writers (a second viewer, a headless
         // `--mcp` reply) cannot interleave `{a}{b}\n\n` (ADR 0032).
-        line.push('\n');
         file.write_all(line.as_bytes())
             .map_err(|error| StoreError::io(&self.path, error))
     }
@@ -1594,6 +1605,47 @@ mod tests {
                 .map_err(|e| StoreError::io(Path::new(name), e))?;
             Ok(Self(dir.0.join("nested").join("threads.jsonl"), dir))
         }
+    }
+
+    /// An event the file refuses is not kept in memory either: the store
+    /// shows what a reload would read, not a reply that never landed.
+    #[test]
+    fn an_event_the_file_refuses_leaves_the_store_as_it_was() -> Result<(), StoreError> {
+        let file = TempFile::new("refused")?;
+        let io = |e| StoreError::io(&file.0, e);
+        let mut store = Store::open(&file.0)?;
+        let draft = |comment: &str| {
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(3, 3),
+                comment,
+            )
+        };
+        let first = store.annotate(draft("kept"), TEXT, 1)?;
+        // A directory in the file's place refuses the append, whoever runs
+        // the test.
+        let aside = file.0.with_extension("aside");
+        fs::rename(&file.0, &aside).map_err(io)?;
+        fs::create_dir(&file.0).map_err(io)?;
+        let refused = store.annotate(draft("lost"), TEXT, 2);
+        assert!(
+            refused.as_ref().is_err_and(StoreError::is_io),
+            "{refused:?}"
+        );
+        assert_eq!(store.threads().len(), 1);
+        assert_eq!(store.thread(&first).map(Thread::comment), Some("kept"));
+        let reply = store.reply(&first, Reply::new(Author::agent("bot"), 3, "lost too"));
+        assert!(reply.is_err());
+        assert_eq!(store.thread(&first).map(|t| t.replies().len()), Some(0));
+        // With the file back, the next event lands and a reload agrees.
+        fs::remove_dir(&file.0).map_err(io)?;
+        fs::rename(&aside, &file.0).map_err(io)?;
+        store.reply(&first, Reply::new(Author::agent("bot"), 4, "landed"))?;
+        let reloaded = Store::open(&file.0)?;
+        assert_eq!(reloaded.threads().len(), 1);
+        assert_eq!(reloaded.thread(&first).map(|t| t.replies().len()), Some(1));
+        Ok(())
     }
 
     /// A file of another format version is refused with the line, both

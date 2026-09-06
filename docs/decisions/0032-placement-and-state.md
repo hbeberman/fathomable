@@ -92,6 +92,10 @@ again.
 - The loader stays strict. A file already damaged is repaired by hand:
   the offending line holds two events run together, and splitting it
   before the second `{` restores it.
+- An append the file refuses (2026-09-05) leaves the store's memory as
+  it was: the event is applied first, so only a valid line reaches the
+  file, and rolled back when the write fails, so the viewer never shows
+  a reply the next reload would drop.
 
 ### The welcome pane
 

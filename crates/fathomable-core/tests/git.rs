@@ -214,6 +214,51 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn an_edited_root_ignore_file_takes_effect_on_reload() -> TestResult {
+    use fathomable_core::workspace::{Filter, is_rules_file};
+
+    let dir = TempDir::new("git-reload-rules")?;
+    init(&dir.0)?;
+    commit(&dir.0, &[("kept.md", "k\n")])?;
+    stage(&dir.0, &[("kept.md", "k\n")])?;
+    fs::write(dir.0.join("kept.md"), "k\n")?;
+    fs::write(dir.0.join("scratch.md"), "s\n")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let dirty = |workspace: &mut Workspace| -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(workspace
+            .status()?
+            .entries()
+            .iter()
+            .map(|e| e.path().display().to_string())
+            .collect())
+    };
+    assert_eq!(dirty(&mut workspace)?, vec!["scratch.md"]);
+
+    // The root's rules were read when the workspace opened; the reload
+    // is what makes the new pattern count, for the listing and the set.
+    fs::write(dir.0.join(".gitignore"), "scratch.md\n")?;
+    assert!(is_rules_file(Path::new(".gitignore")));
+    assert!(is_rules_file(Path::new("docs/.gitattributes")));
+    assert!(is_rules_file(Path::new(".git/info/exclude")));
+    assert!(!is_rules_file(Path::new("docs/ignore.md")));
+    workspace.reload_rules()?;
+    assert_eq!(dirty(&mut workspace)?, vec![".gitignore"]);
+    assert!(
+        !workspace
+            .walk_files(Filter::Visible)
+            .iter()
+            .any(|f| f == "scratch.md"),
+        "the listing hides it too"
+    );
+
+    // Un-ignoring it brings it back the same way.
+    fs::write(dir.0.join(".gitignore"), "")?;
+    workspace.reload_rules()?;
+    assert_eq!(dirty(&mut workspace)?, vec![".gitignore", "scratch.md"]);
+    Ok(())
+}
+
 /// Commit `files` (path, content, kind) as `HEAD` and stage the same tree.
 #[cfg(unix)]
 fn commit_and_stage(

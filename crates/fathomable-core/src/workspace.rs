@@ -221,6 +221,31 @@ impl Workspace {
         &self.root
     }
 
+    /// Re-read the ignore rules and attributes.
+    ///
+    /// The root's `.gitignore`, `.git/info/exclude`, and the
+    /// `.gitattributes` beside them are read once when the workspace
+    /// opens and kept, so an edit to one of them is not seen until this
+    /// runs; call it when a file [`is_rules_file`] names changes. Nothing
+    /// happens outside git.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the rules cannot be read; the ones
+    /// in use stay as they were.
+    pub fn reload_rules(&mut self) -> Result<(), WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(());
+        };
+        let ignore = Ignore::new(&git.repo).map_err(|message| WorkspaceError {
+            path: self.root.clone(),
+            message,
+        })?;
+        self.ignore = Some(ignore);
+        tracing::debug!("ignore rules and attributes reloaded");
+        Ok(())
+    }
+
     /// Whether the root is inside a git repository.
     #[must_use]
     pub fn is_git(&self) -> bool {
@@ -968,6 +993,18 @@ impl From<WorkspaceError> for io::Error {
     fn from(error: WorkspaceError) -> Self {
         Self::other(error)
     }
+}
+
+/// Whether an edit to root-relative `relative` changes what the ignore
+/// rules or attributes say about other paths: a `.gitignore` or
+/// `.gitattributes` anywhere under the root, or `.git/info/exclude`.
+#[must_use]
+pub fn is_rules_file(relative: &Path) -> bool {
+    relative == Path::new(".git/info/exclude")
+        || relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| matches!(name, ".gitignore" | ".gitattributes"))
 }
 
 /// How every repository is opened: as git would, except that `GIT_DIR`,

@@ -16,7 +16,7 @@ tags:
 
 # 0012 Workspace mode
 
-Status: accepted (2026-08-26)
+Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload)
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -51,6 +51,11 @@ choices were captured in a question round on 2026-08-26.
   `default-features = false, features = ["excludes", "sha1"]`), so nested
   `.gitignore`, `.git/info/exclude`, and negations behave as git does.
   Outside a repository nothing is ignored. Milestone 5 needs `gix` anyway.
+  The stack reads the root's rules once when the workspace opens, so an
+  event on a `.gitignore` or `.gitattributes` anywhere, or on
+  `.git/info/exclude`, reloads it (`Workspace::reload_rules`,
+  2026-09-06); until then an edit to the root's `.gitignore` was never
+  seen while the viewer ran, though a nested one was.
 - `fathomable-core` owns all of this in `workspace`, `tree`, and `picker`
   and exposes none of `gix`'s types.
 

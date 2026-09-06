@@ -845,6 +845,29 @@ fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
 }
 
 #[test]
+fn an_ignore_file_event_reloads_the_rules() -> anyhow::Result<()> {
+    let dir = fixture("rules-watch")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("README.md", "# Readme\n\nhello\n")])?;
+    let mut app = app(&dir)?;
+    app.toggle_tree_focus();
+    let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
+    assert!(has(&app, "docs"));
+    assert!(app.status().contains(Path::new("docs/guide.md")));
+
+    // The rules file's own event is enough: the tree and the dirty set
+    // stop showing what it now ignores.
+    changed(&mut app, &dir, ".gitignore", "docs/\n")?;
+    assert!(!has(&app, "docs"), "the listing follows the new rule");
+    assert!(
+        !app.status().contains(Path::new("docs/guide.md")),
+        "the dirty set follows it too"
+    );
+    assert!(app.status().contains(Path::new(".gitignore")));
+    Ok(())
+}
+
+#[test]
 fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     let dir = fixture("source")?;
     let mut app = app(&dir)?;

@@ -53,7 +53,7 @@ use fathomable_core::seen;
 use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::status::Status;
 use fathomable_core::tree::Tree;
-use fathomable_core::workspace::{EntryKind, Filter, Workspace};
+use fathomable_core::workspace::{EntryKind, Filter, Workspace, is_rules_file};
 use fathomable_core::{Document, XdgDirs};
 use input::bindings::Chord;
 
@@ -641,6 +641,16 @@ impl App {
             self.reload_store();
         }
         let root = self.workspace.root().to_path_buf();
+        // Ignore rules first: what follows asks them about every path.
+        let rules_changed = events.iter().any(|event| {
+            event
+                .path()
+                .and_then(|path| path.strip_prefix(&root).ok())
+                .is_some_and(is_rules_file)
+        });
+        if rules_changed {
+            self.reload_rules();
+        }
         let banner_before = self.banner().is_some();
         let mut git_changed = false;
         let mut touched = false;
@@ -733,6 +743,7 @@ impl App {
     /// annotation store may all have changed during the gap.
     fn rescan_workspace(&mut self) {
         tracing::warn!("file watcher lost events; rescanning workspace");
+        self.reload_rules();
         self.reload_store();
         for index in 0..self.docs.len() {
             self.refresh_base(index);
@@ -753,6 +764,14 @@ impl App {
         self.file_index = None;
         self.all_index = None;
         self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
+    }
+
+    /// Re-read the ignore rules after an ignore or attribute file changed
+    /// (ADR 0012); a failure is reported and keeps the rules in use.
+    fn reload_rules(&mut self) {
+        if let Err(error) = self.workspace.reload_rules() {
+            self.notice(format!("ignore rules: {error}"));
+        }
     }
 
     /// Note that the listing holding root-relative `path` changed, unless

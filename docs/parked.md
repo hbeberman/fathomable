@@ -66,11 +66,6 @@ rejected for good (record rejections in the [charter](charter.md)).
   ([0005](decisions/0005-annotations.md)) and a binary file has none, so
   a comment on a whole image or archive has nowhere to go. Origin: the
   same to-do list.
-- **An edited-message alert for agents.** Editing a comment or reply
-  makes the thread pending again
-  ([0058](decisions/0058-the-user-has-the-last-word.md)), but the
-  delivered text does not say which message changed. Origin: the same
-  to-do list.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

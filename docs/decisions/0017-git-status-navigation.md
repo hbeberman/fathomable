@@ -13,7 +13,8 @@ tags:
 
 Status: accepted (2026-08-26); amended 2026-09-05 by
 [0060](0060-one-diff-two-sides.md): the badge reads `DIFF HEAD`, and the
-diff against `HEAD` is the one diff view with `HEAD` as its base.
+diff against `HEAD` is the one diff view with `HEAD` as its base; amended
+2026-09-06: a file event re-examines only the paths it names.
 
 ## Context
 
@@ -46,19 +47,29 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   staged and unstaged changes is one entry with `staged: true` and the
   worktree's state. Ignored paths are never in the set; untracked files
   are, so a new file appears the moment it is written.
-- The set is refreshed on the same `.git` events that refresh `HEAD`
-  bases in 0015 (`HEAD`, `ORIG_HEAD`, the index) and on every workspace
-  file event after the hint debounce, so a save, a `git add`, and a commit
-  each update the sidebar within a beat. Outside a repository the set is
-  empty and every git feature below is inert.
+- The set is walked whole at start, on the same `.git` events that
+  refresh `HEAD` bases in 0015 (`HEAD`, `ORIG_HEAD`, the index), on an
+  event for an ignore or attribute file ([0012](0012-workspace-mode.md)
+  reloads the rules first), and after a lost-events rescan
+  ([0028](0028-live-workspace.md)). Every other workspace file event,
+  after the hint debounce, re-examines only the paths it names
+  (`Workspace::status_after`, 2026-09-06): each named path, and under a
+  directory among them its tracked files, its entries in the set, and
+  the files it holds on disk; the rest of the set is kept. A save, a
+  `git add`, and a commit each update the sidebar within a beat. Outside
+  a repository the set is empty and every git feature below is inert.
 - The walk is in-house over `gix`'s `index` feature rather than its
   `status` feature, which would pull `blob-diff` and its rename machinery
   that [0006](0006-git-access.md) declined: the index against the `HEAD`
   tree for staged changes, a stat-then-hash pass over index entries for
   unstaged ones (a size and mtime match is clean, as in git), and the
   tree's ignore-aware file walk for untracked paths. It runs on the event
-  loop after the hint debounce, so a burst of writes costs one walk;
-  moving it to a thread is a follow-up if large trees make it felt.
+  loop. The full walk is bound by one `stat` per tracked file and one
+  `readdir` per directory (a quarter of a second for sixty thousand
+  files), which every write burst paid until 2026-09-06; now a burst
+  costs the paths it touched, and the walk is left to the events that
+  can change any path. Moving the walk to a thread is a follow-up if
+  the start-up cost makes itself felt.
 - Per-file line counts (`+a -r`) are worktree against `HEAD`, computed in
   the same walk for each dirty path.
 

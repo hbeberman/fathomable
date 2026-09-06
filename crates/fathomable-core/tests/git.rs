@@ -259,6 +259,141 @@ fn an_edited_root_ignore_file_takes_effect_on_reload() -> TestResult {
     Ok(())
 }
 
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk through every kind of change"
+)]
+fn status_after_examines_only_the_named_paths() -> TestResult {
+    use std::path::PathBuf;
+
+    use fathomable_core::status::{State, Status};
+
+    let dir = TempDir::new("git-status-after")?;
+    init(&dir.0)?;
+    let tree = [
+        ("a.md", "a\n"),
+        ("dir/b.md", "b\n"),
+        ("dir/c.md", "c\n"),
+        ("gone.md", "g\n"),
+        (".gitignore", "build/\n"),
+    ];
+    commit(&dir.0, &tree)?;
+    stage(&dir.0, &tree)?;
+    for (name, content) in tree {
+        let path = dir.0.join(name);
+        fs::create_dir_all(path.parent().ok_or("no parent")?)?;
+        fs::write(path, content)?;
+    }
+    fs::write(dir.0.join("untracked.md"), "u\n")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let paths = |names: &[&str]| -> Vec<PathBuf> { names.iter().map(PathBuf::from).collect() };
+    let describe = |status: &Status| -> Vec<(String, State, bool)> {
+        status
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state(), e.is_staged()))
+            .collect()
+    };
+    let mut current = workspace.status()?;
+    assert_eq!(
+        describe(&current),
+        vec![("untracked.md".to_owned(), State::Untracked, false)]
+    );
+
+    // Only the named path is examined: the other edit waits for its
+    // own event, as the full walk would find it.
+    fs::write(dir.0.join("a.md"), "a\nmore\n")?;
+    fs::write(dir.0.join("late.md"), "l\n")?;
+    current = workspace.status_after(&current, &paths(&["a.md"]))?;
+    assert_eq!(
+        describe(&current),
+        vec![
+            ("a.md".to_owned(), State::Modified, false),
+            ("untracked.md".to_owned(), State::Untracked, false),
+        ]
+    );
+    assert_eq!(
+        current
+            .get(Path::new("a.md"))
+            .map(|e| (e.added(), e.removed())),
+        Some((1, 0)),
+        "line counts come with the entry"
+    );
+    current = workspace.status_after(&current, &paths(&["late.md"]))?;
+    assert_eq!(current, workspace.status()?);
+
+    // An event on a directory covers its tracked files, its dirty
+    // entries, and what it holds on disk: removed whole, created whole.
+    fs::remove_dir_all(dir.0.join("dir"))?;
+    current = workspace.status_after(&current, &paths(&["dir"]))?;
+    assert_eq!(current, workspace.status()?);
+    assert_eq!(
+        current
+            .get(Path::new("dir/b.md"))
+            .map(|e| (e.state(), e.is_staged())),
+        Some((State::Deleted, false))
+    );
+    fs::create_dir(dir.0.join("new"))?;
+    fs::write(dir.0.join("new/x.md"), "x\n")?;
+    fs::write(dir.0.join("new/y.md"), "y\n")?;
+    current = workspace.status_after(&current, &paths(&["new"]))?;
+    assert_eq!(current, workspace.status()?);
+    assert!(current.contains(Path::new("new/y.md")));
+
+    // Ignored output never joins; an edit undone leaves.
+    fs::create_dir(dir.0.join("build"))?;
+    fs::write(dir.0.join("build/out.o"), "o\n")?;
+    fs::write(dir.0.join("a.md"), "a\n")?;
+    current = workspace.status_after(&current, &paths(&["build/out.o", "a.md"]))?;
+    assert_eq!(current, workspace.status()?);
+    assert!(!current.contains(Path::new("a.md")));
+    assert!(!current.contains(Path::new("build/out.o")));
+
+    // A staged deletion is covered by the file coming back untracked,
+    // and uncovered when it goes again.
+    fs::remove_file(dir.0.join("gone.md"))?;
+    stage(&dir.0, &tree[..3])?;
+    current = workspace.status()?;
+    assert_eq!(
+        current
+            .get(Path::new("gone.md"))
+            .map(|e| (e.state(), e.is_staged())),
+        Some((State::Deleted, true))
+    );
+    fs::write(dir.0.join("gone.md"), "g\n")?;
+    let untracked_again = workspace.status_after(&current, &paths(&["gone.md"]))?;
+    assert_eq!(untracked_again, workspace.status()?);
+    assert_eq!(
+        untracked_again
+            .get(Path::new("gone.md"))
+            .map(|e| (e.state(), e.is_staged())),
+        Some((State::Untracked, false))
+    );
+    fs::remove_file(dir.0.join("gone.md"))?;
+    current = workspace.status_after(&untracked_again, &paths(&["gone.md"]))?;
+    assert_eq!(current, workspace.status()?);
+    assert_eq!(
+        current
+            .get(Path::new("gone.md"))
+            .map(|e| (e.state(), e.is_staged())),
+        Some((State::Deleted, true))
+    );
+
+    // A rules file among the paths means the whole tree is walked.
+    fs::write(dir.0.join(".gitignore"), "build/\nnew/\n")?;
+    fs::write(dir.0.join("unseen.md"), "s\n")?;
+    workspace.reload_rules()?;
+    current = workspace.status_after(&current, &paths(&[".gitignore"]))?;
+    assert_eq!(current, workspace.status()?);
+    assert!(!current.contains(Path::new("new/x.md")));
+    assert!(
+        current.contains(Path::new("unseen.md")),
+        "the full walk found it"
+    );
+    Ok(())
+}
+
 /// Commit `files` (path, content, kind) as `HEAD` and stage the same tree.
 #[cfg(unix)]
 fn commit_and_stage(

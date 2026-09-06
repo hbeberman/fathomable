@@ -53,7 +53,7 @@ use fathomable_core::seen;
 use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::status::Status;
 use fathomable_core::tree::Tree;
-use fathomable_core::workspace::{EntryKind, Filter, Workspace, is_rules_file};
+use fathomable_core::workspace::{EntryKind, Filter, Workspace, WorkspaceError, is_rules_file};
 use fathomable_core::{Document, XdgDirs};
 use input::bindings::Chord;
 
@@ -311,6 +311,9 @@ pub(crate) struct App {
     last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
     watching_root: bool,
+    /// Whether the dirty set missed a refresh, so the next one must
+    /// walk the whole tree rather than build on it.
+    status_stale: bool,
     /// Every uncommitted path (ADR 0017), refreshed on git and file events.
     status: Status,
 }
@@ -401,6 +404,7 @@ impl App {
             compare: diff.compare(),
             last_change: None,
             watching_root: false,
+            status_stale: false,
             status: Status::default(),
         };
         app.relayout();
@@ -642,18 +646,11 @@ impl App {
         }
         let root = self.workspace.root().to_path_buf();
         // Ignore rules first: what follows asks them about every path.
-        let rules_changed = events.iter().any(|event| {
-            event
-                .path()
-                .and_then(|path| path.strip_prefix(&root).ok())
-                .is_some_and(is_rules_file)
-        });
-        if rules_changed {
-            self.reload_rules();
-        }
+        let rules_changed = self.reload_rules_named_in(&events);
         let banner_before = self.banner().is_some();
         let mut git_changed = false;
-        let mut touched = false;
+        // Root-relative paths the batch named, for the dirty set.
+        let mut changed: Vec<PathBuf> = Vec::new();
         // Root-relative directories whose listing changed.
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
@@ -681,7 +678,12 @@ impl App {
                 git_changed |= is_git_metadata(&relative);
                 continue;
             }
-            touched = true;
+            if let watch::Event::Renamed { from, .. } = &event
+                && let Ok(from) = from.strip_prefix(&root)
+            {
+                changed.push(from.to_path_buf());
+            }
+            changed.push(relative.clone());
             match event {
                 watch::Event::Change(absolute) | watch::Event::Created(absolute) => {
                     if !seen_paths.insert(relative.clone()) {
@@ -718,8 +720,10 @@ impl App {
             }
             self.refresh_reach();
         }
-        if git_changed || touched {
+        if git_changed || rules_changed {
             self.refresh_status();
+        } else if !changed.is_empty() {
+            self.refresh_status_for(&changed);
         }
         // The banner row takes a text row, so the view re-fits when it
         // comes or goes.
@@ -766,8 +770,25 @@ impl App {
         self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
     }
 
-    /// Re-read the ignore rules after an ignore or attribute file changed
-    /// (ADR 0012); a failure is reported and keeps the rules in use.
+    /// Re-read the ignore rules when `events` name an ignore or attribute
+    /// file (ADR 0012); whether they did. A failure is reported and keeps
+    /// the rules in use.
+    fn reload_rules_named_in(&mut self, events: &[watch::Event]) -> bool {
+        let root = self.workspace.root();
+        let named = events.iter().any(|event| {
+            event
+                .path()
+                .and_then(|path| path.strip_prefix(root).ok())
+                .is_some_and(is_rules_file)
+        });
+        if named {
+            self.reload_rules();
+        }
+        named
+    }
+
+    /// Re-read the ignore rules; a failure is reported and keeps the
+    /// rules in use.
     fn reload_rules(&mut self) {
         if let Err(error) = self.workspace.reload_rules() {
             self.notice(format!("ignore rules: {error}"));
@@ -885,18 +906,39 @@ impl App {
         &self.status
     }
 
-    /// Re-read the dirty set. Runs after the hint debounce, so a burst of
-    /// writes costs one walk; a failure is reported and leaves the set as
-    /// it was.
+    /// Re-read the whole dirty set: at start, after a `.git` or ignore
+    /// rules change, and after lost events. A failure is reported and
+    /// leaves the set as it was, to be walked whole next time.
     fn refresh_status(&mut self) {
-        match self.workspace.status() {
+        let result = self.workspace.status();
+        self.take_status(result);
+    }
+
+    /// Re-read the dirty set for the root-relative paths a settled batch
+    /// named (ADR 0017): the rest is kept, so a burst of writes costs
+    /// the paths it touched, never a walk of the tree.
+    fn refresh_status_for(&mut self, changed: &[PathBuf]) {
+        if self.status_stale {
+            self.refresh_status();
+            return;
+        }
+        let result = self.workspace.status_after(&self.status, changed);
+        self.take_status(result);
+    }
+
+    fn take_status(&mut self, result: Result<Status, WorkspaceError>) {
+        match result {
             Ok(status) => {
                 if status != self.status {
                     tracing::info!(dirty = status.len(), "dirty set changed");
                 }
                 self.status = status;
+                self.status_stale = false;
             }
-            Err(error) => self.notice(format!("git status: {error}")),
+            Err(error) => {
+                self.status_stale = true;
+                self.notice(format!("git status: {error}"));
+            }
         }
     }
 

@@ -845,6 +845,68 @@ fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_file_event_refreshes_the_dirty_set_for_its_path_only() -> anyhow::Result<()> {
+    use fathomable_core::status::State;
+
+    use super::watch::Event;
+
+    let dir = fixture("status-events")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(
+        &dir.0,
+        &[
+            ("README.md", "# Readme\n\nhello\n"),
+            ("docs/guide.md", "# Guide\n"),
+            ("docs/notes.md", "# Notes\n"),
+        ],
+    )?;
+    let mut app = app(&dir)?;
+    assert!(app.status().is_empty());
+
+    // Two edits, one event: the set shows the path the event named and
+    // nothing else was looked at.
+    fs::write(dir.0.join("docs/guide.md"), "# Guide\n\nmore\n")?;
+    changed(&mut app, &dir, "README.md", "# Readme\n\nhello\n\nbye\n")?;
+    let dirty = |app: &App| -> Vec<(String, State)> {
+        app.status()
+            .entries()
+            .iter()
+            .map(|e| (e.path().display().to_string(), e.state()))
+            .collect()
+    };
+    assert_eq!(dirty(&app), vec![("README.md".to_owned(), State::Modified)]);
+
+    // Lost events walk the whole tree again.
+    app.on_events(vec![Event::Rescan]);
+    assert_eq!(
+        dirty(&app),
+        vec![
+            ("README.md".to_owned(), State::Modified),
+            ("docs/guide.md".to_owned(), State::Modified),
+        ]
+    );
+
+    // A directory renamed away and back: both sides of the rename are
+    // examined.
+    fs::rename(dir.0.join("docs"), dir.0.join("moved"))?;
+    app.on_events(vec![Event::Renamed {
+        from: dir.0.join("docs"),
+        to: dir.0.join("moved"),
+    }]);
+    assert_eq!(
+        dirty(&app),
+        vec![
+            ("README.md".to_owned(), State::Modified),
+            ("docs/guide.md".to_owned(), State::Deleted),
+            ("docs/notes.md".to_owned(), State::Deleted),
+            ("moved/guide.md".to_owned(), State::Untracked),
+            ("moved/notes.md".to_owned(), State::Untracked),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn an_ignore_file_event_reloads_the_rules() -> anyhow::Result<()> {
     let dir = fixture("rules-watch")?;
     git::init(&dir.0)?;

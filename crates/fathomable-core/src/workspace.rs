@@ -588,16 +588,7 @@ impl Workspace {
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
         let mut head: BTreeMap<BString, ObjectId> = BTreeMap::new();
-        let unborn = git
-            .repo
-            .head()
-            .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
-            .is_unborn();
-        if !unborn {
-            let tree = git
-                .repo
-                .head_tree()
-                .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+        if let Some(tree) = head_tree_of(&git.repo).map_err(&fail)? {
             collect_blobs(&tree, &mut BString::default(), &mut head)
                 .map_err(|error| fail(format!("cannot walk HEAD tree: {error}")))?;
         }
@@ -605,14 +596,7 @@ impl Workspace {
         let mut dirty: BTreeMap<BString, (State, bool)> = BTreeMap::new();
         let mut in_index: BTreeSet<BString> = BTreeSet::new();
         for entry in index.entries() {
-            let is_link = entry.mode == gix::index::entry::Mode::SYMLINK;
-            if entry.stage() != gix::index::entry::Stage::Unconflicted
-                || !(is_link
-                    || matches!(
-                        entry.mode,
-                        gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE
-                    ))
-            {
+            if !is_status_entry(entry) {
                 continue;
             }
             let path = entry.path(&index).to_owned();
@@ -642,17 +626,176 @@ impl Workspace {
         let mut entries = Vec::with_capacity(dirty.len());
         for (path, (state, staged)) in dirty {
             let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
-            let entry = match self.count_lines(&relative, state) {
-                Lines::Text { added, removed } => {
-                    status::Entry::new(relative, state, added, removed)
-                }
-                Lines::Binary => status::Entry::new(relative, state, 0, 0).binary(),
-            };
-            entries.push(if staged { entry.staged() } else { entry });
+            entries.push(self.dirty_entry(relative, state, staged));
         }
         let status = Status::from_entries(entries);
         tracing::debug!(dirty = status.len(), elapsed = ?started.elapsed(), "git status");
         Ok(status)
+    }
+
+    /// The dirty set after the root-relative `changed` paths moved, from
+    /// `previous`, the set before they did. Only those paths are
+    /// examined again, and under a directory among them its tracked
+    /// files, its entries in `previous`, and the files it holds on disk;
+    /// the rest of `previous` is kept. A burst of writes costs the paths
+    /// it touched, not a walk of the tree (ADR 0017).
+    ///
+    /// The index and `HEAD` are read as they are now, but `previous`
+    /// must have been built against them: a change under `.git`, or to
+    /// a file [`is_rules_file`] names, takes the full walk of
+    /// [`Workspace::status`] instead (reload the rules with
+    /// [`Workspace::reload_rules`] first). Empty outside git.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD` or the index cannot be read.
+    pub fn status_after(
+        &mut self,
+        previous: &Status,
+        changed: &[PathBuf],
+    ) -> Result<Status, WorkspaceError> {
+        let started = std::time::Instant::now();
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(Status::default());
+        };
+        if changed
+            .iter()
+            .any(|path| path.starts_with(".git") || is_rules_file(path))
+        {
+            return self.status();
+        }
+        let repo = git.repo.clone();
+        let root = self.root.clone();
+        let fail = move |message: String| WorkspaceError {
+            path: root.clone(),
+            message,
+        };
+        let index = repo
+            .index_or_empty()
+            .map_err(|error| fail(format!("cannot read the index: {error}")))?;
+        let head = Head {
+            tree: head_tree_of(&repo).map_err(&fail)?,
+            hash: repo.object_hash(),
+        };
+        let examine = self.paths_to_examine(&index, previous, changed);
+        let mut entries: Vec<status::Entry> = previous
+            .entries()
+            .iter()
+            .filter(|entry| !examine.contains(entry.path()))
+            .cloned()
+            .collect();
+        for relative in &examine {
+            if let Some((state, staged)) = self.dirty_state(&index, &head, previous, relative)? {
+                entries.push(self.dirty_entry(relative.clone(), state, staged));
+            }
+        }
+        let status = Status::from_entries(entries);
+        tracing::debug!(
+            changed = changed.len(),
+            examined = examine.len(),
+            dirty = status.len(),
+            elapsed = ?started.elapsed(),
+            "git status after changes"
+        );
+        Ok(status)
+    }
+
+    /// The paths [`Workspace::status_after`] examines for `changed`: each
+    /// path, and under one that is a directory its tracked files, its
+    /// entries in `previous`, and the files it holds on disk.
+    fn paths_to_examine(
+        &mut self,
+        index: &gix::index::State,
+        previous: &Status,
+        changed: &[PathBuf],
+    ) -> BTreeSet<PathBuf> {
+        let mut examine: BTreeSet<PathBuf> = BTreeSet::new();
+        for path in changed {
+            examine.insert(path.clone());
+            let mut prefix = unix_path(path).into_owned();
+            if !prefix.is_empty() {
+                prefix.push(b'/');
+            }
+            for entry in index.prefixed_entries(prefix.as_bstr()).unwrap_or(&[]) {
+                examine.insert(gix::path::from_bstr(entry.path(index)).into_owned());
+            }
+            for entry in previous.entries() {
+                if entry.path().starts_with(path) {
+                    examine.insert(entry.path().to_path_buf());
+                }
+            }
+            // A directory that appeared whole, moved in, or was written
+            // without an event per file: its files by the same walk that
+            // finds untracked ones. A symlink to one is a file to git.
+            let is_dir = self
+                .root
+                .join(path)
+                .symlink_metadata()
+                .is_ok_and(|meta| meta.is_dir());
+            if is_dir && !self.is_ignored(path, EntryKind::Dir) {
+                self.walk_under(path, Filter::Visible, &mut examine);
+            }
+        }
+        examine
+    }
+
+    /// How root-relative `relative` is dirty now, as the full walk of
+    /// [`Workspace::status`] would find it: `None` when it is clean.
+    /// `previous` stands in for the `HEAD`-only paths the walk collects,
+    /// which only an index change can alter.
+    fn dirty_state(
+        &mut self,
+        index: &gix::index::State,
+        head: &Head<'_>,
+        previous: &Status,
+        relative: &Path,
+    ) -> Result<Option<(State, bool)>, WorkspaceError> {
+        let absolute = self.root.join(relative);
+        let tracked = index
+            .entry_by_path(unix_path(relative).as_ref())
+            .filter(|entry| is_status_entry(entry));
+        if let Some(entry) = tracked {
+            let staged = match head.id_of(relative).map_err(|message| WorkspaceError {
+                path: absolute.clone(),
+                message,
+            })? {
+                Some(id) if id == entry.id => None,
+                Some(_) => Some(State::Modified),
+                None => Some(State::Added),
+            };
+            return Ok(worktree_state(&absolute, entry, head.hash)
+                .or(staged)
+                .map(|state| (state, staged.is_some())));
+        }
+        let on_disk = absolute
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.is_file() || meta.is_symlink());
+        if on_disk && !self.is_ignored(relative, EntryKind::File) {
+            return Ok(Some((State::Untracked, false)));
+        }
+        // Gone from the index and now from disk too: the staged deletion
+        // the file had covered, when there was one.
+        if previous.contains(relative)
+            && head
+                .id_of(relative)
+                .map_err(|message| WorkspaceError {
+                    path: absolute,
+                    message,
+                })?
+                .is_some()
+        {
+            return Ok(Some((State::Deleted, true)));
+        }
+        Ok(None)
+    }
+
+    /// The entry for a dirty `relative` in `state`, with its line counts.
+    fn dirty_entry(&mut self, relative: PathBuf, state: State, staged: bool) -> status::Entry {
+        let entry = match self.count_lines(&relative, state) {
+            Lines::Text { added, removed } => status::Entry::new(relative, state, added, removed),
+            Lines::Binary => status::Entry::new(relative, state, 0, 0).binary(),
+        };
+        if staged { entry.staged() } else { entry }
     }
 
     /// Line counts of the working tree against `HEAD`, or that the file
@@ -865,8 +1008,21 @@ impl Workspace {
     ///
     /// Directories that cannot be read are logged and skipped.
     pub fn walk_files(&mut self, filter: Filter) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut pending = vec![PathBuf::new()];
+        let mut files: Vec<PathBuf> = Vec::new();
+        self.walk_under(Path::new(""), filter, &mut files);
+        files
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// The walk of [`Workspace::walk_files`] from root-relative `dir`
+    /// down, each file pushed onto `out`.
+    fn walk_under<C>(&mut self, dir: &Path, filter: Filter, out: &mut C)
+    where
+        C: Extend<PathBuf>,
+    {
+        let mut pending = vec![dir.to_path_buf()];
         while let Some(dir) = pending.pop() {
             let entries = match self.list_dir_with(&dir, filter) {
                 Ok(entries) => entries,
@@ -881,13 +1037,12 @@ impl Workspace {
                 if entry.is_dir && !entry.is_link {
                     dirs.push(path);
                 } else {
-                    out.push(path.to_string_lossy().into_owned());
+                    out.extend(std::iter::once(path));
                 }
             }
             // Push in reverse so the stack yields subdirectories in order.
             pending.extend(dirs.into_iter().rev());
         }
-        out
     }
 }
 
@@ -1018,7 +1173,60 @@ pub fn open_options() -> gix::open::Options {
     gix::open::Options::default().permissions(permissions)
 }
 
-/// Every blob under `tree`, keyed by slash-separated path.
+/// `HEAD` as [`Workspace::status_after`] reads it: its tree, `None`
+/// while it is unborn, and the hash the repository keys objects by.
+struct Head<'repo> {
+    tree: Option<gix::Tree<'repo>>,
+    hash: gix::hash::Kind,
+}
+
+impl Head<'_> {
+    /// The blob or symlink `HEAD` holds at root-relative `relative`.
+    fn id_of(&self, relative: &Path) -> Result<Option<ObjectId>, String> {
+        let Some(tree) = self.tree.as_ref() else {
+            return Ok(None);
+        };
+        let entry = tree
+            .lookup_entry_by_path(relative)
+            .map_err(|error| format!("cannot look up {} in HEAD: {error}", relative.display()))?;
+        Ok(entry
+            .filter(|entry| entry.mode().is_blob_or_symlink())
+            .map(|entry| entry.object_id()))
+    }
+}
+
+/// The tree `HEAD` points at, `None` while `HEAD` is unborn.
+fn head_tree_of(repo: &gix::Repository) -> Result<Option<gix::Tree<'_>>, String> {
+    let unborn = repo
+        .head()
+        .map_err(|error| format!("cannot read HEAD: {error}"))?
+        .is_unborn();
+    if unborn {
+        return Ok(None);
+    }
+    repo.head_tree()
+        .map(Some)
+        .map_err(|error| format!("cannot read HEAD tree: {error}"))
+}
+
+/// Whether an index entry takes part in the dirty set: a file or symlink
+/// without a merge conflict. Submodules and conflicted stages are left
+/// out, as the tree pane has nothing to show for them.
+fn is_status_entry(entry: &gix::index::Entry) -> bool {
+    entry.stage() == gix::index::entry::Stage::Unconflicted
+        && matches!(
+            entry.mode,
+            gix::index::entry::Mode::FILE
+                | gix::index::entry::Mode::FILE_EXECUTABLE
+                | gix::index::entry::Mode::SYMLINK
+        )
+}
+
+/// Root-relative `relative` as the slash-separated path the index keys.
+fn unix_path(relative: &Path) -> std::borrow::Cow<'_, gix::bstr::BStr> {
+    gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative))
+}
+
 /// How the working tree differs from index `entry` at `absolute`: `None`
 /// when they match, otherwise the [`State`] the entry is in.
 ///

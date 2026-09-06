@@ -348,7 +348,8 @@ async fn run_async(
                 Effect::None
             }
             () = batch.settled() => {
-                let mut events = batch.take(|path| app.last_seen_fingerprint(path));
+                let mut events =
+                    batch.take(|path| app.last_seen_fingerprint(path), app.max_file_bytes());
                 events.retain(|event| event.path().is_none_or(|path| doc_watcher.is_target(path)));
                 app.on_events(events);
                 Effect::None

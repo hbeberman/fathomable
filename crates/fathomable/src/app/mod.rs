@@ -901,6 +901,11 @@ impl App {
 
     /// The fingerprint the file at absolute `path` last had, from its
     /// loaded text or its last-seen snapshot, for rename pairing.
+    /// The largest file the viewer reads (`viewer.max-file-size-mib`).
+    pub(crate) fn max_file_bytes(&self) -> u64 {
+        self.viewer.max_file_bytes()
+    }
+
     pub(crate) fn last_seen_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
         let relative = path.strip_prefix(self.workspace.root()).ok()?;
         if let Some(text) = self

@@ -71,10 +71,12 @@ impl Fingerprint {
         }
     }
 
-    /// The fingerprint of the file at `path`, when it can be read.
-    fn read(path: &Path) -> Option<Self> {
+    /// The fingerprint of the file at `path`, when it can be read and
+    /// holds at most `max_bytes`: a larger one is read by nobody, so it
+    /// pairs with nothing (`viewer.max-file-size-mib`).
+    fn read(path: &Path, max_bytes: u64) -> Option<Self> {
         let meta = fs::metadata(path).ok()?;
-        if !meta.is_file() {
+        if !meta.is_file() || meta.len() > max_bytes {
             return None;
         }
         fs::read(path).ok().as_deref().map(Self::from_bytes)
@@ -305,11 +307,16 @@ impl Batch {
 
     /// Fold the batch into one event per path. `last_seen` gives the
     /// fingerprint a removed path last had, for pairing an unpaired
-    /// remove-then-create as a rename.
-    pub(crate) fn take(&mut self, last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Vec<Event> {
+    /// remove-then-create as a rename; a created file over `max_bytes`
+    /// is not read for one.
+    pub(crate) fn take(
+        &mut self,
+        last_seen: impl Fn(&Path) -> Option<Fingerprint>,
+        max_bytes: u64,
+    ) -> Vec<Event> {
         self.flush_at = None;
         let raw = std::mem::take(&mut self.raw);
-        classify(&raw, last_seen)
+        classify(&raw, last_seen, max_bytes)
     }
 }
 
@@ -320,8 +327,13 @@ impl Batch {
 /// them as a pair, which is folded away); what is left is created,
 /// removed, or changed by the last thing that happened to the path, and
 /// a removed path whose last-seen fingerprint matches a created file is
-/// a rename after all.
-fn classify(raw: &[Raw], last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Vec<Event> {
+/// a rename after all. A created file over `max_bytes` is never read
+/// for its fingerprint, so a large drop costs the loop nothing.
+fn classify(
+    raw: &[Raw],
+    last_seen: impl Fn(&Path) -> Option<Fingerprint>,
+    max_bytes: u64,
+) -> Vec<Event> {
     if raw.contains(&Raw::Rescan) {
         return vec![Event::Rescan];
     }
@@ -392,7 +404,7 @@ fn classify(raw: &[Raw], last_seen: impl Fn(&Path) -> Option<Fingerprint>) -> Ve
     if !removed.is_empty() && !created.is_empty() {
         let mut created_prints: Vec<(PathBuf, Fingerprint)> = created
             .into_iter()
-            .filter_map(|p| Fingerprint::read(&p).map(|f| (p, f)))
+            .filter_map(|p| Fingerprint::read(&p, max_bytes).map(|f| (p, f)))
             .collect();
         for from in removed {
             let Some(seen) = last_seen(&from) else {
@@ -524,6 +536,7 @@ mod tests {
                 Raw::Create(p("/w/back")),
             ],
             no_snapshot,
+            u64::MAX,
         );
         assert_eq!(
             events,
@@ -546,6 +559,7 @@ mod tests {
                 Raw::Modify(p("/w/old")),
             ],
             no_snapshot,
+            u64::MAX,
         );
         assert_eq!(events, [Event::Rescan]);
     }
@@ -564,6 +578,7 @@ mod tests {
                 Raw::Modify(p("/w/b")),
             ],
             no_snapshot,
+            u64::MAX,
         );
         assert_eq!(
             events,
@@ -584,6 +599,7 @@ mod tests {
                 Raw::RenameTo(p("/w/in")),
             ],
             no_snapshot,
+            u64::MAX,
         );
         assert_eq!(
             events,
@@ -617,6 +633,7 @@ mod tests {
                 Raw::Create(new.clone()),
             ],
             seen,
+            u64::MAX,
         );
         assert_eq!(
             events,
@@ -632,6 +649,17 @@ mod tests {
         let events = classify(
             &[Raw::Remove(old.clone()), Raw::Create(new.clone())],
             |_| Some(Fingerprint::from_bytes(b"else\n")),
+            u64::MAX,
+        );
+        assert_eq!(
+            events,
+            [Event::Removed(old.clone()), Event::Created(new.clone())]
+        );
+        // A created file over the viewer's limit is not read to find out.
+        let events = classify(
+            &[Raw::Remove(old.clone()), Raw::Create(new.clone())],
+            seen,
+            4,
         );
         assert_eq!(events, [Event::Removed(old), Event::Created(new)]);
         fs::remove_dir_all(&dir)

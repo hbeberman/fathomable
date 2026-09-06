@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, Subscriber, WatchWhen};
 use fathomable_core::annotations::{
-    Author, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, LineHashes, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::identity;
@@ -411,30 +411,35 @@ const fn status_word(status: Status) -> &'static str {
     }
 }
 
-/// The files of one workspace as they are now, read once each, so that
-/// every thread's placement is computed against the same text.
+/// The files of one workspace as they are now, read and hashed once
+/// each, so that every thread's placement is computed against the same
+/// text.
 pub(super) struct Tree<'a> {
     root: &'a Path,
-    texts: HashMap<PathBuf, Option<String>>,
+    hashes: HashMap<PathBuf, Option<LineHashes>>,
 }
 
 impl<'a> Tree<'a> {
     pub(super) fn new(root: &'a Path) -> Self {
         Self {
             root,
-            texts: HashMap::new(),
+            hashes: HashMap::new(),
         }
     }
 
     /// Where `thread` sits in its file now; detached at its last known
     /// range when the file cannot be read.
     pub(super) fn place(&mut self, thread: &Thread) -> Placement {
-        let text = self
-            .texts
+        let hashes = self
+            .hashes
             .entry(thread.path().to_path_buf())
-            .or_insert_with(|| fs::read_to_string(self.root.join(thread.path())).ok());
-        match (text, thread.range()) {
-            (Some(text), _) => thread.locate(text),
+            .or_insert_with(|| {
+                fs::read_to_string(self.root.join(thread.path()))
+                    .ok()
+                    .map(|text| LineHashes::of(&text))
+            });
+        match (hashes, thread.range()) {
+            (Some(hashes), _) => thread.locate_in(hashes),
             (None, Some(range)) => Placement::Detached(range),
             (None, None) => Placement::File,
         }

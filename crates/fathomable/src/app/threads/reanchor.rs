@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, Store, ThreadId};
+use fathomable_core::annotations::{LineHashes, LineRange, Store, ThreadId};
 use fathomable_core::context::map_context;
 use fathomable_core::reanchor::{Mapping, map_range};
 use fathomable_core::seen;
@@ -66,13 +66,15 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
                 None
             }
         };
+        let hashes = LineHashes::of(&text);
+        let snapshot_hashes = snapshot.as_deref().map(LineHashes::of);
         let relocations: Vec<(ThreadId, LineRange, LineRange, &str)> = store
             .for_path(&path)
-            .filter(|thread| thread.locate(&text).is_detached())
+            .filter(|thread| thread.locate_in(&hashes).is_detached())
             .filter_map(|thread| {
                 let from = thread.range()?;
                 let through_snapshot = snapshot.as_deref().and_then(|snapshot| {
-                    let placement = thread.locate(snapshot);
+                    let placement = thread.locate_in(snapshot_hashes.as_ref()?);
                     let range = placement.range().filter(|_| !placement.is_detached())?;
                     Some(map_range(snapshot, &text, range))
                 });
@@ -106,7 +108,7 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
             .for_path(&path)
             .filter(|thread| thread.context().is_none())
             .filter_map(|thread| {
-                let placement = thread.locate(&text);
+                let placement = thread.locate_in(&hashes);
                 (!placement.is_detached())
                     .then(|| Some((thread.id().clone(), placement.range()?)))?
             })

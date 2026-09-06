@@ -34,7 +34,8 @@ pub(crate) use draft::{Compose, ComposeTarget};
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, Draft, LineHashes, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread,
+    ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::reanchor::{Mapping, map_range};
@@ -206,6 +207,7 @@ impl App {
             return;
         };
         let text = doc.document.text().unwrap_or_default().to_owned();
+        let hashes = LineHashes::of(&text);
         let path = doc.relative.clone();
         let previous: Vec<(ThreadId, Placement)> = doc
             .marks
@@ -217,7 +219,7 @@ impl App {
         };
         let stale: Vec<(ThreadId, LineRange)> = store
             .for_path(&path)
-            .filter(|thread| thread.locate(&text).is_detached())
+            .filter(|thread| thread.locate_in(&hashes).is_detached())
             .filter_map(|thread| {
                 // Where it sat in the old text; a thread already detached
                 // there has nothing to follow.
@@ -250,12 +252,12 @@ impl App {
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };
-        let text = doc.document.text().unwrap_or_default();
+        let hashes = LineHashes::of(doc.document.text().unwrap_or_default());
         doc.marks = store
             .for_path(&doc.relative)
             .filter(|thread| self.reach.includes(thread))
             .map(|thread| {
-                let placement = thread.locate(text);
+                let placement = thread.locate_in(&hashes);
                 Mark {
                     id: thread.id().clone(),
                     placement,

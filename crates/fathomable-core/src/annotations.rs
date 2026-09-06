@@ -128,6 +128,33 @@ impl fmt::Display for LineRange {
     }
 }
 
+/// The line hashes of one text, computed once for every anchor located in it.
+///
+/// Locating hashes every line of the text; a file with many threads is
+/// hashed once through this and each thread compared against it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineHashes(Vec<String>);
+
+impl LineHashes {
+    /// Hash every line of `text`.
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        Self(text.lines().map(line_hash).collect())
+    }
+
+    /// How many lines were hashed.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the text had no lines.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 /// Content hashes that re-locate an annotated range after edits.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Anchor {
@@ -163,14 +190,21 @@ impl Anchor {
     ///
     /// When several windows match, the one whose surrounding lines also
     /// match wins; ties go to the window closest to `hint`. `None` means the
-    /// exact lines no longer exist.
+    /// exact lines no longer exist. To locate many anchors in one text,
+    /// hash it once with [`LineHashes::of`] and use [`Anchor::locate_in`].
     #[must_use]
     pub fn locate(&self, text: &str, hint: LineRange) -> Option<LineRange> {
+        self.locate_in(&LineHashes::of(text), hint)
+    }
+
+    /// [`Anchor::locate`] in a text hashed beforehand.
+    #[must_use]
+    pub fn locate_in(&self, hashes: &LineHashes, hint: LineRange) -> Option<LineRange> {
         let n = self.lines.len();
         if n == 0 {
             return None;
         }
-        let hashes: Vec<String> = text.lines().map(line_hash).collect();
+        let hashes = &hashes.0;
         if hashes.len() < n {
             return None;
         }
@@ -753,12 +787,21 @@ impl Thread {
     }
 
     /// Where the thread sits in `text` now.
+    ///
+    /// To place many threads in one text, hash it once with
+    /// [`LineHashes::of`] and use [`Thread::locate_in`].
     #[must_use]
     pub fn locate(&self, text: &str) -> Placement {
+        self.locate_in(&LineHashes::of(text))
+    }
+
+    /// [`Thread::locate`] in a text hashed beforehand.
+    #[must_use]
+    pub fn locate_in(&self, hashes: &LineHashes) -> Placement {
         let (Some(anchor), Some(range)) = (&self.anchor, self.range) else {
             return Placement::File;
         };
-        match (anchor.locate(text, range), self.edited) {
+        match (anchor.locate_in(hashes, range), self.edited) {
             (Some(range), Some(_)) => Placement::Edited(range),
             (Some(range), None) => Placement::Anchored(range),
             (None, _) => Placement::Detached(range),
@@ -1586,8 +1629,8 @@ mod tests {
     use fathomable_testing::TempDir;
 
     use super::{
-        Anchor, Author, Draft, Event, FORMAT_VERSION, LineRange, MessageTarget, Placement, Reach,
-        Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
+        Anchor, Author, Draft, Event, FORMAT_VERSION, LineHashes, LineRange, MessageTarget,
+        Placement, Reach, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
     };
 
     const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -1675,6 +1718,32 @@ mod tests {
         let current = stale.replace(r#""v":0"#, r#""v":1"#);
         fs::write(&file.0, current).map_err(|e| StoreError::io(&file.0, e))?;
         assert_eq!(Store::open(&file.0)?.threads().len(), 1);
+        Ok(())
+    }
+
+    /// One hashing of a text serves every anchor located in it, moved
+    /// lines included, exactly as locating from the text does.
+    #[test]
+    fn hashes_of_one_text_locate_many_anchors() -> Result<(), String> {
+        let alpha = Anchor::capture(TEXT, LineRange::new(3, 4)).ok_or("in range")?;
+        let delta = Anchor::capture(TEXT, LineRange::new(7, 7)).ok_or("in range")?;
+        let shifted = format!("intro\n{TEXT}");
+        let hashes = LineHashes::of(&shifted);
+        assert_eq!(hashes.len(), 8);
+        assert!(!hashes.is_empty());
+        assert_eq!(
+            alpha.locate_in(&hashes, LineRange::new(3, 4)),
+            Some(LineRange::new(4, 5))
+        );
+        assert_eq!(
+            delta.locate_in(&hashes, LineRange::new(7, 7)),
+            Some(LineRange::new(8, 8))
+        );
+        assert_eq!(
+            delta.locate_in(&hashes, LineRange::new(7, 7)),
+            delta.locate(&shifted, LineRange::new(7, 7))
+        );
+        assert!(LineHashes::of("").is_empty());
         Ok(())
     }
 

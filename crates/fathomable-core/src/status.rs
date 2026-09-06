@@ -225,10 +225,18 @@ impl Status {
 
     /// The dirty paths under directory `dir`, folded for a collapsed row;
     /// `None` when none are.
+    ///
+    /// The entries are in path order, so those under `dir` are one run
+    /// that starts where `dir` would sort: a tree of collapsed rows costs
+    /// a binary search each, not a scan of the set.
     #[must_use]
     pub fn summary_under(&self, dir: &Path) -> Option<Summary> {
+        let start = self.entries.partition_point(|e| e.path.as_path() < dir);
+        let under = self.entries[start..]
+            .iter()
+            .take_while(|e| e.path.starts_with(dir));
         let mut summary: Option<Summary> = None;
-        for entry in self.entries.iter().filter(|e| e.path.starts_with(dir)) {
+        for entry in under {
             summary = Some(match summary {
                 None => Summary {
                     state: entry.state,
@@ -370,5 +378,24 @@ mod tests {
             Some(true)
         );
         assert!(status.summary_under(Path::new("f")).is_none());
+    }
+
+    #[test]
+    fn summary_takes_the_whole_run_and_only_it() {
+        // Names that sort around `d` as a component: `d-x` and `d.md`
+        // are below and above `d/…` and must not fold into it.
+        let status = Status::from_entries(vec![
+            entry("d-x/a", State::Modified, false),
+            entry("d/a", State::Modified, false),
+            entry("d/b/c", State::Added, true),
+            entry("d.md", State::Deleted, false),
+            entry("e", State::Untracked, false),
+        ]);
+        let count = |dir: &str| status.summary_under(Path::new(dir)).map(|s| s.added);
+        assert_eq!(count("d"), Some(1 + 1));
+        assert_eq!(count("d/b"), Some(1));
+        assert_eq!(count("d-x"), Some(1));
+        assert_eq!(count(""), Some(5));
+        assert_eq!(count("d/c"), None);
     }
 }

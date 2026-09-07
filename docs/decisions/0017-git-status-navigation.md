@@ -127,7 +127,10 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   `diff.plus` and `-r` in `diff.minus`, each omitted when zero. The counts
   are not padded to a column; colour tells the parts apart.
 - The root header carries the summed counts of the whole dirty set
-  (`demo +12 -3`) in the same colours.
+  (`demo +12 -3`) in the same colours. (2026-09-06: the header row is
+  on `ui.header` and names the pane's active filters after the counts;
+  the pane may list a subset; see
+  [0068](0068-what-the-files-pane-shows.md).)
 - A collapsed directory shows the letter of its most advanced descendant
   (`?` > `A` > `D` > `M`) and the summed counts, so a dirty tree is visible
   however it is folded. The follow `●` of 0015 sits after the git mark

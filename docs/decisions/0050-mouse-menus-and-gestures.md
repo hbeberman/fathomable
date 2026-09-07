@@ -87,6 +87,9 @@ same day; the choices are below.
   on a file), `copy path` (`y`, new), `re-read the tree` (`R`), `toggle
   ignored` (`I`). "Reveal" was in the proposal and is dropped: it
   reveals the current file, which a right-click has just made the row.
+  (2026-09-06: the menu carries the three filter toggles of
+  [0068](0068-what-the-files-pane-shows.md), worded as they would act
+  now.)
   In the threads pane and the review list: `go to` (`Enter`), `reply`
   (`r`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
   thread` (`dd`).

@@ -11,7 +11,6 @@ pub(crate) mod message;
 mod threads_pane;
 
 use std::fmt::Write as _;
-use std::path::Path;
 
 use fathomable_core::layout::{Face, Style as Face_, display_width};
 use ratatui::Frame;
@@ -24,8 +23,8 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::header::{
-    Header, Tone, diff_header, draft_header, entry_header, expanded_header, review_footer,
-    review_header,
+    Header, Tone, diff_header, draft_header, entry_header, expanded_header, files_pane_header,
+    review_footer, review_header,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
@@ -270,7 +269,11 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
-                let entries = bindings::menu(place, app.prefix());
+                let entries: Vec<(String, String)> = app
+                    .which_key(place)
+                    .into_iter()
+                    .map(|(chord, label)| (chord.to_string(), label))
+                    .collect();
                 let grid = which_key_grid(app, &entries);
                 let hover = app
                     .pointer()
@@ -538,36 +541,14 @@ fn tree_lines<'a>(
         .file_name()
         .map_or_else(|| "/".to_owned(), |n| n.to_string_lossy().into_owned());
     let mut out = Vec::with_capacity(rows);
-    // The header carries the repo's summed `+n -m` (ADR 0017).
-    let header_style = theme.sidebar_dir.add_modifier(Modifier::BOLD);
-    // A sidebar too narrow for the whole name cuts it rather than spilling
-    // over the divider.
+    // The header row on `ui.header` (ADR 0068): the repo's name, its
+    // summed `+n -m` (ADR 0017), and the filter words. A sidebar too
+    // narrow for the whole name cuts it rather than spilling over the
+    // divider.
     let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
-    let mut header_width = display_width(&title);
-    let mut header = vec![Span::styled(title, header_style)];
-    if let Some(total) = app.status().summary_under(Path::new("")) {
-        let counts = [
-            ('+', total.added, theme.diff_plus),
-            ('-', total.removed, theme.diff_minus),
-        ];
-        for (sign, count, style) in counts {
-            if count == 0 {
-                continue;
-            }
-            let text = format!(" {sign}{count}");
-            if header_width + display_width(&text) > inner {
-                break;
-            }
-            header_width += display_width(&text);
-            header.push(Span::styled(text, style));
-        }
-    }
-    header.push(Span::styled(
-        " ".repeat(inner.saturating_sub(header_width)),
-        header_style,
-    ));
-    header.push(divider.clone());
-    out.push(Line::from(header));
+    let mut header = files_pane_header(app, title).line(theme, inner);
+    header.spans.push(divider.clone());
+    out.push(header);
     let focused = app.focus() == Focus::Tree;
     let circles = app.file_circles();
     for (index, row) in tree

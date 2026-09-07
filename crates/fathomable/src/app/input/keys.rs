@@ -10,7 +10,7 @@
 
 use crossterm::event::KeyEvent;
 use fathomable_core::editor::{Edit, Motion};
-use fathomable_core::tree::Tree;
+use fathomable_core::tree::{Rule, Tree};
 
 use super::super::{App, Focus, PickerKind, Popup};
 use super::bindings::{Action, Chord, Key, Match, Where, lookup};
@@ -221,6 +221,9 @@ impl App {
             Action::CheckpointFile => self.checkpoint_file(),
             Action::CheckpointWorkspace => self.checkpoint_workspace(),
             Action::StubsToggle => self.toggle_stubs(),
+            Action::FilesChanged => self.files_toggle(Rule::Changed),
+            Action::FilesUntracked => self.files_toggle(Rule::Untracked),
+            Action::FilesIgnored => self.files_toggle(Rule::Ignored),
             Action::CommandLine => {
                 if place == Where::Tree {
                     self.toggle_tree_focus();

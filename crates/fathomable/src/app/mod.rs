@@ -19,6 +19,7 @@ mod diff;
 mod draw;
 mod file_index;
 mod files_pane;
+mod files_shown;
 mod goto_file;
 pub(crate) mod input;
 mod jump;
@@ -1008,6 +1009,7 @@ impl App {
                 }
                 self.status = status;
                 self.status_stale = false;
+                self.sift_tree();
             }
             Err(error) => {
                 self.status_stale = true;

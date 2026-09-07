@@ -440,6 +440,15 @@ impl App {
             menu.push(Action::Review, Action::Review, "review");
         }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
+        // What the pane shows, each entry saying what a press does now
+        // (ADR 0068).
+        for action in [
+            Action::FilesChanged,
+            Action::FilesUntracked,
+            Action::FilesIgnored,
+        ] {
+            menu.push(action, action, self.toggle_label(action));
+        }
         self.open_menu(menu);
     }
 

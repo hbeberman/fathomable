@@ -6,10 +6,151 @@
 //! the terminal can draw them and the keys can move a cursor over them
 //! (ADR 0012). Filesystem access always goes through the workspace so ignore
 //! rules apply.
+//!
+//! What the tree lists is a [`Shown`] (ADR 0068): every file, or only the
+//! changed ones, without the untracked ones, with the ignored ones. The
+//! rows are filtered as they are built, so the cursor, clicks, and
+//! [`Tree::reveal`] see only the listed rows.
 
+use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+use crate::status::{State, Status};
 use crate::workspace::{Filter, Workspace, WorkspaceError};
+
+/// What the tree lists (ADR 0068): every file, or a subset by three rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Shown {
+    changed_only: bool,
+    untracked: bool,
+    ignored: bool,
+}
+
+impl Default for Shown {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+impl Shown {
+    /// Every non-ignored file: no rule on.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            changed_only: false,
+            untracked: true,
+            ignored: false,
+        }
+    }
+
+    /// Whether no rule is on.
+    #[must_use]
+    pub const fn is_all(self) -> bool {
+        !self.changed_only && self.untracked && !self.ignored
+    }
+
+    /// Only the files that differ from `HEAD` are listed.
+    #[must_use]
+    pub const fn changed_only(self) -> bool {
+        self.changed_only
+    }
+
+    /// Untracked files are listed.
+    #[must_use]
+    pub const fn untracked(self) -> bool {
+        self.untracked
+    }
+
+    /// Files git ignores are listed.
+    #[must_use]
+    pub const fn ignored(self) -> bool {
+        self.ignored
+    }
+
+    /// The same rules with `rule` flipped.
+    #[must_use]
+    pub const fn toggled(self, rule: Rule) -> Self {
+        match rule {
+            Rule::Changed => Self {
+                changed_only: !self.changed_only,
+                ..self
+            },
+            Rule::Untracked => Self {
+                untracked: !self.untracked,
+                ..self
+            },
+            Rule::Ignored => Self {
+                ignored: !self.ignored,
+                ..self
+            },
+        }
+    }
+
+    /// The workspace filter the tree reads its listings with.
+    const fn filter(self) -> Filter {
+        if self.ignored {
+            Filter::All
+        } else {
+            Filter::Visible
+        }
+    }
+}
+
+/// One of the three rules a [`Shown`] toggles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Rule {
+    /// Only changed files.
+    Changed,
+    /// Untracked files.
+    Untracked,
+    /// Ignored files.
+    Ignored,
+}
+
+/// The paths the rules admit under one status: the changed files and
+/// their directories while only changed files are listed, and the
+/// untracked files to drop while they are hidden.
+#[derive(Debug, Clone, Default)]
+struct Admitted {
+    keep: Option<HashSet<PathBuf>>,
+    hide: HashSet<PathBuf>,
+}
+
+impl Admitted {
+    fn new(shown: Shown, status: &Status) -> Self {
+        let counted = status
+            .entries()
+            .iter()
+            .filter(|entry| shown.untracked || entry.state() != State::Untracked);
+        let keep = shown.changed_only.then(|| {
+            let mut keep = HashSet::new();
+            for entry in counted.clone() {
+                for ancestor in entry.path().ancestors() {
+                    if ancestor.as_os_str().is_empty() {
+                        break;
+                    }
+                    keep.insert(ancestor.to_path_buf());
+                }
+            }
+            keep
+        });
+        let hide = if shown.untracked {
+            HashSet::new()
+        } else {
+            status
+                .entries()
+                .iter()
+                .filter(|entry| entry.state() == State::Untracked)
+                .map(|entry| entry.path().to_path_buf())
+                .collect()
+        };
+        Self { keep, hide }
+    }
+
+    fn admits(&self, path: &Path) -> bool {
+        self.keep.as_ref().is_none_or(|keep| keep.contains(path)) && !self.hide.contains(path)
+    }
+}
 
 /// A visible line of the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +218,8 @@ pub struct Tree {
     root: Node,
     rows: Vec<Row>,
     cursor: usize,
+    shown: Shown,
+    admitted: Admitted,
 }
 
 impl Tree {
@@ -95,9 +238,50 @@ impl Tree {
             },
             rows: Vec::new(),
             cursor: 0,
+            shown: Shown::all(),
+            admitted: Admitted::default(),
         };
         tree.refresh(workspace)?;
         Ok(tree)
+    }
+
+    /// What the tree lists (ADR 0068).
+    #[must_use]
+    pub fn shown(&self) -> Shown {
+        self.shown
+    }
+
+    /// List by `shown` under `status`, keeping the cursor's path where it
+    /// is still listed. The listings are re-read when the ignored rule
+    /// flips, since that changes what a directory holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the root cannot be re-read.
+    pub fn set_shown(
+        &mut self,
+        workspace: &mut Workspace,
+        status: &Status,
+        shown: Shown,
+    ) -> Result<(), WorkspaceError> {
+        let reread = shown.ignored() != self.shown.ignored();
+        self.shown = shown;
+        if reread {
+            self.refresh(workspace)?;
+        }
+        self.sift(status);
+        Ok(())
+    }
+
+    /// Re-apply the rules to a new `status`: a file that became clean
+    /// leaves an only-changed listing, one that changed appears.
+    pub fn sift(&mut self, status: &Status) {
+        self.admitted = Admitted::new(self.shown, status);
+        let cursor_path = self.current().map(|row| row.path.clone());
+        self.rebuild();
+        if let Some(path) = cursor_path {
+            self.select_path(&path);
+        }
     }
 
     /// The visible rows, top to bottom.
@@ -127,13 +311,15 @@ impl Tree {
     /// directory that vanished is collapsed instead.
     pub fn refresh(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
         let cursor_path = self.current().map(|row| row.path.clone());
-        let expanded: Vec<PathBuf> = self
-            .rows
-            .iter()
-            .filter(|row| row.is_dir && row.expanded)
-            .map(|row| row.path.clone())
-            .collect();
-        self.root.children = Some(read_children(workspace, Path::new(""), Filter::Visible)?);
+        // From the nodes, not the rows: a directory the rules hide keeps
+        // its expansion for when they list it again (ADR 0068).
+        let mut expanded = Vec::new();
+        expanded_dirs(&self.root, &PathBuf::new(), &mut expanded);
+        self.root.children = Some(read_children(
+            workspace,
+            Path::new(""),
+            self.shown.filter(),
+        )?);
         for path in expanded {
             if let Err(error) = self.expand_path(workspace, &path) {
                 tracing::debug!(%error, "directory gone during refresh");
@@ -172,10 +358,11 @@ impl Tree {
             return Ok(false);
         };
         let dir = dir.as_path();
+        let filter = self.shown.filter();
         let Some(node) = find_node(&mut self.root, dir) else {
             return Ok(false);
         };
-        let fresh = match read_children(workspace, dir, Filter::Visible) {
+        let fresh = match read_children(workspace, dir, filter) {
             Ok(fresh) => fresh,
             Err(error) if !workspace.root().join(dir).is_dir() => {
                 tracing::debug!(%error, "directory gone; collapsing it");
@@ -372,6 +559,7 @@ impl Tree {
         workspace: &mut Workspace,
         path: &Path,
     ) -> Result<bool, WorkspaceError> {
+        let filter = self.shown.filter();
         let Some(node) = find_node(&mut self.root, path) else {
             return Ok(false);
         };
@@ -379,7 +567,7 @@ impl Tree {
             return Ok(false);
         }
         if node.children.is_none() {
-            node.children = Some(read_children(workspace, path, Filter::Visible)?);
+            node.children = Some(read_children(workspace, path, filter)?);
         }
         node.expanded = true;
         Ok(true)
@@ -393,9 +581,24 @@ impl Tree {
 
     fn rebuild(&mut self) {
         let mut rows = Vec::new();
-        push_rows(&self.root, &PathBuf::new(), 0, &mut rows);
+        push_rows(&self.root, &PathBuf::new(), 0, &self.admitted, &mut rows);
         self.rows = rows;
         self.cursor = self.cursor.min(self.rows.len().saturating_sub(1));
+    }
+}
+
+/// Every expanded directory under `node`, root-relative, `node` itself
+/// aside.
+fn expanded_dirs(node: &Node, path: &Path, out: &mut Vec<PathBuf>) {
+    let Some(children) = node.children.as_ref() else {
+        return;
+    };
+    for child in children.iter().filter(|child| child.is_dir) {
+        let child_path = path.join(&child.name);
+        if child.expanded {
+            out.push(child_path.clone());
+        }
+        expanded_dirs(child, &child_path, out);
     }
 }
 
@@ -457,12 +660,17 @@ fn find_node<'a>(root: &'a mut Node, path: &Path) -> Option<&'a mut Node> {
     Some(node)
 }
 
-fn push_rows(node: &Node, path: &Path, depth: usize, rows: &mut Vec<Row>) {
+/// The rows under an expanded `node`, in listing order, leaving out what
+/// the rules do not admit and everything beneath it (ADR 0068).
+fn push_rows(node: &Node, path: &Path, depth: usize, admitted: &Admitted, rows: &mut Vec<Row>) {
     let Some(children) = node.children.as_ref().filter(|_| node.expanded) else {
         return;
     };
     for child in children {
         let child_path = path.join(&child.name);
+        if !admitted.admits(&child_path) {
+            continue;
+        }
         rows.push(Row {
             path: child_path.clone(),
             name: child.name.clone(),
@@ -470,6 +678,6 @@ fn push_rows(node: &Node, path: &Path, depth: usize, rows: &mut Vec<Row>) {
             is_dir: child.is_dir,
             expanded: child.expanded,
         });
-        push_rows(child, &child_path, depth + 1, rows);
+        push_rows(child, &child_path, depth + 1, admitted, rows);
     }
 }

@@ -16,6 +16,8 @@
 //! The binding table says what a key is called; each builder here says
 //! whether it works.
 
+use std::path::Path;
+
 use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
@@ -46,6 +48,9 @@ pub(crate) enum Tone {
     /// The sidebar's directory colour, bold: the threads pane's title.
     Dir,
     Mark(ThreadState),
+    /// The diff colours: the files pane header's `+n` and `-m`.
+    Added,
+    Removed,
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
@@ -100,6 +105,19 @@ impl HintOf {
             actions: actions.to_vec(),
             tone: Some(Tone::Mark(state)),
             faint,
+            gap: false,
+        }
+    }
+
+    /// A word in `tone` with nothing after it and no click: a count or a
+    /// state word on the files pane's header (ADR 0068).
+    fn word(text: String, tone: Tone) -> Self {
+        Self {
+            key: text,
+            what: String::new(),
+            actions: Vec::new(),
+            tone: Some(tone),
+            faint: false,
             gap: false,
         }
     }
@@ -237,6 +255,8 @@ impl Header {
             Tone::Info => theme.info,
             Tone::Dir => theme.sidebar_dir.add_modifier(Modifier::BOLD),
             Tone::Mark(state) => mark_style(theme, state),
+            Tone::Added => theme.diff_plus,
+            Tone::Removed => theme.diff_minus,
         };
         let mut spans: Vec<Span<'static>> = self
             .left
@@ -458,6 +478,32 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
         count_hints(app.review_counts(file_only), app.review().resolved),
         Align::Right,
     )
+}
+
+/// The files pane's header (ADR 0017, ADR 0068): the repo's directory
+/// name as `title`, then against the right edge its `+n -m` counts and
+/// the words for the active filters, `· changed tracked ignored`, each
+/// naming what is on screen. Items drop from the end as the column
+/// narrows.
+pub(crate) fn files_pane_header(app: &App, title: String) -> Header {
+    let mut hints = Vec::new();
+    if let Some(total) = app.status().summary_under(Path::new("")) {
+        if total.added > 0 {
+            hints.push(HintOf::word(format!("+{}", total.added), Tone::Added));
+        }
+        if total.removed > 0 {
+            hints.push(HintOf::word(format!("-{}", total.removed), Tone::Removed));
+        }
+    }
+    for (i, word) in app.files_shown_words().into_iter().enumerate() {
+        let text = if i == 0 {
+            format!("· {word}")
+        } else {
+            word.to_owned()
+        };
+        hints.push(HintOf::word(text, Tone::Info));
+    }
+    Header::counted(vec![(title, Tone::Dir)], hints, Align::Right)
 }
 
 /// The threads pane's key bar on its bottom row while it has the keys

@@ -270,7 +270,7 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
 /// A click on a which-key entry is that key typed (ADR 0050).
 fn which_key_click(app: &mut App, column: usize, row: usize) -> Option<Effect> {
     let place = keys::place(app).filter(|_| !app.prefix().is_empty())?;
-    let entries = bindings::menu_entries(place, app.prefix());
+    let entries = app.which_key(place);
     let shown: Vec<(String, String)> = entries
         .iter()
         .map(|(chord, label)| (chord.to_string(), label.clone()))

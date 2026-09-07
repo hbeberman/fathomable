@@ -96,7 +96,10 @@ unbound.
   i` finds ignored files), reveal this file (focusing the files pane
   reveals it). The pane's `R` and `I` keys and the right-click
   menu's "re-read the tree" and "toggle ignored" entries go with
-  them. `Tree::refresh` stays for the watcher.
+  them. `Tree::refresh` stays for the watcher. (2026-09-06: the
+  ignored toggle returns as a filter on what the pane lists, `Space F
+  g`, beside two others; see
+  [0068](0068-what-the-files-pane-shows.md).)
 - `Space j c` goes. A change leaves the queue when its target is on
   screen; nothing needs to forget one unseen.
 - `Space c c` is the one "start a thread here" entry, what `C` does

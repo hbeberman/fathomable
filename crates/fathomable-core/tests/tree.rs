@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use fathomable_testing::TempDir;
 
-use fathomable_core::tree::{Activation, Row, Tree};
+use fathomable_core::status::{Entry, State, Status};
+use fathomable_core::tree::{Activation, Row, Rule, Shown, Tree};
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 
 /// A workspace with nested dirs, hidden entries, and mixed-case names.
@@ -268,5 +269,104 @@ fn git_workspace_roots_at_the_repository_and_ignores_files()
 
     let tree = Tree::new(&mut workspace)?;
     assert!(!names(&tree).iter().any(|n| n == "target"));
+    Ok(())
+}
+
+/// The status of `fixture`: `src/main.rs` modified, `b.txt` untracked
+/// (ADR 0068).
+fn dirty_status() -> Status {
+    Status::from_entries(vec![
+        Entry::new(PathBuf::from("src/main.rs"), State::Modified, 2, 1),
+        Entry::new(PathBuf::from("b.txt"), State::Untracked, 3, 0),
+    ])
+}
+
+#[test]
+fn only_changed_lists_the_dirty_files_and_their_directories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("changed")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    let status = dirty_status();
+
+    tree.set_shown(&mut workspace, &status, Shown::all().toggled(Rule::Changed))?;
+    assert!(tree.shown().changed_only());
+    assert_eq!(names(&tree), ["src", "b.txt"]);
+
+    // Expanding a listed directory shows only its changed files.
+    tree.expand(&mut workspace)?;
+    assert_eq!(names(&tree), ["src", "  main.rs", "b.txt"]);
+
+    // Hiding untracked files drops `b.txt`; `src` stays for `main.rs`.
+    tree.set_shown(
+        &mut workspace,
+        &status,
+        tree.shown().toggled(Rule::Untracked),
+    )?;
+    assert_eq!(names(&tree), ["src", "  main.rs"]);
+
+    // A new status re-sifts: `main.rs` clean, `src` has nothing to show.
+    tree.sift(&Status::from_entries(vec![Entry::new(
+        PathBuf::from("b.txt"),
+        State::Untracked,
+        3,
+        0,
+    )]));
+    assert!(names(&tree).is_empty());
+
+    // Back to every file, the expansion of `src` kept all along.
+    tree.set_shown(&mut workspace, &status, Shown::all())?;
+    assert_eq!(
+        names(&tree),
+        [
+            ".hidden",
+            "src",
+            "  nested",
+            "  main.rs",
+            "A.txt",
+            "b.txt",
+            "README.md"
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn hiding_untracked_alone_keeps_the_rest() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("untracked")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.set_shown(
+        &mut workspace,
+        &dirty_status(),
+        Shown::all().toggled(Rule::Untracked),
+    )?;
+    assert_eq!(names(&tree), [".hidden", "src", "A.txt", "README.md"]);
+    assert!(!tree.contains(Path::new("b.txt")));
+    Ok(())
+}
+
+#[test]
+fn showing_ignored_rereads_the_listings() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("ignored")?;
+    init_git(&dir.0)?;
+    fs::write(dir.0.join(".gitignore"), "*.log\n")?;
+    fs::write(dir.0.join("src/app.log"), "")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.move_down(1);
+    tree.expand(&mut workspace)?;
+    assert!(!tree.contains(Path::new("src/app.log")));
+
+    let status = Status::from_entries(Vec::new());
+    tree.set_shown(&mut workspace, &status, Shown::all().toggled(Rule::Ignored))?;
+    assert!(tree.shown().ignored());
+    assert!(tree.contains(Path::new("src/app.log")));
+    // The cursor stayed on `src`, which is still expanded.
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src")));
+
+    tree.set_shown(&mut workspace, &status, Shown::all())?;
+    assert!(!tree.contains(Path::new("src/app.log")));
+    assert!(tree.shown().is_all());
     Ok(())
 }

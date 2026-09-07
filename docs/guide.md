@@ -119,6 +119,7 @@ The `Space` menu, from any pane:
 | --- | --- |
 | `Space f` | file picker |
 | `Space F i`, `Space F r` | files: the picker including ignored files; the recent files |
+| `Space F c`, `Space F u`, `Space F g` | files: only changed files in the files pane; hide untracked files; show ignored files (session toggles, from any pane; each entry says what pressing it does now) |
 | `Space r` | the review list: every thread on the work in place of the document, by file then line under a row per file, resolved hidden; on the focused list, close it |
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
@@ -216,7 +217,8 @@ thread, copy, and clear; on a line a thread covers, expand or fold,
 reply, resolve or reopen, edit, and delete; on a link, copy or open it,
 and on a link or a path that names a file, open it in the viewer;
 on any line, comment, select, and copy. In the files pane it offers open,
-checkpoint, copy path, and, on a file with threads, `threads` (the
+checkpoint, copy path, the three filter toggles worded as they would
+act now, and, on a file with threads, `threads` (the
 threads pane on it) and `review`; on a threads pane or review list
 thread, go to, reply, resolve, edit, delete, and fold file; on a file
 row of either, fold or unfold, fold all or unfold all, open file, and
@@ -358,7 +360,19 @@ becomes a stub.
 
 The left column is the **sidebar**: the **files pane** above the **threads
 pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
-the sidebar drawn while either is. The threads pane lists this file's
+the sidebar drawn while either is. The files pane's header row names
+the repo's directory with its summed `+n -m`; three session toggles
+under `Space F` narrow what it lists, and the header names each active
+one after the counts by what is on screen: `Space F c` lists **only
+changed** files (`M`, `A`, `D`, and `?` against `HEAD`, directories with
+nothing to show left out; the header reads `· changed`), `Space F u`
+**hides untracked** files (`tracked`), and `Space F g` **shows ignored**
+files (`ignored`; an ignored file is never a changed one, so only
+changed wins). The popup's entries say what a press does now, `only
+changed` or `all files`, and the pane's right-click menu carries the
+same three. The toggles work from any pane; while the files pane is
+hidden the status line names the new state instead. The open file may
+drop out of the list and is highlighted again when it qualifies. The threads pane lists this file's
 threads in line order or, after `s`, the whole workspace's grouped by
 file, resolved ones hidden until `x` shows them. Each thread takes two
 rows: its circle, `L3-5` (or `file`), and who wrote its newest message

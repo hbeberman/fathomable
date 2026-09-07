@@ -5,7 +5,7 @@
 //! A [`Binding`] pairs one [`Action`] with the key sequences that fire it
 //! in one [`Where`]. Dispatch looks a typed sequence up with [`lookup`];
 //! a sequence that is the start of a longer binding is a prefix and the
-//! viewer waits for the rest, showing [`menu`] entries meanwhile. The
+//! viewer waits for the rest, showing [`menu_entries`] meanwhile. The
 //! help popup renders [`help`], and a pane header asks [`hint`] how a key
 //! is spelled, so no surface can name a key the table does not bind.
 
@@ -253,6 +253,12 @@ actions! {
     DiffTarget,
     DiffWhitespace,
     StubsToggle,
+    /// `Space F c`: only changed files in the files pane (ADR 0068).
+    FilesChanged,
+    /// `Space F u`: hide untracked files in the files pane (ADR 0068).
+    FilesUntracked,
+    /// `Space F g`: show ignored files in the files pane (ADR 0068).
+    FilesIgnored,
     HunkNext,
     HunkPrev,
     DirtyNext,
@@ -705,6 +711,27 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::PickRecent,
         "Space menu",
         "files: recent files",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('F'), c('c')]],
+        A::FilesChanged,
+        "Space menu",
+        "files: only changed",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('F'), c('u')]],
+        A::FilesUntracked,
+        "Space menu",
+        "files: hide untracked",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('F'), c('g')]],
+        A::FilesIgnored,
+        "Space menu",
+        "files: show ignored",
     ),
     bind(
         W::Any,
@@ -1433,20 +1460,28 @@ fn strip_submenu_word<'a>(typed: &[Chord], label: &'a str) -> &'a str {
         .unwrap_or(label)
 }
 
-/// The which-key entries for `typed` on `place`: the next key of every
-/// binding that continues it, with its label, in table order.
+/// The which-key entries for `typed` on `place` with the table's
+/// labels: the next key of every binding that continues it, in table
+/// order. The app draws them through `App::which_key`, which relabels
+/// a toggle with what pressing it does now (ADR 0068).
+#[cfg(test)]
 #[must_use]
 pub(crate) fn menu(place: Where, typed: &[Chord]) -> Vec<(String, String)> {
-    menu_entries(place, typed)
+    menu_entries(place, typed, |_| None)
         .into_iter()
         .map(|(chord, label)| (chord.to_string(), label))
         .collect()
 }
 
 /// The which-key entries as chords, so a click on a drawn entry can be
-/// the key it shows typed (ADR 0050).
+/// the key it shows typed (ADR 0050). `relabel` may give an action's
+/// entry a live label in place of the table's (ADR 0068).
 #[must_use]
-pub(crate) fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)> {
+pub(crate) fn menu_entries(
+    place: Where,
+    typed: &[Chord],
+    relabel: impl Fn(Action) -> Option<&'static str>,
+) -> Vec<(Chord, String)> {
     let mut entries: Vec<(Chord, String)> = Vec::new();
     for binding in applicable(place) {
         for keys in binding.keys {
@@ -1456,7 +1491,9 @@ pub(crate) fn menu_entries(place: Where, typed: &[Chord]) -> Vec<(Chord, String)
                     let label = if keys.len() == typed.len() + 1 {
                         // The breadcrumb row already names the submenu,
                         // so an entry inside one does not repeat it.
-                        strip_submenu_word(typed, binding.label).to_owned()
+                        relabel(binding.action)
+                            .unwrap_or_else(|| strip_submenu_word(typed, binding.label))
+                            .to_owned()
                     } else {
                         // A submenu is named after where it leads.
                         let word = submenu_word(&keys[..=typed.len()]).unwrap_or("more");
@@ -1672,7 +1709,10 @@ mod tests {
             keys(Where::Review, &[c(' '), c('d')]),
             ["d", "D", "r", "g", "b", "t", "c", "C", "w"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["i", "r"]);
+        assert_eq!(
+            keys(Where::View, &[c(' '), c('F')]),
+            ["i", "r", "c", "u", "g"]
+        );
         assert_eq!(
             keys(Where::View, &[c(' '), c('w')]),
             ["h", "j", "k", "l", "w", "f", "t"]

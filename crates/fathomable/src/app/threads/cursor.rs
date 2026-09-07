@@ -270,6 +270,15 @@ impl App {
         let Some(path) = self.thread(&id).map(|thread| thread.path().to_path_buf()) else {
             return false;
         };
+        // A thread another worktree shows is the way into it (ADR 0070).
+        if let Some(root) = self
+            .thread(&id)
+            .and_then(|thread| self.reach.elsewhere(thread))
+            .map(std::path::Path::to_path_buf)
+            && !self.activate_worktree(&root)
+        {
+            return false;
+        }
         // Showing another file keeps the keys where they were.
         let focus = self.focus;
         if path != self.current_path() {

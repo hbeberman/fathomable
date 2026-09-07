@@ -88,47 +88,48 @@ impl XdgDirs {
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>`, the per-workspace
-    /// state directory (ADR 0005); `hash` is the short SHA-256 of `root`.
+    /// state directory (ADR 0005); `hash` is the short SHA-256 of `key`,
+    /// the workspace's [`key`](crate::workspace::Workspace::key): its git
+    /// common dir, shared by every worktree (ADR 0070), or its root.
     #[must_use]
-    pub fn workspace_dir(&self, root: &Path) -> PathBuf {
-        let hash = crate::annotations::short_hash(root.as_os_str().as_encoded_bytes());
+    pub fn workspace_dir(&self, key: &Path) -> PathBuf {
+        let hash = crate::annotations::short_hash(key.as_os_str().as_encoded_bytes());
         self.state_dir().join("workspaces").join(hash)
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`.
     #[must_use]
-    pub fn threads_file(&self, root: &Path) -> PathBuf {
-        self.workspace_dir(root)
+    pub fn threads_file(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key)
             .join(crate::annotations::THREADS_FILE)
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/agents.jsonl`, the
     /// agent register (ADR 0040).
     #[must_use]
-    pub fn agents_file(&self, root: &Path) -> PathBuf {
-        self.workspace_dir(root).join(crate::agents::AGENTS_FILE)
+    pub fn agents_file(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join(crate::agents::AGENTS_FILE)
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, the
     /// marker that names the root behind the hash (ADR 0024).
     #[must_use]
-    pub(crate) fn workspace_file(&self, root: &Path) -> PathBuf {
-        self.workspace_dir(root)
-            .join(crate::session::WORKSPACE_FILE)
+    pub(crate) fn workspace_file(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join(crate::session::WORKSPACE_FILE)
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/seen`, where last-seen
     /// snapshots live (ADR 0015).
     #[must_use]
-    pub fn seen_dir(&self, root: &Path) -> PathBuf {
-        self.workspace_dir(root).join("seen")
+    pub fn seen_dir(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join("seen")
     }
 
     /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/checkpoints`, where the
     /// reader's checkpoints live (ADR 0049).
     #[must_use]
-    pub fn checkpoints_dir(&self, root: &Path) -> PathBuf {
-        self.workspace_dir(root).join("checkpoints")
+    pub fn checkpoints_dir(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join("checkpoints")
     }
 
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.
@@ -141,8 +142,8 @@ impl XdgDirs {
     /// under its workspace (ADR 0024); `None` when the runtime dir is unset.
     /// A long runtime dir can push it past [`socket_path_fits`].
     #[must_use]
-    pub fn viewer_socket(&self, root: &Path, pid: u32) -> Option<PathBuf> {
-        let hash = crate::annotations::short_hash(root.as_os_str().as_encoded_bytes());
+    pub fn viewer_socket(&self, key: &Path, pid: u32) -> Option<PathBuf> {
+        let hash = crate::annotations::short_hash(key.as_os_str().as_encoded_bytes());
         self.runtime_dir()
             .map(|dir| dir.join(hash).join(format!("{pid}.sock")))
     }

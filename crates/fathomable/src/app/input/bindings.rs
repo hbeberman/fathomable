@@ -252,6 +252,10 @@ actions! {
     DiffBase,
     DiffTarget,
     DiffNext,
+    /// `]w`: the next worktree (ADR 0070).
+    WorktreeNext,
+    /// `[w`: the previous worktree (ADR 0070).
+    WorktreePrev,
     DiffWhitespace,
     SeenAll,
     StubsToggle,
@@ -944,6 +948,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::SeenAll,
         "Space menu",
         "diff: mark all files seen",
+    ),
+    bind(
+        W::Any,
+        &[&[c(']'), c('w')]],
+        A::WorktreeNext,
+        "Worktrees",
+        "next worktree",
+    ),
+    bind(
+        W::Any,
+        &[&[c('['), c('w')]],
+        A::WorktreePrev,
+        "Worktrees",
+        "previous worktree",
     ),
     bind(
         W::Any,

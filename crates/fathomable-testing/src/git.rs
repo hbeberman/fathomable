@@ -146,3 +146,57 @@ pub fn amend(root: &Path, files: &[(&str, &str)]) -> Result<(), GitError> {
     ))?;
     stage(root, files)
 }
+
+/// `git worktree add <linked> -b <branch>` at `HEAD`: register the
+/// linked worktree under `main`'s `.git/worktrees/`, point `linked/.git`
+/// back at it, and check `HEAD`'s tree out into `linked`.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository cannot be opened or the
+/// worktree cannot be written.
+pub fn worktree_add(main: &Path, linked: &Path, branch: &str) -> Result<(), GitError> {
+    let repo = git(gix::open_opts(main, open_options()))?;
+    let head = git(repo.head_id())?.detach();
+    let name = linked
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .ok_or_else(|| GitError("worktree path has no name".to_owned()))?;
+    let git_dir = repo.common_dir().join("worktrees").join(&name);
+    git(std::fs::create_dir_all(&git_dir))?;
+    git(std::fs::create_dir_all(linked))?;
+    let linked_abs = git(linked.canonicalize())?;
+    git(std::fs::write(
+        git_dir.join("gitdir"),
+        format!("{}\n", linked_abs.join(".git").display()),
+    ))?;
+    git(std::fs::write(git_dir.join("commondir"), "../..\n"))?;
+    git(std::fs::write(
+        git_dir.join("HEAD"),
+        format!("ref: refs/heads/{branch}\n"),
+    ))?;
+    let heads = repo.common_dir().join("refs").join("heads");
+    git(std::fs::create_dir_all(&heads))?;
+    git(std::fs::write(heads.join(branch), format!("{head}\n")))?;
+    git(std::fs::write(
+        linked_abs.join(".git"),
+        format!("gitdir: {}\n", git_dir.display()),
+    ))?;
+    // The checkout: every blob of HEAD's tree, at its path.
+    let tree = git(repo.head_tree())?;
+    let mut recorder = gix::traverse::tree::Recorder::default();
+    git(tree.traverse().breadthfirst(&mut recorder))?;
+    for entry in recorder.records {
+        if !entry.mode.is_blob() {
+            continue;
+        }
+        let blob = git(repo.find_object(entry.oid))?;
+        let path: &gix::bstr::BStr = entry.filepath.as_ref();
+        let target = linked_abs.join(gix::path::from_bstr(path));
+        if let Some(parent) = target.parent() {
+            git(std::fs::create_dir_all(parent))?;
+        }
+        git(std::fs::write(target, &blob.data))?;
+    }
+    Ok(())
+}

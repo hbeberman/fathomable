@@ -161,6 +161,11 @@ pub(crate) struct Watcher {
     recursive: bool,
     /// The thread store, watched through its directory (ADR 0024).
     store: Option<PathBuf>,
+    /// The root under the recursive watch, to move it (ADR 0070).
+    root: Option<PathBuf>,
+    /// The git paths of the other worktrees, each watched on its own
+    /// (ADR 0070).
+    extras: Vec<PathBuf>,
 }
 
 impl std::fmt::Debug for Watcher {
@@ -203,6 +208,8 @@ impl Watcher {
                 target: None,
                 recursive: false,
                 store: None,
+                root: None,
+                extras: Vec::new(),
             },
             Raws { rx },
         ))
@@ -210,6 +217,12 @@ impl Watcher {
 
     /// Watch everything under `root`; false when the watch cannot be set up.
     pub(crate) fn watch_root(&mut self, root: &Path) -> bool {
+        if let Some(old) = self.root.take()
+            && old != root
+        {
+            let _ = self.inner.unwatch(&old);
+        }
+        self.root = Some(root.to_path_buf());
         match self.inner.watch(root, RecursiveMode::Recursive) {
             Ok(()) => {
                 tracing::info!(root = %root.display(), "watching workspace");
@@ -240,11 +253,46 @@ impl Watcher {
     }
 
     /// Whether an event on `path` is one this watcher was asked for: in
-    /// the fallback mode only the open file and the store count.
+    /// the fallback mode only the open file, the store, and the other
+    /// worktrees' git paths count.
     pub(crate) fn is_target(&self, path: &Path) -> bool {
         self.recursive
             || self.target.as_deref() == Some(path)
             || self.store.as_deref() == Some(path)
+            || self.extras.iter().any(|dir| path.starts_with(dir))
+    }
+
+    /// Watch the git paths of the other worktrees (ADR 0070), each on
+    /// its own and not recursively, except the refs, which are few and
+    /// nested: a `HEAD` or a branch moving there changes the reach. A
+    /// path under the root's own recursive watch is left to it.
+    pub(crate) fn watch_worktrees(&mut self, paths: &[PathBuf]) {
+        let wanted: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| {
+                !(self.recursive && self.root.as_ref().is_some_and(|root| p.starts_with(root)))
+            })
+            .cloned()
+            .collect();
+        for old in &self.extras {
+            if !wanted.contains(old) {
+                let _ = self.inner.unwatch(old);
+            }
+        }
+        for dir in &wanted {
+            if self.extras.contains(dir) {
+                continue;
+            }
+            let mode = if dir.file_name().is_some_and(|n| n == "refs") {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            if let Err(error) = self.inner.watch(dir, mode) {
+                tracing::debug!(%error, dir = %dir.display(), "cannot watch worktree path");
+            }
+        }
+        self.extras = wanted;
     }
 
     /// Watch the directory holding the thread store, so appends by other

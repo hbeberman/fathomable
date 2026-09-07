@@ -863,16 +863,27 @@ impl Draft {
 /// A thread written against a commit is visible only while that commit is
 /// `HEAD` or one of its ancestors; a thread without a commit, or any thread
 /// when the workspace has no `HEAD`, is always visible.
+///
+/// A workspace with several worktrees (ADR 0070) reaches the union: a
+/// thread shows when any worktree's `HEAD` reaches it. [`Reach::here`]
+/// asks about the checkout in hand alone, and [`Reach::elsewhere`] names
+/// the first other worktree that reaches a thread this one does not.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Reach {
     reachable: Option<HashSet<String>>,
+    /// The other worktrees and the commits reachable from each one's
+    /// `HEAD`, in the listing's order.
+    others: Vec<(PathBuf, HashSet<String>)>,
 }
 
 impl Reach {
     /// A reach that shows every thread: no git, or no `HEAD` yet.
     #[must_use]
     pub fn everything() -> Self {
-        Self { reachable: None }
+        Self {
+            reachable: None,
+            others: Vec::new(),
+        }
     }
 
     /// A scope over the commits reachable from `HEAD`. The set need only
@@ -882,16 +893,45 @@ impl Reach {
     pub fn reachable(commits: HashSet<String>) -> Self {
         Self {
             reachable: Some(commits),
+            others: Vec::new(),
         }
     }
 
-    /// Whether `thread` is on the current work.
+    /// Add another worktree of the workspace, at `root`, and the commits
+    /// its `HEAD` reaches (ADR 0070).
+    #[must_use]
+    pub fn with_worktree(mut self, root: PathBuf, commits: HashSet<String>) -> Self {
+        self.others.push((root, commits));
+        self
+    }
+
+    /// Whether `thread` is on the current work in any worktree.
     #[must_use]
     pub fn includes(&self, thread: &Thread) -> bool {
+        self.here(thread) || self.elsewhere(thread).is_some()
+    }
+
+    /// Whether the checkout in hand reaches `thread`.
+    #[must_use]
+    pub fn here(&self, thread: &Thread) -> bool {
         match (&self.reachable, thread.commit()) {
             (Some(reachable), Some(commit)) => reachable.contains(commit),
             _ => true,
         }
+    }
+
+    /// The first other worktree whose `HEAD` reaches `thread` when the
+    /// checkout in hand does not; `None` when it does, or when none does.
+    #[must_use]
+    pub fn elsewhere(&self, thread: &Thread) -> Option<&Path> {
+        if self.here(thread) {
+            return None;
+        }
+        let commit = thread.commit()?;
+        self.others
+            .iter()
+            .find(|(_, commits)| commits.contains(commit))
+            .map(|(root, _)| root.as_path())
     }
 }
 
@@ -2429,6 +2469,47 @@ mod tests {
         let placement = thread.locate("nothing here\n");
         assert!(placement.is_detached());
         assert_eq!(placement.range(), Some(LineRange::new(5, 5)));
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod reach_tests {
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    use super::{Author, Draft, LineRange, Reach, Thread};
+
+    fn thread(commit: Option<&str>) -> Result<Thread, Box<dyn std::error::Error>> {
+        let dir = fathomable_testing::TempDir::new("reach")?;
+        let mut store = super::Store::open(dir.0.join("threads.jsonl"))?;
+        let id = store.annotate(
+            Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), "x")
+                .at_commit(commit.map(str::to_owned)),
+            "one\n",
+            1,
+        )?;
+        Ok(store.thread(&id).cloned().ok_or("thread missing")?)
+    }
+
+    /// The checkout in hand reaches its own commits; another worktree's
+    /// reach widens what shows and names where (ADR 0070).
+    #[test]
+    fn another_worktree_widens_the_reach_and_is_named() -> Result<(), Box<dyn std::error::Error>> {
+        let here: HashSet<String> = ["aaa".to_owned()].into();
+        let there: HashSet<String> = ["bbb".to_owned()].into();
+        let reach = Reach::reachable(here).with_worktree(PathBuf::from("/feature"), there);
+        let mine = thread(Some("aaa"))?;
+        let theirs = thread(Some("bbb"))?;
+        let nobody = thread(Some("ccc"))?;
+        let unscoped = thread(None)?;
+
+        assert!(reach.here(&mine) && reach.includes(&mine));
+        assert_eq!(reach.elsewhere(&mine), None);
+        assert!(!reach.here(&theirs) && reach.includes(&theirs));
+        assert_eq!(reach.elsewhere(&theirs), Some(Path::new("/feature")));
+        assert!(!reach.includes(&nobody));
+        assert!(reach.here(&unscoped) && reach.elsewhere(&unscoped).is_none());
         Ok(())
     }
 }

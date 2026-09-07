@@ -108,6 +108,10 @@ Space F r    recent files                            (unchanged)
   files are shown. A ` · ` separates the counts from the first word.
 - `demo +12 -3 · changed tracked`. Items drop from the end as the column
   narrows, as every header's do: the words first, then the counts.
+  (Amended 2026-09-06 by [0070](0070-one-workspace-many-worktrees.md):
+  while the workspace has more than one worktree the header begins
+  with the active worktree's branch, and a click on it opens a picker
+  of them.)
 
 ### Amendments
 

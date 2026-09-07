@@ -255,7 +255,7 @@ impl App {
         let hashes = LineHashes::of(doc.document.text().unwrap_or_default());
         doc.marks = store
             .for_path(&doc.relative)
-            .filter(|thread| self.reach.includes(thread))
+            .filter(|thread| self.reach.here(thread))
             .map(|thread| {
                 let placement = thread.locate_in(&hashes);
                 Mark {
@@ -328,7 +328,7 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.includes(thread) && Some(thread.path()) != current)
+            .filter(|thread| self.reach.here(thread) && Some(thread.path()) != current)
             .map(|thread| {
                 let start = thread.range().map(|range| range.start());
                 (thread.path(), start, thread.id().clone())

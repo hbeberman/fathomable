@@ -293,20 +293,19 @@ async fn run_async(
     let theme = crate::app::draw::Theme::from_core(theme);
     let size = terminal.size().context("cannot read terminal size")?;
     let hint_debounce = options.watch.debounce;
-    let watching = doc_watcher.watch_root(workspace.root());
     let mut app = App::new(
         workspace,
         usize::from(size.width),
         usize::from(size.height),
         options,
     );
-    app.set_watching_root(watching);
-    doc_watcher.watch_store(app.store_path());
+    start_watching(&mut app, &mut doc_watcher);
     app.start_on(open);
     let _socket = keep_socket(&mut app, socket);
 
     let mut batch = watch::Batch::default();
     loop {
+        rewatch(&mut app, &mut doc_watcher);
         doc_watcher.follow(app.current_abs_path());
         app.settle();
         // What a crash report says the viewer was showing (ADR 0022): the
@@ -388,6 +387,29 @@ async fn run_async(
     app.on_quit();
     tracing::info!("app closed");
     Ok(())
+}
+
+/// The watches a viewer starts with: the root, the thread store's
+/// directory (ADR 0024), and the other worktrees' git paths (ADR 0070).
+fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) {
+    let watching = doc_watcher.watch_root(app.workspace().root());
+    app.set_watching_root(watching);
+    doc_watcher.watch_store(app.store_path());
+    app.take_rewatch();
+    doc_watcher.watch_worktrees(app.worktree_watch_paths());
+}
+
+/// Move the watcher after the app re-rooted, or the worktree set
+/// changed (ADR 0070).
+fn rewatch(app: &mut App, doc_watcher: &mut watch::Watcher) {
+    let Some(rewatch) = app.take_rewatch() else {
+        return;
+    };
+    if let Some(root) = rewatch.root {
+        let watching = doc_watcher.watch_root(&root);
+        app.set_watching_root(watching);
+    }
+    doc_watcher.watch_worktrees(&rewatch.extras);
 }
 
 /// Do what a key asked of the loop; `Break` when the viewer is to quit.

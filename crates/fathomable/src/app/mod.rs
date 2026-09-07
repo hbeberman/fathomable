@@ -36,8 +36,9 @@ pub(crate) mod threads;
 mod view;
 mod watch;
 mod window;
+mod worktrees;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -127,6 +128,8 @@ pub(crate) enum PickerKind {
     DiffBase,
     /// The target side of the diff (ADR 0060).
     DiffTarget,
+    /// The worktrees of the workspace, the active one marked (ADR 0070).
+    Worktree,
 }
 
 /// The open picker popup.
@@ -325,6 +328,17 @@ pub(crate) struct App {
     walks: status_walk::Walks,
     /// Every uncommitted path (ADR 0017), refreshed on git and file events.
     status: Status,
+    /// The workspace's worktrees as last listed (ADR 0070).
+    worktrees: Vec<fathomable_core::worktrees::Worktree>,
+    /// The git paths watched for the other worktrees (ADR 0070).
+    worktree_paths: Vec<PathBuf>,
+    /// What the other worktrees' `HEAD`s reached last time (ADR 0070).
+    reach_cache: HashMap<PathBuf, worktrees::ReachEntry>,
+    /// Where a thread another worktree shows sits in that worktree's
+    /// file (ADR 0070).
+    elsewhere: HashMap<ThreadId, annotations::Placement>,
+    /// What the loop's watcher must move to, once (ADR 0070).
+    rewatch: Option<worktrees::Rewatch>,
 }
 
 impl App {
@@ -416,8 +430,14 @@ impl App {
             status_stale: false,
             walks: status_walk::Walks::new(),
             status: Status::default(),
+            worktrees: Vec::new(),
+            worktree_paths: Vec::new(),
+            reach_cache: HashMap::new(),
+            elsewhere: HashMap::new(),
+            rewatch: None,
         };
         app.relayout();
+        app.refresh_worktrees();
         app.refresh_status();
         // Snapshots first: a thread edited offline must locate before the
         // scope refresh can keep it across a rewrite (ADR 0035).
@@ -431,7 +451,7 @@ impl App {
     /// stranded follow `HEAD` first (ADR 0035). Marks are refreshed when
     /// the answer changed.
     pub(super) fn refresh_reach(&mut self) {
-        let scope = match self.store.as_mut() {
+        let active = match self.store.as_mut() {
             Some(store) => match self.workspace.reachable(store.commits()) {
                 Some(mut reachable) => {
                     if crate::app::threads::reach::follow_head(store, &self.workspace, &reachable)
@@ -439,10 +459,15 @@ impl App {
                     {
                         reachable.extend(self.workspace.head_commit());
                     }
-                    Reach::reachable(reachable)
+                    Some(reachable)
                 }
-                None => Reach::everything(),
+                None => None,
             },
+            None => None,
+        };
+        // The other worktrees widen the reach (ADR 0070).
+        let scope = match active {
+            Some(reachable) => self.reach_with_others(reachable),
             None => Reach::everything(),
         };
         if scope != self.reach {
@@ -452,6 +477,7 @@ impl App {
                 self.refresh_marks(index);
             }
         }
+        self.refresh_elsewhere();
     }
 
     /// Re-read the thread store after another writer appended to it: a
@@ -674,27 +700,25 @@ impl App {
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut seen_paths: HashSet<PathBuf> = HashSet::new();
         for event in events {
-            let event = match event {
-                // A move across the root's edge is a plain arrival or
-                // departure on this side of it.
-                watch::Event::Renamed { from, to } => {
-                    match (from.starts_with(&root), to.starts_with(&root)) {
-                        (true, true) => watch::Event::Renamed { from, to },
-                        (true, false) => watch::Event::Removed(from),
-                        (false, true) => watch::Event::Created(to),
-                        (false, false) => continue,
-                    }
-                }
-                other => other,
+            let Some(event) = on_this_side(event, &root) else {
+                continue;
             };
             let Some(path) = event.path() else {
                 continue;
             };
+            // A `HEAD`, a ref, or the registry of another worktree moved
+            // (ADR 0070); outside the root, so it is not a file event.
+            if self.is_worktree_path(path) {
+                git_changed = true;
+                continue;
+            }
             let Ok(relative) = path.strip_prefix(&root).map(Path::to_path_buf) else {
                 continue;
             };
             if relative.starts_with(".git") {
-                git_changed |= is_git_metadata(&relative);
+                git_changed |= is_git_metadata(&relative)
+                    || relative.starts_with(".git/worktrees")
+                    || relative.starts_with(".git/refs");
                 continue;
             }
             if let watch::Event::Renamed { from, .. } = &event
@@ -733,11 +757,7 @@ impl App {
             }
         }
         if git_changed {
-            tracing::info!("git metadata changed; refreshing HEAD bases");
-            for index in 0..self.docs.len() {
-                self.refresh_base(index);
-            }
-            self.refresh_reach();
+            self.on_git_changed();
         }
         if rules_changed {
             // What the index shows follows the rules: walk it again.
@@ -763,6 +783,18 @@ impl App {
         }
     }
 
+    /// `HEAD`, the index, a ref, or the worktree set moved: the worktrees
+    /// are listed again (ADR 0070), the `HEAD` bases re-read, and the
+    /// reach recomputed.
+    fn on_git_changed(&mut self) {
+        tracing::info!("git metadata changed; refreshing HEAD bases");
+        self.refresh_worktrees();
+        for index in 0..self.docs.len() {
+            self.refresh_base(index);
+        }
+        self.refresh_reach();
+    }
+
     /// Reconcile state after the platform reports that watcher events were
     /// lost. The tree, loaded documents, repository bases, status, and
     /// annotation store may all have changed during the gap.
@@ -770,6 +802,7 @@ impl App {
         tracing::warn!("file watcher lost events; rescanning workspace");
         self.reload_rules();
         self.reload_store();
+        self.refresh_worktrees();
         for index in 0..self.docs.len() {
             self.refresh_base(index);
         }
@@ -1546,13 +1579,27 @@ impl App {
                 path,
                 line,
                 end_line,
-            } => self.open_for_agent(&path, line, end_line),
+                worktree,
+            } => {
+                // The path is relative to the caller's worktree: page
+                // there first (ADR 0070).
+                if let Some(root) = worktree
+                    && !self.activate_worktree(&root)
+                {
+                    return Response::Error(
+                        self.message
+                            .clone()
+                            .unwrap_or_else(|| format!("cannot open {}", root.display())),
+                    );
+                }
+                self.open_for_agent(&path, line, end_line)
+            }
             Request::ThreadsList { since, path } => match &self.store {
                 Some(store) => Response::Threads(
                     store
                         .threads()
                         .iter()
-                        .filter(|t| self.reach.includes(t))
+                        .filter(|t| self.reach.here(t))
                         .filter(|t| since.is_none_or(|s| t.updated() >= s))
                         .filter(|t| path.as_deref().is_none_or(|p| t.path().starts_with(p)))
                         .cloned()
@@ -1898,6 +1945,7 @@ impl App {
                 .map(|s| format!("{}  {}", s.label(), s.id()))
                 .collect(),
             PickerKind::DiffBase | PickerKind::DiffTarget => self.diff_choices(),
+            PickerKind::Worktree => self.worktree_choices(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
@@ -1957,8 +2005,26 @@ impl App {
             Some((kind @ (PickerKind::DiffBase | PickerKind::DiffTarget), item)) => {
                 self.choose_diff_side(kind, &item);
             }
+            Some((PickerKind::Worktree, item)) => self.choose_worktree(&item),
             None => {}
         }
+    }
+}
+
+/// `event` as seen from inside `root`: a move across the root's edge is
+/// a plain arrival or departure on this side of it, and a move wholly
+/// outside is nothing.
+fn on_this_side(event: watch::Event, root: &Path) -> Option<watch::Event> {
+    match event {
+        watch::Event::Renamed { from, to } => {
+            match (from.starts_with(root), to.starts_with(root)) {
+                (true, true) => Some(watch::Event::Renamed { from, to }),
+                (true, false) => Some(watch::Event::Removed(from)),
+                (false, true) => Some(watch::Event::Created(to)),
+                (false, false) => None,
+            }
+        }
+        other => Some(other),
     }
 }
 
@@ -2005,8 +2071,13 @@ impl Options {
     pub(crate) fn for_test(root: PathBuf) -> Self {
         use fathomable_core::session::Id;
         Self {
-            record: Record::new(Id::mint(), root, None),
-            dirs: XdgDirs::resolve(|_| None),
+            record: Record::new(Id::mint(), root.clone(), root, None),
+            // State a test app writes (a record, a marker) lands in the
+            // temp dir, never beside the sources.
+            dirs: XdgDirs::resolve(|name| {
+                (name == "XDG_STATE_HOME")
+                    .then(|| std::env::temp_dir().join("fathomable-test-state").into())
+            }),
             store: None,
             jump: JumpConfig::default(),
             watch: WatchConfig::default(),

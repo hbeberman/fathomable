@@ -140,6 +140,9 @@ fn commit_time(repo: &gix::Repository, hex: &str) -> Option<gix::date::SecondsSi
 /// A workspace root with git ignore evaluation.
 pub struct Workspace {
     root: PathBuf,
+    /// What the state directory is keyed by (ADR 0070): the canonical
+    /// git common dir, or the root outside git.
+    key: PathBuf,
     ignore: Option<Ignore>,
 }
 
@@ -155,6 +158,7 @@ impl fmt::Debug for Workspace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Workspace")
             .field("root", &self.root)
+            .field("key", &self.key)
             .field("git", &self.ignore.is_some())
             .finish()
     }
@@ -195,9 +199,11 @@ impl Workspace {
                         path: root.clone(),
                         message,
                     })?;
-                    tracing::info!(root = %root.display(), "workspace is a git work tree");
+                    let key = crate::worktrees::canonical(repo.common_dir());
+                    tracing::info!(root = %root.display(), key = %key.display(), "workspace is a git work tree");
                     Ok(Self {
                         root,
+                        key,
                         ignore: Some(ignore),
                     })
                 }
@@ -212,13 +218,56 @@ impl Workspace {
 
     fn plain(root: PathBuf) -> Self {
         tracing::info!(root = %root.display(), "workspace is a plain directory");
-        Self { root, ignore: None }
+        Self {
+            key: root.clone(),
+            root,
+            ignore: None,
+        }
     }
 
-    /// The absolute workspace root.
+    /// The absolute workspace root: the worktree this instance reads.
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// What the workspace's state is keyed by (ADR 0070): the canonical
+    /// git common dir, shared by every worktree of the repository, or
+    /// the root itself outside git. Pass it where [`XdgDirs`] asks for a
+    /// key.
+    ///
+    /// [`XdgDirs`]: crate::XdgDirs
+    #[must_use]
+    pub fn key(&self) -> &Path {
+        &self.key
+    }
+
+    /// Every worktree of the repository (ADR 0070): the main one first,
+    /// then the linked ones as git keeps them, or nothing outside git.
+    #[must_use]
+    pub fn worktrees(&self) -> Vec<crate::worktrees::Worktree> {
+        self.ignore
+            .as_ref()
+            .map(|git| crate::worktrees::list(&git.repo))
+            .unwrap_or_default()
+    }
+
+    /// The paths a viewer watches for the worktree set and the other
+    /// worktrees' `HEAD`s moving (ADR 0070): the common dir, its `refs`,
+    /// its `worktrees/` registry, and each linked worktree's git dir;
+    /// none outside git.
+    #[must_use]
+    pub fn worktree_watch_paths(&self) -> Vec<PathBuf> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Vec::new();
+        };
+        let common = crate::worktrees::canonical(git.repo.common_dir());
+        let registry = crate::worktrees::registry(&common);
+        let mut out = vec![common.clone(), common.join("refs"), registry.clone()];
+        if let Ok(entries) = std::fs::read_dir(&registry) {
+            out.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        }
+        out
     }
 
     /// Re-read the ignore rules and attributes.

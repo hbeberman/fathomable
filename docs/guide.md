@@ -48,6 +48,18 @@ can drive all of them or one by name (`--name`, or `:name` later). The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
+A git workspace is the repository, every worktree of it included
+([0070](decisions/0070-one-workspace-many-worktrees.md)): a checkout
+made with `git worktree add` shares the threads, seen marks, and
+checkpoints of the main one, and a viewer opened in any of them lists
+them all. One worktree is *active* at a time; `]w` and `[w` page
+through them, the files pane header leads with the active branch while
+there are several, and a click on that branch opens a picker of them.
+Paging re-roots the viewer: the file you are reading stays open by its
+path when the worktree has it, the other open files close. A thread an
+agent started on a branch you have not merged still shows, with the
+branch after its author, and opening it pages there.
+
 The workspace is live too. A file or directory the agent creates,
 deletes, or renames shows up in, leaves, or moves within the tree on its
 own (within `watch.debounce`) — a whole new directory arrives
@@ -101,6 +113,7 @@ Text:
 | `D` | the next diff: `HEAD`, last seen, the newest checkpoint, then the file again, skipping what the file lacks |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
+| `]w` `[w` | next / previous worktree of the repository, wrapping ([0070](decisions/0070-one-workspace-many-worktrees.md)) |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
 | `gy` `gx` | copy the link under the cursor; open it with `xdg-open` |
@@ -303,7 +316,10 @@ three lines either side, and an edit that stays inside that window is
 found. Threads live
 outside the repository at
 `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`
-(`~/.local/state/...` by default), one append-only JSON line per event.
+(`~/.local/state/...` by default), one append-only JSON line per event;
+`<hash>` is of the repository's git common dir, so every worktree
+reads the same file, or of the root outside git
+([0070](decisions/0070-one-workspace-many-worktrees.md)).
 Each line carries the format version this build writes; a file of
 another version is refused with the line to blame and the path to
 delete, and there is no migration before the first tag
@@ -377,7 +393,9 @@ drop out of the list and is highlighted again when it qualifies. The threads pan
 threads in line order or, after `s`, the whole workspace's grouped by
 file, resolved ones hidden until `x` shows them. Each thread takes two
 rows: its circle, `L3-5` (or `file`), and who wrote its newest message
-(`name (role)`, or the name alone when the column is narrow), with
+(`name (role)`, or the name alone when the column is narrow), then the
+branch of the worktree that shows it when the active one does not
+([0070](decisions/0070-one-workspace-many-worktrees.md)), with
 `↩n` when replied and the age at the edge; then that message's first
 line, cut with `…`. In workspace scope a row per file in the files
 pane's order sits over its threads with the count at the edge; `z`
@@ -634,12 +652,19 @@ transparent ([0016](decisions/0016-syntax-highlighting.md)).
 
 A workspace's threads are the workspace's; every running Fathomable is
 a *viewer* of one. A viewer writes a record under
-`$XDG_STATE_HOME/fathomable/viewers/`, marks its workspace in
-`$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, and listens
-on `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`. `fathomable --mcp` is a
+`$XDG_STATE_HOME/fathomable/viewers/`, naming the worktree it shows,
+marks its workspace in
+`$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, which
+names the key and every worktree root, and listens on
+`$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`. `fathomable --mcp` is a
 stdio MCP server that, on every call, picks the known workspace containing
-the current directory and drives its viewers; reading and answering threads
-also works with no viewer running, straight from the store.
+the current directory, at the worktree that contains it, and drives its
+viewers; a worktree added after the marker was written is found through
+git. Reading and answering threads also works with no viewer running,
+straight from the store. A subagent working in a worktree is in the same
+workspace as the session that made it: its `follow`, `threads`, and
+`thread_start` land in the one store, and its `open` pages a viewer to
+its worktree first ([0070](decisions/0070-one-workspace-many-worktrees.md)).
 
 Register it with your agent host once. Every host runs the same stdio
 command, `fathomable --mcp`; only the file it is written to differs.
@@ -711,16 +736,16 @@ repository, and the tools are:
 
 | Tool | Use |
 | --- | --- |
-| `workspaces` | see known workspaces and their viewers; `switch` (a root, or a viewer name or id) pins one for the connection when the cwd heuristic is wrong |
-| `open` | show a file in every viewer, or in the one named by `viewer`, optionally at a line or line range; the range is scrolled into view with the cursor on its first line, not selected |
+| `workspaces` | see known workspaces, each with its worktrees (root, branch, whether it is the *main* one, the caller's marked) and its viewers with the worktree each shows; `switch` (a worktree root, or a viewer name or id) pins one for the connection when the cwd heuristic is wrong |
+| `open` | show a file, relative to the caller's worktree, in every viewer, or in the one named by `viewer`, optionally at a line or line range; a viewer on another worktree pages to the caller's first; the range is scrolled into view with the cursor on its first line, not selected |
 | `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness), so the hooks hand it every thread the user has the last word on, as its turns start and end; the session is named here, once: a `persona` when given, else its harness — Claude, Copilot, Codex — else the client string ([0058](decisions/0058-the-user-has-the-last-word.md)); `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
-| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `pending` (open, and the user has the last word), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, *detached*, or *file* for a comment on the file as a whole — and its current range (none for a *file* thread), and no anchor hashes; a resolved thread is only its head; an open thread says whose word is last: `pending` when it is the user's, `answered by name (type)` or `proposed by name (type)` when an agent's ([0058](decisions/0058-the-user-has-the-last-word.md)), and a message the user edited says so; when the session is subscribed, the pending threads count as shown to it, so the hooks do not repeat them; a fired watch is reported first with the `remind` threads in full; works without a viewer; not for polling — the hooks deliver |
+| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `pending` (open, and the user has the last word), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, *detached*, or *file* for a comment on the file as a whole — and its current range (none for a *file* thread), and no anchor hashes; a resolved thread is only its head; an open thread says whose word is last: `pending` when it is the user's, `answered by name (type)` or `proposed by name (type)` when an agent's ([0058](decisions/0058-the-user-has-the-last-word.md)), and a message the user edited says so; when the session is subscribed, the pending threads count as shown to it, so the hooks do not repeat them; a fired watch is reported first with the `remind` threads in full; a thread only another worktree's branch reaches is placed in that worktree's file and names it in `worktree` ([0070](decisions/0070-one-workspace-many-worktrees.md)); works without a viewer; not for polling — the hooks deliver |
 | `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown id, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; signed with the session's id, type, and the name fixed at `follow` when the connection subscribed, the session is known from the harness, or `id` is passed, and with the harness's name when it is not, saying so; works without a viewer |
 | `thread_start` | start a thread of the agent's own on lines of a file, or on the file as a whole when `line` is omitted: one with `path`, `line`, `end_line`, and `body`, or several in `comments`, and get each back as it now stands; the comment is signed as a reply is and stamped with the checkout's commit as yours are, so the thread waits on you from birth, shows the agent's name on its comment, and reaches no agent until you reply, edit, or reopen it; the batch is checked first, so a path that is not a file, a range past the end of the file, a file that is not text, or an empty body refuses the whole call and nothing is written ([0061](decisions/0061-agents-start-threads.md)); works without a viewer |
 | `thread_watch` | be woken when thread `on` gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; `cancel` removes the watch instead; fails when a named thread does not exist |
 
-Every tool but `workspaces` accepts an optional `workspace`: a root, or
-a viewer name or id. A subscription covers the whole workspace
+Every tool but `workspaces` accepts an optional `workspace`: a worktree
+root, or a viewer name or id. A subscription covers the whole workspace
 ([0055](decisions/0055-six-tools.md)); agent types are labels the viewer
 shows next to a message (`name (type)`), and the only rule they carry is
 that an agent is woken by the user's word alone: a thread reaches an
@@ -898,9 +923,16 @@ echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --v
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
 `:status` inside the app shows the subscribed agents (`name (type) id`),
 the open document, the terminal size, the
-viewer name and id, the socket, and every state path. Set
+viewer name and id, the worktrees with the active one marked, the
+socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
-swept away by the next start.
+swept away by the next start. `--viewers` groups viewers by workspace
+and, when there are several, lists its worktrees and says which one
+each viewer shows; `--doctor` counts the worktrees sharing the state.
+A state directory keyed by a root under the old rule is moved to its
+common-dir key once, by the first viewer, `--register`, or `--mcp`
+that finds the new key absent
+([0070](decisions/0070-one-workspace-many-worktrees.md)).
 
 If Fathomable dies, it hands the terminal back and prints one block between
 two rules: what it was showing, where its state lives, and a backtrace with

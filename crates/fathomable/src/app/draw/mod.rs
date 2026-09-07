@@ -545,7 +545,13 @@ fn tree_lines<'a>(
     // summed `+n -m` (ADR 0017), and the filter words. A sidebar too
     // narrow for the whole name cuts it rather than spilling over the
     // divider.
-    let title = fit(&format!(" {root}"), inner).trim_end().to_owned();
+    // The active worktree's branch leads while there are several
+    // (ADR 0070).
+    let title = match app.worktree_label() {
+        Some(branch) => format!(" {branch} · {root}"),
+        None => format!(" {root}"),
+    };
+    let title = fit(&title, inner).trim_end().to_owned();
     let mut header = files_pane_header(app, title).line(theme, inner);
     header.spans.push(divider.clone());
     out.push(header);
@@ -1540,6 +1546,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Wake => "wake",
         super::PickerKind::DiffBase => "base",
         super::PickerKind::DiffTarget => "target",
+        super::PickerKind::Worktree => "worktree",
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
@@ -1694,9 +1701,11 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             words,
             updated,
             selected,
+            worktree,
             ..
         } => {
-            let line = entry_header(*range, *words, *updated, now).line(theme, width);
+            let line =
+                entry_header(*range, *words, *updated, now, worktree.as_deref()).line(theme, width);
             if *selected {
                 line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
             } else {

@@ -18,7 +18,7 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":2,"op":"threads_list"}"#.parse()?;
+//! let request: Request = r#"{"v":3,"op":"threads_list"}"#.parse()?;
 //! assert_eq!(request, Request::ThreadsList { since: None, path: None });
 //! assert_eq!(Response::Done.to_line(), r#"{"ok":true}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -36,7 +36,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 2;
+pub(crate) const PROTOCOL_VERSION: u32 = 3;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -95,6 +95,10 @@ impl FromStr for Id {
 pub struct Record {
     id: Id,
     pid: u32,
+    /// The workspace key (ADR 0070): what the state directory and the
+    /// socket are keyed by.
+    key: PathBuf,
+    /// The worktree the viewer shows; the key itself outside git.
     root: PathBuf,
     socket: PathBuf,
     started: u64,
@@ -104,18 +108,33 @@ pub struct Record {
 }
 
 impl Record {
-    /// Describe the current process as a session on `root`; `socket` is
-    /// where it will listen (or `None` when `XDG_RUNTIME_DIR` is unset).
+    /// Describe the current process as a viewer of the workspace keyed
+    /// by `key`, showing the worktree at `root`; `socket` is where it
+    /// will listen (or `None` when `XDG_RUNTIME_DIR` is unset).
     #[must_use]
-    pub fn new(id: Id, root: PathBuf, socket: Option<PathBuf>) -> Self {
+    pub fn new(id: Id, key: PathBuf, root: PathBuf, socket: Option<PathBuf>) -> Self {
         Self {
             id,
             pid: std::process::id(),
+            key,
             root,
             socket: socket.unwrap_or_default(),
             started: crate::clock::now(),
             name: None,
         }
+    }
+
+    /// The same viewer showing the worktree at `root` (ADR 0070).
+    #[must_use]
+    pub fn on_worktree(mut self, root: PathBuf) -> Self {
+        self.root = root;
+        self
+    }
+
+    /// The workspace key (ADR 0070).
+    #[must_use]
+    pub fn key(&self) -> &Path {
+        &self.key
     }
 
     /// Give the viewer a name; empty clears it.
@@ -276,29 +295,40 @@ impl Record {
 
 /// The marker a viewer leaves beside a workspace's thread store (ADR 0024).
 ///
-/// It names the root behind the state directory's hash, so the workspace
-/// is known when no viewer runs.
+/// It names the key behind the state directory's hash and every
+/// worktree root the workspace had when it was written (ADR 0070), so
+/// the workspace is known, and a cwd in any of its worktrees finds it,
+/// when no viewer runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
-    root: PathBuf,
+    key: PathBuf,
+    roots: Vec<PathBuf>,
     /// When a viewer last started here, in Unix seconds.
     last_seen: u64,
 }
 
 impl Marker {
-    /// Mark `root` as a workspace seen now.
+    /// Mark the workspace keyed by `key`, with worktrees at `roots`, as
+    /// seen now.
     #[must_use]
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(key: PathBuf, roots: Vec<PathBuf>) -> Self {
         Self {
-            root,
+            key,
+            roots,
             last_seen: crate::clock::now(),
         }
     }
 
-    /// The workspace root.
+    /// The workspace key (ADR 0070).
     #[must_use]
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn key(&self) -> &Path {
+        &self.key
+    }
+
+    /// The worktree roots the workspace had when the marker was written.
+    #[must_use]
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
     }
 
     /// When a viewer last started here, in Unix seconds.
@@ -313,7 +343,7 @@ impl Marker {
     ///
     /// Returns the I/O error when the directory or file cannot be written.
     pub fn write(&self, dirs: &XdgDirs) -> io::Result<()> {
-        let path = dirs.workspace_file(&self.root);
+        let path = dirs.workspace_file(&self.key);
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
@@ -368,6 +398,10 @@ pub enum Request {
         /// Last line of the range, when a range should be selected.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         end_line: Option<usize>,
+        /// The worktree the path is relative to (ADR 0070); the viewer
+        /// pages to it first. Absent means the viewer's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worktree: Option<PathBuf>,
     },
     /// Threads, optionally changed since a time or limited to one file.
     ThreadsList {
@@ -537,6 +571,7 @@ mod tests {
         Record::new(
             "1700000000-42".parse().unwrap_or_else(|_| Id::mint()),
             PathBuf::from("/work"),
+            PathBuf::from("/work"),
             Some(PathBuf::from("/run/fathomable/1700000000-42.sock")),
         )
     }
@@ -559,8 +594,7 @@ mod tests {
             (name == "XDG_STATE_HOME").then(|| OsString::from(&state))
         });
         // A pid no live process has: the record reads as dead.
-        let dead =
-            r#"{"id":"1700000000-4000000","pid":4000000,"root":"/w","socket":"","started":1}"#;
+        let dead = r#"{"id":"1700000000-4000000","pid":4000000,"key":"/w","root":"/w","socket":"","started":1}"#;
         let record_dir = dirs.viewers_dir().join("1700000000-4000000");
         fs::create_dir_all(&record_dir)?;
         fs::write(record_dir.join(super::RECORD_FILE), dead)?;
@@ -589,6 +623,7 @@ mod tests {
                 path: PathBuf::from("README.md"),
                 line: Some(3),
                 end_line: None,
+                worktree: Some(PathBuf::from("/work/feature")),
             },
             Request::ThreadsList {
                 since: Some(7),
@@ -616,7 +651,7 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":2,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":3,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         assert_eq!(
@@ -625,7 +660,7 @@ mod tests {
                 path: None
             }
             .to_line(),
-            r#"{"v":2,"op":"threads_list"}"#
+            r#"{"v":3,"op":"threads_list"}"#
         );
         Ok(())
     }
@@ -636,15 +671,15 @@ mod tests {
     fn every_request_needs_the_current_version() {
         let too_old = r#"{"v":1,"op":"threads_list"}"#.parse::<Request>().err();
         assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 1")));
-        let too_new = r#"{"v":3,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 3")));
+        let too_new = r#"{"v":4,"op":"threads_list"}"#.parse::<Request>().err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 4")));
         // `follow` (ADR 0055) and the liveness ops (ADR 0062) are gone.
         assert_eq!(
-            r#"{"v":2,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
+            r#"{"v":3,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
             None
         );
-        assert_eq!(r#"{"v":2,"op":"ping"}"#.parse::<Request>().ok(), None);
-        assert_eq!(r#"{"v":2,"op":"dance"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":3,"op":"ping"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":3,"op":"dance"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
     }
 

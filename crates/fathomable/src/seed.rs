@@ -159,10 +159,11 @@ fn seed(dirs: &XdgDirs, workspace: &Path, file: &Path) -> anyhow::Result<Vec<(St
         .with_context(|| format!("{}: not a seed file", file.display()))?;
     let workspace = Workspace::discover(workspace)?;
     let root = workspace.root();
+    let key = workspace.key();
     let commit = workspace.head_commit();
     let when = now();
 
-    let mut store = Store::open(dirs.threads_file(root))?;
+    let mut store = Store::open(dirs.threads_file(key))?;
     let mut made: Vec<(String, ThreadId)> = Vec::with_capacity(declared.threads.len());
     for (n, thread) in declared.threads.iter().enumerate() {
         let n = u64::try_from(n).unwrap_or(u64::MAX);
@@ -175,7 +176,7 @@ fn seed(dirs: &XdgDirs, workspace: &Path, file: &Path) -> anyhow::Result<Vec<(St
 
     let agents =
         Config::load(dirs, None).map_or_else(|_| AgentsConfig::default(), |c| c.agents().clone());
-    let mut register = Register::open(dirs.agents_file(root), when, agents.expire_after)?;
+    let mut register = Register::open(dirs.agents_file(key), when, agents.expire_after)?;
     for subscriber in &declared.subscribers {
         register.subscribe(
             &subscriber.id,

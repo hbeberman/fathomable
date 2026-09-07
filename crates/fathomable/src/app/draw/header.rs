@@ -380,6 +380,7 @@ pub(crate) fn entry_header(
     words: Words,
     updated: u64,
     now: u64,
+    worktree: Option<&str>,
 ) -> Header {
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut left = vec![
@@ -387,6 +388,10 @@ pub(crate) fn entry_header(
         (format!("{place}  "), Tone::Info),
     ];
     left.extend(state_words(words));
+    // The branch of the worktree showing it (ADR 0070).
+    if let Some(branch) = worktree {
+        left.push((format!("  {branch}"), Tone::Info));
+    }
     left.push((format!("  {}", format_age(updated, now)), Tone::Info));
     Header::new(left, Vec::new())
 }

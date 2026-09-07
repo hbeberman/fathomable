@@ -48,9 +48,9 @@ recommended answer, and they are recorded below.
 
 | Tool | Parameters | Does |
 |---|---|---|
-| `workspaces` | `switch` | lists the known workspaces and their viewers, the default marked; with `switch` (a root, or a viewer name or id) pins that one first |
+| `workspaces` | `switch` | lists the known workspaces and their viewers, the default marked; with `switch` (a root, or a viewer name or id) pins that one first (amended 2026-09-06 by [0070](0070-one-workspace-many-worktrees.md): each workspace lists its worktrees and each viewer the one it shows; `switch`, and every tool's `workspace`, take a worktree root) |
 | `follow` | `id`, `type`, `persona`, `end` | subscribes the session to the workspace; `end: true` ends the subscription, its deliveries, and its watches |
-| `threads` | `status`, `path`, `since`, `limit`, `id` | lists threads; see below |
+| `threads` | `status`, `path`, `since`, `limit`, `id` | lists threads; see below (amended 2026-09-06 by [0070](0070-one-workspace-many-worktrees.md): a thread placed against another worktree names it in `worktree`) |
 | `thread_reply` | `thread`, `body`, `resolve`, `line`, `end_line`, `replies`, `persona`, `id` | answers one thread or several and returns each as it now stands (`persona` removed 2026-09-05 by [0058](0058-the-user-has-the-last-word.md), which also adds `pending` to `threads`' `status`) |
 | `thread_watch` | `on`, `when`, `remind`, `cancel`, `id` | asks to be woken when `on` moves; `cancel: true` removes the watch |
 | `open` | `path`, `line`, `end_line`, `viewer` | shows a file in the viewer |

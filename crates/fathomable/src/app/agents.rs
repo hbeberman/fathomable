@@ -15,7 +15,7 @@ use fathomable_core::clock::now;
 impl App {
     /// The live subscribers of this workspace, read from the register.
     pub(super) fn subscribers(&self) -> Vec<Subscriber> {
-        let path = self.dirs.agents_file(self.workspace.root());
+        let path = self.dirs.agents_file(self.workspace.key());
         match Register::open(path, now(), self.agents.expire_after) {
             Ok(register) => register.subscribers().to_vec(),
             Err(error) => {
@@ -29,7 +29,7 @@ impl App {
     /// and when a thread expands, so the header stays honest without
     /// reading the register on every frame.
     pub(super) fn refresh_watchers(&mut self) {
-        let path = self.dirs.agents_file(self.workspace.root());
+        let path = self.dirs.agents_file(self.workspace.key());
         self.watchers = match Register::open(path, now(), self.agents.expire_after) {
             Ok(register) => register
                 .watches()
@@ -86,12 +86,20 @@ impl App {
             .iter()
             .find(|s| s.id() == id)
             .map_or_else(|| id.to_owned(), Subscriber::label);
-        let root = self.workspace.root().to_path_buf();
+        let bound = hooks::Bound {
+            key: self.workspace.key().to_path_buf(),
+            root: self.workspace.root().to_path_buf(),
+            roots: self
+                .worktrees()
+                .iter()
+                .map(|w| w.root().to_path_buf())
+                .collect(),
+        };
         // `Space a w` hands the blob over as the agent's next prompt, so it
         // forces a turn exactly as the stop hook does.
         let prompt = match hooks::compose(
             &self.dirs,
-            &root,
+            &bound,
             id,
             &self.agents,
             &self.user.name,

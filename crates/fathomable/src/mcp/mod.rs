@@ -99,11 +99,31 @@ struct Signature {
     subscribed: bool,
 }
 
-/// A workspace an agent can address: its root and the viewers showing it.
+/// A workspace an agent can address (ADR 0070): its key, the worktree
+/// the call means (`root`, the caller's), every worktree root the
+/// marker names, and the viewers showing the workspace.
 #[derive(Debug, Clone)]
 struct Target {
+    key: PathBuf,
     root: PathBuf,
+    roots: Vec<PathBuf>,
     viewers: Vec<Record>,
+}
+
+impl Target {
+    /// The same target addressed at the worktree `root`.
+    fn at(&self, root: &Path) -> Self {
+        Self {
+            root: root.to_path_buf(),
+            ..self.clone()
+        }
+    }
+
+    /// The viewer that shows the caller's worktree, when one does: the
+    /// one that can answer for it (ADR 0070).
+    fn viewer_here(&self) -> Option<&Record> {
+        self.viewers.iter().find(|v| v.root() == self.root)
+    }
 }
 
 impl Server {
@@ -152,8 +172,8 @@ impl Server {
     /// Who a reply or a comment from this connection is: the name fixed
     /// at `follow`, the subscription's id and type when there is one, and
     /// the harness's name otherwise (ADR 0058).
-    fn signer(&self, given: Option<String>, root: &Path, client: Option<String>) -> Signature {
-        let subscription = self.signature(given, root);
+    fn signer(&self, given: Option<String>, key: &Path, client: Option<String>) -> Signature {
+        let subscription = self.signature(given, key);
         let mut author = Author::Agent {
             name: subscription
                 .as_ref()
@@ -178,12 +198,12 @@ impl Server {
     fn signature(
         &self,
         given: Option<String>,
-        root: &Path,
+        key: &Path,
     ) -> Option<(String, String, Option<String>)> {
         if let Some(own) = self.subscriber.lock().ok().and_then(|s| s.clone()) {
             return Some(own);
         }
-        let register = self.register(root, now()).ok()?;
+        let register = self.register(key, now()).ok()?;
         let id = self.session_id(given, &register)?;
         let subscriber = register.subscriber(&id)?;
         Some((
@@ -193,39 +213,50 @@ impl Server {
         ))
     }
 
-    /// The workspace's agent register at `now`.
-    fn register(&self, root: &Path, now: u64) -> Result<Register, String> {
-        Register::open(self.dirs.agents_file(root), now, self.agents.expire_after)
+    /// The workspace's agent register at `now`; `key` is the workspace key.
+    fn register(&self, key: &Path, now: u64) -> Result<Register, String> {
+        Register::open(self.dirs.agents_file(key), now, self.agents.expire_after)
             .map_err(|e| e.to_string())
     }
 
-    /// The workspace a call addresses: `workspace` when given (a root, or a
-    /// viewer name or id), else the pin, else the one containing the cwd.
+    /// The workspace a call addresses: `workspace` when given (a worktree
+    /// root, or a viewer name or id), else the pin, else the one
+    /// containing the cwd, at the worktree that contains it (ADR 0070).
     fn resolve(&self, workspace: Option<&str>) -> Result<Target, String> {
         let all = targets(&self.dirs);
         if let Some(key) = workspace {
-            if let Some(found) = all
+            if let Some((found, viewer)) = all
                 .iter()
-                .find(|s| s.viewers.iter().any(|v| v.is_called(key)))
+                .find_map(|s| s.viewers.iter().find(|v| v.is_called(key)).map(|v| (s, v)))
             {
-                return Ok(found.clone());
+                return Ok(found.at(viewer.root()));
             }
             let path = PathBuf::from(key);
             let path = path.canonicalize().unwrap_or(path);
-            return all.iter().find(|s| s.root == path).cloned().ok_or_else(|| {
-                format!(
-                    "no workspace or viewer called `{key}`; call `{}` to see them",
-                    vocab::WORKSPACES.name
-                )
-            });
+            return all
+                .iter()
+                .find(|s| s.roots.contains(&path) || s.key == path)
+                .map(|s| {
+                    if s.roots.contains(&path) {
+                        s.at(&path)
+                    } else {
+                        s.clone()
+                    }
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "no workspace or viewer called `{key}`; call `{}` to see them",
+                        vocab::WORKSPACES.name
+                    )
+                });
         }
         if let Some(pinned) = self.pinned()
-            && let Some(found) = all.iter().find(|s| s.root == pinned)
+            && let Some(found) = all.iter().find(|s| s.roots.contains(&pinned))
         {
-            return Ok(found.clone());
+            return Ok(found.at(&pinned));
         }
         let cwd = env::current_dir().unwrap_or_default();
-        bind(&all, &cwd).cloned().ok_or_else(|| {
+        bind(&all, &cwd).ok_or_else(|| {
             format!(
                 "no known workspace contains the current directory; call `{ws}` to see them, \
                  then `{ws}` with `{switch}` to pin one",
@@ -304,20 +335,33 @@ async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
 
 /// Every known workspace with its live viewers: marked workspaces first
 /// (most recently seen first), then any a live viewer names without a
-/// marker.
+/// marker. Each is addressed at its first worktree until a call binds
+/// it to one (ADR 0070).
 fn targets(dirs: &XdgDirs) -> Vec<Target> {
     let mut all: Vec<Target> = Marker::list(dirs)
         .into_iter()
         .map(|marker| Target {
-            root: marker.root().to_path_buf(),
+            key: marker.key().to_path_buf(),
+            root: marker
+                .roots()
+                .first()
+                .map_or_else(|| marker.key().to_path_buf(), Clone::clone),
+            roots: marker.roots().to_vec(),
             viewers: Vec::new(),
         })
         .collect();
     for record in Record::live(dirs) {
-        match all.iter_mut().find(|s| s.root == record.root()) {
-            Some(target) => target.viewers.push(record),
+        match all.iter_mut().find(|s| s.key == record.key()) {
+            Some(target) => {
+                if !target.roots.iter().any(|r| r == record.root()) {
+                    target.roots.push(record.root().to_path_buf());
+                }
+                target.viewers.push(record);
+            }
             None => all.push(Target {
+                key: record.key().to_path_buf(),
                 root: record.root().to_path_buf(),
+                roots: vec![record.root().to_path_buf()],
                 viewers: vec![record],
             }),
         }
@@ -325,21 +369,56 @@ fn targets(dirs: &XdgDirs) -> Vec<Target> {
     all
 }
 
-/// The target whose root is the longest prefix of `cwd`, if any.
-fn bind<'a>(targets: &'a [Target], cwd: &Path) -> Option<&'a Target> {
+/// The target at the worktree root that is the longest prefix of `cwd`,
+/// if any; failing that, the workspace whose common dir `cwd`'s
+/// repository has, at the worktree `cwd` is in, so a worktree added
+/// after the marker was written is found (ADR 0070).
+fn bind(targets: &[Target], cwd: &Path) -> Option<Target> {
+    let by_prefix = targets
+        .iter()
+        .flat_map(|s| s.roots.iter().map(move |root| (s, root)))
+        .filter(|(_, root)| cwd.starts_with(root))
+        .max_by_key(|(_, root)| root.as_os_str().len())
+        .map(|(s, root)| s.at(root));
+    if by_prefix.is_some() {
+        return by_prefix;
+    }
+    let workspace = Workspace::discover(cwd).ok()?;
     targets
         .iter()
-        .filter(|s| cwd.starts_with(&s.root))
-        .max_by_key(|s| s.root.as_os_str().len())
+        .find(|s| s.key == workspace.key())
+        .map(|s| s.at(workspace.root()))
 }
 
-/// The store of `root` with its threads re-anchored to the files as they
-/// are now, and the git reach that says which threads the checkout
-/// shows; what the tools read when no viewer runs.
-fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Reach), String> {
-    let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+/// The commits reachable from `root`'s `HEAD` among `commits`, with
+/// stranded open threads followed to `HEAD` first (ADR 0035); `None`
+/// outside git or before the first commit.
+fn reach_at(store: &mut Store, root: &Path) -> Option<std::collections::HashSet<String>> {
+    let workspace = Workspace::discover(root)
+        .inspect_err(|error| {
+            tracing::warn!(%error, root = %root.display(), "cannot open the worktree; threads unscoped");
+        })
+        .ok()?;
+    let mut reachable = workspace.reachable(store.commits())?;
+    let moved = reach::follow_head(store, &workspace, &reachable);
+    if moved > 0 {
+        tracing::info!(moved, "threads rescoped headlessly");
+        reachable.extend(workspace.head_commit());
+    }
+    Some(reachable)
+}
+
+/// The store of `target`'s workspace with its threads re-anchored to
+/// the files as they are now in the caller's worktree, and the git reach
+/// that says which threads the workspace shows, the caller's worktree
+/// first and every other worktree after it (ADR 0070); what the tools
+/// read when no viewer runs.
+fn headless_store(dirs: &XdgDirs, target: &Target) -> Result<(Store, Reach), String> {
+    let key = target.key.as_path();
+    let root = target.root.as_path();
+    let mut store = Store::open(dirs.threads_file(key)).map_err(|e| e.to_string())?;
     let pinned: Vec<PathBuf> = store.open_paths().map(Path::to_path_buf).collect();
-    match seen::Store::open_pinned(&dirs.seen_dir(root), pinned.iter().map(PathBuf::as_path)) {
+    match seen::Store::open_pinned(&dirs.seen_dir(key), pinned.iter().map(PathBuf::as_path)) {
         Ok(seen) => {
             let moved = follow_snapshots(&mut store, &seen, root);
             if moved > 0 {
@@ -348,22 +427,20 @@ fn headless_store(dirs: &XdgDirs, root: &Path) -> Result<(Store, Reach), String>
         }
         Err(error) => tracing::warn!(%error, "cannot open snapshots; reporting stored ranges"),
     }
-    let scope = match Workspace::discover(root) {
-        Ok(workspace) => match workspace.reachable(store.commits()) {
-            Some(mut reachable) => {
-                let moved = reach::follow_head(&mut store, &workspace, &reachable);
-                if moved > 0 {
-                    tracing::info!(moved, "threads rescoped headlessly");
-                    reachable.extend(workspace.head_commit());
+    let scope = match reach_at(&mut store, root) {
+        Some(reachable) => {
+            let mut scope = Reach::reachable(reachable);
+            for other in target.roots.iter().filter(|r| r.as_path() != root) {
+                if let Some(reachable) = Workspace::discover(other)
+                    .ok()
+                    .and_then(|w| w.reachable(store.commits()))
+                {
+                    scope = scope.with_worktree(other.clone(), reachable);
                 }
-                Reach::reachable(reachable)
             }
-            None => Reach::everything(),
-        },
-        Err(error) => {
-            tracing::warn!(%error, "cannot open the workspace; threads unscoped");
-            Reach::everything()
+            scope
         }
+        None => Reach::everything(),
     };
     Ok((store, scope))
 }
@@ -423,9 +500,11 @@ mod tests {
 
     fn target(root: &str, viewers: usize) -> Target {
         Target {
+            key: PathBuf::from(root),
             root: PathBuf::from(root),
+            roots: vec![PathBuf::from(root)],
             viewers: (0..viewers)
-                .map(|_| Record::new(Id::mint(), PathBuf::from(root), None))
+                .map(|_| Record::new(Id::mint(), PathBuf::from(root), PathBuf::from(root), None))
                 .collect(),
         }
     }
@@ -435,10 +514,29 @@ mod tests {
         let sessions = [target("/work", 1), target("/work/repo", 0), target("/x", 2)];
         let bound = bind(&sessions, Path::new("/work/repo/src"));
         assert_eq!(
-            bound.map(|s| s.root.as_path()),
+            bound.as_ref().map(|s| s.root.as_path()),
             Some(Path::new("/work/repo"))
         );
         assert!(bind(&sessions, Path::new("/tmp")).is_none());
+    }
+
+    /// A worktree the marker names binds to the workspace at that
+    /// worktree; the key stays the repository's (ADR 0070).
+    #[test]
+    fn binding_lands_on_the_worktree_that_contains_the_cwd() {
+        let mut repo = target("/work/main", 0);
+        repo.key = PathBuf::from("/work/main/.git");
+        repo.roots.push(PathBuf::from("/work/feature"));
+        let bound = bind(&[repo], Path::new("/work/feature/src"));
+        let bound = bound.as_ref();
+        assert_eq!(
+            bound.map(|s| s.root.as_path()),
+            Some(Path::new("/work/feature"))
+        );
+        assert_eq!(
+            bound.map(|s| s.key.as_path()),
+            Some(Path::new("/work/main/.git"))
+        );
     }
 
     #[test]

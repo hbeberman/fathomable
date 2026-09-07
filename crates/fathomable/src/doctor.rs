@@ -166,7 +166,10 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
             }
         }
         ok &= watch_budget(&mut workspace);
-        if let Some(socket) = dirs.viewer_socket(workspace.root(), std::process::id()) {
+        if let Some(line) = worktrees_line(&workspace) {
+            println!("  ok    {line}");
+        }
+        if let Some(socket) = dirs.viewer_socket(workspace.key(), std::process::id()) {
             let bytes = socket.as_os_str().len();
             if fathomable_core::socket_path_fits(&socket) {
                 println!("  ok    viewer socket path fits ({bytes} bytes)");
@@ -179,10 +182,10 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 );
             }
         }
-        let dir = dirs.seen_dir(workspace.root());
+        let dir = dirs.seen_dir(workspace.key());
         // Opening prunes, so pin what the viewer pins (ADR 0020).
         let threads =
-            fathomable_core::annotations::Store::open(dirs.threads_file(workspace.root())).ok();
+            fathomable_core::annotations::Store::open(dirs.threads_file(workspace.key())).ok();
         let pinned = threads
             .iter()
             .flat_map(fathomable_core::annotations::Store::open_paths);
@@ -199,7 +202,7 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 println!("  FAIL  snapshots: {error}");
             }
         }
-        let dir = dirs.checkpoints_dir(workspace.root());
+        let dir = dirs.checkpoints_dir(workspace.key());
         match fathomable_core::checkpoints::Store::open(&dir) {
             Ok(checkpoints) => println!(
                 "  ok    {} checkpoint{} over {} file{} ({} bytes) in {}",
@@ -218,6 +221,25 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
     }
 
     ok
+}
+
+/// The worktrees sharing the workspace's state (ADR 0070), when there
+/// are several.
+fn worktrees_line(workspace: &Workspace) -> Option<String> {
+    let worktrees = workspace.worktrees();
+    if worktrees.len() < 2 {
+        return None;
+    }
+    Some(format!(
+        "{} worktrees share the state keyed by {}: {}",
+        worktrees.len(),
+        workspace.key().display(),
+        worktrees
+            .iter()
+            .map(fathomable_core::worktrees::Worktree::label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
 }
 
 /// How many crash reports a past run left behind (ADR 0022).

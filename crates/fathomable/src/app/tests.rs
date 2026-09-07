@@ -1251,6 +1251,7 @@ fn agent_open_queues_a_settled_range() -> anyhow::Result<()> {
         path: PathBuf::from("README.md"),
         line: Some(1),
         end_line: Some(3),
+        worktree: None,
     });
     assert_eq!(response, Response::Done);
     assert_eq!(app.queue().len(), 1);
@@ -1274,6 +1275,7 @@ fn agent_open_range_shows_without_selecting() -> anyhow::Result<()> {
         path: PathBuf::from("long.txt"),
         line: Some(30),
         end_line: Some(36),
+        worktree: None,
     });
     assert_eq!(response, Response::Done);
     assert_eq!(app.view().mode(), super::view::Mode::Normal);
@@ -1290,6 +1292,7 @@ fn agent_open_range_shows_without_selecting() -> anyhow::Result<()> {
         path: PathBuf::from("long.txt"),
         line: Some(10),
         end_line: Some(60),
+        worktree: None,
     });
     assert_eq!(app.view().cursor_source_line(), Some(10));
     assert!(app.view().line_on_screen(10));

@@ -217,19 +217,23 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     if removed > 0 {
         tracing::info!(removed, "swept dead session records");
     }
+    // The state is keyed by the git common dir, shared by every worktree
+    // (ADR 0070); a directory keyed by the root under the old rule moves.
+    let key = workspace.key().to_path_buf();
+    adopt_state(dirs, &workspace);
     // One socket per viewer, grouped under the workspace (ADR 0024).
-    let socket = dirs.viewer_socket(workspace.root(), std::process::id());
-    let record =
-        Record::new(id, workspace.root().to_path_buf(), socket).with_name(cli.name.clone());
+    let socket = dirs.viewer_socket(&key, std::process::id());
+    let record = Record::new(id, key.clone(), workspace.root().to_path_buf(), socket)
+        .with_name(cli.name.clone());
     record.write(dirs)?;
     tracing::info!(id = %record.id(), name = ?record.name(), root = %record.root().display(), "viewer recorded");
-    let marker = Marker::new(workspace.root().to_path_buf());
+    let marker = Marker::new(key.clone(), worktree_roots(&workspace));
     if let Err(error) = marker.write(dirs) {
         tracing::warn!(%error, "cannot write the workspace marker; headless agents will not find this workspace");
     }
 
     let config = Config::load(dirs, cli.config.as_deref())?;
-    let store = match Store::open(dirs.threads_file(workspace.root())) {
+    let store = match Store::open(dirs.threads_file(&key)) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
             Some(store)
@@ -242,10 +246,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     // Snapshots of files with open threads are kept past their age so a
     // thread edited offline can still be followed (ADR 0020).
     let pinned = store.iter().flat_map(Store::open_paths);
-    let seen = match fathomable_core::seen::Store::open_pinned(
-        &dirs.seen_dir(workspace.root()),
-        pinned,
-    ) {
+    let seen = match fathomable_core::seen::Store::open_pinned(&dirs.seen_dir(&key), pinned) {
         Ok(seen) => {
             tracing::info!(path = %seen.dir().display(), files = seen.len(), "last-seen snapshots loaded");
             Some(seen)
@@ -255,9 +256,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             None
         }
     };
-    let checkpoints = match fathomable_core::checkpoints::Store::open(
-        &dirs.checkpoints_dir(workspace.root()),
-    ) {
+    let checkpoints = match fathomable_core::checkpoints::Store::open(&dirs.checkpoints_dir(&key)) {
         Ok(checkpoints) => {
             tracing::info!(path = %checkpoints.dir().display(), events = checkpoints.events(), "checkpoints loaded");
             Some(checkpoints)
@@ -296,6 +295,31 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     result
 }
 
+/// Every worktree root of `workspace`, or its root alone outside git
+/// (ADR 0070).
+fn worktree_roots(workspace: &Workspace) -> Vec<PathBuf> {
+    let roots: Vec<PathBuf> = workspace
+        .worktrees()
+        .iter()
+        .map(|w| w.root().to_path_buf())
+        .collect();
+    if roots.is_empty() {
+        vec![workspace.root().to_path_buf()]
+    } else {
+        roots
+    }
+}
+
+/// Move a state directory keyed by the root under the old rule to the
+/// workspace's key, once (ADR 0070).
+fn adopt_state(dirs: &XdgDirs, workspace: &Workspace) {
+    match fathomable_core::worktrees::adopt(dirs, workspace.root(), workspace.key()) {
+        Ok(true) => tracing::info!("workspace state moved to its common-dir key"),
+        Ok(false) => {}
+        Err(error) => tracing::warn!(%error, "cannot move the workspace state to its key"),
+    }
+}
+
 /// `--register`: write the workspace marker for the root around `PATH`
 /// and print it (ADR 0009).
 fn register(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
@@ -307,18 +331,20 @@ fn register(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let marker = Marker::new(workspace.root().to_path_buf());
+    adopt_state(dirs, &workspace);
+    let marker = Marker::new(workspace.key().to_path_buf(), worktree_roots(&workspace));
     if let Err(error) = marker.write(dirs) {
         eprintln!("fathomable: cannot write the workspace marker: {error}");
         return ExitCode::FAILURE;
     }
     println!("{}", workspace.root().display());
-    println!("{}", dirs.workspace_dir(workspace.root()).display());
+    println!("{}", dirs.workspace_dir(workspace.key()).display());
     ExitCode::SUCCESS
 }
 
-/// `--viewers`: one block per known workspace, then its viewer records,
-/// marking dead ones (ADR 0024).
+/// `--viewers`: one block per known workspace, its worktrees under it
+/// when there are several (ADR 0070), then its viewer records, marking
+/// dead ones (ADR 0024).
 fn list_viewers(dirs: &XdgDirs) -> ExitCode {
     let markers = Marker::list(dirs);
     let records = Record::list(dirs);
@@ -326,19 +352,43 @@ fn list_viewers(dirs: &XdgDirs) -> ExitCode {
         println!("no workspaces");
         return ExitCode::SUCCESS;
     }
-    let mut roots: Vec<PathBuf> = markers.iter().map(|m| m.root().to_path_buf()).collect();
+    let mut workspaces: Vec<(PathBuf, Vec<PathBuf>)> = markers
+        .iter()
+        .map(|m| (m.key().to_path_buf(), m.roots().to_vec()))
+        .collect();
     for record in &records {
-        if !roots.iter().any(|root| root == record.root()) {
-            roots.push(record.root().to_path_buf());
+        match workspaces.iter_mut().find(|(key, _)| key == record.key()) {
+            Some((_, roots)) => {
+                if !roots.iter().any(|root| root == record.root()) {
+                    roots.push(record.root().to_path_buf());
+                }
+            }
+            None => workspaces.push((
+                record.key().to_path_buf(),
+                vec![record.root().to_path_buf()],
+            )),
         }
     }
-    for root in roots {
-        println!("{}", root.display());
+    for (key, roots) in workspaces {
+        match roots.first() {
+            Some(first) if roots.len() == 1 => println!("{}", first.display()),
+            _ => {
+                println!("{}", key.display());
+                for root in &roots {
+                    println!("  worktree {}", root.display());
+                }
+            }
+        }
         let mut any = false;
-        for record in records.iter().filter(|r| r.root() == root) {
+        for record in records.iter().filter(|r| r.key() == key) {
             any = true;
+            let on = if roots.len() > 1 {
+                format!("\ton {}", record.root().display())
+            } else {
+                String::new()
+            };
             println!(
-                "  {}\t{}\t{}\t{}",
+                "  {}\t{}\t{}\t{}{on}",
                 record.name().unwrap_or("-"),
                 record.id(),
                 if record.is_alive() { "live" } else { "dead" },

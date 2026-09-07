@@ -158,7 +158,18 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
     } else {
         fit_ellipsis(short, free).trim_end().to_owned()
     };
-    let pad = inner.saturating_sub(lead + display_width(&author) + display_width(&tail));
+    // The branch of the worktree showing it, dim, after the author
+    // (ADR 0070); dropped before the author is cut.
+    let branch = entry
+        .worktree()
+        .map(|branch| format!(" {branch}"))
+        .filter(|branch| {
+            lead + display_width(&author) + display_width(branch) + display_width(&tail) < inner
+        })
+        .unwrap_or_default();
+    let pad = inner.saturating_sub(
+        lead + display_width(&author) + display_width(&branch) + display_width(&tail),
+    );
     Line::from(vec![
         Span::styled(" ", style),
         Span::styled(
@@ -167,6 +178,7 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
         ),
         Span::styled(place, on(style, theme.info)),
         Span::styled(author, on(style, theme.popup_key)),
+        Span::styled(branch, on(style, theme.info)),
         Span::styled(" ".repeat(pad), style),
         Span::styled(tail, on(style, theme.info)),
     ])

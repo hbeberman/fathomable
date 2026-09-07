@@ -117,7 +117,7 @@ impl Server {
             Err(error) => return failure(error),
         };
         let client = context.client_info().map(|c| c.name);
-        let signed = self.signer(p.id, &target.root, client);
+        let signed = self.signer(p.id, &target.key, client);
         let mut items = p.comments;
         match (p.path, p.body) {
             (Some(path), Some(body)) => items.insert(
@@ -202,9 +202,9 @@ impl Server {
             author: author.clone(),
             body: item.body.clone(),
         };
-        let outcome = match target.viewers.first() {
+        let outcome = match target.viewer_here() {
             Some(viewer) => call(viewer, &request).await,
-            None => headless_start(&self.dirs, &target.root, author, item)
+            None => headless_start(&self.dirs, &target.key, &target.root, author, item)
                 .map(|thread| Response::Threads(vec![thread])),
         };
         match outcome {
@@ -260,6 +260,7 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
 /// and answer with it.
 fn headless_start(
     dirs: &XdgDirs,
+    key: &Path,
     root: &Path,
     author: Author,
     item: Placed,
@@ -269,7 +270,7 @@ fn headless_start(
     let commit = Workspace::discover(root)
         .ok()
         .and_then(|workspace| workspace.head_commit());
-    let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+    let mut store = Store::open(dirs.threads_file(key)).map_err(|e| e.to_string())?;
     let draft = match item.range {
         Some(range) => Draft::new(author, &item.path, range, item.body),
         None => Draft::on_file(author, &item.path, item.body),
@@ -387,6 +388,7 @@ mod tests {
         let author = Author::agent("bot").subscribed("s1", "coder");
         let thread = headless_start(
             &dirs,
+            &root,
             &root,
             author.clone(),
             Placed {

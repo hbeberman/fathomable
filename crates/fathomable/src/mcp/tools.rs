@@ -20,7 +20,7 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, Subscriber, WatchWhen};
 use fathomable_core::annotations::{
-    Author, LineHashes, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
+    Author, LineHashes, LineRange, Placement, Reach, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::identity;
@@ -323,9 +323,27 @@ pub(super) struct Shown<'a> {
     pending: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     answered: Option<Answered<'a>>,
+    /// The worktree the thread is placed against when the caller's does
+    /// not reach it (ADR 0070).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    worktree: Option<&'a Path>,
 }
 
 impl<'a> Shown<'a> {
+    /// `thread` as `scope` shows it, placed in the caller's worktree
+    /// through `trees`, or in the first other worktree that reaches it
+    /// (ADR 0070).
+    pub(super) fn placed(thread: &'a Thread, scope: &'a Reach, trees: &mut Trees<'a>) -> Self {
+        let worktree = scope.elsewhere(thread);
+        Self::new(thread, trees.place(worktree, thread)).in_worktree(worktree)
+    }
+
+    /// The same thread, placed against `worktree` (ADR 0070).
+    pub(super) fn in_worktree(mut self, worktree: Option<&'a Path>) -> Self {
+        self.worktree = worktree;
+        self
+    }
+
     pub(super) fn new(thread: &'a Thread, placement: Placement) -> Self {
         let open = thread.status() == Status::Open;
         Self {
@@ -348,6 +366,7 @@ impl<'a> Shown<'a> {
             edited: thread.edited(),
             pending: thread.awaits_agent(),
             answered: Answered::of(thread),
+            worktree: None,
         }
     }
 
@@ -379,6 +398,10 @@ impl<'a> Shown<'a> {
         if self.placement != "anchored" {
             line.push(' ');
             line.push_str(self.placement);
+        }
+        if let Some(worktree) = self.worktree {
+            line.push_str(" in ");
+            line.push_str(&worktree.display().to_string());
         }
         line.push_str("  ");
         line.push_str(self.comment.lines().next().unwrap_or_default());
@@ -446,6 +469,37 @@ impl<'a> Tree<'a> {
     }
 }
 
+/// One [`Tree`] per worktree a thread may be placed in (ADR 0070): the
+/// caller's, and any other that reaches a thread the caller's does not.
+pub(super) struct Trees<'a> {
+    here: Tree<'a>,
+    others: Vec<(&'a Path, Tree<'a>)>,
+}
+
+impl<'a> Trees<'a> {
+    pub(super) fn new(root: &'a Path) -> Self {
+        Self {
+            here: Tree::new(root),
+            others: Vec::new(),
+        }
+    }
+
+    /// Where `thread` sits in `worktree`'s file, or in the caller's when
+    /// `worktree` is `None`.
+    pub(super) fn place(&mut self, worktree: Option<&'a Path>, thread: &Thread) -> Placement {
+        let Some(root) = worktree else {
+            return self.here.place(thread);
+        };
+        if let Some((_, tree)) = self.others.iter_mut().find(|(r, _)| *r == root) {
+            return tree.place(thread);
+        }
+        self.others.push((root, Tree::new(root)));
+        self.others
+            .last_mut()
+            .map_or(Placement::File, |(_, tree)| tree.place(thread))
+    }
+}
+
 #[tool_router(vis = "pub(super)")]
 impl Server {
     #[tool(
@@ -474,10 +528,11 @@ impl Server {
             }
         }
         let all = super::targets(&self.dirs);
-        let default = self.resolve(None).ok().map(|s| s.root);
+        let default = self.resolve(None).ok();
         let workspaces: Vec<Value> = all
             .iter()
             .map(|s| {
+                let is_default = default.as_ref().is_some_and(|d| d.key == s.key);
                 let viewers: Vec<Value> = s
                     .viewers
                     .iter()
@@ -487,12 +542,29 @@ impl Server {
                             "name": v.name(),
                             "pid": v.pid(),
                             "started": v.started(),
+                            "worktree": v.root(),
+                        })
+                    })
+                    .collect();
+                // The worktrees as git lists them now, with their branches
+                // (ADR 0070); the marker's roots when git cannot be asked.
+                let worktrees: Vec<Value> = worktrees_of(s)
+                    .into_iter()
+                    .map(|(root, branch, main)| {
+                        json!({
+                            "root": root,
+                            "branch": branch,
+                            "main": main,
+                            "caller": is_default
+                                && default.as_ref().is_some_and(|d| d.root == root),
                         })
                     })
                     .collect();
                 json!({
-                    "root": s.root,
-                    "default": default.as_deref() == Some(s.root.as_path()),
+                    "root": if is_default { default.as_ref().map(|d| d.root.clone()) } else { Some(s.root.clone()) },
+                    "key": s.key,
+                    "worktrees": worktrees,
+                    "default": is_default,
                     "viewers": viewers,
                 })
             })
@@ -501,18 +573,7 @@ impl Server {
             lines.push("no known workspaces; start Fathomable in one".to_owned());
         }
         for s in &all {
-            let mark = if default.as_deref() == Some(s.root.as_path()) {
-                "*"
-            } else {
-                " "
-            };
-            lines.push(format!("{mark} {}", s.root.display()));
-            if s.viewers.is_empty() {
-                lines.push("    (no viewers running)".to_owned());
-            }
-            for v in &s.viewers {
-                lines.push(format!("    {}  {}", v.name().unwrap_or("-"), v.id()));
-            }
+            lines.extend(workspace_lines(s, default.as_ref()));
         }
         with_summary(json!({ "workspaces": workspaces }), lines.join("\n"))
     }
@@ -529,10 +590,17 @@ impl Server {
         )
     )]
     async fn open(&self, Parameters(p): Parameters<OpenParams>) -> CallToolResult {
+        // The path is relative to the caller's worktree; a viewer on
+        // another pages there first (ADR 0070).
+        let worktree = match self.resolve(p.workspace.as_deref()) {
+            Ok(target) => target.root,
+            Err(error) => return failure(error),
+        };
         let request = Request::Open {
             path: p.path.clone(),
             line: p.line,
             end_line: p.end_line,
+            worktree: Some(worktree),
         };
         match self
             .broadcast(p.workspace.as_deref(), p.viewer.as_deref(), &request)
@@ -571,14 +639,14 @@ impl Server {
             Err(error) => return failure(error),
         };
         if p.end {
-            return match self.end_subscription(&target.root, p.id) {
+            return match self.end_subscription(&target.key, p.id) {
                 Ok(message) => text(message),
                 Err(error) => failure(error),
             };
         }
         let client = context.client_info().map(|c| c.name);
         match self.subscription(
-            &target.root,
+            &target.key,
             p.id,
             p.kind,
             p.persona.as_deref(),
@@ -615,12 +683,12 @@ impl Server {
             Ok(path) => path,
             Err(error) => return failure(error),
         };
-        let all = match self.fetch(&target).await {
+        let (all, scope) = match self.fetch(&target).await {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
         let when = now();
-        let mut register = match self.register(&target.root, when) {
+        let mut register = match self.register(&target.key, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
@@ -701,10 +769,10 @@ impl Server {
             }
         }
 
-        let mut tree = Tree::new(&target.root);
+        let mut trees = Trees::new(&target.root);
         let shown: Vec<Shown<'_>> = threads
             .iter()
-            .map(|t| Shown::new(t, tree.place(t)))
+            .map(|t| Shown::placed(t, &scope, &mut trees))
             .collect();
         if shown.is_empty() {
             lines.push("no threads".to_owned());
@@ -745,7 +813,7 @@ impl Server {
         let client = context.client_info().map(|c| c.name);
         // The name was fixed at `follow`; without one, the harness names
         // the agent (ADR 0058).
-        let signed = self.signer(p.id, &target.root, client);
+        let signed = self.signer(p.id, &target.key, client);
         let author = signed.author;
         let mut items = p.replies;
         match (p.thread, p.body) {
@@ -772,7 +840,7 @@ impl Server {
 
         // Check the whole batch before writing any of it, so that a retry
         // with the fixed list is a whole retry.
-        let all = match self.fetch(&target).await {
+        let (all, _) = match self.fetch(&target).await {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
@@ -894,7 +962,7 @@ impl Server {
     /// reply.
     fn subscription(
         &self,
-        root: &Path,
+        key: &Path,
         id: Option<String>,
         kind: Option<String>,
         persona: Option<&str>,
@@ -908,14 +976,14 @@ impl Server {
         let name = identity::agent_name(persona, client);
         match (id, kind) {
             (Some(id), Some(kind)) => {
-                let mut register = self.register(root, when)?;
+                let mut register = self.register(key, when)?;
                 self.subscribe(&mut register, &id, &kind, &name, client, when)?;
                 Ok(format!(
                     "subscribed {id} as {kind}, signing as {name}; {COVERAGE}"
                 ))
             }
             (None, Some(kind)) => {
-                let mut register = self.register(root, when)?;
+                let mut register = self.register(key, when)?;
                 let Some(id) = register.session_for(&self.ancestors).map(str::to_owned) else {
                     return Err(format!(
                         "`{}` needs the session `{}` the hello hook gave you; this session \
@@ -944,7 +1012,7 @@ impl Server {
                         vocab::ID
                     )
                 };
-                let mut register = self.register(root, when)?;
+                let mut register = self.register(key, when)?;
                 let Some(id) = self.session_id(None, &register) else {
                     return Err(nudge());
                 };
@@ -993,9 +1061,9 @@ impl Server {
 
     /// `follow` with `end`: forget the session's subscription, its
     /// deliveries, and its watches.
-    fn end_subscription(&self, root: &Path, id: Option<String>) -> Result<String, String> {
+    fn end_subscription(&self, key: &Path, id: Option<String>) -> Result<String, String> {
         let when = now();
-        let mut register = self.register(root, when)?;
+        let mut register = self.register(key, when)?;
         let Some(id) = self.session_id(id, &register) else {
             return Err(format!(
                 "nothing to end: pass `{}`, or call `{}` with `{}` first",
@@ -1033,7 +1101,7 @@ impl Server {
             Err(error) => return failure(error),
         };
         let when = now();
-        let mut register = match self.register(&target.root, when) {
+        let mut register = match self.register(&target.key, when) {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
@@ -1052,18 +1120,24 @@ impl Server {
     }
 
     /// Every thread the checkout shows, through a viewer or the store.
-    async fn fetch(&self, target: &Target) -> Result<Vec<Thread>, String> {
+    /// Every thread the workspace shows, and the reach that says which
+    /// worktree shows each (ADR 0070): through the viewer on the
+    /// caller's worktree when one runs, else from the store.
+    async fn fetch(&self, target: &Target) -> Result<(Vec<Thread>, Reach), String> {
         let request = Request::ThreadsList {
             since: None,
             path: None,
         };
-        match target.viewers.first() {
+        match target.viewer_here() {
             Some(viewer) => match call(viewer, &request).await? {
-                Response::Threads(threads) => Ok(threads),
+                Response::Threads(threads) => {
+                    let (_, scope) = headless_store(&self.dirs, target)?;
+                    Ok((threads, scope))
+                }
                 Response::Error(message) => Err(message),
                 Response::Done => Err("unexpected reply Done".to_owned()),
             },
-            None => headless_list(&self.dirs, &target.root),
+            None => headless_list(&self.dirs, target),
         }
     }
 
@@ -1086,11 +1160,11 @@ impl Server {
             resolve: item.resolve,
             lines,
         };
-        let outcome = match target.viewers.first() {
+        let outcome = match target.viewer_here() {
             Some(viewer) => call(viewer, &request).await,
             None => headless_reply(
                 &self.dirs,
-                &target.root,
+                target,
                 &thread,
                 author,
                 item.body,
@@ -1269,27 +1343,29 @@ fn known_threads<'a>(
 }
 
 /// Every thread the checkout shows, from the store.
-fn headless_list(dirs: &XdgDirs, root: &Path) -> Result<Vec<Thread>, String> {
-    let (store, scope) = headless_store(dirs, root)?;
-    Ok(store
+fn headless_list(dirs: &XdgDirs, target: &Target) -> Result<(Vec<Thread>, Reach), String> {
+    let (store, scope) = headless_store(dirs, target)?;
+    let threads = store
         .threads()
         .iter()
         .filter(|t| scope.includes(t))
         .cloned()
-        .collect())
+        .collect();
+    Ok((threads, scope))
 }
 
 /// Reply to `thread` in the store and answer with it as it then stands.
 fn headless_reply(
     dirs: &XdgDirs,
-    root: &Path,
+    target: &Target,
     thread: &ThreadId,
     author: Author,
     body: String,
     resolve: bool,
     lines: Option<LineRange>,
 ) -> Result<Thread, String> {
-    let mut store = Store::open(dirs.threads_file(root)).map_err(|e| e.to_string())?;
+    let root = target.root.as_path();
+    let mut store = Store::open(dirs.threads_file(&target.key)).map_err(|e| e.to_string())?;
     if store.thread(thread).is_none() {
         return Err(format!(
             "no thread {thread}; call `{}` to see the ids",
@@ -1312,6 +1388,74 @@ fn headless_reply(
         .thread(thread)
         .cloned()
         .ok_or_else(|| format!("thread {thread} vanished after the reply"))
+}
+
+/// The summary lines of one workspace (ADR 0070): its first root,
+/// marked when it is the one calls address, its worktrees when there
+/// are several, the caller's said, then its viewers and the worktree
+/// each shows.
+fn workspace_lines(s: &Target, default: Option<&Target>) -> Vec<String> {
+    let is_default = default.is_some_and(|d| d.key == s.key);
+    let caller_root = default.filter(|_| is_default).map(|d| d.root.as_path());
+    let mark = if is_default { "*" } else { " " };
+    let worktrees = worktrees_of(s);
+    let mut lines = vec![format!(
+        "{mark} {}",
+        worktrees.first().map_or_else(
+            || s.key.display().to_string(),
+            |(root, ..)| root.display().to_string()
+        )
+    )];
+    if worktrees.len() > 1 {
+        for (root, branch, main) in &worktrees {
+            let caller = if caller_root == Some(root.as_path()) {
+                "  (the caller's)"
+            } else {
+                ""
+            };
+            let main = if *main { "  (main)" } else { "" };
+            lines.push(format!(
+                "    worktree {}  {}{main}{caller}",
+                branch.as_deref().unwrap_or("detached"),
+                root.display()
+            ));
+        }
+    }
+    if s.viewers.is_empty() {
+        lines.push("    (no viewers running)".to_owned());
+    }
+    for v in &s.viewers {
+        let on = if worktrees.len() > 1 {
+            format!("  on {}", v.root().display())
+        } else {
+            String::new()
+        };
+        lines.push(format!("    {}  {}{on}", v.name().unwrap_or("-"), v.id()));
+    }
+    lines
+}
+
+/// The worktrees of `target`'s workspace as git lists them now: root,
+/// branch, and whether it is the main one (ADR 0070); the marker's roots
+/// with no branch when git cannot be asked.
+fn worktrees_of(target: &Target) -> Vec<(PathBuf, Option<String>, bool)> {
+    let listed = target
+        .roots
+        .first()
+        .and_then(|root| Workspace::discover(root).ok())
+        .map(|w| w.worktrees())
+        .unwrap_or_default();
+    if listed.is_empty() {
+        return target
+            .roots
+            .iter()
+            .map(|root| (root.clone(), None, false))
+            .collect();
+    }
+    listed
+        .into_iter()
+        .map(|w| (w.root().to_path_buf(), Some(w.label()), w.is_main()))
+        .collect()
 }
 
 fn text(summary: String) -> CallToolResult {
@@ -1371,7 +1515,7 @@ mod tests {
     use serde_json::Value;
 
     use super::{
-        ReplyItem, Server, Shown, Tree, Which, check_path, headless_list, headless_reply,
+        ReplyItem, Server, Shown, Target, Tree, Which, check_path, headless_list, headless_reply,
         instructions, known_threads, refusal, thread_id, vocab,
     };
     use crate::app::testing;
@@ -1494,12 +1638,18 @@ mod tests {
             "one\ntwo\n",
             5,
         )?;
-        let threads = headless_list(&dirs, &root)?;
+        let target = Target {
+            key: root.clone(),
+            root: root.clone(),
+            roots: vec![root.clone()],
+            viewers: Vec::new(),
+        };
+        let (threads, _) = headless_list(&dirs, &target)?;
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].id(), &id);
         let answered = headless_reply(
             &dirs,
-            &root,
+            &target,
             &id,
             Author::agent("bot"),
             "because".to_owned(),
@@ -1510,10 +1660,10 @@ mod tests {
         // The agent proposed; only the user resolves (ADR 0053).
         assert_eq!(answered.status(), Status::Open);
         assert!(answered.proposes_resolution());
-        assert_eq!(headless_list(&dirs, &root)?, [answered]);
+        assert_eq!(headless_list(&dirs, &target)?.0, [answered]);
         let missing = headless_reply(
             &dirs,
-            &root,
+            &target,
             &serde_json::from_str::<fathomable_core::annotations::ThreadId>(r#""1-2-3""#)?,
             Author::agent("bot"),
             "x".to_owned(),

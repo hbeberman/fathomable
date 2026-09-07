@@ -92,7 +92,10 @@ before this record, on disk or on the wire, is owed a reader.
 - A store or register from before this record fails to open with the
   line number, both versions, and the path to delete; the viewer and
   `--mcp` report it as they report any store error. There is no
-  migration.
+  migration. (Noted 2026-09-06 by
+  [0070](0070-one-workspace-many-worktrees.md): a state directory
+  keyed by a root is renamed once to its common-dir key; a rename is
+  not a format, and the rule stands.)
 - `scripts/demo-repo.sh` writes `"v": 1` thread events.
 - `config.rs` loses `FOLLOW_MOVED` and the `"follow"` arm; the
   `unknown setting` test already covers what a `follow` node now gets.

@@ -67,6 +67,8 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize)
         }
         // Row 0 is the root header.
         MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.tree_click(row - 1),
+        // A click on the branch opens the worktree picker (ADR 0070).
+        MouseEventKind::Down(MouseButton::Left) if app.has_worktrees() => app.pick_worktree(),
         MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
         MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
             app.open_tree_menu(row - 1, column, row);

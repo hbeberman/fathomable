@@ -97,7 +97,10 @@ colour. The colour is whose turn it is; the fill is the lifecycle.
   flush right in the info colour. Row 2: the newest message's first
   line, indented under the place and truncated with `…`. The author
   reads `name (role)` when the row has room and `name` when it does
-  not; there is one form and no compact toggle.
+  not; there is one form and no compact toggle. (Amended 2026-09-06 by
+  [0070](0070-one-workspace-many-worktrees.md): an entry the active
+  worktree does not reach carries its worktree's branch, dim, after
+  the author.)
 - A thread's two rows are one unit: `j`/`k`, the wheel, and a click
   treat them as one entry, and they are never separated.
 - `fit` gains a sibling, `fit_ellipsis`, that marks a cut with `…`; the

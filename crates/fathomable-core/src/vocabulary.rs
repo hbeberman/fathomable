@@ -42,6 +42,9 @@ pub const STATUS: &str = "status";
 pub const PENDING: &str = "pending";
 /// The field naming the agent that has the last word on a thread (ADR 0058).
 pub const ANSWERED: &str = "answered";
+/// The field naming the worktree a thread is placed against when the
+/// caller's does not reach it (ADR 0070).
+pub const WORKTREE: &str = "worktree";
 /// A workspace-relative file path.
 pub const PATH: &str = "path";
 /// A name to sign as, given once at `follow` (ADR 0058).
@@ -132,7 +135,7 @@ pub const ALL: [Tool; 7] = [
 ];
 
 /// Whether `ident` is a tool name, a parameter name, a `when` or
-/// `status` value, or the `pending` field.
+/// `status` value, or the `pending`, `answered`, or `worktree` field.
 #[must_use]
 pub fn is_known(ident: &str) -> bool {
     [
@@ -142,6 +145,7 @@ pub fn is_known(ident: &str) -> bool {
         STATUS_ALL,
         PENDING,
         ANSWERED,
+        WORKTREE,
     ]
     .contains(&ident)
         || ALL

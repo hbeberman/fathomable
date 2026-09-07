@@ -1118,6 +1118,7 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
             path: PathBuf::from(bad),
             line: None,
             end_line: None,
+            worktree: None,
         });
         assert!(matches!(reply, Response::Error(_)), "{bad}: {reply:?}");
     }
@@ -1125,6 +1126,7 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
         path: PathBuf::from("other.md"),
         line: Some(3),
         end_line: Some(3),
+        worktree: None,
     });
     assert_eq!(reply, Response::Done);
     assert_eq!(app.current_path(), Path::new("other.md"));

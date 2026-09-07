@@ -328,3 +328,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     base only; `D` steps the diff through `HEAD`, last seen, the newest
     checkpoint, and the file; `Space d s` marks every file seen
     ([0069](decisions/0069-the-diffs-keys-on-the-bar.md)).
+61. **One workspace, many worktrees.** A git workspace is keyed by its
+    common dir and every worktree of it shares one store; the viewer
+    lists the worktrees itself, `]w` / `[w` page through them, the
+    files pane header names the active one, and a thread from any
+    worktree's branch shows everywhere with the branch on its entry;
+    the tools and hooks resolve a worktree root as they resolve a root
+    ([0070](decisions/0070-one-workspace-many-worktrees.md)).

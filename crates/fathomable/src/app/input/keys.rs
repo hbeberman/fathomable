@@ -220,6 +220,8 @@ impl App {
             Action::DiffNext => self.diff_next(),
             Action::DiffWhitespace => self.toggle_whitespace(),
             Action::SeenAll => self.mark_all_seen(),
+            Action::WorktreeNext => self.worktree_step(1),
+            Action::WorktreePrev => self.worktree_step(-1),
             Action::CheckpointFile => self.checkpoint_file(),
             Action::CheckpointWorkspace => self.checkpoint_workspace(),
             Action::StubsToggle => self.toggle_stubs(),

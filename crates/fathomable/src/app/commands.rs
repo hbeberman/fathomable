@@ -78,6 +78,7 @@ impl App {
                 "workspace".to_owned(),
                 self.workspace.root().display().to_string(),
             ),
+            ("worktrees".to_owned(), self.worktrees_row()),
             (
                 "socket".to_owned(),
                 self.record.socket().map_or_else(

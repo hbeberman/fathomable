@@ -57,7 +57,10 @@ Settled in a question round on 2026-08-27; the choices are recorded below.
 - A **session** is the annotation state of one workspace root, keyed by the
   canonical path as the thread store already is. It exists whether or not a
   viewer is running. Keying by git common-dir (to survive renames and share
-  across worktrees) was considered and parked.
+  across worktrees) was considered and parked. (Amended 2026-09-06 by
+  [0070](0070-one-workspace-many-worktrees.md): the common-dir key is
+  taken; a git workspace is the repository, and every worktree of it
+  reads and writes one store.)
 - A running TUI is a **viewer** of a session. Its runtime record and socket
   live under the workspace key:
   `$XDG_RUNTIME_DIR/fathomable/<workspace-key>/<pid>.sock`, one per viewer.

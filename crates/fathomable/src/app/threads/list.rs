@@ -122,9 +122,18 @@ pub(crate) struct Entry {
     words: Words,
     /// When the thread last changed.
     updated: u64,
+    /// The branch of the worktree that shows the thread when the active
+    /// one does not (ADR 0070).
+    worktree: Option<String>,
 }
 
 impl Entry {
+    /// The branch on the entry when another worktree shows the thread
+    /// (ADR 0070).
+    pub(crate) fn worktree(&self) -> Option<&str> {
+        self.worktree.as_deref()
+    }
+
     pub(crate) fn id(&self) -> &ThreadId {
         &self.id
     }
@@ -176,6 +185,8 @@ pub(crate) enum Row {
         updated: u64,
         selected: bool,
         dim: bool,
+        /// The branch of the worktree showing it (ADR 0070).
+        worktree: Option<String>,
     },
     /// `author  age  [badge]`.
     Message {
@@ -385,6 +396,7 @@ impl App {
                     range,
                     words,
                     updated: thread.updated(),
+                    worktree: self.worktree_of(thread.id()),
                 })
             })
             .collect();
@@ -410,7 +422,12 @@ impl App {
     /// (ADR 0066): its most urgent thread's, by path.
     pub(crate) fn file_circles(&self) -> Vec<(PathBuf, Words)> {
         let mut out: Vec<(PathBuf, Words)> = Vec::new();
-        for entry in self.review_entries(false) {
+        // The circles count what the active worktree reaches (ADR 0070).
+        for entry in self
+            .review_entries(false)
+            .into_iter()
+            .filter(|entry| entry.worktree.is_none())
+        {
             match out.iter_mut().find(|(path, _)| path == entry.path()) {
                 Some((_, words)) => {
                     if entry.words().urgency() > words.urgency() {
@@ -495,6 +512,11 @@ impl App {
     /// its file is open this session, else as stored; no range for a
     /// thread on the file as a whole (ADR 0063).
     pub(super) fn placement_of(&self, thread: &Thread) -> (Option<LineRange>, Words) {
+        // A thread another worktree shows is placed in that worktree's
+        // file (ADR 0070).
+        if let Some(placed) = self.elsewhere_words(thread.id()) {
+            return placed;
+        }
         self.docs
             .iter()
             .find(|doc| doc.relative == thread.path())
@@ -524,6 +546,7 @@ impl App {
             updated: thread.updated(),
             selected,
             dim,
+            worktree: entry.worktree.clone(),
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));

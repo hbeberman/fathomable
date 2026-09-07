@@ -31,6 +31,7 @@ pub mod theme;
 pub mod tree;
 pub mod vocabulary;
 pub mod workspace;
+pub mod worktrees;
 
 #[doc(inline)]
 pub use document::{Document, LoadError};

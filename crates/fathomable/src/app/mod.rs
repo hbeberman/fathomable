@@ -16,6 +16,7 @@ mod checkpoints;
 mod clipboard;
 mod commands;
 mod diff;
+mod diff_keys;
 mod draw;
 mod file_index;
 mod files_pane;
@@ -24,6 +25,7 @@ mod goto_file;
 pub(crate) mod input;
 mod jump;
 mod jumplist;
+mod last_seen;
 pub(crate) mod run;
 mod sidebar;
 mod socket;
@@ -1250,29 +1252,6 @@ impl App {
         next
     }
 
-    /// Snapshot the document at `index` as seen.
-    pub(super) fn mark_seen(&mut self, index: usize) {
-        let Some(doc) = self.docs.get_mut(index) else {
-            return;
-        };
-        doc.seen_dirty = false;
-        let (Some(seen), Some(text)) = (self.seen.as_mut(), doc.document.text()) else {
-            return;
-        };
-        match seen.record(&doc.relative, text) {
-            Ok(true) => tracing::debug!(path = %doc.relative.display(), "snapshotted as seen"),
-            Ok(false) => {}
-            Err(error) => tracing::warn!(%error, "cannot snapshot as seen"),
-        }
-    }
-
-    /// Snapshot the visible file before the session ends.
-    pub(crate) fn on_quit(&mut self) {
-        if let Some(index) = self.current {
-            self.mark_seen(index);
-        }
-    }
-
     pub(crate) fn workspace(&self) -> &Workspace {
         &self.workspace
     }
@@ -1445,14 +1424,16 @@ impl App {
     }
 
     /// Whether the text's key bar replaces the bottom text row (ADR
-    /// 0067): the column shows a document, and a draft is open, a thread
-    /// is under the cursor, or the file has a thread to fold. The review
-    /// list and the file-info pane have no bar of this kind.
+    /// 0067): the column shows a document, and a diff is open (ADR
+    /// 0069), a draft is open, a thread is under the cursor, or the file
+    /// has a thread to fold. The review list and the file-info pane have
+    /// no bar of this kind.
     pub(crate) fn text_bar_shown(&self) -> bool {
         self.has_document()
             && !self.review_list().is_open()
             && self.info().is_none()
-            && (self.draft().is_some()
+            && (self.view().diff_view()
+                || self.draft().is_some()
                 || self
                     .thread_cursor()
                     .thread()

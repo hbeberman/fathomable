@@ -98,6 +98,7 @@ Text:
 | `gs` / `:source` | toggle raw source view |
 | `gd` / `:diff`, `gD` / `:diff seen` | the diff against `HEAD` (`HEAD · now`); against last seen; the same key again, or `Esc`, closes it |
 | `h` `l`, `b` `t`, `w` in a diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the working file, last seen, `HEAD`, and the commits that touched it; ignore whitespace |
+| `D` | the next diff: `HEAD`, last seen, the newest checkpoint, then the file again, skipping what the file lacks |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
@@ -134,6 +135,7 @@ The `Space` menu, from any pane:
 | `Space d b`, `Space d t` | diff: pick the base, the target (as `b` `t` in a diff; from outside one, against the working file) |
 | `Space d c`, `Space d C` | diff: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space d w` | diff: ignore whitespace (as `w` in a diff) |
+| `Space d s` | diff: mark every file seen, so `gD` from then on shows only what came after (a toast counts them) |
 | `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
 | `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -227,14 +229,13 @@ outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
 at once. The `Space` menu and `Space ?` take clicks too, as do the key
-hints at the right edge of the checkpoint header and on the text's,
-the review list's, and the threads pane's key bars (a click on a bar
+hints on the text's, the review list's, and the threads pane's key bars (a click on a bar
 that says `click or Space w l to focus` focuses that pane); a click on
 either row of a thread in the threads pane
 lands on it and one on a file row folds or unfolds it; a click
 on the threads pane header's words toggles its scope and one on its
 resolved count toggles `x`, as in the review list's header; on the
-checkpoint header's base or target
+diff header's base or target
 name opens that picker; and on the status line the waiting count opens
 the review list and the thread count focuses the threads pane.
 
@@ -483,7 +484,10 @@ There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit,
 comment on it, or leave it alone for five seconds. It never drives the bar
 or `]g`; `gD` (or `:diff seen`) shows it in the diff view as `last seen ·
-now`, badge `DIFF seen`, and `gD` again returns to the file. Snapshots
+now`, badge `DIFF seen`, and `gD` again returns to the file. `Space d s`
+marks every non-ignored text file seen at once (a toast counts the
+new snapshots, `seen: 12 files`), so a later `gD` shows only what came
+after. Snapshots
 live under
 `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at
 any time; they expire after thirty days unless the file has an open
@@ -503,11 +507,17 @@ the latest checkpoint against the working file. Its header reads
 `checkpoint 2/3  5m ago · now` and the badge `DIFF cp 2/3`; `h` and `l`
 page to the earlier or later pair along the timeline, and, while the
 file has a checkpoint, a strip along the bottom lists them, `◆` on the
-workspace-wide ones. With no checkpoint the view says so and names
+workspace-wide ones. The diff's keys sit on the text's key bar, the
+bottom text row, while the text has focus: `h/l page` on a checkpoint
+base, then `b base · t target · D next base · w whitespace · Esc
+close`; the header is the pair's names alone. With no checkpoint the view says so and names
 `Space d c`; `Space d r` again leaves it.
 
 Every diff is the same view with two **sides**, so its keys work in all
-of them. `b` and `t` pick the base or the target from the file's
+of them. `D` steps through the diffs the file has, `HEAD · now`, `last
+seen · now`, the newest checkpoint against the working file, then the
+file again, skipping any it lacks; from a pair off that row it returns
+to the file. `b` and `t` pick the base or the target from the file's
 checkpoints, the working file, last seen, `HEAD`, and the commits that
 touched it (the fifty most recent reachable from `HEAD`); the header
 names the pair (`a1b2c3d · HEAD`) and the badge the base (`DIFF
@@ -519,7 +529,8 @@ while it does, and `diff { ignore-whitespace }` sets the start. The
 gutter bar, `]g`, and the file counts always compare against `HEAD`
 exactly: checkpoints and snapshots sit beside git, they never replace
 it ([0049](decisions/0049-inline-threads-and-the-rail.md),
-[0060](decisions/0060-one-diff-two-sides.md)).
+[0060](decisions/0060-one-diff-two-sides.md),
+[0069](decisions/0069-the-diffs-keys-on-the-bar.md)).
 
 ## 6. Following an agent
 

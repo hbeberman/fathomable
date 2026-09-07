@@ -323,3 +323,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     pane's header row moves onto `ui.header` and names the active
     filters after the repo's counts
     ([0068](decisions/0068-what-the-files-pane-shows.md)).
+60. **The diff's keys on the bar.** The diff header is its words and its
+    keys move to the text's key bar, `h/l page` drawn on a checkpoint
+    base only; `D` steps the diff through `HEAD`, last seen, the newest
+    checkpoint, and the file; `Space d s` marks every file seen
+    ([0069](decisions/0069-the-diffs-keys-on-the-bar.md)).

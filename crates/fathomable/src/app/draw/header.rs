@@ -82,11 +82,11 @@ impl HintOf {
         }
     }
 
-    pub(super) fn keyed(place: Where, action: Action, what: &'static str) -> Self {
+    pub(crate) fn keyed(place: Where, action: Action, what: &'static str) -> Self {
         Self::new(key_of(place, action), what, &[action])
     }
 
-    pub(super) fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
+    pub(crate) fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
@@ -335,22 +335,10 @@ fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
     hints
 }
 
-/// A diff's header (ADR 0049, ADR 0060): the pair's names, then the
-/// paging, side, whitespace, and close keys while the text has focus
-/// (ADR 0064).
-pub(crate) fn diff_header(app: &App, text: &str) -> Header {
-    let hints = if app.focus() == Focus::View {
-        vec![
-            HintOf::paired(Where::View, Action::MoveLeft, Action::MoveRight, "page"),
-            HintOf::keyed(Where::View, Action::DiffBase, "base"),
-            HintOf::keyed(Where::View, Action::DiffTarget, "target"),
-            HintOf::keyed(Where::View, Action::DiffWhitespace, "whitespace"),
-            HintOf::keyed(Where::View, Action::Escape, "close"),
-        ]
-    } else {
-        Vec::new()
-    };
-    Header::new(vec![(format!(" {text}"), Tone::Key)], hints)
+/// A diff's header (ADR 0049, ADR 0060): the pair's names and nothing
+/// more; its keys are on the text's bar (ADR 0069).
+pub(crate) fn diff_header(text: &str) -> Header {
+    Header::new(vec![(format!(" {text}"), Tone::Key)], Vec::new())
 }
 
 /// The state words after a thread's circle: the placement, the state,
@@ -620,20 +608,6 @@ mod tests {
             None,
             "a dropped hint is not there"
         );
-    }
-
-    /// The diff header's keys show only while the text has focus (ADR
-    /// 0064); the header keeps them at its right edge (ADR 0067).
-    #[test]
-    fn diff_header_keys_need_the_texts_focus() -> anyhow::Result<()> {
-        use crate::app::testing::{self, source_app};
-
-        let dir = testing::workspace("diff-header-keys", testing::README)?;
-        let mut app = source_app(&dir)?;
-        assert!(!diff_header(&app, "HEAD · now").hints.is_empty());
-        app.toggle_tree_focus();
-        assert!(diff_header(&app, "HEAD · now").hints.is_empty());
-        Ok(())
     }
 
     /// A header row inside a thread block paints its gutter cells on

@@ -8,16 +8,18 @@
 //! thread is under the cursor, or the file has a thread to fold: then,
 //! while another pane has the keys, it says how to focus the text, and
 //! a click on it does; with the keys it reads the draft's keys, else
-//! the thread cursor's keys, then `Z` for the file's threads. Every
-//! hint drawn works now (ADR 0064); the rest are left out.
+//! the diff's keys while a diff is open (ADR 0069), the thread cursor's
+//! keys, then `Z` for the file's threads. Every hint drawn works now
+//! (ADR 0064); the rest are left out.
 
 use crate::app::draw::header::{Header, HintOf, draft_hints};
 use crate::app::input::bindings::{Action, Where};
 use crate::app::threads::words::Words;
 use crate::app::{App, Focus};
 
-/// The text's key bar: the draft's keys, the thread cursor's keys and
-/// `Z` for the file while the text has focus, else the focus tip.
+/// The text's key bar: the draft's keys, else the diff's keys, the
+/// thread cursor's keys, and `Z` for the file while the text has focus;
+/// the focus tip otherwise.
 pub(crate) fn text_bar(app: &App) -> Header {
     if app.focus() != Focus::View {
         return Header::bar(vec![HintOf::new("", "click or Space w l to focus", &[])]);
@@ -26,7 +28,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
         return Header::bar(draft_hints(compose));
     }
     let place = Where::View;
-    let mut hints = Vec::new();
+    let mut hints = crate::app::diff_keys::diff_hints(app);
     if let Some(id) = app.thread_cursor().thread()
         && app.threads_at_cursor().contains(id)
         && let Some(thread) = app.thread(id)
@@ -34,7 +36,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
         let mark = app.mark_of(id);
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
         let expanded = app.is_expanded(id);
-        hints = thread_hints(app, place, words, expanded);
+        hints.extend(thread_hints(app, place, words, expanded));
     }
     let stubs = app.stubs();
     if !stubs.is_empty() {

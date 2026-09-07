@@ -251,7 +251,9 @@ actions! {
     DiffCommit,
     DiffBase,
     DiffTarget,
+    DiffNext,
     DiffWhitespace,
+    SeenAll,
     StubsToggle,
     /// `Space F c`: only changed files in the files pane (ADR 0068).
     FilesChanged,
@@ -615,6 +617,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
+        &[&[c('D')]],
+        A::DiffNext,
+        "Display",
+        "diff: next base (HEAD, last seen, checkpoint, file)",
+    ),
+    bind(
+        W::View,
         &[&[c('w')]],
         A::DiffWhitespace,
         "Display",
@@ -928,6 +937,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::DiffWhitespace,
         "Space menu",
         "diff: ignore whitespace",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('s')]],
+        A::SeenAll,
+        "Space menu",
+        "diff: mark all files seen",
     ),
     bind(
         W::Any,
@@ -1707,7 +1723,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["d", "D", "r", "g", "b", "t", "c", "C", "w"]
+            ["d", "D", "r", "g", "b", "t", "c", "C", "w", "s"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

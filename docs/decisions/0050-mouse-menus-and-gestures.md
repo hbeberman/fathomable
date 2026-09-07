@@ -171,7 +171,9 @@ same day; the choices are below.
   the file and the workspace, as `s` does.
 - In the checkpoint header a click on the base name opens the base
   picker and a click on the target name the target picker, as `b` and
-  `t` do.
+  `t` do. (Amended 2026-09-06 by
+  [0069](0069-the-diffs-keys-on-the-bar.md): the header carries no
+  hints; the diff's keys are on the text's bar, which takes clicks.)
 - The status line carries no hints, only the state, so nothing on it is
   clickable.
 

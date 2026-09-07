@@ -72,3 +72,4 @@ supersede rather than edit history.
 - [0066 One circle language and the grouped threads pane](0066-one-circle-language.md)
 - [0067 The text's key bar](0067-the-texts-key-bar.md)
 - [0068 What the files pane shows](0068-what-the-files-pane-shows.md)
+- [0069 The diff's keys on the bar](0069-the-diffs-keys-on-the-bar.md)

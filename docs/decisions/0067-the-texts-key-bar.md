@@ -94,6 +94,9 @@ resolve. This record undoes both, the same day, for one rule.
   the one exception to the rule. They fit there on the user's 68-column
   text column today; after the thread keys on the bar the last two
   would drop. A view's keys on its header, the cursor's on the bar.
+  (Amended 2026-09-06 by [0069](0069-the-diffs-keys-on-the-bar.md):
+  the exception is closed; the diff's keys are on the bar, first, and
+  the diff header is its words.)
 - **`ui.hint` retires.** Nothing draws it once the stub's hint is gone;
   a theme that sets it is refused as it would be for any unknown key
   ([0062](0062-one-version-no-compatibility.md)).

@@ -343,7 +343,7 @@ fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
     };
     let width = usize::from(area.width);
     frame.render_widget(
-        Paragraph::new(diff_header(app, &header).line(theme, width)).style(theme.info),
+        Paragraph::new(diff_header(&header).line(theme, width)).style(theme.info),
         Rect { height: 1, ..area },
     );
     let strip = app.checkpoint_strip();

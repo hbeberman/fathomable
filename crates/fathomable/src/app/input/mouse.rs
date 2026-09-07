@@ -160,18 +160,15 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
     Effect::None
 }
 
-/// A click on a diff's header (ADR 0050, ADR 0060): a hint runs its
-/// key; the base name, before the ` · `, opens the base picker and the
-/// target name the target picker.
+/// A click on a diff's header (ADR 0050, ADR 0060): the base name,
+/// before the ` · `, opens the base picker and the target name the
+/// target picker; the keys are on the bar (ADR 0069).
 fn diff_header_click(app: &mut App, column: usize) -> Effect {
     let Some(text) = app.diff_header() else {
         return Effect::None;
     };
     app.focus_pane(Focus::View);
-    let header = header::diff_header(app, &text);
-    if let Some(action) = header.action_at(app.column_width(), column) {
-        return app.act(action);
-    }
+    let header = header::diff_header(&text);
     if column < header.left_width() {
         // The left part is ` ` then the header text.
         let split = text

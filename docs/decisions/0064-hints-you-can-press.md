@@ -54,7 +54,9 @@ column with a strip of the other colour before it.
   when the cursor's message is the user's, as the review bar already
   decides it. Every other expanded thread's header is its words alone.
   The diff header's keys and a stub's `(c expand)` show only while the
-  text has focus. The review bar and the draft's row already obey the
+  text has focus. (Amended 2026-09-06 by
+  [0069](0069-the-diffs-keys-on-the-bar.md): the diff's keys are on
+  the text's bar, and `h/l page` is drawn on a checkpoint base only.) The review bar and the draft's row already obey the
   rule and are unchanged.
 - **A header reaches the left edge.** A header row inside a thread
   block (the thread header, the draft's `comment on …` row, and the

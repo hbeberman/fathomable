@@ -76,6 +76,8 @@ change queue is newest-first; one milestone, one ADR.
   `follow.seen-idle` (default 5 s). The snapshot is the on-disk text at
   that moment, so what the reader watched arrive during the idle period
   counts as seen, but a change that lands after the idle mark does not.
+  (Amended 2026-09-06 by [0069](0069-the-diffs-keys-on-the-bar.md):
+  `Space d s` snapshots every non-ignored text file as seen at once.)
 - Snapshots survive restarts; on start any blob unreferenced by `seen.jsonl`
   or older than 30 days is deleted, and the log is rewritten to its last
   records. Removing the `seen/` directory is always safe.

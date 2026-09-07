@@ -78,7 +78,10 @@ would have to bring that back or cut rows, either its own decision.
   pair's names (`HEAD · now`, `last seen · now`, `checkpoint 2/3  5m ago
   · now`, `a1b2c3d · HEAD`), then ` · whitespace ignored` while it is,
   then the hints `h/l page · b base · t target · w whitespace · Esc
-  close`. `b` and `t` open the side pickers from any diff, and their
+  close`. (Amended 2026-09-06 by
+  [0069](0069-the-diffs-keys-on-the-bar.md): the hints are on the
+  text's key bar, `h/l page` on a checkpoint base only, and the header
+  is the pair's names alone.) `b` and `t` open the side pickers from any diff, and their
   lists gain `last seen` when the file has a snapshot. `h` and `l` page
   the timeline when the base is a checkpoint and say so when it is not,
   as before. The **strip** of the file's checkpoints draws under the
@@ -104,6 +107,7 @@ Space d g         diff vs commit…
 Space d b / t     pick base… / pick target…
 Space d c / C     checkpoint file / checkpoint workspace
 Space d w         ignore whitespace
+Space d s         mark all files seen      (0069)
 Space v s         source view              gs
 Space v t         toggle thread stubs
 Space v x         toggle resolved stubs    (was Space c x)

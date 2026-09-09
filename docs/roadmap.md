@@ -335,3 +335,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     worktree's branch shows everywhere with the branch on its entry;
     the tools and hooks resolve a worktree root as they resolve a root
     ([0070](decisions/0070-one-workspace-many-worktrees.md)).
+62. **Author stripes and the cursor bar.** A message's rows sit on a
+    faint stripe of its author's kind, blue for the user and green for
+    agents, the name in the same hue; the thread cursor is a `▎` bar
+    down its message and on the thread's header instead of the
+    selected surface; the expanded thread has a two-cell gutter of
+    its own in the file; a draft is written on a warm surface
+    ([0071](decisions/0071-author-stripes.md)).

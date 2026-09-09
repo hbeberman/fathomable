@@ -85,3 +85,7 @@ The review list of [0025](0025-thread-list.md) had gone on wrapping
 bodies as plain text; since 2026-09-09 its body rows come from the same
 `Layout::render_message`, so a thread reads the same there as expanded
 in its file.
+
+[0071](0071-author-stripes.md) gave the expanded thread a two-cell gutter
+of its own, so the message indent is four cells and a body wraps two
+cells narrower; each message's rows sit on its author's stripe.

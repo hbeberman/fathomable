@@ -159,7 +159,7 @@ mod tests {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("mine"))?;
         assert_eq!(
-            expanded_header(&app, &mine_thread).action_at(80, 60),
+            expanded_header(&app, &mine_thread, false).action_at(80, 60),
             None,
             "a click on a header runs nothing"
         );

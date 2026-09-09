@@ -232,3 +232,7 @@ Everything the keys do here the mouse does too, extending
 - Not done: a `copy link` entry on a thread's menu was named in the
   review and has no action to run; it waits for a decision on what a
   thread's link is.
+
+The selected surface under the cursor's entry and message was replaced
+by a cursor bar and bold text in [0071](0071-author-stripes.md), which
+also stripes every message by its author.

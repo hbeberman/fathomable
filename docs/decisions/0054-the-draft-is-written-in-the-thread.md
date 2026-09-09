@@ -146,3 +146,8 @@ the request left open; each took the recommended answer.
   today ...)"), 0050 (the box header's hints, now the author row's).
 - `docs/guide.md` renames the key table and describes the draft in the
   same change.
+
+Since [0071](0071-author-stripes.md) the draft's author row and text
+rows sit on `thread.draft` rather than `ui.header` and the block's
+tint, the author row names the user by `user.name` in the user's colour,
+and the rows begin after the thread's own two-cell gutter.

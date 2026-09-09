@@ -950,6 +950,84 @@ fn resolving_in_the_list_keeps_the_scroll_and_moves_to_the_next_entry() -> anyho
     Ok(())
 }
 
+/// ADR 0071: the cursor bar is the first cell of the cursor's thread's
+/// entry header and of every row of the cursor's message in the list;
+/// in the file the expanded thread's rows begin with a gutter of their
+/// own, the bar in its first cell on the header and the cursor's message.
+#[test]
+fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-cursor-bar", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening\nsecond line")?;
+    let id = app.marks()[0].id().clone();
+    app.agent_reply(
+        &id,
+        Author::agent("reviewer"),
+        "agent answer".to_owned(),
+        false,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
+    app.expand_thread(id.clone());
+    app.thread_reply();
+    type_in(&mut app, "user follow-up");
+    app.compose_submit();
+    app.open_review();
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert_eq!(app.thread_cursor().message(), 2, "the newest message");
+    let rows = testing::screen(&app)?;
+    let marked: Vec<&String> = rows.iter().filter(|row| row.starts_with('▎')).collect();
+    // The entry header, then the newest message's author row and body row.
+    assert_eq!(marked.len(), 3, "{rows:?}");
+    assert!(
+        marked[0].contains("L3") && marked[0].contains("open"),
+        "{marked:?}"
+    );
+    assert!(marked[1].starts_with("▎  User  "), "{marked:?}");
+    assert!(marked[2].starts_with("▎    user follow-up"), "{marked:?}");
+    let other = rows
+        .iter()
+        .find(|row| row.contains("agent answer"))
+        .context("the agent's body row")?;
+    assert!(other.starts_with("     agent answer"), "{other:?}");
+    let author = rows
+        .iter()
+        .find(|row| row.contains("reviewer"))
+        .context("the agent's author row")?;
+    assert!(author.starts_with("   reviewer  "), "{author:?}");
+
+    // In the file: the global gutter, then the thread's own.
+    app.thread_open_in_file();
+    let rows = testing::screen(&app)?;
+    let gutter = crate::app::draw::gutter_width(app.view());
+    let after = |row: &str| row.chars().skip(gutter).collect::<String>();
+    let header = rows
+        .iter()
+        .find(|row| after(row).starts_with("▎ ●"))
+        .with_context(|| format!("the expanded header: {rows:?}"))?;
+    assert!(header.contains("open"), "{header:?}");
+    let follow = rows
+        .iter()
+        .find(|row| row.contains("user follow-up"))
+        .context("the cursor's body row")?;
+    assert!(
+        after(follow).starts_with("▎   user follow-up"),
+        "{follow:?}"
+    );
+    let answer = rows
+        .iter()
+        .find(|row| row.contains("agent answer"))
+        .context("the agent's body row")?;
+    assert!(after(answer).starts_with("    agent answer"), "{answer:?}");
+    let opening = rows
+        .iter()
+        .find(|row| row.contains("second line"))
+        .context("the comment's second row")?;
+    assert!(after(opening).starts_with("    second line"), "{opening:?}");
+    Ok(())
+}
+
 #[test]
 fn the_review_list_renders_bodies_as_markdown() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-list-markdown", testing::README)?;

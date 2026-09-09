@@ -199,6 +199,14 @@ pub enum Key {
     ThreadFocus,
     /// The background of a thread's stub and expanded rows (ADR 0049).
     ThreadInline,
+    /// The user's messages (ADR 0071): `fg` the name, `bg` the stripe.
+    ThreadUser,
+    /// An agent's messages (ADR 0071): `fg` the name, `bg` the stripe.
+    ThreadAgent,
+    /// The background of a draft's rows while it is written (ADR 0071).
+    ThreadDraft,
+    /// The bar down the thread cursor's message (ADR 0071).
+    ThreadCursor,
     MarkupHeading,
     /// One heading level, 1 through 6; falls back to [`Key::MarkupHeading`].
     MarkupHeadingLevel(u8),
@@ -210,7 +218,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 36] = [
+    const NAMED: [(&'static str, Self); 40] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -241,6 +249,10 @@ impl Key {
         ("thread.line", Self::ThreadLine),
         ("thread.focus", Self::ThreadFocus),
         ("thread.inline", Self::ThreadInline),
+        ("thread.user", Self::ThreadUser),
+        ("thread.agent", Self::ThreadAgent),
+        ("thread.draft", Self::ThreadDraft),
+        ("thread.cursor", Self::ThreadCursor),
         ("markup.heading", Self::MarkupHeading),
         ("markup.raw.inline", Self::MarkupRawInline),
         ("markup.raw.block", Self::MarkupRawBlock),

@@ -3,6 +3,7 @@
 //! popups, and the status line; `gutter`, `info`, and `message` build the
 //! rows the frame draws.
 
+pub(crate) mod author;
 pub(crate) mod bar;
 pub(crate) mod gutter;
 pub(crate) mod header;
@@ -22,9 +23,10 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
+use crate::app::draw::author::{THREAD_GUTTER, cursor_cell, name_style, row_style};
 use crate::app::draw::header::{
-    Header, Tone, diff_header, draft_header, entry_header, expanded_header, files_pane_header,
-    review_footer, review_header,
+    Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
+    review_header,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
@@ -81,6 +83,14 @@ pub(crate) struct Theme {
     pub(crate) thread_focus: Style,
     /// A stub's background (ADR 0049).
     pub(crate) thread_inline: Style,
+    /// The user's messages: the name's colour and the stripe (ADR 0071).
+    pub(crate) thread_user: Style,
+    /// An agent's messages: the name's colour and the stripe (ADR 0071).
+    pub(crate) thread_agent: Style,
+    /// The draft's rows while it is written (ADR 0071).
+    pub(crate) thread_draft: Style,
+    /// The bar down the thread cursor's message (ADR 0071).
+    pub(crate) thread_cursor: Style,
     pub(crate) diff_plus: Style,
     pub(crate) diff_delta: Style,
     pub(crate) diff_minus: Style,
@@ -127,6 +137,10 @@ impl Theme {
             thread_line: style(Key::ThreadLine),
             thread_focus: style(Key::ThreadFocus),
             thread_inline: style(Key::ThreadInline),
+            thread_user: style(Key::ThreadUser),
+            thread_agent: style(Key::ThreadAgent),
+            thread_draft: style(Key::ThreadDraft),
+            thread_cursor: style(Key::ThreadCursor),
             diff_plus: style(Key::DiffPlus),
             diff_delta: style(Key::DiffDelta),
             diff_minus: style(Key::DiffMinus),
@@ -1072,7 +1086,8 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
             };
             let cursor = app.thread_cursor();
             let selected = (cursor.thread() == Some(id)).then_some(cursor.message());
-            let mut lines = vec![expanded_header(app, thread).line(theme, width)];
+            let mut lines =
+                vec![expanded_header(app, thread, selected.is_some()).line(theme, width)];
             lines.extend(expanded_lines(
                 theme,
                 app.highlighter(),
@@ -1092,17 +1107,31 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
     lines
 }
 
-/// The draft's rows (ADR 0054): the author row, then the text wrapped at
-/// the draft's width and indented as a body is; the draft's keys are on
-/// the text's key bar (ADR 0067).
+/// The draft's rows (ADR 0054): the author row, ` User  draft` as a
+/// message's author row reads with the user's name colour, then the
+/// text wrapped at the draft's width and indented as a body is, every
+/// row on `thread.draft` (ADR 0071); the draft's keys are on the text's
+/// key bar (ADR 0067).
 fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) -> Vec<Line<'a>> {
-    let mut lines = vec![draft_header(app.user_name()).line(theme, width)];
+    let surface = theme
+        .thread_draft
+        .bg
+        .map_or_else(Style::default, |bg| Style::default().bg(bg));
+    let header = vec![
+        Span::raw(" ".repeat(THREAD_GUTTER)),
+        Span::styled(
+            app.user_name().to_owned(),
+            name_style(theme, &fathomable_core::annotations::Author::User, false),
+        ),
+        Span::styled("  draft", theme.info),
+    ];
+    let mut lines = vec![message_line(header, width, surface)];
     let buffer = compose.buffer();
     let text_width = app.draft_width();
     let indent = " ".repeat(MESSAGE_INDENT);
     let rows = buffer.rows(text_width);
     if rows.is_empty() {
-        lines.push(message_line(theme, vec![Span::raw(indent)], width, false));
+        lines.push(message_line(vec![Span::raw(indent)], width, surface));
         return lines;
     }
     for row in rows {
@@ -1110,7 +1139,7 @@ fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) ->
             Span::raw(indent.clone()),
             Span::styled(buffer.row_text(row).to_owned(), theme.text),
         ];
-        lines.push(message_line(theme, spans, width, false));
+        lines.push(message_line(spans, width, surface));
     }
     lines
 }
@@ -1668,7 +1697,8 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour, `▸` when folded, the count at the edge; the
-        // selected surface when the cursor's thread is folded inside.
+        // cursor bar and bold when the cursor's thread is folded inside
+        // (ADR 0071).
         Row::File {
             path,
             count,
@@ -1677,25 +1707,21 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             ..
         } => {
             let count = format!("{count} ");
-            let name = format!(" {}{}", if *folded { "▸ " } else { "" }, path.display());
-            let name_width = width.saturating_sub(display_width(&count));
+            let name = format!("{}{}", if *folded { "▸ " } else { "" }, path.display());
+            let name_width = width.saturating_sub(1 + display_width(&count));
             let mut style = theme.sidebar_dir;
             if *selected {
-                style = style.patch(theme.picker_selected);
+                style = style.add_modifier(Modifier::BOLD);
             }
-            let line = Line::from(vec![
+            Line::from(vec![
+                cursor_cell(theme, *selected),
                 Span::styled(fit_ellipsis(&name, name_width), style),
-                Span::styled(count, theme.info.patch(style)),
-            ]);
-            if *selected {
-                line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
-            } else {
-                line
-            }
+                Span::styled(count, theme.info),
+            ])
         }
         // The header as the expanded thread in the text reads (ADR
-        // 0066), a bar on `ui.header`; the cursor's thread in bold on
-        // the selected surface.
+        // 0066), a bar on `ui.header`; the cursor's thread with the
+        // cursor bar in its first cell, in bold (ADR 0071).
         Row::Header {
             range,
             words,
@@ -1704,15 +1730,26 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             worktree,
             ..
         } => {
-            let line =
-                entry_header(*range, *words, *updated, now, worktree.as_deref()).line(theme, width);
+            let line = entry_header(
+                *range,
+                *words,
+                *updated,
+                now,
+                worktree.as_deref(),
+                *selected,
+            )
+            .line(theme, width);
             if *selected {
-                line.style(theme.picker_selected.add_modifier(Modifier::BOLD))
+                line.patch_style(Modifier::BOLD)
             } else {
                 line
             }
         }
+        // A message's rows on its author's stripe, the name in the
+        // author's colour, the cursor's message with the bar down its
+        // left edge and its name bold (ADR 0071).
         Row::Message {
+            user,
             author,
             created,
             badge,
@@ -1720,27 +1757,38 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             selected,
             ..
         } => {
+            let who = list_author(*user);
             let mut spans = vec![
+                cursor_cell(theme, *selected),
+                Span::raw("  "),
                 Span::styled(
-                    format!("   {author}"),
-                    if *dim { theme.info } else { theme.popup_key },
+                    author.clone(),
+                    if *dim {
+                        theme.info
+                    } else {
+                        name_style(theme, &who, *selected)
+                    },
                 ),
                 Span::styled(format!("  {}", format_age(*created, now)), theme.info),
             ];
             if let Some(badge) = badge {
                 spans.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
             }
-            list_selection_line(theme, spans, width, *selected)
+            message_line(spans, width, row_style(theme, &who))
         }
         // A body row's Markdown faces as the file view draws them (ADR
         // 0037); a resolved thread's whole body dimmed.
         Row::Body {
+            user,
             line,
             dim,
             selected,
             ..
         } => {
-            let mut spans = vec![Span::raw(" ".repeat(BODY_INDENT))];
+            let mut spans = vec![
+                cursor_cell(theme, *selected),
+                Span::raw(" ".repeat(BODY_INDENT - 1)),
+            ];
             spans.extend(line.spans().iter().map(|span| {
                 Span::styled(
                     span.text().to_owned(),
@@ -1751,22 +1799,19 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                     },
                 )
             }));
-            list_selection_line(theme, spans, width, *selected)
+            message_line(spans, width, row_style(theme, &list_author(*user)))
         }
         Row::Blank => Line::from(""),
     }
 }
 
-fn list_selection_line<'a>(
-    theme: &Theme,
-    spans: Vec<Span<'a>>,
-    width: usize,
-    selected: bool,
-) -> Line<'a> {
-    if selected {
-        padded_line(spans, width).style(theme.picker_selected)
+/// The author kind a list row carries, as [`row_style`] and
+/// [`name_style`] read it.
+fn list_author(user: bool) -> fathomable_core::annotations::Author {
+    if user {
+        fathomable_core::annotations::Author::User
     } else {
-        Line::from(spans)
+        fathomable_core::annotations::Author::agent("")
     }
 }
 
@@ -1845,14 +1890,17 @@ mod tests {
 
     use super::{Theme, format_age, format_age_short, format_time, list_row};
 
+    /// ADR 0071: the cursor's message in the list fills its rows with
+    /// the author's stripe and starts each with the bar.
     #[test]
-    fn selected_review_messages_fill_the_row() -> anyhow::Result<()> {
+    fn selected_review_messages_fill_the_row_on_their_stripe() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
         let mut rows = vec![Row::Message {
             entry: 0,
             message: 1,
-            author: "user".to_owned(),
+            user: true,
+            author: "User".to_owned(),
             created: 0,
             badge: None,
             dim: false,
@@ -1862,6 +1910,7 @@ mod tests {
         rows.extend(body.lines().iter().map(|line| Row::Body {
             entry: 0,
             message: 1,
+            user: true,
             line: line.clone(),
             dim: false,
             selected: true,
@@ -1874,7 +1923,8 @@ mod tests {
                 .iter()
                 .map(|span| display_width(&span.content))
                 .sum();
-            assert_eq!(line.style, theme.picker_selected);
+            assert_eq!(line.style.bg, theme.thread_user.bg);
+            assert_eq!(line.spans[0].content, "▎");
             assert_eq!(width, 30);
         }
         Ok(())

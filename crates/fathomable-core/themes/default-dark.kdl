@@ -59,6 +59,10 @@ colors {
     "thread.line"          bg="#2a2a1e"
     "thread.focus"         bg="#1c2a3f"
     "thread.inline"        bg="#171d27"
+    "thread.user"          fg="blue" bg="#1c2738"
+    "thread.agent"         fg="green" bg="#1c261e"
+    "thread.draft"         bg="#2c2a1f"
+    "thread.cursor"        fg="yellow"
 
     "markup.heading"       fg="purple" mods="bold"
     "markup.raw.inline"    fg="orange"

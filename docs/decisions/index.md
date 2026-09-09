@@ -74,3 +74,4 @@ supersede rather than edit history.
 - [0068 What the files pane shows](0068-what-the-files-pane-shows.md)
 - [0069 The diff's keys on the bar](0069-the-diffs-keys-on-the-bar.md)
 - [0070 One workspace, many worktrees](0070-one-workspace-many-worktrees.md)
+- [0071 Author stripes and the cursor bar](0071-author-stripes.md)

@@ -22,6 +22,7 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
+use crate::app::draw::author::CURSOR_BAR;
 use crate::app::draw::{Theme, format_age, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::threads::list::{Counts, Entry};
@@ -51,6 +52,8 @@ pub(crate) enum Tone {
     /// The diff colours: the files pane header's `+n` and `-m`.
     Added,
     Removed,
+    /// The thread cursor's bar (ADR 0071).
+    Cursor,
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
@@ -257,6 +260,7 @@ impl Header {
             Tone::Mark(state) => mark_style(theme, state),
             Tone::Added => theme.diff_plus,
             Tone::Removed => theme.diff_minus,
+            Tone::Cursor => theme.thread_cursor,
         };
         let mut spans: Vec<Span<'static>> = self
             .left
@@ -360,10 +364,17 @@ fn state_words(words: Words) -> Vec<(String, Tone)> {
 /// An expanded thread's header row in the text (ADR 0049): the circle,
 /// the placement and state, and who watches it. Its keys are on the
 /// text's key bar (ADR 0067).
-pub(crate) fn expanded_header(app: &App, thread: &fathomable_core::annotations::Thread) -> Header {
+pub(crate) fn expanded_header(
+    app: &App,
+    thread: &fathomable_core::annotations::Thread,
+    marked: bool,
+) -> Header {
     let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-    let mut left = vec![(format!(" {} ", words.glyph()), Tone::Mark(words.state()))];
+    let mut left = vec![
+        cursor_tone(marked),
+        (format!(" {} ", words.glyph()), Tone::Mark(words.state())),
+    ];
     left.extend(state_words(words));
     let watchers = app.watchers_of(thread.id());
     if !watchers.is_empty() {
@@ -381,10 +392,12 @@ pub(crate) fn entry_header(
     updated: u64,
     now: u64,
     worktree: Option<&str>,
+    marked: bool,
 ) -> Header {
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut left = vec![
-        (format!(" {}  ", words.glyph()), Tone::Mark(words.state())),
+        cursor_tone(marked),
+        (format!("{}  ", words.glyph()), Tone::Mark(words.state())),
         (format!("{place}  "), Tone::Info),
     ];
     left.extend(state_words(words));
@@ -515,17 +528,14 @@ pub(crate) fn threads_pane_footer(app: &App) -> Header {
     Header::bar(hints)
 }
 
-/// The draft's author row (ADR 0054): ` User  draft` as a message's
-/// author row reads, `user` the configured name (ADR 0058). Its keys
-/// are on the text's key bar (ADR 0067).
-pub(crate) fn draft_header(user: &str) -> Header {
-    Header::new(
-        vec![
-            (format!(" {user}"), Tone::Key),
-            ("  draft".to_owned(), Tone::Info),
-        ],
-        Vec::new(),
-    )
+/// A header's first cell (ADR 0071): the thread cursor's bar while the
+/// cursor is in the thread, else a space.
+fn cursor_tone(marked: bool) -> (String, Tone) {
+    if marked {
+        (CURSOR_BAR.to_owned(), Tone::Cursor)
+    } else {
+        (" ".to_owned(), Tone::Info)
+    }
 }
 
 /// The draft's keys (ADR 0054), for the text's key bar (ADR 0067):

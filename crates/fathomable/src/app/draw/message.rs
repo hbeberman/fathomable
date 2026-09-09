@@ -7,27 +7,34 @@
 //! code coloured by its language. The row count the view lays out is
 //! taken from the same rendering, so the two cannot disagree.
 
-use fathomable_core::annotations::Thread;
+use fathomable_core::annotations::{Author, Thread};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, display_width};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
+use crate::app::draw::author::{THREAD_GUTTER, cursor_cell, name_style, row_style};
 use crate::app::draw::{Theme, face_style, format_age};
 use crate::app::threads::author_label;
 
-/// Cells a message body sits in from the pane's left edge.
-pub(crate) const MESSAGE_INDENT: usize = 3;
+/// Cells a message body sits in from the block's left edge: the
+/// thread's own gutter (ADR 0071) and two more.
+pub(crate) const MESSAGE_INDENT: usize = THREAD_GUTTER + 2;
 
 /// One message of a thread: the comment or a reply.
 struct Message<'a> {
-    author: &'a str,
+    author: &'a Author,
+    name: &'a str,
     created: u64,
     body: &'a str,
     badge: Option<&'a str>,
 }
 
-/// A message: author, age and an optional badge on one row, the body
-/// rendered as Markdown and indented beneath it.
+/// A message: the cursor cell, the author's name in its kind's colour,
+/// the age and an optional badge on one row, the body rendered as
+/// Markdown and indented beneath it, every row on the kind's stripe
+/// (ADR 0071); `selected` marks the cursor's message with the bar and
+/// a bold name.
 fn message_lines<'a>(
     theme: &Theme,
     highlighter: &Highlighter,
@@ -36,8 +43,14 @@ fn message_lines<'a>(
     width: usize,
     selected: bool,
 ) -> Vec<Line<'a>> {
+    let row = row_style(theme, message.author);
     let mut header = vec![
-        Span::styled(format!(" {}", message.author), theme.popup_key),
+        cursor_cell(theme, selected),
+        Span::raw(" "),
+        Span::styled(
+            message.name.to_owned(),
+            name_style(theme, message.author, selected),
+        ),
         Span::styled(
             format!("  {}", format_age(message.created, now)),
             theme.info,
@@ -46,38 +59,29 @@ fn message_lines<'a>(
     if let Some(badge) = message.badge {
         header.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
     }
-    let mut out = vec![message_line(theme, header, width, selected)];
-    let indent = " ".repeat(MESSAGE_INDENT);
+    let mut out = vec![message_line(header, width, row)];
+    let indent = " ".repeat(MESSAGE_INDENT - 1);
     for line in body_layout(message.body, width, highlighter).lines() {
-        let mut spans = vec![Span::raw(indent.clone())];
+        let mut spans = vec![cursor_cell(theme, selected), Span::raw(indent.clone())];
         spans.extend(
             line.spans()
                 .iter()
                 .map(|span| Span::styled(span.text().to_owned(), face_style(theme, span.style()))),
         );
-        out.push(message_line(theme, spans, width, selected));
+        out.push(message_line(spans, width, row));
     }
     out
 }
 
-/// One row of a message, padded to the text width so the thread's
-/// background reaches the right edge however short the row is.
-pub(crate) fn message_line<'a>(
-    theme: &Theme,
-    mut spans: Vec<Span<'a>>,
-    width: usize,
-    selected: bool,
-) -> Line<'a> {
+/// One row of a message, padded to the text width so `row`, the
+/// stripe, reaches the right edge however short the row is.
+pub(crate) fn message_line(mut spans: Vec<Span<'_>>, width: usize, row: Style) -> Line<'_> {
     let used = spans
         .iter()
         .map(|span| display_width(&span.content))
         .sum::<usize>();
     spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
-    if selected {
-        Line::from(spans).style(theme.picker_selected)
-    } else {
-        Line::from(spans)
-    }
+    Line::from(spans).style(row)
 }
 
 /// The rows of `thread` expanded in place (ADR 0049): the comment and
@@ -96,9 +100,10 @@ pub(crate) fn expanded_lines<'a>(
     let mut out = Vec::new();
     // Every author as `author_label` names them (ADR 0058, ADR 0061):
     // the configured name for the user, `name (type)` for an agent.
-    let comment_author = author_label(thread.author(), user);
+    let comment_name = author_label(thread.author(), user);
     let comment = Message {
-        author: &comment_author,
+        author: thread.author(),
+        name: &comment_name,
         created: thread.created(),
         body: thread.comment(),
         badge: None,
@@ -112,9 +117,10 @@ pub(crate) fn expanded_lines<'a>(
         selected == Some(0),
     ));
     for (index, reply) in thread.replies().iter().enumerate() {
-        let author = author_label(reply.author(), user);
+        let name = author_label(reply.author(), user);
         let message = Message {
-            author: &author,
+            author: reply.author(),
+            name: &name,
             created: reply.created(),
             body: reply.body(),
             badge: reply.proposes_resolution().then_some("proposes resolving"),
@@ -191,8 +197,10 @@ mod tests {
     }
 
     fn render(body: &str, badge: Option<&str>, width: usize) -> anyhow::Result<Vec<Line<'static>>> {
+        let author = Author::agent("Copilot");
         let message = Message {
-            author: "Copilot",
+            author: &author,
+            name: "Copilot",
             created: 0,
             body,
             badge,
@@ -212,7 +220,7 @@ mod tests {
         let lines = render("please check this", None, 40)?;
         assert_eq!(
             trimmed(&lines),
-            [" Copilot  just now", "   please check this"]
+            ["  Copilot  just now", "    please check this"]
         );
         Ok(())
     }
@@ -220,7 +228,7 @@ mod tests {
     #[test]
     fn a_newline_stays_a_line_break() -> anyhow::Result<()> {
         let lines = render("first\nsecond", None, 40)?;
-        assert_eq!(trimmed(&lines)[1..], ["   first", "   second"]);
+        assert_eq!(trimmed(&lines)[1..], ["    first", "    second"]);
         Ok(())
     }
 
@@ -229,8 +237,8 @@ mod tests {
         let body = "Two **points**:\n\n- first\n- second `x`\n\n```rust\nfn a() {}\n```\n";
         let lines = render(body, Some("proposes resolving"), 30)?;
         let rows = trimmed(&lines);
-        assert_eq!(rows[0], " Copilot  just now  [proposes resolving]");
-        assert!(rows.iter().any(|t| t == "   Two points:"), "{rows:?}");
+        assert_eq!(rows[0], "  Copilot  just now  [proposes resolving]");
+        assert!(rows.iter().any(|t| t == "    Two points:"), "{rows:?}");
         assert!(rows.iter().any(|t| t.contains("• first")), "{rows:?}");
         assert!(rows.iter().any(|t| t.contains("fn a() {}")), "{rows:?}");
         let bold = lines[1].spans.iter().find(|s| s.content == "points");
@@ -252,18 +260,52 @@ mod tests {
         Ok(())
     }
 
+    /// ADR 0071: the cursor's message keeps its author's stripe and
+    /// gets the bar down its rows and a bold name; another author's
+    /// message sits on its own stripe with no bar.
     #[test]
-    fn a_selected_message_fills_each_row_with_the_selection_style() -> anyhow::Result<()> {
+    fn a_selected_message_keeps_its_stripe_and_gets_the_bar() -> anyhow::Result<()> {
         let theme = theme()?;
         let message = Message {
-            author: "user",
+            author: &Author::User,
+            name: "User",
             created: 0,
-            body: "selected",
+            body: "selected\nrows",
             badge: None,
         };
         let lines = message_lines(&theme, &Highlighter::plain(), &message, 0, 24, true);
-        assert!(lines.iter().all(|line| line.style == theme.picker_selected));
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.style.bg == theme.thread_user.bg)
+        );
         assert!(texts(&lines).iter().all(|line| display_width(line) == 24));
+        assert!(
+            texts(&lines).iter().all(|line| line.starts_with("▎")),
+            "{:?}",
+            texts(&lines)
+        );
+        let name = lines[0].spans.iter().find(|s| s.content == "User");
+        assert!(
+            name.is_some_and(|s| s.style.add_modifier.contains(Modifier::BOLD)
+                && s.style.fg == theme.thread_user.fg),
+            "bold in the user's colour"
+        );
+        let agent = Author::agent("coder");
+        let other = Message {
+            author: &agent,
+            name: "coder",
+            created: 0,
+            body: "theirs",
+            badge: None,
+        };
+        let lines = message_lines(&theme, &Highlighter::plain(), &other, 0, 24, false);
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.style.bg == theme.thread_agent.bg)
+        );
+        assert!(texts(&lines).iter().all(|line| line.starts_with(' ')));
         Ok(())
     }
 }

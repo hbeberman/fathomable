@@ -14,7 +14,7 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, Thread, ThreadId};
+use fathomable_core::annotations::{Author, LineRange, Thread, ThreadId};
 use fathomable_core::layout::{Layout, Line};
 
 use crate::app::threads::words::Words;
@@ -188,10 +188,12 @@ pub(crate) enum Row {
         /// The branch of the worktree showing it (ADR 0070).
         worktree: Option<String>,
     },
-    /// `author  age  [badge]`.
+    /// `author  age  [badge]`; `user` when the author is the user, for
+    /// the stripe and the name's colour (ADR 0071).
     Message {
         entry: usize,
         message: usize,
+        user: bool,
         author: String,
         created: u64,
         badge: Option<&'static str>,
@@ -203,6 +205,7 @@ pub(crate) enum Row {
     Body {
         entry: usize,
         message: usize,
+        user: bool,
         line: Line,
         dim: bool,
         selected: bool,
@@ -551,8 +554,12 @@ impl App {
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
+        // Every author as `author_label` names them (ADR 0058, ADR
+        // 0061): the configured name for the user, `name (type)` for an
+        // agent, the comment's the same as a reply's.
+        let user = self.user_name();
         let mut message = |message: usize,
-                           author: &str,
+                           author: &Author,
                            created: u64,
                            body: &str,
                            badge: Option<&'static str>| {
@@ -560,7 +567,8 @@ impl App {
             out.rows.push(Row::Message {
                 entry: index,
                 message,
-                author: author.to_owned(),
+                user: author.is_user(),
+                author: author_label(author, user),
                 created,
                 badge,
                 dim,
@@ -573,28 +581,19 @@ impl App {
                 out.rows.push(Row::Body {
                     entry: index,
                     message,
+                    user: author.is_user(),
                     line: line.clone(),
                     dim,
                     selected: message_selected,
                 });
             }
         };
-        // Every author as `author_label` names them (ADR 0058, ADR
-        // 0061): the configured name for the user, `name (type)` for an
-        // agent, the comment's the same as a reply's.
-        let user = self.user_name();
-        message(
-            0,
-            &author_label(thread.author(), user),
-            thread.created(),
-            thread.comment(),
-            None,
-        );
+        message(0, thread.author(), thread.created(), thread.comment(), None);
         for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
             message(
                 reply_index + 1,
-                &author_label(reply.author(), user),
+                reply.author(),
                 reply.created(),
                 reply.body(),
                 badge,

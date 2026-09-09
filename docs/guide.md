@@ -297,6 +297,17 @@ lines: its stub stands above the first line, its header reads
 `file · open`, and it never moves, detaches, or re-anchors. The lines of the thread the cursor is on
 are tinted in a cool colour (blue in the dark theme, teal in the light
 one), distinct from the tint of other annotated lines (`thread.focus`).
+Each message of an expanded thread sits on a faint stripe of its
+author's kind, blue for you and green for an agent (`thread.user`,
+`thread.agent`; the name on the author row takes the same colour), and
+the thread's rows begin two cells after the gutter, a gutter of the
+thread's own: the thread cursor's message carries a `▎` bar
+(`thread.cursor`) down its left edge there with its name in bold, and
+the thread's header the same bar while the cursor is inside. In the
+review list the bar is the first cell of the same rows, and of a file
+row folded over the cursor's thread. A draft is written on its own
+warm surface (`thread.draft`) and takes your stripe on submit
+([0071](decisions/0071-author-stripes.md)).
 Comment and reply bodies in an expanded thread render as Markdown:
 lists, emphasis, `inline code`, and fenced blocks coloured by their
 language, with a newline kept as a line break as in a GitHub comment;

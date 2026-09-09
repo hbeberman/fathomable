@@ -305,13 +305,15 @@ impl View {
         self.jump_to_row(row);
     }
 
-    /// Scroll just enough to show `row`, the cursor staying where it is:
-    /// for the draft's cursor, which is not the text cursor (ADR 0054).
-    pub(crate) fn reveal_row(&mut self, row: usize) {
+    /// Scroll just enough to show `row` with `below` rows under it on
+    /// screen, the cursor staying where it is: for the draft's cursor,
+    /// which is not the text cursor (ADR 0054), kept above the key bar
+    /// that covers the bottom row (ADR 0067).
+    pub(crate) fn reveal_row(&mut self, row: usize, below: usize) {
         if row < self.scroll {
             self.scroll = row;
-        } else if row >= self.scroll + self.height {
-            self.scroll = row + 1 - self.height;
+        } else if row + below >= self.scroll + self.height {
+            self.scroll = (row + below + 1).saturating_sub(self.height);
         }
         self.scroll = self.scroll.min(self.max_scroll());
     }

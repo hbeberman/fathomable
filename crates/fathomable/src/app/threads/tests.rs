@@ -737,7 +737,8 @@ fn mouse_targets_the_pane_under_the_pointer() -> anyhow::Result<()> {
     assert!(matches!(app.popup(), Some(Popup::Compose(_))));
     let (row, _) = app.draft_cursor_cell().context("the draft's cursor")?;
     let shown = app.view().scroll();
-    assert!(shown > 0 && row < shown + app.text_rows(), "revealed");
+    // Above the key bar on the bottom text row (ADR 0067).
+    assert!(shown > 0 && row + 1 < shown + app.text_rows(), "revealed");
     crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 20, 2));
     assert_eq!(
         app.view().scroll(),
@@ -1410,6 +1411,41 @@ fn ctrl_c_clears_the_draft_and_closes_an_empty_box() -> anyhow::Result<()> {
 }
 
 #[test]
+fn a_reply_from_the_review_list_shows_its_row_above_the_key_bar() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-reply-reveal", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 16);
+    app.start_comment();
+    let long = (1..=30)
+        .map(|n| format!("row {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    type_in(&mut app, &long);
+    app.compose_submit();
+    // `r` on the list's entry opens the file with the thread expanded
+    // and the draft at its end, past the bottom of the screen; the
+    // draft's row is scrolled on, above the key bar that covers the
+    // bottom text row (ADR 0067).
+    app.open_review();
+    app.thread_reply();
+    assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+    assert!(app.text_bar_shown());
+    let (row, _) = app.draft_cursor_cell().context("the draft's cursor")?;
+    let scroll = app.view().scroll();
+    assert!(row >= scroll, "{row} < {scroll}");
+    assert!(
+        row + 1 < scroll + app.text_rows(),
+        "row {row} under the bar: scroll {scroll}, {} rows",
+        app.text_rows()
+    );
+    // Typing keeps it there.
+    type_in(&mut app, "seen");
+    let (row, _) = app.draft_cursor_cell().context("the draft's cursor")?;
+    assert!(row + 1 < app.view().scroll() + app.text_rows());
+    Ok(())
+}
+
+#[test]
 fn a_long_draft_wraps_in_its_block_and_the_view_reveals_its_cursor() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-wrap", testing::README)?;
     let mut app = app(&dir)?;
@@ -1431,7 +1467,11 @@ fn a_long_draft_wraps_in_its_block_and_the_view_reveals_its_cursor() -> anyhow::
     assert_eq!((row, col), (author + 10, MESSAGE_INDENT + width));
     let scroll = app.view().scroll();
     assert!(scroll > 0, "the view scrolled");
-    assert!(row >= scroll && row < scroll + app.text_rows(), "revealed");
+    // Above the key bar on the bottom text row (ADR 0067).
+    assert!(
+        row >= scroll && row + 1 < scroll + app.text_rows(),
+        "revealed"
+    );
     assert_eq!(app.view().cursor_source_line(), Some(1));
     // Up on the only line goes to its start, and the view follows the
     // draft's cursor back up; a click lands on the wrapped cell under

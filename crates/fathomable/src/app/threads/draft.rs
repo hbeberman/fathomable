@@ -422,11 +422,14 @@ impl App {
     }
 
     /// The draft's text changed: its rows are laid out again and the
-    /// view scrolls to show the row its cursor is on.
+    /// view scrolls to show the row its cursor is on, above the key bar
+    /// that covers the bottom text row while the draft is open (ADR
+    /// 0067).
     fn draft_changed(&mut self) {
         self.place_stub_rows();
         if let Some((row, _)) = self.draft_cursor_cell() {
-            self.view_mut().reveal_row(row);
+            let bar = usize::from(self.text_bar_shown());
+            self.view_mut().reveal_row(row, bar);
         }
     }
 

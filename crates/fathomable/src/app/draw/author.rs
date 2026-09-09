@@ -20,6 +20,14 @@ pub(crate) const THREAD_GUTTER: usize = 2;
 /// The glyph of the cursor bar.
 pub(crate) const CURSOR_BAR: &str = "▎";
 
+/// The chevron on an expanded thread's header row, in the thread
+/// gutter's second cell: a click on it folds the thread (ADR 0073).
+pub(crate) const CHEVRON_DOWN: &str = "▾";
+
+/// The chevron on a stub's first row, in the same column as
+/// [`CHEVRON_DOWN`]: a click on the stub expands it (ADR 0073).
+pub(crate) const CHEVRON_RIGHT: &str = "▸";
+
 /// The stripe under every row of a message by `author`: the kind's
 /// background alone, so the text keeps its own colours.
 pub(crate) fn row_style(theme: &Theme, author: &Author) -> Style {

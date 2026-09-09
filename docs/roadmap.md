@@ -348,3 +348,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     the review list and the threads pane list earlier commits' resolved
     threads under `x` with the commit named, where `o` brings one back
     ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
+64. **The chevron.** An expanded thread's header draws a `▾` in the
+    thread's gutter and a stub a `▸` in the same column; a click on
+    either folds or expands the thread and a double-click on the header
+    folds it ([0073](decisions/0073-the-chevron.md)).

@@ -1004,7 +1004,7 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     let after = |row: &str| row.chars().skip(gutter).collect::<String>();
     let header = rows
         .iter()
-        .find(|row| after(row).starts_with("▎ ●"))
+        .find(|row| after(row).starts_with("▎▾ ●"))
         .with_context(|| format!("the expanded header: {rows:?}"))?;
     assert!(header.contains("open"), "{header:?}");
     let follow = rows

@@ -22,7 +22,7 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::author::CURSOR_BAR;
+use crate::app::draw::author::{CHEVRON_DOWN, CURSOR_BAR};
 use crate::app::draw::{Theme, format_age, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::threads::list::{Counts, Entry};
@@ -361,9 +361,10 @@ fn state_words(words: Words) -> Vec<(String, Tone)> {
     left
 }
 
-/// An expanded thread's header row in the text (ADR 0049): the circle,
-/// the placement and state, and who watches it. Its keys are on the
-/// text's key bar (ADR 0067).
+/// An expanded thread's header row in the text (ADR 0049): the cursor
+/// cell, the chevron that folds it (ADR 0073), the circle, the
+/// placement and state, and who watches it. Its keys are on the text's
+/// key bar (ADR 0067).
 pub(crate) fn expanded_header(
     app: &App,
     thread: &fathomable_core::annotations::Thread,
@@ -373,6 +374,7 @@ pub(crate) fn expanded_header(
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
     let mut left = vec![
         cursor_tone(marked),
+        (CHEVRON_DOWN.to_owned(), Tone::Info),
         (format!(" {} ", words.glyph()), Tone::Mark(words.state())),
     ];
     left.extend(state_words(words));

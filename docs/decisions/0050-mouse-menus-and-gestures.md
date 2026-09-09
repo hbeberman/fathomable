@@ -4,7 +4,6 @@ title: Mouse menus and gestures
 description: A right-click opens a context menu of the actions that apply where the pointer is, in the text, the rail, and the review list, each entry showing its key from the binding table; the Space menu and Space ? take clicks; the gutter, double- and triple-click, and Shift-click select; pane-header hints take clicks; and links copy or open from the menu.
 resource: crates/fathomable/src/app/input/menu.rs
 related_resources:
-  - crates/fathomable/src/app/input/mouse.rs
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable/src/app/view.rs
@@ -28,7 +27,10 @@ take clicks, the threads pane's header counts and file rows take
 clicks and menus, and the files pane's menu gains `threads` and
 `review`. Amended 2026-09-05 by [0067](0067-the-texts-key-bar.md): the
 text's key bar takes clicks; the expanded thread's header and the
-draft's author row draw no hints and take none.
+draft's author row draw no hints and take none. Amended 2026-09-09
+by [0073](0073-the-chevron.md): the expanded thread's header draws a
+chevron that folds on a click and folds on a double-click, and a stub
+draws one that expands.
 
 ## Context
 

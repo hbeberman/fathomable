@@ -223,8 +223,10 @@ under the pointer — over the tree it steps one row per tick, showing
 each file it lands on — and a click focuses the pane. A click in the
 tree stays in the tree: it expands a directory or shows a file like the
 wheel does, and only `Enter` moves focus to the view. A click on a stub
-expands its thread. Drag the sidebar's divider or the threads pane's rule
-to resize them.
+expands its thread, and a click on the `▾` in the expanded thread's
+gutter, or a double-click anywhere on its header row, folds it again;
+the stub's `▸` says it opens. Drag the sidebar's divider or the threads
+pane's rule to resize them.
 
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new
@@ -341,7 +343,8 @@ delete, and there is no migration before the first tag
 ([0062](decisions/0062-one-version-no-compatibility.md)).
 
 Every open thread shows a **stub** under the last of its lines: one row
-per message for its newest two, oldest first, each with the author
+per message for its newest two, oldest first, a `▸` on the first row,
+and each with the author
 (the user by `user.name`, or an agent as `name (type)`), the age, and the first line of
 the message, on the author's stripe with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
@@ -362,7 +365,7 @@ out of the file and the tools, and checking that commit out again brings
 it back ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
 
 `c` or `z` on a line a thread covers **expands** its stub in place, the
-view staying still: a header row with the state, placement, and
+view staying still: a header row with a `▾`, the state, placement, and
 watchers, then every message rendered as Markdown. The text's keys sit
 on a **key bar** that replaces the bottom text row while it has
 something to say (a thread under the cursor, a thread in the file, or a
@@ -379,7 +382,8 @@ of its rows folds it. `z` only opens and closes; `c` walks on: when
 several threads cover the line, `c` again folds the expanded one and
 expands the next in line order, wrapping, and after the last leaves none
 expanded. `Z` expands every thread in the file, or folds them all when
-any is expanded. A click on a stub expands it.
+any is expanded. A click on a stub expands it; a click on the header's `▾` or
+a double-click on the header folds it.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its

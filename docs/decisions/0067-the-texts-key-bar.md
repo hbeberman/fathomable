@@ -80,7 +80,8 @@ resolve. This record undoes both, the same day, for one rule.
   - Hints drop from the end when the column is narrow, as every bar's
     do.
 - **The rows give up their keys.** An expanded thread's header row is
-  its words alone. A stub's last row ends with its text. The draft's
+  its words alone (and, since [0073](0073-the-chevron.md), a `▾` in
+  its gutter that folds on a click). A stub's last row ends with its text. The draft's
   author row reads ` user  draft` and nothing more. The review list's
   cursor entry header loses the keys 0066 gave it; the list's bar
   already carries them.

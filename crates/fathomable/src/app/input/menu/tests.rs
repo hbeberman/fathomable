@@ -358,6 +358,71 @@ fn gutter_double_and_triple_clicks_select() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// ADR 0073: a stub draws `▸` and a click on it expands the thread;
+/// the expanded header draws `▾` in the thread's gutter, a click there
+/// folds the thread, and so does a double-click anywhere on the
+/// header, while one click places the cursor. A double-click on a
+/// stub expands it and stops.
+#[test]
+fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result<()> {
+    let dir = fixture("chevron")?;
+    let mut app = app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    app.compose_insert("first");
+    app.compose_submit();
+    let id = app
+        .file_threads()
+        .into_iter()
+        .next()
+        .context("the thread")?;
+    app.fold_thread(&id);
+    let gutter = app.sidebar_width() + draw::gutter_width(app.view());
+    let after = |row: &str| row.chars().skip(gutter).collect::<String>();
+    let top = (0..app.view().layout().lines().len())
+        .find(|&row| app.stub_on_row(row).is_some())
+        .context("the stub's first row")?;
+    let (_, screen_row) = at(&app, top, 0);
+    let rows = testing::screen(&app)?;
+    assert!(
+        rows.iter().any(|row| after(row).starts_with(" ▸ ●")),
+        "the stub draws the chevron: {rows:?}"
+    );
+
+    // A double-click on the stub expands it and stops.
+    let (words, _) = at(&app, top, 12);
+    left(&mut app, words, screen_row);
+    assert!(app.is_expanded(&id), "a click on the stub expands it");
+    left(&mut app, words, screen_row);
+    assert!(
+        app.is_expanded(&id),
+        "the second press is a first press on the header"
+    );
+    let rows = testing::screen(&app)?;
+    assert!(
+        rows.iter().any(|row| after(row).starts_with("▎▾ ●")),
+        "the header draws the chevron after the bar: {rows:?}"
+    );
+
+    // A click on the chevron folds.
+    let (chevron, _) = at(&app, top, 1);
+    left(&mut app, chevron, screen_row);
+    assert!(!app.is_expanded(&id), "a click on the chevron folds");
+
+    // One click on the header's words places the cursor; two fold.
+    left(&mut app, words, screen_row);
+    assert!(app.is_expanded(&id));
+    left(&mut app, words, screen_row);
+    assert!(
+        app.is_expanded(&id),
+        "one click on the header keeps it open"
+    );
+    assert_eq!(app.view().mode(), Mode::Normal, "and selects nothing");
+    left(&mut app, words, screen_row);
+    assert!(!app.is_expanded(&id), "a double-click on the header folds");
+    Ok(())
+}
+
 #[test]
 fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
     let dir = fixture("tree")?;

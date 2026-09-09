@@ -23,7 +23,7 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
-use crate::app::draw::author::{THREAD_GUTTER, cursor_cell, name_style, row_style};
+use crate::app::draw::author::{CHEVRON_RIGHT, THREAD_GUTTER, cursor_cell, name_style, row_style};
 use crate::app::draw::header::{
     Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
     review_header,
@@ -965,9 +965,10 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
 }
 
 /// Row `index` of a collapsed stub (ADR 0049): the gutter's bracket if
-/// an outer thread spans the row, then the thread's circle on the
-/// newest message's row only (ADR 0066) and a blank in its cell on the
-/// older, the author, the age, and the first line of the message, on
+/// an outer thread spans the row, the chevron on the first row (ADR
+/// 0073), then the thread's circle on the newest message's row only
+/// (ADR 0066) and a blank in its cell on the older, the author, the
+/// age, and the first line of the message, on
 /// the author's stripe over the `thread.inline` background, the name in
 /// the author's colour as a message of the expanded thread reads (ADR
 /// 0071) — or behind a `▎` in the state colour when the theme sets no
@@ -1028,9 +1029,12 @@ fn stub_line<'a>(
     let lead = format!(" {} ", author_label(author, app.user_name()));
     // The age in the info colour, as every other row gives it (ADR 0059).
     let age = format!("{}  ", format_age_short(created, now));
+    // The chevron sits in the same column as the expanded header's
+    // (ADR 0073): the edge cell, then the chevron and a space.
+    let chevron = if index == 0 { CHEVRON_RIGHT } else { " " };
     let free = width
         .saturating_sub(gutter)
-        .saturating_sub(1)
+        .saturating_sub(1 + THREAD_GUTTER)
         .saturating_sub(1 + display_width(&lead) + display_width(&age));
     let first = body.lines().next().unwrap_or("");
     let text = fit_ellipsis(first, free);
@@ -1040,6 +1044,8 @@ fn stub_line<'a>(
         Span::styled(" ", surface),
         Span::styled(" ", surface),
         edge,
+        Span::styled(chevron, theme.info.patch(surface)),
+        Span::styled(" ", surface),
         Span::styled(glyph, mark_style(theme, kind).patch(surface)),
         Span::styled(lead, name_style(theme, author, marked).patch(surface)),
         Span::styled(age, theme.info.patch(surface)),

@@ -118,7 +118,9 @@ folded file row marked as an entry header is.
   message indent of [0037](0037-markdown-in-threads.md) grows from
   three to four and the text wraps two cells narrower. The draft's
   rows and its terminal cursor move with it. Stubs, which are one row
-  and carry the state glyph, are unchanged.
+  and carry the state glyph, are unchanged. (Amended 2026-09-09 by
+  [0073](0073-the-chevron.md): the gutter's second cell holds the
+  header's `▾`, and a stub gains the same two cells for its `▸`.)
 - The review list has no global gutter, so its rows are as they were:
   the bar in the first cell, the author three cells in, the body five.
 

@@ -123,7 +123,9 @@ result.
   `:N`, `v`/`V`/`x` selection, `y`, `c` on a selection, and the gutter
   address source rows only; a collapsed stub is skipped as the detached
   row is. A click on a stub sets the thread cursor to it and expands
-  it; the wheel scrolls through it.
+  it; the wheel scrolls through it. (Amended 2026-09-09 by
+  [0073](0073-the-chevron.md): the stub's first row draws a `▸`, the
+  expanded header a `▾` that folds on a click or a double-click.)
 - **Highlight.** When the text cursor is on a row the thread covers (or
   on its detached row), the stub's text takes `thread.focus`'s
   foreground and the thread's own rows take the focus tint as today.

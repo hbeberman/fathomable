@@ -215,8 +215,12 @@ impl Buffer {
     }
 
     /// The buffer wrapped at `width` display columns: at least one row per
-    /// line, more when a line is wider than the box. A width of zero
-    /// counts as one column so every grapheme still lands somewhere.
+    /// line, more when a line is wider than the box. A line wraps at
+    /// words: the word that would cross the edge moves whole to the next
+    /// row, and the whitespace before it hangs off the end of the row it
+    /// ends. A word wider than the box is split between graphemes. A
+    /// width of zero counts as one column so every grapheme still lands
+    /// somewhere.
     #[must_use]
     pub fn rows(&self, width: usize) -> Vec<Row> {
         let width = width.max(1);
@@ -225,18 +229,37 @@ impl Buffer {
         for (line, text) in self.lines().enumerate() {
             let mut start = 0;
             let mut used = 0;
+            // Where the row's last word began, when a word came before
+            // it on the row: the place to break at.
+            let mut word = None;
+            let mut has_word = false;
+            let mut after_space = false;
             for (offset, grapheme) in text.grapheme_indices(true) {
                 let cells = grapheme.width().max(1);
-                if used + cells > width && offset > start {
-                    rows.push(Row {
-                        line,
-                        start: line_start + start,
-                        end: line_start + offset,
-                    });
-                    start = offset;
-                    used = 0;
+                if grapheme.chars().all(char::is_whitespace) {
+                    used += cells;
+                    after_space = true;
+                    continue;
+                }
+                if after_space && has_word {
+                    word = Some(offset);
+                }
+                after_space = false;
+                if used + cells > width {
+                    let at = word.unwrap_or(offset);
+                    if at > start {
+                        rows.push(Row {
+                            line,
+                            start: line_start + start,
+                            end: line_start + at,
+                        });
+                        used = text[at..offset].width();
+                        start = at;
+                        word = None;
+                    }
                 }
                 used += cells;
+                has_word = true;
             }
             rows.push(Row {
                 line,
@@ -254,7 +277,9 @@ impl Buffer {
         &self.text[row.start..row.end]
     }
 
-    /// The wrapped row and display column the cursor is on at `width`.
+    /// The wrapped row and display column the cursor is on at `width`;
+    /// the column stops at the box's edge when the cursor is in the
+    /// whitespace hanging past it.
     #[must_use]
     pub fn cursor_cell(&self, width: usize) -> Cell {
         let rows = self.rows(width);
@@ -267,7 +292,9 @@ impl Buffer {
             start: 0,
             end: 0,
         });
-        let column = self.text[row.start..self.at.max(row.start)].width();
+        let column = self.text[row.start..self.at.max(row.start)]
+            .width()
+            .min(width.max(1));
         Cell { row: index, column }
     }
 

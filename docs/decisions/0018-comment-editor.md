@@ -53,9 +53,11 @@ These choices were settled in a question round on 2026-08-27.
 - The buffer also owns its own layout: `rows(width)` wraps each line at a
   display width by grapheme (comments are prose and a box is narrow, so
   wrapping beats horizontal scrolling; word-aware wrapping is a later
-  refinement), `cursor_cell(width)` says which wrapped row and column the
-  cursor is on, and `place_cursor(width, row, column)` is the inverse for
-  a mouse click. Keeping the wrap in core means the drawn text, the
+  refinement, made on 2026-09-09: the word crossing the edge moves down
+  whole, the whitespace before it hangs off the row it ends, and only a
+  word wider than the box splits between graphemes), `cursor_cell(width)`
+  says which wrapped row and column the cursor is on, and
+  `place_cursor(width, row, column)` is the inverse for a mouse click. Keeping the wrap in core means the drawn text, the
   terminal cursor, and the click target come from one function and are
   tested without a terminal.
 

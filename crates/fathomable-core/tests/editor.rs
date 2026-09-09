@@ -153,3 +153,46 @@ fn wrapping_rows_and_the_cursor_cell_agree() {
     assert_eq!(narrow.rows(1).len(), 1);
     assert_eq!(Buffer::new().rows(5).len(), 1);
 }
+
+#[test]
+fn wrapping_moves_the_word_at_the_edge_down_whole() {
+    let texts = |buffer: &Buffer, width| -> Vec<String> {
+        buffer
+            .rows(width)
+            .iter()
+            .map(|row| buffer.row_text(*row).to_owned())
+            .collect()
+    };
+    // The word crossing the edge moves down; the space it followed stays
+    // at the end of the row above.
+    let buffer = Buffer::from_text("please tighten this");
+    assert_eq!(texts(&buffer, 10), ["please ", "tighten ", "this"]);
+    assert_eq!(texts(&buffer, 14), ["please tighten ", "this"]);
+    // A word wider than the box is split between graphemes, and the
+    // words after it wrap on.
+    let long = Buffer::from_text("a supercalifragilistic b");
+    assert_eq!(texts(&long, 8), ["a ", "supercal", "ifragili", "stic b"]);
+    // A row that is one word, wider than the box, splits rather than
+    // leaving the row empty.
+    assert_eq!(
+        texts(&Buffer::from_text("abcdefgh"), 3),
+        ["abc", "def", "gh"]
+    );
+    // Runs of spaces hang past the edge and never start a row of their
+    // own; the cursor inside them draws at the edge.
+    let mut spaces = Buffer::from_text("ab      cd");
+    assert_eq!(texts(&spaces, 4), ["ab      ", "cd"]);
+    spaces.set_cursor(Cursor { line: 0, column: 6 });
+    assert_eq!(spaces.cursor_cell(4), Cell { row: 0, column: 4 });
+    // A leading indent stays with its word.
+    assert_eq!(
+        texts(&Buffer::from_text("   abcdef"), 4),
+        ["   a", "bcde", "f"]
+    );
+    // The typed text's cursor follows the word that moved down.
+    let mut typing = Buffer::from_text("hello wor");
+    assert_eq!(typing.cursor_cell(9), Cell { row: 0, column: 9 });
+    typing.insert("l");
+    assert_eq!(texts(&typing, 9), ["hello ", "worl"]);
+    assert_eq!(typing.cursor_cell(9), Cell { row: 1, column: 4 });
+}

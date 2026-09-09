@@ -29,7 +29,7 @@ use crate::app::draw::header::{
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
 use crate::app::input::bindings::Action;
-use crate::app::threads::list::{Row, Rows};
+use crate::app::threads::list::{BODY_INDENT, Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
 use crate::app::threads::words::Words;
 use crate::app::threads::{Compose, Mark, ThreadState, author_label};
@@ -1732,20 +1732,27 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             }
             list_selection_line(theme, spans, width, *selected)
         }
+        // A body row's Markdown faces as the file view draws them (ADR
+        // 0037); a resolved thread's whole body dimmed.
         Row::Body {
-            text,
+            line,
             dim,
             selected,
             ..
-        } => list_selection_line(
-            theme,
-            vec![Span::styled(
-                text.clone(),
-                if *dim { theme.info } else { theme.text },
-            )],
-            width,
-            *selected,
-        ),
+        } => {
+            let mut spans = vec![Span::raw(" ".repeat(BODY_INDENT))];
+            spans.extend(line.spans().iter().map(|span| {
+                Span::styled(
+                    span.text().to_owned(),
+                    if *dim {
+                        theme.info
+                    } else {
+                        face_style(theme, span.style())
+                    },
+                )
+            }));
+            list_selection_line(theme, spans, width, *selected)
+        }
         Row::Blank => Line::from(""),
     }
 }
@@ -1831,7 +1838,8 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
-    use fathomable_core::layout::display_width;
+    use fathomable_core::highlight::Highlighter;
+    use fathomable_core::layout::{Layout, display_width};
 
     use crate::app::threads::list::Row;
 
@@ -1841,24 +1849,24 @@ mod tests {
     fn selected_review_messages_fill_the_row() -> anyhow::Result<()> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
-        let rows = [
-            Row::Message {
-                entry: 0,
-                message: 1,
-                author: "user".to_owned(),
-                created: 0,
-                badge: None,
-                dim: false,
-                selected: true,
-            },
-            Row::Body {
-                entry: 0,
-                message: 1,
-                text: "     revised answer".to_owned(),
-                dim: false,
-                selected: true,
-            },
-        ];
+        let mut rows = vec![Row::Message {
+            entry: 0,
+            message: 1,
+            author: "user".to_owned(),
+            created: 0,
+            badge: None,
+            dim: false,
+            selected: true,
+        }];
+        let body = Layout::render_message("revised answer", 25, &Highlighter::plain());
+        rows.extend(body.lines().iter().map(|line| Row::Body {
+            entry: 0,
+            message: 1,
+            line: line.clone(),
+            dim: false,
+            selected: true,
+        }));
+        assert_eq!(rows.len(), 2);
         for row in rows {
             let line = list_row(&theme, &row, 0, 30);
             let width: usize = line

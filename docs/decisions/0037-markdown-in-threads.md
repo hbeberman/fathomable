@@ -80,3 +80,8 @@ Settled in a question round on 2026-08-28:
 
 The unwrapped code-block consequence above was superseded by
 [0044](0044-wrap-all-lines.md): code blocks wrap in both files and messages.
+
+The review list of [0025](0025-thread-list.md) had gone on wrapping
+bodies as plain text; since 2026-09-09 its body rows come from the same
+`Layout::render_message`, so a thread reads the same there as expanded
+in its file.

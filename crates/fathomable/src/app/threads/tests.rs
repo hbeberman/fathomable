@@ -21,6 +21,7 @@ use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::Row;
 use crate::app::threads::stubs::Subject;
 use crate::app::{App, Popup};
+use fathomable_core::layout::{Face, Line};
 
 fn type_in(app: &mut App, text: &str) {
     for ch in text.chars() {
@@ -914,6 +915,38 @@ fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn the_review_list_renders_bodies_as_markdown() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-list-markdown", testing::README)?;
+    let mut app = app(&dir)?;
+    app.start_comment();
+    type_in(&mut app, "Two **points** and `code`");
+    app.compose_submit();
+    app.open_review();
+    let rows = app.review_rows(60);
+    let bodies: Vec<&Line> = rows
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Body { line, .. } => Some(line),
+            _ => None,
+        })
+        .collect();
+    // The markers are gone as in the expanded thread (ADR 0037): the
+    // asterisks and backticks are not drawn, and the code span keeps
+    // its face.
+    assert_eq!(bodies.len(), 1, "{bodies:?}");
+    assert_eq!(bodies[0].text(), "Two points and code");
+    assert!(
+        bodies[0]
+            .spans()
+            .iter()
+            .any(|span| span.text() == "code" && span.style().face == Face::Code),
+        "{bodies:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-list", testing::README)?;
     let mut app = app(&dir)?;
@@ -942,7 +975,7 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
     assert!(
         rows.rows
             .iter()
-            .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "top"))
+            .any(|row| matches!(row, Row::Body { line, .. } if line.text() == "top"))
     );
     app.review_step(1);
     app.thread_open_in_file();
@@ -981,7 +1014,7 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
         app.review_rows(60)
             .rows
             .iter()
-            .any(|row| matches!(row, Row::Body { text, .. } if text.trim() == "still here"))
+            .any(|row| matches!(row, Row::Body { line, .. } if line.text() == "still here"))
     );
     // A file opened by any route takes the column back.
     app.open(Path::new("README.md"));

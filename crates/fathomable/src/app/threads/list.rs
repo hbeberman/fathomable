@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{LineRange, Thread, ThreadId};
-use fathomable_core::layout::wrap_text;
+use fathomable_core::layout::{Layout, Line};
 
 use crate::app::threads::ThreadState;
 use crate::app::threads::words::Words;
@@ -24,9 +24,9 @@ use crate::app::{App, Focus};
 /// Rows kept visible above and below the selected message.
 const SCROLLOFF: usize = 2;
 /// Cells a message body is indented from the column edge: two deeper than
-/// its author row. Body rows carry the indent in their text, so the UI
-/// draws them verbatim and the wrap width already accounts for it.
-const MESSAGE_INDENT: usize = 5;
+/// its author row. The UI draws the indent before each body row; the
+/// wrap width already accounts for it.
+pub(crate) const BODY_INDENT: usize = 5;
 
 /// What the review shows (ADR 0049), shared by the review list and the
 /// sidebar's threads pane.
@@ -198,11 +198,12 @@ pub(crate) enum Row {
         dim: bool,
         selected: bool,
     },
-    /// One wrapped line of a comment or reply, already indented.
+    /// One row of a comment or reply rendered as Markdown (ADR 0037),
+    /// wrapped to the column less [`BODY_INDENT`].
     Body {
         entry: usize,
         message: usize,
-        text: String,
+        line: Line,
         dim: bool,
         selected: bool,
     },
@@ -463,7 +464,7 @@ impl App {
     /// between entries; a folded file is its row alone.
     pub(crate) fn review_rows(&self, width: usize) -> Rows {
         let mut out = Rows::default();
-        let body_width = width.saturating_sub(MESSAGE_INDENT).max(1);
+        let body_width = width.saturating_sub(BODY_INDENT).max(1);
         let cursor = self.thread_cursor();
         let entries = self.review_entries(self.review.file_only);
         let grouped = !self.review.file_only;
@@ -565,16 +566,17 @@ impl App {
                 dim,
                 selected: message_selected,
             });
-            for paragraph in body.lines() {
-                for line in wrap_text(paragraph, body_width) {
-                    out.rows.push(Row::Body {
-                        entry: index,
-                        message,
-                        text: format!("{}{line}", " ".repeat(MESSAGE_INDENT)),
-                        dim,
-                        selected: message_selected,
-                    });
-                }
+            // The body as the expanded thread in the file draws it (ADR
+            // 0037): Markdown, a newline kept as a line break, fences
+            // coloured by the app's highlighter.
+            for line in Layout::render_message(body, body_width, self.highlighter()).lines() {
+                out.rows.push(Row::Body {
+                    entry: index,
+                    message,
+                    line: line.clone(),
+                    dim,
+                    selected: message_selected,
+                });
             }
         };
         // The comment's author as a reply's is shown (ADR 0061).

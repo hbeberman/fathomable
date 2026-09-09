@@ -41,7 +41,10 @@ Settled in a question round on 2026-08-28. The choices:
   accepts for uncommitted lines: the work is here. Resolved threads
   keep their commit, so a finished discussion does not travel; a
   detached thread stays hidden, which keeps the branch-switch case of
-  0024 intact. Following every open thread regardless of its lines was
+  0024 intact. (Amended 2026-09-09 by
+  [0072](0072-a-resolved-thread-stays-at-its-commit.md): resolving
+  fixes the thread to the `HEAD` of that moment, and a resolved thread
+  shows only while that commit is `HEAD`.) Following every open thread regardless of its lines was
   rejected because a branch switch would drag foreign threads along.
 - *When?* On every `HEAD` change, in the viewer and on a headless
   `--mcp` read, so `annotations_list` is right with no viewer running,

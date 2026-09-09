@@ -69,15 +69,17 @@ pub(crate) struct PaneEntry {
     current: bool,
     /// The thread cursor's thread.
     selected: bool,
-    /// The branch of the worktree showing it (ADR 0070).
-    worktree: Option<String>,
+    /// The branch of the worktree showing it (ADR 0070), or the commit
+    /// a past thread was resolved at (ADR 0072).
+    note: Option<String>,
 }
 
 impl PaneEntry {
-    /// The branch after the author when another worktree shows the
-    /// thread (ADR 0070).
-    pub(crate) fn worktree(&self) -> Option<&str> {
-        self.worktree.as_deref()
+    /// After the author: the branch when another worktree shows the
+    /// thread (ADR 0070), the commit when it is resolved at an earlier
+    /// one of this branch (ADR 0072).
+    pub(crate) fn note(&self) -> Option<&str> {
+        self.note.as_deref()
     }
 
     #[cfg(test)]
@@ -265,7 +267,7 @@ impl App {
                             (reply.author(), reply.body())
                         });
                     out.push(PaneRow::Thread(PaneEntry {
-                        worktree: entry.worktree().map(str::to_owned),
+                        note: entry.note().map(str::to_owned),
                         id: entry.id().clone(),
                         path: path.clone(),
                         range: entry.range(),

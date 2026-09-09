@@ -9,7 +9,7 @@
 //! or a linked one made by `git worktree add`. [`adopt`] moves a state
 //! directory keyed by a root under the old rule to its common-dir key,
 //! once. The union reach over worktrees lives on
-//! [`Reach`](crate::annotations::Reach).
+//! [`Reach`](crate::reach::Reach).
 
 use std::fs;
 use std::io;

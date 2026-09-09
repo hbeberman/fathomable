@@ -171,7 +171,7 @@ mod tests {
         assert_eq!(detached.placement(), Some("detached"));
         assert!(detached.urgency() > proposed.urgency());
 
-        store.resolve(&id, 3)?;
+        store.resolve(&id, None, 3)?;
         let resolved = words(&store, anchored)?;
         assert_eq!(
             (resolved.glyph(), resolved.state()),

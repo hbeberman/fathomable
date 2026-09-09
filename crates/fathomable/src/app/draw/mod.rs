@@ -1727,18 +1727,11 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             words,
             updated,
             selected,
-            worktree,
+            note,
             ..
         } => {
-            let line = entry_header(
-                *range,
-                *words,
-                *updated,
-                now,
-                worktree.as_deref(),
-                *selected,
-            )
-            .line(theme, width);
+            let line = entry_header(*range, *words, *updated, now, note.as_deref(), *selected)
+                .line(theme, width);
             if *selected {
                 line.patch_style(Modifier::BOLD)
             } else {

@@ -342,3 +342,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     selected surface; the expanded thread has a two-cell gutter of
     its own in the file; a draft is written on a warm surface
     ([0071](decisions/0071-author-stripes.md)).
+63. **A resolved thread stays at its commit.** Resolving fixes a thread
+    to the commit that is `HEAD`, and a resolved thread shows in the
+    file, the tools, and the hooks only while that commit is `HEAD`;
+    the review list and the threads pane list earlier commits' resolved
+    threads under `x` with the commit named, where `o` brings one back
+    ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).

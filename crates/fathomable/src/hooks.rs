@@ -43,9 +43,10 @@ use std::process::ExitCode;
 use clap::ValueEnum;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Blob, Register, Subscriber};
-use fathomable_core::annotations::{Reach, Store, Thread};
+use fathomable_core::annotations::{Store, Thread};
 use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config, UserConfig};
+use fathomable_core::reach::Reach;
 use fathomable_core::session::{Marker, Record};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
@@ -762,14 +763,16 @@ fn scoped_threads(dirs: &XdgDirs, bound: &Bound) -> Result<Vec<Thread>, String> 
     let store = Store::open(dirs.threads_file(&bound.key)).map_err(|e| e.to_string())?;
     let mut scope = Workspace::discover(&bound.root)
         .ok()
-        .and_then(|w| w.reachable(store.commits()))
-        .map_or_else(Reach::everything, Reach::reachable);
+        .and_then(|w| Some((w.head_commit()?, w.reachable(store.commits())?)))
+        .map_or_else(Reach::everything, |(head, reachable)| {
+            Reach::at(head, reachable)
+        });
     for other in bound.roots.iter().filter(|r| **r != bound.root) {
-        if let Some(reachable) = Workspace::discover(other)
+        if let Some((head, reachable)) = Workspace::discover(other)
             .ok()
-            .and_then(|w| w.reachable(store.commits()))
+            .and_then(|w| Some((w.head_commit()?, w.reachable(store.commits())?)))
         {
-            scope = scope.with_worktree(other.clone(), reachable);
+            scope = scope.with_worktree(other.clone(), head, reachable);
         }
     }
     Ok(store

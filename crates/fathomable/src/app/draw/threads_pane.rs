@@ -158,11 +158,12 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
     } else {
         fit_ellipsis(short, free).trim_end().to_owned()
     };
-    // The branch of the worktree showing it, dim, after the author
-    // (ADR 0070); dropped before the author is cut.
+    // The branch of the worktree showing it (ADR 0070), or the commit a
+    // past thread was resolved at (ADR 0072), dim, after the author;
+    // dropped before the author is cut.
     let branch = entry
-        .worktree()
-        .map(|branch| format!(" {branch}"))
+        .note()
+        .map(|note| format!(" {note}"))
         .filter(|branch| {
             lead + display_width(&author) + display_width(branch) + display_width(&tail) < inner
         })

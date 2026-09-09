@@ -497,6 +497,15 @@ impl App {
     /// Move the cursor to the first line of `id`, when the document has it.
     pub(super) fn goto_thread(&mut self, id: &ThreadId) {
         let Some(mark) = self.marks().iter().find(|mark| mark.id() == id) else {
+            // A past thread has no mark: its stored lines are the
+            // nearest thing to it (ADR 0072).
+            if let Some(range) = self
+                .thread(id)
+                .filter(|thread| self.reach.past(thread))
+                .and_then(fathomable_core::annotations::Thread::range)
+            {
+                self.view_mut().goto_source_line(range.start());
+            }
             return;
         };
         match mark.placement() {
@@ -523,15 +532,16 @@ impl App {
         }
     }
 
-    /// Resolve `id` when open, reopen it otherwise; every loaded
-    /// document's marks follow.
+    /// Resolve `id` when open, fixing it to `HEAD` (ADR 0072), reopen it
+    /// otherwise; every loaded document's marks follow.
     pub(super) fn toggle_resolved(&mut self, id: &ThreadId) {
+        let head = self.workspace.head_commit();
         let Some(store) = self.store_mut() else {
             return;
         };
         let open = store.thread(id).is_some_and(|t| t.status() == Status::Open);
         let result = if open {
-            store.resolve(id, now())
+            store.resolve(id, head.as_deref(), now())
         } else {
             store.reopen(id, now())
         };

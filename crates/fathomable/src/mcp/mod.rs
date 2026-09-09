@@ -31,10 +31,11 @@ use std::sync::{Arc, Mutex};
 use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::Register;
-use fathomable_core::annotations::{Author, Reach, Store};
+use fathomable_core::annotations::{Author, Store};
 use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
 use fathomable_core::identity;
+use fathomable_core::reach::Reach;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
 use fathomable_core::vocabulary as vocab;
@@ -390,22 +391,23 @@ fn bind(targets: &[Target], cwd: &Path) -> Option<Target> {
         .map(|s| s.at(workspace.root()))
 }
 
-/// The commits reachable from `root`'s `HEAD` among `commits`, with
-/// stranded open threads followed to `HEAD` first (ADR 0035); `None`
-/// outside git or before the first commit.
-fn reach_at(store: &mut Store, root: &Path) -> Option<std::collections::HashSet<String>> {
+/// The `HEAD` of `root` and the commits it reaches among the store's,
+/// with stranded open threads followed to `HEAD` first (ADR 0035);
+/// `None` outside git or before the first commit.
+fn reach_at(store: &mut Store, root: &Path) -> Option<(String, std::collections::HashSet<String>)> {
     let workspace = Workspace::discover(root)
         .inspect_err(|error| {
             tracing::warn!(%error, root = %root.display(), "cannot open the worktree; threads unscoped");
         })
         .ok()?;
+    let head = workspace.head_commit()?;
     let mut reachable = workspace.reachable(store.commits())?;
     let moved = reach::follow_head(store, &workspace, &reachable);
     if moved > 0 {
         tracing::info!(moved, "threads rescoped headlessly");
-        reachable.extend(workspace.head_commit());
+        reachable.insert(head.clone());
     }
-    Some(reachable)
+    Some((head, reachable))
 }
 
 /// The store of `target`'s workspace with its threads re-anchored to
@@ -428,14 +430,14 @@ fn headless_store(dirs: &XdgDirs, target: &Target) -> Result<(Store, Reach), Str
         Err(error) => tracing::warn!(%error, "cannot open snapshots; reporting stored ranges"),
     }
     let scope = match reach_at(&mut store, root) {
-        Some(reachable) => {
-            let mut scope = Reach::reachable(reachable);
+        Some((head, reachable)) => {
+            let mut scope = Reach::at(head, reachable);
             for other in target.roots.iter().filter(|r| r.as_path() != root) {
-                if let Some(reachable) = Workspace::discover(other)
+                if let Some((head, reachable)) = Workspace::discover(other)
                     .ok()
-                    .and_then(|w| w.reachable(store.commits()))
+                    .and_then(|w| Some((w.head_commit()?, w.reachable(store.commits())?)))
                 {
-                    scope = scope.with_worktree(other.clone(), reachable);
+                    scope = scope.with_worktree(other.clone(), head, reachable);
                 }
             }
             scope

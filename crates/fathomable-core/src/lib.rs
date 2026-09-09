@@ -23,6 +23,7 @@ pub mod identity;
 pub mod layout;
 pub mod link;
 pub mod picker;
+pub mod reach;
 pub mod reanchor;
 pub mod seen;
 pub mod session;

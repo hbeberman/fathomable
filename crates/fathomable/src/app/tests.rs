@@ -583,7 +583,7 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
     let kept = store.annotate(at(1, "kept"), text, 1)?;
     let gone = store.annotate(at(3, "lines gone"), text, 2)?;
     let done = store.annotate(at(1, "resolved"), text, 3)?;
-    store.resolve(&done, 4)?;
+    store.resolve(&done, Some(&first), 4)?;
 
     let mut app = app_with(
         &dir,
@@ -621,6 +621,112 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
         again.thread(&done).and_then(Thread::commit),
         Some(first.as_str())
     );
+    Ok(())
+}
+
+/// Resolving fixes a thread to `HEAD`, where it still shows; the next
+/// commit takes it out of the marks and the thread list, the review
+/// lists it under `x` naming its commit, `r` is refused there, `Enter`
+/// lands on its stored lines, and `o` brings it back (ADR 0072).
+#[test]
+fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+    use fathomable_core::session::{Request, Response};
+
+    let dir = fixture("past")?;
+    git::init(&dir.0)?;
+    let text = "# Readme\n\nhello\n";
+    git::commit_and_stage(&dir.0, &[("README.md", text)])?;
+    let workspace = Workspace::discover(&dir.0)?;
+    let first = workspace
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    let store_path = dir.0.join(".state/threads.jsonl");
+    let mut store = Store::open(&store_path)?;
+    let old = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "older",
+        )
+        .at_commit(Some(first.clone())),
+        text,
+        1,
+    )?;
+    // A second commit: the thread's commit is now an ancestor.
+    git::commit_and_stage(
+        &dir.0,
+        &[("README.md", text), ("docs/guide.md", "# Guide\n\nmore\n")],
+    )?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    assert_ne!(first, second);
+
+    let mut app = app_with(
+        &dir,
+        Options {
+            store: Some(Store::open(&store_path)?),
+            ..Options::for_test(dir.0.clone())
+        },
+    )?;
+    app.open(Path::new("README.md"));
+    assert_eq!(app.marks().len(), 1);
+
+    // `o` at the second commit: the thread moves there and still shows.
+    app.set_thread_cursor(old.clone());
+    app.thread_toggle_resolved();
+    assert_eq!(app.message(), Some("resolved"));
+    assert_eq!(app.marks().len(), 1, "resolved at HEAD still shows");
+    assert_eq!(
+        Store::open(&store_path)?
+            .thread(&old)
+            .and_then(Thread::commit),
+        Some(second.as_str())
+    );
+
+    // A third commit: the resolved thread is past.
+    git::commit_and_stage(
+        &dir.0,
+        &[("README.md", text), ("docs/notes.md", "# Notes\n\nmore\n")],
+    )?;
+    app.on_changes(vec![dir.0.join(".git/HEAD")]);
+    assert!(app.marks().is_empty(), "gone from the file");
+    let Response::Threads(listed) = app.handle_request(Request::ThreadsList {
+        since: None,
+        path: None,
+    }) else {
+        anyhow::bail!("expected threads");
+    };
+    assert!(listed.is_empty(), "gone from the tools");
+    assert!(app.review_entries(false).is_empty(), "hidden until x");
+    app.review_toggle_resolved();
+    let entries = app.review_entries(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].commit(), Some(&second[..7]));
+    assert_eq!(entries[0].range(), Some(LineRange::new(3, 3)));
+    assert_eq!(app.review_counts(false).resolved, 1);
+
+    // In the list: `r` is refused, `Enter` lands on the stored lines,
+    // `o` reopens it and it is back in the file.
+    app.open_review();
+    app.set_thread_cursor(old.clone());
+    app.thread_reply();
+    assert!(app.draft().is_none());
+    assert_eq!(
+        app.message(),
+        Some(format!("resolved at {}; o reopens it", &second[..7]).as_str())
+    );
+    app.thread_open_in_file();
+    assert!(!app.review_list().is_open());
+    assert_eq!(app.view().cursor_source_line(), Some(3));
+    app.open_review();
+    app.set_thread_cursor(old.clone());
+    app.thread_toggle_resolved();
+    assert_eq!(app.message(), Some("reopened"));
+    assert_eq!(app.marks().len(), 1, "open again, on the work");
+    assert_eq!(app.review_entries(false)[0].commit(), None);
     Ok(())
 }
 

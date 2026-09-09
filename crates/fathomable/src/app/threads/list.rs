@@ -125,6 +125,14 @@ pub(crate) struct Entry {
     /// The branch of the worktree that shows the thread when the active
     /// one does not (ADR 0070).
     worktree: Option<String>,
+    /// The commit a past thread was resolved at, short, when no
+    /// checkout shows it (ADR 0072).
+    commit: Option<String>,
+}
+
+/// A commit as an entry names it: its first seven hex digits.
+pub(crate) fn short_commit(commit: &str) -> String {
+    commit.chars().take(7).collect()
 }
 
 impl Entry {
@@ -132,6 +140,18 @@ impl Entry {
     /// (ADR 0070).
     pub(crate) fn worktree(&self) -> Option<&str> {
         self.worktree.as_deref()
+    }
+
+    /// The commit on the entry when the thread is resolved at an
+    /// earlier commit of this branch (ADR 0072).
+    pub(crate) fn commit(&self) -> Option<&str> {
+        self.commit.as_deref()
+    }
+
+    /// What follows the state words: the branch of the worktree
+    /// showing the thread, or the commit a past one was resolved at.
+    pub(crate) fn note(&self) -> Option<&str> {
+        self.worktree().or_else(|| self.commit())
     }
 
     pub(crate) fn id(&self) -> &ThreadId {
@@ -185,8 +205,9 @@ pub(crate) enum Row {
         updated: u64,
         selected: bool,
         dim: bool,
-        /// The branch of the worktree showing it (ADR 0070).
-        worktree: Option<String>,
+        /// The branch of the worktree showing it (ADR 0070), or the
+        /// commit a past thread was resolved at (ADR 0072).
+        note: Option<String>,
     },
     /// `author  age  [badge]`; `user` when the author is the user, for
     /// the stripe and the name's colour (ADR 0071).
@@ -370,9 +391,9 @@ impl App {
     }
 
     /// The threads the review lists, in its order (ADR 0049, ADR 0066):
-    /// resolved ones only when asked for, narrowed to the current file
-    /// when `file_only`; files in the files pane's order, threads by
-    /// line.
+    /// resolved ones only when asked for, the past ones among them with
+    /// their commit (ADR 0072), narrowed to the current file when
+    /// `file_only`; files in the files pane's order, threads by line.
     pub(crate) fn review_entries(&self, file_only: bool) -> Vec<Entry> {
         self.review_entries_showing(file_only, self.review.resolved)
     }
@@ -387,20 +408,25 @@ impl App {
         let mut entries: Vec<Entry> = store
             .threads()
             .iter()
-            .filter(|thread| self.reach.includes(thread))
+            .filter(|thread| self.reach.includes(thread) || (resolved && self.reach.past(thread)))
             .filter(|thread| !file_only || thread.path() == current)
             .filter_map(|thread| {
                 let (range, words) = self.placement_of(thread);
                 if !resolved && !is_open(words.state()) {
                     return None;
                 }
+                let worktree = self.worktree_of(thread.id());
+                let commit = (worktree.is_none() && self.reach.past(thread))
+                    .then(|| thread.commit().map(short_commit))
+                    .flatten();
                 Some(Entry {
                     id: thread.id().clone(),
                     path: thread.path().to_path_buf(),
                     range,
                     words,
                     updated: thread.updated(),
-                    worktree: self.worktree_of(thread.id()),
+                    worktree,
+                    commit,
                 })
             })
             .collect();
@@ -550,7 +576,7 @@ impl App {
             updated: thread.updated(),
             selected,
             dim,
-            worktree: entry.worktree.clone(),
+            note: entry.note().map(str::to_owned),
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));

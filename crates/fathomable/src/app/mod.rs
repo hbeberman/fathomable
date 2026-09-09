@@ -45,7 +45,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::threads::list::ReviewList;
-use fathomable_core::annotations::{self, Reach, Store, ThreadId};
+use fathomable_core::annotations::{self, Store, ThreadId};
 use fathomable_core::config::{
     AgentsConfig, DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
     ViewerConfig, WatchConfig,
@@ -55,6 +55,7 @@ use fathomable_core::diff::Diff;
 use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
+use fathomable_core::reach::Reach;
 use fathomable_core::seen;
 use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::status::Status;
@@ -451,23 +452,24 @@ impl App {
     /// stranded follow `HEAD` first (ADR 0035). Marks are refreshed when
     /// the answer changed.
     pub(super) fn refresh_reach(&mut self) {
-        let active = match self.store.as_mut() {
-            Some(store) => match self.workspace.reachable(store.commits()) {
+        let head = self.workspace.head_commit();
+        let active = match (self.store.as_mut(), head) {
+            (Some(store), Some(head)) => match self.workspace.reachable(store.commits()) {
                 Some(mut reachable) => {
                     if crate::app::threads::reach::follow_head(store, &self.workspace, &reachable)
                         > 0
                     {
-                        reachable.extend(self.workspace.head_commit());
+                        reachable.insert(head.clone());
                     }
-                    Some(reachable)
+                    Some((head, reachable))
                 }
                 None => None,
             },
-            None => None,
+            _ => None,
         };
         // The other worktrees widen the reach (ADR 0070).
         let scope = match active {
-            Some(reachable) => self.reach_with_others(reachable),
+            Some((head, reachable)) => self.reach_with_others(head, reachable),
             None => Reach::everything(),
         };
         if scope != self.reach {

@@ -7,7 +7,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineHashes, Placement, Reach, ThreadId};
+use fathomable_core::annotations::{LineHashes, Placement, ThreadId};
+use fathomable_core::reach::Reach;
 use fathomable_core::session::Marker;
 use fathomable_core::workspace::Workspace;
 use fathomable_core::worktrees::Worktree;
@@ -278,15 +279,15 @@ impl App {
     }
 
     /// The union reach of the workspace (ADR 0070): `active` is what
-    /// the checkout in hand reaches; each other worktree's `HEAD` is
-    /// walked once per `(HEAD, commits)` and cached.
-    pub(super) fn reach_with_others(&mut self, active: HashSet<String>) -> Reach {
+    /// the checkout in hand, at `head`, reaches; each other worktree's
+    /// `HEAD` is walked once per `(HEAD, commits)` and cached.
+    pub(super) fn reach_with_others(&mut self, head: String, active: HashSet<String>) -> Reach {
         let commits: BTreeSet<String> = self
             .store
             .iter()
             .flat_map(|store| store.commits().map(str::to_owned))
             .collect();
-        let mut reach = Reach::reachable(active);
+        let mut reach = Reach::at(head, active);
         let mut fresh: HashMap<PathBuf, ReachEntry> = HashMap::new();
         let others: Vec<Worktree> = self
             .worktrees
@@ -297,6 +298,10 @@ impl App {
         for worktree in others {
             let root = worktree.root().to_path_buf();
             let head = worktree.head().map(str::to_owned);
+            // A worktree before its first commit reaches nothing.
+            let Some(at) = head.clone() else {
+                continue;
+            };
             let reachable = match self.reach_cache.get(&root) {
                 Some(entry) if entry.head == head && entry.commits == commits => {
                     entry.reachable.clone()
@@ -314,7 +319,7 @@ impl App {
                     reachable: reachable.clone(),
                 },
             );
-            reach = reach.with_worktree(root, reachable);
+            reach = reach.with_worktree(root, at, reachable);
         }
         self.reach_cache = fresh;
         reach

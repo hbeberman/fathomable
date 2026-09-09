@@ -170,7 +170,7 @@ fn seed(dirs: &XdgDirs, workspace: &Path, file: &Path) -> anyhow::Result<Vec<(St
         // Threads are minutes old and in file order, so the register's
         // freshness rules and the viewer's sort see the shape intended.
         let created = when.saturating_sub(600).saturating_add(n);
-        let id = write_thread(&mut store, root, commit.clone(), thread, created)?;
+        let id = write_thread(&mut store, root, commit.as_deref(), thread, created)?;
         made.push((thread.key.clone(), id));
     }
 
@@ -209,7 +209,7 @@ fn seed(dirs: &XdgDirs, workspace: &Path, file: &Path) -> anyhow::Result<Vec<(St
 fn write_thread(
     store: &mut Store,
     root: &Path,
-    commit: Option<String>,
+    commit: Option<&str>,
     thread: &ThreadSeed,
     created: u64,
 ) -> anyhow::Result<ThreadId> {
@@ -222,8 +222,8 @@ fn write_thread(
         text
     };
     let range = LineRange::new(thread.line, thread.end_line.unwrap_or(thread.line));
-    let draft =
-        Draft::new(Author::User, &thread.path, range, thread.comment.as_str()).at_commit(commit);
+    let draft = Draft::new(Author::User, &thread.path, range, thread.comment.as_str())
+        .at_commit(commit.map(str::to_owned));
     let id = store
         .annotate(draft, &text, created)
         .with_context(|| format!("thread `{}`", thread.key))?;
@@ -240,7 +240,7 @@ fn write_thread(
         store.reply(&id, Reply::new(author, at, reply.body.as_str()))?;
     }
     if thread.resolved {
-        store.resolve(&id, at.saturating_add(60))?;
+        store.resolve(&id, commit, at.saturating_add(60))?;
     }
     Ok(id)
 }

@@ -223,6 +223,18 @@ impl App {
             self.notice(format!("{} was deleted; cannot comment", path.display()));
             return;
         }
+        // A thread resolved at an earlier commit is not written in from
+        // the past: `o` brings it back first (ADR 0072).
+        if let ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } = &target
+            && let Some(commit) = self
+                .thread(id)
+                .filter(|thread| self.reach.past(thread))
+                .and_then(|thread| thread.commit())
+        {
+            let commit = crate::app::threads::list::short_commit(commit);
+            self.notice(format!("resolved at {commit}; o reopens it"));
+            return;
+        }
         let original = match &target {
             ComposeTarget::Edit { thread, message } => {
                 let Some((body, editable)) = self.message_for(thread, *message) else {

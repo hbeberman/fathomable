@@ -20,10 +20,11 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Register, Subscriber, WatchWhen};
 use fathomable_core::annotations::{
-    Author, LineHashes, LineRange, Placement, Reach, Reply, Status, Store, Thread, ThreadId,
+    Author, LineHashes, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::identity;
+use fathomable_core::reach::Reach;
 use fathomable_core::session::{Request, Response};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::{Filter, Workspace};
@@ -1708,7 +1709,7 @@ mod tests {
             "one\ntwo\n",
             6,
         )?;
-        store.resolve(&resolved, 7)?;
+        store.resolve(&resolved, None, 7)?;
         let gone = store.annotate(
             Draft::new(Author::User, Path::new("a.md"), LineRange::new(2, 2), "old"),
             "one\nthree\n",
@@ -1836,7 +1837,7 @@ mod tests {
         assert_eq!(shown.line(), format!("{id}  a.md:2  open pending  why?"));
         assert!(Which::Pending.admits(&thread) && !Which::Resolved.admits(&thread));
 
-        store.resolve(&id, 9)?;
+        store.resolve(&id, None, 9)?;
         let thread = store.thread(&id).cloned().ok_or("gone")?;
         let shown = Shown::new(&thread, tree.place(&thread));
         assert_eq!(shown.line(), format!("{id}  a.md:2  resolved  why?"));

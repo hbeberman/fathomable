@@ -163,7 +163,9 @@ result.
     config `threads { stubs #true }`.
   - `Space c x` toggles resolved stubs. Default **hidden**, matching the
     review list; config `threads { stubs-resolved #false }`. The gutter
-    still shows a resolved thread in grey, so the margin loses nothing.
+    still shows a resolved thread in grey, so the margin loses nothing
+    (while its commit is `HEAD`, since
+    [0072](0072-a-resolved-thread-stays-at-its-commit.md)).
   - `Space c z` expands every visible stub in the file, or folds every
     expanded one when any is expanded.
   - Amended 2026-09-04: **`Space c c` and `Space c z` are unbound.**

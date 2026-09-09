@@ -75,3 +75,4 @@ supersede rather than edit history.
 - [0069 The diff's keys on the bar](0069-the-diffs-keys-on-the-bar.md)
 - [0070 One workspace, many worktrees](0070-one-workspace-many-worktrees.md)
 - [0071 Author stripes and the cursor bar](0071-author-stripes.md)
+- [0072 A resolved thread stays at its commit](0072-a-resolved-thread-stays-at-its-commit.md)

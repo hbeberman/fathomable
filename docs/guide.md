@@ -163,7 +163,7 @@ the keys, its bottom row is a key bar naming them):
 | --- | --- |
 | `j` `k` | next / previous thread, wrapping, a folded file counting once; the text follows, and in workspace scope the file opens |
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
-| `s`, `x` | list this file or the workspace; show or hide resolved threads (the review list shares the flag) |
+| `s`, `x` | list this file or the workspace; show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the review list shares the flag) |
 | `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
@@ -182,7 +182,7 @@ surface every pane header shares):
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
-| `x`, `f` | show or hide resolved threads (the threads pane shares the flag); only this file |
+| `x`, `f` | show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the threads pane shares the flag); only this file |
 | `z`, `Z` | fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
 | `Esc` | close the list, back to the document (`Space r` does too) |
 
@@ -348,7 +348,11 @@ of the thread under the cursor reads in the text colour, bold for the
 thread the cursor is on; the others are dimmed.
 `Space v x` gives resolved threads a stub too, and `Space v t` hides
 stubs altogether; `threads { stubs; stubs-resolved }` sets both
-defaults.
+defaults. Resolving fixes a thread to the commit that is `HEAD`, and a
+resolved thread shows in the file, its grey circle and tint included,
+only while that commit is `HEAD`: the next commit or checkout takes it
+out of the file and the tools, and checking that commit out again brings
+it back ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
 
 `c` or `z` on a line a thread covers **expands** its stub in place, the
 view staying still: a header row with the state, placement, and
@@ -402,7 +406,8 @@ same three. The toggles work from any pane; while the files pane is
 hidden the status line names the new state instead. The open file may
 drop out of the list and is highlighted again when it qualifies. The threads pane lists this file's
 threads in line order or, after `s`, the whole workspace's grouped by
-file, resolved ones hidden until `x` shows them. Each thread takes two
+file, resolved ones hidden until `x` shows them, the ones resolved at
+earlier commits of the branch among them. Each thread takes two
 rows: its circle, `L3-5` (or `file`), and who wrote its newest message
 (`name (role)`, or the name alone when the column is narrow), then the
 branch of the worktree that shows it when the active one does not
@@ -446,7 +451,12 @@ and threads by line, each open with its messages under a header that
 reads as the expanded thread in the text does (`●  L14-16  waiting
 10m ago`). Resolved threads
 are hidden until `x` shows them dimmed (the threads pane shares the
-flag). It takes the text column
+flag), and with them the threads resolved at earlier commits of the
+branch, which the file no longer shows: each names its commit after the
+state (`○  L3  resolved  ab12cd3  2d ago`) at the lines its record
+holds, `Enter` lands on those lines with nothing to expand, `r` and `e`
+are refused, and `o` reopens it and brings it back into the file
+([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)). It takes the text column
 the way a document does; the sidebar stays beside it. The newest message
 in the selected thread starts highlighted, and the thread's header
 carries the thread keys; `j`/`k` move between
@@ -770,7 +780,11 @@ ancestors, so switching to unrelated work hides it and merging brings it
 along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
 or rebase that drops that commit does not lose an open thread: while its
 lines are still in the working tree it moves to the new `HEAD`
-([0035](decisions/0035-threads-follow-head.md)). Details and the wire
+([0035](decisions/0035-threads-follow-head.md)). Resolving fixes a
+thread to the commit that is `HEAD`, and a resolved thread is shown only
+while that commit is `HEAD`, so `resolved` and `all` list this commit's
+resolved threads and no earlier ones
+([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)). Details and the wire
 protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md);
 [0062](decisions/0062-one-version-no-compatibility.md) trims it to
 the requests that have a client and one protocol version.

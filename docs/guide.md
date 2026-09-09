@@ -361,7 +361,7 @@ any is expanded. A click on a stub expands it.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its
-thread's expanded rows, under a ` user  draft` row; the draft keys are
+thread's expanded rows, under a ` User  draft` row (the name from `user.name`); the draft keys are
 on the text's key bar (`Enter submit · Alt-Enter newline · Alt-k/j
 scroll · Ctrl-e $EDITOR · Esc`, or `Esc again to discard` once you have
 pressed Esc on a changed draft); an edit replaces the message it edits,

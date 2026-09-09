@@ -732,12 +732,13 @@ mod tests {
         app.toggle_expand_all();
         assert!(!app.is_expanded(&inner) && !app.is_expanded(&outer));
 
-        // A click on a collapsed stub expands it with the cursor on it.
+        // A click on a collapsed stub expands it with the cursor on it;
+        // the stub shows the newest two of inner's three messages.
         let shown = screen(&app)?;
         let row = shown
             .iter()
-            .position(|line| line.contains("inner point"))
-            .ok_or_else(|| anyhow::anyhow!("inner's stub"))?;
+            .position(|line| line.contains("second reply") && !line.contains("inner point"))
+            .ok_or_else(|| anyhow::anyhow!("inner's stub: {shown:?}"))?;
         click(&mut app, 60, row);
         assert!(app.is_expanded(&inner));
         assert_eq!(app.thread_cursor().thread(), Some(&inner));

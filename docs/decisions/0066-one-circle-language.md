@@ -81,7 +81,10 @@ agents' green (amber and teal until 2026-09-09).
   `•` retires. A detached thread's row draws `?`. Where several one-row
   threads share a row the most urgent circle wins, as the colour did.
 - **The stubs and the expanded header** draw the circle in place of
-  their `●`.
+  their `●`. A stub draws it once, on its newest message's row; the
+  older row keeps the cell blank so the names align (until 2026-09-09
+  every stub row drew it, and a stub of three or more messages showed
+  its oldest two).
 - **The files pane** draws one circle after a file that has listed
   threads, the most urgent among them, no count; a folded directory
   rolls up its children's most urgent circle (`▸ docs/ ●`). The `↩` tag

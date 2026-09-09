@@ -1830,6 +1830,50 @@ fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A collapsed stub shows the newest two messages, oldest first (ADR
+/// 0049), and only the newest carries the thread's circle (ADR 0066):
+/// the older row keeps the circle's cell blank so the names align.
+#[test]
+fn a_stub_shows_the_newest_two_messages_and_one_circle() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-stub-one-circle", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    for (body, proposed) in [("first answer", false), ("second answer", true)] {
+        app.agent_reply(
+            &id,
+            Author::agent("reviewer"),
+            body.to_owned(),
+            proposed,
+            None,
+        )
+        .map_err(anyhow::Error::msg)?;
+    }
+    app.view_mut().goto_top();
+    let rows = testing::screen(&app)?;
+    let stub_row = |needle: &str| -> anyhow::Result<&String> {
+        rows.iter()
+            .find(|row| row.contains(needle))
+            .with_context(|| format!("the stub row {needle:?}: {rows:?}"))
+    };
+    assert!(
+        !rows.iter().any(|row| row.contains("opening")),
+        "the comment is older than the newest two: {rows:?}"
+    );
+    let older = stub_row("first answer")?;
+    let newest = stub_row("second answer")?;
+    assert!(!older.contains('◐'), "{older:?}");
+    assert!(newest.contains("◐ reviewer"), "{newest:?}");
+    let name_at = |row: &str| {
+        row.split("reviewer")
+            .next()
+            .map(|lead| lead.chars().count())
+    };
+    assert_eq!(name_at(older), name_at(newest), "{older:?} / {newest:?}");
+    Ok(())
+}
+
 /// ADR 0071: on an expanded thread's rows the cursor bar is the cursor,
 /// so the terminal's is hidden rather than parked on the bar's cell.
 #[test]

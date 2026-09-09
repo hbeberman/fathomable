@@ -964,19 +964,20 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
     ])
 }
 
-/// One row of a collapsed stub (ADR 0049): the gutter's bracket if an
-/// outer thread spans the row, then the state glyph, the author, the
-/// age, and the first line of the message, on the author's stripe over
-/// the `thread.inline` background, the name in the author's colour as
-/// a message of the expanded thread reads (ADR 0071) — or behind a `▎`
-/// in the state colour when the theme sets no background. The thread
-/// under the cursor reads in the text colour, the others dimmed; the
-/// thread cursor's rows read bold (ADR 0067).
+/// Row `index` of a collapsed stub (ADR 0049): the gutter's bracket if
+/// an outer thread spans the row, then the thread's circle on the
+/// newest message's row only (ADR 0066) and a blank in its cell on the
+/// older, the author, the age, and the first line of the message, on
+/// the author's stripe over the `thread.inline` background, the name in
+/// the author's colour as a message of the expanded thread reads (ADR
+/// 0071) — or behind a `▎` in the state colour when the theme sets no
+/// background. The thread under the cursor reads in the text colour,
+/// the others dimmed; the thread cursor's rows read bold (ADR 0067).
 fn stub_line<'a>(
     app: &App,
     theme: &Theme,
     stub: &Stub,
-    message: usize,
+    index: usize,
     row: usize,
     gutter: usize,
     width: usize,
@@ -985,9 +986,18 @@ fn stub_line<'a>(
     let Some(thread) = stub.thread().and_then(|id| app.thread(id)) else {
         return Line::from("");
     };
+    let Some(message) = stub.message_of_row(index) else {
+        return Line::from("");
+    };
     let mark = app.mark_of(thread.id());
     let kind = mark.map_or(ThreadState::Open, Mark::kind);
-    let glyph = mark.map_or("●", Mark::glyph);
+    // The circle sits on the newest message's row; the older row keeps
+    // its cell so the names align.
+    let glyph = if stub.message_of_row(index + 1).is_some() {
+        " "
+    } else {
+        mark.map_or("●", Mark::glyph)
+    };
     let (author, created, body) = match message.checked_sub(1) {
         None => (thread.author(), thread.created(), thread.comment()),
         Some(index) => {

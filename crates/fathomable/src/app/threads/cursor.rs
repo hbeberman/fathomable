@@ -382,10 +382,12 @@ impl App {
             self.notice("no thread here");
             return;
         };
+        // In the list a resolved thread leaves the rows (unless resolved
+        // ones are shown): the cursor moves to the entry now in its
+        // place and the scroll stays, the rows below having moved up.
+        let place = self.review_selected_index();
         self.toggle_resolved(&id);
-        if self.review_list.is_open() {
-            self.review_follow_cursor();
-        }
+        self.review_reselect(place);
     }
 
     /// The first `d`: arm deletion of the cursor's thread (ADR 0034).

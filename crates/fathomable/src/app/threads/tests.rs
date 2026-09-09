@@ -916,6 +916,41 @@ fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn resolving_in_the_list_keeps_the_scroll_and_moves_to_the_next_entry() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-resolve-scroll", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 16);
+    // Six threads on the file's six non-blank lines, each four rows
+    // tall, so the list scrolls.
+    app.view_mut().toggle_source_view();
+    for line in [1, 3, 4, 5, 7, 8] {
+        app.view_mut().goto_source_line(line);
+        app.start_comment();
+        type_in(&mut app, &format!("thread {line}\nmore\nmore"));
+        app.compose_submit();
+    }
+    app.open_review();
+    let rows = app.review_rows(app.column_width());
+    assert_eq!(rows.entries.len(), 6);
+    app.review_goto(false);
+    for _ in 0..3 {
+        app.review_step(1);
+    }
+    let scroll = app.review_list().scroll();
+    assert!(scroll > 0, "the fourth entry is below the fold");
+    let fourth = rows.entries[3].id().clone();
+    let fifth = rows.entries[4].id().clone();
+    assert_eq!(app.thread_cursor().thread(), Some(&fourth));
+    // `o` hides the resolved entry; the one below it takes its place and
+    // the rows keep still under the eye.
+    app.thread_toggle_resolved();
+    assert_eq!(app.review_rows(app.column_width()).entries.len(), 5);
+    assert_eq!(app.thread_cursor().thread(), Some(&fifth));
+    assert_eq!(app.review_list().scroll(), scroll, "no jump");
+    Ok(())
+}
+
+#[test]
 fn the_review_list_renders_bodies_as_markdown() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-list-markdown", testing::README)?;
     let mut app = app(&dir)?;

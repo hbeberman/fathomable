@@ -54,6 +54,9 @@ pub(crate) enum Tone {
     Removed,
     /// The thread cursor's bar (ADR 0071).
     Cursor,
+    /// The chevron that folds an expanded thread (ADR 0073): the info
+    /// colour, bold.
+    Chevron,
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
@@ -261,6 +264,7 @@ impl Header {
             Tone::Added => theme.diff_plus,
             Tone::Removed => theme.diff_minus,
             Tone::Cursor => theme.thread_cursor,
+            Tone::Chevron => theme.info.add_modifier(Modifier::BOLD),
         };
         let mut spans: Vec<Span<'static>> = self
             .left
@@ -374,7 +378,7 @@ pub(crate) fn expanded_header(
     let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
     let mut left = vec![
         cursor_tone(marked),
-        (CHEVRON_DOWN.to_owned(), Tone::Info),
+        (CHEVRON_DOWN.to_owned(), Tone::Chevron),
         (format!(" {} ", words.glyph()), Tone::Mark(words.state())),
     ];
     left.extend(state_words(words));

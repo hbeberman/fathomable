@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The chevron
-description: An expanded thread's header row draws a ▾ in the thread's gutter and a stub's first row a ▸ in the same column; a click on either folds or expands the thread, and a double-click anywhere on the header folds it, so the mouse opens and closes a thread without a key.
+description: An expanded thread's header row draws a bold ▾ in the thread's gutter and a stub's first row a bold ▸ in the same column; a click on either, or a double-click anywhere on the header or the stub, folds or expands the thread, while one click elsewhere on the row only places the cursor.
 resource: crates/fathomable/src/app/input/mouse.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -33,7 +33,9 @@ them.
 The user asked on 2026-09-09 for a clickable `v` / `>` indicator in the
 gutter of the thread's top row, so the mouse has a way to expand and
 collapse a thread, and for a double-click on the header to do the
-same.
+same. With those in place they asked the same day that one click on a
+stub no longer expand it, so a click on a stub is a click like any
+other, and that the arrows read bold.
 
 [0071](0071-author-stripes.md) gave the expanded thread a gutter of
 two cells after the global gutter, the cursor bar or a space and then a
@@ -44,28 +46,32 @@ its own: its edge cell, the circle, and the name.
 
 - **The header's chevron.** An expanded thread's header row draws `▾`
   in the second cell of the thread's gutter, after the cursor bar or
-  its space, in the info colour: `▎▾ ● open · watched by coder`. The
+  its space, in the info colour and bold: `▎▾ ● open · watched by
+  coder`. The
   circle and the words move one cell right of where the author rows'
   names begin. A draft block's header (`comment on L3-5`,
   [0054](0054-the-draft-is-written-in-the-thread.md)) draws none: it
   does not fold.
 - **The stub's chevron.** A collapsed stub's first row draws `▸` in
-  the same column, so a folded thread and an expanded one show their
-  chevrons under each other. The stub gains the two cells: its edge
+  the same column, bold too, so a folded thread and an expanded one
+  show their chevrons under each other. The stub gains the two cells: its edge
   cell, the chevron or a space, a space, then the circle and the name
   as before. The circle stays on the newest message's row
   ([0066](0066-one-circle-language.md)); on a two-row stub the chevron
   is on the older row and the circle on the newer.
 - **A click on the chevron.** A left press on the thread's gutter of
-  the header row, the bar's cell or the chevron's, folds the thread.
-  A click anywhere on a stub expands it, as 0049 says; the chevron
-  is the cell that says so.
-- **A double-click on the header.** Two presses on one cell of the
-  header row within the multi-click window fold the thread, wherever
-  on the row they land. One press places the cursor as it did. The
-  expanding press on a stub and the folding press on a header both
-  end the gesture, so a double-click on a stub expands it and stops:
-  the second press is a first press on the header, not a fold.
+  the header row, the bar's cell or the chevron's, folds the thread;
+  the same press on the chevron's column of a stub's rows expands it.
+- **A double-click on the row.** Two presses on one cell within the
+  multi-click window (400 ms, as the word and line gestures of
+  [0050](0050-mouse-menus-and-gestures.md)) fold the header's thread
+  or expand the stub's, wherever on the row they land. One press
+  elsewhere on either row only places the cursor: on the header as it
+  did, on a stub on the row the stub hangs under, as 0049 gives the
+  right button. 0049's *a click on a stub expands it* no longer holds.
+  The expanding press and the folding press both end the gesture, so
+  a double-click on a stub opens the thread and stops: a third press
+  is a first press on the header, not a fold.
 - **The gutter's presses are unchanged.** A press in the global
   gutter of the header row still selects the line it settles on, as a
   gutter press does everywhere.
@@ -74,12 +80,15 @@ its own: its edge cell, the circle, and the name.
 
 - The mouse can open and close a thread without the keyboard, and the
   glyph names the affordance, as the hints on the bars do
-  ([0064](0064-hints-you-can-press.md)).
+  ([0064](0064-hints-you-can-press.md)). A click on a stub's words
+  no longer opens it; a reader who clicks to place the cursor near a
+  thread is not surprised by the thread unfolding.
 - `expanded_header` draws the chevron after the cursor tone; `stub_line`
   gains the two cells and its text is two cells narrower.
-- `text_mouse` reads the header row before the general press: a press
-  in the thread's gutter folds, a second press on one cell folds, and
-  both clear the press record.
+- `text_mouse` reads a stub's rows and the header row before the
+  general press: a press in the thread's gutter or a second press on
+  one cell opens or closes, and both clear the press record.
+- `Tone::Chevron` in `header.rs` is the info colour, bold.
 - 0049's stub bullet, 0050's gestures, 0067's header bullet, and
   0071's stub note carry dated notes pointing here.
 - The guide's mouse and threads passages say the chevron folds and

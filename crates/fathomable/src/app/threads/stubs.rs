@@ -732,14 +732,14 @@ mod tests {
         app.toggle_expand_all();
         assert!(!app.is_expanded(&inner) && !app.is_expanded(&outer));
 
-        // A click on a collapsed stub expands it with the cursor on it;
-        // the stub shows the newest two of inner's three messages.
-        let shown = screen(&app)?;
-        let row = shown
+        // A click on a stub's chevron column expands it with the cursor
+        // on it (ADR 0073); the stub shows inner's newest two messages.
+        let row = screen(&app)?
             .iter()
             .position(|line| line.contains("second reply") && !line.contains("inner point"))
-            .ok_or_else(|| anyhow::anyhow!("inner's stub: {shown:?}"))?;
-        click(&mut app, 60, row);
+            .ok_or_else(|| anyhow::anyhow!("inner's stub"))?;
+        let chevron = app.sidebar_width() + crate::app::draw::gutter_width(app.view()) + 1;
+        click(&mut app, chevron, row);
         assert!(app.is_expanded(&inner));
         assert_eq!(app.thread_cursor().thread(), Some(&inner));
         assert_eq!(

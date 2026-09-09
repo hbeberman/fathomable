@@ -5,9 +5,9 @@
 //! context menu for what is under the pointer, the drawn key menus and
 //! pane-header hints take clicks, and the gutter, a double- or
 //! triple-click, and Shift-click select (ADR 0050). A click on a
-//! stub's `▸` or anywhere on the stub expands its thread, and a click
-//! on the expanded header's `▾` or a double-click on the header folds
-//! it (ADR 0073).
+//! stub's `▸` or a double-click on the stub expands its thread, and a
+//! click on the expanded header's `▾` or a double-click on the header
+//! folds it; one click on either places the cursor (ADR 0073).
 
 use std::time::{Duration, Instant};
 
@@ -393,40 +393,36 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             return Effect::None;
         }
         app.focus_pane(Focus::View);
+        // A stub's rows and the expanded header (ADR 0073): a press on
+        // the thread's gutter, the chevron's column, opens or closes
+        // the thread, as does a second press on any of its cells; a
+        // first press elsewhere on the row places the cursor. Opening
+        // and closing end the gesture, so a double-click does not undo
+        // itself.
         if text_row < text_rows
             && let Some((stub, index, _)) = app.stub_on_row(app.view().scroll() + text_row)
             && let Some(id) = stub.thread().cloned()
+            && (!stub.expanded() || index == 0)
         {
-            if !stub.expanded() {
-                // A click on a collapsed stub expands its thread with
-                // the cursor on it (ADR 0049). The gesture ends here,
-                // so a double-click does not fold what it just opened
-                // (ADR 0073).
-                let newest = app.newest_message(&id);
-                app.goto_message(id, newest);
+            let chevron = !in_gutter && col < THREAD_GUTTER;
+            if chevron || press(app, column, row, in_gutter) == 2 {
+                if stub.expanded() {
+                    app.fold_thread(&id);
+                } else {
+                    let newest = app.newest_message(&id);
+                    app.goto_message(id, newest);
+                }
                 app.press = None;
                 return Effect::None;
             }
-            if index == 0 {
-                // The header row (ADR 0073): a press on the thread's
-                // gutter, the bar's cell or the chevron's, folds the
-                // thread, as does a second press on any of its cells;
-                // a first press elsewhere on it places the cursor.
-                let chevron = !in_gutter && col < THREAD_GUTTER;
-                if chevron || press(app, column, row, in_gutter) == 2 {
-                    app.fold_thread(&id);
-                    app.press = None;
-                    return Effect::None;
-                }
-                let view = app.view_mut();
-                view.touch();
-                if in_gutter {
-                    view.select_line_at(text_row);
-                } else {
-                    view.click(text_row, col);
-                }
-                return Effect::None;
+            let view = app.view_mut();
+            view.touch();
+            if in_gutter {
+                view.select_line_at(text_row);
+            } else {
+                view.click(text_row, col);
             }
+            return Effect::None;
         }
         if text_row >= text_rows {
             return Effect::None;

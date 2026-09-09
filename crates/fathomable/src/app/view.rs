@@ -991,7 +991,8 @@ impl View {
     pub(crate) fn click(&mut self, screen_row: usize, col: usize) {
         self.selection = None;
         self.mode = Mode::Normal;
-        // A click on a stub row lands on the row it hangs under (ADR 0049).
+        // A click on a stub row lands on the row it hangs under (ADR 0049,
+        // ADR 0073).
         self.cursor.row = self.settle((self.scroll + screen_row).min(self.last_row()), false);
         self.want_col = col;
         self.clamp_col();

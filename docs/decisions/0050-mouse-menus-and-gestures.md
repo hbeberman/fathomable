@@ -29,8 +29,9 @@ clicks and menus, and the files pane's menu gains `threads` and
 text's key bar takes clicks; the expanded thread's header and the
 draft's author row draw no hints and take none. Amended 2026-09-09
 by [0073](0073-the-chevron.md): the expanded thread's header draws a
-chevron that folds on a click and folds on a double-click, and a stub
-draws one that expands.
+chevron that folds on a click or a double-click, and a stub draws one
+that expands the same two ways; one click on a stub only places the
+cursor.
 
 ## Context
 

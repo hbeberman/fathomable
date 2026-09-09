@@ -1044,7 +1044,10 @@ fn stub_line<'a>(
         Span::styled(" ", surface),
         Span::styled(" ", surface),
         edge,
-        Span::styled(chevron, theme.info.patch(surface)),
+        Span::styled(
+            chevron,
+            theme.info.patch(surface).add_modifier(Modifier::BOLD),
+        ),
         Span::styled(" ", surface),
         Span::styled(glyph, mark_style(theme, kind).patch(surface)),
         Span::styled(lead, name_style(theme, author, marked).patch(surface)),

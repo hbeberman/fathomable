@@ -358,11 +358,11 @@ fn gutter_double_and_triple_clicks_select() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// ADR 0073: a stub draws `▸` and a click on it expands the thread;
-/// the expanded header draws `▾` in the thread's gutter, a click there
-/// folds the thread, and so does a double-click anywhere on the
-/// header, while one click places the cursor. A double-click on a
-/// stub expands it and stops.
+/// ADR 0073: a stub draws `▸`, and a click on it or a double-click on
+/// the stub expands the thread; the expanded header draws `▾` in the
+/// thread's gutter, a click there folds the thread, and so does a
+/// double-click anywhere on the header. One click on either row
+/// places the cursor. A double-click on a stub expands it and stops.
 #[test]
 fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result<()> {
     let dir = fixture("chevron")?;
@@ -389,14 +389,24 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
         "the stub draws the chevron: {rows:?}"
     );
 
-    // A double-click on the stub expands it and stops.
+    // One click on the stub's words places the cursor; two expand it
+    // and stop.
     let (words, _) = at(&app, top, 12);
     left(&mut app, words, screen_row);
-    assert!(app.is_expanded(&id), "a click on the stub expands it");
+    assert!(
+        !app.is_expanded(&id),
+        "one click on the stub keeps it folded"
+    );
+    assert_eq!(app.view().mode(), Mode::Normal, "and selects nothing");
     left(&mut app, words, screen_row);
     assert!(
         app.is_expanded(&id),
-        "the second press is a first press on the header"
+        "a double-click on the stub expands it"
+    );
+    left(&mut app, words, screen_row);
+    assert!(
+        app.is_expanded(&id),
+        "the third press is a first press on the header"
     );
     let rows = testing::screen(&app)?;
     assert!(
@@ -409,9 +419,14 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
     left(&mut app, chevron, screen_row);
     assert!(!app.is_expanded(&id), "a click on the chevron folds");
 
+    // A click on the stub's chevron expands it.
+    left(&mut app, chevron, screen_row);
+    assert!(
+        app.is_expanded(&id),
+        "a click on the stub's chevron expands"
+    );
+
     // One click on the header's words places the cursor; two fold.
-    left(&mut app, words, screen_row);
-    assert!(app.is_expanded(&id));
     left(&mut app, words, screen_row);
     assert!(
         app.is_expanded(&id),

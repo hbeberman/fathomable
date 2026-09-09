@@ -1788,7 +1788,14 @@ fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     app.resize(100, 30);
     annotate(&mut app, "opening")?;
-    let id = app.marks()[0].id().clone();
+    // A second thread two lines down, whose newest message is an
+    // agent's: a stub shows the newest message alone.
+    app.view_mut().goto_source_line(5);
+    app.view_mut().select_lines();
+    app.start_new_comment();
+    type_in(&mut app, "second");
+    app.compose_submit();
+    let id = app.file_threads()[1].clone();
     app.agent_reply(
         &id,
         Author::agent("reviewer"),
@@ -1830,11 +1837,11 @@ fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A collapsed stub shows the newest two messages, oldest first (ADR
-/// 0049), and only the newest carries the thread's circle (ADR 0066):
-/// the older row keeps the circle's cell blank so the names align.
+/// A collapsed stub is one row, the thread's newest message (ADR 0049,
+/// amended 2026-09-09), with the thread's circle before the name (ADR
+/// 0066).
 #[test]
-fn a_stub_shows_the_newest_two_messages_and_one_circle() -> anyhow::Result<()> {
+fn a_stub_shows_the_newest_message_and_its_circle() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-stub-one-circle", testing::README)?;
     let mut app = app(&dir)?;
     app.resize(100, 30);
@@ -1857,20 +1864,14 @@ fn a_stub_shows_the_newest_two_messages_and_one_circle() -> anyhow::Result<()> {
             .find(|row| row.contains(needle))
             .with_context(|| format!("the stub row {needle:?}: {rows:?}"))
     };
-    assert!(
-        !rows.iter().any(|row| row.contains("opening")),
-        "the comment is older than the newest two: {rows:?}"
-    );
-    let older = stub_row("first answer")?;
+    for older in ["opening", "first answer"] {
+        assert!(
+            !rows.iter().any(|row| row.contains(older)),
+            "{older:?} is not the newest message: {rows:?}"
+        );
+    }
     let newest = stub_row("second answer")?;
-    assert!(!older.contains('◐'), "{older:?}");
-    assert!(newest.contains("◐ reviewer"), "{newest:?}");
-    let name_at = |row: &str| {
-        row.split("reviewer")
-            .next()
-            .map(|lead| lead.chars().count())
-    };
-    assert_eq!(name_at(older), name_at(newest), "{older:?} / {newest:?}");
+    assert!(newest.contains("▸ ◐ reviewer"), "{newest:?}");
     Ok(())
 }
 

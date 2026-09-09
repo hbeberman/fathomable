@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0049-inline-threads-and-the-rail.md
 //! Inline stubs (ADR 0049): a thread shows under the last row of its
-//! lines as a block of one or two rows, the newest messages' first line
-//! each, and `c` or `z` expands it in place into the whole thread (`z`
+//! lines as one row, the first line of its newest message, and `c` or
+//! `z` expands it in place into the whole thread (`z`
 //! folds it again, ADR 0065), so a file reads with its conversation
 //! where the lines are.
 //!
@@ -26,8 +26,9 @@ use crate::app::draw::message::expanded_rows;
 use crate::app::threads::{ComposeTarget, Mark, ThreadState};
 use crate::app::view::StubBlock;
 
-/// Messages a collapsed stub shows: the newest two.
-const STUB_MESSAGES: usize = 2;
+/// Messages a collapsed stub shows: the newest one (ADR 0049, amended
+/// 2026-09-09).
+const STUB_MESSAGES: usize = 1;
 
 /// Whether stubs are drawn at all (`threads { stubs }`, `Space v t`), and
 /// whether resolved threads get one (`Space v x`).
@@ -491,10 +492,10 @@ mod tests {
         app.fold_thread(&inner);
         app.view_mut().goto_source_line(1);
 
-        // Row model: 8 source rows, plus 1 + 2 rows under L5 and 1 under L7.
+        // Row model: 8 source rows, plus 1 + 1 rows under L5 and 1 under L7.
         annotate(&mut app, 7, 7, "seven");
         let rows = app.view().layout().lines().len();
-        assert_eq!(rows, 12);
+        assert_eq!(rows, 11);
         assert_eq!(app.view().source_line_of_row(4), Some(5));
         assert!(
             app.view().stub_slot_of_row(5).is_some(),
@@ -502,13 +503,9 @@ mod tests {
         );
         assert!(
             app.view().stub_slot_of_row(6).is_some(),
-            "inner's first row"
+            "inner's stub, its newest message"
         );
-        assert!(
-            app.view().stub_slot_of_row(7).is_some(),
-            "inner's reply row"
-        );
-        assert_eq!(app.view().source_line_of_row(8), Some(6));
+        assert_eq!(app.view().source_line_of_row(7), Some(6));
         let (stub, index, last) = app
             .stub_on_row(5)
             .ok_or_else(|| anyhow::anyhow!("a stub under L5"))?;
@@ -517,9 +514,8 @@ mod tests {
         let (stub, index, last) = app
             .stub_on_row(6)
             .ok_or_else(|| anyhow::anyhow!("a stub under L5"))?;
-        assert_eq!(stub.messages(), [0, 1]);
-        assert_eq!((index, last), (0, false));
-        assert_eq!(app.stub_on_row(7).map(|(_, i, l)| (i, l)), Some((1, true)));
+        assert_eq!(stub.messages(), [1], "the reply, not the comment");
+        assert_eq!((index, last), (0, true));
 
         // The screen: the stub rows show the author, age, and text, no
         // number; the text of the thread under the cursor and the hint.
@@ -536,32 +532,28 @@ mod tests {
             "no line number: {:?}",
             shown[5]
         );
-        assert!(shown[6].contains("inner point"), "{:?}", shown[6]);
-        assert!(shown[7].contains("agent-free reply"), "{:?}", shown[7]);
-        assert_eq!(shown[8].trim(), "6", "L6 follows: {:?}", shown[8]);
+        assert!(shown[6].contains("agent-free reply"), "{:?}", shown[6]);
+        assert!(!shown[6].contains("inner point"), "{:?}", shown[6]);
+        assert_eq!(shown[7].trim(), "6", "L6 follows: {:?}", shown[7]);
         // The cursor is on L5, which starts the inner thread: its stub
-        // rows read bold, the outer's do not, and the bar says `z
+        // row reads bold, the outer's does not, and the bar says `z
         // expand` (ADR 0067).
-        assert_eq!(
-            bold_rows(&app, &[5, 6, 7])?,
-            [6, 7],
-            "the inner thread's rows"
-        );
+        assert_eq!(bold_rows(&app, &[5, 6])?, [6], "the inner thread's row");
         assert!(
             shown[app.text_bar_row()].contains("z expand"),
             "{:?}",
             shown[app.text_bar_row()]
         );
-        assert!(!shown[7].contains("(z expand)"), "{:?}", shown[7]);
+        assert!(!shown[6].contains("(z expand)"), "{:?}", shown[6]);
         // On L4 only the outer thread covers the cursor.
         app.view_mut().goto_source_line(4);
-        assert_eq!(bold_rows(&app, &[5, 6, 7])?, [5], "the outer thread's row");
+        assert_eq!(bold_rows(&app, &[5, 6])?, [5], "the outer thread's row");
 
-        // `j` from L5 lands on L6, past three stub rows; `k` comes back.
+        // `j` from L5 lands on L6, past two stub rows; `k` comes back.
         app.view_mut().goto_source_line(5);
         press(&mut app, "j");
         assert_eq!(app.view().cursor_source_line(), Some(6));
-        assert_eq!(app.view().cursor().row, 8);
+        assert_eq!(app.view().cursor().row, 7);
         press(&mut app, "k");
         assert_eq!(app.view().cursor().row, 4);
         press(&mut app, "G");

@@ -956,11 +956,10 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
     ])
 }
 
-/// Row `index` of a collapsed stub (ADR 0049): the gutter's bracket if
-/// an outer thread spans the row, the chevron on the first row (ADR
-/// 0073), then the thread's circle on the newest message's row only
-/// (ADR 0066) and a blank in its cell on the older, the author, the
-/// age, and the first line of the message, on
+/// Row `index` of a collapsed stub (ADR 0049), one row since 2026-09-09:
+/// the gutter's bracket if an outer thread spans the row, the chevron
+/// (ADR 0073), the thread's circle (ADR 0066), the author, the age, and
+/// the first line of the newest message, on
 /// the author's stripe over the `thread.inline` background, the name in
 /// the author's colour as a message of the expanded thread reads (ADR
 /// 0071) — or behind a `▎` in the state colour when the theme sets no
@@ -984,13 +983,7 @@ fn stub_line<'a>(
     };
     let mark = app.mark_of(thread.id());
     let kind = mark.map_or(ThreadState::Open, Mark::kind);
-    // The circle sits on the newest message's row; the older row keeps
-    // its cell so the names align.
-    let glyph = if stub.message_of_row(index + 1).is_some() {
-        " "
-    } else {
-        mark.map_or("●", Mark::glyph)
-    };
+    let glyph = mark.map_or("●", Mark::glyph);
     let (author, created, body) = match message.checked_sub(1) {
         None => (thread.author(), thread.created(), thread.comment()),
         Some(index) => {

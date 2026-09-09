@@ -58,7 +58,9 @@ its own: its edge cell, the circle, and the name.
   cell, the chevron or a space, a space, then the circle and the name
   as before. The circle stays on the newest message's row
   ([0066](0066-one-circle-language.md)); on a two-row stub the chevron
-  is on the older row and the circle on the newer.
+  is on the older row and the circle on the newer. (A stub has been one
+  row since later on 2026-09-09, [0049](0049-inline-threads-and-the-rail.md):
+  the chevron and the circle share it.)
 - **A click on the chevron.** A left press on the thread's gutter of
   the header row, the bar's cell or the chevron's, folds the thread;
   the same press on the chevron's column of a stub's rows expands it.

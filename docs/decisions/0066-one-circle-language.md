@@ -84,7 +84,8 @@ agents' green (amber and teal until 2026-09-09).
   their `●`. A stub draws it once, on its newest message's row; the
   older row keeps the cell blank so the names align (until 2026-09-09
   every stub row drew it, and a stub of three or more messages showed
-  its oldest two).
+  its oldest two; later the same day a stub became one row, the
+  newest message, so the circle is on its only row).
 - **The files pane** draws one circle after a file that has listed
   threads, the most urgent among them, no count; a folded directory
   rolls up its children's most urgent circle (`▸ docs/ ●`). The `↩` tag

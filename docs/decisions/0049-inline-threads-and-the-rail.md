@@ -98,7 +98,8 @@ result.
   the tree pane has been the **files pane** since
   [0056](0056-the-leader-trimmed.md).
 - A **stub** is the condensed block a thread shows under its last
-  anchored row. A stub is **collapsed** (two rows at most) or
+  anchored row. A stub is **collapsed** (two rows at most; one row,
+  the newest message, since 2026-09-09) or
   **expanded** (the whole thread).
 - A **checkpoint** is a recorded content of one file at a moment, on
   that file's **checkpoint timeline**. A **workspace checkpoint** appends
@@ -118,7 +119,11 @@ result.
   as `name (type)` in the agent colour), the age, then the first line of
   the body truncated with `…`. Rows never wrap and carry no line number;
   the thread's gutter bracket ends on its last text row. Stub rows sit
-  on the `thread.inline` background.
+  on the `thread.inline` background. (Amended 2026-09-09: a collapsed
+  stub is one row, the newest message alone. The user found two rows
+  of preview more than a folded thread needs; the older message is one
+  `z` away, and a file with many threads keeps more of its lines on
+  screen. The chevron and the circle share the row.)
 - **Stubs are not lines.** `j`/`k`, `Ctrl-d`/`Ctrl-u`, `gg`/`G`, search,
   `:N`, `v`/`V`/`x` selection, `y`, `c` on a selection, and the gutter
   address source rows only; a collapsed stub is skipped as the detached

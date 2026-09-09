@@ -345,15 +345,13 @@ another version is refused with the line to blame and the path to
 delete, and there is no migration before the first tag
 ([0062](decisions/0062-one-version-no-compatibility.md)).
 
-Every open thread shows a **stub** under the last of its lines: one row
-per message for its newest two, oldest first, a `▸` on the first row,
-and each with the author
+Every open thread shows a **stub** under the last of its lines: one row,
+its newest message, with a `▸`, the thread's circle, the author
 (the user by `user.name`, or an agent as `name (type)`), the age, and the first line of
 the message, on the author's stripe with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
 `thread.agent`, over `thread.inline`; a theme that sets no background
-gets a `▎` at the left edge instead). The thread's circle sits on the
-newest row only; the older row leaves its cell blank. Stubs are not lines:
+gets a `▎` at the left edge instead). Stubs are not lines:
 `j`/`k`, paging, search, `:N`, and selection step over them, a click on
 one lands on the row above (its `▸` or a double-click expands it), and
 they carry no line number. Stubs of

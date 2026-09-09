@@ -1780,6 +1780,56 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A collapsed stub reads as the message does when expanded (ADR 0071):
+/// each row on its author's stripe, the name in the author's colour.
+#[test]
+fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-stub-stripes", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.agent_reply(
+        &id,
+        Author::agent("reviewer"),
+        "agent answer".to_owned(),
+        false,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
+    app.view_mut().goto_top();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let buffer = testing::buffer(&app)?;
+    let rows = testing::screen(&app)?;
+    let gutter = u16::try_from(crate::app::draw::gutter_width(app.view()))?;
+    let stub_row = |needle: &str| -> anyhow::Result<u16> {
+        let y = rows
+            .iter()
+            .position(|row| row.contains(needle))
+            .with_context(|| format!("the stub row {needle:?}: {rows:?}"))?;
+        Ok(u16::try_from(y)?)
+    };
+    let user_row = stub_row("opening")?;
+    let agent_row = stub_row("agent answer")?;
+    for (y, kind, name) in [
+        (user_row, theme.thread_user, "User"),
+        (agent_row, theme.thread_agent, "reviewer"),
+    ] {
+        let body = &buffer[(gutter + 20, y)];
+        assert_eq!(body.bg, kind.bg.unwrap_or_default(), "row {y}: {rows:?}");
+        let x = u16::try_from(
+            rows[usize::from(y)]
+                .find(name)
+                .with_context(|| format!("the name {name:?} on row {y}"))?,
+        )?;
+        let cell = &buffer[(x, y)];
+        assert_eq!(cell.fg, kind.fg.unwrap_or_default(), "row {y}: {rows:?}");
+        assert_eq!(cell.bg, kind.bg.unwrap_or_default(), "row {y}: {rows:?}");
+    }
+    Ok(())
+}
+
 /// ADR 0071: on an expanded thread's rows the cursor bar is the cursor,
 /// so the terminal's is hidden rather than parked on the bar's cell.
 #[test]

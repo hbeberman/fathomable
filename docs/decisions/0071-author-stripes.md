@@ -120,7 +120,9 @@ folded file row marked as an entry header is.
   ([0044](0044-wrap-all-lines.md)); the cost is two cells of wrap.
 - A user theme written before this record shows no stripes and no name
   colour until it sets the keys, or inherits a built-in that does.
-- The stub rows under a thread's lines keep `thread.inline` and the key
-  yellow for the author: a stub is a one-row summary, not a message,
-  and its glyph and dimming already say what state it is in. Striping
-  the stubs is left until it is missed.
+- The stub rows under a thread's lines took the stripes the same day
+  they were missed (2026-09-09): each stub row sits on its author's
+  `bg` over `thread.inline`, with the name in the author's `fg`, so a
+  folded thread reads as the expanded one does. The glyph, the dimming
+  of threads the cursor is not on, and the bold of the cursor's thread
+  stay as they were.

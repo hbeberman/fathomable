@@ -966,10 +966,12 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
 
 /// One row of a collapsed stub (ADR 0049): the gutter's bracket if an
 /// outer thread spans the row, then the state glyph, the author, the
-/// age, and the first line of the message, on the `thread.inline`
-/// background — or behind a `▎` in the state colour when the theme sets
-/// none. The thread under the cursor reads in the text colour, the
-/// others dimmed; the thread cursor's rows read bold (ADR 0067).
+/// age, and the first line of the message, on the author's stripe over
+/// the `thread.inline` background, the name in the author's colour as
+/// a message of the expanded thread reads (ADR 0071) — or behind a `▎`
+/// in the state colour when the theme sets no background. The thread
+/// under the cursor reads in the text colour, the others dimmed; the
+/// thread cursor's rows read bold (ADR 0067).
 fn stub_line<'a>(
     app: &App,
     theme: &Theme,
@@ -987,53 +989,33 @@ fn stub_line<'a>(
     let kind = mark.map_or(ThreadState::Open, Mark::kind);
     let glyph = mark.map_or("●", Mark::glyph);
     let (author, created, body) = match message.checked_sub(1) {
-        None => (
-            author_label(thread.author(), app.user_name()),
-            thread.created(),
-            thread.comment(),
-        ),
+        None => (thread.author(), thread.created(), thread.comment()),
         Some(index) => {
             let reply = &thread.replies()[index];
-            (
-                author_label(reply.author(), app.user_name()),
-                reply.created(),
-                reply.body(),
-            )
+            (reply.author(), reply.created(), reply.body())
         }
     };
     let covered = app.threads_at_cursor().contains(thread.id());
     // The thread cursor's stub is the marked one (ADR 0067).
     let marked = covered && app.thread_cursor().thread() == Some(thread.id());
-    let row_style = theme.thread_inline;
-    let text_style = if covered {
-        theme
-            .text
-            .patch(Style::default().fg(theme.thread_focus.fg.unwrap_or_default()))
-    } else {
-        theme.info
-    }
-    .patch(row_style);
-    let text_style = if theme.thread_focus.fg.is_none() && covered {
-        theme.text.patch(row_style)
-    } else {
-        text_style
-    };
+    let surface = theme.thread_inline.patch(row_style(theme, author));
+    let text_style = if covered { theme.text } else { theme.info }.patch(surface);
     let text_style = if marked {
         text_style.add_modifier(Modifier::BOLD)
     } else {
         text_style
     };
     let note = app.note_on_row(row).map_or_else(
-        || Span::styled(" ", row_style),
-        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
+        || Span::styled(" ", surface),
+        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(surface)),
     );
-    let edge = if row_style.bg.is_none() {
+    let edge = if surface.bg.is_none() {
         Span::styled("▎", mark_style(theme, kind))
     } else {
-        Span::styled(" ", row_style)
+        Span::styled(" ", surface)
     };
     let now = fathomable_core::clock::now();
-    let lead = format!(" {author} ");
+    let lead = format!(" {} ", author_label(author, app.user_name()));
     // The age in the info colour, as every other row gives it (ADR 0059).
     let age = format!("{}  ", format_age_short(created, now));
     let free = width
@@ -1044,16 +1026,16 @@ fn stub_line<'a>(
     let text = fit_ellipsis(first, free);
     let spans = vec![
         note,
-        Span::styled(" ".repeat(digits), row_style),
-        Span::styled(" ", row_style),
-        Span::styled(" ", row_style),
+        Span::styled(" ".repeat(digits), surface),
+        Span::styled(" ", surface),
+        Span::styled(" ", surface),
         edge,
-        Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
-        Span::styled(lead, theme.popup_key.patch(row_style)),
-        Span::styled(age, theme.info.patch(row_style)),
+        Span::styled(glyph, mark_style(theme, kind).patch(surface)),
+        Span::styled(lead, name_style(theme, author, marked).patch(surface)),
+        Span::styled(age, theme.info.patch(surface)),
         Span::styled(text, text_style),
     ];
-    Line::from(spans).style(row_style)
+    Line::from(spans).style(surface)
 }
 
 /// The rows of `stub`'s block expanded in place (ADR 0049), at the text

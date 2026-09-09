@@ -1277,17 +1277,25 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
         app.message_for(&id, MessageTarget::Comment),
         Some(("look here", false))
     );
-    // The review list names the agent on the comment's row.
+    // The review list names the agent on the comment's row as the
+    // toast does, and the user's reply by the configured name, the
+    // case the comment's row would use (ADR 0058).
+    app.open_review();
+    app.thread_reply();
+    type_in(&mut app, "noted");
+    app.compose_submit();
     app.open_review();
     let rows = app.review_rows(100);
-    assert!(
-        rows.rows.iter().any(|row| matches!(
-            row,
-            Row::Message { author, message: 0, .. } if author == "reviewer"
-        )),
-        "{:?}",
-        rows.rows
-    );
+    let authors: Vec<&str> = rows
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Message { author, .. } => Some(author.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(authors, ["reviewer (coder)", "User"], "{:?}", rows.rows);
+    app.close_review();
 
     for (path, range, wrong) in [
         ("missing.md", LineRange::new(1, 1), "cannot read"),

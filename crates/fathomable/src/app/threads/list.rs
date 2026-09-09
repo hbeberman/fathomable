@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use fathomable_core::annotations::{LineRange, Thread, ThreadId};
 use fathomable_core::layout::{Layout, Line};
 
-use crate::app::threads::ThreadState;
 use crate::app::threads::words::Words;
+use crate::app::threads::{ThreadState, author_label};
 use crate::app::{App, Focus};
 
 /// Rows kept visible above and below the selected message.
@@ -579,18 +579,22 @@ impl App {
                 });
             }
         };
-        // The comment's author as a reply's is shown (ADR 0061).
-        let comment_author = if thread.author().is_user() {
-            self.user_name()
-        } else {
-            thread.author().name()
-        };
-        message(0, comment_author, thread.created(), thread.comment(), None);
+        // Every author as `author_label` names them (ADR 0058, ADR
+        // 0061): the configured name for the user, `name (type)` for an
+        // agent, the comment's the same as a reply's.
+        let user = self.user_name();
+        message(
+            0,
+            &author_label(thread.author(), user),
+            thread.created(),
+            thread.comment(),
+            None,
+        );
         for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
             message(
                 reply_index + 1,
-                reply.author().name(),
+                &author_label(reply.author(), user),
                 reply.created(),
                 reply.body(),
                 badge,

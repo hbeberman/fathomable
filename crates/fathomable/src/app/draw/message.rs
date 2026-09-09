@@ -13,6 +13,7 @@ use fathomable_core::layout::{Layout, display_width};
 use ratatui::text::{Line, Span};
 
 use crate::app::draw::{Theme, face_style, format_age};
+use crate::app::threads::author_label;
 
 /// Cells a message body sits in from the pane's left edge.
 pub(crate) const MESSAGE_INDENT: usize = 3;
@@ -93,12 +94,11 @@ pub(crate) fn expanded_lines<'a>(
     selected: Option<usize>,
 ) -> Vec<Line<'a>> {
     let mut out = Vec::new();
+    // Every author as `author_label` names them (ADR 0058, ADR 0061):
+    // the configured name for the user, `name (type)` for an agent.
+    let comment_author = author_label(thread.author(), user);
     let comment = Message {
-        author: if thread.author().is_user() {
-            user
-        } else {
-            thread.author().name()
-        },
+        author: &comment_author,
         created: thread.created(),
         body: thread.comment(),
         badge: None,
@@ -112,8 +112,9 @@ pub(crate) fn expanded_lines<'a>(
         selected == Some(0),
     ));
     for (index, reply) in thread.replies().iter().enumerate() {
+        let author = author_label(reply.author(), user);
         let message = Message {
-            author: reply.author().name(),
+            author: &author,
             created: reply.created(),
             body: reply.body(),
             badge: reply.proposes_resolution().then_some("proposes resolving"),

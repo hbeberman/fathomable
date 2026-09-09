@@ -57,7 +57,12 @@ fn message_lines<'a>(
         ),
     ];
     if let Some(badge) = message.badge {
-        header.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
+        // The badge in the author's colour: an agent's proposal reads
+        // green as the agent's name does (ADR 0071).
+        header.push(Span::styled(
+            format!("  [{badge}]"),
+            name_style(theme, message.author, false),
+        ));
     }
     let mut out = vec![message_line(header, width, row)];
     let indent = " ".repeat(MESSAGE_INDENT - 1);

@@ -275,16 +275,18 @@ as *detached* when the lines are gone: a blank row then appears where
 the lines were, carrying the thread's mark, and the lines now at that
 place are left alone. `c` on that row opens the thread; `C` is refused,
 as the row is not text. The colour of a mark is the thread's status
-alone: amber while open (`thread.open`), a bold cool colour when it
-waits on you (`thread.waiting`), grey once resolved
-(`thread.resolved`); *edited* and *detached* are words in an expanded
+alone, and it is the colour of whoever has the last word: your blue
+while open (`thread.open`, the hue of `thread.user`), an agent's bold
+green when it waits on you (`thread.waiting`, the hue of
+`thread.agent`), grey once resolved (`thread.resolved`); *edited* and
+*detached* are words in an expanded
 thread's header, not colours. Every surface that names a thread draws
 one **circle** in that colour, the fill saying where the thread is in
 its life:
 
 | glyph | meaning |
 | --- | --- |
-| `●` | open (amber), or waiting on you (the waiting colour) |
+| `●` | open (your blue), or waiting on you (the agents' green) |
 | `◐` | an agent's newest reply proposes resolving it |
 | `○` | resolved |
 | `?` | the thread's lines are gone (detached) |
@@ -481,10 +483,10 @@ and until then no agent is woken for it
 ([0058](decisions/0058-the-user-has-the-last-word.md)). Waiting
 threads have their own colour (`thread.waiting`) in the gutter
 bracket, the threads pane, and the review list, the status line
-counts them (`● 2 waiting` with a teal circle, and `1 proposed` before
+counts them (`● 2 waiting` with a green circle, and `1 proposed` before
 it while a thread on
 the document carries a proposal; `:status` has both totals), the files
-pane's circle after their file turns teal, and a reply landing while you read raises a toast
+pane's circle after their file turns green, and a reply landing while you read raises a toast
 (`reply on src/lib.rs:42`, or `reply on src/lib.rs:42, proposes
 resolving` when the agent proposed closing it). `]r`
 and `[r`, or `Tab` and `Shift-Tab`, step through them — this file

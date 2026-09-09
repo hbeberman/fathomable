@@ -52,9 +52,9 @@ colors {
     "git.staged"           fg="teal"
     "git.unstaged"         fg="orange"
 
-    "thread.open"          fg="#b06a00"
+    "thread.open"          fg="blue"
     "thread.resolved"      fg="bright-black"
-    "thread.waiting"       fg="blue" mods="bold"
+    "thread.waiting"       fg="green" mods="bold"
     "thread.line"          bg="#fff6d6"
     "thread.focus"         bg="#d6f0ef"
     "thread.inline"        bg="#eef2f7"

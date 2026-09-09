@@ -67,6 +67,15 @@ folded file row marked as an entry header is.
 - `thread.cursor` is the bar: the palette's yellow, the key colour, in
   both built-in themes. `ui.picker.selected` keeps the pickers and the
   files pane and no longer marks a message or an entry.
+- The state colours say the same thing as the stripes (2026-09-09): a
+  thread is open when the user has the last word and waiting when an
+  agent does ([0058](0058-the-user-has-the-last-word.md)), so in the
+  built-in themes `thread.open` is the user's blue and `thread.waiting`
+  the agents' green, bold; `thread.resolved` stays grey and the
+  resolved circle hollow. The circle, the state word, the header
+  counts, and the status line's waiting count all read in the colour
+  of whoever spoke last, and a reply's `proposes resolving` badge takes
+  its author's colour rather than the open hue.
 - A theme that leaves a key unset gets no stripe and no name colour for
   it, as an unset key gives no style anywhere ([0011](0011-theme-schema.md)).
 

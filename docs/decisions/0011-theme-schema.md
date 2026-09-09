@@ -110,7 +110,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.menu` | the `Space` menu and the right-click menu's surface; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
 | `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
-| `thread.waiting` | gutter note cell, list rows, and tree-pane tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)) |
+| `thread.waiting` | gutter note cell, list rows, and tree-pane tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)); in the built-in themes `thread.open` is the hue of `thread.user` and `thread.waiting` that of `thread.agent` ([0071](0071-author-stripes.md)) |
 | `thread.line` | background of annotated rows (0013) |
 | `thread.focus` | background of the rows of the thread the cursor is on, the thread pane's before [0049](0049-inline-threads-and-the-rail.md) ([0033](0033-open-thread-lines.md)) |
 | `thread.inline` | background of a thread's stub rows under its lines; `none` marks them with `▎` instead ([0049](0049-inline-threads-and-the-rail.md)) |

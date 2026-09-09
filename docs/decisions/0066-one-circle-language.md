@@ -61,11 +61,14 @@ once on a folded file.
 
 Every surface that names a thread draws the same glyph in the same
 colour. The colour is whose turn it is; the fill is the lifecycle.
+Since [0071](0071-author-stripes.md) the turn colours are the author
+colours: `thread.open` is the user's blue, `thread.waiting` the
+agents' green (amber and teal until 2026-09-09).
 
 | glyph | colour | meaning |
 | --- | --- | --- |
-| `●` | amber `thread.open` | open, waiting on an agent or anyone |
-| `●` | teal `thread.waiting`, bold | waiting on the user: an agent's reply is newest |
+| `●` | `thread.open`, the user's hue | open, waiting on an agent or anyone |
+| `●` | `thread.waiting`, the agents' hue, bold | waiting on the user: an agent's reply is newest |
 | `◐` | the state colour | an agent's newest reply proposes resolving (0053) |
 | `○` | grey `thread.resolved` | resolved |
 | `?` | the state colour | the thread's lines are gone (`Placement::Detached`) |
@@ -85,8 +88,8 @@ colour. The colour is whose turn it is; the fill is the lifecycle.
   retires. The change badge of [0015](0015-follow-mode.md) stays before
   it: two marks, two meanings. Urgency is the state first (waiting,
   open, resolved), then `?`, `●`, `◐`, `○`, so a file with a thread to
-  answer reads teal whatever else it holds.
-- **The status line** draws a teal `●` before `2 waiting`; `proposed`
+  answer reads in the waiting colour whatever else it holds.
+- **The status line** draws a waiting-coloured `●` before `2 waiting`; `proposed`
   and `threads` stay words.
 - `✓` retires from every surface.
 
@@ -133,8 +136,8 @@ colour. The colour is whose turn it is; the fill is the lifecycle.
 ### Header and key bar
 
 - The header reads `threads · workspace` (or `· file`) then, flush
-  right, the counts by colour: `●2 ●2 ○1`, amber open, teal waiting,
-  grey resolved. A `◐` thread counts as waiting; a `?` thread counts
+  right, the counts by colour: `●2 ●2 ○1`, open, waiting, and
+  resolved each in its colour. A `◐` thread counts as waiting; a `?` thread counts
   under its colour. A zero count is not drawn. With resolved hidden
   the `○n` count still shows what `x` would reveal, dimmed. The bare
   total goes.

@@ -1756,7 +1756,10 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 Span::styled(format!("  {}", format_age(*created, now)), theme.info),
             ];
             if let Some(badge) = badge {
-                spans.push(Span::styled(format!("  [{badge}]"), theme.thread_open));
+                spans.push(Span::styled(
+                    format!("  [{badge}]"),
+                    name_style(theme, &who, false),
+                ));
             }
             message_line(spans, width, row_style(theme, &who))
         }

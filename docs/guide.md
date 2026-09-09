@@ -327,7 +327,7 @@ delete, and there is no migration before the first tag
 
 Every open thread shows a **stub** under the last of its lines: one row
 per message for its newest two, each with the state glyph, the author
-(`user`, or an agent as `name (type)`), the age, and the first line of
+(the user by `user.name`, or an agent as `name (type)`), the age, and the first line of
 the message, on a tinted background (`thread.inline`; a theme that sets
 it to `none` gets a `▎` at the left edge instead). Stubs are not lines:
 `j`/`k`, paging, search, `:N`, and selection step over them, a click on

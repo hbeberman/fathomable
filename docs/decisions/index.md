@@ -77,3 +77,4 @@ supersede rather than edit history.
 - [0071 Author stripes and the cursor bar](0071-author-stripes.md)
 - [0072 A resolved thread stays at its commit](0072-a-resolved-thread-stays-at-its-commit.md)
 - [0073 The chevron](0073-the-chevron.md)
+- [0074 The bracket marks the focused thread](0074-the-bracket-marks-the-focused-thread.md)

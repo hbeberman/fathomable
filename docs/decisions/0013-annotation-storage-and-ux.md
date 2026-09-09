@@ -116,6 +116,9 @@ were captured in a question round on 2026-08-26.
   `╭ │ ╰` over the thread's rows, `•` for one row); the diff bar keeps its
   own cell so git and annotation information never hide each other. A
   thread's rows also get the `annotation.line` background.
+  (Removed 2026-09-09 by
+  [0074](0074-the-bracket-marks-the-focused-thread.md): no row carries
+  a tint; the gutter's bracket lights up on the focused thread.)
 - Theme keys (added to the [0011](0011-theme-schema.md) table):
   `annotation.open`, `annotation.resolved`, `annotation.resolved.auto`,
   `annotation.detached`, and `annotation.line`. When several threads

@@ -11,7 +11,10 @@ tags:
 
 # 0036 Gutter brackets rendered rows, focus in a second colour
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28); the focus colour half was superseded
+2026-09-09 by [0074](0074-the-bracket-marks-the-focused-thread.md):
+the rows carry no tint, and the bracket cells light up instead.
+`thread.focus` lives on in the threads pane.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

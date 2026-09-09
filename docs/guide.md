@@ -299,9 +299,11 @@ review list, the files pane, and the status line's waiting count all
 draw it. A comment on the file as a whole
 (`Space c f`, or an agent's `thread_start` with no `line`) has no
 lines: its stub stands above the first line, its header reads
-`file · open`, and it never moves, detaches, or re-anchors. The lines of the thread the cursor is on
-are tinted in a cool colour (blue in the dark theme, teal in the light
-one), distinct from the tint of other annotated lines (`thread.focus`).
+`file · open`, and it never moves, detaches, or re-anchors. The lines themselves carry no tint;
+the gutter's bracket on the lines of the thread the cursor is on
+lights up in yellow (`thread.bracket`), so the corners and the line
+between them say which thread the keys act on
+([0074](decisions/0074-the-bracket-marks-the-focused-thread.md)).
 Each message of an expanded thread sits on a faint stripe of its
 author's kind, blue for you and green for an agent (`thread.user`,
 `thread.agent`; the name on the author row takes the same colour), and

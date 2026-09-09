@@ -9,6 +9,7 @@ pub(crate) mod gutter;
 pub(crate) mod header;
 pub(crate) mod info;
 pub(crate) mod message;
+mod note;
 mod threads_pane;
 
 use std::fmt::Write as _;
@@ -30,6 +31,7 @@ use crate::app::draw::header::{
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
+use crate::app::draw::note::note_cell;
 use crate::app::input::bindings::Action;
 use crate::app::threads::list::{BODY_INDENT, Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
@@ -79,8 +81,8 @@ pub(crate) struct Theme {
     pub(crate) thread_open: Style,
     pub(crate) thread_resolved: Style,
     pub(crate) thread_waiting: Style,
-    pub(crate) thread_line: Style,
     pub(crate) thread_focus: Style,
+    pub(crate) thread_bracket: Style,
     /// A stub's background (ADR 0049).
     pub(crate) thread_inline: Style,
     /// The user's messages: the name's colour and the stripe (ADR 0071).
@@ -134,8 +136,8 @@ impl Theme {
             thread_open: style(Key::ThreadOpen),
             thread_resolved: style(Key::ThreadResolved),
             thread_waiting: style(Key::ThreadWaiting),
-            thread_line: style(Key::ThreadLine),
             thread_focus: style(Key::ThreadFocus),
+            thread_bracket: style(Key::ThreadBracket),
             thread_inline: style(Key::ThreadInline),
             thread_user: style(Key::ThreadUser),
             thread_agent: style(Key::ThreadAgent),
@@ -881,16 +883,10 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             }
             continue;
         }
-        // The note cell brackets a thread's rows (ADR 0027).
-        let note = app.note_on_row(row);
-        let mut row_style = Style::default();
-        if note.is_some() {
-            row_style = row_style.patch(theme.thread_line);
-        }
-        // The open thread's own lines stand out from the rest (ADR 0033).
-        if app.open_thread_on_row(row) {
-            row_style = row_style.patch(theme.thread_focus);
-        }
+        // The note cell brackets a thread's rows (ADR 0027) and lights
+        // up on the focused thread's (ADR 0074); the rows themselves
+        // carry no tint.
+        let note = note_cell(app, theme, row, Style::default());
         let number = line
             .source_line()
             .map_or_else(|| " ".repeat(digits), |n| format!("{n:>digits$}"));
@@ -901,7 +897,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
             .source_line_of_row(row)
             .and_then(|line| view.line_status(line))
             .map_or_else(
-                || Span::styled(" ", row_style),
+                || Span::raw(" "),
                 |status| {
                     // A hunk the index already holds draws thicker
                     // (ADR 0017): `▌` staged, `▎` not yet.
@@ -913,17 +909,13 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
                         (_, true) => "▌",
                         (_, false) => "▎",
                     };
-                    Span::styled(glyph, status_style(theme, status).patch(row_style))
+                    Span::styled(glyph, status_style(theme, status))
                 },
             );
-        let note = note.map_or_else(
-            || Span::styled(" ", row_style),
-            |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
-        );
         let mut spans = vec![
             note,
-            Span::styled(number, theme.line_number.patch(row_style)),
-            Span::styled(" ", theme.marker.patch(row_style)),
+            Span::styled(number, theme.line_number),
+            Span::styled(" ", theme.marker),
             bar,
         ];
         let matches: Vec<_> = view.matches().iter().filter(|m| m.row == row).collect();
@@ -939,7 +931,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         };
         let mut col = 0;
         for span in line.spans() {
-            let base = face_style(theme, span.style()).patch(row_style);
+            let base = face_style(theme, span.style());
             // Split the span per character so selection and match highlights
             // can start and end mid-span.
             for grapheme in grapheme_cells(span.text()) {
@@ -947,7 +939,7 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
                 col += display_width(grapheme);
             }
         }
-        out.push(Line::from(spans).style(row_style));
+        out.push(Line::from(spans));
     }
     if out.len() < rows && view.scroll() + out.len() == lines.len() {
         out.push(past_end_line(theme, digits));
@@ -1016,10 +1008,7 @@ fn stub_line<'a>(
     } else {
         text_style
     };
-    let note = app.note_on_row(row).map_or_else(
-        || Span::styled(" ", surface),
-        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(surface)),
-    );
+    let note = note_cell(app, theme, row, surface);
     let edge = if surface.bg.is_none() {
         Span::styled("▎", mark_style(theme, kind))
     } else {
@@ -1172,10 +1161,7 @@ fn with_gutter<'a>(
     } else {
         theme.thread_inline
     };
-    let note = app.note_on_row(row).map_or_else(
-        || Span::styled(" ", row_style),
-        |(glyph, kind)| Span::styled(glyph, mark_style(theme, kind).patch(row_style)),
-    );
+    let note = note_cell(app, theme, row, row_style);
     let mut spans = vec![
         note,
         Span::styled(" ".repeat(digits), row_style),

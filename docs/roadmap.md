@@ -353,3 +353,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     either, or a double-click on the row, folds or expands the thread,
     and one click elsewhere only places the cursor
     ([0073](decisions/0073-the-chevron.md)).
+65. **The bracket marks the focused thread.** Annotated rows carry no
+    tint; the gutter cells that draw the focused thread's bracket sit
+    on a brighter yellow (`thread.bracket`), and `thread.line` is gone
+    ([0074](decisions/0074-the-bracket-marks-the-focused-thread.md)).

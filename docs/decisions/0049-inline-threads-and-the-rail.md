@@ -131,6 +131,9 @@ result.
 - **Highlight.** When the text cursor is on a row the thread covers (or
   on its detached row), the stub's text takes `thread.focus`'s
   foreground and the thread's own rows take the focus tint as today.
+  (Amended 2026-09-09 by
+  [0074](0074-the-bracket-marks-the-focused-thread.md): the rows take
+  no tint; the gutter's bracket on them lights up.)
   The thread cursor's stub ([0046](0046-one-thread-cursor.md): the
   thread starting on the cursor line, else the first on its row, else
   the nearest above) additionally shows `(c expand)` at the end of its

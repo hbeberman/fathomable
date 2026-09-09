@@ -195,8 +195,12 @@ pub enum Key {
     ThreadOpen,
     ThreadResolved,
     ThreadWaiting,
-    ThreadLine,
+    /// The threads pane's current-file rows (ADR 0066); the focused
+    /// thread's lines before ADR 0074.
     ThreadFocus,
+    /// The note cell on the rows of the thread the cursor is on (ADR
+    /// 0074).
+    ThreadBracket,
     /// The background of a thread's stub and expanded rows (ADR 0049).
     ThreadInline,
     /// The user's messages (ADR 0071): `fg` the name, `bg` the stripe.
@@ -246,8 +250,8 @@ impl Key {
         ("thread.open", Self::ThreadOpen),
         ("thread.resolved", Self::ThreadResolved),
         ("thread.waiting", Self::ThreadWaiting),
-        ("thread.line", Self::ThreadLine),
         ("thread.focus", Self::ThreadFocus),
+        ("thread.bracket", Self::ThreadBracket),
         ("thread.inline", Self::ThreadInline),
         ("thread.user", Self::ThreadUser),
         ("thread.agent", Self::ThreadAgent),

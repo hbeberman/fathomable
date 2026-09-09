@@ -495,9 +495,12 @@ fn place_cursor(
         || !app.has_document()
         || app.review_list().is_open()
         || app.info().is_some()
+        || view.stub_slot_of_row(view.cursor().row).is_some()
     {
         // The highlighted row is the cursor; leaving the terminal cursor
-        // unset keeps it hidden rather than parked on the divider.
+        // unset keeps it hidden rather than parked on the divider. On an
+        // expanded thread's rows the cursor bar (ADR 0071) is the
+        // cursor, so the terminal's would only sit on the bar's cell.
     } else {
         let screen_row = view.cursor().row.saturating_sub(view.scroll());
         frame.set_cursor_position((

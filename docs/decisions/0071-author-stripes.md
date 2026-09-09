@@ -90,6 +90,10 @@ folded file row marked as an entry header is.
   and read bold. A file row folded over the cursor's thread
   ([0066](0066-one-circle-language.md)) draws the bar and reads bold
   too. No row of a thread takes `ui.picker.selected` any more.
+- While the text cursor rests on an expanded thread's rows the terminal
+  cursor is hidden: the bar says where the reader is, and the
+  terminal's block would only sit on the bar's cell of the author row
+  (fixed 2026-09-09; it was drawn there at first).
 
 ### The thread's gutter
 

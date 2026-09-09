@@ -1779,3 +1779,41 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     assert_eq!(app.waiting_count(), 0);
     Ok(())
 }
+
+/// ADR 0071: on an expanded thread's rows the cursor bar is the cursor,
+/// so the terminal's is hidden rather than parked on the bar's cell.
+#[test]
+fn the_terminal_cursor_hides_on_an_expanded_threads_rows() -> anyhow::Result<()> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let dir = testing::workspace("threads-terminal-cursor", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    app.view_mut().goto_top();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+    assert!(terminal.backend().cursor_visible(), "on a source row");
+    app.view_mut().move_down(2);
+    app.expand_at_cursor();
+    anyhow::ensure!(app.shows_thread(), "the thread did not expand");
+    // `j` walks into the expanded thread's message rows (ADR 0049).
+    let on_thread = |app: &App| {
+        app.view()
+            .stub_slot_of_row(app.view().cursor().row)
+            .is_some()
+    };
+    for _ in 0..10 {
+        if on_thread(&app) {
+            break;
+        }
+        app.view_mut().move_down(1);
+    }
+    anyhow::ensure!(on_thread(&app), "the text cursor is on the thread's rows");
+    terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+    assert!(!terminal.backend().cursor_visible(), "on the thread's rows");
+    Ok(())
+}

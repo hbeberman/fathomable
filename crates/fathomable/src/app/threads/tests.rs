@@ -344,7 +344,7 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         .position(|row| row.contains("line 12"))
         .context("the reply's last row")?;
     assert!(
-        rows[last + 1].contains(" user  draft") && !rows[last + 1].contains("submit"),
+        rows[last + 1].contains(" User  draft") && !rows[last + 1].contains("submit"),
         "the author row follows the last message, its keys on the bar (ADR 0067):\n{screen}"
     );
     assert!(

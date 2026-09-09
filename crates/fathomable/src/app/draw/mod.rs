@@ -1096,7 +1096,7 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
 /// the draft's width and indented as a body is; the draft's keys are on
 /// the text's key bar (ADR 0067).
 fn draft_lines<'a>(app: &App, theme: &Theme, compose: &Compose, width: usize) -> Vec<Line<'a>> {
-    let mut lines = vec![draft_header().line(theme, width)];
+    let mut lines = vec![draft_header(app.user_name()).line(theme, width)];
     let buffer = compose.buffer();
     let text_width = app.draft_width();
     let indent = " ".repeat(MESSAGE_INDENT);

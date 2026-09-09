@@ -93,7 +93,7 @@ impl Compose {
 /// Which of a draft's rows a rendered row is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DraftRow {
-    /// The ` user  draft` row with the draft keys at its right edge.
+    /// The ` User  draft` row with the draft keys at its right edge.
     Author,
     /// A wrapped row of the draft's text, counted from its first.
     Text(usize),

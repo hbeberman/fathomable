@@ -515,12 +515,13 @@ pub(crate) fn threads_pane_footer(app: &App) -> Header {
     Header::bar(hints)
 }
 
-/// The draft's author row (ADR 0054): ` user  draft` as a message's
-/// author row reads. Its keys are on the text's key bar (ADR 0067).
-pub(crate) fn draft_header() -> Header {
+/// The draft's author row (ADR 0054): ` User  draft` as a message's
+/// author row reads, `user` the configured name (ADR 0058). Its keys
+/// are on the text's key bar (ADR 0067).
+pub(crate) fn draft_header(user: &str) -> Header {
     Header::new(
         vec![
-            (" user".to_owned(), Tone::Key),
+            (format!(" {user}"), Tone::Key),
             ("  draft".to_owned(), Tone::Info),
         ],
         Vec::new(),

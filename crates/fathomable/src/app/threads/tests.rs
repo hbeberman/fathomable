@@ -1867,3 +1867,55 @@ fn the_terminal_cursor_hides_on_an_expanded_threads_rows() -> anyhow::Result<()>
     assert!(!terminal.backend().cursor_visible(), "on the thread's rows");
     Ok(())
 }
+
+/// ADR 0071: in the file the header's bar says which thread the keys
+/// act on, so it shows from the thread's lines above; a message's bar
+/// waits for the text cursor to be on the thread's own rows.
+#[test]
+fn the_bar_waits_for_the_text_cursor_to_enter_the_thread() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-bar-waits", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.expand_thread(id.clone());
+    app.view_mut().goto_top();
+    app.thread_step_in_file(1);
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert!(
+        app.view()
+            .stub_slot_of_row(app.view().cursor().row)
+            .is_none(),
+        "the text cursor is on the thread's first line"
+    );
+    let gutter = crate::app::draw::gutter_width(app.view());
+    let barred = |rows: &[String]| {
+        rows.iter()
+            .filter(|row| row.chars().nth(gutter) == Some('▎'))
+            .count()
+    };
+    let rows = testing::screen(&app)?;
+    assert_eq!(
+        barred(&rows),
+        1,
+        "the header alone from the lines: {rows:?}"
+    );
+    let header = rows
+        .iter()
+        .find(|row| row.chars().nth(gutter) == Some('▎'))
+        .context("the barred row")?;
+    assert!(header.contains("open"), "the header: {header:?}");
+    for _ in 0..10 {
+        if app
+            .view()
+            .stub_slot_of_row(app.view().cursor().row)
+            .is_some()
+        {
+            break;
+        }
+        app.view_mut().move_down(1);
+    }
+    // The header and the comment's author row and body row.
+    assert_eq!(barred(&testing::screen(&app)?), 3, "the bar once inside");
+    Ok(())
+}

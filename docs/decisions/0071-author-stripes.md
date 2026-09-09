@@ -87,7 +87,13 @@ folded file row marked as an entry header is.
   every row it has, and its name bold. The entry header of the cursor's
   thread in the list, and the header row of the expanded thread in the
   file while the cursor is in it, draw the same bar in their first cell
-  and read bold. A file row folded over the cursor's thread
+  and read bold. In the file the header's bar says this is the thread
+  `r` and the other keys act on, so it shows whenever the thread is the
+  cursor's, from its lines above included; a message's bar waits for
+  the text cursor to rest on the thread's own rows, since from the
+  lines above the cursor merely rides the thread
+  ([0046](0046-one-thread-cursor.md)) and no message is the one under
+  it (clarified 2026-09-09). A file row folded over the cursor's thread
   ([0066](0066-one-circle-language.md)) draws the bar and reads bold
   too. No row of a thread takes `ui.picker.selected` any more.
 - While the text cursor rests on an expanded thread's rows the terminal

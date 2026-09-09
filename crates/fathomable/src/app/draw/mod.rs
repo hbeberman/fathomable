@@ -1069,10 +1069,16 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
             let Some(thread) = app.thread(id) else {
                 return Vec::new();
             };
-            let cursor = app.thread_cursor();
-            let selected = (cursor.thread() == Some(id)).then_some(cursor.message());
-            let mut lines =
-                vec![expanded_header(app, thread, selected.is_some()).line(theme, width)];
+            // The header's bar says this is the thread the keys act on
+            // (ADR 0071); a message's bar waits for the text cursor to
+            // be on the thread's own rows, so from its lines above no
+            // message reads as the one under the cursor.
+            let current = app.thread_cursor().thread() == Some(id);
+            let selected = app
+                .expanded_row_message(app.view().cursor().row)
+                .filter(|(on, _)| on == id)
+                .map(|(_, message)| message);
+            let mut lines = vec![expanded_header(app, thread, current).line(theme, width)];
             lines.extend(expanded_lines(
                 theme,
                 app.highlighter(),

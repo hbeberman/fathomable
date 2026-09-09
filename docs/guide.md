@@ -301,9 +301,11 @@ Each message of an expanded thread sits on a faint stripe of its
 author's kind, blue for you and green for an agent (`thread.user`,
 `thread.agent`; the name on the author row takes the same colour), and
 the thread's rows begin two cells after the gutter, a gutter of the
-thread's own: the thread cursor's message carries a `▎` bar
-(`thread.cursor`) down its left edge there with its name in bold, and
-the thread's header the same bar while the cursor is inside. In the
+thread's own: the header of the thread the keys act on carries a `▎`
+bar (`thread.cursor`) there, and once your cursor is on the thread's
+own rows the message it is on carries the same bar down its left edge
+with its name in bold; from the thread's lines above, the header alone
+is barred. In the
 review list the bar is the first cell of the same rows, and of a file
 row folded over the cursor's thread. A draft is written on its own
 warm surface (`thread.draft`) and takes your stripe on submit

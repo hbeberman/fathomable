@@ -1964,3 +1964,80 @@ fn the_bar_waits_for_the_text_cursor_to_enter_the_thread() -> anyhow::Result<()>
     assert_eq!(barred(&testing::screen(&app)?), 3, "the bar once inside");
     Ok(())
 }
+
+/// A click on a collapsed stub's words rests the text cursor on the
+/// stub's row, not the line above (ADR 0073, amended 2026-09-09): the
+/// terminal cursor hides, the stub's edge carries the cursor bar, the
+/// thread cursor is the stub's thread, and `j` walks on to the next
+/// line. A press in the gutter of the row still selects the line it
+/// hangs under. The bar is on the thread cursor's stub from its lines
+/// above too (ADR 0071).
+#[test]
+fn a_click_on_a_stub_rests_the_cursor_on_it() -> anyhow::Result<()> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let dir = testing::workspace("threads-click-stub", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let bar_fg = theme.thread_cursor.fg.unwrap_or_default();
+    let edge_x = app.sidebar_width() + crate::app::draw::gutter_width(app.view());
+    let rows = testing::screen(&app)?;
+    let stub_y = rows
+        .iter()
+        .position(|row| row.contains("opening"))
+        .with_context(|| format!("the stub row: {rows:?}"))?;
+    // From the thread's line the stub is the cursor's: barred, and the
+    // block cursor still on the line.
+    let buffer = testing::buffer(&app)?;
+    let edge = &buffer[(u16::try_from(edge_x)?, u16::try_from(stub_y)?)];
+    assert_eq!(
+        (edge.symbol(), edge.fg),
+        ("▎", bar_fg),
+        "barred from the line"
+    );
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+    assert!(terminal.backend().cursor_visible(), "on the line");
+
+    testing::click(&mut app, edge_x + 10, stub_y);
+    let stub_row = app.view().scroll() + stub_y - app.text_top();
+    assert_eq!(
+        app.view().cursor().row,
+        stub_row,
+        "the cursor rests on the stub"
+    );
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+    assert!(
+        !terminal.backend().cursor_visible(),
+        "no block cursor on a stub"
+    );
+    let buffer = testing::buffer(&app)?;
+    let edge = &buffer[(u16::try_from(edge_x)?, u16::try_from(stub_y)?)];
+    assert_eq!(
+        (edge.symbol(), edge.fg),
+        ("▎", bar_fg),
+        "barred on the stub"
+    );
+
+    // The paragraph the thread is on renders as one row; `j` steps off
+    // the stub onto the row after it, `k` back over it.
+    testing::press(&mut app, "j");
+    assert_eq!(app.view().cursor().row, stub_row + 1, "j steps off it");
+    testing::press(&mut app, "k");
+    assert_eq!(app.view().cursor().row, stub_row - 1, "k steps over it");
+
+    let gutter_x = app.sidebar_width() + 1;
+    testing::click(&mut app, gutter_x, stub_y);
+    assert_eq!(
+        app.view().selected_lines().map(|r| (r.start(), r.end())),
+        Some((3, 5)),
+        "a gutter press selects the paragraph row the stub hangs under"
+    );
+    Ok(())
+}

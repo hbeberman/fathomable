@@ -73,7 +73,15 @@ its own: its edge cell, the circle, and the name.
   right button. 0049's *a click on a stub expands it* no longer holds.
   The expanding press and the folding press both end the gesture, so
   a double-click on a stub opens the thread and stops: a third press
-  is a first press on the header, not a fold.
+  is a first press on the header, not a fold. (Amended 2026-09-09: one
+  press on a stub's words rests the text cursor on the stub's own row,
+  not on the row it hangs under. The user clicked a stub and saw the
+  block cursor jump to the line above, a line the click was not on; a
+  stub has no column for a block cursor, so the terminal cursor hides
+  there as on the expanded rows and the stub's `▎` bar marks the place,
+  as [0049](0049-inline-threads-and-the-rail.md)'s stub bullet and
+  [0071](0071-author-stripes.md)'s bar rule now say. A press in the
+  global gutter of the row still selects the line it hangs under.)
 - **The gutter's presses are unchanged.** A press in the global
   gutter of the header row still selects the line it settles on, as a
   gutter press does everywhere.

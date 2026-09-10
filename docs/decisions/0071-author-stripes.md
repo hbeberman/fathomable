@@ -102,7 +102,11 @@ folded file row marked as an entry header is.
   the text cursor to rest on the thread's own rows, since from the
   lines above the cursor merely rides the thread
   ([0046](0046-one-thread-cursor.md)) and no message is the one under
-  it (clarified 2026-09-09). A file row folded over the cursor's thread
+  it (clarified 2026-09-09). A collapsed stub is its thread's header
+  folded, so it draws the same bar in its edge cell whenever the thread
+  is the cursor's, from its lines above or with the text cursor on the
+  stub itself, and reads bold as before (amended 2026-09-09). A file
+  row folded over the cursor's thread
   ([0066](0066-one-circle-language.md)) draws the bar and reads bold
   too. No row of a thread takes `ui.picker.selected` any more.
 - While the text cursor rests on an expanded thread's rows the terminal

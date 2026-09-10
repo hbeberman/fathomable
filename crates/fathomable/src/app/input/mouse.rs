@@ -396,8 +396,9 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         // A stub's rows and the expanded header (ADR 0073): a press on
         // the thread's gutter, the chevron's column, opens or closes
         // the thread, as does a second press on any of its cells; a
-        // first press elsewhere on the row places the cursor. Opening
-        // and closing end the gesture, so a double-click does not undo
+        // first press elsewhere on the row places the cursor, on a
+        // collapsed stub's own row (amended 2026-09-09). Opening and
+        // closing end the gesture, so a double-click does not undo
         // itself.
         if text_row < text_rows
             && let Some((stub, index, _)) = app.stub_on_row(app.view().scroll() + text_row)
@@ -419,8 +420,10 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             view.touch();
             if in_gutter {
                 view.select_line_at(text_row);
-            } else {
+            } else if stub.expanded() {
                 view.click(text_row, col);
+            } else {
+                view.rest_on(text_row);
             }
             return Effect::None;
         }

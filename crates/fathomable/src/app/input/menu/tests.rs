@@ -384,8 +384,10 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
         .context("the stub's first row")?;
     let (_, screen_row) = at(&app, top, 0);
     let rows = testing::screen(&app)?;
+    // The cursor is on the thread's line, so its stub carries the bar
+    // in the edge cell (ADR 0071, amended 2026-09-09).
     assert!(
-        rows.iter().any(|row| after(row).starts_with(" ▸ ●")),
+        rows.iter().any(|row| after(row).starts_with("▎▸ ●")),
         "the stub draws the chevron: {rows:?}"
     );
 

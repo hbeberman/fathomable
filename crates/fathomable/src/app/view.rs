@@ -998,6 +998,17 @@ impl View {
         self.clamp_col();
     }
 
+    /// Put the cursor on screen row `screen_row` as it is, a collapsed
+    /// stub's row included, at its first column: the mouse's one way onto
+    /// a row no motion stops on (ADR 0073, amended 2026-09-09).
+    pub(crate) fn rest_on(&mut self, screen_row: usize) {
+        self.selection = None;
+        self.mode = Mode::Normal;
+        self.cursor.row = (self.scroll + screen_row).min(self.last_row());
+        self.want_col = 0;
+        self.clamp_col();
+    }
+
     /// Extend a mouse selection to a screen position (drag).
     pub(crate) fn drag(&mut self, screen_row: usize, col: usize) {
         let anchor = self.cursor;

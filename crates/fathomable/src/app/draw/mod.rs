@@ -24,7 +24,9 @@ use ratatui::widgets::{Clear, Paragraph, Wrap};
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
-use crate::app::draw::author::{CHEVRON_RIGHT, THREAD_GUTTER, cursor_cell, name_style, row_style};
+use crate::app::draw::author::{
+    CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, cursor_cell, name_style, row_style,
+};
 use crate::app::draw::header::{
     Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
     review_header,
@@ -964,7 +966,9 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
 /// the author's colour as a message of the expanded thread reads (ADR
 /// 0071) — or behind a `▎` in the state colour when the theme sets no
 /// background. The thread under the cursor reads in the text colour,
-/// the others dimmed; the thread cursor's rows read bold (ADR 0067).
+/// the others dimmed; the thread cursor's stub reads bold (ADR 0067)
+/// and carries the cursor bar in its edge cell, as the expanded header
+/// does (ADR 0071, amended 2026-09-09).
 fn stub_line<'a>(
     app: &App,
     theme: &Theme,
@@ -1002,7 +1006,9 @@ fn stub_line<'a>(
         text_style
     };
     let note = note_cell(app, theme, row, surface);
-    let edge = if surface.bg.is_none() {
+    let edge = if marked {
+        Span::styled(CURSOR_BAR, surface.patch(theme.thread_cursor))
+    } else if surface.bg.is_none() {
         Span::styled("▎", mark_style(theme, kind))
     } else {
         Span::styled(" ", surface)

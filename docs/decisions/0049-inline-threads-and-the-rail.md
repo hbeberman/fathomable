@@ -132,7 +132,11 @@ result.
   [0073](0073-the-chevron.md): the stub's first row draws a `▸` and
   opens on a click there or a double-click, one click elsewhere on it
   placing the cursor; the expanded header draws a `▾` that folds on a
-  click or a double-click.)
+  click or a double-click. Amended again the same day: that one click
+  rests the text cursor on the stub's own row, the one way onto a row
+  no motion stops on; the terminal cursor hides there, `j`/`k` step
+  off it to the next line either way, and the thread cursor is the
+  stub's thread at its newest message, as on the thread's lines.)
 - **Highlight.** When the text cursor is on a row the thread covers (or
   on its detached row), the stub's text takes `thread.focus`'s
   foreground and the thread's own rows take the focus tint as today.

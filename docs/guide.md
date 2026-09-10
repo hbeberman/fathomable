@@ -226,7 +226,8 @@ wheel does, and only `Enter` moves focus to the view. A click on a
 stub's `▸`, or a double-click anywhere on the stub, expands its
 thread; a click on the `▾` in the expanded thread's gutter, or a
 double-click anywhere on its header row, folds it again. One click
-elsewhere on either row only places the cursor. Drag the sidebar's
+elsewhere on either row only places the cursor, on a stub on the stub
+itself. Drag the sidebar's
 divider or the threads pane's rule to resize them.
 
 A **right-click** opens a menu of what the pointer is on, each entry
@@ -309,7 +310,7 @@ author's kind, blue for you and green for an agent (`thread.user`,
 `thread.agent`; the name on the author row takes the same colour), and
 the thread's rows begin two cells after the gutter, a gutter of the
 thread's own: the header of the thread the keys act on carries a `▎`
-bar (`thread.cursor`) there, and once your cursor is on the thread's
+bar (`thread.cursor`) there, and so does its stub while it is folded, and once your cursor is on the thread's
 own rows the message it is on carries the same bar down its left edge
 with its name in bold; from the thread's lines above, the header alone
 is barred. In the
@@ -352,9 +353,10 @@ the message, on the author's stripe with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
 `thread.agent`, over `thread.inline`; a theme that sets no background
 gets a `▎` at the left edge instead). Stubs are not lines:
-`j`/`k`, paging, search, `:N`, and selection step over them, a click on
-one lands on the row above (its `▸` or a double-click expands it), and
-they carry no line number. Stubs of
+`j`/`k`, paging, search, `:N`, and selection step over them, and
+they carry no line number; a click on one rests the cursor on the stub
+itself, the `▎` bar at its left edge standing in for the block cursor
+(its `▸` or a double-click expands it), and `j` or `k` steps off it. Stubs of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour, bold for the
 thread the cursor is on; the others are dimmed.

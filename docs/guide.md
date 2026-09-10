@@ -226,9 +226,10 @@ wheel does, and only `Enter` moves focus to the view. A click on a
 stub's `▸`, or a double-click anywhere on the stub, expands its
 thread; a click on the `▾` in the expanded thread's gutter, or a
 double-click anywhere on its header row, folds it again. One click
-elsewhere on either row only places the cursor, on a stub on the stub
-itself. Drag the sidebar's
-divider or the threads pane's rule to resize them.
+elsewhere on either row only places the cursor, on that row itself:
+the `▎` bar at the row's left edge stands in for the block cursor
+there. Drag the sidebar's divider or the threads pane's rule to resize
+them.
 
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new

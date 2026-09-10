@@ -1007,8 +1007,9 @@ impl View {
     }
 
     /// Put the cursor on screen row `screen_row` as it is, a collapsed
-    /// stub's row included, at its first column: the mouse's one way onto
-    /// a row no motion stops on (ADR 0073, amended 2026-09-09).
+    /// stub's row or an expanded thread's header included, at its first
+    /// column: the mouse's one way onto a row no motion stops on (ADR
+    /// 0073, amended 2026-09-09 and 2026-09-10).
     pub(crate) fn rest_on(&mut self, screen_row: usize) {
         self.selection = None;
         self.mode = Mode::Normal;

@@ -81,7 +81,14 @@ its own: its edge cell, the circle, and the name.
   there as on the expanded rows and the stub's `▎` bar marks the place,
   as [0049](0049-inline-threads-and-the-rail.md)'s stub bullet and
   [0071](0071-author-stripes.md)'s bar rule now say. A press in the
-  global gutter of the row still selects the line it hangs under.)
+  global gutter of the row still selects the line it hangs under.
+  Amended 2026-09-10: the expanded header's words rest the cursor the
+  same way, on the header row itself. *On the header as it did* had
+  settled the click to the row above, the header being no stop for a
+  motion, so the block cursor jumped off the row the user clicked
+  just as it had on a stub; the terminal cursor hides there as on the
+  thread's other rows, the header's `▎` bar marks the place, and `j`
+  steps on to the first message, `k` back to the line above.)
 - **The gutter's presses are unchanged.** A press in the global
   gutter of the header row still selects the line it settles on, as a
   gutter press does everywhere.

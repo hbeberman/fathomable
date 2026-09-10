@@ -136,7 +136,9 @@ result.
   rests the text cursor on the stub's own row, the one way onto a row
   no motion stops on; the terminal cursor hides there, `j`/`k` step
   off it to the next line either way, and the thread cursor is the
-  stub's thread at its newest message, as on the thread's lines.)
+  stub's thread at its newest message, as on the thread's lines. From
+  2026-09-10 one click on the expanded header rests the cursor on the
+  header row the same way.)
 - **Highlight.** When the text cursor is on a row the thread covers (or
   on its detached row), the stub's text takes `thread.focus`'s
   foreground and the thread's own rows take the focus tint as today.

@@ -2041,3 +2041,73 @@ fn a_click_on_a_stub_rests_the_cursor_on_it() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// A click on an expanded thread's header row rests the text cursor on
+/// the header, not the line above (ADR 0073, amended 2026-09-10): the
+/// terminal cursor hides, the header alone is barred, the thread cursor
+/// is the header's thread, and `j` walks on to its first message, `k`
+/// back to the line above. A press in the gutter of the row still
+/// selects the line it settles on.
+#[test]
+fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let dir = testing::workspace("threads-click-header", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.expand_thread(id.clone());
+    app.view_mut().goto_top();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let gutter = crate::app::draw::gutter_width(app.view());
+    let edge_x = app.sidebar_width() + gutter;
+    let rows = testing::screen(&app)?;
+    let header_y = rows
+        .iter()
+        .position(|row| row.chars().nth(gutter + 1) == Some('▾'))
+        .with_context(|| format!("the header row: {rows:?}"))?;
+    let header_row = app.view().scroll() + header_y - app.text_top();
+    let barred = |rows: &[String]| {
+        rows.iter()
+            .filter(|row| row.chars().nth(gutter) == Some('▎'))
+            .count()
+    };
+
+    testing::click(&mut app, edge_x + 10, header_y);
+    assert_eq!(
+        app.view().cursor().row,
+        header_row,
+        "the cursor rests on the header"
+    );
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert!(app.is_expanded(&id), "one click keeps it open");
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
+    assert!(
+        !terminal.backend().cursor_visible(),
+        "no block cursor on the header"
+    );
+    let rows = testing::screen(&app)?;
+    assert_eq!(barred(&rows), 1, "the header alone is barred: {rows:?}");
+
+    testing::press(&mut app, "j");
+    assert_eq!(
+        app.expanded_row_message(app.view().cursor().row),
+        Some((id.clone(), 0)),
+        "j steps onto the first message"
+    );
+    testing::press(&mut app, "k");
+    assert_eq!(app.view().cursor().row, header_row - 1, "k steps over it");
+
+    let gutter_x = app.sidebar_width() + 1;
+    testing::click(&mut app, gutter_x, header_y);
+    assert_eq!(
+        app.view().selected_lines().map(|r| (r.start(), r.end())),
+        Some((3, 5)),
+        "a gutter press selects the paragraph row the header hangs under"
+    );
+    Ok(())
+}

@@ -623,6 +623,45 @@ mod tests {
     /// the view; `j`/`k` walk its messages and `r` replies with the
     /// cursor landing on the reply; `c` folds; `c` cycles through the
     /// threads covering a row and ends with none expanded.
+    /// Opening a thread from its chevron and closing it again leaves the
+    /// view where it was: the row the stub hangs under keeps its place on
+    /// screen, even though the cursor sat on a message row that went.
+    #[test]
+    fn opening_and_closing_a_thread_leaves_the_view_still() -> anyhow::Result<()> {
+        let lines: Vec<String> = (1..=80).map(|n| format!("line {n}")).collect();
+        let text = lines.join("\n") + "\n";
+        let dir = testing::workspace("stubs-fold-still", &text)?;
+        let mut app = source_app(&dir)?;
+        annotate(&mut app, 40, 40, "a point\nwith a second line");
+        app.thread_reply();
+        app.compose_insert("a reply");
+        app.compose_submit();
+        let id = app.file_threads()[0].clone();
+        app.fold_thread(&id);
+        app.view_mut().goto_source_line(40);
+        // The wheel brings the cursor to mid-screen, where the opened
+        // thread fits below it without a scroll.
+        app.view_mut().scroll_by(10);
+        let scroll = app.view().scroll();
+        assert!(scroll > 0, "the view has scrolled down to L40");
+        assert_eq!(app.view().cursor_source_line(), Some(40));
+        for _ in 0..3 {
+            let newest = app.newest_message(&id);
+            app.goto_message(id.clone(), newest);
+            assert!(app.expanded_row_message(app.view().cursor().row).is_some());
+            app.fold_thread(&id);
+            assert_eq!(app.view().scroll(), scroll, "the view stays still");
+            assert_eq!(app.view().cursor_source_line(), Some(40));
+        }
+        // `c` then `j` onto a message, and `z` to fold, the same.
+        press(&mut app, "c");
+        press(&mut app, "j");
+        press(&mut app, "z");
+        assert!(!app.is_expanded(&id));
+        assert_eq!(app.view().scroll(), scroll, "the view stays still");
+        Ok(())
+    }
+
     #[test]
     fn c_expands_in_place_walks_messages_and_cycles() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-expand", testing::README)?;

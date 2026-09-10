@@ -777,7 +777,15 @@ impl View {
             }
             None => self.source_position(),
         };
-        let screen_row = self.cursor.row.saturating_sub(self.scroll);
+        // The row that keeps its place on screen: the cursor's, or for a
+        // cursor on a stub row, the document row the stub hangs under, so
+        // folding the thread under the cursor leaves the view still.
+        let kept_row = if self.is_stub_row(self.cursor.row) {
+            anchor_row.unwrap_or(self.cursor.row)
+        } else {
+            self.cursor.row
+        };
+        let screen_row = kept_row.saturating_sub(self.scroll);
         let layout = match self.display {
             Display::Diff => match self.diff_shown.as_ref().map(|d| &d.body) {
                 Some(DiffBody::Diff { base, target }) => {

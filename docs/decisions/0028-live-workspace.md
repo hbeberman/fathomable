@@ -96,6 +96,12 @@ Settled in a question round on 2026-08-28; the choices are below.
   remove-then-create within the debounce window, the pair is matched by
   file size and content hash of the created file against the last-seen
   snapshot of the removed one; no match means delete plus create.
+- A rename pair whose old path is created again in the same debounce
+  window is not a rename but an editor's backup swap (Helix and Vim
+  move the file aside, write a new file at its path, and usually delete
+  the backup): it lands as a change to the old path, and the backup
+  counts only if it stays. Amended 2026-09-10; before this the open
+  document followed the swap to the backup name and stopped reloading.
 - On a detected rename every thread on the old path moves to the new
   path with its range and anchor unchanged. The store records it as a
   new `move` event (`{"event":"move","v":1,"thread":ID,"path":NEW,

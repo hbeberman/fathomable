@@ -372,10 +372,11 @@ impl Batch {
 ///
 /// Platform-paired renames win; a `RenameFrom` then a `RenameTo` in the
 /// batch are paired in order (inotify reports them so and then repeats
-/// them as a pair, which is folded away); what is left is created,
-/// removed, or changed by the last thing that happened to the path, and
-/// a removed path whose last-seen fingerprint matches a created file is
-/// a rename after all. A created file over `max_bytes` is never read
+/// them as a pair, which is folded away); a rename whose old name is
+/// created again in the batch is an editor's backup swap, a change to
+/// that name; what is left is created, removed, or changed by the last
+/// thing that happened to the path, and a removed path whose last-seen
+/// fingerprint matches a created file is a rename after all. A created file over `max_bytes` is never read
 /// for its fingerprint, so a large drop costs the loop nothing.
 fn classify(
     raw: &[Raw],
@@ -434,6 +435,7 @@ fn classify(
     // inotify emits `From`, `To`, and then the pair; keep one rename and
     // drop the loose ends that belong to it.
     renames.dedup();
+    renames.retain(|(from, to)| !unswap(from, to, &mut fate, &mut order));
     for (from, to) in &renames {
         fate.remove(from);
         fate.remove(to);
@@ -479,6 +481,30 @@ fn classify(
         Some(event)
     }));
     out
+}
+
+/// Whether the rename `from` to `to` is an editor's backup swap (Helix
+/// and Vim move the file aside, write a new one at its path, and delete
+/// the backup): `from` was created again in the same batch. A swap is
+/// folded into `fate` as a change to `from`; `to` is a fresh file whose
+/// own fate stands, a removal folding away to nothing.
+fn unswap(
+    from: &Path,
+    to: &Path,
+    fate: &mut HashMap<PathBuf, Fate>,
+    order: &mut Vec<PathBuf>,
+) -> bool {
+    if fate.get(from) != Some(&Fate::Created) {
+        return false;
+    }
+    fate.insert(from.to_path_buf(), Fate::Changed);
+    if fate.get(to) == Some(&Fate::Removed) {
+        fate.remove(to);
+    } else if !fate.contains_key(to) {
+        fate.insert(to.to_path_buf(), Fate::Created);
+        order.push(to.to_path_buf());
+    }
+    true
 }
 
 /// What a burst did to one path, folded in order.
@@ -660,6 +686,47 @@ mod tests {
                 Event::Created(p("/w/x")),
                 Event::Created(p("/w/in")),
             ]
+        );
+    }
+
+    #[test]
+    fn an_editor_backup_swap_is_a_change_to_the_file() {
+        // A Helix `:w` on inotify: the file moves aside to a backup, a
+        // new file is written at its path, the backup goes (measured
+        // with Helix 25.07).
+        let events = classify(
+            &[
+                Raw::RenameFrom(p("/w/note.txt")),
+                Raw::RenameTo(p("/w/note.txtzJmTMj.bck")),
+                Raw::Rename {
+                    from: p("/w/note.txt"),
+                    to: p("/w/note.txtzJmTMj.bck"),
+                },
+                Raw::Create(p("/w/note.txt")),
+                Raw::Modify(p("/w/note.txt")),
+                Raw::Modify(p("/w/note.txt")),
+                Raw::Remove(p("/w/note.txtzJmTMj.bck")),
+            ],
+            no_snapshot,
+            u64::MAX,
+        );
+        assert_eq!(events, [Event::Change(p("/w/note.txt"))]);
+        // Vim with `backup` set keeps the backup: it is a new file.
+        let events = classify(
+            &[
+                Raw::Rename {
+                    from: p("/w/a.rs"),
+                    to: p("/w/a.rs~"),
+                },
+                Raw::Create(p("/w/a.rs")),
+                Raw::Modify(p("/w/a.rs")),
+            ],
+            no_snapshot,
+            u64::MAX,
+        );
+        assert_eq!(
+            events,
+            [Event::Change(p("/w/a.rs")), Event::Created(p("/w/a.rs~"))]
         );
     }
 

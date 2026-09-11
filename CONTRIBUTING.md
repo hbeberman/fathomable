@@ -20,15 +20,23 @@ must be present before `cargo install` builds them. `perf` is only for
 sudo dnf install gcc git make ripgrep python3 python3-pyyaml \
     pkgconf-pkg-config openssl-devel perf just
 
-# Azure Linux 3
-sudo tdnf install build-essential git make python3 python3-pyyaml \
-    pkg-config openssl-devel ca-certificates
-cargo install ripgrep --locked    # if `tdnf install ripgrep` finds no package
+# Azure Linux 3 (no ripgrep, perf, or just package)
+sudo tdnf install build-essential git python3 python3-pyyaml \
+    pkgconf-pkg-config openssl-devel ca-certificates
+cargo install ripgrep --locked
+
+# Azure Linux 4 (no just package)
+sudo tdnf install gcc git make tar ripgrep python3 python3-pyyaml \
+    pkgconf-pkg-config openssl-devel perf ca-certificates
 
 # Ubuntu 24.04
-sudo apt install build-essential git make ripgrep python3 python3-yaml \
+sudo apt install build-essential git curl make ripgrep python3 python3-yaml \
     pkg-config libssl-dev linux-tools-$(uname -r) just
 ```
+
+`just` is `cargo install just --locked` where it is not packaged. Each
+line was run in the distribution's official container image, followed by
+the setup script and the full gate.
 
 Then, with rustup already installed:
 

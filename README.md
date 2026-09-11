@@ -10,23 +10,29 @@ Linux only: viewer liveness and the session bonds that let a headless
 
 ## Install
 
-Building needs a Rust toolchain, a C linker, and git. Install the
+Building needs a Rust toolchain, a C linker, git, and make. Install the
 system packages for your distribution, then rustup:
 
 ```sh
 # Fedora
-sudo dnf install gcc git
+sudo dnf install gcc git make
 
 # Azure Linux 3
 sudo tdnf install build-essential git ca-certificates
 
+# Azure Linux 4
+sudo tdnf install gcc git make tar ca-certificates
+
 # Ubuntu 24.04
-sudo apt install build-essential git
+sudo apt install build-essential git curl
 
 # any of the above
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+Each line was run in that distribution's official container image
+(`fedora:latest`, `mcr.microsoft.com/azurelinux/base/core:3.0`,
+`mcr.microsoft.com/azurelinux-beta/base/core:4.0`, `ubuntu:24.04`).
 `rust-toolchain.toml` pins the compiler, so the first `cargo` command in
 the checkout installs the right version on its own. The product crates
 are pure Rust: no OpenSSL, libgit2, or other C headers are needed.

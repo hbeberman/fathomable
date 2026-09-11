@@ -20,6 +20,7 @@ pub(crate) mod draft;
 pub(crate) mod file;
 pub(crate) mod fold;
 pub(crate) mod list;
+pub(crate) mod list_fold;
 pub(crate) mod open;
 pub(crate) mod pane;
 pub(crate) mod proposed;

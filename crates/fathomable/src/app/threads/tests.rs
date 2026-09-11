@@ -932,8 +932,10 @@ fn resolving_in_the_list_keeps_the_scroll_and_moves_to_the_next_entry() -> anyho
     app.open_review();
     let rows = app.review_rows(app.column_width());
     assert_eq!(rows.entries.len(), 6);
+    // `gg` lands on the file row (ADR 0076); four steps reach the
+    // fourth entry.
     app.review_goto(false);
-    for _ in 0..3 {
+    for _ in 0..4 {
         app.review_step(1);
     }
     let scroll = app.review_list().scroll();
@@ -1141,9 +1143,13 @@ fn the_review_list_shows_the_work_and_acts_in_place() -> anyhow::Result<()> {
 /// The review lists files in the files pane's order under a row per
 /// file, threads by line within one (ADR 0066); `z` folds the cursor's
 /// file to its row and `Z` every file, a folded file being one stop.
-#[test]
-fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-by-file", testing::README)?;
+/// A workspace with three threads for the review list: `guide` in
+/// docs/guide.md, then `top` and `bottom` in README.md, the bottom one
+/// answered by an agent; the list open in workspace scope.
+fn review_by_file(
+    name: &str,
+) -> anyhow::Result<(TempDir, App, [fathomable_core::annotations::ThreadId; 3])> {
+    let dir = testing::workspace(name, testing::README)?;
     fs::create_dir_all(dir.0.join("ws/docs"))?;
     fs::write(dir.0.join("ws/docs/guide.md"), "# Guide\n\nfirst\n")?;
     let mut app = app(&dir)?;
@@ -1172,47 +1178,66 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
         None,
     )
     .map_err(anyhow::Error::msg)?;
-    let order = |app: &App| -> Vec<fathomable_core::annotations::ThreadId> {
-        app.review_rows(60)
-            .entries
-            .iter()
-            .map(|entry| entry.id().clone())
-            .collect()
-    };
-    let files = |app: &App| -> Vec<String> {
-        app.review_rows(60)
-            .rows
-            .iter()
-            .filter_map(|row| match row {
-                Row::File { path, folded, .. } => Some(format!(
-                    "{}{}",
-                    if *folded { "▸ " } else { "" },
-                    path.display()
-                )),
-                _ => None,
-            })
-            .collect()
-    };
     app.open_review();
+    Ok((dir, app, [guide, top, bottom]))
+}
+
+/// The list's entries in order.
+fn review_order(app: &App) -> Vec<fathomable_core::annotations::ThreadId> {
+    app.review_rows(60)
+        .entries
+        .iter()
+        .map(|entry| entry.id().clone())
+        .collect()
+}
+
+/// The list's file rows, `▸ ` before a folded one.
+fn review_files(app: &App) -> Vec<String> {
+    app.review_rows(60)
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::File { path, folded, .. } => Some(format!(
+                "{}{}",
+                if *folded { "▸ " } else { "" },
+                path.display()
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether the cursor rests on `path`'s file row.
+fn review_file_selected(app: &App, path: &str) -> bool {
+    app.review_rows(60)
+        .rows
+        .iter()
+        .any(|row| matches!(row, Row::File { path: p, selected: true, .. } if p == Path::new(path)))
+}
+
+#[test]
+fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
+    let (_dir, mut app, [guide, top, bottom]) = review_by_file("threads-by-file")?;
     assert_eq!(
-        order(&app),
+        review_order(&app),
         [guide.clone(), top.clone(), bottom.clone()],
         "the directory first, then lines; the reply does not reorder"
     );
-    assert_eq!(files(&app), ["docs/guide.md", "README.md"]);
+    assert_eq!(review_files(&app), ["docs/guide.md", "README.md"]);
 
-    // `z` on README's first thread folds README; the cursor stays inside
-    // and the file row is selected; `k` reaches the guide, `j` comes
-    // back to README once, and Enter still opens the file.
+    // `k` from README's first thread stops on README's file row (ADR
+    // 0076), where `z` folds the file; the cursor stays on the row over
+    // the file's first thread, `k` reaches the guide's thread and then
+    // its row, `j` comes back to README's row once, and no further.
     app.set_thread_cursor(top.clone());
-    app.review_fold();
-    assert_eq!(files(&app), ["docs/guide.md", "▸ README.md"]);
+    app.review_step(-1);
     assert!(
-        app.review_rows(60)
-            .rows
-            .iter()
-            .any(|row| matches!(row, Row::File { selected: true, .. }))
+        review_file_selected(&app, "README.md"),
+        "the file row is a stop"
     );
+    app.review_fold();
+    assert_eq!(review_files(&app), ["docs/guide.md", "▸ README.md"]);
+    assert!(review_file_selected(&app, "README.md"));
     assert!(
         !app.review_rows(60)
             .rows
@@ -1220,30 +1245,100 @@ fn the_review_groups_by_file_and_folds_files() -> anyhow::Result<()> {
             .any(|row| matches!(row, Row::Header { entry: 1, .. })),
         "a folded file's threads have no rows"
     );
+    assert_eq!(app.thread_cursor().thread(), Some(&top));
     app.review_step(-1);
     assert_eq!(app.thread_cursor().thread(), Some(&guide));
-    app.review_step(1);
+    assert!(!review_file_selected(&app, "docs/guide.md"));
+    app.review_step(-1);
+    assert!(review_file_selected(&app, "docs/guide.md"));
+    app.review_step(-1);
+    assert!(
+        review_file_selected(&app, "docs/guide.md"),
+        "the first stop"
+    );
+    app.review_step(2);
+    assert!(review_file_selected(&app, "README.md"));
     assert_eq!(app.thread_cursor().thread(), Some(&top));
     app.review_step(1);
-    assert_eq!(
-        app.thread_cursor().thread(),
-        Some(&top),
+    assert!(
+        review_file_selected(&app, "README.md"),
         "one stop, no further"
     );
-    app.review_fold_all();
-    assert_eq!(
-        files(&app),
-        ["docs/guide.md", "README.md"],
-        "any folded: unfold all"
-    );
-    app.review_fold_all();
-    assert_eq!(files(&app), ["▸ docs/guide.md", "▸ README.md"]);
     app.review_fold();
-    assert_eq!(files(&app), ["▸ docs/guide.md", "README.md"]);
+    assert_eq!(
+        review_files(&app),
+        ["docs/guide.md", "README.md"],
+        "`z` unfolds"
+    );
+    assert!(
+        review_file_selected(&app, "README.md"),
+        "the cursor stays on the row"
+    );
     // `f` lists one file with no file row.
     app.review_toggle_file();
-    assert!(files(&app).is_empty());
-    assert_eq!(order(&app), [top.clone(), bottom.clone()]);
+    assert!(review_files(&app).is_empty());
+    assert_eq!(review_order(&app), [top.clone(), bottom.clone()]);
+    Ok(())
+}
+
+/// ADR 0076: `z` on a thread folds it to one packed row and expands it
+/// again; `Z` folds every thread while any is expanded and expands
+/// them all when every one is folded, leaving the files alone; and `z`
+/// keeps its thread meaning in file scope.
+#[test]
+fn the_review_folds_threads_and_shift_z_every_thread() -> anyhow::Result<()> {
+    let (_dir, mut app, [guide, top, bottom]) = review_by_file("threads-fold-list")?;
+    app.set_thread_cursor(top.clone());
+    app.review_fold();
+    assert!(app.review_list().is_thread_folded(&top));
+    let rows = app.review_rows(60);
+    let stub = rows
+        .rows
+        .iter()
+        .position(|row| {
+            matches!(
+                row,
+                Row::Stub {
+                    entry: 1,
+                    selected: true,
+                    ..
+                }
+            )
+        })
+        .context("the folded row")?;
+    assert!(
+        matches!(rows.rows[stub + 1], Row::Header { entry: 2, .. }),
+        "packed, no blank row: {:?}",
+        rows.rows[stub + 1]
+    );
+    app.review_fold();
+    assert!(!app.review_list().is_thread_folded(&top));
+
+    let all_folded = |app: &App| {
+        [&guide, &top, &bottom]
+            .iter()
+            .all(|id| app.review_list().is_thread_folded(id))
+    };
+    app.review_fold_all();
+    assert!(all_folded(&app));
+    assert_eq!(review_files(&app), ["docs/guide.md", "README.md"]);
+    app.review_toggle_thread(&top);
+    app.review_fold_all();
+    assert!(all_folded(&app), "any expanded: fold them all");
+    app.review_fold_all();
+    assert!(
+        [&guide, &top, &bottom]
+            .iter()
+            .all(|id| !app.review_list().is_thread_folded(id)),
+        "all folded: expand them all"
+    );
+    app.review_toggle_file();
+    app.set_thread_cursor(top.clone());
+    app.review_fold();
+    assert!(
+        app.review_list().is_thread_folded(&top),
+        "`z` in file scope"
+    );
     Ok(())
 }
 
@@ -2026,11 +2121,14 @@ fn a_click_on_a_stub_rests_the_cursor_on_it() -> anyhow::Result<()> {
     );
 
     // The paragraph the thread is on renders as one row; `j` steps off
-    // the stub onto the row after it, `k` back over it.
+    // the stub onto the row after it, `k` back onto the stub, a stop
+    // (ADR 0076), and once more onto the row before it.
     testing::press(&mut app, "j");
     assert_eq!(app.view().cursor().row, stub_row + 1, "j steps off it");
     testing::press(&mut app, "k");
-    assert_eq!(app.view().cursor().row, stub_row - 1, "k steps over it");
+    assert_eq!(app.view().cursor().row, stub_row, "k stops on it");
+    testing::press(&mut app, "k");
+    assert_eq!(app.view().cursor().row, stub_row - 1, "k steps before it");
 
     let gutter_x = app.sidebar_width() + 1;
     testing::click(&mut app, gutter_x, stub_y);

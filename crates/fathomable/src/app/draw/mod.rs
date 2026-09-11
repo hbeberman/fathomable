@@ -26,7 +26,7 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::author::{
-    CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, cursor_cell, name_style, row_style,
+    CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, cursor_cell, name_style, row_style,
 };
 use crate::app::draw::header::{
     Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
@@ -1692,9 +1692,9 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
         // A file's row over its threads (ADR 0066): the path in the
-        // directory colour, `▸` when folded, the count at the edge; the
-        // cursor bar and bold when the cursor's thread is folded inside
-        // (ADR 0071).
+        // directory colour after `▾`, or `▸` when folded (ADR 0076), the
+        // count at the edge; the cursor bar and bold when the cursor
+        // rests on the row (ADR 0071).
         Row::File {
             path,
             count,
@@ -1703,7 +1703,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             ..
         } => {
             let count = format!("{count} ");
-            let name = format!("{}{}", if *folded { "▸ " } else { "" }, path.display());
+            let name = format!("{} {}", file_chevron(*folded), path.display());
             let name_width = width.saturating_sub(1 + display_width(&count));
             let mut style = theme.sidebar_dir;
             if *selected {
@@ -1734,6 +1734,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 line
             }
         }
+        Row::Stub { .. } => stub_row(theme, row, now, width),
         // A message's rows on its author's stripe, the name in the
         // author's colour, the cursor's message with the bar down its
         // left edge and its name bold (ADR 0071).
@@ -1795,6 +1796,73 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         }
         Row::Blank => Line::from(""),
     }
+}
+
+/// A folded thread's one row in the list (ADR 0076), the stub's form:
+/// the chevron, the circle, the place, the newest message's author on
+/// their stripe, its short age, and its first line cut with `…`; the
+/// cursor's thread bold with the bar in its edge cell.
+fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+    let Row::Stub {
+        range,
+        words,
+        note,
+        author,
+        user,
+        created,
+        text,
+        selected,
+        dim,
+        ..
+    } = row
+    else {
+        return Line::from("");
+    };
+    let who = list_author(*user);
+    let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
+    let mut lead = vec![
+        cursor_cell(theme, *selected),
+        Span::styled(CHEVRON_RIGHT, theme.info.add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" {}  ", words.glyph()),
+            mark_style(theme, words.state()),
+        ),
+        Span::styled(format!("{place}  "), theme.info),
+    ];
+    if let Some(note) = note {
+        lead.push(Span::styled(format!("{note}  "), theme.info));
+    }
+    lead.push(Span::styled(
+        author.clone(),
+        if *dim {
+            theme.info
+        } else {
+            name_style(theme, &who, *selected)
+        },
+    ));
+    lead.push(Span::styled(
+        format!("  {}  ", format_age_short(*created, now)),
+        theme.info,
+    ));
+    let taken: usize = lead.iter().map(|span| display_width(&span.content)).sum();
+    let text_style = if *dim { theme.info } else { theme.text };
+    let text_style = if *selected {
+        text_style.add_modifier(Modifier::BOLD)
+    } else {
+        text_style
+    };
+    lead.push(Span::styled(
+        fit_ellipsis(text, width.saturating_sub(taken)),
+        text_style,
+    ));
+    message_line(lead, width, row_style(theme, &who))
+}
+
+/// The arrow before a file row's path in the list and the threads pane
+/// (ADR 0076): `▾` while its threads show, `▸` while it is folded, so
+/// the path never moves.
+pub(crate) fn file_chevron(folded: bool) -> &'static str {
+    if folded { CHEVRON_RIGHT } else { CHEVRON_DOWN }
 }
 
 /// The author kind a list row carries, as [`row_style`] and

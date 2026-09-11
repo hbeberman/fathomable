@@ -165,7 +165,9 @@ result.
   cursor's message), `e` edits and `dd` deletes that message, `r`
   replies (the comment box as today, focus returns to the message), `o`
   resolves or reopens; `c` on any of its rows folds it back to a stub.
-  Only expanded rows are walkable; collapsed stubs stay skipped. `Esc`
+  Only expanded rows are walkable; collapsed stubs stay skipped
+  (until 2026-09-11: a collapsed stub is a stop too,
+  [0076](0076-threads-fold-in-the-list.md)). `Esc`
   on an expanded row folds nothing; it clears as today.
 - **`c` cycles from the thread cursor.** When several threads cover the
   cursor row, the first `c` expands the thread cursor's thread, the one

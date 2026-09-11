@@ -4,11 +4,14 @@
 //! resolved ones hidden until asked for, drawn in place of the document.
 //!
 //! The list keeps only its own state — whether it is open, the scroll,
-//! and which files are folded; the resolved flag and the file filter
+//! which files and threads are folded (ADR 0076), and whether the
+//! cursor rests on a file row; the resolved flag and the file filter
 //! are the [`ReviewState`] the sidebar's threads pane shares. Its rows
 //! are computed from the store on every draw and key by
 //! [`App::review_rows`], so a reload or a change of state needs
-//! nothing invalidated.
+//! nothing invalidated. The stops `j`/`k` walk are rows: a file row,
+//! then each of its threads while it is unfolded, a folded thread
+//! being one row.
 
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -45,7 +48,12 @@ pub(crate) struct ReviewList {
     scroll: usize,
     /// Files folded to their row (ADR 0066); the list's own, apart from
     /// the threads pane's.
-    folded: HashSet<PathBuf>,
+    pub(super) folded: HashSet<PathBuf>,
+    /// Threads folded to one row (ADR 0076), kept for the session.
+    pub(super) folded_threads: HashSet<ThreadId>,
+    /// The cursor rests on its thread's file row (ADR 0076), the stop
+    /// over the file's threads; the thread cursor is the file's first.
+    pub(super) on_file: bool,
 }
 
 impl ReviewList {
@@ -55,11 +63,6 @@ impl ReviewList {
 
     pub(crate) fn scroll(&self) -> usize {
         self.scroll
-    }
-
-    /// Whether `path` is folded to its row.
-    pub(crate) fn is_folded(&self, path: &Path) -> bool {
-        self.folded.contains(path)
     }
 
     /// A document took the column back.
@@ -211,6 +214,24 @@ pub(crate) enum Row {
         /// commit a past thread was resolved at (ADR 0072).
         note: Option<String>,
     },
+    /// A folded thread's one row (ADR 0076), the stub's form: the
+    /// chevron, the circle, the range, the newest message's author and
+    /// age, and its first line; `selected` for the cursor's thread.
+    Stub {
+        entry: usize,
+        range: Option<LineRange>,
+        words: Words,
+        note: Option<String>,
+        /// The newest message's author, as `author_label` names them,
+        /// and whether they are the user (ADR 0071).
+        author: String,
+        user: bool,
+        created: u64,
+        /// The first line of the newest message.
+        text: String,
+        selected: bool,
+        dim: bool,
+    },
     /// `author  age  [badge]`; `user` when the author is the user, for
     /// the stripe and the name's colour (ADR 0071).
     Message {
@@ -243,12 +264,27 @@ pub(crate) struct Rows {
     pub(crate) entries: Vec<Entry>,
 }
 
+/// One stop of the list's `j`/`k` (ADR 0076): a file row, or a thread
+/// with a header or a folded row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Stop {
+    File(PathBuf),
+    Entry(usize),
+}
+
+/// What a click on a row lands on: a stop, or a message of an entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Landing {
+    Stop(Stop),
+    Message(usize, usize),
+}
+
 impl Rows {
-    /// The row index of `entry`'s header.
-    pub(crate) fn header_row(&self, entry: usize) -> Option<usize> {
-        self.rows
-            .iter()
-            .position(|row| matches!(row, Row::Header { entry: e, .. } if *e == entry))
+    /// The row index of `entry`'s header, or of its folded row.
+    pub(crate) fn entry_row(&self, entry: usize) -> Option<usize> {
+        self.rows.iter().position(|row| {
+            matches!(row, Row::Header { entry: e, .. } | Row::Stub { entry: e, .. } if *e == entry)
+        })
     }
 
     /// The row index of the file row over `entry`.
@@ -272,14 +308,26 @@ impl Rows {
         self.entries.iter().position(|entry| entry.path == path)
     }
 
-    /// The entry and optional message under `row`.
-    pub(crate) fn selection_at(&self, row: usize) -> Option<(usize, Option<usize>)> {
+    /// What `row` lands on: a file row, a thread's header or folded
+    /// row, or a message; nothing on a blank row.
+    pub(crate) fn landing_at(&self, row: usize) -> Option<Landing> {
         match self.rows.get(row)? {
-            Row::Header { entry, .. } => Some((*entry, None)),
-            Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
-                Some((*entry, Some(*message)))
+            Row::File { path, .. } => Some(Landing::Stop(Stop::File(path.clone()))),
+            Row::Header { entry, .. } | Row::Stub { entry, .. } => {
+                Some(Landing::Stop(Stop::Entry(*entry)))
             }
-            Row::File { .. } | Row::Blank => None,
+            Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
+                Some(Landing::Message(*entry, *message))
+            }
+            Row::Blank => None,
+        }
+    }
+
+    /// The thread whose header or folded row `row` is.
+    pub(crate) fn thread_at(&self, row: usize) -> Option<&ThreadId> {
+        match self.landing_at(row)? {
+            Landing::Stop(Stop::Entry(entry)) => self.entries.get(entry).map(|entry| &entry.id),
+            Landing::Stop(Stop::File(_)) | Landing::Message(..) => None,
         }
     }
 
@@ -302,34 +350,29 @@ impl Rows {
         Some(start..start + len)
     }
 
-    /// The entries that are stops for `j` / `k` (ADR 0066): every entry
-    /// with a header, which is every entry of an unfolded file, and the
-    /// first entry of a folded one.
-    fn stops(&self) -> Vec<usize> {
-        (0..self.entries.len())
-            .filter(|&entry| self.is_stop(entry))
+    /// The stops of `j` / `k` in row order (ADR 0076): every file row,
+    /// and every thread with a header or a folded row, which is every
+    /// thread of an unfolded file.
+    fn stops(&self) -> Vec<Stop> {
+        self.rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::File { path, .. } => Some(Stop::File(path.clone())),
+                Row::Header { entry, .. } | Row::Stub { entry, .. } => Some(Stop::Entry(*entry)),
+                Row::Message { .. } | Row::Body { .. } | Row::Blank => None,
+            })
             .collect()
     }
 
-    fn is_stop(&self, entry: usize) -> bool {
-        self.header_row(entry).is_some()
-            || self
-                .entries
-                .get(entry)
-                .and_then(|e| self.first_entry_of(&e.path))
-                == Some(entry)
-    }
-
-    /// The stop `entry` counts as: itself, or the first entry of its
-    /// folded file.
-    fn stop_of(&self, entry: usize) -> usize {
-        if self.is_stop(entry) {
-            return entry;
+    /// The row of `stop`.
+    fn row_of_stop(&self, stop: &Stop) -> Option<usize> {
+        match stop {
+            Stop::File(path) => self
+                .rows
+                .iter()
+                .position(|row| matches!(row, Row::File { path: p, .. } if p == path)),
+            Stop::Entry(entry) => self.entry_row(*entry),
         }
-        self.entries
-            .get(entry)
-            .and_then(|e| self.first_entry_of(&e.path))
-            .unwrap_or(entry)
     }
 }
 
@@ -500,6 +543,13 @@ impl App {
         let cursor = self.thread_cursor();
         let entries = self.review_entries(self.review.file_only);
         let grouped = !self.review.file_only;
+        // The cursor rests on its file's row (ADR 0076) while the list
+        // says so, or while the file is folded over its thread.
+        let cursor_path = cursor
+            .thread()
+            .and_then(|id| entries.iter().find(|entry| &entry.id == id))
+            .map(|entry| entry.path.clone());
+        let on_file = grouped && self.review_list.on_file && cursor_path.is_some();
         let mut index = 0;
         while index < entries.len() {
             let path = entries[index].path.clone();
@@ -508,23 +558,20 @@ impl App {
                 .position(|entry| entry.path != path)
                 .map_or(entries.len(), |len| index + len);
             let folded = grouped && self.review_list.folded.contains(&path);
+            let cursor_inside = cursor_path.as_deref() == Some(path.as_path());
             if grouped {
-                let selected = folded
-                    && entries[index..group_end]
-                        .iter()
-                        .any(|entry| cursor.thread() == Some(&entry.id));
                 out.rows.push(Row::File {
                     path: path.clone(),
                     count: group_end - index,
                     folded,
                     current: path == self.current_path(),
-                    selected,
+                    selected: cursor_inside && (on_file || folded),
                 });
             }
             for entry in &entries[index..group_end] {
                 let entry_index = out.entries.len();
                 if !folded {
-                    let selected = cursor.thread() == Some(&entry.id);
+                    let selected = !on_file && cursor.thread() == Some(&entry.id);
                     self.push_entry(
                         &mut out,
                         entry,
@@ -572,6 +619,28 @@ impl App {
         let Some(thread) = self.thread(&entry.id) else {
             return;
         };
+        let user = self.user_name();
+        // A folded thread is one row, the stub's form, with no blank row
+        // after it (ADR 0076).
+        if self.review_list.folded_threads.contains(&entry.id) {
+            let (author, created, body) = match thread.replies().last() {
+                Some(reply) => (reply.author(), reply.created(), reply.body()),
+                None => (thread.author(), thread.created(), thread.comment()),
+            };
+            out.rows.push(Row::Stub {
+                entry: index,
+                range: entry.range,
+                words: entry.words,
+                note: entry.note().map(str::to_owned),
+                author: author_label(author, user),
+                user: author.is_user(),
+                created,
+                text: body.lines().next().unwrap_or("").to_owned(),
+                selected,
+                dim,
+            });
+            return;
+        }
         out.rows.push(Row::Header {
             entry: index,
             range: entry.range,
@@ -586,7 +655,6 @@ impl App {
         // Every author as `author_label` names them (ADR 0058, ADR
         // 0061): the configured name for the user, `name (type)` for an
         // agent, the comment's the same as a reply's.
-        let user = self.user_name();
         let mut message = |message: usize,
                            author: &Author,
                            created: u64,
@@ -639,7 +707,7 @@ impl App {
 
     /// The cursor's entry, or the first entry when the cursor's thread
     /// is not listed.
-    fn selected_index(&self, rows: &Rows) -> Option<usize> {
+    pub(super) fn selected_index(&self, rows: &Rows) -> Option<usize> {
         let cursor = self.thread_cursor();
         let by_id = cursor
             .thread()
@@ -652,6 +720,7 @@ impl App {
         let Some(entry) = rows.entries.get(index) else {
             return;
         };
+        self.review_list.on_file = false;
         self.set_thread_cursor(entry.id.clone());
         self.scroll_to_selection(rows, index);
     }
@@ -660,8 +729,70 @@ impl App {
         let Some(id) = rows.entries.get(entry).map(|entry| entry.id.clone()) else {
             return;
         };
+        self.review_list.on_file = false;
         self.set_thread_cursor_message(id, message);
         self.scroll_to_selection(rows, entry);
+    }
+
+    /// Rest the cursor on `path`'s file row (ADR 0076): the thread
+    /// cursor goes to the file's first thread and the row is kept on
+    /// screen.
+    pub(super) fn rest_on_file(&mut self, rows: &Rows, path: &Path) {
+        let Some(entry) = rows.first_entry_of(path) else {
+            return;
+        };
+        self.select_entry(rows, entry);
+        self.review_list.on_file = true;
+        self.scroll_to_selection(rows, entry);
+    }
+
+    /// Land on `stop`: a file row, or a thread.
+    fn land_on_stop(&mut self, rows: &Rows, stop: &Stop) {
+        match stop {
+            Stop::File(path) => self.rest_on_file(rows, path),
+            Stop::Entry(entry) => self.select_entry(rows, *entry),
+        }
+    }
+
+    /// The stop the cursor is on: its file's row while it rests there
+    /// or the file is folded over it, else its thread.
+    pub(super) fn cursor_stop(&self, rows: &Rows, index: usize) -> Stop {
+        let path = rows.entries[index].path.clone();
+        let file_row = rows.row_of_stop(&Stop::File(path.clone())).is_some();
+        if file_row && (self.review_list.on_file || rows.entry_row(index).is_none()) {
+            Stop::File(path)
+        } else {
+            Stop::Entry(index)
+        }
+    }
+
+    /// Whether the cursor is on a row that shows no messages (ADR
+    /// 0076): a file row or a folded thread, where `l`/`h` have nothing
+    /// to walk.
+    pub(crate) fn review_cursor_folded(&self) -> bool {
+        if !self.review_list.is_open() {
+            return false;
+        }
+        let rows = self.review_rows(self.column_width());
+        let Some(index) = self.selected_index(&rows) else {
+            return false;
+        };
+        match self.cursor_stop(&rows, index) {
+            Stop::File(_) => true,
+            Stop::Entry(entry) => rows
+                .entries
+                .get(entry)
+                .is_some_and(|entry| self.review_list.folded_threads.contains(&entry.id)),
+        }
+    }
+
+    /// `l` / `h`: the next or previous message of the cursor's thread,
+    /// when its messages are shown.
+    pub(crate) fn review_message_step(&mut self, delta: isize) {
+        if self.review_cursor_folded() {
+            return;
+        }
+        self.message_step(delta);
     }
 
     /// Scroll enough to keep the cursor's message, or a folded file's
@@ -676,10 +807,12 @@ impl App {
     /// Scroll enough to keep the selected message, or the folded file's
     /// row, visible.
     fn scroll_to_selection(&mut self, rows: &Rows, entry: usize) {
-        let range = rows
-            .message_range(entry, self.thread_cursor().message())
-            .or_else(|| rows.header_row(entry).map(|row| row..row + 1))
-            .or_else(|| rows.file_row_of(entry).map(|row| row..row + 1));
+        let range = match self.cursor_stop(rows, entry) {
+            Stop::File(_) => rows.file_row_of(entry).map(|row| row..row + 1),
+            Stop::Entry(_) => rows
+                .message_range(entry, self.thread_cursor().message())
+                .or_else(|| rows.entry_row(entry).map(|row| row..row + 1)),
+        };
         let Some(range) = range else {
             return;
         };
@@ -697,19 +830,22 @@ impl App {
         }
     }
 
-    /// `j` / `k`: move between threads by `delta` in the list's order,
-    /// a folded file being one stop (ADR 0066).
+    /// `j` / `k`: move by `delta` stops in the list's order (ADR 0066,
+    /// ADR 0076): file rows, and each thread of an unfolded file.
     pub(crate) fn review_step(&mut self, delta: isize) {
         let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return;
         };
         let stops = rows.stops();
-        let stop = rows.stop_of(index);
-        let at = stops.iter().position(|&s| s == stop).unwrap_or(0);
-        let last = stops.len().saturating_sub(1);
-        let target = stops[at.saturating_add_signed(delta).min(last)];
-        self.select_entry(&rows, target);
+        if stops.is_empty() {
+            return;
+        }
+        let stop = self.cursor_stop(&rows, index);
+        let at = stops.iter().position(|s| *s == stop).unwrap_or(0);
+        let last = stops.len() - 1;
+        let target = stops[at.saturating_add_signed(delta).min(last)].clone();
+        self.land_on_stop(&rows, &target);
     }
 
     /// `Ctrl-d` / `Ctrl-u`: the message half a page of rows below or
@@ -719,12 +855,13 @@ impl App {
         let Some(entry) = self.selected_index(&rows) else {
             return;
         };
-        let Some(start) = rows
-            .message_range(entry, self.thread_cursor().message())
-            .map(|range| range.start)
-            .or_else(|| rows.header_row(entry))
-            .or_else(|| rows.file_row_of(entry))
-        else {
+        let Some(start) = (match self.cursor_stop(&rows, entry) {
+            Stop::File(_) => rows.file_row_of(entry),
+            Stop::Entry(_) => rows
+                .message_range(entry, self.thread_cursor().message())
+                .map(|range| range.start)
+                .or_else(|| rows.entry_row(entry)),
+        }) else {
             return;
         };
         let half = (self.list_rows() / 2).max(1);
@@ -735,26 +872,25 @@ impl App {
             start.saturating_sub(half)
         };
         let landing = if direction > 0 {
-            (target..=last).find_map(|row| rows.selection_at(row))
+            (target..=last).find_map(|row| rows.landing_at(row))
         } else {
-            (0..=target).rev().find_map(|row| rows.selection_at(row))
+            (0..=target).rev().find_map(|row| rows.landing_at(row))
         };
         match landing {
-            Some((entry, Some(message))) => self.select_message(&rows, entry, message),
-            Some((entry, None)) => self.select_entry(&rows, entry),
+            Some(Landing::Message(entry, message)) => self.select_message(&rows, entry, message),
+            Some(Landing::Stop(stop)) => self.land_on_stop(&rows, &stop),
             None => {}
         }
     }
 
-    /// `gg` / `G`.
+    /// `gg` / `G`: the first stop, or the last.
     pub(crate) fn review_goto(&mut self, end: bool) {
         let rows = self.review_rows(self.column_width());
-        let target = if end {
-            rows.stops().last().copied().unwrap_or(0)
-        } else {
-            0
-        };
-        self.select_entry(&rows, target);
+        let stops = rows.stops();
+        let target = if end { stops.last() } else { stops.first() };
+        if let Some(target) = target.cloned() {
+            self.land_on_stop(&rows, &target);
+        }
         if !end {
             self.review_list.scroll = 0;
         }
@@ -771,33 +907,36 @@ impl App {
             .min(max);
     }
 
-    /// A click on list row `row` (below the header) selects its message;
-    /// on a file row it folds or unfolds the file (ADR 0066).
+    /// A click on list row `row` (below the header) selects its message
+    /// or its thread; on a file row it folds or unfolds the file and
+    /// rests the cursor on the row (ADR 0066, ADR 0076).
     pub(crate) fn review_click(&mut self, row: usize) {
         let rows = self.review_rows(self.column_width());
         let at = self.review_list.scroll + row;
-        if let Some(path) = rows.file_at(at).map(Path::to_path_buf) {
-            self.review_toggle_fold(&path);
-        } else if let Some((entry, message)) = rows.selection_at(at) {
-            if let Some(message) = message {
-                self.select_message(&rows, entry, message);
-            } else {
-                self.select_entry(&rows, entry);
-            }
+        match rows.landing_at(at) {
+            Some(Landing::Stop(Stop::File(path))) => self.review_toggle_fold(&path),
+            Some(Landing::Stop(Stop::Entry(entry))) => self.select_entry(&rows, entry),
+            Some(Landing::Message(entry, message)) => self.select_message(&rows, entry, message),
+            None => {}
         }
         self.focus = Focus::Review;
     }
 
+    /// The thread whose header or folded row list row `row` is (ADR
+    /// 0076), for the chevron and the double-click.
+    pub(crate) fn review_thread_row(&self, row: usize) -> Option<ThreadId> {
+        let rows = self.review_rows(self.column_width());
+        rows.thread_at(self.review_list.scroll + row).cloned()
+    }
+
     /// A right-click on list row `row` (ADR 0066): on a file row the
-    /// cursor goes to the file's first thread and the path is returned
-    /// for the file's menu; elsewhere the click selects as a left one.
+    /// cursor rests on the row and the path is returned for the file's
+    /// menu; elsewhere the click selects as a left one.
     pub(crate) fn review_point(&mut self, row: usize) -> Option<PathBuf> {
         let rows = self.review_rows(self.column_width());
         let at = self.review_list.scroll + row;
         let path = rows.file_at(at).map(Path::to_path_buf)?;
-        if let Some(entry) = rows.first_entry_of(&path) {
-            self.select_entry(&rows, entry);
-        }
+        self.rest_on_file(&rows, &path);
         self.focus = Focus::Review;
         Some(path)
     }
@@ -822,7 +961,7 @@ impl App {
 
     /// The rows changed under the list: keep the cursor's entry in view,
     /// or say why the list is empty.
-    fn reshow_review(&mut self) {
+    pub(super) fn reshow_review(&mut self) {
         if !self.review_list.is_open() {
             return;
         }
@@ -833,43 +972,6 @@ impl App {
         } else if let Some(index) = self.selected_index(&rows) {
             self.select_entry(&rows, index);
         }
-    }
-
-    /// `z`: fold the cursor's file to its row, or unfold it (ADR 0066).
-    pub(crate) fn review_fold(&mut self) {
-        let rows = self.review_rows(self.column_width());
-        let Some(index) = self.selected_index(&rows) else {
-            return;
-        };
-        let path = rows.entries[index].path.clone();
-        self.review_toggle_fold(&path);
-    }
-
-    /// `Z`: fold every listed file, or unfold them all when any is
-    /// folded (ADR 0066).
-    pub(crate) fn review_fold_all(&mut self) {
-        let rows = self.review_rows(self.column_width());
-        let listed: HashSet<PathBuf> = rows
-            .entries
-            .iter()
-            .map(|entry| entry.path.clone())
-            .collect();
-        if listed
-            .iter()
-            .any(|path| self.review_list.folded.contains(path))
-        {
-            self.review_list.folded.clear();
-        } else {
-            self.review_list.folded = listed;
-        }
-        self.review_follow_cursor();
-    }
-
-    fn review_toggle_fold(&mut self, path: &Path) {
-        if !self.review_list.folded.remove(path) {
-            self.review_list.folded.insert(path.to_path_buf());
-        }
-        self.review_follow_cursor();
     }
 
     /// The selected entry's index, for a caller about to change the store.

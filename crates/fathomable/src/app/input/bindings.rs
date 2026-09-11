@@ -1219,14 +1219,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('z')]],
         A::Fold,
         "Review list",
-        "fold or unfold the file",
+        "fold or expand the thread here, or the file on its row",
     ),
     bind(
         W::Review,
         &[&[c('Z')]],
         A::FoldAll,
         "Review list",
-        "fold every file, or unfold them all",
+        "fold every thread, or expand them all",
     ),
     bind(
         W::Review,

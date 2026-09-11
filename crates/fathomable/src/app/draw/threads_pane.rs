@@ -15,7 +15,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::draw::header::{threads_pane_footer, threads_pane_header};
-use crate::app::draw::{Theme, fit, fit_ellipsis, format_age_short, mark_style};
+use crate::app::draw::{Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style};
 use crate::app::threads::pane::{PaneEntry, PaneLine, PaneRow, PaneScope, pane_lines};
 use crate::app::{App, Focus};
 
@@ -107,8 +107,8 @@ fn on(row: Style, mark: Style) -> Style {
     })
 }
 
-/// A file's row: its path in the directory colour, `▸` before a folded
-/// one, the thread count at the right edge.
+/// A file's row: its path in the directory colour after `▾`, or `▸`
+/// when folded (ADR 0076), the thread count at the right edge.
 fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
     let PaneRow::File {
         path,
@@ -122,7 +122,7 @@ fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
     };
     let style = row_style(theme, *current, *selected);
     let count = format!("{count} ");
-    let name = format!(" {}{}", if *folded { "▸ " } else { "" }, path.display());
+    let name = format!(" {} {}", file_chevron(*folded), path.display());
     let name_width = inner.saturating_sub(display_width(&count));
     Line::from(vec![
         Span::styled(

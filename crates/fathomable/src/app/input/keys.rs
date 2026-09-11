@@ -370,12 +370,13 @@ impl App {
         Effect::None
     }
 
-    /// Keys in the review list (ADR 0025, ADR 0049, folds per ADR 0066).
+    /// Keys in the review list (ADR 0025, ADR 0049, folds per ADR 0066
+    /// and ADR 0076).
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
             Action::Escape => self.close_review(),
-            Action::MoveDown => self.message_step(1),
-            Action::MoveUp => self.message_step(-1),
+            Action::MoveDown => self.review_message_step(1),
+            Action::MoveUp => self.review_message_step(-1),
             Action::ThreadPrev => self.review_step(-1),
             Action::ThreadNext => self.review_step(1),
             Action::HalfPageDown => self.review_page(1),

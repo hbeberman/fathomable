@@ -261,6 +261,13 @@ fn z_folds_a_file_and_shift_z_every_file() -> anyhow::Result<()> {
         1,
         "README's rows are gone"
     );
+    // A file row always carries its arrow (ADR 0076).
+    let shown = testing::screen(&app)?;
+    assert!(
+        shown.iter().any(|row| row.contains("▾ docs/guide.md"))
+            && shown.iter().any(|row| row.contains("▸ README.md")),
+        "{shown:?}"
+    );
     assert!(app.threads_pane_rows().iter().any(|row| matches!(
         row,
         PaneRow::File { path, selected: true, .. } if path == Path::new("README.md")

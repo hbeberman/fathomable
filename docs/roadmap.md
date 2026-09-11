@@ -362,3 +362,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     (`● 2 user ● 3 agent ◐ 1 resolve? ○ 1 resolved`), a proposed thread
     counts on its own, and the words drop together when the row is
     too narrow ([0075](decisions/0075-the-header-names-its-counts.md)).
+67. **Threads fold in the list.** Every thread in the review list folds
+    and expands with the text's chevrons, `z`, `Z`, clicks, and menu
+    entries; a folded thread is one packed row; file rows and folded
+    threads are stops for `j`/`k`, `z` acts on the row the cursor is
+    on, and `Z` folds or expands every thread; file rows always draw
+    `▾` or `▸`; and a stub is a stop in the text
+    ([0076](decisions/0076-threads-fold-in-the-list.md)).

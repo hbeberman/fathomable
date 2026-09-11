@@ -487,18 +487,19 @@ impl App {
         }
     }
 
-    /// Whether `place` groups its threads by file now, so a fold has
-    /// something to fold (ADR 0066).
+    /// Whether `z` on a thread row of `place` folds the thread's file
+    /// (ADR 0066): only in the pane in workspace scope; in the list `z`
+    /// folds the thread (ADR 0076).
     fn folds_files(&self, place: Where) -> bool {
         match place {
             Where::ThreadsPane => self.sidebar_scope() == PaneScope::Workspace,
-            Where::Review => !self.review().file_only,
             _ => false,
         }
     }
 
-    /// The menu for a file row (ADR 0066): fold or unfold it, fold or
-    /// unfold every file, open the file, and the resolved toggle.
+    /// The menu for a file row (ADR 0066): fold or unfold it, in the
+    /// pane fold or unfold every file (the list's `Z` folds threads, ADR
+    /// 0076), open the file, and the resolved toggle.
     fn file_menu(
         &self,
         place: Where,
@@ -517,15 +518,17 @@ impl App {
             Action::Fold,
             if folded { "unfold" } else { "fold" },
         );
-        let any_folded = self.review_entries(false).iter().any(|entry| match place {
-            Where::ThreadsPane => self.threads_pane_is_folded(entry.path()),
-            _ => self.review_list().is_folded(entry.path()),
-        });
-        menu.push(
-            Action::FoldAll,
-            Action::FoldAll,
-            if any_folded { "unfold all" } else { "fold all" },
-        );
+        if place == Where::ThreadsPane {
+            let any_folded = self
+                .review_entries(false)
+                .iter()
+                .any(|entry| self.threads_pane_is_folded(entry.path()));
+            menu.push(
+                Action::FoldAll,
+                Action::FoldAll,
+                if any_folded { "unfold all" } else { "fold all" },
+            );
+        }
         menu.push(Action::Confirm, Action::Confirm, "open file");
         menu.push(
             Action::ReviewResolved,
@@ -539,9 +542,26 @@ impl App {
         menu
     }
 
-    /// The menu for the thread cursor's thread on a thread surface.
+    /// The menu for the thread cursor's thread on a thread surface; in
+    /// the list it folds and expands the thread as the text's does (ADR
+    /// 0076).
     fn thread_menu(&self, place: Where, column: usize, row: usize) -> Menu {
         let mut menu = Menu::new("thread", place, column, row);
+        if place == Where::Review {
+            let folded = self
+                .thread_cursor()
+                .thread()
+                .is_some_and(|id| self.review_list().is_thread_folded(id));
+            menu.push(
+                Action::Fold,
+                Action::Fold,
+                if folded {
+                    "expand thread"
+                } else {
+                    "fold thread"
+                },
+            );
+        }
         menu.push(Action::Confirm, Action::Confirm, "go to");
         menu.push(Action::Reply, Action::Reply, "reply");
         let resolved = self

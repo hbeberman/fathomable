@@ -6,10 +6,11 @@
 //! where the lines are.
 //!
 //! Stubs are not lines. The view inserts their rows after the row they
-//! hang under, the way a detached thread's row is inserted (ADR 0039),
-//! and every motion steps over a collapsed stub; only the mouse lands on
-//! one. An expanded thread's message rows are stops: `j`/`k` walk them,
-//! and the message under the cursor is the thread cursor's. Which
+//! hang under, the way a detached thread's row is inserted (ADR 0039).
+//! A collapsed stub's row is a stop (ADR 0076): `j`/`k` land on it, the
+//! thread cursor is its thread, and `z` expands it. An expanded
+//! thread's message rows are stops too: `j`/`k` walk them, and the
+//! message under the cursor is the thread cursor's. Which
 //! threads produce rows, under which row, in what order, with which
 //! messages, and which rows are stops is decided here from the marks;
 //! the view keeps only the anchors, counts, and stops, and the drawing
@@ -142,6 +143,7 @@ impl Stub {
             anchor: self.anchor,
             rows: self.rows,
             stops: self.stops.clone(),
+            expanded: self.expanded,
         }
     }
 }
@@ -269,7 +271,8 @@ impl App {
                     let messages: Vec<usize> =
                         (count.saturating_sub(STUB_MESSAGES)..count).collect();
                     let rows = messages.len();
-                    (messages, rows, Vec::new(), None)
+                    // Every row of a collapsed stub is a stop (ADR 0076).
+                    (messages, rows, (0..rows).collect(), None)
                 };
                 Some(Stub {
                     subject: Subject::Thread(mark.id().clone()),
@@ -436,9 +439,10 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
     use std::fs;
 
-    use crate::app::testing::{self, click, press, screen, source_app};
+    use crate::app::testing::{self, click, press, press_key, screen, source_app};
 
     use crate::app::threads::ComposeTarget;
     use crate::app::{App, Focus, Popup};
@@ -477,19 +481,35 @@ mod tests {
 
     /// Stub rows sit under the last row of their thread, carry no line
     /// number, and stacked threads come one after another in line order;
-    /// the cursor steps over them and the hint marks only the cursor's.
+    /// the cursor stops on each (ADR 0076) and the hint marks only the
+    /// cursor's.
+    /// Two threads stacked under L5: `outer` on L3-5 and `inner` on L5
+    /// with one reply, `reply`, the inner one folded back to a stub
+    /// after the reply expanded it.
+    fn stacked_threads(
+        app: &mut crate::app::App,
+        reply: &str,
+    ) -> (
+        fathomable_core::annotations::ThreadId,
+        fathomable_core::annotations::ThreadId,
+    ) {
+        annotate(app, 3, 5, "outer thread");
+        annotate(app, 5, 5, "inner point");
+        app.thread_reply();
+        app.compose_insert(reply);
+        app.compose_submit();
+        let outer = app.file_threads()[0].clone();
+        let inner = app.file_threads()[1].clone();
+        assert!(app.is_expanded(&inner), "a reply from the text expands");
+        app.fold_thread(&inner);
+        (outer, inner)
+    }
+
     #[test]
-    fn stubs_hang_under_their_lines_and_the_cursor_skips_them() -> anyhow::Result<()> {
+    fn stubs_hang_under_their_lines_and_the_cursor_stops_on_them() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-rows", testing::README)?;
         let mut app = source_app(&dir)?;
-        annotate(&mut app, 3, 5, "outer thread");
-        annotate(&mut app, 5, 5, "inner point");
-        app.thread_reply();
-        app.compose_insert("agent-free reply");
-        app.compose_submit();
-        // A reply from the text expands the thread; fold it again.
-        let inner = app.file_threads()[1].clone();
-        app.fold_thread(&inner);
+        let (outer, inner) = stacked_threads(&mut app, "agent-free reply");
         app.view_mut().goto_source_line(1);
 
         // Row model: 8 source rows, plus 1 + 1 rows under L5 and 1 under L7.
@@ -549,12 +569,20 @@ mod tests {
         app.view_mut().goto_source_line(4);
         assert_eq!(bold_rows(&app, &[5, 6])?, [5], "the outer thread's row");
 
-        // `j` from L5 lands on L6, past two stub rows; `k` comes back.
+        // `j` from L5 stops on the outer stub, then the inner, then L6
+        // (ADR 0076), each stub's thread the cursor's; `k` comes back
+        // the same way.
         app.view_mut().goto_source_line(5);
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 5);
+        assert_eq!(app.thread_cursor().thread(), Some(&outer));
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 6);
+        assert_eq!(app.thread_cursor().thread(), Some(&inner));
         press(&mut app, "j");
         assert_eq!(app.view().cursor_source_line(), Some(6));
         assert_eq!(app.view().cursor().row, 7);
-        press(&mut app, "k");
+        press(&mut app, "kkk");
         assert_eq!(app.view().cursor().row, 4);
         press(&mut app, "G");
         assert_eq!(
@@ -563,14 +591,26 @@ mod tests {
         );
         press(&mut app, "gg");
         assert_eq!(app.view().cursor().row, 0);
-        // `x` selects lines, never a stub.
+        // `x` selects lines, never a stub: from L5 the second press
+        // steps over both stubs to L6, and from a stub the selection
+        // anchors on the line the stub hangs under.
         app.view_mut().goto_source_line(5);
         press(&mut app, "xx");
         assert_eq!(
             app.view().selected_lines().map(|r| (r.start(), r.end())),
             Some((5, 6))
         );
-        press(&mut app, "\u{1b}");
+        press_key(&mut app, KeyCode::Esc);
+        app.view_mut().goto_source_line(5);
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 5, "on the outer stub");
+        press(&mut app, "x");
+        assert_eq!(
+            app.view().selected_lines().map(|r| (r.start(), r.end())),
+            Some((5, 5)),
+            "the line it hangs under"
+        );
+        press_key(&mut app, KeyCode::Esc);
         Ok(())
     }
 
@@ -666,15 +706,7 @@ mod tests {
     fn c_expands_in_place_walks_messages_and_cycles() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-expand", testing::README)?;
         let mut app = source_app(&dir)?;
-        annotate(&mut app, 3, 5, "outer thread");
-        annotate(&mut app, 5, 5, "inner point");
-        app.thread_reply();
-        app.compose_insert("first reply\nwith a second line");
-        app.compose_submit();
-        let outer = app.file_threads()[0].clone();
-        let inner = app.file_threads()[1].clone();
-        assert!(app.is_expanded(&inner), "a reply from the text expands");
-        app.fold_thread(&inner);
+        let (outer, inner) = stacked_threads(&mut app, "first reply\nwith a second line");
 
         // On L5 the thread cursor is the inner thread; `c` expands it.
         app.view_mut().goto_source_line(5);
@@ -710,7 +742,11 @@ mod tests {
         );
         assert_eq!(shown[12].trim(), "6", "L6 follows: {:?}", shown[12]);
 
-        // `j` from L5 stops on the comment, then the reply, then L6.
+        // `j` from L5 stops on the outer stub (ADR 0076), the comment,
+        // then the reply, then L6.
+        press(&mut app, "j");
+        assert_eq!(app.view().cursor().row, 5);
+        assert_eq!(app.thread_cursor().thread(), Some(&outer));
         press(&mut app, "j");
         assert_eq!(app.view().cursor().row, 7);
         assert_eq!(app.thread_cursor().message(), 0);

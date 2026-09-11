@@ -165,7 +165,7 @@ keys, its bottom row is a key bar naming them):
 | `j` `k` | next / previous thread, wrapping, a folded file counting once; the text follows, and in workspace scope the file opens |
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the review list shares the flag) |
-| `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
+| `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all; a file row carries `▾` open and `▸` folded, here and in the review list |
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
@@ -179,14 +179,14 @@ surface every pane header shares):
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` / `Down` `Up` | next / previous thread, its newest message highlighted; a folded file counts once |
-| `l` `h` / `Right` `Left` | next / previous message in the thread |
-| `gg` `ge` `G` | first / last thread |
+| `j` `k` / `Down` `Up` | next / previous stop: a file row, then each thread of the file while it is unfolded, a folded thread being one row; a thread's newest message is highlighted, and on a file row the file's first thread is the cursor's |
+| `l` `h` / `Right` `Left` | next / previous message in the thread; nothing on a file row or a folded thread |
+| `gg` `ge` `G` | first / last stop |
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
 | `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `x`, `f` | show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the threads pane shares the flag); only this file |
-| `z`, `Z` | fold the cursor's file to its row, or unfold it; fold every file, or unfold them all |
+| `z`, `Z` | fold or expand the thread here (one row, the stub's form, with no blank row after it), or on a file row fold the file to its row or unfold it; fold every thread, or expand them all when every one is folded; the list opens with every thread expanded and remembers its folds while the viewer runs |
 | `Esc` | close the list, back to the document (`Space r` does too) |
 
 The draft, a comment, reply, or edit written in the thread's rows:
@@ -231,8 +231,10 @@ thread; a click on the `▾` in the expanded thread's gutter, or a
 double-click anywhere on its header row, folds it again. One click
 elsewhere on either row only places the cursor, on that row itself:
 the `▎` bar at the row's left edge stands in for the block cursor
-there. Drag the sidebar's divider or the threads pane's rule to resize
-them.
+there. In the review list a thread's header and its folded row take
+the same chevron click and double-click, and a click on a file row
+folds or unfolds the file and rests the cursor on it. Drag the
+sidebar's divider or the threads pane's rule to resize them.
 
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new
@@ -242,10 +244,11 @@ and on a link or a path that names a file, open it in the viewer;
 on any line, comment, select, and copy. In the files pane it offers open,
 checkpoint, copy path, the three filter toggles worded as they would
 act now, and, on a file with threads, `threads` (the
-threads pane on it) and `review`; on a threads pane or review list
-thread, go to, reply, resolve, edit, delete, and fold file; on a file
-row of either, fold or unfold, fold all or unfold all, open file, and
-the resolved toggle. A right-click
+threads pane on it) and `review`; on a threads pane thread, go to,
+reply, resolve, edit, delete, and fold file; on a review list thread,
+fold or expand thread, then go to, reply, resolve, edit, and delete;
+on a file row of either, fold or unfold, in the pane fold all or
+unfold all, open file, and the resolved toggle. A right-click
 outside the selection moves the cursor there first; inside it keeps the
 selection. Hover highlights an entry; a click or its key runs it; `Esc`
 or a click elsewhere closes the menu. The `delete thread` entry deletes
@@ -356,11 +359,12 @@ its newest message, with a `▸`, the thread's circle, the author
 the message, on the author's stripe with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
 `thread.agent`, over `thread.inline`; a theme that sets no background
-gets a `▎` at the left edge instead). Stubs are not lines:
-`j`/`k`, paging, search, `:N`, and selection step over them, and
-they carry no line number; a click on one rests the cursor on the stub
-itself, the `▎` bar at its left edge standing in for the block cursor
-(its `▸` or a double-click expands it), and `j` or `k` steps off it. Stubs of
+gets a `▎` at the left edge instead). Stubs are not lines: they carry
+no line number and selection never takes one; but `j`/`k` and the
+other motions stop on a stub as on a line, the cursor resting on the
+stub itself with the `▎` bar at its left edge standing in for the
+block cursor (a click rests it there too), the stub's thread the
+cursor's, and `z`, its `▸`, or a double-click expands it. Stubs of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour, bold for the
 thread the cursor is on; the others are dimmed.

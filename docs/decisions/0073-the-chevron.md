@@ -71,6 +71,9 @@ its own: its edge cell, the circle, and the name.
   elsewhere on either row only places the cursor: on the header as it
   did, on a stub on the row the stub hangs under, as 0049 gives the
   right button. 0049's *a click on a stub expands it* no longer holds.
+  (Since 2026-09-11 the review list's thread rows take the same
+  chevron click and double-click, and a stub is a stop for `j`/`k`,
+  [0076](0076-threads-fold-in-the-list.md).)
   The expanding press and the folding press both end the gesture, so
   a double-click on a stub opens the thread and stops: a third press
   is a first press on the header, not a fold. (Amended 2026-09-09: one

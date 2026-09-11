@@ -609,6 +609,95 @@ fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// In the review list a click on a thread's chevron or a double-click
+/// on its row folds and expands it, the thread's menu offers `fold
+/// thread` and no `fold file`, a click on a file row folds the file and
+/// rests the cursor on it, the file's menu has no fold-all, and a file
+/// row draws `▾` open and `▸` folded (ADR 0076).
+#[test]
+fn the_list_folds_a_thread_by_chevron_double_click_and_menu() -> anyhow::Result<()> {
+    let dir = fixture("list-fold")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    let id = app.file_threads()[0].clone();
+    app.open_review();
+    let edge = app.sidebar_width();
+    let after = |row: &str| row.chars().skip(edge).collect::<String>();
+    let rows = testing::screen(&app)?;
+    let file_y = rows
+        .iter()
+        .position(|row| row.contains("▾ README.md"))
+        .with_context(|| format!("the file row with its arrow: {rows:?}"))?;
+    let header_y = rows
+        .iter()
+        .position(|row| after(row).starts_with("▎▾ ●"))
+        .with_context(|| format!("the header with its chevron: {rows:?}"))?;
+
+    // The chevron cell folds and expands.
+    left(&mut app, edge + 1, header_y);
+    assert!(app.review_list().is_thread_folded(&id), "the chevron folds");
+    let rows = testing::screen(&app)?;
+    assert!(
+        after(&rows[header_y]).starts_with("▎▸ ●"),
+        "the folded row draws `▸`: {rows:?}"
+    );
+    left(&mut app, edge + 1, header_y);
+    assert!(
+        !app.review_list().is_thread_folded(&id),
+        "the chevron expands"
+    );
+
+    // One click on the words selects; two fold and end the gesture.
+    left(&mut app, edge + 12, header_y);
+    assert!(
+        !app.review_list().is_thread_folded(&id),
+        "one click selects"
+    );
+    left(&mut app, edge + 12, header_y);
+    assert!(
+        app.review_list().is_thread_folded(&id),
+        "a double-click folds"
+    );
+    left(&mut app, edge + 12, header_y);
+    assert!(
+        app.review_list().is_thread_folded(&id),
+        "the third press is a first press"
+    );
+
+    // The thread's menu leads with the fold and has no `fold file`.
+    right(&mut app, edge + 12, header_y);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert_eq!(labels[0], "expand thread");
+    assert!(
+        !labels.iter().any(|label| label == "fold file"),
+        "{labels:?}"
+    );
+    let cell = entry_cell(&app, "expand thread")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(
+        !app.review_list().is_thread_folded(&id),
+        "the entry expands"
+    );
+
+    // A click on the file row folds the file and rests the cursor on it;
+    // its menu has no fold-all.
+    left(&mut app, edge + 5, file_y);
+    assert!(
+        app.review_list()
+            .is_folded(std::path::Path::new("README.md"))
+    );
+    let rows = testing::screen(&app)?;
+    assert!(
+        after(&rows[file_y]).starts_with("▎▸ README.md"),
+        "folded, barred: {rows:?}"
+    );
+    right(&mut app, edge + 5, file_y);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert_eq!(labels, ["unfold", "open file", "show resolved"]);
+    app.close_popup();
+    Ok(())
+}
+
 /// A right-click on a file row offers the file's menu, and its `fold`
 /// entry folds the file on the surface it opened for (ADR 0066); the
 /// files pane's menu offers `threads` and `review` on a file with

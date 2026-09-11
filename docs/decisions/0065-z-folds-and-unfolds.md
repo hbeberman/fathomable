@@ -51,7 +51,8 @@ thread here, and every thread in the file.
   its seat on that thread through any relayout, on its row or the stop
   before it, and a cursor resting on a stub or a header stays there
   while other threads change. [0073](0073-the-chevron.md) carries the
-  same note.)
+  same note. Since 2026-09-11 `j`/`k` stop on a stub too,
+  [0076](0076-threads-fold-in-the-list.md).)
 - **`Z` opens and closes the file.** It expands every stub in the file,
   or, when any thread is expanded, folds every one.
 - **`c` is unchanged.** It still expands, cycles through the covering

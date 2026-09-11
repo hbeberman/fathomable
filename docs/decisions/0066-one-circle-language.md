@@ -176,7 +176,12 @@ agents' green (amber and teal until 2026-09-09).
   selected band, so `l`/`h` and `e` stay visible.
 - `z` folds or unfolds the cursor's file; `Z` folds or unfolds every
   file. A folded file is one stop for `j`/`k`, as in the pane. `s`
-  retires: one order everywhere. `x` stays.
+  retires: one order everywhere. `x` stays. (Superseded 2026-09-11 by
+  [0076](0076-threads-fold-in-the-list.md): every thread in the list
+  folds as in the text, `z` acts on the row the cursor is on, file
+  rows are stops, `Z` folds or expands every thread and the list has
+  no fold-all for files, and a file row always draws `▾` or `▸`; the
+  pane keeps its file folds and gains the arrows.)
 - The header reads `review  ●2 ●2 ○1`, then ` · path` while `f`
   narrows the list; the order word goes with `s` (since 2026-09-11,
   [0075](0075-the-header-names-its-counts.md): `review threads`, the
@@ -191,7 +196,9 @@ Everything the keys do here the mouse does too, extending
 [0059](0059-headers-and-the-key-bar.md).
 
 - A thread's two rows are one hit target; the wheel steps by thread.
-- A file row: a left-click folds or unfolds it, as a click on a
+- A file row (in the list since 2026-09-11 the click also rests the
+  cursor on the row, and the list's file menu has no fold-all,
+  [0076](0076-threads-fold-in-the-list.md)): a left-click folds or unfolds it, as a click on a
   directory in the files pane; a right-click puts the cursor on the
   file's first thread and opens the file's menu: `z fold` / `z unfold`,
   `Z fold all` / `Z unfold all`, `Enter open file`, `x hide resolved` /

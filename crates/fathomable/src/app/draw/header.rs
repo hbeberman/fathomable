@@ -414,9 +414,10 @@ pub(crate) fn expanded_header(
     Header::new(left, Vec::new())
 }
 
-/// A review list entry's header (ADR 0066): the circle, the lines, the
-/// state words, and the age, as the expanded thread in the text reads.
-/// Its keys are on the list's key bar (ADR 0067).
+/// A review list entry's header (ADR 0066): the chevron that folds it
+/// (ADR 0076), the circle, the lines, the state words, and the age, as
+/// the expanded thread in the text reads. Its keys are on the list's
+/// key bar (ADR 0067).
 pub(crate) fn entry_header(
     range: Option<fathomable_core::annotations::LineRange>,
     words: Words,
@@ -428,7 +429,8 @@ pub(crate) fn entry_header(
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut left = vec![
         cursor_tone(marked),
-        (format!("{}  ", words.glyph()), Tone::Mark(words.state())),
+        (CHEVRON_DOWN.to_owned(), Tone::Chevron),
+        (format!(" {}  ", words.glyph()), Tone::Mark(words.state())),
         (format!("{place}  "), Tone::Info),
     ];
     left.extend(state_words(words));
@@ -467,10 +469,9 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
             HintOf::keyed(place, Action::ReviewResolved, "resolved"),
             HintOf::keyed(place, Action::FileOnly, "file"),
         ];
-        if !app.review().file_only {
-            hints.push(HintOf::keyed(place, Action::Fold, "fold"));
-            hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
-        }
+        // `z` and `Z` fold threads in file scope too (ADR 0076).
+        hints.push(HintOf::keyed(place, Action::Fold, "fold"));
+        hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
         hints.push(HintOf::keyed(place, Action::Confirm, "open"));
         hints.push(HintOf::keyed(place, Action::Reply, "reply"));
         if app.thread_message_editable() {
@@ -485,7 +486,8 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 "threads",
             ));
         }
-        if app.cursor_message_count() > 1 {
+        // No messages to walk on a file row or a folded thread (ADR 0076).
+        if app.cursor_message_count() > 1 && !app.review_cursor_folded() {
             hints.push(HintOf::paired(
                 place,
                 Action::MoveDown,

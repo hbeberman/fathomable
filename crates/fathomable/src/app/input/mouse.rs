@@ -128,11 +128,12 @@ fn threads_pane_mouse(
     Effect::None
 }
 
-/// The mouse over the review list (ADR 0025, ADR 0059, ADR 0066): the
-/// wheel scrolls, a click selects the entry under the pointer or folds
-/// the file row it lands on, a click on the header's resolved count, a
-/// key-bar hint, or a hint on the cursor's thread header runs it, and
-/// a right-click on a row opens its menu. Row 0 is the list header and
+/// The mouse over the review list (ADR 0025, ADR 0059, ADR 0066, ADR
+/// 0076): the wheel scrolls, a click selects the entry under the
+/// pointer or folds the file row it lands on, a click on a thread's
+/// chevron or a double-click on its row folds or expands it, a click on
+/// the header's resolved count or a key-bar hint runs it, and a
+/// right-click on a row opens its menu. Row 0 is the list header and
 /// the column's last row is the key bar; unfocused, a click on either
 /// focuses the list.
 fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
@@ -156,8 +157,22 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
                 return app.act(action);
             }
         }
+        // A thread's header or folded row (ADR 0076): a press on the
+        // chevron's cell, or a second press on any of its cells, folds
+        // or expands the thread and ends the gesture, as in the text
+        // (ADR 0073); one press elsewhere selects.
         MouseEventKind::Down(MouseButton::Left) => {
-            app.review_click(row - 1);
+            let list_row = row - 1;
+            if let Some(id) = app.review_thread_row(list_row) {
+                let chevron = column.saturating_sub(app.sidebar_width()) == 1;
+                if chevron || press(app, column, row, false) == 2 {
+                    app.review_click(list_row);
+                    app.review_toggle_thread(&id);
+                    app.press = None;
+                    return Effect::None;
+                }
+            }
+            app.review_click(list_row);
         }
         MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
             app.open_review_menu(row - 1, column, row);

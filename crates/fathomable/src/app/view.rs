@@ -201,8 +201,11 @@ pub(crate) struct StubBlock {
     pub(crate) anchor: RowAnchor,
     pub(crate) rows: usize,
     /// Row indices within the block that are stops: an expanded thread's
-    /// message rows. A collapsed stub has none.
+    /// message rows, or a collapsed stub's rows (ADR 0076).
     pub(crate) stops: Vec<usize>,
+    /// The thread is expanded in place; a collapsed stub's rows are
+    /// stops a selection never takes.
+    pub(crate) expanded: bool,
 }
 
 /// The cursor's place on a stub block, kept across a relayout: the
@@ -334,13 +337,27 @@ impl View {
     }
 
     /// Whether the cursor may rest on `row`: a row of the document, or a
-    /// stop in an expanded thread.
+    /// stop in a thread's block, a collapsed stub's row included (ADR
+    /// 0076).
     fn is_stop_row(&self, row: usize) -> bool {
         match self.stub_slot_of_row(row) {
             Some((block, index)) => self
                 .stubs
                 .get(block)
                 .is_some_and(|block| block.stops.contains(&index)),
+            None => true,
+        }
+    }
+
+    /// Whether a selection's head may rest on `row`: as [`Self::is_stop_row`],
+    /// except that a collapsed stub's rows are no stops, since a
+    /// selection never takes one (ADR 0076).
+    fn is_selection_stop(&self, row: usize) -> bool {
+        match self.stub_slot_of_row(row) {
+            Some((block, index)) => self
+                .stubs
+                .get(block)
+                .is_some_and(|block| block.expanded && block.stops.contains(&index)),
             None => true,
         }
     }
@@ -370,7 +387,7 @@ impl View {
         self.layout.lines().get(row)?.stub_slot()
     }
 
-    /// Whether `row` is a stub row, which the cursor never rests on.
+    /// Whether `row` is a stub row: a thread's, which no selection takes.
     fn is_stub_row(&self, row: usize) -> bool {
         self.stub_slot_of_row(row).is_some()
     }
@@ -379,11 +396,21 @@ impl View {
     /// stop when moving forward, else the previous one, the other way
     /// when there is none.
     fn settle(&self, row: usize, forward: bool) -> usize {
-        if self.is_stop_row(row) {
+        self.settle_on(row, forward, |r| self.is_stop_row(r))
+    }
+
+    /// [`Self::settle`] for a selection's head, which skips a collapsed
+    /// stub (ADR 0076).
+    fn settle_selecting(&self, row: usize, forward: bool) -> usize {
+        self.settle_on(row, forward, |r| self.is_selection_stop(r))
+    }
+
+    fn settle_on(&self, row: usize, forward: bool, is_stop: impl Fn(usize) -> bool) -> usize {
+        if is_stop(row) {
             return row;
         }
-        let after = (row + 1..self.layout.lines().len()).find(|&r| self.is_stop_row(r));
-        let before = (0..row).rev().find(|&r| self.is_stop_row(r));
+        let after = (row + 1..self.layout.lines().len()).find(|&r| is_stop(r));
+        let before = (0..row).rev().find(|&r| is_stop(r));
         if forward {
             after.or(before)
         } else {
@@ -943,8 +970,14 @@ impl View {
 
     fn set_row(&mut self, row: usize) {
         let row = row.min(self.last_row());
-        // Stub rows are stepped over in the direction of travel (ADR 0049).
-        self.cursor.row = self.settle(row, row >= self.cursor.row);
+        // A row that is no stop is stepped over in the direction of
+        // travel (ADR 0049); a selection steps over collapsed stubs.
+        let forward = row >= self.cursor.row;
+        self.cursor.row = if self.mode == Mode::Select {
+            self.settle_selecting(row, forward)
+        } else {
+            self.settle(row, forward)
+        };
         self.clamp_col();
         self.extend_selection();
         self.ensure_visible();
@@ -1082,10 +1115,11 @@ impl View {
         self.clamp_col();
     }
 
-    /// Extend a mouse selection to a screen position (drag).
+    /// Extend a mouse selection to a screen position (drag); the head
+    /// never rests on a stub row.
     pub(crate) fn drag(&mut self, screen_row: usize, col: usize) {
-        let anchor = self.cursor;
-        let row = self.settle((self.scroll + screen_row).min(self.last_row()), false);
+        let anchor = self.leave_stub();
+        let row = self.settle_selecting((self.scroll + screen_row).min(self.last_row()), false);
         let col = self
             .columns(row)
             .iter()
@@ -1112,13 +1146,30 @@ impl View {
 
     /// A press in the gutter (ADR 0050): select the line under it, whole.
     pub(crate) fn select_line_at(&mut self, screen_row: usize) {
-        self.click(screen_row, 0);
+        // A press on a stub row selects the line it hangs under: a
+        // selection never takes a stub (ADR 0076).
+        self.selection = None;
+        self.cursor.row =
+            self.settle_selecting((self.scroll + screen_row).min(self.last_row()), false);
+        self.want_col = 0;
+        self.clamp_col();
         self.selection = Some(Selection {
             anchor: self.cursor,
             head: self.cursor,
             linewise: true,
         });
         self.mode = Mode::Select;
+    }
+
+    /// The cursor as a selection may anchor on it: a cursor resting on a
+    /// collapsed stub moves to the line the stub hangs under first (ADR
+    /// 0076).
+    fn leave_stub(&mut self) -> Cursor {
+        if !self.is_selection_stop(self.cursor.row) {
+            self.cursor.row = self.settle_selecting(self.cursor.row, false);
+            self.clamp_col();
+        }
+        self.cursor
     }
 
     /// A drag that began in the gutter (ADR 0050): extend by whole lines.
@@ -1268,9 +1319,10 @@ impl View {
             }
             return;
         }
+        let anchor = self.leave_stub();
         self.selection = Some(Selection {
-            anchor: self.cursor,
-            head: self.cursor,
+            anchor,
+            head: anchor,
             linewise: true,
         });
         self.mode = Mode::Select;
@@ -1289,9 +1341,10 @@ impl View {
             }
             return;
         }
+        let anchor = self.leave_stub();
         self.selection = Some(Selection {
-            anchor: self.cursor,
-            head: self.cursor,
+            anchor,
+            head: anchor,
             linewise,
         });
         self.mode = Mode::Select;

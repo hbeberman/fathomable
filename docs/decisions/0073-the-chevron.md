@@ -88,7 +88,10 @@ its own: its edge cell, the circle, and the name.
   motion, so the block cursor jumped off the row the user clicked
   just as it had on a stub; the terminal cursor hides there as on the
   thread's other rows, the header's `▎` bar marks the place, and `j`
-  steps on to the first message, `k` back to the line above.)
+  steps on to the first message, `k` back to the line above. And a
+  fold from the thread's rows, by the chevron, a double-click, or `z`,
+  rests the cursor on the stub the header becomes, not on the line
+  above, as [0065](0065-z-folds-and-unfolds.md) now says.)
 - **The gutter's presses are unchanged.** A press in the global
   gutter of the header row still selects the line it settles on, as a
   gutter press does everywhere.

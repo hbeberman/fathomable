@@ -2111,3 +2111,109 @@ fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// Folding the thread the cursor is on, by `z`, a click on the
+/// header's chevron, or a double-click on the header, rests the cursor
+/// on the thread's stub (ADR 0073, amended 2026-09-10), not at the
+/// first column of the line above: the terminal cursor stays hidden,
+/// the stub carries the bar, and the view stays still. A cursor resting
+/// on a stub stays there while another thread folds.
+#[test]
+fn folding_the_thread_under_the_cursor_rests_it_on_the_stub() -> anyhow::Result<()> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let dir = testing::workspace("threads-fold-rests", testing::README)?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app, "opening")?;
+    let id = app.marks()[0].id().clone();
+    app.view_mut().goto_top();
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let gutter = crate::app::draw::gutter_width(app.view());
+    let edge_x = app.sidebar_width() + gutter;
+    let header_y = |app: &App| -> anyhow::Result<usize> {
+        let rows = testing::screen(app)?;
+        rows.iter()
+            .position(|row| row.chars().nth(gutter + 1) == Some('▾'))
+            .with_context(|| format!("the header row: {rows:?}"))
+    };
+    let stub_y = |app: &App| -> anyhow::Result<usize> {
+        let rows = testing::screen(app)?;
+        rows.iter()
+            .position(|row| row.chars().nth(gutter + 1) == Some('▸'))
+            .with_context(|| format!("the stub row: {rows:?}"))
+    };
+    let on_stub = |app: &App, y: usize| -> anyhow::Result<()> {
+        let stub_row = app.view().scroll() + y - app.text_top();
+        anyhow::ensure!(
+            app.view().cursor().row == stub_row,
+            "the cursor rests on the stub, not row {}",
+            app.view().cursor().row
+        );
+        anyhow::ensure!(app.thread_cursor().thread() == Some(&id));
+        let buffer = testing::buffer(app)?;
+        let edge = &buffer[(u16::try_from(edge_x)?, u16::try_from(y)?)];
+        anyhow::ensure!(edge.symbol() == "▎", "the stub is barred: {edge:?}");
+        let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+        terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
+        anyhow::ensure!(!terminal.backend().cursor_visible(), "no block cursor");
+        Ok(())
+    };
+
+    // `z` from a message row.
+    let newest = app.newest_message(&id);
+    app.goto_message(id.clone(), newest);
+    let y = header_y(&app)?;
+    let scroll = app.view().scroll();
+    testing::press(&mut app, "z");
+    assert!(!app.is_expanded(&id));
+    assert_eq!(stub_y(&app)?, y, "the stub takes the header's row");
+    assert_eq!(app.view().scroll(), scroll, "the view stays still");
+    on_stub(&app, y)?;
+
+    // The chevron, from the header row itself.
+    testing::click(&mut app, edge_x + 1, y);
+    assert!(app.is_expanded(&id), "the stub's chevron expands");
+    testing::click(&mut app, edge_x + 10, y);
+    assert_eq!(
+        app.view().cursor().row,
+        app.view().scroll() + y - app.text_top()
+    );
+    testing::click(&mut app, edge_x + 1, y);
+    assert!(!app.is_expanded(&id), "the header's chevron folds");
+    on_stub(&app, y)?;
+
+    // A double-click on the header's words.
+    testing::click(&mut app, edge_x + 1, y);
+    assert!(app.is_expanded(&id));
+    testing::click(&mut app, edge_x + 10, y);
+    testing::click(&mut app, edge_x + 10, y);
+    assert!(!app.is_expanded(&id), "a double-click folds");
+    on_stub(&app, y)?;
+
+    // Another thread folding leaves a cursor resting on a stub where it
+    // is.
+    app.view_mut().goto_source_line(1);
+    app.start_new_comment();
+    app.compose_insert("on the first line");
+    app.compose_submit();
+    let other = app.file_threads()[0].clone();
+    assert_ne!(other, id);
+    app.goto_message(other.clone(), 0);
+    let y = stub_y(&app)?;
+    testing::click(&mut app, edge_x + 10, y);
+    on_stub(&app, y)?;
+    let row = app.view().cursor().row;
+    app.fold_thread(&other);
+    assert!(
+        app.stub_on_row(app.view().cursor().row)
+            .is_some_and(|(stub, _, _)| stub.thread() == Some(&id))
+    );
+    assert!(
+        app.view().cursor().row < row,
+        "the other thread's rows went"
+    );
+    Ok(())
+}

@@ -42,7 +42,16 @@ thread here, and every thread in the file.
   folds that thread back to its stub. On a row a thread covers it
   expands the thread cursor's thread, the one the stub hint marks.
   Elsewhere it does nothing. It never cycles and never starts a
-  comment.
+  comment. (Amended 2026-09-10: a fold from the thread's rows leaves
+  the cursor on the stub, the row the header becomes, where the
+  terminal cursor stays hidden and the stub's `▎` bar marks the place.
+  The relayout had dropped it to the first column of the line the
+  thread hangs under, a jump the user saw on every fold by `z`, the
+  chevron, or a double-click; a cursor on a thread's rows now keeps
+  its seat on that thread through any relayout, on its row or the stop
+  before it, and a cursor resting on a stub or a header stays there
+  while other threads change. [0073](0073-the-chevron.md) carries the
+  same note.)
 - **`Z` opens and closes the file.** It expands every stub in the file,
   or, when any thread is expanded, folds every one.
 - **`c` is unchanged.** It still expands, cycles through the covering

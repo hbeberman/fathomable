@@ -389,7 +389,8 @@ expands the next in line order, wrapping, and after the last leaves none
 expanded. `Z` expands every thread in the file, or folds them all when
 any is expanded. A click on a stub's `▸` or a double-click on the stub expands
 it; a click on the header's `▾` or a double-click on the header folds
-it.
+it. Folding from the thread's rows leaves the cursor on the stub, its
+`▎` bar standing in for the block cursor until `j` or `k` steps off.
 
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its

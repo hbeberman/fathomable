@@ -205,6 +205,16 @@ pub(crate) struct StubBlock {
     pub(crate) stops: Vec<usize>,
 }
 
+/// The cursor's place on a stub block, kept across a relayout: the
+/// block's anchor, which of the blocks under that anchor it is, and the
+/// row within it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StubSeat {
+    anchor: RowAnchor,
+    ordinal: usize,
+    index: usize,
+}
+
 impl View {
     /// Lay `text` out for a text area of `width` by `height` cells, as
     /// uncoloured Markdown.
@@ -275,8 +285,44 @@ impl View {
         if blocks == self.stubs {
             return;
         }
+        let seat = self.stub_seat();
         self.stubs = blocks;
-        self.relayout();
+        self.relayout_seated(seat);
+    }
+
+    /// Where the cursor sits within a stub block, as it survives a
+    /// relayout: the block's anchor, its place among the blocks under
+    /// that anchor, and the row within it. `None` off the stub rows.
+    fn stub_seat(&self) -> Option<StubSeat> {
+        let (block, index) = self.stub_slot_of_row(self.cursor.row)?;
+        let anchor = self.stubs.get(block)?.anchor;
+        let ordinal = self.stubs[..block]
+            .iter()
+            .filter(|other| other.anchor == anchor)
+            .count();
+        Some(StubSeat {
+            anchor,
+            ordinal,
+            index,
+        })
+    }
+
+    /// The row `seat` names in the current layout, the cursor kept on
+    /// the block it was on: on the same row when that is a stop, else
+    /// on the stop before it within the block, else on the block's first
+    /// row, the stub or the header, as a click rests there (ADR 0073,
+    /// amended 2026-09-10). `None` when the block is gone.
+    fn seat_row(&self, seat: StubSeat) -> Option<usize> {
+        let (block, rows) = self
+            .stubs
+            .iter()
+            .enumerate()
+            .filter(|(_, other)| other.anchor == seat.anchor)
+            .nth(seat.ordinal)
+            .map(|(block, other)| (block, other.rows))?;
+        let first = self.row_of_stub_slot(block, 0)?;
+        let seated = self.row_of_stub_slot(block, seat.index.min(rows.saturating_sub(1)))?;
+        Some(self.settle(seated, false).max(first))
     }
 
     /// The rendered row of stub `index` of block `block`, if laid out.
@@ -748,6 +794,14 @@ impl View {
     }
 
     fn relayout(&mut self) {
+        let seat = self.stub_seat();
+        self.relayout_seated(seat);
+    }
+
+    /// Lay the document out again, the cursor kept on its source line
+    /// and column, on its detached row, or on the thread's rows `seat`
+    /// names, the stub once the thread has folded.
+    fn relayout_seated(&mut self, seat: Option<StubSeat>) {
         // A cursor on a detached row stays on it (ADR 0039).
         let on_detached = self.detached_anchor_of_row(self.cursor.row);
         // A cursor on a row with no source — a blank rendered row — is
@@ -822,13 +876,23 @@ impl View {
             .or_else(|| offset.and_then(|offset| self.layout.line_at_offset(offset)))
             .unwrap_or(self.cursor.row);
         let mut row = row.min(self.last_row());
+        let hangs_under = row;
         for _ in 0..rows_below {
             row = (row + 1..=self.last_row())
                 .find(|&r| !self.is_stub_row(r))
                 .unwrap_or(row);
         }
-        self.cursor.row = self.settle(row, false);
-        self.scroll = self.cursor.row.saturating_sub(screen_row);
+        // A cursor on a thread's rows stays on the thread, the row it
+        // hangs under keeping its place on screen; else the cursor's
+        // row does.
+        let kept = if let Some(seated) = seat.and_then(|seat| self.seat_row(seat)) {
+            self.cursor.row = seated;
+            hangs_under
+        } else {
+            self.cursor.row = self.settle(row, false);
+            self.cursor.row
+        };
+        self.scroll = kept.saturating_sub(screen_row);
         self.clamp_col();
         self.selection = None;
         self.rescan();

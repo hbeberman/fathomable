@@ -10,6 +10,7 @@ pub(crate) mod gutter;
 pub(crate) mod header;
 pub(crate) mod info;
 pub(crate) mod message;
+pub(crate) mod nest;
 mod note;
 mod threads_pane;
 
@@ -34,6 +35,7 @@ use crate::app::draw::header::{
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
+use crate::app::draw::nest::{NEST, nest_span};
 use crate::app::draw::note::note_cell;
 use crate::app::input::bindings::Action;
 use crate::app::threads::list::{BODY_INDENT, Row, Rows};
@@ -1693,12 +1695,14 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour after `▾`, or `▸` when folded (ADR 0076), the
-        // count at the edge; the cursor bar and bold when the cursor
+        // count at the edge; the cursor bar while the cursor's thread
+        // is one of the file's (ADR 0077), and bold when the cursor
         // rests on the row (ADR 0071).
         Row::File {
             path,
             count,
             folded,
+            inside,
             selected,
             ..
         } => {
@@ -1710,7 +1714,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
                 style = style.add_modifier(Modifier::BOLD);
             }
             Line::from(vec![
-                cursor_cell(theme, *selected),
+                cursor_cell(theme, *inside),
                 Span::styled(fit_ellipsis(&name, name_width), style),
                 Span::styled(count, theme.info),
             ])
@@ -1737,7 +1741,8 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         Row::Stub { .. } => stub_row(theme, row, now, width),
         // A message's rows on its author's stripe, the name in the
         // author's colour, the cursor's message with the bar down its
-        // left edge and its name bold (ADR 0071).
+        // left edge and its name bold (ADR 0071), in the nest (ADR
+        // 0077).
         Row::Message {
             user,
             author,
@@ -1750,7 +1755,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             let who = list_author(*user);
             let mut spans = vec![
                 cursor_cell(theme, *selected),
-                Span::raw("  "),
+                Span::raw(" ".repeat(NEST + 2)),
                 Span::styled(
                     author.clone(),
                     if *dim {
@@ -1799,9 +1804,10 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
 }
 
 /// A folded thread's one row in the list (ADR 0076), the stub's form:
-/// the chevron, the circle, the place, the newest message's author on
-/// their stripe, its short age, and its first line cut with `…`; the
-/// cursor's thread bold with the bar in its edge cell.
+/// the chevron after the nest (ADR 0077), the circle, the place, the
+/// newest message's author on their stripe, its short age, and its
+/// first line cut with `…`; the cursor's thread bold with the bar in
+/// its edge cell.
 fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     let Row::Stub {
         range,
@@ -1822,6 +1828,7 @@ fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut lead = vec![
         cursor_cell(theme, *selected),
+        nest_span(),
         Span::styled(CHEVRON_RIGHT, theme.info.add_modifier(Modifier::BOLD)),
         Span::styled(
             format!(" {}  ", words.glyph()),

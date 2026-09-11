@@ -628,20 +628,22 @@ fn the_list_folds_a_thread_by_chevron_double_click_and_menu() -> anyhow::Result<
         .iter()
         .position(|row| row.contains("▾ README.md"))
         .with_context(|| format!("the file row with its arrow: {rows:?}"))?;
+    // The header sits in the nest (ADR 0077): the bar, two cells, the
+    // chevron under the path's first letter.
     let header_y = rows
         .iter()
-        .position(|row| after(row).starts_with("▎▾ ●"))
+        .position(|row| after(row).starts_with("▎  ▾ ●"))
         .with_context(|| format!("the header with its chevron: {rows:?}"))?;
 
     // The chevron cell folds and expands.
-    left(&mut app, edge + 1, header_y);
+    left(&mut app, edge + 3, header_y);
     assert!(app.review_list().is_thread_folded(&id), "the chevron folds");
     let rows = testing::screen(&app)?;
     assert!(
-        after(&rows[header_y]).starts_with("▎▸ ●"),
+        after(&rows[header_y]).starts_with("▎  ▸ ●"),
         "the folded row draws `▸`: {rows:?}"
     );
-    left(&mut app, edge + 1, header_y);
+    left(&mut app, edge + 3, header_y);
     assert!(
         !app.review_list().is_thread_folded(&id),
         "the chevron expands"

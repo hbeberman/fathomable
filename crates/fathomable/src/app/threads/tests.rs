@@ -953,9 +953,11 @@ fn resolving_in_the_list_keeps_the_scroll_and_moves_to_the_next_entry() -> anyho
 }
 
 /// ADR 0071: the cursor bar is the first cell of the cursor's thread's
-/// entry header and of every row of the cursor's message in the list;
-/// in the file the expanded thread's rows begin with a gutter of their
-/// own, the bar in its first cell on the header and the cursor's message.
+/// entry header and of every row of the cursor's message in the list,
+/// and of the file row over them (ADR 0077), the thread's rows in the
+/// nest under the path; in the file the expanded thread's rows begin
+/// with a gutter of their own, the bar in its first cell on the header
+/// and the cursor's message.
 #[test]
 fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-cursor-bar", testing::README)?;
@@ -980,24 +982,39 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     assert_eq!(app.thread_cursor().message(), 2, "the newest message");
     let rows = testing::screen(&app)?;
     let marked: Vec<&String> = rows.iter().filter(|row| row.starts_with('▎')).collect();
-    // The entry header, then the newest message's author row and body row.
-    assert_eq!(marked.len(), 3, "{rows:?}");
+    // The file row the cursor is within, not bold on its own (ADR
+    // 0077), the entry header, then the newest message's author row
+    // and body row, each in the nest.
+    assert_eq!(marked.len(), 4, "{rows:?}");
+    assert!(marked[0].starts_with("▎▾ README.md"), "{marked:?}");
     assert!(
-        marked[0].contains("L3") && marked[0].contains("open"),
+        marked[1].starts_with("▎  ▾ ") && marked[1].contains("L3") && marked[1].contains("open"),
         "{marked:?}"
     );
-    assert!(marked[1].starts_with("▎  User  "), "{marked:?}");
-    assert!(marked[2].starts_with("▎    user follow-up"), "{marked:?}");
+    assert!(marked[2].starts_with("▎    User  "), "{marked:?}");
+    assert!(marked[3].starts_with("▎      user follow-up"), "{marked:?}");
     let other = rows
         .iter()
         .find(|row| row.contains("agent answer"))
         .context("the agent's body row")?;
-    assert!(other.starts_with("     agent answer"), "{other:?}");
+    assert!(other.starts_with("       agent answer"), "{other:?}");
     let author = rows
         .iter()
         .find(|row| row.contains("reviewer"))
         .context("the agent's author row")?;
-    assert!(author.starts_with("   reviewer  "), "{author:?}");
+    assert!(author.starts_with("     reviewer  "), "{author:?}");
+    // File scope drops the file row and keeps the nest.
+    app.review_toggle_file();
+    let rows = testing::screen(&app)?;
+    assert!(
+        !rows.iter().any(|row| row.contains("▾ README.md")),
+        "no file row in file scope: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|row| row.starts_with("▎  ▾ ")),
+        "the threads keep the nest in file scope: {rows:?}"
+    );
+    app.review_toggle_file();
 
     // In the file: the global gutter, then the thread's own.
     app.thread_open_in_file();

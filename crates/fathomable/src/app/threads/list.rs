@@ -20,16 +20,17 @@ use std::path::{Path, PathBuf};
 use fathomable_core::annotations::{Author, LineRange, Thread, ThreadId};
 use fathomable_core::layout::{Layout, Line};
 
+use crate::app::draw::nest::NEST;
 use crate::app::threads::words::Words;
 use crate::app::threads::{ThreadState, author_label};
 use crate::app::{App, Focus};
 
 /// Rows kept visible above and below the selected message.
 const SCROLLOFF: usize = 2;
-/// Cells a message body is indented from the column edge: two deeper than
-/// its author row. The UI draws the indent before each body row; the
-/// wrap width already accounts for it.
-pub(crate) const BODY_INDENT: usize = 5;
+/// Cells a message body is indented from the column edge: the nest
+/// (ADR 0077), then two deeper than its author row. The UI draws the
+/// indent before each body row; the wrap width already accounts for it.
+pub(crate) const BODY_INDENT: usize = NEST + 5;
 
 /// What the review shows (ADR 0049), shared by the review list and the
 /// sidebar's threads pane.
@@ -191,13 +192,15 @@ impl Entry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Row {
     /// A file's row over its threads (ADR 0066): the path and how many
-    /// threads it lists; `selected` when the cursor's thread is inside
-    /// it while it is folded.
+    /// threads it lists; `inside` when the cursor's thread is one of
+    /// the file's, for the bar (ADR 0077); `selected` when the cursor
+    /// rests on the row itself, on it as a stop or over a folded file.
     File {
         path: PathBuf,
         count: usize,
         folded: bool,
         current: bool,
+        inside: bool,
         selected: bool,
     },
     /// The first row of an entry: the circle, the range, the words,
@@ -565,6 +568,7 @@ impl App {
                     count: group_end - index,
                     folded,
                     current: path == self.current_path(),
+                    inside: cursor_inside,
                     selected: cursor_inside && (on_file || folded),
                 });
             }

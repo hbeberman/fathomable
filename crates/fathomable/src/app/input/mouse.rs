@@ -20,6 +20,7 @@ use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
 use crate::app::draw::author::THREAD_GUTTER;
 use crate::app::draw::header;
+use crate::app::draw::nest::NEST;
 use crate::app::threads::draft::DraftRow;
 use crate::app::view::Effect;
 
@@ -158,13 +159,14 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             }
         }
         // A thread's header or folded row (ADR 0076): a press on the
-        // chevron's cell, or a second press on any of its cells, folds
-        // or expands the thread and ends the gesture, as in the text
-        // (ADR 0073); one press elsewhere selects.
+        // chevron's cell, after the cursor cell and the nest (ADR
+        // 0077), or a second press on any of its cells, folds or
+        // expands the thread and ends the gesture, as in the text (ADR
+        // 0073); one press elsewhere selects.
         MouseEventKind::Down(MouseButton::Left) => {
             let list_row = row - 1;
             if let Some(id) = app.review_thread_row(list_row) {
-                let chevron = column.saturating_sub(app.sidebar_width()) == 1;
+                let chevron = column.saturating_sub(app.sidebar_width()) == 1 + NEST;
                 if chevron || press(app, column, row, false) == 2 {
                     app.review_click(list_row);
                     app.review_toggle_thread(&id);

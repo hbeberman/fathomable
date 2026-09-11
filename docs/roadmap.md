@@ -369,3 +369,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     on, and `Z` folds or expands every thread; file rows always draw
     `▾` or `▸`; and a stub is a stop in the text
     ([0076](decisions/0076-threads-fold-in-the-list.md)).
+68. **Threads nest under their file.** In the review list and the
+    threads pane a thread's rows sit two cells in under the file row,
+    one level as the files pane nests, in file scope too; and the
+    list's file row draws the cursor bar while the cursor is on one of
+    its threads ([0077](decisions/0077-threads-nest-under-their-file.md)).

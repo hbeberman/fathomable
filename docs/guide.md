@@ -157,8 +157,11 @@ The `Space` menu, from any pane:
 Threads pane (the sidebar's lower pane; its header reads `threads ·
 file` or `threads · workspace` with the counts by colour at its right
 edge, `● 2 user ● 1 agent ◐ 1 resolve? ○ 3 resolved` when the row holds
-the words and `● 2 ● 1 ◐ 1 ○ 3` when it does not; while the pane has the
-keys, its bottom row is a key bar naming them):
+the words and `● 2 ● 1 ◐ 1 ○ 3` when it does not; in workspace scope a
+row per file over its threads, each thread's two rows sitting two cells
+in under the path as the files pane nests a directory's children, and
+in file scope the threads alone at the same indent; while the pane has
+the keys, its bottom row is a key bar naming them):
 
 | Keys | Action |
 | --- | --- |
@@ -175,7 +178,11 @@ pane's, each with its word while the row holds them all and bare
 otherwise, then ` · path` while `f` narrows it;
 the keys below sit on a bar along the list's bottom row, and the
 header, the bar, and each thread's header draw on the `ui.header`
-surface every pane header shares):
+surface every pane header shares; a thread's rows sit two cells in
+under its file row, in file scope too, and the file row draws the
+yellow `▎` bar in its edge cell while the cursor is on one of its
+threads, as the thread's header does while the cursor is on one of
+its messages):
 
 | Keys | Action |
 | --- | --- |

@@ -26,6 +26,7 @@ use ratatui::text::{Line, Span};
 
 use crate::app::draw::author::{CHEVRON_DOWN, CURSOR_BAR};
 use crate::app::draw::counts::count_hints;
+use crate::app::draw::nest::NEST;
 use crate::app::draw::{Theme, format_age, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::threads::list::Entry;
@@ -414,8 +415,8 @@ pub(crate) fn expanded_header(
     Header::new(left, Vec::new())
 }
 
-/// A review list entry's header (ADR 0066): the chevron that folds it
-/// (ADR 0076), the circle, the lines, the state words, and the age, as
+/// A review list entry's header (ADR 0066): after the nest (ADR 0077),
+/// the chevron that folds it (ADR 0076), the circle, the lines, the state words, and the age, as
 /// the expanded thread in the text reads. Its keys are on the list's
 /// key bar (ADR 0067).
 pub(crate) fn entry_header(
@@ -427,8 +428,10 @@ pub(crate) fn entry_header(
     marked: bool,
 ) -> Header {
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
+    // The chevron after the nest (ADR 0077), under the file row's path.
     let mut left = vec![
         cursor_tone(marked),
+        (" ".repeat(NEST), Tone::Info),
         (CHEVRON_DOWN.to_owned(), Tone::Chevron),
         (format!(" {}  ", words.glyph()), Tone::Mark(words.state())),
         (format!("{place}  "), Tone::Info),

@@ -6,21 +6,24 @@
 //!
 //! A thread's first row is its circle, its place, and the author of
 //! its newest message, with the reply count and the age at the right
-//! edge; its second row is that message's first line. The cursor's
-//! entry draws both rows on the selected surface, the current file's
-//! rows on the focus tint, and a folded file its row alone.
+//! edge; its second row is that message's first line. Both sit in the
+//! nest (ADR 0077), under the file row's path. The cursor's entry
+//! draws both rows on the selected surface, the current file's rows
+//! on the focus tint, and a folded file its row alone.
 
 use fathomable_core::layout::display_width;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::draw::header::{threads_pane_footer, threads_pane_header};
+use crate::app::draw::nest::NEST;
 use crate::app::draw::{Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style};
 use crate::app::threads::pane::{PaneEntry, PaneLine, PaneRow, PaneScope, pane_lines};
 use crate::app::{App, Focus};
 
-/// Cells a thread's second row is indented, under its place.
-const SUMMARY_INDENT: usize = 3;
+/// Cells a thread's second row is indented, under its place: the
+/// leading space, the nest, and the circle with its space.
+const SUMMARY_INDENT: usize = 1 + NEST + 2;
 
 /// The pane's rows for a column `width` cells wide and `rows` tall.
 pub(super) fn threads_pane_lines<'a>(
@@ -134,8 +137,9 @@ fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
     .style(style)
 }
 
-/// A thread's first row: the circle in the state colour, the place dim,
-/// the newest author, then `↩n age` at the right edge.
+/// A thread's first row: after the nest, the circle in the state
+/// colour, the place dim, the newest author, then `↩n age` at the
+/// right edge.
 fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> Line<'a> {
     let style = row_style(theme, entry.current(), entry.selected());
     let place = format!(" {} ", entry.place());
@@ -145,7 +149,7 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
     } else {
         age
     };
-    let lead = 1 + display_width(entry.words().glyph()) + display_width(&place);
+    let lead = 1 + NEST + display_width(entry.words().glyph()) + display_width(&place);
     // The author takes what is left before the tail: `name (role)` when
     // it fits, `name` when it does not, cut with `…` beyond that.
     let free = inner.saturating_sub(lead + display_width(&tail) + 1);
@@ -172,7 +176,7 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
         lead + display_width(&author) + display_width(&branch) + display_width(&tail),
     );
     Line::from(vec![
-        Span::styled(" ", style),
+        Span::styled(" ".repeat(1 + NEST), style),
         Span::styled(
             entry.words().glyph(),
             on(style, mark_style(theme, entry.kind())),
@@ -260,12 +264,15 @@ mod tests {
         let column = sidebar_column(&app, 100)?;
         let top = app.tree_rows();
         let first = column[top + 2].trim_end_matches('│').to_owned();
-        assert!(first.contains("◐ L3 reviewer (coder)"), "{first:?}");
+        assert!(
+            first.starts_with("   ◐ L3 reviewer (coder)"),
+            "the circle in the nest, under the path (ADR 0077): {first:?}"
+        );
         assert!(first.ends_with("↩1 now"), "{first:?}");
         assert!(column[top + 3].ends_with("…│"), "{:?}", column[top + 3]);
         assert!(
-            column[top + 3].starts_with("   done, I think"),
-            "{:?}",
+            column[top + 3].starts_with("     done, I think"),
+            "the summary under the place, in the nest (ADR 0077): {:?}",
             column[top + 3]
         );
         assert!(
@@ -275,8 +282,8 @@ mod tests {
         );
 
         // Narrow: the role goes before the tail does.
-        app.resize(66, 30);
-        let column = sidebar_column(&app, 66)?;
+        app.resize(72, 30);
+        let column = sidebar_column(&app, 72)?;
         let first = column[top + 2].trim_end_matches('│').to_owned();
         assert!(first.contains("◐ L3 reviewer "), "{first:?}");
         assert!(!first.contains("(coder)"), "{first:?}");

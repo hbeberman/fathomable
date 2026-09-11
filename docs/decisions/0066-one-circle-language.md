@@ -109,7 +109,9 @@ agents' green (amber and teal until 2026-09-09).
   not; there is one form and no compact toggle. (Amended 2026-09-06 by
   [0070](0070-one-workspace-many-worktrees.md): an entry the active
   worktree does not reach carries its worktree's branch, dim, after
-  the author.)
+  the author. Amended 2026-09-11 by
+  [0077](0077-threads-nest-under-their-file.md): both rows sit two
+  cells in under the file row's path, in file scope too.)
 - A thread's two rows are one unit: `j`/`k`, the wheel, and a click
   treat them as one entry, and they are never separated.
 - `fit` gains a sibling, `fit_ellipsis`, that marks a cut with `…`; the
@@ -170,6 +172,10 @@ agents' green (amber and teal until 2026-09-09).
   text: `●  L14-16  waiting  10m ago`, on `ui.header`. The path is on
   the file row, not repeated on every header. `f` narrows to the
   current file, with no file row, as the pane's file scope does.
+  (Amended 2026-09-11 by
+  [0077](0077-threads-nest-under-their-file.md): a thread's rows sit
+  two cells in under the file row, in file scope too, and the file row
+  draws the cursor bar while the cursor is on one of its threads.)
 - The cursor's thread draws its header bold on `ui.picker.selected`
   with the editing hints (`r reply · e edit · o resolve · z fold`) at
   its right edge while the list has the keys, and its message keeps the

@@ -121,6 +121,10 @@ pub fn stage(root: &Path, files: &[(&str, &str)]) -> Result<(), GitError> {
 /// Rewrite `refs/heads/main` as a fresh root commit of `files` and stage
 /// it: what an amend or a squash leaves behind.
 ///
+/// The commit names its committer outright, as [`commit_and_stage`]
+/// does: the reflog entry needs one, and a fixture repository has no
+/// identity configured, nor does every contributor's machine.
+///
 /// # Errors
 ///
 /// Returns [`GitError`] when the repository cannot be opened or written.
@@ -137,13 +141,21 @@ pub fn amend(root: &Path, files: &[(&str, &str)]) -> Result<(), GitError> {
         parents: std::iter::empty().collect(),
         extra_headers: Vec::default(),
     };
-    let id = git(repo.write_object(&commit))?;
-    git(repo.reference(
-        "refs/heads/main",
-        id,
-        gix::refs::transaction::PreviousValue::Any,
-        "amend",
-    ))?;
+    let id = git(repo.write_object(&commit))?.detach();
+    let edit = gix::refs::transaction::RefEdit {
+        change: gix::refs::transaction::Change::Update {
+            log: gix::refs::transaction::LogChange {
+                mode: gix::refs::transaction::RefLog::AndReference,
+                force_create_reflog: false,
+                message: "amend".into(),
+            },
+            expected: gix::refs::transaction::PreviousValue::Any,
+            new: gix::refs::Target::Object(id),
+        },
+        name: git(gix::refs::FullName::try_from("refs/heads/main"))?,
+        deref: false,
+    };
+    git(repo.edit_references_as(Some(edit), Some(author)))?;
     stage(root, files)
 }
 

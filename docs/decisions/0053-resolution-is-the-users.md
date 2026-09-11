@@ -22,7 +22,9 @@ tags:
 
 Status: accepted (2026-09-04). Amended 2026-09-05 by
 [0066](0066-one-circle-language.md): a proposed thread draws `◐` everywhere and
-counts under the waiting circle in the headers.
+counts under the waiting circle in the headers. Amended 2026-09-11 by
+[0075](0075-the-header-names-its-counts.md): the headers count `◐`
+threads on their own, apart from waiting.
 
 ## Context
 

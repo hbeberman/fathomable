@@ -26,7 +26,9 @@ tags:
 
 Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the review list's cursor entry header
-carries no keys; the list's bar has them.
+carries no keys; the list's bar has them. Amended 2026-09-11 by
+[0075](0075-the-header-names-its-counts.md): the headers' counts carry
+words, a `◐` thread counts on its own, and the list is `review threads`.
 
 ## Context
 
@@ -142,7 +144,10 @@ agents' green (amber and teal until 2026-09-09).
 - The header reads `threads · workspace` (or `· file`) then, flush
   right, the counts by colour: `●2 ●2 ○1`, open, waiting, and
   resolved each in its colour. A `◐` thread counts as waiting; a `?` thread counts
-  under its colour. A zero count is not drawn. With resolved hidden
+  under its colour. (Amended 2026-09-11 by
+  [0075](0075-the-header-names-its-counts.md): each count carries a
+  word when the row has room, and a `◐` thread has its own count.) A
+  zero count is not drawn. With resolved hidden
   the `○n` count still shows what `x` would reveal, dimmed. The bare
   total goes.
 - The keys leave the header. While the pane has the keys its bottom
@@ -173,7 +178,9 @@ agents' green (amber and teal until 2026-09-09).
   file. A folded file is one stop for `j`/`k`, as in the pane. `s`
   retires: one order everywhere. `x` stays.
 - The header reads `review  ●2 ●2 ○1`, then ` · path` while `f`
-  narrows the list; the order word goes with `s`. The key bar reads `x
+  narrows the list; the order word goes with `s` (since 2026-09-11,
+  [0075](0075-the-header-names-its-counts.md): `review threads`, the
+  counts with their words). The key bar reads `x
   resolved · f file · z fold · Z fold all · Enter open · r reply · e
   edit · o resolve · k/j threads · l/h messages · Esc`.
 

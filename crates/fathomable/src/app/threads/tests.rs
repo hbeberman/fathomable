@@ -1744,8 +1744,8 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     ));
     let screen = render(&app)?;
     assert!(
-        screen.contains("review  ●1"),
-        "a proposal counts as waiting: {screen}"
+        screen.contains("review threads  ◐1 resolve?"),
+        "a proposal counts under its own circle (ADR 0075): {screen}"
     );
     assert!(screen.contains("◐  L"), "{screen}");
     assert!(screen.contains("waiting · proposed"), "{screen}");

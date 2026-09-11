@@ -5,6 +5,7 @@
 
 pub(crate) mod author;
 pub(crate) mod bar;
+mod counts;
 pub(crate) mod gutter;
 pub(crate) mod header;
 pub(crate) mod info;

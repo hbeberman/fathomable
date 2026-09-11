@@ -68,13 +68,15 @@ impl ReviewList {
     }
 }
 
-/// The threads of one scope by state, for the headers' counts (ADR
-/// 0066): `resolved` counts the resolved threads whether or not they
-/// are listed, so the count says what `x` would reveal.
+/// The threads of one scope by circle, for the headers' counts (ADR
+/// 0066, ADR 0075): a proposed thread counts under `proposed` and not
+/// under `waiting`, and `resolved` counts the resolved threads whether
+/// or not they are listed, so the count says what `x` would reveal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Counts {
     pub(crate) open: usize,
     pub(crate) waiting: usize,
+    pub(crate) proposed: usize,
     pub(crate) resolved: usize,
 }
 
@@ -434,13 +436,14 @@ impl App {
         entries
     }
 
-    /// The threads of the review's scope by state (ADR 0066), the
-    /// resolved ones counted whether or not they are listed.
+    /// The threads of the review's scope by circle (ADR 0066, ADR
+    /// 0075), the resolved ones counted whether or not they are listed.
     pub(crate) fn review_counts(&self, file_only: bool) -> Counts {
         let mut counts = Counts::default();
         for entry in self.review_entries_showing(file_only, true) {
             match entry.kind() {
                 ThreadState::Open => counts.open += 1,
+                ThreadState::Waiting if entry.words().proposed() => counts.proposed += 1,
                 ThreadState::Waiting => counts.waiting += 1,
                 ThreadState::Resolved => counts.resolved += 1,
             }

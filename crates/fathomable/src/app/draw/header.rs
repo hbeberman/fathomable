@@ -5,7 +5,9 @@
 //! them, built once so the drawing and the mouse agree on where each
 //! hint is. The review list's and the threads pane's headers carry
 //! their counts by colour (ADR 0066) as hints, so the resolved count
-//! takes a click. Keys live on a bar along a pane's bottom row,
+//! takes a click; a count's word (ADR 0075, [`super::counts`]) is drawn
+//! when every count's fits and dropped with the others when not. Keys
+//! live on a bar along a pane's bottom row,
 //! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
 //! text's in [`super::bar`] (ADR 0067); the diff header alone keeps its
 //! keys at its right edge. Every header row draws on `ui.header`.
@@ -23,9 +25,10 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
 use crate::app::draw::author::{CHEVRON_DOWN, CURSOR_BAR};
+use crate::app::draw::counts::count_hints;
 use crate::app::draw::{Theme, format_age, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
-use crate::app::threads::list::{Counts, Entry};
+use crate::app::threads::list::Entry;
 use crate::app::threads::words::{Words, label};
 use crate::app::threads::{Compose, ComposeTarget, ThreadState};
 use crate::app::{App, Focus};
@@ -62,11 +65,14 @@ pub(crate) enum Tone {
 /// A header hint with what a click on it runs (ADR 0050): nothing for
 /// words alone, two actions for an `a/b` pair split at the slash. A
 /// count (ADR 0066) is a circle in a state's colour with its number
-/// against it.
+/// against it and a word after the number (ADR 0075) that the header
+/// draws only when every count's fits.
 #[derive(Debug, Clone)]
 pub(crate) struct HintOf {
     key: String,
     what: String,
+    /// The word after `what`, a space between; empty for most hints.
+    word: String,
     actions: Vec<Action>,
     /// The key's colour when it is not the info colour.
     tone: Option<Tone>,
@@ -81,6 +87,7 @@ impl HintOf {
         Self {
             key: key.into(),
             what: what.into(),
+            word: String::new(),
             actions: actions.to_vec(),
             tone: None,
             faint: false,
@@ -96,10 +103,12 @@ impl HintOf {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
-    /// `●2`: the circle in `state`'s colour, the count against it, dim
-    /// when it counts what is hidden (ADR 0066).
-    fn count(
+    /// `●2 user`: the circle in `state`'s colour, the count against it,
+    /// `word` after when the header has room (ADR 0075), dim when it
+    /// counts what is hidden (ADR 0066).
+    pub(super) fn count(
         glyph: &'static str,
+        word: &'static str,
         state: ThreadState,
         n: usize,
         faint: bool,
@@ -108,6 +117,7 @@ impl HintOf {
         Self {
             key: glyph.to_owned(),
             what: n.to_string(),
+            word: word.to_owned(),
             actions: actions.to_vec(),
             tone: Some(Tone::Mark(state)),
             faint,
@@ -121,6 +131,7 @@ impl HintOf {
         Self {
             key: text,
             what: String::new(),
+            word: String::new(),
             actions: Vec::new(),
             tone: Some(tone),
             faint: false,
@@ -128,20 +139,42 @@ impl HintOf {
         }
     }
 
-    /// The columns the hint takes: key, action, and the space between
-    /// when both are present.
-    fn width(&self) -> usize {
+    /// The cells the word takes after `what` in the worded form: a
+    /// space and the word, or none when the hint has no word.
+    fn word_width(&self) -> usize {
+        if self.word.is_empty() {
+            0
+        } else {
+            1 + display_width(&self.word)
+        }
+    }
+
+    /// The columns the hint takes in `form`: key, action, the space
+    /// between when both are present, and the word when worded.
+    fn width(&self, form: Form) -> usize {
         display_width(&self.key)
             + display_width(&self.what)
             + usize::from(self.gap && !self.key.is_empty() && !self.what.is_empty())
+            + match form {
+                Form::Worded => self.word_width(),
+                Form::Bare => 0,
+            }
     }
+}
+
+/// Whether a header's hints are drawn with their words after the
+/// counts (ADR 0075): worded when every hint fits that way, else bare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Worded,
+    Bare,
 }
 
 /// Where a header's hints sit: against the right edge after the words,
 /// or from the left edge along a key bar (ADR 0059), or straight after
 /// the words (ADR 0066).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Align {
+pub(super) enum Align {
     Right,
     Left,
 }
@@ -187,7 +220,7 @@ impl Header {
 
     /// Words, then counts against the right edge, a space apart (ADR
     /// 0066).
-    fn counted(left: Vec<(String, Tone)>, counts: Vec<HintOf>, align: Align) -> Self {
+    pub(super) fn counted(left: Vec<(String, Tone)>, counts: Vec<HintOf>, align: Align) -> Self {
         Self {
             left,
             hints: counts,
@@ -201,10 +234,11 @@ impl Header {
         self.left.iter().map(|(text, _)| display_width(text)).sum()
     }
 
-    /// The hints that fit after the left part on `width` cells, losing
-    /// items from the end until they do, and the column the first
-    /// starts at.
-    fn shown(&self, width: usize) -> Option<(usize, &[HintOf])> {
+    /// The hints that fit after the left part on `width` cells, the
+    /// column the first starts at, and their form (ADR 0075): every
+    /// hint with its word when that fits, else bare, losing items from
+    /// the end until they do.
+    fn shown(&self, width: usize) -> Option<(usize, &[HintOf], Form)> {
         let used = self.left_width();
         let free = width.saturating_sub(used);
         let sep = display_width(self.sep);
@@ -213,27 +247,35 @@ impl Header {
         } else {
             HINT_MARGIN
         };
-        let shown = (1..=self.hints.len())
-            .rev()
-            .map(|n| &self.hints[..n])
-            .find(|shown| free >= hints_width(shown, sep) + margin)?;
+        let fits = |shown: &[HintOf], form: Form| free >= hints_width(shown, sep, form) + margin;
+        let worded =
+            self.hints.iter().any(|hint| !hint.word.is_empty()) && fits(&self.hints, Form::Worded);
+        let (shown, form) = if worded {
+            (self.hints.as_slice(), Form::Worded)
+        } else {
+            let shown = (1..=self.hints.len())
+                .rev()
+                .map(|n| &self.hints[..n])
+                .find(|shown| fits(shown, Form::Bare))?;
+            (shown, Form::Bare)
+        };
         let start = match self.align {
-            Align::Right => used + (free - hints_width(shown, sep) - 1),
+            Align::Right => used + (free - hints_width(shown, sep, form) - 1),
             Align::Left => used + 1,
         };
-        Some((start, shown))
+        Some((start, shown, form))
     }
 
     /// The action a click at `column` on a `width`-cell header runs: the
     /// hint under the pointer, its left or right half for a pair.
     pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
-        let (mut at, shown) = self.shown(width)?;
+        let (mut at, shown, form) = self.shown(width)?;
         let sep = display_width(self.sep);
         for (i, hint) in shown.iter().enumerate() {
             if i > 0 {
                 at += sep;
             }
-            let end = at + hint.width();
+            let end = at + hint.width(form);
             if column >= at && column < end {
                 let offset = column - at;
                 let slash = hint
@@ -272,7 +314,7 @@ impl Header {
             .map(|(text, tone)| Span::styled(text.clone(), tone_style(*tone)))
             .collect();
         let mut at = self.left_width();
-        if let Some((start, shown)) = self.shown(width) {
+        if let Some((start, shown, form)) = self.shown(width) {
             spans.push(Span::raw(" ".repeat(start - at)));
             at = start;
             let faint = theme.info.add_modifier(Modifier::DIM);
@@ -295,7 +337,10 @@ impl Header {
                 if !hint.what.is_empty() {
                     spans.push(Span::styled(hint.what.clone(), faint));
                 }
-                at += hint.width();
+                if form == Form::Worded && !hint.word.is_empty() {
+                    spans.push(Span::styled(format!(" {}", hint.word), faint));
+                }
+                at += hint.width(form);
             }
         }
         spans.push(Span::raw(" ".repeat(width.saturating_sub(at))));
@@ -303,44 +348,10 @@ impl Header {
     }
 }
 
-/// The cells `shown` hints take with `sep`-wide separators between them.
-fn hints_width(shown: &[HintOf], sep: usize) -> usize {
-    shown.iter().map(HintOf::width).sum::<usize>() + sep * shown.len().saturating_sub(1)
-}
-
-/// The counts by colour (ADR 0066): amber `●` open, teal `●` waiting,
-/// grey `○` resolved, a zero left out; the resolved count is a click on
-/// `x`, and reads dim while resolved threads are hidden.
-fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
-    let mut hints = Vec::new();
-    if counts.open > 0 {
-        hints.push(HintOf::count(
-            "●",
-            ThreadState::Open,
-            counts.open,
-            false,
-            &[],
-        ));
-    }
-    if counts.waiting > 0 {
-        hints.push(HintOf::count(
-            "●",
-            ThreadState::Waiting,
-            counts.waiting,
-            false,
-            &[],
-        ));
-    }
-    if counts.resolved > 0 {
-        hints.push(HintOf::count(
-            "○",
-            ThreadState::Resolved,
-            counts.resolved,
-            !resolved_shown,
-            &[Action::ReviewResolved],
-        ));
-    }
-    hints
+/// The cells `shown` hints take in `form` with `sep`-wide separators
+/// between them.
+fn hints_width(shown: &[HintOf], sep: usize, form: Form) -> usize {
+    shown.iter().map(|hint| hint.width(form)).sum::<usize>() + sep * shown.len().saturating_sub(1)
 }
 
 /// A diff's header (ADR 0049, ADR 0060): the pair's names and nothing
@@ -416,11 +427,12 @@ pub(crate) fn entry_header(
     Header::new(left, Vec::new())
 }
 
-/// The review list's header (ADR 0025, ADR 0049, ADR 0066): the counts
-/// by colour after the word, the path while the list is one file's.
+/// The review list's header (ADR 0025, ADR 0049, ADR 0066, ADR 0075):
+/// `review threads`, the path while the list is one file's, then the
+/// counts by colour with their words.
 pub(crate) fn review_header(app: &App) -> Header {
     let review = app.review();
-    let mut left = vec![(" review".to_owned(), Tone::Key)];
+    let mut left = vec![(" review threads".to_owned(), Tone::Key)];
     if review.file_only {
         left.push((format!(" · {}", app.current_path().display()), Tone::Info));
     }
@@ -475,8 +487,9 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     Header::bar(hints)
 }
 
-/// The threads pane's header (ADR 0066): `threads · workspace`, then
-/// the counts by colour against the right edge; a click on the words
+/// The threads pane's header (ADR 0066, ADR 0075): `threads ·
+/// workspace`, then the counts by colour, with their words when the
+/// row has room, against the right edge; a click on the words
 /// switches the scope and one on the resolved count toggles `x`.
 pub(crate) fn threads_pane_header(app: &App) -> Header {
     let scope = app.sidebar_scope();

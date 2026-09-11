@@ -156,8 +156,8 @@ The `Space` menu, from any pane:
 
 Threads pane (the sidebar's lower pane; its header reads `threads ·
 file` or `threads · workspace` with the counts by colour at its right
-edge, `●2 user ●1 agent ◐1 resolve? ○3 resolved` when the row holds
-the words and `●2 ●1 ◐1 ○3` when it does not; while the pane has the
+edge, `● 2 user ● 1 agent ◐ 1 resolve? ○ 3 resolved` when the row holds
+the words and `● 2 ● 1 ◐ 1 ○ 3` when it does not; while the pane has the
 keys, its bottom row is a key bar naming them):
 
 | Keys | Action |
@@ -169,8 +169,8 @@ keys, its bottom row is a key bar naming them):
 | `r` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
-Review list (`Space r`; its header reads `review threads  ●2 user ●1
-agent ◐1 resolve? ○3 resolved`, the counts by colour as the threads
+Review list (`Space r`; its header reads `review threads  ● 2 user ● 1
+agent ◐ 1 resolve? ○ 3 resolved`, the counts by colour as the threads
 pane's, each with its word while the row holds them all and bare
 otherwise, then ` · path` while `f` narrows it;
 the keys below sit on a bar along the list's bottom row, and the
@@ -438,7 +438,7 @@ line, cut with `…`. In workspace scope a row per file in the files
 pane's order sits over its threads with the count at the edge; `z`
 folds a file to `▸ path  n` and `Z` every file, the fold outliving a
 scope or file switch, and the current file's rows carry the focus
-tint. The header counts by colour (`●2 user ●1 agent ◐1 resolve? ○3
+tint. The header counts by colour (`● 2 user ● 1 agent ◐ 1 resolve? ○ 3
 resolved`, the words dropping together when the row is too narrow for
 them; the resolved count is dim while hidden), and while the
 pane has the keys its bottom row is a key bar (`s scope · x resolved ·

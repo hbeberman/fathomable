@@ -359,6 +359,6 @@ Milestones are ordered; each is usable on its own. Details live in the
     ([0074](decisions/0074-the-bracket-marks-the-focused-thread.md)).
 66. **The header names its counts.** The review list is `review
     threads`, each count on it and on the threads pane carries a word
-    (`●2 user ●3 agent ◐1 resolve? ○1 resolved`), a proposed thread
+    (`● 2 user ● 3 agent ◐ 1 resolve? ○ 1 resolved`), a proposed thread
     counts on its own, and the words drop together when the row is
     too narrow ([0075](decisions/0075-the-header-names-its-counts.md)).

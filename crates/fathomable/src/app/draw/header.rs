@@ -80,6 +80,9 @@ pub(crate) struct HintOf {
     faint: bool,
     /// A space between the key and its word.
     gap: bool,
+    /// `what` is a count's number: it reads in the text colour rather
+    /// than dim (ADR 0075).
+    number: bool,
 }
 
 impl HintOf {
@@ -92,6 +95,7 @@ impl HintOf {
             tone: None,
             faint: false,
             gap: true,
+            number: false,
         }
     }
 
@@ -103,9 +107,10 @@ impl HintOf {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
-    /// `●2 user`: the circle in `state`'s colour, the count against it,
-    /// `word` after when the header has room (ADR 0075), dim when it
-    /// counts what is hidden (ADR 0066).
+    /// `● 2 user`: the circle in `state`'s colour, the count after a
+    /// space in the text colour, `word` after that when the header has
+    /// room (ADR 0075), all dim when it counts what is hidden (ADR
+    /// 0066).
     pub(super) fn count(
         glyph: &'static str,
         word: &'static str,
@@ -121,7 +126,8 @@ impl HintOf {
             actions: actions.to_vec(),
             tone: Some(Tone::Mark(state)),
             faint,
-            gap: false,
+            gap: true,
+            number: true,
         }
     }
 
@@ -136,6 +142,7 @@ impl HintOf {
             tone: Some(tone),
             faint: false,
             gap: false,
+            number: false,
         }
     }
 
@@ -335,7 +342,14 @@ impl Header {
                     spans.push(Span::styled(" ", faint));
                 }
                 if !hint.what.is_empty() {
-                    spans.push(Span::styled(hint.what.clone(), faint));
+                    // A count's number reads in the text colour, dim
+                    // only when the count is of what is hidden.
+                    let style = match (hint.number, hint.faint) {
+                        (true, false) => theme.text,
+                        (true, true) => theme.text.add_modifier(Modifier::DIM),
+                        (false, _) => faint,
+                    };
+                    spans.push(Span::styled(hint.what.clone(), style));
                 }
                 if form == Form::Worded && !hint.word.is_empty() {
                     spans.push(Span::styled(format!(" {}", hint.word), faint));

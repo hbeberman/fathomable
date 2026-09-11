@@ -111,7 +111,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     let top = app.tree_rows();
     assert!(column[top].starts_with("───"), "rule: {:?}", column[top]);
     assert!(
-        column[top + 1].contains("threads · file") && column[top + 1].contains("●2"),
+        column[top + 1].contains("threads · file") && column[top + 1].contains("● 2"),
         "{:?}",
         column[top + 1]
     );
@@ -146,7 +146,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     );
     let column = sidebar_column(&app)?;
     assert!(
-        column[top + 1].contains("●1") && column[top + 1].contains("○1"),
+        column[top + 1].contains("● 1") && column[top + 1].contains("○ 1"),
         "{:?}",
         column[top + 1]
     );

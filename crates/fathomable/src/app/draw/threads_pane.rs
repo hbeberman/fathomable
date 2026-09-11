@@ -269,7 +269,7 @@ mod tests {
             column[top + 3]
         );
         assert!(
-            column[top + 1].contains("◐1 resolve?"),
+            column[top + 1].contains("◐ 1 resolve?"),
             "one proposed, with its word (ADR 0075): {:?}",
             column[top + 1]
         );

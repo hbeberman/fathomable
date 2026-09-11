@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The header names its counts
-description: The review list's header reads `review threads`, and each count on it and on the threads pane's header carries a word saying whose the circle is (`●2 user  ●3 agent  ◐1 resolve?  ○1 resolved`); a proposed thread counts under its own `◐` rather than under waiting; and when the row cannot hold the words they all drop together, leaving the bare counts as before.
+description: The review list's header reads `review threads`, and each count on it and on the threads pane's header carries a word saying whose the circle is (`● 2 user  ● 3 agent  ◐ 1 resolve?  ○ 1 resolved`); a proposed thread counts under its own `◐` rather than under waiting; and when the row cannot hold the words they all drop together, leaving the bare counts as before.
 resource: crates/fathomable/src/app/draw/counts.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -36,11 +36,14 @@ words at all.
 ## Decision
 
 - **The words.** After each count, in the dim colour the keys' words
-  use, a word for whose the circle is: `●2 user` (the user has the last
-  word, `thread.open`), `●3 agent` (an agent does, `thread.waiting`),
-  `◐1 resolve?` (an agent's newest reply proposes resolving), and `○1
-  resolved`. The review list's header reads `review threads  ●2 user
-  ●3 agent  ◐1 resolve?  ○1 resolved`, then ` · path` while `f` narrows
+  use, a word for whose the circle is (amended the same day: a space
+  sits between the circle and its number, and the number reads in
+  `ui.text` rather than dim, so the count stands out from its word;
+  a hidden count's number dims with the rest): `● 2 user` (the user has the last
+  word, `thread.open`), `● 3 agent` (an agent does, `thread.waiting`),
+  `◐ 1 resolve?` (an agent's newest reply proposes resolving), and `○ 1
+  resolved`. The review list's header reads `review threads  ● 2 user
+  ● 3 agent  ◐ 1 resolve?  ○ 1 resolved`, then ` · path` while `f` narrows
   it, as before. The threads pane's header carries the same counts with
   the same words after `threads · workspace`.
 - **A proposed thread has its own count.** `Counts` gains `proposed`;
@@ -51,8 +54,8 @@ words at all.
   while resolved threads are hidden.
 - **The words go together.** A header lays its counts out with their
   words when every count fits that way. When the row is too narrow for
-  that, the words all drop at once and the counts read bare (`●2 ●3 ◐1
-  ○1`), the 0066 form; only then do counts drop from the end, as the
+  that, the words all drop at once and the counts read bare (`● 2 ● 3 ◐ 1
+  ○ 1`), the 0066 form; only then do counts drop from the end, as the
   hints of [0059](0059-headers-and-the-key-bar.md) do. There is no
   shorter wording between the two: a reader sees one set of words or
   none, so the header never changes what it calls a thing. The mouse

@@ -3,7 +3,7 @@
 //! 0075).
 //!
 //! The review list's and the threads pane's headers count the threads
-//! in scope by circle: `●2 user`, `●3 agent`, `◐1 resolve?`, `○1
+//! in scope by circle: `● 2 user`, `● 3 agent`, `◐ 1 resolve?`, `○ 1
 //! resolved`, each circle in its state colour and the word after the
 //! number saying whose it is. A zero count is left out. The resolved
 //! count is a click on `x` and reads dim while resolved threads are
@@ -113,13 +113,46 @@ mod tests {
         };
         assert_eq!(
             text(&header(counts), 80)?,
-            " review threads  ●2 user ●3 agent ◐1 resolve? ○1 resolved"
+            " review threads  ● 2 user ● 3 agent ◐ 1 resolve? ○ 1 resolved"
         );
         let quiet = Counts {
             resolved: 1,
             ..Counts::default()
         };
-        assert_eq!(text(&header(quiet), 80)?, " review threads  ○1 resolved");
+        assert_eq!(text(&header(quiet), 80)?, " review threads  ○ 1 resolved");
+        Ok(())
+    }
+
+    /// The number reads in the text colour and its word dim; a hidden
+    /// count's number dims with it.
+    #[test]
+    fn the_number_is_brighter_than_its_word() -> anyhow::Result<()> {
+        use ratatui::style::Modifier;
+
+        let theme = theme()?;
+        let counts = Counts {
+            open: 2,
+            resolved: 1,
+            ..Counts::default()
+        };
+        let line = header(counts).line(&theme, 80);
+        let span = |content: &str| {
+            line.spans
+                .iter()
+                .find(|span| span.content == content)
+                .map(|span| span.style)
+        };
+        assert_eq!(span("2"), Some(theme.text), "the number");
+        assert_eq!(
+            span(" user"),
+            Some(theme.info.add_modifier(Modifier::DIM)),
+            "the word"
+        );
+        assert_eq!(
+            span("1"),
+            Some(theme.text.add_modifier(Modifier::DIM)),
+            "the hidden count's number"
+        );
         Ok(())
     }
 
@@ -134,8 +167,8 @@ mod tests {
             resolved: 1,
         };
         let header = header(counts);
-        assert_eq!(text(&header, 56)?, " review threads  ●2 ●3 ◐1 ○1");
-        assert_eq!(text(&header, 26)?, " review threads  ●2 ●3");
+        assert_eq!(text(&header, 56)?, " review threads  ● 2 ● 3 ◐ 1 ○ 1");
+        assert_eq!(text(&header, 26)?, " review threads  ● 2 ● 3");
         Ok(())
     }
 
@@ -149,7 +182,7 @@ mod tests {
             resolved: 1,
         };
         let header = header(counts);
-        let worded = " review threads  ●2 user ○1 resolved";
+        let worded = " review threads  ● 2 user ○ 1 resolved";
         let at = |s: &str| fathomable_core::layout::display_width(s);
         assert_eq!(
             header.action_at(80, at(worded) - 1),
@@ -157,11 +190,11 @@ mod tests {
             "the word is part of the hint"
         );
         assert_eq!(
-            header.action_at(80, at(" review threads  ●2 user")),
+            header.action_at(80, at(" review threads  ● 2 user")),
             None,
             "the space between the hints runs nothing"
         );
-        let bare = " review threads  ●2 ○1";
+        let bare = " review threads  ● 2 ○ 1";
         assert_eq!(
             header.action_at(at(bare) + 2, at(bare) - 1),
             Some(Action::ReviewResolved),

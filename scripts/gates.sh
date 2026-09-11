@@ -43,7 +43,7 @@ run "clippy"           cargo clippy --all-targets --all-features -- -D warnings 
 run "nextest"          cargo nextest run --all-targets --all-features
 run "doctest"          scripts/test-doctests.sh
 run "okf"              python3 scripts/okf-lint.py --repo-root . docs
-run "links"            lychee --offline --no-progress docs README.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md
+run "links"            lychee --offline --no-progress docs README.md CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md
 run "boundaries"       scripts/check-boundaries.sh "${script_args[@]}"
 run "rustdoc"          env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features
 run "public-api"       scripts/check-public-api.sh "${script_args[@]}"

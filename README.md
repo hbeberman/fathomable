@@ -1,47 +1,63 @@
 # fathomable
 
 Read-only terminal workspace viewer and annotation side-car for
-agent-driven work. New here? Read the [setup guide](docs/guide.md).
+agent-driven work. You read files as they change, leave threads on the
+lines an agent wrote, and the agent answers over MCP. New here? Read the
+[setup guide](docs/guide.md).
+
 Linux only: viewer liveness and the session bonds that let a headless
 `--mcp` learn its session read `/proc`.
 
-## Local workflow
+## Install
+
+Building needs a Rust toolchain, a C linker, and git. Install the
+system packages for your distribution, then rustup:
 
 ```sh
-scripts/setup-build-deps.sh   # installs optional cargo tools after approval
-just install-commit-hooks     # refreshes the local commit hook
+# Fedora
+sudo dnf install gcc git
 
-# Run project gates and heavyweight diagnostics.
-make gates                    # canonical local gate
-make mutants                  # heavyweight mutation testing
-just perf path/to/file.md     # profile interactively until fathomable exits
-PERF_PATH=path/to/file.md make perf
-scripts/perf-record.sh --bin fathomable -- path/to/file.md
+# Azure Linux 3
+sudo tdnf install build-essential git ca-certificates
+
+# Ubuntu 24.04
+sudo apt install build-essential git
+
+# any of the above
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-`Makefile` is the command source of truth; `justfile` is a thin compatibility
-frontend that calls the matching Make target. `make gates` calls
-`scripts/gates.sh`. `just install-commit-hooks` writes a local
-`.git/hooks/commit-msg` wrapper without mutating `core.hooksPath`. Do not claim
-the full gate passed after running only an individual diagnostic command.
+`rust-toolchain.toml` pins the compiler, so the first `cargo` command in
+the checkout installs the right version on its own. The product crates
+are pure Rust: no OpenSSL, libgit2, or other C headers are needed.
 
-## Documentation
+```sh
+git clone https://github.com/hbeberman/fathomable
+cd fathomable
+make install          # cargo install --path crates/fathomable --locked
+fathomable --version
+```
 
-Durable project knowledge lives in the Open Knowledge Format 0.2 bundle under
-`docs/`. Start at `docs/index.md`; validate changes with `just docs-check`.
-The canonical gate enforces both OKF structure and maintained local links.
+At run time the viewer only shells out for two optional things: your
+`$VISUAL` or `$EDITOR` to draft a long comment, and `xdg-open` to follow
+a link.
 
-## Generated checks
+## Use it
 
-- formatting: `cargo fmt --check`
-- linting: `cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code`
-- tests: `cargo nextest run --all-targets --all-features`
-- doctests: `scripts/test-doctests.sh` (all library targets)
-- rustdoc: `RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features`
-- OKF documentation: `python3 scripts/okf-lint.py --repo-root . docs`
-- documentation links: `lychee --offline --no-progress docs README.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md`
-- public API scan: `scripts/check-public-api.sh`
-- dependency audit: `cargo audit`
-- unused dependencies: `cargo +nightly udeps --all-targets --all-features`
-- mutation testing: `cargo mutants --workspace --all-features`
-- perf tracing: `just perf [path]` profiles the release binary until it exits; artifacts and text reports are written under `target/perf/`. Pass a file or a workspace directory.
+```sh
+fathomable README.md     # single file
+fathomable               # workspace rooted at the enclosing git root, or cwd
+```
+
+The [setup guide](docs/guide.md) covers the keys, themes, configuration,
+and connecting an agent over MCP.
+
+## Contribute
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the build tooling, the commit
+gate, and the documentation bundle. Durable project knowledge lives under
+[`docs/`](docs/index.md).
+
+## License
+
+[MIT](LICENSE).

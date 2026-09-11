@@ -29,9 +29,9 @@ make install          # cargo install --path crates/fathomable --locked
 fathomable --version
 ```
 
-Contributors also want `scripts/setup-build-deps.sh` and
-`just install-commit-hooks`; see the [README](../README.md) for the gate
-workflow.
+The [README](../README.md) lists the system packages per distribution.
+Contributors also want the build tooling and the commit gate; see
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 2. Open something
 

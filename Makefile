@@ -67,7 +67,7 @@ okf:
 	python3 scripts/okf-lint.py --repo-root . docs
 
 links:
-	lychee --offline --no-progress docs README.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md
+	lychee --offline --no-progress docs README.md CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md
 
 docs-check: okf links
 

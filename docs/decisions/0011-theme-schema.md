@@ -103,7 +103,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | Key | Use |
 | --- | --- |
 | `ui.text` | body text |
-| `ui.linenr` | gutter line numbers |
+| `ui.linenr` | gutter line numbers; the current source line uses the `ui.list.cursor` foreground while the document owns navigation (0010, amended 2026-09-14), retaining the number's background without dim intensity |
 | `ui.selection` | mouse or `V` selection; `ui.cursorline`, the cursor row, was removed on 2026-09-04 ([0010](0010-viewer-ux.md)) |
 | `ui.search.match` | search highlights |
 | `ui.statusline` | status line background |
@@ -115,7 +115,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.sidebar`, `ui.sidebar.dir` | the sidebar's background and directory names ([0012](0012-workspace-mode.md)); written `ui.rail*` between [0049](0049-inline-threads-and-the-rail.md) and [0057](0057-the-sidebar.md) |
 | `ui.list.active` | `bg` of the selected entry while its list owns the keys: files, threads pane (including file groups), review file/thread headers and folded rows, and every picker result ([0079](0079-list-focus-language.md)) |
 | `ui.list.inactive` | quieter `bg` of the remembered selected entry while its list does not own the keys, including under overlays, Compose, and pending key prefixes (0079) |
-| `ui.list.cursor` | `fg` of the active list selection's left-edge bar, including the selected review thread's header and message rows together without replacing message author stripes; the marker ignores this role's `bg` so the row stays one band; ancestor-file context bars stay muted (0079) |
+| `ui.list.cursor` | `fg` of the active list selection's left-edge bar, including the selected review thread's header and message rows together without replacing message author stripes, and of the document's current source line number while it owns navigation; these cues ignore this role's `bg`; ancestor-file context bars stay muted (0079) |
 | `ui.list.hover` | subtle `bg` of hovered help and menu entries; no keyboard selection or cursor bar (0079) |
 | `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, and key labels (0012); the space menu drew on `ui.popup` before [0056](0056-the-leader-trimmed.md) |
 | `ui.menu` | the `Space` menu and the right-click menu's surface; the built-ins share its visual ground with `ui.popup`, while a custom theme may set either independently; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |

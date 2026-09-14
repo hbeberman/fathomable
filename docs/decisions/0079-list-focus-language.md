@@ -77,6 +77,12 @@ document gutter's thread bracket keep their separate roles. The inline
 thread cursor in the document retains `thread.cursor`; the shared list
 cursor replaces it for review selection, not for every thread rendering.
 
+Amended 2026-09-14: the document uses the same `ui.list.cursor`
+foreground on the current source line number while it owns navigation,
+instead of tinting the text row. Its number returns to `ui.linenr` when
+another pane, overlay, prefix, or command/search input owns the keys;
+see [0010](0010-viewer-ux.md).
+
 ### Ownership of the keys
 
 Help, Status, Picker, context Menu, Compose, and a pending key prefix

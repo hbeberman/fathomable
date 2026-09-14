@@ -878,6 +878,13 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
     let view = app.view();
     let digits = gutter - 3;
     let selection = view.selection();
+    let cursor_line = if Navigation::for_pane(app, Focus::View) == Navigation::Active
+        && matches!(view.mode(), Mode::Normal | Mode::Select)
+    {
+        view.source_line_of_row(view.cursor().row)
+    } else {
+        None
+    };
     let lines = view.layout().lines();
     let width = gutter + view.layout().width();
     let mut expanded: std::collections::HashMap<usize, Vec<Line<'a>>> =
@@ -929,7 +936,17 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         );
         let mut spans = vec![
             note,
-            Span::styled(number, theme.line_number),
+            Span::styled(
+                number,
+                if line.source_line().is_some() && line.source_line() == cursor_line {
+                    on_surface(
+                        theme.line_number.remove_modifier(Modifier::DIM),
+                        theme.list_cursor,
+                    )
+                } else {
+                    theme.line_number
+                },
+            ),
             Span::styled(" ", theme.marker),
             bar,
         ];

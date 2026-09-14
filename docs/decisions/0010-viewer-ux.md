@@ -51,6 +51,14 @@ viewer, the layout engine, and later themes agree.
     vocabulary ([0011](0011-theme-schema.md)) and a theme naming it is
     an unknown key. The user dropped the tint on 2026-09-04 because it
     read as a second highlight beside the thread and selection tints.
+  - Amended 2026-09-14: while the document owns navigation, its current
+    source line number uses the bright `ui.list.cursor` foreground,
+    the same cue as active list cursors. The number keeps its own
+    background and is not dimmed; the text row remains untinted.
+    Another pane, an overlay, a key prefix, or command/search input
+    returns it to `ui.linenr`. Wrapped continuations light their source
+    line's existing number, not an extra number; synthetic and thread
+    rows and unnumbered diff rows light none.
 - `scrolloff` is 3 rendered lines. `Ctrl-d`/`Ctrl-u` move half a page,
   `gg`/`G` go to the first and last rendered line.
 - Amended 2026-09-14: `gh` and `gl` go to the start and end of the

@@ -279,6 +279,12 @@ Copying a selection still yields the original source text.
 Scrolling stops with one unnumbered `~` gutter row after the document.
 When the pane's key bar is shown, that EOF row remains visible above it.
 The cursor stays on document or thread rows, never the EOF marker.
+While the file viewer has the keys, its current source line number is
+brighter, using the active lists' `ui.list.cursor` colour without tinting
+the text row. It dims back to `ui.linenr` when another pane, popup, key
+prefix, or command/search input takes the keys. A wrapped continuation
+highlights its source line's number; rows without a source line do not
+highlight a number.
 
 The mouse works on whichever pane it is over: the wheel scrolls the pane
 under the pointer — over the tree it steps one row per tick, showing

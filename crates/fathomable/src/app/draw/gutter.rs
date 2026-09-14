@@ -142,7 +142,9 @@ impl App {
 mod tests {
 
     use anyhow::Context as _;
+    use crossterm::event::KeyCode;
     use fathomable_core::annotations::LineRange;
+    use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::Span;
 
     use crate::app::App;
@@ -178,6 +180,142 @@ mod tests {
         .into_iter()
         .map(|line| line.spans[3].clone())
         .collect())
+    }
+
+    fn number_cells(app: &App, theme: &Theme) -> Vec<Span<'static>> {
+        text_lines(
+            app,
+            theme,
+            gutter_width(app.view()),
+            app.view().layout().lines().len() - app.view().scroll(),
+        )
+        .into_iter()
+        .filter_map(|line| line.spans.into_iter().nth(1))
+        .map(|span| Span::styled(span.content.into_owned(), span.style))
+        .collect()
+    }
+
+    #[test]
+    fn current_line_number_uses_the_active_cursor_colour_only_while_reading() -> anyhow::Result<()>
+    {
+        let dir = testing::workspace("gutter-current-number", "first\nsecond\nthird\n")?;
+        for name in fathomable_core::theme::BUILTIN_NAMES {
+            let core = fathomable_core::theme::Theme::resolve(name, |_| Ok(None))?;
+            let mut theme = Theme::from_core(&core);
+            let mut app = testing::source_app(&dir)?;
+            app.view_mut().goto_source_line(2);
+            let cells = number_cells(&app, &theme);
+            assert_eq!(cells[1].content.trim(), "2");
+            assert_eq!(cells[1].style.fg, theme.list_cursor.fg);
+            assert_ne!(cells[1].style.fg, theme.line_number.fg);
+            assert_eq!(cells[0].style, theme.line_number);
+            assert_eq!(cells[2].style, theme.line_number);
+            assert_eq!(cells[1].style.bg, theme.line_number.bg);
+
+            testing::press(&mut app, "j");
+            let cells = number_cells(&app, &theme);
+            assert_eq!(cells[1].style, theme.line_number);
+            assert_eq!(cells[2].style.fg, theme.list_cursor.fg);
+            testing::press(&mut app, "V");
+            assert_eq!(number_cells(&app, &theme)[2].style.fg, theme.list_cursor.fg);
+            testing::press_key(&mut app, KeyCode::Esc);
+
+            // Theme accents cannot introduce a line-number background or
+            // inherit the inactive number's dim modifier.
+            theme.line_number = theme
+                .line_number
+                .bg(Color::Black)
+                .add_modifier(Modifier::DIM);
+            theme.list_cursor = Style::default().fg(Color::White).bg(Color::Blue);
+            let active = number_cells(&app, &theme)[2].style;
+            assert_eq!(active.fg, Some(Color::White));
+            assert_eq!(active.bg, Some(Color::Black));
+            assert!(!active.add_modifier.contains(Modifier::DIM));
+
+            for keys in [" ", " ?", " f", ":", "/"] {
+                testing::press(&mut app, keys);
+                assert!(
+                    number_cells(&app, &theme)
+                        .iter()
+                        .all(|cell| cell.style == theme.line_number)
+                );
+                testing::press_key(&mut app, KeyCode::Esc);
+                assert_eq!(number_cells(&app, &theme)[2].style.fg, theme.list_cursor.fg);
+            }
+            app.window_files();
+            assert!(
+                number_cells(&app, &theme)
+                    .iter()
+                    .all(|cell| cell.style == theme.line_number)
+            );
+            app.focus = crate::app::Focus::View;
+            assert_eq!(number_cells(&app, &theme)[2].style.fg, theme.list_cursor.fg);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn current_number_follows_wrapping_but_not_synthetic_or_removed_rows() -> anyhow::Result<()> {
+        let dir = testing::workspace(
+            "gutter-wrapped-number",
+            "a paragraph with enough words to wrap over several rendered rows\n\nsecond paragraph\n",
+        )?;
+        let mut app = app(&dir, 25)?;
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        app.view_mut().move_down(1);
+        assert_eq!(
+            app.view().source_line_of_row(app.view().cursor().row),
+            Some(1)
+        );
+        assert_eq!(
+            app.view().layout().lines()[app.view().cursor().row].source_line(),
+            None
+        );
+        let cells = number_cells(&app, &theme);
+        assert_eq!(cells[0].content.trim(), "1");
+        assert_eq!(cells[0].style.fg, theme.list_cursor.fg);
+        assert_eq!(cells[1].content.trim(), "");
+        assert_eq!(cells[1].style, theme.line_number);
+
+        while app
+            .view()
+            .source_line_of_row(app.view().cursor().row)
+            .is_some()
+        {
+            app.view_mut().move_down(1);
+        }
+        assert!(
+            number_cells(&app, &theme)
+                .iter()
+                .all(|cell| cell.style == theme.line_number)
+        );
+
+        app.view_mut()
+            .set_bases(None, None, Some("old paragraph\n".to_owned()));
+        app.view_mut().toggle_head_diff();
+        app.view_mut().goto_top();
+        let rows = app.view().layout().lines().len();
+        let mut numbered = 0;
+        let mut unnumbered = 0;
+        for _ in 0..rows {
+            let source = app.view().source_line_of_row(app.view().cursor().row);
+            let cells = number_cells(&app, &theme);
+            if let Some(source) = source {
+                numbered += 1;
+                assert!(cells.iter().any(|cell| {
+                    cell.content.trim() == source.to_string()
+                        && cell.style.fg == theme.list_cursor.fg
+                }));
+            } else {
+                unnumbered += 1;
+                assert!(cells.iter().all(|cell| cell.style == theme.line_number));
+            }
+            app.view_mut().move_down(1);
+        }
+        assert!(numbered > 0);
+        assert!(unnumbered > 0);
+        Ok(())
     }
 
     #[test]

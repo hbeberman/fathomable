@@ -74,6 +74,13 @@ the request left open; each took the recommended answer.
   `comment on L3-5` in the header's key tone, then the author row and
   the draft's rows. On submit the block goes and the thread's stub
   appears; on cancel the block goes and nothing else changes.
+- **Drafts belong to their files.** Leaving a file parks its draft in
+  the open document, keeping its target, text, editor cursor, and discard
+  prompt. Other files neither draw it nor route keys or submission to it.
+  Returning restores it, and different files can each keep a draft.
+  This applies to line comments, file comments, replies, and edits,
+  including navigation requested by an agent. Drafts remain in memory
+  for the lifetime of their open documents; they are not saved to disk.
 - **From the review list**, `r`, `e`, `Space c r`, and `Space c e` do
   what `Enter` does first: the list closes, the file opens with the
   thread expanded and the cursor on the message, and the draft is
@@ -131,6 +138,10 @@ the request left open; each took the recommended answer.
   the rows: which block it is in, where its rows and its cursor are,
   and what a click on them does. The comment-box section of
   `app/threads/mod.rs` moves there.
+- The active draft takes keys through `Popup::Compose`; while parked,
+  it belongs to its `Doc`. Showing a document restores its draft before
+  further typing or submission, rather than carrying the previous
+  file's draft into the new file.
 - A stub's subject is a thread or a draft block: `stubs()` adds the
   draft's rows to the block that holds it, and a draft block for a new
   comment, so the view lays the rows out as it lays out any expanded

@@ -567,7 +567,7 @@ mod tests {
             _ => String::new(),
         };
         assert_eq!(draft, "answer", "the draft is seeded with the reply");
-        app.close_popup();
+        app.compose_cancel();
 
         // From the tree the same keys reach the same thread.
         app.show_tree();

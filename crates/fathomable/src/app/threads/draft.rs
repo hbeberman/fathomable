@@ -9,7 +9,8 @@
 //! says where its rows and its cursor are, and keeps that cursor on
 //! screen. The review list opens the file to write and comes back when
 //! the draft closes. [`Popup::Compose`] is only the state that routes
-//! the keys here; nothing pops up.
+//! the keys here; nothing pops up. Leaving a file parks its draft in
+//! the document; showing that document again restores it.
 
 use fathomable_core::annotations::{Author, Draft, LineRange, MessageTarget, Reply, ThreadId};
 use fathomable_core::clock::now;
@@ -19,6 +20,9 @@ use fathomable_core::editor::{Buffer, Cell, Edit};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::Mark;
 use crate::app::{App, Popup};
+
+#[cfg(test)]
+mod tests;
 
 /// What the draft will produce on submit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -269,6 +273,11 @@ impl App {
                 .unwrap_or_else(|| self.newest_message(&id));
             self.goto_message(id, message);
         }
+        self.resume_draft();
+        if self.draft().is_some() {
+            self.notice("finish or discard this file's draft first");
+            return;
+        }
         let buffer = Buffer::from_text(&original);
         self.popup = Some(Popup::Compose(Compose {
             target,
@@ -278,6 +287,33 @@ impl App {
             from_review,
         }));
         self.draft_changed();
+    }
+
+    /// Keep the active draft with its document before leaving it.
+    pub(in crate::app) fn park_draft(&mut self) {
+        if let Some(index) = self.current
+            && matches!(self.popup, Some(Popup::Compose(_)))
+            && let Some(Popup::Compose(compose)) = self.popup.take()
+        {
+            self.docs[index].draft = Some(compose);
+            self.place_stub_rows();
+        }
+    }
+
+    /// Give the current document's waiting draft its rows and keys back.
+    pub(in crate::app) fn resume_draft(&mut self) {
+        if self.popup.is_some() {
+            return;
+        }
+        if let Some(index) = self.current
+            && let Some(compose) = self.docs[index].draft.take()
+        {
+            if let Some(id) = compose.target.thread() {
+                self.expanded.insert(id.clone());
+            }
+            self.popup = Some(Popup::Compose(compose));
+            self.draft_changed();
+        }
     }
 
     /// The open draft, if one is.

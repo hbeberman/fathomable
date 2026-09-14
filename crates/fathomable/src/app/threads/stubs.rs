@@ -781,7 +781,7 @@ mod tests {
             app.popup(),
             Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Edit { .. })
         ));
-        app.close_popup();
+        app.compose_cancel();
 
         // `c` on an expanded row folds it and expands the next covering
         // thread; the outer thread covers L5 too, so it comes next, and

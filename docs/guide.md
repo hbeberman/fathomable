@@ -481,6 +481,11 @@ places its cursor. Submit, cancel, or clear an empty draft and the rows
 go: a reply becomes the newest message under the cursor, a new comment
 becomes a stub.
 
+A draft stays with the file where you started it. Switch to another file
+and it is hidden, not submitted or discarded; return and its text and
+editor cursor are waiting. Each file can keep its own draft during the
+session, including replies, edits, and comments on the whole file.
+
 The left column is the **sidebar**: the **files pane** above the **threads
 pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
 the sidebar drawn while either is. The files pane's header row names

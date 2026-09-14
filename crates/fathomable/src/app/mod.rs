@@ -210,6 +210,8 @@ struct Doc {
     relative: PathBuf,
     view: View,
     marks: Vec<Mark>,
+    /// The draft waiting here while another file or popup has the keys.
+    draft: Option<Compose>,
     /// Whether the text has changed or been read since it was last
     /// snapshotted as seen.
     seen_dirty: bool,
@@ -1592,6 +1594,7 @@ impl App {
                         relative: relative.clone(),
                         view,
                         marks: Vec::new(),
+                        draft: None,
                         seen_dirty: true,
                         deleted: None,
                     });
@@ -1719,6 +1722,7 @@ impl App {
         if let Some(previous) = self.current
             && previous != index
         {
+            self.park_draft();
             self.mark_seen(previous);
         }
         self.current = Some(index);
@@ -1738,6 +1742,7 @@ impl App {
         // The document's stubs follow the session's toggles (ADR 0049).
         self.place_stub_rows();
         self.relayout();
+        self.resume_draft();
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
 
@@ -1954,16 +1959,19 @@ impl App {
     // ----- popups -----
 
     pub(crate) fn open_help(&mut self) {
+        self.park_draft();
         self.popup = Some(Popup::Help(input::help::Help::default()));
     }
 
     /// `:status`: the overlay of session facts (ADR 0021).
     pub(crate) fn open_status(&mut self) {
+        self.park_draft();
         self.reload_agents();
         self.popup = Some(Popup::Status);
     }
 
     pub(crate) fn close_popup(&mut self) {
+        self.park_draft();
         self.popup = None;
     }
 
@@ -1985,6 +1993,7 @@ impl App {
             PickerKind::Worktree => self.worktree_choices(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
+        self.park_draft();
         self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
     }
 

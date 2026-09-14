@@ -277,6 +277,7 @@ impl App {
     fn open_menu(&mut self, menu: Menu) {
         self.take_prefix();
         self.cancel_delete();
+        self.park_draft();
         self.popup = Some(Popup::Menu(menu));
     }
 

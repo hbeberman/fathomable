@@ -112,6 +112,15 @@ impl App {
         if !self.auto || self.queue.is_empty() {
             return None;
         }
+        if self.popup.is_some() || self.review_list.is_open() {
+            return None;
+        }
+        if let Some(index) = self.current {
+            let view = &self.docs[index].view;
+            if view.selection().is_some() || view.mode() != view::Mode::Normal || view.diff_view() {
+                return None;
+            }
+        }
         let since = self.last_change.map_or(Duration::ZERO, |at| at.elapsed());
         let wait = self.jump.debounce.saturating_sub(since);
         let activity = self.current.map_or(Duration::ZERO, |i| {
@@ -237,6 +246,17 @@ mod tests {
         assert_eq!(app.current_path(), Path::new("notes.md"));
         assert!(app.auto_jump());
         assert!(app.queue().is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_blocking_popup_suspends_the_auto_jump_timer() -> anyhow::Result<()> {
+        let dir = fixture("blocked-timer")?;
+        let mut app = app(&dir)?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        assert!(app.auto_jump_in().is_some());
+        app.open_status();
+        assert_eq!(app.auto_jump_in(), None);
         Ok(())
     }
 

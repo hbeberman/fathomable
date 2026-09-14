@@ -283,7 +283,6 @@ impl Register {
             .map(|s| s.id.clone())
             .collect();
         for id in expired {
-            tracing::info!(id, "subscription expired");
             register.forget(&id);
         }
         register.bonds.retain(|b| b.created() >= cutoff);

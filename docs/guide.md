@@ -64,7 +64,11 @@ The workspace is live too. A file or directory the agent creates,
 deletes, or renames shows up in, leaves, or moves within the tree on its
 own (within `watch.debounce`) — a whole new directory arrives
 collapsed, and is listed when you expand it — so `R` is only for a
-listing you suspect is stale. If the file you are reading is deleted,
+listing you suspect is stale. Fathomable watches visible directories
+individually and does not watch ignored trees, so build output under
+`target/` or another ignored cache consumes no watches, event-loop work,
+or redraws. An ignored file you explicitly open is watched narrowly and
+still reloads, including while another file is in front. If the file you are reading is deleted,
 the text stays put under a `deleted` banner: you can still scroll,
 search, and read its threads, but `c`,
 `C`, and replies are refused until the file comes back, at which point it
@@ -432,7 +436,9 @@ changed** files (`M`, `A`, `D`, and `?` against `HEAD`, directories with
 nothing to show left out; the header reads `· changed`), `Space F u`
 **hides untracked** files (`tracked`), and `Space F g` **shows ignored**
 files (`ignored`; an ignored file is never a changed one, so only
-changed wins). The popup's entries say what a press does now, `only
+changed wins). Ignored entries are browsed from directory snapshots,
+not recursively live-monitored; press `R` to refresh that view. The
+popup's entries say what a press does now, `only
 changed` or `all files`, and the pane's right-click menu carries the
 same three. The toggles work from any pane; while the files pane is
 hidden the status line names the new state instead. The open file may
@@ -986,7 +992,9 @@ socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
 swept away by the next start. `--viewers` groups viewers by workspace
 and, when there are several, lists its worktrees and says which one
-each viewer shows; `--doctor` counts the worktrees sharing the state.
+each viewer shows; `--doctor` counts the worktrees sharing the state and
+the visible directories that consume inotify watches. Ignored trees are
+not part of that watch budget.
 A state directory keyed by a root under the old rule is moved to its
 common-dir key once, by the first viewer, `--register`, or `--mcp`
 that finds the new key absent

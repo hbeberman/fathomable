@@ -33,7 +33,7 @@ impl App {
 
     /// The `subscribers` row of `:status` (ADR 0040).
     fn subscriber_row(&self) -> String {
-        match self.subscribers().as_slice() {
+        match self.subscribers() {
             [] => "none".to_owned(),
             all => all
                 .iter()
@@ -101,9 +101,9 @@ impl App {
             (
                 "watching".to_owned(),
                 if self.watching_root {
-                    "the whole workspace".to_owned()
+                    "visible workspace files".to_owned()
                 } else {
-                    "the open file's directory only".to_owned()
+                    "partial coverage plus the open file".to_owned()
                 },
             ),
             (

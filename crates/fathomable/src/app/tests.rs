@@ -989,6 +989,29 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
 }
 
 #[test]
+fn ignored_churn_is_dropped_except_for_the_open_file() -> anyhow::Result<()> {
+    use super::watch::{Event, Raw};
+
+    let dir = fixture("ignored-events")?;
+    git::init(&dir.0)?;
+    fs::write(dir.0.join(".gitignore"), "target/\n")?;
+    fs::create_dir_all(dir.0.join("target/deep"))?;
+    let open = dir.0.join("target/deep/open.txt");
+    let sibling = dir.0.join("target/deep/noise.bin");
+    fs::write(&open, "one\n")?;
+    fs::write(&sibling, "noise\n")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("target/deep/open.txt"));
+
+    assert!(app.raw_is_relevant(&Raw::Modify(open.clone())));
+    assert!(!app.raw_is_relevant(&Raw::Modify(sibling)));
+    fs::write(&open, "two\n")?;
+    app.on_events(vec![Event::Change(open)]);
+    assert_eq!(app.view().text(), "two\n");
+    Ok(())
+}
+
+#[test]
 fn new_and_removed_files_update_the_tree() -> anyhow::Result<()> {
     let dir = fixture("tree-watch")?;
     let mut app = app(&dir)?;

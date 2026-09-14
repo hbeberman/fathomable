@@ -86,6 +86,17 @@ impl Ignore {
             }
         }
     }
+
+    /// Whether `path` is an ignored directory whose whole subtree can be
+    /// skipped.
+    ///
+    /// A pattern such as `target/**` or `docs/` matches a child rather than
+    /// the directory name itself. Testing one ordinary child distinguishes
+    /// those subtree patterns from file-only patterns such as `*.lock`.
+    #[must_use]
+    pub fn is_tree_ignored(&self, path: &Path) -> bool {
+        self.is_ignored(path) || self.is_ignored(&path.join(".fathomable-watch-probe"))
+    }
 }
 
 /// A `watch.ignore` glob that cannot be compiled.
@@ -330,6 +341,9 @@ mod tests {
         assert!(ignore.is_ignored(Path::new("sub/Cargo.lock")));
         assert!(ignore.is_ignored(Path::new("docs/guide.md")));
         assert!(ignore.is_ignored(Path::new("a/build/out.o")));
+        assert!(ignore.is_tree_ignored(Path::new("target")));
+        assert!(ignore.is_tree_ignored(Path::new("docs")));
+        assert!(!ignore.is_tree_ignored(Path::new("src")));
         assert!(!ignore.is_ignored(Path::new("src/main.rs")));
         assert!(!ignore.is_ignored(Path::new("targets/x")));
         assert!(!ignore.is_ignored(Path::new("docs")));

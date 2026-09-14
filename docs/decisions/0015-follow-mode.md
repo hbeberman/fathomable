@@ -15,7 +15,7 @@ tags:
 # 0015 Follow mode and the last-seen diff base
 
 Status: accepted (2026-08-26); amended 2026-09-06: `--doctor` reports
-the watch budget.
+the watch budget; amended 2026-09-13: ignored trees spend no watches.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -47,11 +47,17 @@ change queue is newest-first; one milestone, one ADR.
 
 ### Change sources
 
-- The watcher grows from the visible document's directory to the workspace
-  root, recursive, filtered by the tree's ignore rules
-  ([0012](0012-workspace-mode.md)) plus `follow.ignore` globs. Events
-  under `.git/` are never change events (they drive the base refresh
-  below).
+- The watcher covers the workspace with one **non-recursive** inotify
+  watch per visible directory, filtered by the tree's ignore rules
+  ([0012](0012-workspace-mode.md)) plus `follow.ignore` globs. A parent
+  is watched before its children are listed; when a visible directory
+  appears, it and its visible descendants are watched before their
+  already-created files are folded into the pending batch. This keeps
+  mkdir-then-populate races live without watching ignored build trees.
+  Explicitly loaded files are an exception: their ancestor directories
+  are watched even when ignored, so foreground and background files still
+  reload and follow renames. Events under `.git/` are never change events (dedicated
+  metadata watches drive the base refresh below).
 - `follow.source` selects what counts as a change:
   - `workspace` (default): any non-ignored file under the root written or
     created by anyone.
@@ -200,11 +206,13 @@ than replacing them. Unknown keys are errors as in
 
 ## Consequences
 
-- The recursive workspace watch replaces the single-directory watch; large
-  trees raise inotify watch counts. `--doctor` counts the directories
-  under the root, ignored ones included since the watch takes them too,
-  against `fs.inotify.max_user_watches`, and the viewer says when the
-  watch fails and it follows the open file only (2026-09-06).
+- The workspace consumes one inotify watch per visible directory, plus
+  the small explicit sets for the open file, workspace state, and Git
+  metadata. Ignored trees consume no watches and emit no event-loop work.
+  `--doctor` counts the visible directories against
+  `fs.inotify.max_user_watches`; if only part of that set can be watched,
+  the viewer says live updates have partial coverage while retaining the
+  watches it could install and the open file's path.
 - Snapshot state grows with distinct viewed contents, bounded by the 2 MiB
   cap, the 30-day prune, and content addressing across paths.
 - `Config` gains a `follow` block; `Session` gains the follow source and

@@ -45,6 +45,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::threads::list::ReviewList;
+use fathomable_core::agents::Subscriber;
 use fathomable_core::annotations::{self, Store, ThreadId};
 use fathomable_core::config::{
     AgentsConfig, DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
@@ -298,6 +299,10 @@ pub(crate) struct App {
     viewer: ViewerConfig,
     /// Subscriptions and the wake command (ADR 0040).
     agents: AgentsConfig,
+    /// Live subscribers, reloaded when the agent register changes.
+    subscribers: Vec<Subscriber>,
+    /// Unix second when the next cached subscriber expires.
+    agents_refresh_at: Option<u64>,
     /// How the person at the viewer is named (ADR 0058).
     user: UserConfig,
     /// Who watches which thread, refreshed with the store (ADR 0040).
@@ -415,6 +420,8 @@ impl App {
             markdown,
             viewer,
             agents,
+            subscribers: Vec::new(),
+            agents_refresh_at: None,
             user,
             watchers: Vec::new(),
             config_path,
@@ -427,7 +434,7 @@ impl App {
             diff_target_next: None,
             compare: diff.compare(),
             last_change: None,
-            watching_root: false,
+            watching_root: true,
             status_stale: false,
             walks: status_walk::Walks::new(),
             status: Status::default(),
@@ -437,6 +444,7 @@ impl App {
             elsewhere: HashMap::new(),
             rewatch: None,
         };
+        app.reload_agents();
         app.relayout();
         app.refresh_worktrees();
         app.refresh_status();
@@ -506,7 +514,6 @@ impl App {
                     .unwrap_or_default();
                 self.store = Some(store);
                 self.toast_waiting(&before);
-                self.refresh_watchers();
                 self.refresh_reach();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
@@ -552,18 +559,18 @@ impl App {
         }
     }
 
-    /// Whether the whole workspace is watched, or only the visible
-    /// document's directory as a fallback.
-    /// Whether the recursive workspace watch is in place; when it is
-    /// not, the user is told, since the tree, the follow queue, and the
-    /// dirty set all go quiet without it (ADR 0015).
-    pub(crate) fn set_watching_root(&mut self, watching: bool) {
+    /// Whether every visible workspace directory is watched.
+    pub(crate) fn set_watching_root(&mut self, watching: bool) -> bool {
+        if self.watching_root == watching {
+            return false;
+        }
         self.watching_root = watching;
         if !watching {
             self.notice(
-                "cannot watch the workspace; following the open file only (--doctor counts the directories)",
+                "cannot watch every visible directory; live updates have partial coverage (--doctor counts the directories)",
             );
         }
+        true
     }
 
     // ----- follow mode (ADR 0015) -----
@@ -686,11 +693,7 @@ impl App {
             self.rescan_workspace();
             return;
         }
-        // The store lives outside the root; another writer's append lands
-        // here through the store watch (ADR 0024).
-        if events.iter().any(|e| e.path() == self.store_path()) {
-            self.reload_store();
-        }
+        self.reload_state_named_in(&events);
         let root = self.workspace.root().to_path_buf();
         // Ignore rules first: what follows asks them about every path.
         let rules_changed = self.reload_rules_named_in(&events);
@@ -785,6 +788,22 @@ impl App {
         }
     }
 
+    /// Reload append-only state files that another process changed.
+    fn reload_state_named_in(&mut self, events: &[watch::Event]) {
+        // Both stores live outside the root and arrive through the state
+        // directory watch (ADR 0024, 0040).
+        if events.iter().any(|event| event.path() == self.store_path()) {
+            self.reload_store();
+        }
+        let agents_path = self.agents_path();
+        if events
+            .iter()
+            .any(|event| event.path() == Some(agents_path.as_path()))
+        {
+            self.reload_agents();
+        }
+    }
+
     /// `HEAD`, the index, a ref, or the worktree set moved: the worktrees
     /// are listed again (ADR 0070), the `HEAD` bases re-read, and the
     /// reach recomputed.
@@ -846,8 +865,15 @@ impl App {
     /// Re-read the ignore rules; a failure is reported and keeps the
     /// rules in use.
     fn reload_rules(&mut self) {
-        if let Err(error) = self.workspace.reload_rules() {
-            self.notice(format!("ignore rules: {error}"));
+        match self.workspace.reload_rules() {
+            Ok(()) => {
+                let rewatch = self.rewatch.get_or_insert(worktrees::Rewatch {
+                    root: None,
+                    extras: Vec::new(),
+                });
+                rewatch.root = Some(self.workspace.root().to_path_buf());
+            }
+            Err(error) => self.notice(format!("ignore rules: {error}")),
         }
     }
 
@@ -1255,6 +1281,7 @@ impl App {
     pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|toast| toast.until > now);
+        self.refresh_agents_if_due();
         if let Some(index) = self.current
             && self.docs[index].seen_dirty
             && self.docs[index].view.idle() >= self.viewer.seen_idle
@@ -1282,6 +1309,9 @@ impl App {
             consider(self.viewer.seen_idle.saturating_sub(idle));
         }
         if let Some(wait) = self.auto_jump_in() {
+            consider(wait);
+        }
+        if let Some(wait) = self.agents_refresh_in() {
             consider(wait);
         }
         next
@@ -1403,13 +1433,6 @@ impl App {
         self.current
             .and_then(|i| self.docs.get(i))
             .map_or(Path::new(""), |doc| &doc.relative)
-    }
-
-    /// Absolute path of the current document, for the watcher.
-    pub(crate) fn current_abs_path(&self) -> Option<&Path> {
-        self.current
-            .and_then(|i| self.docs.get(i))
-            .map(|doc| doc.document.path())
     }
 
     /// Whether the current document's file is gone from disk (ADR 0028).
@@ -1925,6 +1948,7 @@ impl App {
 
     /// `:status`: the overlay of session facts (ADR 0021).
     pub(crate) fn open_status(&mut self) {
+        self.reload_agents();
         self.popup = Some(Popup::Status);
     }
 

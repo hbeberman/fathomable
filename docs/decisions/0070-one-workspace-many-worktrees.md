@@ -111,8 +111,8 @@ in the host, labelled with its branch.
   changing, and each linked worktree's git dir for its `HEAD`, one
   watch each and the refs recursively, since a commit in a worktree
   moves the branch under the common dir, not the worktree's `HEAD`.
-  Only the active worktree's tree is walked and watched, so the
-  inotify budget of the doctor stays one tree's.
+  Only the active worktree's visible directories are walked and watched;
+  ignored trees spend no inotify watches ([0015](0015-follow-mode.md)).
 - No tool adds a worktree. The set is git's; an agent that ran
   `git worktree add` has already told the viewer everything. A `link`
   flag on `workspaces` was considered for a clone elsewhere and

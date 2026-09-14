@@ -13,36 +13,73 @@ use crate::hooks;
 use fathomable_core::clock::now;
 
 impl App {
-    /// The live subscribers of this workspace, read from the register.
-    pub(super) fn subscribers(&self) -> Vec<Subscriber> {
-        let path = self.dirs.agents_file(self.workspace.key());
-        match Register::open(path, now(), self.agents.expire_after) {
-            Ok(register) => register.subscribers().to_vec(),
+    /// The cached live subscribers of this workspace.
+    pub(super) fn subscribers(&self) -> &[Subscriber] {
+        &self.subscribers
+    }
+
+    /// Where the workspace's agent register lives.
+    pub(crate) fn agents_path(&self) -> std::path::PathBuf {
+        self.dirs.agents_file(self.workspace.key())
+    }
+
+    /// Re-read subscribers and watches after the register changes or a
+    /// cached subscriber reaches its expiry time. Returns whether the cache
+    /// changed.
+    pub(crate) fn reload_agents(&mut self) -> bool {
+        let path = self.agents_path();
+        let when = now();
+        match Register::open(path, when, self.agents.expire_after) {
+            Ok(register) => {
+                let subscribers = register.subscribers().to_vec();
+                let watchers = register
+                    .watches()
+                    .iter()
+                    .map(|watch| {
+                        let label = register
+                            .subscriber(watch.subscriber())
+                            .map_or_else(|| watch.subscriber().to_owned(), Subscriber::label);
+                        (watch.on().clone(), label)
+                    })
+                    .collect();
+                self.agents_refresh_at = subscribers
+                    .iter()
+                    .map(|subscriber| {
+                        subscriber
+                            .seen()
+                            .saturating_add(self.agents.expire_after.as_secs())
+                            .saturating_add(1)
+                    })
+                    .min();
+                let changed = self.subscribers != subscribers || self.watchers != watchers;
+                self.subscribers = subscribers;
+                self.watchers = watchers;
+                changed
+            }
             Err(error) => {
                 tracing::warn!(%error, "cannot read the agent register");
-                Vec::new()
+                self.agents_refresh_at = None;
+                false
             }
         }
     }
 
-    /// Re-read who watches which thread; called when the store reloads
-    /// and when a thread expands, so the header stays honest without
-    /// reading the register on every frame.
+    /// Re-read who watches which thread before a user opens one.
     pub(super) fn refresh_watchers(&mut self) {
-        let path = self.dirs.agents_file(self.workspace.key());
-        self.watchers = match Register::open(path, now(), self.agents.expire_after) {
-            Ok(register) => register
-                .watches()
-                .iter()
-                .map(|w| {
-                    let label = register
-                        .subscriber(w.subscriber())
-                        .map_or_else(|| w.subscriber().to_owned(), Subscriber::label);
-                    (w.on().clone(), label)
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        };
+        self.reload_agents();
+    }
+
+    /// Time until the next cached subscriber expires.
+    pub(super) fn agents_refresh_in(&self) -> Option<std::time::Duration> {
+        self.agents_refresh_at
+            .map(|at| std::time::Duration::from_secs(at.saturating_sub(now())))
+    }
+
+    /// Drop subscribers whose cached lifetime has ended.
+    pub(super) fn refresh_agents_if_due(&mut self) {
+        if self.agents_refresh_at.is_some_and(|at| now() >= at) {
+            self.reload_agents();
+        }
     }
 
     /// The labels of the subscribers watching `thread`.
@@ -61,7 +98,8 @@ impl App {
             self.notice("set agents.wake in config.kdl to a command with {id} and {prompt}");
             return;
         }
-        let subscribers = self.subscribers();
+        self.reload_agents();
+        let subscribers = self.subscribers().to_vec();
         match subscribers.as_slice() {
             [] => self.notice("no agent is subscribed to this workspace"),
             [only] => {
@@ -206,6 +244,27 @@ mod tests {
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
         assert!(row.contains("bot (coder) s-1"), "{row}");
+        register.subscribe("s-2", "reviewer", None, None, when)?;
+        let cached = app
+            .status_lines()
+            .into_iter()
+            .find(|(key, _)| key == "subscribers")
+            .map(|(_, value)| value)
+            .unwrap_or_default();
+        assert!(!cached.contains("s-2"), "status reads the cache: {cached}");
+        assert!(app.reload_agents());
+        let refreshed = app
+            .status_lines()
+            .into_iter()
+            .find(|(key, _)| key == "subscribers")
+            .map(|(_, value)| value)
+            .unwrap_or_default();
+        assert!(
+            refreshed.contains("s-2"),
+            "register events refresh the cache: {refreshed}"
+        );
+        register.unsubscribe("s-2", when + 1)?;
+        assert!(app.reload_agents());
         app.open("a.md".as_ref());
         app.expand_thread(id.clone());
         assert_eq!(app.watchers_of(&id), ["bot (coder)"]);
@@ -225,7 +284,8 @@ mod tests {
             "{:?}",
             app.message()
         );
-        register.subscribe("s-2", "reviewer", None, None, when)?;
+        register.subscribe("s-2", "reviewer", None, None, when + 2)?;
+        app.reload_agents();
         app.wake();
         assert!(matches!(app.popup(), Some(Popup::Picker(p)) if p.kind() == PickerKind::Wake));
         app.picker_confirm();

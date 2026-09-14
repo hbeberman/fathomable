@@ -2,28 +2,33 @@
 //! Workspace watcher: turns `notify` events into tree, view, and thread
 //! changes (ADR 0028).
 //!
-//! [`Watcher`] owns the recursive watch on the workspace root (falling
-//! back to the open file's directory when the root cannot be watched, ADR
-//! 0015) and the watch on the thread store's directory (ADR 0024). Raw
-//! events go into a [`Batch`], which waits out the hint debounce and then
-//! folds a burst into one [`Event`] per path: a plain [`Event::Change`],
-//! a [`Event::Created`] or [`Event::Removed`] entry, or a
-//! [`Event::Renamed`] pair. [`Event::Rescan`] preserves the platform's
+//! [`Watcher`] owns one non-recursive watch per visible workspace
+//! directory, explicit watches along the open file's path, and the watches
+//! on thread, agent, and Git state (ADR 0015, 0024, 0070). Ignored build
+//! trees therefore consume neither inotify watches nor event-loop work.
+//! Raw events go into a [`Batch`], which waits out the hint debounce and
+//! then folds a burst into one [`Event`] per path: a plain
+//! [`Event::Change`], a [`Event::Created`] or [`Event::Removed`] entry, or
+//! a [`Event::Renamed`] pair. [`Event::Rescan`] preserves the platform's
 //! warning that events were lost. Renames are paired from the platform's
 //! own pairing first; an unpaired remove-then-create in one batch is
 //! paired when the created file's size and content hash match what the
 //! removed path last held.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use fathomable_core::annotations::short_hash;
+use fathomable_core::follow::Ignore;
+use fathomable_core::workspace::{EntryKind, Workspace, is_rules_file};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecursiveMode, Watcher as _};
 use tokio::sync::mpsc;
+
+use super::App;
 
 /// What a settled batch says happened to one path. Paths are absolute.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +136,20 @@ impl Raw {
             EventKind::Access(_) | EventKind::Any | EventKind::Other => Vec::new(),
         }
     }
+
+    /// Every path named by this raw event.
+    pub(crate) fn paths(&self) -> impl Iterator<Item = &Path> {
+        let (first, second) = match self {
+            Self::Rescan => (None, None),
+            Self::Create(path)
+            | Self::Modify(path)
+            | Self::Remove(path)
+            | Self::RenameFrom(path)
+            | Self::RenameTo(path) => (Some(path.as_path()), None),
+            Self::Rename { from, to } => (Some(from.as_path()), Some(to.as_path())),
+        };
+        [first, second].into_iter().flatten()
+    }
 }
 
 /// Raw events from the platform watcher, in arrival order.
@@ -151,29 +170,95 @@ impl Raws {
     }
 }
 
-/// Watches the workspace root recursively (ADR 0015). When that fails
-/// (inotify limits), falls back to the directory of the visible document,
-/// following it as it changes (a rename lands as a directory event, so the
-/// file itself is never watched directly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchMode {
+    NonRecursive,
+    Recursive,
+}
+
+impl WatchMode {
+    const fn notify(self) -> RecursiveMode {
+        match self {
+            Self::NonRecursive => RecursiveMode::NonRecursive,
+            Self::Recursive => RecursiveMode::Recursive,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Surface {
+    Root,
+    Targets,
+    State,
+    Extras,
+}
+
+impl Surface {
+    const fn bit(self) -> u8 {
+        match self {
+            Self::Root => 1 << 0,
+            Self::Targets => 1 << 1,
+            Self::State => 1 << 2,
+            Self::Extras => 1 << 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Coverage(u8);
+
+impl Coverage {
+    fn set(&mut self, surface: Surface, complete: bool) {
+        if complete {
+            self.0 &= !surface.bit();
+        } else {
+            self.0 |= surface.bit();
+        }
+    }
+
+    const fn complete(self) -> bool {
+        self.0 == 0
+    }
+
+    const fn surface_complete(self, surface: Surface) -> bool {
+        self.0 & surface.bit() == 0
+    }
+}
+
+/// Watches visible directories and the small explicit state surfaces.
+///
+/// The workspace tree is covered by non-recursive watches so Git-ignored
+/// build trees never spend the process-wide inotify budget. Loaded files'
+/// ancestor directories are covered separately, so files opened from an
+/// ignored directory still reload and follow renames in the background.
 pub(crate) struct Watcher {
     inner: notify::RecommendedWatcher,
-    target: Option<PathBuf>,
-    recursive: bool,
-    /// The thread store, watched through its directory (ADR 0024).
-    store: Option<PathBuf>,
-    /// The root under the recursive watch, to move it (ADR 0070).
+    /// Every loaded document, including background documents.
+    targets: HashSet<PathBuf>,
+    /// Visible directories under the active root.
+    root_dirs: HashSet<PathBuf>,
+    /// Ancestors needed to follow loaded files when they are ignored.
+    target_dirs: HashSet<PathBuf>,
+    /// Directories holding exact state files.
+    state_dirs: HashSet<PathBuf>,
+    /// The exact thread and agent register paths.
+    state_files: HashSet<PathBuf>,
+    /// Git metadata paths and whether each needs recursive coverage.
+    extras: HashMap<PathBuf, WatchMode>,
+    /// The watches currently installed in `notify`.
+    watched: HashMap<PathBuf, WatchMode>,
+    /// The active worktree root.
     root: Option<PathBuf>,
-    /// The git paths of the other worktrees, each watched on its own
-    /// (ADR 0070).
-    extras: Vec<PathBuf>,
+    coverage: Coverage,
 }
 
 impl std::fmt::Debug for Watcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Watcher")
-            .field("target", &self.target)
-            .field("recursive", &self.recursive)
-            .field("store", &self.store)
+            .field("targets", &self.targets)
+            .field("visible_directories", &self.root_dirs.len())
+            .field("target_directories", &self.target_dirs.len())
+            .field("state_files", &self.state_files)
             .finish_non_exhaustive()
     }
 }
@@ -205,111 +290,377 @@ impl Watcher {
         Ok((
             Self {
                 inner: watcher,
-                target: None,
-                recursive: false,
-                store: None,
+                targets: HashSet::new(),
+                root_dirs: HashSet::new(),
+                target_dirs: HashSet::new(),
+                state_dirs: HashSet::new(),
+                state_files: HashSet::new(),
+                extras: HashMap::new(),
+                watched: HashMap::new(),
                 root: None,
-                extras: Vec::new(),
+                coverage: Coverage::default(),
             },
             Raws { rx },
         ))
     }
 
-    /// Watch everything under `root`; false when the watch cannot be set up.
-    pub(crate) fn watch_root(&mut self, root: &Path) -> bool {
-        if let Some(old) = self.root.take()
-            && old != root
-        {
-            let _ = self.inner.unwatch(&old);
-        }
-        self.root = Some(root.to_path_buf());
-        match self.inner.watch(root, RecursiveMode::Recursive) {
-            Ok(()) => {
-                tracing::info!(root = %root.display(), "watching workspace");
-                self.recursive = true;
+    /// Reconcile non-recursive watches with the visible directory tree.
+    ///
+    /// Each directory is watched before it is listed, so a child created
+    /// during the walk is still reported by its parent. Returns whether
+    /// every visible directory is covered.
+    pub(crate) fn watch_root(&mut self, workspace: &mut Workspace, ignore: &Ignore) -> bool {
+        let root = workspace.root().to_path_buf();
+        let changed_root = self.root.as_deref() != Some(root.as_path());
+        self.root = Some(root.clone());
+        let old = std::mem::take(&mut self.root_dirs);
+        let mut pending = vec![PathBuf::new()];
+        let mut complete = true;
+
+        while let Some(relative) = pending.pop() {
+            if !relative.as_os_str().is_empty() && ignore.is_tree_ignored(&relative) {
+                continue;
             }
-            Err(error) => {
-                tracing::warn!(%error, root = %root.display(), "cannot watch workspace; watching the open file only");
-                self.recursive = false;
+            let absolute = if relative.as_os_str().is_empty() {
+                root.clone()
+            } else {
+                root.join(&relative)
+            };
+            self.root_dirs.insert(absolute.clone());
+            if let Err(error) = self.reconcile(&absolute) {
+                tracing::warn!(%error, dir = %absolute.display(), "cannot watch visible directory");
+                self.root_dirs.remove(&absolute);
+                complete = false;
+            }
+            let entries = match workspace.list_dir(&relative) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    if relative.as_os_str().is_empty() {
+                        tracing::warn!(%error, root = %root.display(), "cannot list workspace while watching");
+                        complete = false;
+                    } else {
+                        tracing::debug!(%error, dir = %absolute.display(), "directory gone while watching");
+                    }
+                    continue;
+                }
+            };
+            let mut dirs: Vec<PathBuf> = entries
+                .into_iter()
+                .filter(|entry| entry.is_dir() && !entry.is_symlink())
+                .map(|entry| relative.join(entry.name()))
+                .filter(|path| !ignore.is_tree_ignored(path))
+                .collect();
+            pending.extend(dirs.drain(..).rev());
+        }
+
+        for stale in old {
+            if !self.root_dirs.contains(&stale)
+                && let Err(error) = self.reconcile(&stale)
+            {
+                tracing::debug!(%error, dir = %stale.display(), "cannot remove stale directory watch");
             }
         }
-        self.recursive
+        if changed_root {
+            tracing::info!(
+                root = %root.display(),
+                directories = self.root_dirs.len(),
+                "watching visible workspace"
+            );
+        }
+        self.coverage.set(Surface::Root, complete);
+        complete
     }
 
-    /// Follow the visible document when only its directory is watched.
-    pub(crate) fn follow(&mut self, target: Option<&Path>) {
-        if self.recursive || target == self.target.as_deref() {
-            return;
-        }
-        if let Some(old) = self.target.as_ref().and_then(|p| p.parent()) {
-            let _ = self.inner.unwatch(old);
-        }
-        if let Some(dir) = target.and_then(Path::parent)
-            && let Err(error) = self.inner.watch(dir, RecursiveMode::NonRecursive)
+    /// Add a newly-created visible directory before its debounce settles.
+    ///
+    /// Files already present when their directory gets its watch are
+    /// returned as synthetic creates. This closes the mkdir-then-populate
+    /// race without watching ignored trees.
+    pub(crate) fn watch_created(
+        &mut self,
+        workspace: &mut Workspace,
+        ignore: &Ignore,
+        created: &Path,
+    ) -> (Vec<Raw>, bool) {
+        let Some(root) = self.root.clone() else {
+            return (Vec::new(), true);
+        };
+        let Ok(relative) = created.strip_prefix(&root).map(Path::to_path_buf) else {
+            return (Vec::new(), true);
+        };
+        if !created
+            .symlink_metadata()
+            .is_ok_and(|meta| meta.is_dir() && !meta.file_type().is_symlink())
         {
-            tracing::warn!(%error, dir = %dir.display(), "cannot watch directory");
+            return (Vec::new(), true);
         }
-        self.target = target.map(Path::to_path_buf);
+        if ignore.is_tree_ignored(&relative)
+            || workspace.is_ignored(&relative, fathomable_core::workspace::EntryKind::Dir)
+        {
+            return (Vec::new(), true);
+        }
+
+        let mut pending = vec![relative];
+        let mut discovered = Vec::new();
+        let mut complete = true;
+        while let Some(relative) = pending.pop() {
+            if ignore.is_tree_ignored(&relative) {
+                continue;
+            }
+            let absolute = root.join(&relative);
+            let newly_watched = self.root_dirs.insert(absolute.clone());
+            if let Err(error) = self.reconcile(&absolute) {
+                tracing::warn!(%error, dir = %absolute.display(), "cannot watch new directory");
+                self.root_dirs.remove(&absolute);
+                complete = false;
+            }
+            let entries = match workspace.list_dir(&relative) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    tracing::debug!(%error, dir = %absolute.display(), "new directory gone while watching");
+                    continue;
+                }
+            };
+            let mut dirs = Vec::new();
+            for entry in entries {
+                let child = relative.join(entry.name());
+                if entry.is_dir() && !entry.is_symlink() {
+                    if !ignore.is_tree_ignored(&child) {
+                        dirs.push(child);
+                    }
+                } else if !ignore.is_ignored(&child) && newly_watched {
+                    discovered.push(Raw::Create(root.join(child)));
+                }
+            }
+            pending.extend(dirs.into_iter().rev());
+        }
+        if !complete {
+            self.coverage.set(Surface::Root, false);
+        }
+        (discovered, complete)
     }
 
-    /// Whether an event on `path` is one this watcher was asked for: in
-    /// the fallback mode only the open file, the store, and the other
-    /// worktrees' git paths count.
+    /// Follow every loaded document, including through ignored trees.
+    ///
+    /// A rename is reported by the watched parent, so every directory from
+    /// the root to the file's parent is covered rather than the file itself.
+    pub(crate) fn follow<'a>(&mut self, targets: impl IntoIterator<Item = &'a Path>) -> bool {
+        let targets: HashSet<PathBuf> = targets.into_iter().map(Path::to_path_buf).collect();
+        if targets == self.targets {
+            return self.coverage.surface_complete(Surface::Targets);
+        }
+        let old = std::mem::take(&mut self.target_dirs);
+        let mut complete = true;
+        for parent in targets.iter().filter_map(|target| target.parent()) {
+            if let Some(root) = self.root.as_deref()
+                && parent.starts_with(root)
+            {
+                let mut ancestors: Vec<PathBuf> = parent
+                    .ancestors()
+                    .take_while(|dir| dir.starts_with(root))
+                    .map(Path::to_path_buf)
+                    .collect();
+                ancestors.reverse();
+                self.target_dirs.extend(ancestors);
+            } else {
+                self.target_dirs.insert(parent.to_path_buf());
+            }
+        }
+        let wanted: Vec<PathBuf> = self.target_dirs.iter().cloned().collect();
+        for dir in wanted {
+            if let Err(error) = self.reconcile(&dir) {
+                tracing::warn!(%error, dir = %dir.display(), "cannot watch loaded file directory");
+                self.target_dirs.remove(&dir);
+                complete = false;
+            }
+        }
+        for stale in old {
+            if !self.target_dirs.contains(&stale) {
+                let _ = self.reconcile(&stale);
+            }
+        }
+        self.targets = targets;
+        self.coverage.set(Surface::Targets, complete);
+        complete
+    }
+
+    /// Whether every requested live surface has complete coverage.
+    pub(crate) const fn coverage_complete(&self) -> bool {
+        self.coverage.complete()
+    }
+
+    /// Whether a raw event came from one of the requested surfaces.
+    pub(crate) fn accepts(&self, raw: &Raw) -> bool {
+        matches!(raw, Raw::Rescan) || raw.paths().any(|path| self.is_target(path))
+    }
+
+    /// Whether an event on `path` is one this watcher was asked for.
     pub(crate) fn is_target(&self, path: &Path) -> bool {
-        self.recursive
-            || self.target.as_deref() == Some(path)
-            || self.store.as_deref() == Some(path)
-            || self.extras.iter().any(|dir| path.starts_with(dir))
+        self.state_files.contains(path)
+            || self.targets.contains(path)
+            || self.extras.keys().any(|dir| path.starts_with(dir))
+            || path.parent().is_some_and(|parent| {
+                self.root_dirs.contains(parent) || self.target_dirs.contains(parent)
+            })
     }
 
     /// Watch the git paths of the other worktrees (ADR 0070), each on
     /// its own and not recursively, except the refs, which are few and
-    /// nested: a `HEAD` or a branch moving there changes the reach. A
-    /// path under the root's own recursive watch is left to it.
-    pub(crate) fn watch_worktrees(&mut self, paths: &[PathBuf]) {
-        let wanted: Vec<PathBuf> = paths
+    /// nested: a `HEAD` or a branch moving there changes the reach.
+    pub(crate) fn watch_worktrees(&mut self, paths: &[PathBuf]) -> bool {
+        let old = std::mem::take(&mut self.extras);
+        self.extras = paths
             .iter()
-            .filter(|p| {
-                !(self.recursive && self.root.as_ref().is_some_and(|root| p.starts_with(root)))
+            .map(|path| {
+                let mode = if path.file_name().is_some_and(|name| name == "refs") {
+                    WatchMode::Recursive
+                } else {
+                    WatchMode::NonRecursive
+                };
+                (path.clone(), mode)
             })
-            .cloned()
             .collect();
-        for old in &self.extras {
-            if !wanted.contains(old) {
-                let _ = self.inner.unwatch(old);
+        let mut complete = true;
+        let wanted: Vec<PathBuf> = self.extras.keys().cloned().collect();
+        for path in wanted {
+            if let Err(error) = self.reconcile(&path) {
+                tracing::debug!(%error, dir = %path.display(), "cannot watch worktree path");
+                self.extras.remove(&path);
+                complete = false;
             }
         }
-        for dir in &wanted {
-            if self.extras.contains(dir) {
-                continue;
-            }
-            let mode = if dir.file_name().is_some_and(|n| n == "refs") {
-                RecursiveMode::Recursive
-            } else {
-                RecursiveMode::NonRecursive
-            };
-            if let Err(error) = self.inner.watch(dir, mode) {
-                tracing::debug!(%error, dir = %dir.display(), "cannot watch worktree path");
+        for stale in old.keys() {
+            if !self.extras.contains_key(stale) {
+                let _ = self.reconcile(stale);
             }
         }
-        self.extras = wanted;
+        self.coverage.set(Surface::Extras, complete);
+        complete
     }
 
-    /// Watch the directory holding the thread store, so appends by other
-    /// writers are noticed (ADR 0024).
-    pub(crate) fn watch_store(&mut self, store: Option<&Path>) {
-        let Some(dir) = store.and_then(Path::parent) else {
-            return;
-        };
-        match self.inner.watch(dir, RecursiveMode::NonRecursive) {
-            Ok(()) => {
-                tracing::info!(dir = %dir.display(), "watching the thread store");
-                self.store = store.map(Path::to_path_buf);
-            }
-            Err(error) => {
-                tracing::warn!(%error, dir = %dir.display(), "cannot watch the thread store");
+    /// Watch the directories holding exact state `files`.
+    pub(crate) fn watch_state<'a>(&mut self, files: impl IntoIterator<Item = &'a Path>) -> bool {
+        let old = std::mem::take(&mut self.state_dirs);
+        self.state_files = files.into_iter().map(Path::to_path_buf).collect();
+        self.state_dirs = self
+            .state_files
+            .iter()
+            .filter_map(|path| path.parent().map(Path::to_path_buf))
+            .collect();
+        let mut complete = true;
+        let wanted: Vec<PathBuf> = self.state_dirs.iter().cloned().collect();
+        for dir in wanted {
+            if let Err(error) = self.reconcile(&dir) {
+                tracing::warn!(%error, dir = %dir.display(), "cannot watch workspace state");
+                self.state_dirs.remove(&dir);
+                complete = false;
             }
         }
+        for stale in old {
+            if !self.state_dirs.contains(&stale) {
+                let _ = self.reconcile(&stale);
+            }
+        }
+        self.coverage.set(Surface::State, complete);
+        complete
+    }
+
+    /// Whether structural `events` can have changed the visible directory
+    /// watch set.
+    pub(crate) fn needs_root_sync(&self, events: &[Event]) -> bool {
+        events.iter().any(|event| match event {
+            Event::Created(path) => path.is_dir(),
+            Event::Removed(path) => self.root_dirs.iter().any(|dir| dir.starts_with(path)),
+            Event::Renamed { from, to } => {
+                to.is_dir() || self.root_dirs.iter().any(|dir| dir.starts_with(from))
+            }
+            Event::Change(_) | Event::Rescan => false,
+        })
+    }
+
+    fn desired_mode(&self, path: &Path) -> Option<WatchMode> {
+        self.extras.get(path).copied().or_else(|| {
+            (self.root_dirs.contains(path)
+                || self.target_dirs.contains(path)
+                || self.state_dirs.contains(path))
+            .then_some(WatchMode::NonRecursive)
+        })
+    }
+
+    fn reconcile(&mut self, path: &Path) -> notify::Result<()> {
+        let wanted = self.desired_mode(path);
+        let have = self.watched.get(path).copied();
+        if wanted == have {
+            return Ok(());
+        }
+        if have.is_some() {
+            let _ = self.inner.unwatch(path);
+            self.watched.remove(path);
+        }
+        let Some(mode) = wanted else {
+            return Ok(());
+        };
+        self.inner.watch(path, mode.notify())?;
+        self.watched.insert(path.to_path_buf(), mode);
+        Ok(())
+    }
+}
+
+impl App {
+    /// Install or reconcile watches for the active visible workspace.
+    pub(crate) fn sync_workspace_watches(&mut self, watcher: &mut Watcher) -> bool {
+        watcher.watch_root(&mut self.workspace, &self.ignore)
+    }
+
+    /// Cover a newly-created visible directory before its event settles.
+    pub(crate) fn watch_created(&mut self, watcher: &mut Watcher, path: &Path) -> (Vec<Raw>, bool) {
+        watcher.watch_created(&mut self.workspace, &self.ignore, path)
+    }
+
+    /// Absolute paths of every document retained by this viewer.
+    pub(crate) fn loaded_abs_paths(&self) -> Vec<PathBuf> {
+        let root = self.workspace.root();
+        self.docs
+            .iter()
+            .map(|doc| root.join(&doc.relative))
+            .collect()
+    }
+
+    /// Whether a raw event can affect observable workspace state.
+    ///
+    /// State and Git paths have already been narrowed by [`Watcher`].
+    /// Within the worktree, ignored noise is dropped before it reaches the
+    /// debounce queue. An explicitly loaded ignored file and its ancestors
+    /// remain relevant so the open document still reloads and follows moves.
+    pub(crate) fn raw_is_relevant(&mut self, raw: &Raw) -> bool {
+        if matches!(raw, Raw::Rescan) {
+            return true;
+        }
+        let root = self.workspace.root().to_path_buf();
+        raw.paths().any(|path| {
+            let Ok(relative) = path.strip_prefix(&root) else {
+                return true;
+            };
+            if relative.starts_with(".git") || is_rules_file(relative) {
+                return true;
+            }
+            if self
+                .docs
+                .iter()
+                .any(|doc| doc.relative == relative || doc.relative.starts_with(relative))
+            {
+                return true;
+            }
+            if self.ignore.is_ignored(relative) {
+                return false;
+            }
+            let kind = if path.is_dir() {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
+            !self.workspace.is_ignored(relative, kind)
+        })
     }
 }
 
@@ -338,11 +689,10 @@ pub(crate) struct Batch {
 }
 
 impl Batch {
-    /// Adds an event; the first one after a flush starts the quiet period.
+    /// Adds an event and restarts the quiet period.
     pub(crate) fn push(&mut self, raw: Raw, debounce: Duration) {
         self.raw.push(raw);
-        self.flush_at
-            .get_or_insert_with(|| Instant::now() + debounce);
+        self.flush_at = Some(Instant::now() + debounce);
     }
 
     /// Resolves once the quiet period ends; never while the batch is empty.
@@ -534,12 +884,15 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
+    use fathomable_core::follow::Ignore;
+    use fathomable_core::workspace::Workspace;
+    use fathomable_testing::{TempDir, git};
     use notify::EventKind;
     use notify::event::{
         AccessKind, AccessMode, CreateKind, Flag, ModifyKind, RemoveKind, RenameMode,
     };
 
-    use super::{Event, Fingerprint, Raw, classify, is_git_metadata};
+    use super::{Event, Fingerprint, Raw, Watcher, classify, is_git_metadata};
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
@@ -593,6 +946,83 @@ mod tests {
         assert!(!is_git_metadata(Path::new(".git/objects/ab/cdef")));
         assert!(!is_git_metadata(Path::new(".git/logs/HEAD")));
         assert!(!is_git_metadata(Path::new(".git")));
+    }
+
+    #[test]
+    fn workspace_watches_cover_visible_directories_not_build_trees() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-visible")?;
+        git::init(&dir.0)?;
+        fs::write(dir.0.join(".gitignore"), "target/\n.tmp/\n")?;
+        fs::create_dir_all(dir.0.join("src/nested"))?;
+        fs::create_dir_all(dir.0.join("target/deep/cache"))?;
+        fs::create_dir_all(dir.0.join(".tmp/worktrees/generated"))?;
+        fs::create_dir_all(dir.0.join("build/deep"))?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let ignore = Ignore::new(&["build/**".to_owned()])?;
+        let (mut watcher, _) = Watcher::new()?;
+
+        assert!(watcher.watch_root(&mut workspace, &ignore));
+        assert_eq!(
+            watcher.root_dirs,
+            [dir.0.clone(), dir.0.join("src"), dir.0.join("src/nested"),]
+                .into_iter()
+                .collect()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_new_visible_subtree_is_watched_before_its_files_are_reported() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-created")?;
+        git::init(&dir.0)?;
+        fs::create_dir_all(dir.0.join("src"))?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let ignore = Ignore::default();
+        let (mut watcher, _) = Watcher::new()?;
+        assert!(watcher.watch_root(&mut workspace, &ignore));
+
+        fs::create_dir_all(dir.0.join("src/new/deep"))?;
+        fs::write(dir.0.join("src/new/deep/file.rs"), "fn main() {}\n")?;
+        let (created, complete) =
+            watcher.watch_created(&mut workspace, &ignore, &dir.0.join("src/new"));
+        assert!(complete);
+        assert!(watcher.root_dirs.contains(&dir.0.join("src/new")));
+        assert!(watcher.root_dirs.contains(&dir.0.join("src/new/deep")));
+        assert_eq!(created, [Raw::Create(dir.0.join("src/new/deep/file.rs"))]);
+        Ok(())
+    }
+
+    #[test]
+    fn loaded_ignored_files_keep_narrow_ancestor_watches() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-open-ignored")?;
+        git::init(&dir.0)?;
+        fs::write(dir.0.join(".gitignore"), "target/\n")?;
+        fs::create_dir_all(dir.0.join("target/one"))?;
+        fs::create_dir_all(dir.0.join("target/two"))?;
+        let first = dir.0.join("target/one/output.txt");
+        let second = dir.0.join("target/two/output.txt");
+        fs::write(&first, "one\n")?;
+        fs::write(&second, "two\n")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let (mut watcher, _) = Watcher::new()?;
+        assert!(watcher.watch_root(&mut workspace, &Ignore::default()));
+
+        assert!(watcher.follow([first.as_path(), second.as_path()]));
+        assert!(watcher.target_dirs.contains(&dir.0.join("target")));
+        assert!(watcher.target_dirs.contains(&dir.0.join("target/one")));
+        assert!(watcher.target_dirs.contains(&dir.0.join("target/two")));
+        assert!(watcher.accepts(&Raw::Modify(first)));
+        assert!(watcher.accepts(&Raw::Modify(second)));
+        Ok(())
+    }
+
+    #[test]
+    fn state_watch_failure_marks_coverage_partial() -> anyhow::Result<()> {
+        let (mut watcher, _) = Watcher::new()?;
+        let missing = PathBuf::from("/fathomable-test-missing/state/agents.jsonl");
+        assert!(!watcher.watch_state([missing.as_path()]));
+        assert!(!watcher.coverage_complete());
+        Ok(())
     }
 
     #[test]

@@ -304,18 +304,17 @@ async fn run_async(
     let _socket = keep_socket(&mut app, socket);
 
     let mut batch = watch::Batch::default();
+    let mut redraw = true;
     loop {
-        rewatch(&mut app, &mut doc_watcher);
-        doc_watcher.follow(app.current_abs_path());
-        app.settle();
-        // What a crash report says the viewer was showing (ADR 0022): the
-        // `:status` rows, refreshed here so they describe the frame that
-        // dies rather than the one before it.
-        crash::observe(app.status_lines());
-        terminal
-            .draw(|frame| crate::app::draw::draw(frame, &app, &theme))
-            .context("draw failed")?;
-        let effect = tokio::select! {
+        redraw |= rewatch(&mut app, &mut doc_watcher);
+        sync_loaded_watches(&app, &mut doc_watcher);
+        redraw |= app.set_watching_root(doc_watcher.coverage_complete());
+        if redraw {
+            app.settle();
+            draw(&app, &theme, &mut terminal)?;
+            redraw = false;
+        }
+        let (effect, changed) = tokio::select! {
             event = input.events.recv() => match event {
                 Some(Ok(event)) => {
                     let mut effect = handle_event(&mut app, &event);
@@ -328,55 +327,54 @@ async fn run_async(
                         let next = next.context("reading terminal input")?;
                         effect = handle_event(&mut app, &next);
                     }
-                    effect
+                    (effect, true)
                 }
                 Some(Err(error)) => return Err(error).context("reading terminal input"),
-                None => Effect::Quit,
+                None => (Effect::Quit, false),
             },
             notice = reload_rx.recv() => {
-                if let Some(raw) = notice {
-                    // One quiet period turns a burst of writes into one
-                    // change per file (ADR 0015 `follow.hint-debounce`).
-                    // The wait is its own arm below, so input keeps
-                    // flowing while the burst settles.
-                    batch.push(raw, hint_debounce);
-                    while let Some(raw) = reload_rx.try_recv() {
-                        batch.push(raw, hint_debounce);
-                    }
-                }
-                Effect::None
+                let changed = notice.is_some_and(|raw| {
+                    enqueue_raws(
+                        &mut app,
+                        &mut doc_watcher,
+                        &mut reload_rx,
+                        &mut batch,
+                        raw,
+                        hint_debounce,
+                    )
+                });
+                // Raw notices only fill the debounce batch. They do not
+                // redraw a frame whose observable state has not changed.
+                (Effect::None, changed)
             }
             () = batch.settled() => {
-                let mut events =
-                    batch.take(|path| app.last_seen_fingerprint(path), app.max_file_bytes());
-                events.retain(|event| event.path().is_none_or(|path| doc_watcher.is_target(path)));
-                app.on_events(events);
-                Effect::None
+                (Effect::None, apply_batch(&mut app, &mut doc_watcher, &mut batch))
             }
             () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
                 app.tick();
-                Effect::None
+                (Effect::None, true)
             }
             walked = app.next_walk() => {
                 app.on_walked(walked);
-                Effect::None
+                (Effect::None, true)
             }
             envelope = request_rx.recv() => {
                 if let Some(socket::Envelope { request, reply }) = envelope {
                     let response = app.handle_request(request);
                     let _ = reply.send(response);
                 }
-                Effect::None
+                (Effect::None, true)
             }
             _ = sigterm.recv() => {
                 tracing::info!("SIGTERM; quitting");
-                Effect::Quit
+                (Effect::Quit, false)
             }
             _ = sighup.recv() => {
                 tracing::info!("SIGHUP; quitting");
-                Effect::Quit
+                (Effect::Quit, false)
             }
         };
+        redraw |= changed;
         if perform(&mut app, &input, &mut terminal, effect)
             .await?
             .is_break()
@@ -389,27 +387,109 @@ async fn run_async(
     Ok(())
 }
 
-/// The watches a viewer starts with: the root, the thread store's
-/// directory (ADR 0024), and the other worktrees' git paths (ADR 0070).
+/// Draw one observable state and retain it for a possible crash report.
+fn draw(
+    app: &App,
+    theme: &crate::app::draw::Theme,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> anyhow::Result<()> {
+    crash::observe(app.status_lines());
+    terminal
+        .draw(|frame| crate::app::draw::draw(frame, app, theme))
+        .context("draw failed")?;
+    Ok(())
+}
+
+/// Keep narrow coverage for every loaded file, including ignored ones.
+fn sync_loaded_watches(app: &App, watcher: &mut watch::Watcher) {
+    let loaded = app.loaded_abs_paths();
+    watcher.follow(loaded.iter().map(std::path::PathBuf::as_path));
+}
+
+/// Apply one debounced watcher batch and repair structural watch changes.
+fn apply_batch(app: &mut App, watcher: &mut watch::Watcher, batch: &mut watch::Batch) -> bool {
+    let mut events = batch.take(|path| app.last_seen_fingerprint(path), app.max_file_bytes());
+    events.retain(|event| event.path().is_none_or(|path| watcher.is_target(path)));
+    let sync = watcher.needs_root_sync(&events);
+    let mut changed = !events.is_empty();
+    app.on_events(events);
+    if sync {
+        let complete = app.sync_workspace_watches(watcher);
+        changed |= app.set_watching_root(complete && watcher.coverage_complete());
+    }
+    changed
+}
+
+/// Queue one ready burst without drawing for each raw notification.
+fn enqueue_raws(
+    app: &mut App,
+    watcher: &mut watch::Watcher,
+    incoming: &mut watch::Raws,
+    batch: &mut watch::Batch,
+    first: watch::Raw,
+    debounce: Duration,
+) -> bool {
+    let mut raws = vec![first];
+    while let Some(raw) = incoming.try_recv() {
+        raws.push(raw);
+    }
+    let mut changed = false;
+    let mut synthetic = Vec::new();
+    for raw in raws {
+        let arrived = match &raw {
+            watch::Raw::Create(path)
+            | watch::Raw::RenameTo(path)
+            | watch::Raw::Rename { to: path, .. } => Some(path),
+            _ => None,
+        };
+        if let Some(path) = arrived {
+            let (created, complete) = app.watch_created(watcher, path);
+            synthetic.extend(created);
+            if !complete {
+                changed |= app.set_watching_root(false);
+            }
+        }
+        if watcher.accepts(&raw) && app.raw_is_relevant(&raw) {
+            batch.push(raw, debounce);
+        }
+    }
+    for raw in synthetic {
+        if watcher.accepts(&raw) && app.raw_is_relevant(&raw) {
+            batch.push(raw, debounce);
+        }
+    }
+    changed
+}
+
+/// The watches a viewer starts with: visible workspace directories, the
+/// thread and agent stores, and worktree Git paths.
 fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) {
-    let watching = doc_watcher.watch_root(app.workspace().root());
-    app.set_watching_root(watching);
-    doc_watcher.watch_store(app.store_path());
+    let watching = app.sync_workspace_watches(doc_watcher);
+    let mut state: Vec<std::path::PathBuf> = app
+        .store_path()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .collect();
+    state.push(app.agents_path());
+    doc_watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
     app.take_rewatch();
     doc_watcher.watch_worktrees(app.worktree_watch_paths());
+    app.set_watching_root(watching && doc_watcher.coverage_complete());
 }
 
 /// Move the watcher after the app re-rooted, or the worktree set
 /// changed (ADR 0070).
-fn rewatch(app: &mut App, doc_watcher: &mut watch::Watcher) {
+fn rewatch(app: &mut App, doc_watcher: &mut watch::Watcher) -> bool {
     let Some(rewatch) = app.take_rewatch() else {
-        return;
+        return false;
     };
-    if let Some(root) = rewatch.root {
-        let watching = doc_watcher.watch_root(&root);
-        app.set_watching_root(watching);
+    let mut changed = false;
+    if rewatch.root.is_some() {
+        let watching = app.sync_workspace_watches(doc_watcher);
+        changed |= app.set_watching_root(watching && doc_watcher.coverage_complete());
     }
     doc_watcher.watch_worktrees(&rewatch.extras);
+    changed
 }
 
 /// Do what a key asked of the loop; `Break` when the viewer is to quit.

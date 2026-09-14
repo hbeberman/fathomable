@@ -223,6 +223,12 @@ whoever answered before; a delivery is keyed on that act's time.
   agent. `:status` lists the subscribers; the thread pane header says
   `watched by name (type)` under a watched thread.
 
+  Amended 2026-09-13: the viewer caches the register's subscribers and
+  watch labels, reloading them when `agents.jsonl` changes or the next
+  subscriber reaches `agents.expire-after`. Drawing `:status` and
+  recording crash state perform no register I/O. Expiry is routine state
+  reduction and is not logged once per replayed record.
+
 ### Tools
 
 | Tool | Change |

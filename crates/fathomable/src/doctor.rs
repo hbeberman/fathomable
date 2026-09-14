@@ -101,7 +101,7 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
         }
     }
 
-    ok &= workspace_checks(dirs);
+    ok &= workspace_checks(dirs, &config);
 
     let records = Record::list(dirs);
     let live = records.iter().filter(|record| record.is_alive()).count();
@@ -120,7 +120,7 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
 }
 
 /// The git and snapshot checks for the workspace around the cwd.
-fn workspace_checks(dirs: &XdgDirs) -> bool {
+fn workspace_checks(dirs: &XdgDirs, config: &Config) -> bool {
     let mut ok = true;
     match std::env::current_dir()
         .map_err(|error| error.to_string())
@@ -165,7 +165,7 @@ fn workspace_checks(dirs: &XdgDirs) -> bool {
                 }
             }
         }
-        ok &= watch_budget(&mut workspace);
+        ok &= watch_budget(&mut workspace, &config.watch().ignore);
         if let Some(line) = worktrees_line(&workspace) {
             println!("  ok    {line}");
         }
@@ -242,45 +242,35 @@ fn worktrees_line(workspace: &Workspace) -> Option<String> {
     ))
 }
 
-/// How many crash reports a past run left behind (ADR 0022).
-/// The recursive workspace watch costs one inotify watch per directory,
-/// ignored ones included (ADR 0015): how many the root holds, against
-/// the user's budget, so a watch that fails is not a mystery. Fails when
-/// the tree alone exhausts the budget.
-fn watch_budget(workspace: &mut Workspace) -> bool {
-    use fathomable_core::workspace::EntryKind;
+/// Count the visible directory watches against the user's inotify budget.
+fn watch_budget(workspace: &mut Workspace, extra_ignores: &[String]) -> bool {
+    use fathomable_core::follow::Ignore;
 
+    let ignore = Ignore::new(extra_ignores).unwrap_or_default();
     let root = workspace.root().to_path_buf();
-    let dirs = count_dirs(&root);
-    let mut ignored = 0;
-    let mut heavy: Vec<(usize, String)> = Vec::new();
-    if let Ok(read) = fs::read_dir(&root) {
-        for item in read.flatten() {
-            let name = item.file_name().to_string_lossy().into_owned();
-            let is_dir = item.file_type().is_ok_and(|kind| kind.is_dir());
-            if !is_dir || name == ".git" || !workspace.is_ignored(Path::new(&name), EntryKind::Dir)
-            {
-                continue;
-            }
-            let under = count_dirs(&item.path());
-            ignored += under;
-            heavy.push((under, name));
+    let mut dirs = 0;
+    let mut pending = vec![Path::new("").to_path_buf()];
+    while let Some(relative) = pending.pop() {
+        if !relative.as_os_str().is_empty() && ignore.is_tree_ignored(&relative) {
+            continue;
         }
+        dirs += 1;
+        let Ok(entries) = workspace.list_dir(&relative) else {
+            continue;
+        };
+        pending.extend(
+            entries
+                .into_iter()
+                .filter(|entry| entry.is_dir() && !entry.is_symlink())
+                .map(|entry| relative.join(entry.name()))
+                .filter(|path| !ignore.is_tree_ignored(path)),
+        );
     }
-    heavy.sort_by(|a, b| b.cmp(a));
-    let heavy: Vec<String> = heavy
-        .iter()
-        .take(3)
-        .map(|(_, name)| format!("{name}/"))
-        .collect();
-    let summary = if ignored > 0 {
-        format!(
-            "{dirs} directories to watch ({ignored} under ignored paths: {})",
-            heavy.join(", ")
-        )
-    } else {
-        format!("{dirs} directories to watch")
-    };
+    let summary = format!(
+        "{dirs} visible director{} to watch under {} (ignored trees skipped)",
+        if dirs == 1 { "y" } else { "ies" },
+        root.display()
+    );
     let budget = fs::read_to_string("/proc/sys/fs/inotify/max_user_watches")
         .ok()
         .and_then(|text| text.trim().parse::<usize>().ok());
@@ -291,7 +281,7 @@ fn watch_budget(workspace: &mut Workspace) -> bool {
         }
         Some(max) => {
             println!(
-                "  FAIL  {summary}, but inotify allows {max} per user: raise fs.inotify.max_user_watches, or the viewer follows the open file only"
+                "  FAIL  {summary}, but inotify allows {max} per user: raise fs.inotify.max_user_watches, or live updates have partial coverage"
             );
             false
         }
@@ -300,24 +290,6 @@ fn watch_budget(workspace: &mut Workspace) -> bool {
             true
         }
     }
-}
-
-/// `root` and every directory under it, symlinks not followed.
-fn count_dirs(root: &Path) -> usize {
-    let mut count = 1;
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(read) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for item in read.flatten() {
-            if item.file_type().is_ok_and(|kind| kind.is_dir()) {
-                count += 1;
-                pending.push(item.path());
-            }
-        }
-    }
-    count
 }
 
 fn crash_reports(log_dir: &Path) -> usize {

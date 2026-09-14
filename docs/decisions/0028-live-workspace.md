@@ -12,7 +12,7 @@ tags:
 
 # 0028 Live workspace
 
-Status: accepted (2026-08-28)
+Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded watches)
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -55,10 +55,13 @@ Settled in a question round on 2026-08-28; the choices are below.
   collapsed listing kept its stale entries when it was re-expanded and
   a new directory never appeared at all). The cursor and expanded set
   survive as they do for `R`.
-- Events on paths the tree would not show — the ignore rules of the
-  workspace plus `follow.ignore` — never trigger a rebuild, so build
-  output churning under `target/` is free. With `I` showing ignored
-  entries the filter is `All` and such events count.
+- Paths the tree would not normally show — the ignore rules of the
+  workspace plus `watch.ignore` — are not watched, so build output
+  churning under `target/` is free at the kernel, event-loop, and render
+  layers. `Space F g` can browse ignored entries from a directory
+  snapshot but does not recursively live-monitor ignored trees. An
+  ignored file that has been opened is watched narrowly and still
+  reloads, including while another file is in front.
 - `R` stays as the manual re-read (it also drops the picker indexes);
   a new file is one `Space f` away because an automatic refresh patches
   the picker indexes (2026-09-06, `app/file_index.rs`): a path that
@@ -112,6 +115,19 @@ Settled in a question round on 2026-08-28; the choices are below.
   scroll, cursor, and threads intact, the pill shows the new name, and
   a notice reads `renamed to NEW`.
 - A directory rename moves every thread under it by prefix.
+
+### Rendering follows observable state
+
+- A raw filesystem notification only joins the debounce batch. It does
+  not redraw the terminal. A settled relevant batch, input, a timer whose
+  visible deadline arrived, a status-walk result, or a viewer socket
+  request may draw one frame.
+- Subscriber and watch labels are cached in the viewer. The agent
+  register is reloaded when `agents.jsonl` changes or the next subscriber
+  expires, never as part of drawing `:status` or recording crash state.
+- A blocked auto-jump has no polling timer while a popup, selection,
+  review list, or diff prevents it from moving. The user event that clears
+  the guard schedules the next evaluation.
 
 ## Consequences
 

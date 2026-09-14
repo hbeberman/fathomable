@@ -81,3 +81,4 @@ supersede rather than edit history.
 - [0075 The header names its counts](0075-the-header-names-its-counts.md)
 - [0076 Threads fold in the list](0076-threads-fold-in-the-list.md)
 - [0077 Threads nest under their file](0077-threads-nest-under-their-file.md)
+- [0078 All keys stays reachable](0078-all-keys-stays-reachable.md)

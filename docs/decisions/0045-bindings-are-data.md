@@ -15,6 +15,11 @@ Status: accepted (2026-09-03)
 
 Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the which-key menu and `Space ?` take clicks and hover, pane-header hints carry their action and take clicks, and `gx`, `gy`, and the tree's `y` are new rows.
 
+Amended 2026-09-14 by
+[0078](0078-all-keys-stays-reachable.md): `Space ?` still derives every
+row from this table, but groups the rows into one or two responsive
+lanes and makes the complete result scrollable and filterable.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -70,7 +75,10 @@ is possible while the map is prose.
   there. The status line shows the prefix as the table spells it.
   (Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the which-key
   menu leads with a row naming the prefix and its group word, `Space c
-  · threads`, and re-renders at every level.)
+  · threads`, and re-renders at every level. Amended 2026-09-14 by
+  [0078](0078-all-keys-stays-reachable.md): help reads `BINDINGS`
+  directly, wraps into one or two lanes, and scrolls instead of creating
+  clipped columns.)
 - **Tests make it load-bearing.** Every `Action` is bound at least once;
   on each surface no sequence has two meanings and none is the start of
   another; no binding uses a zellij lock chord (`Ctrl-g p t n h s o q

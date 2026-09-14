@@ -7,6 +7,7 @@
 //! focused one, and a right-click opens a [`menu::Menu`] (ADR 0050).
 
 pub(crate) mod bindings;
+pub(crate) mod help;
 pub(crate) mod keys;
 pub(crate) mod menu;
 pub(crate) mod mouse;

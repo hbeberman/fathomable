@@ -6,8 +6,9 @@
 //! in one [`Where`]. Dispatch looks a typed sequence up with [`lookup`];
 //! a sequence that is the start of a longer binding is a prefix and the
 //! viewer waits for the rest, showing [`menu_entries`] meanwhile. The
-//! help popup renders [`help`], and a pane header asks [`hint`] how a key
-//! is spelled, so no surface can name a key the table does not bind.
+//! the help popup groups and wraps [`BINDINGS`], and a pane header asks
+//! [`hint`] how a key is spelled, so no surface can name a key the table
+//! does not bind.
 
 use std::fmt;
 
@@ -354,7 +355,8 @@ use Action as A;
 use Key as K;
 use Where as W;
 
-/// Every binding. Order is the help popup's order.
+/// Every binding. Help keeps this order within each group and for groups
+/// that do not have a preferred first-screen lane.
 pub(crate) const BINDINGS: &[Binding] = &[
     // ----- the text -----
     bind(
@@ -491,98 +493,86 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('c')]],
         A::Comment,
         "Threads",
-        "expand or fold the thread here, else comment on the selection or line",
+        "thread here, or comment",
     ),
-    bind(
-        W::View,
-        &[&[c('C')]],
-        A::NewThread,
-        "Threads",
-        "always start a new thread",
-    ),
+    bind(W::View, &[&[c('C')]], A::NewThread, "Threads", "new thread"),
     bind(
         W::View,
         &[&[c('z')]],
         A::Fold,
         "Threads",
-        "expand or fold the thread here",
+        "expand or fold thread",
     ),
     bind(
         W::View,
         &[&[c('Z')]],
         A::FoldAll,
         "Threads",
-        "expand every thread in the file, or fold them all",
+        "expand or fold all",
     ),
-    bind(
-        W::View,
-        &[&[c('r')]],
-        A::Reply,
-        "Threads",
-        "reply to the thread here",
-    ),
+    bind(W::View, &[&[c('r')]], A::Reply, "Threads", "reply"),
     bind(
         W::View,
         &[&[c('e')]],
         A::EditMessage,
         "Threads",
-        "edit the message here, when yours",
+        "edit your message",
     ),
     bind(
         W::View,
         &[&[c('o')]],
         A::ToggleResolved,
         "Threads",
-        "resolve or reopen the thread here",
+        "resolve or reopen",
     ),
     bind(
         W::View,
         &[&[c('d'), c('d')]],
         A::Delete,
         "Threads",
-        "delete the thread here",
+        "delete thread",
     ),
     bind(
         W::View,
         &[&[c(']'), c('c')]],
         A::ThreadNext,
         "Threads",
-        "next thread in the file",
+        "next thread in file",
     ),
     bind(
         W::View,
         &[&[c('['), c('c')]],
         A::ThreadPrev,
         "Threads",
-        "previous thread in the file",
+        "previous thread in file",
     ),
     bind(
         W::View,
         &[&[c(']'), c('C')]],
         A::ThreadNextAcross,
         "Threads",
-        "next thread across the workspace",
+        "next thread in workspace",
     ),
     bind(
         W::View,
         &[&[c('['), c('C')]],
         A::ThreadPrevAcross,
         "Threads",
-        "previous thread across the workspace",
+        "previous thread in workspace",
     ),
     bind(
         W::View,
         &[&[c(']'), c('r')], &[k(K::Tab)]],
         A::WaitingNext,
         "Threads",
-        "next thread waiting on you, across files",
+        "next waiting thread",
     ),
     bind(
         W::View,
         &[&[c('['), c('r')], &[k(K::BackTab)]],
         A::WaitingPrev,
         "Threads",
-        "previous thread waiting on you, across files",
+        "previous waiting thread",
     ),
     bind(
         W::View,
@@ -1569,40 +1559,10 @@ pub(crate) fn first_keys(place: Where, action: Action) -> Option<Keys> {
     own.or_else(any).and_then(|b| b.keys.first()).copied()
 }
 
-/// The help popup: one row per binding, keys joined by ` / `, under a
-/// header row per group.
-#[must_use]
-pub(crate) fn help() -> Vec<(String, String)> {
-    help_rows().into_iter().map(|(_, row)| row).collect()
-}
-
-/// The help rows with the binding each one stands for, `None` on a
-/// group header, so a click on a row can run it (ADR 0050).
-#[must_use]
-pub(crate) fn help_rows() -> Vec<(Option<&'static Binding>, (String, String))> {
-    let mut rows = Vec::with_capacity(BINDINGS.len() + 16);
-    let mut group = "";
-    for binding in BINDINGS {
-        if binding.group != group {
-            group = binding.group;
-            rows.push((None, (String::new(), group.to_owned())));
-        }
-        let keys = binding
-            .keys
-            .iter()
-            .map(|keys| spell(keys))
-            .collect::<Vec<_>>()
-            .join(" / ");
-        rows.push((Some(binding), (keys, binding.label.to_owned())));
-    }
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, help, hint, k, lookup, menu,
-        spell,
+        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu, spell,
     };
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
@@ -1874,6 +1834,5 @@ mod tests {
             Some(":")
         );
         assert_eq!(hint(Where::Draft, Action::CommandLine), None);
-        assert!(help().iter().any(|(keys, _)| keys == "j / Down"));
     }
 }

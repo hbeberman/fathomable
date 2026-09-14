@@ -26,7 +26,11 @@ unknown keys now, and `--doctor` no longer reports them. Amended
 again, and `ui.rail*` is an unknown key. Amended 2026-09-05 by
 [0059](0059-headers-and-the-key-bar.md): `ui.header` is added. Amended
 2026-09-05 by [0067](0067-the-texts-key-bar.md): `ui.hint` retires, an
-unknown key now.
+unknown key now. Amended 2026-09-14 by
+[0078](0078-all-keys-stays-reachable.md): help filtering uses the picker
+match and selection roles; the built-ins give help, pickers, key menus, and
+right-click menus the same quiet overlay treatment while keeping `ui.popup`
+and `ui.menu` independently customizable.
 
 ## Context
 
@@ -106,9 +110,9 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
 | `ui.sidebar`, `ui.sidebar.selected`, `ui.sidebar.dir` | the sidebar's background, the files pane's cursor row, directory names ([0012](0012-workspace-mode.md)); written `ui.rail*` between [0049](0049-inline-threads-and-the-rail.md) and [0057](0057-the-sidebar.md) |
-| `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, key labels (0012); the space menu drew on it before [0056](0056-the-leader-trimmed.md) |
-| `ui.menu` | the `Space` menu and the right-click menu's surface; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
-| `ui.picker.match`, `ui.picker.selected` | matched characters, selected row in pickers (0012) |
+| `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, and key labels (0012); the space menu drew on `ui.popup` before [0056](0056-the-leader-trimmed.md) |
+| `ui.menu` | the `Space` menu and the right-click menu's surface; the built-ins share its visual ground with `ui.popup`, while a custom theme may set either independently; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
+| `ui.picker.match`, `ui.picker.selected` | matched characters in pickers and help filtering, and the selected or hovered row in pickers, help, and menus (0012, [0078](0078-all-keys-stays-reachable.md)) |
 | `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
 | `thread.waiting` | gutter note cell, list rows, and tree-pane tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)); in the built-in themes `thread.open` is the hue of `thread.user` and `thread.waiting` that of `thread.agent` ([0071](0071-author-stripes.md)) |
 | `thread.focus` | the threads pane's current-file rows ([0066](0066-one-circle-language.md)); the rows of the thread the cursor is on before [0074](0074-the-bracket-marks-the-focused-thread.md) ([0033](0033-open-thread-lines.md)); `thread.line`, the background of annotated rows (0013), was removed by 0074 |
@@ -132,6 +136,20 @@ is an **error with a file location** and Fathomable refuses to start, as
 
 - `default-dark` and `default-light` are compiled into `fathomable-core`
   from `crates/fathomable-core/themes/`; nothing is written to disk.
+- The built-ins use one `overlay` palette colour for both `ui.popup` and
+  `ui.menu`, one regular-weight `key` colour for `ui.popup.key` and
+  `ui.picker.match`, and a nearby `overlay-focus` for selected or hovered
+  rows. Dark uses slate `#1b222c`, muted blue `#8faecb`, and focus
+  `#263342`; light uses `#edf2f7`, `#3e6485`, and `#dce6ef`. The dark
+  normal text, key, and subdued-info contrasts on the overlay are 10.38:1,
+  6.93:1, and 4.64:1; the light equivalents are 14.63:1, 5.54:1, and
+  4.80:1. The key remains above 4.5:1 on each focus colour.
+- Those palette names are a built-in authoring convenience, not extra schema
+  keys. A custom theme may preserve the shared treatment by setting both
+  semantic surfaces and both accent roles to its own common palette names,
+  or deliberately separate them. Because inherited styles have already been
+  resolved, overriding a palette name in a child does not recolour a parent
+  style unless the child also sets that semantic style.
 - A theme name resolves first to `$XDG_CONFIG_HOME/fathomable/themes/<name>.kdl`,
   then to a built-in, so a user file can shadow a built-in.
 - `theme "name"` in `config.kdl` picks the default; `--theme NAME` wins for

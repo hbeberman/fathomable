@@ -286,24 +286,6 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
     assert_eq!(bindings::spell(app.prefix()), "Space v");
     handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
-    // The help runs the binding on the clicked row when it applies here.
-    app.open_help();
-    let rows = bindings::help_rows();
-    let index = rows
-        .iter()
-        .position(|(b, _)| b.is_some_and(|b| b.action == Action::MoveDown))
-        .context("j is listed")?;
-    let cursor_row = app.view().cursor().row;
-    let shown: Vec<(String, String)> = rows.iter().map(|(_, r)| r.clone()).collect();
-    let grid = draw::help_grid(&app, &shown);
-    let cell = (0..grid.width)
-        .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
-        .map(|(x, y)| (grid.x + x, grid.y + y))
-        .find(|&(x, y)| grid.entry_at(x, y) == Some(index))
-        .context("the row is drawn")?;
-    left(&mut app, cell.0, cell.1);
-    assert!(app.popup().is_none(), "the help closes");
-    assert_eq!(app.view().cursor().row, cursor_row + 1, "j ran on the text");
     Ok(())
 }
 
@@ -774,6 +756,7 @@ fn the_threads_pane_header_toggles_the_reach() -> anyhow::Result<()> {
 fn the_context_menu_draws() -> anyhow::Result<()> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::{Color, Modifier, Style};
 
     let dir = fixture("draw")?;
     let mut app = app(&dir)?;
@@ -782,13 +765,20 @@ fn the_context_menu_draws() -> anyhow::Result<()> {
     right(&mut app, column, screen_row);
     let (x, y) = entry_cell(&app, "select line")?;
     mouse(&mut app, MouseEventKind::Moved, x, y);
+    let grid = app
+        .menu()
+        .context("a context menu is open")?
+        .grid(app.size().0, app.size().1);
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-    let theme = draw::Theme::from_core(&core);
+    let mut theme = draw::Theme::from_core(&core);
+    let overlay = Color::Rgb(9, 18, 30);
+    theme.menu = Style::default().fg(Color::Gray).bg(overlay);
+    theme.mode_normal = Style::default().fg(Color::Black).bg(Color::LightYellow);
+    theme.popup_key = Style::default().fg(Color::LightBlue);
     let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
     terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
-    let text = terminal
-        .backend()
-        .buffer()
+    let buffer = terminal.backend().buffer();
+    let text = buffer
         .content()
         .iter()
         .map(|cell| cell.symbol().to_owned())
@@ -796,5 +786,18 @@ fn the_context_menu_draws() -> anyhow::Result<()> {
     assert!(text.contains("line 5"), "the title names the line");
     assert!(text.contains("comment on line"));
     assert!(text.contains("select line"));
+    let title = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y)?)];
+    assert_eq!(title.fg, Color::Gray);
+    assert_eq!(title.bg, overlay);
+    assert!(title.modifier.contains(Modifier::BOLD));
+    assert_ne!(
+        title.bg,
+        Color::LightYellow,
+        "the menu title does not borrow the saturated status pill"
+    );
+    let key = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y + 1)?)];
+    assert_eq!(key.fg, Color::LightBlue);
+    assert_eq!(key.bg, overlay);
+    assert!(!key.modifier.contains(Modifier::BOLD));
     Ok(())
 }

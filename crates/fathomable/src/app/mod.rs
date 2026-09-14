@@ -192,7 +192,7 @@ impl PickerState {
 #[derive(Debug)]
 pub(crate) enum Popup {
     /// Every key binding.
-    Help,
+    Help(input::help::Help),
     /// A file, recent-document, or thread picker.
     Picker(PickerState),
     /// The draft being written in the text (ADR 0013, 0054): a popup
@@ -1515,6 +1515,7 @@ impl App {
         self.relayout();
         // Message and draft rows wrap at the new width (ADR 0049, 0054).
         self.place_stub_rows();
+        input::help::resize(self);
     }
 
     fn relayout(&mut self) {
@@ -1943,7 +1944,7 @@ impl App {
     // ----- popups -----
 
     pub(crate) fn open_help(&mut self) {
-        self.popup = Some(Popup::Help);
+        self.popup = Some(Popup::Help(input::help::Help::default()));
     }
 
     /// `:status`: the overlay of session facts (ADR 0021).

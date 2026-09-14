@@ -100,6 +100,16 @@ prefix (`g`, `[`, `]`, `Space`, `d`) shows the keys that continue it under
 a row naming the prefix (`Space c · threads`).
 `Space ?` lists every binding inside the app. Every key below is checked
 against the binding table by a test, so what is written here exists.
+At an ordinary 80-column terminal the help is a compact two-column
+grouped action list; it collapses to one column when narrow. Long keys
+and descriptions wrap, and the complete table scrolls rather than
+dropping later actions. Use `j` / `k` or `Up` / `Down` to scroll,
+`PgUp` / `PgDn` to page (`Ctrl-u` / `Ctrl-d` also work), and the mouse
+wheel when preferred. `/` filters by key spelling, action, or group;
+type and use `Backspace`, then `Enter` to apply the query and return the
+motion keys. `Esc` clears a filter and exits filter editing; a second
+`Esc` closes help. A query with no matches says so. Help never sends
+typed filter or motion keys to the document underneath.
 
 Text:
 
@@ -273,6 +283,9 @@ resolved count toggles `x`, as in the review list's header; on the
 diff header's base or target
 name opens that picker; and on the status line the waiting count opens
 the review list and the thread count focuses the threads pane.
+In `Space ?`, a click on any wrapped row runs that binding when it
+applies to the pane that had focus; filtering, scrolling, and resizing
+all update the click targets.
 
 Selecting with the mouse: drag over text for a character selection; a
 press or drag in the gutter selects whole lines; a double-click selects
@@ -707,6 +720,13 @@ and the key vocabulary are in
 of syntect's bundled themes for code colours (`--doctor` lists them); only
 their foreground colours are used, so a transparent background stays
 transparent ([0016](decisions/0016-syntax-highlighting.md)).
+The all-keys help uses `ui.popup`; `Space` prefix menus and right-click
+menus use `ui.menu`. The built-ins give the two surfaces the same
+overlay treatment, while custom and inherited themes may separate them
+or leave either transparent. All use the regular `ui.popup.key` key
+face and `ui.picker.selected` hover face. Titles and help groups use
+their active overlay foreground in bold; help uses `ui.picker.match` for
+its filter and the subdued info face for its footer.
 
 ## 8. Connect an agent
 

@@ -16,6 +16,7 @@ use fathomable_core::layout::display_width;
 
 use super::super::{App, Border, Focus, Popup};
 use super::bindings::{self, Where};
+use super::help;
 use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
 use crate::app::draw::author::THREAD_GUTTER;
@@ -207,17 +208,18 @@ fn diff_header_click(app: &mut App, column: usize) -> Effect {
     Effect::None
 }
 
-/// A click on the help popup (ADR 0050): the binding on that row runs
-/// when it applies on the focused surface; any click closes the popup.
+/// A click on the help popup (ADR 0050, ADR 0078): the binding on that
+/// wrapped row runs when it applies on the focused surface. Other cells
+/// keep help open.
 fn help_click(app: &mut App, column: usize, row: usize) -> Effect {
-    let rows = bindings::help_rows();
-    let shown: Vec<(String, String)> = rows.iter().map(|(_, row)| row.clone()).collect();
-    let grid = draw::help_grid(app, &shown);
-    let index = grid.entry_at(column, row);
-    app.close_popup();
-    let Some((Some(binding), _)) = index.and_then(|index| rows.get(index)) else {
+    let binding = help::state(app).and_then(|help| {
+        let (width, height) = app.size();
+        help.layout(width, height).binding_at(column, row)
+    });
+    let Some(binding) = binding else {
         return Effect::None;
     };
+    app.close_popup();
     let Some(place) = keys::place(app) else {
         return Effect::None;
     };
@@ -278,12 +280,17 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
         return None;
     }
     match app.popup() {
-        Some(Popup::Help) if left => Some(help_click(app, column, row)),
+        Some(Popup::Help(_)) => match kind {
+            MouseEventKind::ScrollDown => Some(help::wheel(app, WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(help::wheel(app, -WHEEL_LINES)),
+            _ if left => Some(help_click(app, column, row)),
+            _ => Some(Effect::None),
+        },
         Some(Popup::Status) if left => {
             app.close_popup();
             Some(Effect::None)
         }
-        Some(Popup::Help | Popup::Status | Popup::Picker(_)) => Some(Effect::None),
+        Some(Popup::Status | Popup::Picker(_)) => Some(Effect::None),
         _ => None,
     }
 }

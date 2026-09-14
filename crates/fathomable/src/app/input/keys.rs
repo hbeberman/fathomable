@@ -14,6 +14,7 @@ use fathomable_core::tree::{Rule, Tree};
 
 use super::super::{App, Focus, PickerKind, Popup};
 use super::bindings::{Action, Chord, Key, Match, Where, lookup};
+use super::help;
 use crate::app::view::{Effect, Mode};
 
 /// Rows a scroll key or wheel notch moves.
@@ -30,7 +31,7 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
 #[must_use]
 pub(crate) fn place(app: &App) -> Option<Where> {
     match app.popup() {
-        Some(Popup::Help | Popup::Status | Popup::Menu(_)) => None,
+        Some(Popup::Help(_) | Popup::Status | Popup::Menu(_)) => None,
         Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
         None => Some(match app.focus() {
@@ -46,6 +47,9 @@ pub(crate) fn place(app: &App) -> Option<Where> {
 }
 
 fn key_event(app: &mut App, key: KeyEvent) -> Effect {
+    if matches!(app.popup(), Some(Popup::Help(_))) {
+        return help::key(app, key);
+    }
     app.clear_message();
     app.view_mut().clear_message();
     let Some(chord) = Chord::from_event(key) else {

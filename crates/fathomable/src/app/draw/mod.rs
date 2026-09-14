@@ -45,6 +45,7 @@ use crate::app::threads::{Compose, Mark, ThreadState, author_label};
 use crate::app::view::{Mode, View};
 
 use crate::app::input::bindings;
+use crate::app::input::help;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, Menu};
 use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
@@ -255,13 +256,8 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
     draw_toasts(frame, app, theme, text_area);
     match app.popup() {
-        Some(Popup::Help) => {
-            let rows = bindings::help();
-            let grid = help_grid(app, &rows);
-            let hover = app
-                .pointer()
-                .and_then(|(column, row)| grid.entry_at(column, row));
-            draw_table(frame, theme, grid, HELP_TITLE, &rows, hover);
+        Some(Popup::Help(_)) => {
+            draw_help(frame, app, theme);
         }
         Some(Popup::Status) => {
             let rows = app.status_lines();
@@ -1436,12 +1432,6 @@ pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
     )
 }
 
-/// The help popup's grid (ADR 0050).
-pub(crate) fn help_grid(app: &App, rows: &[(String, String)]) -> Grid {
-    Grid::centred(rows, HELP_TITLE, 0, 0, app.size().0, app.pane_rows())
-}
-
-pub(crate) const HELP_TITLE: &str = " Keys (any key closes)";
 const STATUS_TITLE: &str = " Status (any key closes)";
 
 /// A Helix-style key menu in `grid` under a breadcrumb row naming the
@@ -1462,7 +1452,7 @@ fn draw_menu(
     let mut lines = Vec::with_capacity(grid.rows + 1);
     lines.push(Line::from(Span::styled(
         format!(" {title} "),
-        theme.mode_normal,
+        theme.menu.add_modifier(Modifier::BOLD),
     )));
     for r in 0..grid.rows {
         let mut spans = vec![Span::raw(" ")];
@@ -1478,11 +1468,11 @@ fn draw_menu(
             };
             spans.push(Span::styled(
                 format!("{key:>key_width$}"),
-                theme.popup_key.patch(row_style),
+                theme.menu.patch(theme.popup_key).patch(row_style),
             ));
             spans.push(Span::styled(
                 format!("  {label:<label_width$}   "),
-                row_style,
+                theme.menu.patch(row_style),
             ));
         }
         lines.push(Line::from(spans));
@@ -1518,8 +1508,184 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
     draw_menu(frame, theme, grid, menu.title(), &entries, hover);
 }
 
-/// A centred two-column popup with a title row: the key help and the
-/// status overlay.
+/// The compact all-keys help: grouped binding rows flow through one or
+/// two columns, with the footer and hit geometry owned by `input::help`.
+fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+    let Some(help) = help::state(app) else {
+        return;
+    };
+    let (width, height) = app.size();
+    let layout = help.layout(width, height);
+    let popup = Rect {
+        x: u16_of(layout.x),
+        y: u16_of(layout.y),
+        width: u16_of(layout.width),
+        height: u16_of(layout.height),
+    };
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new("").style(theme.popup), popup);
+    frame.render_widget(
+        Paragraph::new(help_title(help, &layout, theme)).style(theme.popup),
+        Rect { height: 1, ..popup },
+    );
+
+    let hovered = app
+        .pointer()
+        .and_then(|(column, row)| layout.binding_index_at(column, row));
+    for (row_index, row) in layout.rows.iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new(help_body_line(row, &layout, help.query(), hovered, theme))
+                .style(theme.popup),
+            Rect {
+                x: popup.x,
+                y: u16_of(layout.body_y + row_index),
+                width: popup.width,
+                height: 1,
+            },
+        );
+    }
+
+    for (index, footer) in layout.footer.iter().enumerate() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(" {footer}"),
+                on_surface(theme.popup, theme.info),
+            )))
+            .style(theme.popup),
+            Rect {
+                x: popup.x,
+                y: u16_of(layout.footer_y() + index),
+                width: popup.width,
+                height: 1,
+            },
+        );
+    }
+}
+
+fn help_title<'a>(help: &help::Help, layout: &help::Layout, theme: &Theme) -> Line<'a> {
+    let mut spans = vec![Span::styled(
+        " All keys",
+        theme.popup.add_modifier(Modifier::BOLD),
+    )];
+    if !help.query().is_empty() {
+        spans.push(Span::styled("  /", on_surface(theme.popup, theme.info)));
+        spans.push(Span::styled(
+            help.query().to_owned(),
+            theme.popup.patch(theme.picker_match),
+        ));
+    } else if help.filtering() {
+        spans.push(Span::styled("  /", theme.popup.patch(theme.picker_match)));
+    }
+    let position = format!(
+        "{}{}  {}/{} actions ",
+        if layout.more_above { "↑ " } else { "" },
+        if layout.more_below { "↓ more" } else { "" },
+        layout.shown_bindings,
+        layout.total_bindings
+    );
+    let left_width: usize = spans
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum();
+    let right_width = display_width(&position);
+    spans.push(Span::raw(
+        " ".repeat(layout.width.saturating_sub(left_width + right_width)),
+    ));
+    spans.push(Span::styled(position, on_surface(theme.popup, theme.info)));
+    Line::from(spans)
+}
+
+fn help_body_line<'a>(
+    row: &help::Row,
+    layout: &help::Layout,
+    query: &str,
+    hovered: Option<usize>,
+    theme: &Theme,
+) -> Line<'a> {
+    let mut spans = vec![Span::raw(" ")];
+    for (column, cell) in row.cells.iter().enumerate() {
+        if column > 0 {
+            spans.push(Span::raw(" ".repeat(layout.column_gap)));
+        }
+        let Some(cell) = cell else {
+            spans.push(Span::raw(" ".repeat(layout.column_width)));
+            continue;
+        };
+        let row_style = if cell
+            .binding()
+            .is_some_and(|binding| hovered == Some(binding))
+        {
+            theme.picker_selected
+        } else {
+            Style::default()
+        };
+        match cell {
+            help::Cell::Heading(text) => spans.push(Span::styled(
+                pad(text, layout.column_width),
+                matched_style(
+                    text,
+                    query,
+                    theme.popup.add_modifier(Modifier::BOLD),
+                    theme.picker_match,
+                    row_style,
+                ),
+            )),
+            help::Cell::Entry {
+                key,
+                label,
+                key_width,
+                ..
+            } => {
+                spans.push(Span::styled(
+                    pad(key, *key_width),
+                    matched_style(
+                        key,
+                        query,
+                        theme.popup.patch(theme.popup_key),
+                        theme.picker_match,
+                        row_style,
+                    ),
+                ));
+                spans.push(Span::styled("  ", row_style));
+                spans.push(Span::styled(
+                    pad(label, layout.column_width.saturating_sub(*key_width + 2)),
+                    matched_style(label, query, theme.popup, theme.picker_match, row_style),
+                ));
+            }
+            help::Cell::Message(text) => spans.push(Span::styled(
+                pad(text, layout.column_width),
+                on_surface(theme.popup, theme.info).patch(row_style),
+            )),
+        }
+    }
+    Line::from(spans)
+}
+
+fn pad(text: &str, width: usize) -> String {
+    format!(
+        "{text}{}",
+        " ".repeat(width.saturating_sub(display_width(text)))
+    )
+}
+
+fn matched_style(text: &str, query: &str, base: Style, matched: Style, row: Style) -> Style {
+    let style = if !query.is_empty() && text.to_lowercase().contains(&query.to_lowercase()) {
+        base.patch(matched)
+    } else {
+        base
+    };
+    style.patch(row)
+}
+
+/// Apply an accent's foreground and modifiers without allowing its
+/// background to replace the surface beneath it.
+fn on_surface(surface: Style, accent: Style) -> Style {
+    let mut style = surface.patch(accent);
+    style.bg = surface.bg;
+    style
+}
+
+/// A centred popup with a title row: the status overlay.
 fn draw_table(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -1530,8 +1696,7 @@ fn draw_table(
 ) {
     let key_width = grid.key_width;
     let label_width = grid.label_width;
-    // Rows that do not fit under the title flow into further columns, so
-    // a long table (`Space ?`) is read like a menu, not cut off.
+    // Rows that do not fit under the title flow into further columns.
     let mut lines: Vec<Line<'_>> = vec![Line::from(Span::styled(title, theme.popup_key))];
     for r in 0..grid.rows.min(rows.len()) {
         let mut spans = Vec::new();

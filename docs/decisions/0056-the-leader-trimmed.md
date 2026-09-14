@@ -24,6 +24,9 @@ and `Space w t` join the window submenu, naming the files pane and the
 threads pane; amended 2026-09-05 by [0060](0060-one-diff-two-sides.md):
 the comparisons and the checkpoint marks move to a `Space d` diff
 submenu, `Space v` is `s` / `t` / `x`, and `Space c` loses `x`.
+Amended 2026-09-14 by [0078](0078-all-keys-stays-reachable.md): help
+keeps its separate `ui.popup` role, while the built-ins give it and
+`ui.menu` the same overlay treatment.
 
 ## Context
 
@@ -128,7 +131,12 @@ settled on another.
 
 The `Space` menu and the right-click menu draw on a new theme key,
 `ui.menu`, as Helix's do; pickers, the help, and the status popup stay
-on `ui.popup`. The built-in themes give it a cool slate ground
+on `ui.popup`. (Amended 2026-09-14 by
+[0078](0078-all-keys-stays-reachable.md): the semantic split remains,
+but the built-ins give `ui.popup` and `ui.menu` the same visual ground.
+With [0011](0011-theme-schema.md)'s 2026-09-14 amendment this supersedes
+the exact menu grounds and bold yellow keys described next; that text
+records the original 0056 palette.) The built-in themes give it a cool slate ground
 (`#222a36` dark, `#e3e9f2` light) that reads as an overlay against
 the grey status line and lifts the yellow keys. A terminal cell has no
 alpha, so translucency is not a thing the viewer can draw; a theme that

@@ -374,3 +374,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     one level as the files pane nests, in file scope too; and the
     list's file row draws the cursor bar while the cursor is on one of
     its threads ([0077](decisions/0077-threads-nest-under-their-file.md)).
+69. **All keys stays reachable.** `Space ?` is a compact grouped action
+    list: two columns at an ordinary terminal, one when narrow, with
+    wrapped descriptions, keyboard and wheel scrolling, key-and-word
+    filtering, no-match feedback, current-layout click targets, and the
+    built-ins' shared overlay treatment through separate popup and menu
+    roles; every row still comes from the binding table
+    ([0078](decisions/0078-all-keys-stays-reachable.md)).

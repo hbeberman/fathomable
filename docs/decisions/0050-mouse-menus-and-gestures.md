@@ -31,7 +31,10 @@ draft's author row draw no hints and take none. Amended 2026-09-09
 by [0073](0073-the-chevron.md): the expanded thread's header draws a
 chevron that folds on a click or a double-click, and a stub draws one
 that expands the same two ways; one click on a stub only places the
-cursor.
+cursor. Amended 2026-09-14 by
+[0078](0078-all-keys-stays-reachable.md): the wheel scrolls `Space ?`,
+and clicks use its current filtered, wrapped, scrolled layout after any
+resize; help columns are no longer clipped.
 
 ## Context
 
@@ -133,7 +136,10 @@ same day; the choices are below.
   on the focused surface (its place, or `Any` on a pane), else the
   popup closes as any key closes it. A click closes `:status` too.
   Columns of the help that the terminal is too narrow to show are cut
-  off as before and cannot be clicked.
+  off as before and cannot be clicked. (Amended 2026-09-14 by
+  [0078](0078-all-keys-stays-reachable.md): no help row is cut off;
+  wrapped rows use current layout geometry, the wheel scrolls them, and
+  `Esc` rather than any key closes the popup.)
 
 ### Selection gestures
 

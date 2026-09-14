@@ -15,7 +15,8 @@ Status: accepted (2026-08-27); amended 2026-09-04 by
 **tree pane** and the module is `app/rail.rs`; the paging rule is
 unchanged. Amended 2026-09-05 by [0057](0057-the-sidebar.md): the
 column is the sidebar again, the pane is the **files pane**, and the
-module is `app/files_pane.rs`.
+module is `app/files_pane.rs`. Amended 2026-09-14: `l` / Right only
+navigates directories; `Enter` is the file-row key that gives the text focus.
 
 ## Context
 
@@ -42,6 +43,10 @@ highlight drives the pane.
   click activates the row it hits — expanding a directory or showing a
   file — but leaves focus in the tree, so clicking is paging too
   (amended 2026-08-27; a click first committed like `Enter`).
+- `l` / Right on a file does nothing, so directory navigation cannot
+  unexpectedly leave the files pane; `h` / Left still goes to its parent.
+  Descending into a directory can preview its first file, but keeps focus
+  in the files pane like other paging moves (amended 2026-09-14).
 - The wheel over the sidebar steps **one row per tick**, so a tick is a
   page turn. Every other pane keeps the three-line wheel.
 - Only a highlight the user *moved* opens a file: the key and wheel

@@ -453,7 +453,7 @@ impl Tree {
     }
 
     /// `l` / Right: expand a directory or descend into an expanded one;
-    /// on a file this is the same as [`Tree::activate`].
+    /// on a file this leaves the cursor in place without opening it.
     ///
     /// # Errors
     ///
@@ -462,10 +462,10 @@ impl Tree {
         &mut self,
         workspace: &mut Workspace,
     ) -> Result<Option<Activation>, WorkspaceError> {
-        let Some(row) = self.current().cloned() else {
+        let Some(row) = self.current().filter(|row| row.is_dir).cloned() else {
             return Ok(None);
         };
-        if row.is_dir && row.expanded {
+        if row.expanded {
             if self
                 .rows
                 .get(self.cursor + 1)

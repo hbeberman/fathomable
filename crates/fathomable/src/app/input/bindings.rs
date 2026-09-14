@@ -1008,7 +1008,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('l')], &[k(K::Right)]],
         A::MoveRight,
         "Tree",
-        "expand, or open",
+        "expand directory",
     ),
     bind(
         W::Tree,

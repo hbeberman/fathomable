@@ -75,6 +75,13 @@ fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>>
         tree.activate(&mut workspace)?,
         Some(Activation::Open(PathBuf::from("src/nested/deep.rs")))
     );
+    let file_cursor = tree.cursor();
+    assert_eq!(
+        tree.expand(&mut workspace)?,
+        None,
+        "only activate opens a file"
+    );
+    assert_eq!(tree.cursor(), file_cursor, "expanding a file does not move");
 
     tree.collapse();
     assert_eq!(tree.current().map(Row::path), Some(Path::new("src/nested")));

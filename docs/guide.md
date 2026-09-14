@@ -227,7 +227,10 @@ Files pane and picker:
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` `h` `l` `Enter` | move (the highlighted file is shown), collapse, expand or open and focus |
+| `j` `k` / `Down` `Up` | move, previewing the highlighted file without leaving the files pane |
+| `h` / `Left` | collapse a directory or go to the parent |
+| `l` / `Right` | expand or descend into a directory; do nothing on a file |
+| `Enter` | open the file and focus the text; toggle a directory |
 | `gg` `ge` `G` | top / bottom |
 | `y` | copy the highlighted entry's path, relative to the root |
 | `t` | the threads pane in file scope on the highlighted file, with the keys |

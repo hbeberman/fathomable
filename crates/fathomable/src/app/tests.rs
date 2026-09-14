@@ -204,6 +204,57 @@ fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
 }
 
 #[test]
+fn files_need_enter_to_take_focus_while_l_only_navigates_directories() -> anyhow::Result<()> {
+    use crate::app::testing::{press, press_key};
+    use crossterm::event::KeyCode;
+    use fathomable_core::tree::Row;
+
+    let dir = fixture("tree-enter-only")?;
+    let mut app = app(&dir)?;
+    app.show_tree();
+    assert_eq!(
+        app.tree().and_then(Tree::current).map(Row::path),
+        Some(Path::new("docs"))
+    );
+    press(&mut app, "l");
+    assert!(
+        app.tree()
+            .and_then(Tree::current)
+            .is_some_and(Row::expanded)
+    );
+    press_key(&mut app, KeyCode::Right);
+    assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+    assert_eq!(
+        app.focus(),
+        Focus::Tree,
+        "descending previews without taking focus"
+    );
+    let cursor = app.view().cursor();
+    for key in [KeyCode::Char('l'), KeyCode::Right] {
+        press_key(&mut app, key);
+        assert_eq!(app.focus(), Focus::Tree, "a file stays in the file list");
+        assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+        assert_eq!(app.view().cursor(), cursor);
+    }
+    press(&mut app, "h");
+    assert_eq!(
+        app.tree().and_then(Tree::current).map(Row::path),
+        Some(Path::new("docs"))
+    );
+    press(&mut app, "h");
+    assert!(
+        app.tree()
+            .and_then(Tree::current)
+            .is_some_and(|row| !row.expanded())
+    );
+    press(&mut app, "ll");
+    press_key(&mut app, KeyCode::Enter);
+    assert_eq!(app.focus(), Focus::View, "Enter commits focus to the text");
+    assert_eq!(app.current_path(), Path::new("docs/guide.md"));
+    Ok(())
+}
+
+#[test]
 fn ge_goes_to_the_end_like_g_in_the_tree_and_the_view() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

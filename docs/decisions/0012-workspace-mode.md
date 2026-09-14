@@ -16,7 +16,8 @@ tags:
 
 # 0012 Workspace mode
 
-Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload)
+Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
+amended 2026-09-14 (`l` / Right is directory navigation only).
 
 Selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
 files and all picker results use shared active and remembered list
@@ -70,7 +71,7 @@ choices were captured in a question round on 2026-08-26.
   closed when it starts on a file. `Space e` opens it and gives it focus,
   and `Ctrl-b` does the same for one-handed use. With the sidebar focused,
   `Space e` or `Esc` returns focus to the view and leaves the tree
-  visible; `Space E` hides it (amended 2026-09-04: and shows it again; later that day it moved to `Space p e`, [0049](0049-inline-threads-and-the-rail.md)). Opening a file from the tree also returns
+  visible; `Space E` hides it (amended 2026-09-04: and shows it again; later that day it moved to `Space p e`, [0049](0049-inline-threads-and-the-rail.md)). Confirming a file with `Enter` returns
   focus to the view. (Amended 2026-09-04 by
   [0049](0049-inline-threads-and-the-rail.md): the sidebar is the **rail**, holding
   the **tree pane** above the **threads pane** at a fixed split;
@@ -81,13 +82,15 @@ choices were captured in a question round on 2026-08-26.
 - Before a file is open the text column shows a welcome block, not a
   document: the name, the workspace root, the session id, and the keys
   that get going. It has no gutter and no cursor (2026-08-27).
-- Directories are read only when expanded (lazy). `l`/`Enter`/`Right`
-  expand or open, `h`/`Left` collapse or go to the parent, `j`/`k` move,
-  `gg`/`G` jump, a click on an entry does what `Enter` does. `R` re-reads
-  the expanded directories. Amended 2026-08-27: moving the highlight
-  onto a file also shows it in the main pane without taking focus, so the
-  tree pages the viewer; `Enter` and a click still move focus to the view
-  ([0023](0023-sidebar-paging.md)).
+- Directories are read only when expanded (lazy). `l`/`Right` expand a
+  directory or descend into an expanded one; on a file they do nothing
+  (amended 2026-09-14: they previously opened it and transferred focus).
+  `h`/`Left` collapse or go to the parent, `j`/`k` move, and `gg`/`G`
+  jump. `Enter` toggles a directory or opens a file and gives the text
+  the keys. Moving the highlight onto a file previews it without taking
+  focus; clicking a file also keeps the keys in the files pane
+  ([0023](0023-sidebar-paging.md), amended 2026-08-27). `R` re-reads the
+  expanded directories.
 - The tree shows the directory name of the root at the top; entries are
   sorted directories first, then files, case-insensitively.
 - A file that is not valid UTF-8 is not opened; the status line says why.

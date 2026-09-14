@@ -19,6 +19,14 @@ tags:
 
 Status: accepted (2026-09-11)
 
+Focus amended 2026-09-14 by [0079](0079-list-focus-language.md): the
+review's ancestor-file bar is muted info-colour context, not a yellow
+active cursor. Selected rows use the shared active or remembered list
+treatment, the thread header staying selected alongside its message;
+the threads pane gains the same active bar.
+This supersedes the bright ancestor-file bar and pane-without-bar rules
+below, not the nest or the independent current-file tint.
+
 ## Context
 
 The review list ([0066](0066-one-circle-language.md),

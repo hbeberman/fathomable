@@ -381,3 +381,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     built-ins' shared overlay treatment through separate popup and menu
     roles; every row still comes from the binding table
     ([0078](decisions/0078-all-keys-stays-reachable.md)).
+70. **Shared list focus.** Files, threads, review entries, and every
+    picker share a blue active tint and bright edge bar, with a quieter
+    remembered tint while another surface owns the keys. Headers stay
+    neutral, help and menus use hover alone, and thread-state colours,
+    author stripes, and muted ancestor-file context remain independent; four
+    `ui.list.*` roles replace the old sidebar and picker selection keys
+    ([0079](decisions/0079-list-focus-language.md)).

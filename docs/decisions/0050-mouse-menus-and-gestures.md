@@ -35,6 +35,10 @@ cursor. Amended 2026-09-14 by
 [0078](0078-all-keys-stays-reachable.md): the wheel scrolls `Space ?`,
 and clicks use its current filtered, wrapped, scrolled layout after any
 resize; help columns are no longer clipped.
+Amended 2026-09-14 by [0079](0079-list-focus-language.md): help and menu
+hover uses `ui.list.hover`, never a keyboard-selection bar; overlays and
+pending prefixes deactivate underlying list highlights. The old
+`ui.picker.selected` drawing rule below is superseded.
 
 ## Context
 

@@ -815,7 +815,7 @@ mod tests {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let mut theme = draw::Theme::from_core(&core);
         let hover_bg = Color::Rgb(38, 51, 66);
-        theme.picker_selected = Style::default().bg(hover_bg);
+        theme.list_hover = Style::default().bg(hover_bg);
         let mut terminal = Terminal::new(TestBackend::new(60, 20))?;
         terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
         assert_eq!(

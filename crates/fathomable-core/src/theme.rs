@@ -179,14 +179,16 @@ pub enum Key {
     /// The background of a pane's header rows (ADR 0059).
     UiHeader,
     UiSidebar,
-    UiSidebarSelected,
+    UiListActive,
+    UiListInactive,
+    UiListCursor,
+    UiListHover,
     UiSidebarDir,
     UiPopup,
     UiPopupKey,
     /// The `Space` menu's and the right-click menu's surface (ADR 0056).
     UiMenu,
     UiPickerMatch,
-    UiPickerSelected,
     DiffPlus,
     DiffDelta,
     DiffMinus,
@@ -222,7 +224,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 40] = [
+    const NAMED: [(&'static str, Self); 42] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -235,13 +237,15 @@ impl Key {
         ("ui.warning", Self::UiWarning),
         ("ui.header", Self::UiHeader),
         ("ui.sidebar", Self::UiSidebar),
-        ("ui.sidebar.selected", Self::UiSidebarSelected),
+        ("ui.list.active", Self::UiListActive),
+        ("ui.list.inactive", Self::UiListInactive),
+        ("ui.list.cursor", Self::UiListCursor),
+        ("ui.list.hover", Self::UiListHover),
         ("ui.sidebar.dir", Self::UiSidebarDir),
         ("ui.popup", Self::UiPopup),
         ("ui.popup.key", Self::UiPopupKey),
         ("ui.menu", Self::UiMenu),
         ("ui.picker.match", Self::UiPickerMatch),
-        ("ui.picker.selected", Self::UiPickerSelected),
         ("diff.plus", Self::DiffPlus),
         ("diff.delta", Self::DiffDelta),
         ("diff.minus", Self::DiffMinus),

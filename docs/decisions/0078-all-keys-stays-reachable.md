@@ -14,6 +14,11 @@ tags:
 
 Status: accepted (2026-09-14)
 
+Amended 2026-09-14 by [0079](0079-list-focus-language.md): hover uses
+`ui.list.hover`; help and menus have no selected keyboard item or cursor
+bar, and opening them makes underlying list highlights inactive without
+changing the remembered navigation state.
+
 ## Context
 
 [0045](0045-bindings-are-data.md) made `Space ?` a rendering of the
@@ -70,7 +75,7 @@ bindings or a command palette.
   intentionally separate them or leave either transparent. Keys use
   `ui.popup.key`, each overlay's headings use its own foreground in
   bold, filter matches use `ui.picker.match`, hover uses
-  `ui.picker.selected`, and restrained secondary text uses the existing
+  `ui.list.hover`, and restrained secondary text uses the existing
   info face. Every explicit span is patched onto its active surface, and
   drawing does not force keys bold. This preserves
   [0056](0056-the-leader-trimmed.md)'s semantic surface split while

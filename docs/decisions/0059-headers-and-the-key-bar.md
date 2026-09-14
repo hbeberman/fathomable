@@ -25,6 +25,10 @@ has no sort word; the threads pane's keys sit on a bar of its own.
 Amended 2026-09-05 by [0067](0067-the-texts-key-bar.md): the text column
 has a bar of its own, and the unfocused tip reads `click or Space w l
 to focus`, the key that reaches the text column.
+Selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
+pane headers and key bars remain neutral `ui.header`; selected review
+entry headers use shared active/remembered list styles instead of the
+retired `ui.picker.selected`. Message rows keep 0071's author stripes.
 
 ## Context
 

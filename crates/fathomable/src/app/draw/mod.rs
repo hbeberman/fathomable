@@ -12,6 +12,7 @@ pub(crate) mod info;
 pub(crate) mod message;
 pub(crate) mod nest;
 mod note;
+mod selection;
 mod threads_pane;
 
 use std::fmt::Write as _;
@@ -27,7 +28,7 @@ use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
 
 use crate::app::draw::author::{
-    CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, cursor_cell, name_style, row_style,
+    CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, name_style, row_style,
 };
 use crate::app::draw::header::{
     Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
@@ -37,6 +38,7 @@ use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
 use crate::app::draw::nest::{NEST, nest_span};
 use crate::app::draw::note::note_cell;
+use crate::app::draw::selection::{Navigation, context_marker};
 use crate::app::input::bindings::Action;
 use crate::app::threads::list::{BODY_INDENT, Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
@@ -76,14 +78,16 @@ pub(crate) struct Theme {
     pub(crate) mode_select: Style,
     pub(crate) mode_input: Style,
     pub(crate) sidebar: Style,
-    pub(crate) sidebar_selected: Style,
+    pub(crate) list_active: Style,
+    pub(crate) list_inactive: Style,
+    pub(crate) list_cursor: Style,
+    pub(crate) list_hover: Style,
     pub(crate) sidebar_dir: Style,
     pub(crate) popup: Style,
     pub(crate) popup_key: Style,
     /// The `Space` menu and the right-click menu (ADR 0056).
     pub(crate) menu: Style,
     pub(crate) picker_match: Style,
-    pub(crate) picker_selected: Style,
     pub(crate) thread_open: Style,
     pub(crate) thread_resolved: Style,
     pub(crate) thread_waiting: Style,
@@ -132,13 +136,15 @@ impl Theme {
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
             sidebar: style(Key::UiSidebar),
-            sidebar_selected: style(Key::UiSidebarSelected),
+            list_active: style(Key::UiListActive),
+            list_inactive: style(Key::UiListInactive),
+            list_cursor: style(Key::UiListCursor),
+            list_hover: style(Key::UiListHover),
             sidebar_dir: style(Key::UiSidebarDir),
             popup: style(Key::UiPopup),
             popup_key: style(Key::UiPopupKey),
             menu: style(Key::UiMenu),
             picker_match: style(Key::UiPickerMatch),
-            picker_selected: style(Key::UiPickerSelected),
             thread_open: style(Key::ThreadOpen),
             thread_resolved: style(Key::ThreadResolved),
             thread_waiting: style(Key::ThreadWaiting),
@@ -575,7 +581,7 @@ fn tree_lines<'a>(
     let mut header = files_pane_header(app, title).line(theme, inner);
     header.spans.push(divider.clone());
     out.push(header);
-    let focused = app.focus() == Focus::Tree;
+    let navigation = Navigation::for_pane(app, Focus::Tree);
     let circles = app.file_circles();
     for (index, row) in tree
         .rows()
@@ -584,6 +590,10 @@ fn tree_lines<'a>(
         .skip(app.tree_scroll())
         .take(rows.saturating_sub(1))
     {
+        if inner == 0 {
+            out.push(Line::from(divider.clone()));
+            continue;
+        }
         let marker = if row.is_dir() {
             if row.expanded() { "▾ " } else { "▸ " }
         } else {
@@ -595,17 +605,13 @@ fn tree_lines<'a>(
             row.name(),
             if row.is_dir() { "/" } else { "" }
         );
-        let mut style = if row.is_dir() {
+        let style = if row.is_dir() {
             theme.sidebar_dir
         } else {
             theme.sidebar
         };
-        if index == tree.cursor() {
-            style = style.patch(theme.sidebar_selected);
-            if !focused {
-                style = style.remove_modifier(Modifier::BOLD);
-            }
-        }
+        let selection = navigation.selection(index == tree.cursor());
+        let style = theme.sidebar.patch(style).patch(selection.style(theme));
         // A queued change marks its file, and its collapsed ancestors so it
         // shows however the tree is folded (ADR 0015).
         let badge = if row.is_dir() {
@@ -617,24 +623,32 @@ fn tree_lines<'a>(
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
-        if tail_width == 0 || inner <= tail_width + 1 {
+        let content_width = inner.saturating_sub(1);
+        if tail_width == 0 || content_width <= tail_width + 1 {
             tail.clear();
             tail_width = 0;
         }
-        let name = fit(&text, inner - tail_width).trim_end().to_owned();
+        let name = fit(&text, content_width - tail_width).trim_end().to_owned();
         // The git letter takes the gutter column ahead of the indent, which
         // is the name's leading space; a sidebar too narrow to hold any of
         // the name has no such column to take.
         let letter = letter.filter(|_| !name.is_empty());
         let used = display_width(&name) + tail_width;
-        let mut spans = match letter {
-            Some(letter) => vec![letter, Span::styled(name[1..].to_owned(), style)],
-            None => vec![Span::styled(name, style)],
-        };
+        let mut spans = vec![selection.marker(theme)];
+        match letter {
+            Some(letter) => {
+                spans.push(letter);
+                spans.push(Span::styled(name[1..].to_owned(), style));
+            }
+            None => spans.push(Span::styled(name, style)),
+        }
         spans.extend(tail);
-        spans.push(Span::styled(" ".repeat(inner.saturating_sub(used)), style));
+        spans.push(Span::styled(
+            " ".repeat(content_width.saturating_sub(used)),
+            style,
+        ));
         spans.push(divider.clone());
-        out.push(Line::from(spans));
+        out.push(Line::from(spans).style(style));
     }
     while out.len() < rows {
         out.push(Line::from(vec![
@@ -1467,7 +1481,7 @@ fn draw_menu(
                 break;
             };
             let row_style = if hover == Some(index) {
-                theme.picker_selected
+                theme.list_hover
             } else {
                 Style::default()
             };
@@ -1620,7 +1634,7 @@ fn help_body_line<'a>(
             .binding()
             .is_some_and(|binding| hovered == Some(binding))
         {
-            theme.picker_selected
+            theme.list_hover
         } else {
             Style::default()
         };
@@ -1711,7 +1725,7 @@ fn draw_table(
                 break;
             };
             let row_style = if hover == Some(index) {
-                theme.picker_selected
+                theme.list_hover
             } else {
                 Style::default()
             };
@@ -1753,7 +1767,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
             theme.info,
         ),
     ])];
-    let inner = usize::from(width).saturating_sub(2);
+    let inner = usize::from(width);
     for (index, m) in picker
         .matches()
         .iter()
@@ -1762,12 +1776,9 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         .take(list_rows)
     {
         let item = picker.item(m);
-        let row_style = if index == selected {
-            theme.picker_selected
-        } else {
-            Style::default()
-        };
-        let mut spans = vec![Span::styled(" ", row_style)];
+        let selection = Navigation::Active.selection(index == selected);
+        let row_style = theme.popup.patch(selection.style(theme));
+        let mut spans = vec![selection.marker(theme)];
         let mut used = 1;
         for (char_index, ch) in item.chars().enumerate() {
             let w = display_width(&ch.to_string());
@@ -1779,7 +1790,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
                 .binary_search(&u32::try_from(char_index).unwrap_or(u32::MAX))
                 .is_ok();
             let style = if matched {
-                theme.picker_match.patch(row_style)
+                on_surface(row_style, theme.picker_match)
             } else {
                 row_style
             };
@@ -1787,10 +1798,10 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
             used += w;
         }
         spans.push(Span::styled(
-            " ".repeat(inner.saturating_sub(used) + 1),
+            " ".repeat(inner.saturating_sub(used)),
             row_style,
         ));
-        lines.push(Line::from(spans));
+        lines.push(Line::from(spans).style(row_style));
     }
     frame.render_widget(Clear, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), popup);
@@ -1852,7 +1863,13 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
-        lines.push(list_row(theme, row, now, width));
+        lines.push(list_row(
+            theme,
+            row,
+            now,
+            width,
+            Navigation::for_pane(app, Focus::Review),
+        ));
     }
     if rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
@@ -1861,13 +1878,18 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+fn list_row<'a>(
+    theme: &Theme,
+    row: &Row,
+    now: u64,
+    width: usize,
+    navigation: Navigation,
+) -> Line<'a> {
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour after `▾`, or `▸` when folded (ADR 0076), the
-        // count at the edge; the cursor bar while the cursor's thread
-        // is one of the file's (ADR 0077), and bold when the cursor
-        // rests on the row (ADR 0071).
+        // count at the edge; a muted ancestor bar when the cursor is
+        // inside the file, shared selection when it rests on this row.
         Row::File {
             path,
             count,
@@ -1879,19 +1901,24 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             let count = format!("{count} ");
             let name = format!("{} {}", file_chevron(*folded), path.display());
             let name_width = width.saturating_sub(1 + display_width(&count));
-            let mut style = theme.sidebar_dir;
-            if *selected {
-                style = style.add_modifier(Modifier::BOLD);
-            }
-            Line::from(vec![
-                cursor_cell(theme, *inside),
-                Span::styled(fit_ellipsis(&name, name_width), style),
-                Span::styled(count, theme.info),
-            ])
+            let selection = navigation.selection(*selected);
+            let marker = if *selected {
+                selection.marker(theme)
+            } else {
+                context_marker(theme, *inside)
+            };
+            selection.paint(
+                theme,
+                Line::from(vec![
+                    marker,
+                    Span::styled(fit_ellipsis(&name, name_width), theme.sidebar_dir),
+                    Span::styled(count, theme.info),
+                ]),
+            )
         }
         // The header as the expanded thread in the text reads (ADR
-        // 0066), a bar on `ui.header`; the cursor's thread with the
-        // cursor bar in its first cell, in bold (ADR 0071).
+        // 0066), on `ui.header` unless selected; the cursor's thread
+        // takes the list's active or remembered selection.
         Row::Header {
             range,
             words,
@@ -1900,15 +1927,13 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             note,
             ..
         } => {
-            let line = entry_header(*range, *words, *updated, now, note.as_deref(), *selected)
+            let selection = navigation.selection(*selected);
+            let mut line = entry_header(*range, *words, *updated, now, note.as_deref(), false)
                 .line(theme, width);
-            if *selected {
-                line.patch_style(Modifier::BOLD)
-            } else {
-                line
-            }
+            line.spans[0] = selection.marker(theme);
+            selection.paint(theme, line)
         }
-        Row::Stub { .. } => stub_row(theme, row, now, width),
+        Row::Stub { .. } => stub_row(theme, row, now, width, navigation),
         // A message's rows on its author's stripe, the name in the
         // author's colour, the cursor's message with the bar down its
         // left edge and its name bold (ADR 0071), in the nest (ADR
@@ -1924,7 +1949,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         } => {
             let who = list_author(*user);
             let mut spans = vec![
-                cursor_cell(theme, *selected),
+                navigation.selection(*selected).marker(theme),
                 Span::raw(" ".repeat(NEST + 2)),
                 Span::styled(
                     author.clone(),
@@ -1954,7 +1979,7 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
             ..
         } => {
             let mut spans = vec![
-                cursor_cell(theme, *selected),
+                navigation.selection(*selected).marker(theme),
                 Span::raw(" ".repeat(BODY_INDENT - 1)),
             ];
             spans.extend(line.spans().iter().map(|span| {
@@ -1976,9 +2001,15 @@ fn list_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
 /// A folded thread's one row in the list (ADR 0076), the stub's form:
 /// the chevron after the nest (ADR 0077), the circle, the place, the
 /// newest message's author on their stripe, its short age, and its
-/// first line cut with `…`; the cursor's thread bold with the bar in
-/// its edge cell.
-fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
+/// first line cut with `…`; selected rows take the shared list tint
+/// and show the cursor bar only while the list owns navigation.
+fn stub_row<'a>(
+    theme: &Theme,
+    row: &Row,
+    now: u64,
+    width: usize,
+    navigation: Navigation,
+) -> Line<'a> {
     let Row::Stub {
         range,
         words,
@@ -1995,9 +2026,10 @@ fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         return Line::from("");
     };
     let who = list_author(*user);
+    let selection = navigation.selection(*selected);
     let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
     let mut lead = vec![
-        cursor_cell(theme, *selected),
+        selection.marker(theme),
         nest_span(),
         Span::styled(CHEVRON_RIGHT, theme.info.add_modifier(Modifier::BOLD)),
         Span::styled(
@@ -2014,7 +2046,7 @@ fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
         if *dim {
             theme.info
         } else {
-            name_style(theme, &who, *selected)
+            name_style(theme, &who, false)
         },
     ));
     lead.push(Span::styled(
@@ -2023,16 +2055,11 @@ fn stub_row<'a>(theme: &Theme, row: &Row, now: u64, width: usize) -> Line<'a> {
     ));
     let taken: usize = lead.iter().map(|span| display_width(&span.content)).sum();
     let text_style = if *dim { theme.info } else { theme.text };
-    let text_style = if *selected {
-        text_style.add_modifier(Modifier::BOLD)
-    } else {
-        text_style
-    };
     lead.push(Span::styled(
         fit_ellipsis(text, width.saturating_sub(taken)),
         text_style,
     ));
-    message_line(lead, width, row_style(theme, &who))
+    selection.paint(theme, message_line(lead, width, row_style(theme, &who)))
 }
 
 /// The arrow before a file row's path in the list and the threads pane
@@ -2154,7 +2181,7 @@ mod tests {
         }));
         assert_eq!(rows.len(), 2);
         for row in rows {
-            let line = list_row(&theme, &row, 0, 30);
+            let line = list_row(&theme, &row, 0, 30, super::Navigation::Active);
             let width: usize = line
                 .spans
                 .iter()

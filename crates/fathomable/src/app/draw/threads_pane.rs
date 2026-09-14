@@ -8,15 +8,17 @@
 //! its newest message, with the reply count and the age at the right
 //! edge; its second row is that message's first line. Both sit in the
 //! nest (ADR 0077), under the file row's path. The cursor's entry
-//! draws both rows on the selected surface, the current file's rows
-//! on the focus tint, and a folded file its row alone.
+//! draws both rows on the active or remembered selection surface,
+//! with a cursor bar only while the pane owns navigation. The current
+//! file's other rows keep their context tint; a folded file draws its row alone.
 
 use fathomable_core::layout::display_width;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::app::draw::header::{threads_pane_footer, threads_pane_header};
 use crate::app::draw::nest::NEST;
+use crate::app::draw::selection::Navigation;
 use crate::app::draw::{
     Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style, sidebar_divider_style,
 };
@@ -59,18 +61,19 @@ pub(super) fn threads_pane_lines<'a>(
         ))));
     }
     let focused = app.focus() == Focus::ThreadsPane;
+    let navigation = Navigation::for_pane(app, Focus::ThreadsPane);
     let lines = pane_lines(&entries);
     let scroll = app.threads_pane_scroll(&entries, &lines);
     let now = fathomable_core::clock::now();
     for line in lines.iter().skip(scroll).take(app.threads_pane_body_rows()) {
         let drawn = match *line {
-            PaneLine::File(index) => file_line(theme, &entries[index], inner),
+            PaneLine::File(index) => file_line(theme, &entries[index], inner, navigation),
             PaneLine::First(index) => match &entries[index] {
-                PaneRow::Thread(entry) => first_line(theme, entry, inner, now),
+                PaneRow::Thread(entry) => first_line(theme, entry, inner, now, navigation),
                 PaneRow::File { .. } => Line::from(""),
             },
             PaneLine::Second(index) => match &entries[index] {
-                PaneRow::Thread(entry) => second_line(theme, entry, inner),
+                PaneRow::Thread(entry) => second_line(theme, entry, inner, navigation),
                 PaneRow::File { .. } => Line::from(""),
             },
         };
@@ -91,18 +94,13 @@ pub(super) fn threads_pane_lines<'a>(
 }
 
 /// The row's style: the sidebar's, the focus tint on the current
-/// file's rows, the selected surface in bold on the cursor's entry.
-fn row_style(theme: &Theme, current: bool, selected: bool) -> Style {
+/// file's rows, and the shared active or remembered selection.
+fn row_style(theme: &Theme, current: bool, selected: bool, navigation: Navigation) -> Style {
     let mut style = theme.sidebar;
     if current {
         style = style.patch(theme.thread_focus);
     }
-    if selected {
-        style = style
-            .patch(theme.picker_selected)
-            .add_modifier(Modifier::BOLD);
-    }
-    style
+    style.patch(navigation.selection(selected).style(theme))
 }
 
 /// `mark` drawn over the row's background.
@@ -115,7 +113,7 @@ fn on(row: Style, mark: Style) -> Style {
 
 /// A file's row: its path in the directory colour after `▾`, or `▸`
 /// when folded (ADR 0076), the thread count at the right edge.
-fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
+fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize, navigation: Navigation) -> Line<'a> {
     let PaneRow::File {
         path,
         count,
@@ -126,11 +124,12 @@ fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
     else {
         return Line::from("");
     };
-    let style = row_style(theme, *current, *selected);
+    let style = row_style(theme, *current, *selected, navigation);
     let count = format!("{count} ");
-    let name = format!(" {} {}", file_chevron(*folded), path.display());
-    let name_width = inner.saturating_sub(display_width(&count));
+    let name = format!("{} {}", file_chevron(*folded), path.display());
+    let name_width = inner.saturating_sub(1 + display_width(&count));
     Line::from(vec![
+        navigation.selection(*selected).marker(theme),
         Span::styled(
             fit_ellipsis(&name, name_width),
             on(style, theme.sidebar_dir),
@@ -143,8 +142,14 @@ fn file_line<'a>(theme: &Theme, row: &PaneRow, inner: usize) -> Line<'a> {
 /// A thread's first row: after the nest, the circle in the state
 /// colour, the place dim, the newest author, then `↩n age` at the
 /// right edge.
-fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> Line<'a> {
-    let style = row_style(theme, entry.current(), entry.selected());
+fn first_line<'a>(
+    theme: &Theme,
+    entry: &PaneEntry,
+    inner: usize,
+    now: u64,
+    navigation: Navigation,
+) -> Line<'a> {
+    let style = row_style(theme, entry.current(), entry.selected(), navigation);
     let place = format!(" {} ", entry.place());
     let age = format_age_short(entry.updated(), now);
     let tail = if entry.replies() > 0 {
@@ -179,7 +184,8 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
         lead + display_width(&author) + display_width(&branch) + display_width(&tail),
     );
     Line::from(vec![
-        Span::styled(" ".repeat(1 + NEST), style),
+        navigation.selection(entry.selected()).marker(theme),
+        Span::styled(" ".repeat(NEST), style),
         Span::styled(
             entry.words().glyph(),
             on(style, mark_style(theme, entry.kind())),
@@ -195,15 +201,24 @@ fn first_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize, now: u64) -> L
 
 /// A thread's second row: the newest message's first line, indented
 /// under the place and cut with `…`.
-fn second_line<'a>(theme: &Theme, entry: &PaneEntry, inner: usize) -> Line<'a> {
-    let style = row_style(theme, entry.current(), entry.selected());
+fn second_line<'a>(
+    theme: &Theme,
+    entry: &PaneEntry,
+    inner: usize,
+    navigation: Navigation,
+) -> Line<'a> {
+    let style = row_style(theme, entry.current(), entry.selected(), navigation);
     let text_style = if entry.words().is_resolved() {
         on(style, theme.info)
     } else {
         style
     };
     Line::from(vec![
-        Span::styled(" ".repeat(SUMMARY_INDENT.min(inner)), style),
+        navigation.selection(entry.selected()).marker(theme),
+        Span::styled(
+            " ".repeat(SUMMARY_INDENT.min(inner).saturating_sub(1)),
+            style,
+        ),
         Span::styled(
             fit_ellipsis(entry.summary(), inner.saturating_sub(SUMMARY_INDENT)),
             text_style,
@@ -324,7 +339,11 @@ mod tests {
         app.focus_threads_pane();
         let focused = sidebar_column(&app, 100)?;
         assert!(focused[last].contains("s scope"), "{:?}", focused[last]);
-        assert_eq!(focused[top + 2], column[top + 2], "rows above do not move");
+        assert_eq!(
+            focused[top + 2].chars().skip(1).collect::<String>(),
+            column[top + 2].chars().skip(1).collect::<String>(),
+            "rows above do not move when the cursor bar appears"
+        );
         assert_eq!(focused[last - 1], column[last - 1]);
 
         app.leave_threads_pane();

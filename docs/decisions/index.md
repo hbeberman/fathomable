@@ -82,3 +82,4 @@ supersede rather than edit history.
 - [0076 Threads fold in the list](0076-threads-fold-in-the-list.md)
 - [0077 Threads nest under their file](0077-threads-nest-under-their-file.md)
 - [0078 All keys stays reachable](0078-all-keys-stays-reachable.md)
+- [0079 List focus language](0079-list-focus-language.md)

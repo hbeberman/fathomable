@@ -27,6 +27,10 @@ to file and line order, hides resolved threads until `x` shows them
 the current file, and `Enter` opens the file with the thread expanded
 in place since the thread pane is gone.
 
+Selection superseded 2026-09-14 by [0079](0079-list-focus-language.md):
+review entry rows use shared active/remembered styles; message author
+and body rows retain author stripes with a focus-aware selection bar.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

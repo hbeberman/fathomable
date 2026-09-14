@@ -22,6 +22,10 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Amended 2026-09-14 by [0079](0079-list-focus-language.md):
+`ui.sidebar.selected` is retired in favour of shared `ui.list.*` roles,
+with no compatibility alias; `ui.sidebar` and `ui.sidebar.dir` remain.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) named the left column the

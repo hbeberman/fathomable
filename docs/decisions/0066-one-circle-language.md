@@ -29,6 +29,11 @@ Status: accepted (2026-09-05). Amended 2026-09-05 by
 carries no keys; the list's bar has them. Amended 2026-09-11 by
 [0075](0075-the-header-names-its-counts.md): the headers' counts carry
 words, a `◐` thread counts on its own, and the list is `review threads`.
+Selection superseded 2026-09-14 by [0079](0079-list-focus-language.md):
+thread and file-group rows distinguish active from remembered selection
+with shared list roles, overriding current-file `thread.focus` context;
+overlays and prefixes deactivate them. Review messages keep author
+stripes, with a bright bar only while review owns the keys.
 
 ## Context
 

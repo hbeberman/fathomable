@@ -17,6 +17,15 @@ tags:
 
 Status: accepted (2026-09-09)
 
+Review selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
+selectable headers and folded rows use shared active/remembered list
+styles; message author and body rows keep their stripes and use
+`ui.list.cursor`, bright only while review owns the keys. The selected
+thread header stays selected alongside its message; the ancestor-file bar
+is muted info-colour context. This supersedes the review's
+yellow-bar and no-selected-surface rules below; inline document threads
+retain `thread.cursor`, and `ui.picker.selected` is retired everywhere.
+
 ## Context
 
 A thread is a conversation between the user and one or more agents, and

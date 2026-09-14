@@ -191,12 +191,12 @@ agent ◐ 1 resolve? ○ 3 resolved`, the counts by colour as the threads
 pane's, each with its word while the row holds them all and bare
 otherwise, then ` · path` while `f` narrows it;
 the keys below sit on a bar along the list's bottom row, and the
-header, the bar, and each thread's header draw on the `ui.header`
-surface every pane header shares; a thread's rows sit two cells in
-under its file row, in file scope too, and the file row draws the
-yellow `▎` bar in its edge cell while the cursor is on one of its
-threads, as the thread's header does while the cursor is on one of
-its messages):
+header and the bar stay on neutral `ui.header`; selectable file and
+thread headers and folded rows use the shared list selection below.
+A thread's rows sit two cells in under its file row, in file scope too.
+The selected thread's header stays selected alongside its message;
+the ancestor file's edge bar alone is muted context, unless that file
+row itself is selected):
 
 | Keys | Action |
 | --- | --- |
@@ -233,6 +233,24 @@ Files pane and picker:
 | `t` | the threads pane in file scope on the highlighted file, with the keys |
 | `Esc` | back to the text; the pane stays |
 | picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
+
+**List focus:** files, threads (including file-group rows), review entries,
+and every picker's results use a blue-tinted selected row plus a bright
+left-edge bar while they own the keys. A remembered selection has a
+quieter tint without the bright bar; pane headers remain neutral. The
+built-ins do not force bold for either state; the active bar is the
+non-colour focus cue. Review
+messages keep their author stripes instead of taking the list tint, with
+the shared cursor bar down the selected message only bright while review
+owns the keys. Its thread header stays selected alongside the message.
+Thread-state circles and text keep their colours.
+
+Help, Status, a picker, a right-click menu, a draft (Compose), and a pending
+key prefix make underlying list selections inactive. Returning the keys
+restores the active highlight without moving your position. Help and
+menus have subtle hover highlights only, never a selected keyboard item
+or bright cursor bar: their keys scroll, filter, or run shortcuts.
+See [0079](decisions/0079-list-focus-language.md).
 
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.
@@ -344,9 +362,12 @@ thread's own: the header of the thread the keys act on carries a `▎`
 bar (`thread.cursor`) there, and so does its stub while it is folded, and once your cursor is on the thread's
 own rows the message it is on carries the same bar down its left edge
 with its name in bold; from the thread's lines above, the header alone
-is barred. In the
-review list the bar is the first cell of the same rows, and of a file
-row folded over the cursor's thread. A draft is written on its own
+is barred. In the review list, `ui.list.cursor` marks the selected
+message in the first cell while the author and body keep their stripes;
+only that bar changes with focus, bright while review owns the keys.
+Selectable file/thread headers and folded rows take the shared list tint;
+the selected thread's header stays selected alongside its message, and
+the ancestor file's bar is muted info-colour context. A draft is written on its own
 warm surface (`thread.draft`) and takes your stripe on submit
 ([0071](decisions/0071-author-stripes.md)).
 Comment and reply bodies in an expanded thread render as Markdown:
@@ -468,16 +489,18 @@ line, cut with `…`. In workspace scope a row per file in the files
 pane's order sits over its threads with the count at the edge; `z`
 folds a file to `▸ path  n` and `Z` every file, the fold outliving a
 scope or file switch, and the current file's rows carry the focus
-tint. The header counts by colour (`● 2 user ● 1 agent ◐ 1 resolve? ○ 3
+tint (`thread.focus`), independent of selection and overridden by an
+actual active or remembered selected row. The header counts by colour
+(`● 2 user ● 1 agent ◐ 1 resolve? ○ 3
 resolved`, the words dropping together when the row is too narrow for
 them; the resolved count is dim while hidden), and while the
 pane has the keys its bottom row is a key bar (`s scope · x resolved ·
 z fold · Z fold all`, from the end as the column narrows). Beside the
 files pane it keeps `sidebar.split` rows (8 by default; drag its rule to
 change that for the session), and alone it takes the whole column. The
-highlighted entry is the thread under the cursor, both rows on the
-selected surface, so reading the file
-walks the pane; `j`/`k` step the cursor and the text follows, another
+highlighted entry is the thread under the cursor, both rows on the active
+or remembered list surface according to which pane owns the keys, so
+reading the file walks the pane; `j`/`k` step the cursor and the text follows, another
 file opening in workspace scope, `Enter` opens the file with the thread
 expanded, and `r` and `o` act on the highlight. A file with listed
 threads shows its most urgent circle after its name in the files pane,
@@ -569,7 +592,8 @@ counts after the name (`bin` for a binary file, which has no lines to
 count); a collapsed folder shows the most advanced letter
 and the summed counts of everything beneath it, and the root header shows
 the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
-of this within a beat.
+of this within a beat. A separate cursor cell before the git gutter holds
+the active file selection's bar; it never replaces the status letter.
 
 There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit,
@@ -724,9 +748,25 @@ The all-keys help uses `ui.popup`; `Space` prefix menus and right-click
 menus use `ui.menu`. The built-ins give the two surfaces the same
 overlay treatment, while custom and inherited themes may separate them
 or leave either transparent. All use the regular `ui.popup.key` key
-face and `ui.picker.selected` hover face. Titles and help groups use
-their active overlay foreground in bold; help uses `ui.picker.match` for
+face; help and menus use `ui.list.hover` background for hover, without a
+cursor bar. Titles and help groups use their active overlay foreground
+in bold; help uses `ui.picker.match` for
 its filter and the subdued info face for its footer.
+
+List selection uses four shared theme roles: `ui.list.active` background,
+`ui.list.inactive` background, `ui.list.cursor` foreground, and
+`ui.list.hover` background. Both built-ins distinguish these from
+`ui.header`; the exact colours are in
+[0011](decisions/0011-theme-schema.md#selection-and-built-ins).
+Review message backgrounds keep `thread.user` and `thread.agent` stripes.
+
+**Theme migration:** remove `ui.sidebar.selected` and `ui.picker.selected`
+from custom theme files, including any parent theme you maintain. They
+are unknown-key errors, not aliases. Inherit the built-in shared defaults,
+or move your selected background to `ui.list.active` and choose a quieter
+`ui.list.inactive` background, a distinct `ui.list.cursor` foreground, and
+a subtle `ui.list.hover` background. Keep `ui.picker.match`,
+`ui.sidebar`, and `ui.sidebar.dir`; no navigation settings change.
 
 ## 8. Connect an agent
 

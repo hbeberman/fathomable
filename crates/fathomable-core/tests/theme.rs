@@ -45,6 +45,46 @@ fn builtins_resolve_and_set_every_key() -> TestResult {
 }
 
 #[test]
+fn list_focus_roles_are_distinct_from_chrome_and_inherit_together() -> TestResult {
+    for name in BUILTIN_NAMES {
+        let theme = Theme::resolve(name, |_| Ok(None))?;
+        let backgrounds = [
+            Key::UiListActive,
+            Key::UiListInactive,
+            Key::UiListHover,
+            Key::UiHeader,
+        ]
+        .map(|key| theme.style(key).bg());
+        assert!(backgrounds.iter().all(Option::is_some));
+        for (index, bg) in backgrounds.iter().enumerate() {
+            assert!(
+                !backgrounds[index + 1..].contains(bg),
+                "{name}: focus is not chrome or hover"
+            );
+        }
+        assert!(theme.style(Key::UiListCursor).fg().is_some());
+        let child = Theme::resolve(
+            "child",
+            from_map(&[("child", &format!("inherits \"{name}\""))]),
+        )?;
+        for key in [
+            Key::UiListActive,
+            Key::UiListInactive,
+            Key::UiListCursor,
+            Key::UiListHover,
+        ] {
+            assert_eq!(child.style(key), theme.style(key));
+        }
+    }
+    for retired in ["ui.sidebar.selected", "ui.picker.selected"] {
+        let text = format!("colors {{ \"{retired}\" bg=\"red\" }}");
+        let error = must_fail("old", &[("old", &text)])?;
+        assert!(error.to_string().contains("unknown theme key"));
+    }
+    Ok(())
+}
+
+#[test]
 fn unknown_name_is_not_found() -> TestResult {
     let error = must_fail("nope", &[])?;
     assert!(error.is_not_found());

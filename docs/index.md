@@ -13,6 +13,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Setup guide](guide.md)
 - [Roadmap](roadmap.md)
 - [Design decisions](decisions/index.md)
+- [List focus language](decisions/0079-list-focus-language.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

@@ -104,7 +104,7 @@ mod tests {
     use crate::app::testing::{self, press};
 
     /// `Space d s` snapshots every text file, counts the new ones in a
-    /// toast, refreshes the open file's last-seen base so `gD` shows an
+    /// toast, refreshes the open file's last-seen base so `Space d D` shows an
     /// empty diff, and finds nothing new the second time (ADR 0069).
     #[test]
     fn space_d_s_marks_every_file_seen() -> anyhow::Result<()> {
@@ -131,7 +131,7 @@ mod tests {
             "binary files are skipped"
         );
         assert!(app.view().has_seen(), "the open file's base is re-read");
-        press(&mut app, "gD");
+        press(&mut app, " dD");
         let shown: Vec<String> = app
             .view()
             .layout()
@@ -139,7 +139,7 @@ mod tests {
             .iter()
             .map(fathomable_core::layout::Line::text)
             .collect();
-        assert!(app.view().diff_view(), "gD opens the last-seen diff");
+        assert!(app.view().diff_view(), "Space d D opens the last-seen diff");
         assert!(
             !shown
                 .iter()

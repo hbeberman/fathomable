@@ -10,7 +10,7 @@ use std::fs;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
@@ -280,6 +280,7 @@ async fn run_async(
 ) -> anyhow::Result<()> {
     let (mut doc_watcher, mut reload_rx) = watch::Watcher::new()?;
     let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
+    let (opener_tx, mut opener_rx) = mpsc::channel::<Result<(), String>>(16);
     let socket = serve_socket(&options.record, request_tx);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
@@ -316,19 +317,7 @@ async fn run_async(
         }
         let (effect, changed) = tokio::select! {
             event = input.events.recv() => match event {
-                Some(Ok(event)) => {
-                    let mut effect = handle_event(&mut app, &event);
-                    // Coalesce a burst (wheel flick, key repeat) into one
-                    // frame: draining here keeps the redraw from lagging
-                    // behind the queue and jumping several notches at once.
-                    while matches!(effect, Effect::None)
-                        && let Ok(next) = input.events.try_recv()
-                    {
-                        let next = next.context("reading terminal input")?;
-                        effect = handle_event(&mut app, &next);
-                    }
-                    (effect, true)
-                }
+                Some(Ok(event)) => (handle_events(&mut app, &event, &mut input.events)?, true),
                 Some(Err(error)) => return Err(error).context("reading terminal input"),
                 None => (Effect::Quit, false),
             },
@@ -365,6 +354,15 @@ async fn run_async(
                 }
                 (Effect::None, true)
             }
+            result = opener_rx.recv() => {
+                let changed = if let Some(Err(why)) = result {
+                    app.notice(why);
+                    true
+                } else {
+                    false
+                };
+                (Effect::None, changed)
+            }
             _ = sigterm.recv() => {
                 tracing::info!("SIGTERM; quitting");
                 (Effect::Quit, false)
@@ -375,10 +373,8 @@ async fn run_async(
             }
         };
         redraw |= changed;
-        if perform(&mut app, &input, &mut terminal, effect)
-            .await?
-            .is_break()
-        {
+        let flow = perform(&mut app, &input, &mut terminal, &opener_tx, effect).await?;
+        if flow.is_break() {
             break;
         }
     }
@@ -497,6 +493,7 @@ async fn perform(
     app: &mut App,
     input: &Input,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    opener: &mpsc::Sender<Result<(), String>>,
     effect: Effect,
 ) -> anyhow::Result<ControlFlow<()>> {
     match effect {
@@ -506,32 +503,79 @@ async fn perform(
             tracing::debug!(bytes = text.len(), "copied selection via OSC 52");
             clipboard::copy(&text).context("cannot write to clipboard")?;
         }
-        Effect::Open(url) => open_url(app, &url),
+        Effect::Open(url) => open_url(app, &url, opener),
         Effect::Command(command) => app.command(&command),
         Effect::EditDraft => edit_draft(app, input, terminal).await?,
     }
     Ok(ControlFlow::Continue(()))
 }
 
-/// `gx` (ADR 0050): hand `url` to `xdg-open`, the one process the
-/// viewer starts. The child is reaped on a thread of its own so the
-/// loop never waits on a browser.
-fn open_url(app: &mut App, url: &str) {
-    let spawned = Command::new("xdg-open")
+/// Hand an external URL to `xdg-open` without waiting on the browser.
+fn open_url(app: &mut App, url: &str, opener: &mpsc::Sender<Result<(), String>>) {
+    let mut command = Command::new("xdg-open");
+    command
         .arg(url)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    match spawned {
-        Ok(mut child) => {
-            thread::spawn(move || {
-                let _ = child.wait();
-            });
-            app.notice(format!("opening {url}"));
-        }
-        Err(error) => app.notice(format!("cannot open link with xdg-open: {error}")),
+        .stderr(std::process::Stdio::null());
+    match spawn_opener(command, opener.clone()) {
+        Ok(()) => app.notice(format!("asking xdg-open to open {url}")),
+        Err(error) => app.notice(format!("cannot start link opener: {error}")),
     }
+}
+
+fn spawn_opener(mut command: Command, results: mpsc::Sender<Result<(), String>>) -> io::Result<()> {
+    // Spawn the worker before the process so a thread-start failure cannot
+    // leave an unreaped child. A blocking Tokio task would delay runtime
+    // shutdown if xdg-open stays alive for the browser's lifetime.
+    thread::Builder::new()
+        .name("url-opener".to_owned())
+        .spawn(move || {
+            let result = command
+                .spawn()
+                .map_err(|error| opener_spawn_error(&error))
+                .and_then(|mut child| opener_status(child.wait()));
+            // The receiver closes when the viewer exits.
+            let _ = results.blocking_send(result);
+        })?;
+    Ok(())
+}
+
+fn opener_spawn_error(error: &io::Error) -> String {
+    if error.kind() == io::ErrorKind::NotFound {
+        "cannot open link: xdg-open not found; install xdg-utils and configure a desktop URL opener"
+            .to_owned()
+    } else {
+        format!("cannot start xdg-open: {error}")
+    }
+}
+
+fn opener_status(result: io::Result<ExitStatus>) -> Result<(), String> {
+    match result {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(format!(
+            "xdg-open failed ({status}); check your desktop URL opener"
+        )),
+        Err(error) => Err(format!("cannot wait for xdg-open: {error}")),
+    }
+}
+
+fn handle_events(
+    app: &mut App,
+    event: &Event,
+    incoming: &mut mpsc::Receiver<io::Result<Event>>,
+) -> anyhow::Result<Effect> {
+    let mut effect = handle_event(app, event);
+    // Coalesce a burst (wheel flick, key repeat) into one frame: draining
+    // here keeps the redraw from lagging behind the queue and jumping
+    // several notches at once.
+    while matches!(effect, Effect::None)
+        && let Ok(next) = incoming.try_recv()
+    {
+        let next = next.context("reading terminal input")?;
+        effect = handle_event(app, &next);
+    }
+    Ok(effect)
 }
 
 fn handle_event(app: &mut App, event: &Event) -> Effect {
@@ -549,5 +593,103 @@ fn handle_event(app: &mut App, event: &Event) -> Effect {
             Effect::None
         }
         _ => Effect::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    use std::process::Stdio;
+
+    use super::{Command, Context, Duration, io, mpsc, opener_status, spawn_opener};
+
+    async fn opener_result(command: Command) -> anyhow::Result<Result<(), String>> {
+        let (sender, mut receiver) = mpsc::channel(1);
+        spawn_opener(command, sender)?;
+        tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+            .await?
+            .context("opener closed without reporting a result")
+    }
+
+    fn shell(script: &str) -> Command {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", script])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    #[tokio::test]
+    async fn missing_opener_reports_installation_advice() -> anyhow::Result<()> {
+        let error = opener_result(Command::new("./fathomable-no-such-opener/executable"))
+            .await?
+            .err()
+            .context("missing opener should fail")?;
+        assert!(error.contains("xdg-open not found"));
+        assert!(error.contains("install xdg-utils"));
+        assert!(error.contains("desktop URL opener"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn other_spawn_errors_are_reported() -> anyhow::Result<()> {
+        let error = opener_result(Command::new("."))
+            .await?
+            .err()
+            .context("executing a directory should fail")?;
+        assert!(error.starts_with("cannot start xdg-open:"));
+        assert!(!error.contains("not found"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn successful_opener_reports_completion() -> anyhow::Result<()> {
+        assert_eq!(opener_result(shell("exit 0")).await?, Ok(()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nonzero_opener_reports_failure() -> anyhow::Result<()> {
+        let error = opener_result(shell("exit 4"))
+            .await?
+            .err()
+            .context("nonzero exit should fail")?;
+        assert!(error.contains("xdg-open failed"));
+        assert!(error.contains("exit status: 4"));
+        assert!(error.contains("desktop URL opener"));
+        Ok(())
+    }
+
+    #[test]
+    fn wait_failure_is_reported() -> anyhow::Result<()> {
+        let error = opener_status(Err(io::Error::other("wait failed")))
+            .err()
+            .context("wait failure should fail")?;
+        assert_eq!(error, "cannot wait for xdg-open: wait failed");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pending_opener_does_not_block_the_event_loop() -> anyhow::Result<()> {
+        let (reader, mut writer) = UnixStream::pair()?;
+        let mut command = shell("read line; exit 4");
+        command.stdin(Stdio::from(std::os::fd::OwnedFd::from(reader)));
+        let (sender, mut receiver) = mpsc::channel(1);
+        spawn_opener(command, sender)?;
+
+        tokio::select! {
+            result = receiver.recv() => anyhow::bail!("opener completed before release: {result:?}"),
+            () = tokio::task::yield_now() => {}
+        }
+        writer.write_all(b"release\n")?;
+        let result = tokio::time::timeout(Duration::from_secs(5), receiver.recv())
+            .await?
+            .context("opener closed without reporting its exit")?;
+        let error = result.err().context("nonzero exit should fail")?;
+        assert!(error.contains("exit status: 4"));
+        Ok(())
     }
 }

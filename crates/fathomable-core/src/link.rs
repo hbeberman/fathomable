@@ -56,7 +56,7 @@ impl Target {
 /// any other fragment is dropped. `%XX` escapes are decoded.
 #[must_use]
 pub fn parse(reference: &str) -> Option<Target> {
-    if reference.contains("://") || reference.starts_with("mailto:") {
+    if is_external(reference) {
         return None;
     }
     let (rest, fragment) = match reference.split_once('#') {
@@ -73,6 +73,27 @@ pub fn parse(reference: &str) -> Option<Target> {
         path: PathBuf::from(path),
         line,
     })
+}
+
+/// Whether a reference names an external URL rather than a workspace file.
+///
+/// URLs carry `://` or the `mailto:` scheme. Relative paths and
+/// fragment-only references are not external.
+///
+/// # Examples
+///
+/// ```
+/// use fathomable_core::link;
+///
+/// assert!(link::is_external("https://example.com/guide"));
+/// assert!(!link::is_external("docs/guide.md#setup"));
+/// ```
+#[must_use]
+pub fn is_external(reference: &str) -> bool {
+    reference.contains("://")
+        || reference
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("mailto:"))
 }
 
 /// The reference the byte at `offset` in `text` is part of: the longest
@@ -111,7 +132,7 @@ pub fn word_at(text: &str, offset: usize) -> Option<&str> {
 /// one. Quotes and brackets are in so a word like `(docs/a.md)` is found
 /// whole, then trimmed.
 fn is_path_char(c: char) -> bool {
-    c.is_alphanumeric() || "/._-~:#@+%=()[]<>'\"`".contains(c)
+    c.is_alphanumeric() || "/._-~:#@+%=?&()[]<>'\"`".contains(c)
 }
 
 const OPENERS: &str = "([<'\"`";
@@ -216,6 +237,7 @@ mod tests {
         assert_eq!(parse("https://example.com/a.md"), None);
         assert_eq!(parse("file:///tmp/a.md"), None);
         assert_eq!(parse("mailto:someone@example.com"), None);
+        assert_eq!(parse("MAILTO:someone@example.com"), None);
         assert_eq!(parse(""), None);
         assert_eq!(
             parse(":12"),

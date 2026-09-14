@@ -58,8 +58,10 @@ impl App {
 
     /// Run one reader event and switch auto-jump off if it went elsewhere.
     pub(super) fn with_navigation_watch<T>(&mut self, event: impl FnOnce(&mut Self) -> T) -> T {
+        self.sync_text_height();
         let before = self.place();
         let result = event(self);
+        self.sync_text_height();
         if self.auto && left(before, self.place()) {
             self.auto = false;
             self.push_toast("auto-jump off".to_owned());

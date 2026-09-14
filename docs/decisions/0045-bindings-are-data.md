@@ -20,6 +20,17 @@ Amended 2026-09-14 by
 row from this table, but groups the rows into one or two responsive
 lanes and makes the complete result scrollable and filterable.
 
+Amended 2026-09-14: the pending-prefix helper anchors to the whole
+viewer's bottom-right corner, above the status line, independent of
+focus. Text inside remains left-aligned. The text's `g` menu is now
+`g goto top`, `e goto bottom`, `l goto line end`, `h goto line start`,
+and `f open linked file/URL`. The line motions cross wraps as
+[0010](0010-viewer-ux.md) describes; [0052](0052-goto-file.md) unifies
+opening. `gy`/`gx` are removed; `gs`/`gd`/`gD` are removed in favor
+of `Space v s`/`Space d d`/`Space d D`, which already work from every
+pane. `Space Space` cancels only the pending Space chord; pane cycling
+is `Space w w`, and cancellation does not run the broader `Esc` action.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

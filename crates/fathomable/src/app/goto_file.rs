@@ -1,5 +1,4 @@
-//! `gf` (ADR 0052): open the file the reference under the cursor names,
-//! in the viewer, at its line.
+//! `gf` (ADR 0052): open the linked file in the viewer or URL externally.
 //!
 //! The reference is the rendered link's destination or the bare word
 //! under the cursor, as [`fathomable_core::link`] reads it. It resolves
@@ -10,51 +9,31 @@
 
 use std::path::{Path, PathBuf};
 
-use fathomable_core::link::{self, Target};
+use fathomable_core::link;
 
-use crate::app::view::View;
+use crate::app::view::Effect;
 use crate::app::{App, Focus};
 
-impl View {
-    /// The reference under the cursor: the link's destination on a
-    /// rendered link, else the path-like word around the cursor.
-    #[must_use]
-    pub(crate) fn file_reference(&self) -> Option<String> {
-        if let Some(url) = self.link_at_cursor() {
-            return Some(url.to_owned());
-        }
-        let cursor = self.cursor();
-        let line = self.layout().lines().get(cursor.row)?;
-        let text = line.text();
-        let byte = line.byte_at(cursor.col)?;
-        link::word_at(&text, byte).map(str::to_owned)
-    }
-
-    /// The file the reference under the cursor names, if it names one.
-    #[must_use]
-    pub(crate) fn file_target(&self) -> Option<Target> {
-        self.file_reference()
-            .and_then(|reference| link::parse(&reference))
-    }
-}
-
 impl App {
-    /// `gf`: open the file under the cursor at its line; a notice says
-    /// why when there is no file to open.
-    pub(crate) fn goto_file(&mut self) {
+    /// Open the file under the cursor at its line, or hand its URL to
+    /// the desktop opener; a notice explains a reference that cannot open.
+    pub(crate) fn goto_file(&mut self) -> Effect {
         let Some(reference) = self.view().file_reference() else {
-            self.notice("no file reference here");
-            return;
+            self.notice("no file or URL reference here");
+            return Effect::None;
         };
+        if link::is_external(&reference) {
+            return Effect::Open(reference);
+        }
         let Some(target) = link::parse(&reference) else {
-            self.notice(format!("not a file: {reference}; gx opens it"));
-            return;
+            self.notice(format!("not a file or URL: {reference}"));
+            return Effect::None;
         };
         let relative = match self.resolve_reference(target.path()) {
             Ok(relative) => relative,
             Err(notice) => {
                 self.notice(notice);
-                return;
+                return Effect::None;
             }
         };
         self.close_popup();
@@ -63,15 +42,17 @@ impl App {
         if self.current_path() == relative {
             self.view_mut().goto_source_line(target.line().unwrap_or(1));
         }
+        Effect::None
     }
 
-    /// Whether the reference under the cursor names a file that is there,
-    /// which is when the context menu offers `gf`.
+    /// Whether the context menu can offer a URL or an existing local file.
     #[must_use]
-    pub(super) fn file_here(&self) -> bool {
-        self.view()
-            .file_target()
-            .is_some_and(|target| self.resolve_reference(target.path()).is_ok())
+    pub(super) fn reference_here(&self) -> bool {
+        self.view().file_reference().is_some_and(|reference| {
+            link::is_external(&reference)
+                || link::parse(&reference)
+                    .is_some_and(|target| self.resolve_reference(target.path()).is_ok())
+        })
     }
 
     /// The root-relative file `path` names, read against the current
@@ -185,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn directories_schemes_and_plain_words_notice_and_stay() -> anyhow::Result<()> {
+    fn directories_and_plain_words_notice_while_urls_open_externally() -> anyhow::Result<()> {
         let (_dir, mut app) = fixture("notice")?;
         app.open(Path::new("docs/notes.md"));
         cursor_on(&mut app, 2, "src/)")?;
@@ -194,12 +175,11 @@ mod tests {
         assert_eq!(app.message.as_deref(), Some("src is a directory"));
 
         cursor_on(&mut app, 4, "example")?;
-        assert!(app.view().file_target().is_none(), "a scheme is not a file");
-        app.act(Action::GotoFile);
         assert_eq!(
-            app.message.as_deref(),
-            Some("not a file: https://example.com/x.md; gx opens it")
+            app.act(Action::GotoFile),
+            crate::app::view::Effect::Open("https://example.com/x.md".to_owned())
         );
+        assert_eq!(app.current_path(), Path::new("docs/notes.md"));
 
         app.view_mut().line_end();
         app.act(Action::GotoFile);
@@ -240,7 +220,7 @@ mod tests {
             anyhow::bail!("a right-click opens the menu");
         };
         let labels: Vec<&str> = menu.entries().iter().map(Entry::label).collect();
-        assert!(labels.contains(&"open in viewer"), "{labels:?}");
+        assert!(labels.contains(&"open linked file/URL"), "{labels:?}");
         app.close_popup();
 
         handle_mouse(

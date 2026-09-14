@@ -78,6 +78,8 @@ fn thread_hints(app: &App, place: Where, words: Words, expanded: bool) -> Vec<Hi
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use crossterm::event::KeyCode;
     use fathomable_core::annotations::{Author, LineRange};
     use fathomable_core::session::{Request, Response};
@@ -93,6 +95,72 @@ mod tests {
             .chars()
             .skip(app.sidebar_width())
             .collect())
+    }
+
+    #[test]
+    fn eof_marker_remains_above_the_bar_with_folded_and_expanded_threads() -> anyhow::Result<()> {
+        let text = (1..=60)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let dir = testing::workspace("eof-bar", &text)?;
+        let mut app = testing::AppBuilder::new(&dir)
+            .source_view()
+            .options(|mut options| {
+                options.jump.toast = std::time::Duration::ZERO;
+                options
+            })
+            .build()?;
+        app.view_mut().goto_source_line(4);
+        app.start_new_comment();
+        app.compose_insert("a thread");
+        app.compose_submit();
+
+        for keys in ["", "Z", "Z", " vs", " vs", " vt"] {
+            testing::press(&mut app, keys);
+            // Exercise keyboard arrival and wheel clamping separately.
+            for wheel in [false, true] {
+                testing::press(&mut app, "ge");
+                if wheel {
+                    app.view_mut().scroll_by(isize::MAX);
+                }
+                let rows = screen(&app)?;
+                let end = app.text_bar_row() - usize::from(app.text_bar_shown());
+                let content: String = rows[end].chars().skip(app.sidebar_width()).collect();
+                assert_eq!(content.trim(), "~", "{keys:?}: {rows:?}");
+                let previous: String = rows[end - 1].chars().skip(app.sidebar_width()).collect();
+                assert!(previous.contains("line 60"), "{previous:?}");
+                assert_eq!(app.view().cursor_source_line(), Some(119));
+                let scroll = app.view().scroll();
+                app.view_mut().scroll_by(1);
+                assert_eq!(app.view().scroll(), scroll, "only one EOF row");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn eof_marker_remains_above_diff_keys_and_after_resizing() -> anyhow::Result<()> {
+        let mut text = String::new();
+        for n in 1..=60 {
+            writeln!(text, "line {n}")?;
+        }
+        let dir = testing::workspace("eof-diff-bar", &text)?;
+        let mut app = testing::source_app(&dir)?;
+        app.view_mut()
+            .set_bases(None, None, Some("old\n".to_owned()));
+        app.toggle_head_diff();
+        for width in [80, 100] {
+            app.resize(width, 30);
+            testing::press(&mut app, "ge");
+            let rows = screen(&app)?;
+            let end = app.text_bar_row() - 1;
+            let content: String = rows[end].chars().skip(app.sidebar_width()).collect();
+            assert_eq!(content.trim(), "~", "{rows:?}");
+            assert!(bar(&app)?.contains("base"));
+            assert_eq!(app.view().cursor_source_line(), Some(60));
+        }
+        Ok(())
     }
 
     /// The bar carries the thread cursor's keys and only those that work

@@ -171,7 +171,7 @@ impl Grid {
         key_width + 2 + label_width + 3
     }
 
-    /// The which-key menu (ADR 0045) along the bottom of the pane at
+    /// The which-key menu (ADR 0045) at the bottom right of the area at
     /// `(x, y)` of `pane_width` by `pane_height`: as many columns as
     /// keep the box to eight rows.
     #[must_use]
@@ -191,9 +191,9 @@ impl Grid {
         let width = (columns * Self::column_width(key_width, label_width) + 1)
             .max(display_width(title) + 2)
             .min(pane_width);
-        let height = rows + 1;
+        let height = (rows + 1).min(pane_height);
         Self {
-            x,
+            x: x + pane_width.saturating_sub(width),
             y: (y + pane_height).saturating_sub(height),
             width,
             height,
@@ -393,12 +393,8 @@ impl App {
             }
             menu.push(Action::Delete, Action::DeleteThread, "delete thread");
         }
-        if view.link_at_cursor().is_some() {
-            menu.push(Action::CopyLink, Action::CopyLink, "copy link");
-            menu.push(Action::OpenLink, Action::OpenLink, "open link");
-        }
-        if self.file_here() {
-            menu.push(Action::GotoFile, Action::GotoFile, "open in viewer");
+        if self.reference_here() {
+            menu.push(Action::GotoFile, Action::GotoFile, "open linked file/URL");
         }
         if threads.is_empty() {
             menu.push(Action::Comment, Action::Comment, "comment on line");

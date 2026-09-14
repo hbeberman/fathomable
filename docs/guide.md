@@ -81,7 +81,7 @@ prose such as `README` and `LICENSE`) open rendered; every other file,
 `justfile` and `Makefile` included, opens as syntax-highlighted source,
 coloured by its extension or, without one, its file name. Fenced code blocks inside Markdown are
 coloured by their info string (` ```rust `). A language syntect does not
-bundle (TOML, KDL, Dockerfile among them) shows plain. `gs` still flips any
+bundle (TOML, KDL, Dockerfile among them) shows plain. `Space v s` flips any
 file between the two views.
 
 A binary file — one git would diff as binary: `-diff` or `binary` in
@@ -116,13 +116,14 @@ Text:
 | Keys | Action |
 | --- | --- |
 | `j` `k` `h` `l`, arrows | move; `h` at the first column wraps onto the end of the row above and `l` at the last onto the start of the row below |
-| `0` `$`, `Home` `End` | line start / end |
+| `0` `$`, `Home` `End` | start / end of the current rendered row |
 | `gg`, `ge` / `G` | top / bottom |
+| `gh`, `gl` | goto logical line start / end, across wrapped rows; start includes indentation, end lands on the last character |
 | `Ctrl-d` `Ctrl-u` | half page down / up |
 | `/` `?`, `n` `N`, `:noh` | search, next / previous match, clear highlight |
 | `:N` | go to source line N |
-| `gs` / `:source` | toggle raw source view |
-| `gd` / `:diff`, `gD` / `:diff seen` | the diff against `HEAD` (`HEAD · now`); against last seen; the same key again, or `Esc`, closes it |
+| `Space v s` / `:source` | toggle raw source view |
+| `Space d d` / `:diff`, `Space d D` / `:diff seen` | the diff against `HEAD` (`HEAD · now`); against last seen; the same key again, or `Esc`, closes it |
 | `h` `l`, `b` `t`, `w` in a diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the working file, last seen, `HEAD`, and the commits that touched it; ignore whitespace |
 | `D` | the next diff: `HEAD`, last seen, the newest checkpoint, then the file again, skipping what the file lacks |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
@@ -130,8 +131,7 @@ Text:
 | `]w` `[w` | next / previous worktree of the repository, wrapping ([0070](decisions/0070-one-workspace-many-worktrees.md)) |
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
-| `gy` `gx` | copy the link under the cursor; open it with `xdg-open` |
-| `gf`, Ctrl-click | open the file named under the cursor in the viewer, at its line: a Markdown link to a path, or a bare `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns |
+| `gf`, Ctrl-click | open linked file/URL: local files open in the viewer at their line, URLs through `xdg-open`; accepts Markdown links and bare references, including `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns from a file hop |
 | `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `C` | always start a new thread, on the selection or the cursor line |
@@ -151,18 +151,19 @@ The `Space` menu, from any pane:
 | `Space r` | the review list: every thread on the work in place of the document, by file then line under a row per file, resolved hidden; on the focused list, close it |
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
-| `Space w w`, `Space Space` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
+| `Space w w` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
+| `Space Space` | cancel the Space chord without changing focus, selection, or the current view |
 | `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
 | `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
 | `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
 | `Space c f` | threads: a comment on the open file as a whole, written in a block above its first line |
-| `Space v s`, `Space v t`, `Space v x` | view: toggle source view (as `gs`), thread stubs, stubs for resolved threads (hidden by default) |
-| `Space d d`, `Space d D` | diff: the diff against `HEAD`, against last seen (as `gd` `gD`) |
+| `Space v s`, `Space v t`, `Space v x` | view: toggle source view, thread stubs, stubs for resolved threads (hidden by default) |
+| `Space d d`, `Space d D` | diff: the diff against `HEAD`, against last seen |
 | `Space d r`, `Space d g` | diff: the checkpoint diff, opened on the latest checkpoint against the working file; pick a commit to diff against the working file |
 | `Space d b`, `Space d t` | diff: pick the base, the target (as `b` `t` in a diff; from outside one, against the working file) |
 | `Space d c`, `Space d C` | diff: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space d w` | diff: ignore whitespace (as `w` in a diff) |
-| `Space d s` | diff: mark every file seen, so `gD` from then on shows only what came after (a toast counts them) |
+| `Space d s` | diff: mark every file seen, so `Space d D` from then on shows only what came after (a toast counts them) |
 | `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
 | `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
 | `Space ?` | all keys |
@@ -258,10 +259,26 @@ See [0079](decisions/0079-list-focus-language.md).
 Copy uses OSC 52, so it lands in the system clipboard through most
 terminals and multiplexers.
 
+Key-chord helpers sit at the whole viewer's lower-right corner, above
+the global status line, regardless of the focused pane. Their text stays
+left-aligned inside the popup.
+
+`gf`, Ctrl-click, and the context menu use the same opener. URLs require
+`xdg-open` on the viewer host (normally supplied by `xdg-utils`) and a
+working desktop URL handler. Missing commands and failed launches are
+reported in the viewer; availability is determined by actually launching
+the opener, not guessed from terminal capabilities. Over SSH this opens
+on the remote host, not the local terminal. Fathomable does not emit OSC 8
+hyperlinks or probe support for them.
+
 All long lines wrap to the pane. Prose wraps at words; code blocks,
 source files, diffs, and very narrow tables wrap between displayed
 characters. Wrapped diff continuations align under a blank sign cell.
 Copying a selection still yields the original source text.
+
+Scrolling stops with one unnumbered `~` gutter row after the document.
+When the pane's key bar is shown, that EOF row remains visible above it.
+The cursor stays on document or thread rows, never the EOF marker.
 
 The mouse works on whichever pane it is over: the wheel scrolls the pane
 under the pointer — over the tree it steps one row per tick, showing
@@ -281,8 +298,8 @@ sidebar's divider or the threads pane's rule to resize them.
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new
 thread, copy, and clear; on a line a thread covers, expand or fold,
-reply, resolve or reopen, edit, and delete; on a link, copy or open it,
-and on a link or a path that names a file, open it in the viewer;
+reply, resolve or reopen, edit, and delete; on a URL or a path that names
+a file, `open linked file/URL`;
 on any line, comment, select, and copy. In the files pane it offers open,
 checkpoint, copy path, the three filter toggles worded as they would
 act now, and, on a file with threads, `threads` (the
@@ -429,7 +446,8 @@ view staying still: a header row with a `▾`, the state, placement, and
 watchers, then every message rendered as Markdown. The text's keys sit
 on a **key bar** that replaces the bottom text row while it has
 something to say (a thread under the cursor, a thread in the file, or a
-draft); the text does not move for it. While the text has the keys it
+draft); the viewport stays put unless its cursor would be covered, and
+scrolling keeps the last line and its `~` marker above the bar. While the text has the keys it
 names the keys of the thread the cursor is on (`r reply · e edit · o
 resolve · z fold`, or `z expand` on a stub, `e` only on your own
 message) and `Z fold all` or `Z unfold all` while the file has threads;
@@ -577,11 +595,11 @@ re-draws the corners on the outer one's line. The rows are the rendered
 ones, so a thread on a long markdown paragraph is bracketed across the rows
 it wraps to, and the blank rows between paragraphs inside a thread draw `│`.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
-for one that is staged; a new untracked file is all thin green. `gd` swaps
+for one that is staged; a new untracked file is all thin green. `Space d d` swaps
 the pane for the **diff view** with `HEAD` as its base: a unified diff of
 the file, a header naming the two sides (`HEAD · now`) with the diff keys
 at its right, the badge `DIFF HEAD` after the path, and `+added -removed`
-counts in the status line. `gd` again, or `Esc` once there is nothing
+counts in the status line. `Space d d` again, or `Esc` once there is nothing
 else to clear, returns to the file.
 
 `]g` and `[g` walk the hunks, and when a file's hunks run out they carry
@@ -601,10 +619,10 @@ the active file selection's bar; it never replaces the status letter.
 There is a second base. **Last seen** is the file as it was when you last
 looked at it: Fathomable snapshots a file when you switch away, quit,
 comment on it, or leave it alone for five seconds. It never drives the bar
-or `]g`; `gD` (or `:diff seen`) shows it in the diff view as `last seen ·
-now`, badge `DIFF seen`, and `gD` again returns to the file. `Space d s`
+or `]g`; `Space d D` (or `:diff seen`) shows it in the diff view as `last seen ·
+now`, badge `DIFF seen`, and `Space d D` again returns to the file. `Space d s`
 marks every non-ignored text file seen at once (a toast counts the
-new snapshots, `seen: 12 files`), so a later `gD` shows only what came
+new snapshots, `seen: 12 files`), so a later `Space d D` shows only what came
 after. Snapshots
 live under
 `~/.local/state/fathomable/workspaces/<hash>/seen/` and can be deleted at

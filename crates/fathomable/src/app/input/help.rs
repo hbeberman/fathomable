@@ -826,7 +826,7 @@ mod tests {
         key(&mut app, KeyCode::Esc);
 
         key(&mut app, KeyCode::Char('/'));
-        press(&mut app, "wrapping onto the row below");
+        press(&mut app, "wraps to row below");
         key(&mut app, KeyCode::Enter);
         app.resize(32, 18);
         let layout = state(&app).context("help")?.layout(32, 18);

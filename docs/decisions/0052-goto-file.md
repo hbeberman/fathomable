@@ -1,7 +1,7 @@
 ---
 type: Decision
-title: File references open in the viewer
-description: gf, a Ctrl-click, and a context-menu entry open the file a Markdown link or a bare path:line reference under the cursor names, at that line, in the viewer itself; a scheme keeps a link external for gx; the jumplist records the hop so Alt-Left returns.
+title: One action opens linked files and URLs
+description: gf, a Ctrl-click, and one context-menu entry open local file references in the viewer at their line and URLs through xdg-open; the jumplist records file hops so Alt-Left returns.
 resource: crates/fathomable-core/src/link.rs
 related_resources:
   - crates/fathomable/src/app/goto_file.rs
@@ -16,9 +16,14 @@ tags:
   - rendering
 ---
 
-# 0052 File references open in the viewer
+# 0052 One action opens linked files and URLs
 
 Status: accepted (2026-09-04)
+
+Amended 2026-09-14: `gf` is the single `open linked file/URL` action.
+Local references still open in the viewer; URLs use the desktop opener.
+`gy`, `gx`, and the separate context-menu copy/open-link entries are
+removed. The original separation described in Context is superseded.
 
 ## Context
 
@@ -42,42 +47,49 @@ bare `path:line` words as the forms, and anything with a scheme left to
 
 ## Decision
 
-- **A file reference** is either the destination of the rendered link
+- **A reference** is either the destination of the rendered link
   under the cursor or, when the cursor is not on a link, the word under
-  it: the longest run of path characters (letters, digits, `/ . _ - ~ :
-  # @ + % =`) around the cursor, with wrapping quotes and brackets and
+  it in the source: the longest run of path/URL characters (letters,
+  digits, `/ . _ - ~ : # @ + % = ? &`) around the cursor, with wrapping quotes and brackets and
   trailing sentence punctuation trimmed, so `(see docs/guide.md).` and
-  `` `view.rs:870` `` both yield their path.
+  `` `view.rs:870` `` both yield their path. Reading the source preserves
+  a reference's portions across wrapped rows and a URL's query/fragment.
 - **Parsing** (`fathomable_core::link::parse`) splits the reference into
   a path and an optional 1-based line. The line comes from a trailing
   `:LINE` or `:LINE:COL` (compiler style; the column is accepted and
   ignored) or a `#LLINE`, `#LLINE-LEND`, or `#LLINEC…` fragment (code
   host style); any other `#fragment` is dropped. `%XX` escapes in a link
-  destination are decoded. A reference with a scheme (`://`, `mailto:`)
-  is not a file; `gf` says so and points at `gx`.
+  destination are decoded. `is_external` classifies references carrying
+  `://` or `mailto:` (case-insensitive for the latter) as URLs rather
+  than files. Empty or fragment-only references do not launch an opener.
 - **Resolution** is against the current document's directory first and
   the workspace root second, as a Markdown renderer and a compiler
   message respectively would read it; an absolute path must lie inside
   the workspace. The first candidate that is a file wins; a directory or
   a path that is not there gets a notice and nothing moves. Resolution
   is the app's, since only it knows the root and the open document.
-- **`gf`** opens the file as any far move does (focus to the text, the
+- **`gf` on a file** opens it as any far move does (focus to the text, the
   popup closed, the jumplist recording where it left) and lands the
   cursor on the line, or on line 1 when the reference has none. It is a
   far move in the sense of [0049](0049-inline-threads-and-the-rail.md),
   so **`Alt-Left`** is the way back and `Alt-Right` returns; there is no
-  second stack.
+  second stack. On a URL it leaves the document and cursor in place and
+  returns an external-open effect; no jumplist entry is added.
 - **The mouse.** A **Ctrl-click** in the text places the cursor on the
   cell and runs `gf` there. Terminals forward a Ctrl-click under mouse
   capture; Shift-click stays the terminal's own escape hatch and the
-  viewer's extend-selection gesture. The **context menu** gains `open in
-  viewer` (`gf`) when the reference under the pointer resolves to a file
-  that is there, after `copy link` and `open link` on a link; any word
-  parses as a path, so the menu checks the file system where the key
-  only notices.
-- **`gx` is unchanged**: it still hands every link to `xdg-open`,
-  relative paths included, which is how a Markdown file is opened in a
-  browser or an image in a viewer.
+  viewer's extend-selection gesture. The **context menu** offers
+  `open linked file/URL` (`gf`) for an external URL or a local file that
+  exists; any word parses as a path, so the menu checks the file system
+  where the key only notices. There are no separate link-copy or
+  external-open entries.
+- **The desktop opener** is `xdg-open` on the viewer host. Its actual
+  launch detects availability; a missing command names `xdg-utils`,
+  other launch errors and unsuccessful exits are reported, and the
+  viewer remains responsive while the child is reaped. No shell
+  interprets the URL. A working desktop handler is still required;
+  launching the process does not prove that a browser displayed it.
+  OSC 8 hyperlinks and capability detection are not implemented.
 
 ## Consequences
 

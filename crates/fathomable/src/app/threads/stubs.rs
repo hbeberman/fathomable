@@ -299,6 +299,7 @@ impl App {
     /// called whenever the marks, the messages, or the toggles change.
     pub(crate) fn place_stub_rows(&mut self) {
         let blocks: Vec<StubBlock> = self.stubs().iter().map(Stub::block).collect();
+        self.sync_text_height();
         self.view_mut().set_stub_blocks(blocks);
     }
 

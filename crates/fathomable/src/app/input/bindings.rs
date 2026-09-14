@@ -219,6 +219,8 @@ actions! {
     MoveRight,
     LineStart,
     LineEnd,
+    GotoLineStart,
+    GotoLineEnd,
     Top,
     Bottom,
     HalfPageDown,
@@ -233,8 +235,6 @@ actions! {
     SelectLines,
     ExtendLine,
     Yank,
-    CopyLink,
-    OpenLink,
     GotoFile,
     CopyPath,
     Comment,
@@ -277,6 +277,7 @@ actions! {
     JumpBack,
     JumpForward,
     CommandLine,
+    CancelPrefix,
     Escape,
     Confirm,
     TreeToggle,
@@ -372,14 +373,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('h')], &[k(K::Left)]],
         A::MoveLeft,
         "Move",
-        "left, wrapping onto the row above",
+        "left, wraps to row above",
     ),
     bind(
         W::View,
         &[&[c('l')], &[k(K::Right)]],
         A::MoveRight,
         "Move",
-        "right, wrapping onto the row below",
+        "right, wraps to row below",
     ),
     bind(
         W::View,
@@ -395,13 +396,27 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Move",
         "line end",
     ),
-    bind(W::View, &[&[c('g'), c('g')]], A::Top, "Move", "top"),
+    bind(W::View, &[&[c('g'), c('g')]], A::Top, "Move", "goto top"),
     bind(
         W::View,
         &[&[c('g'), c('e')], &[c('G')]],
         A::Bottom,
         "Move",
-        "bottom",
+        "goto bottom",
+    ),
+    bind(
+        W::View,
+        &[&[c('g'), c('l')]],
+        A::GotoLineEnd,
+        "Move",
+        "goto line end",
+    ),
+    bind(
+        W::View,
+        &[&[c('g'), c('h')]],
+        A::GotoLineStart,
+        "Move",
+        "goto line start",
     ),
     bind(
         W::View,
@@ -469,24 +484,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
-        &[&[c('g'), c('y')]],
-        A::CopyLink,
-        "Links",
-        "copy the link here",
-    ),
-    bind(
-        W::View,
-        &[&[c('g'), c('x')]],
-        A::OpenLink,
-        "Links",
-        "open the link here",
-    ),
-    bind(
-        W::View,
         &[&[c('g'), c('f')]],
         A::GotoFile,
         "Links",
-        "open the file named here in the viewer, at its line",
+        "open linked file/URL",
     ),
     bind(
         W::View,
@@ -573,27 +574,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::WaitingPrev,
         "Threads",
         "previous waiting thread",
-    ),
-    bind(
-        W::View,
-        &[&[c('g'), c('s')]],
-        A::SourceView,
-        "Display",
-        "toggle source view",
-    ),
-    bind(
-        W::View,
-        &[&[c('g'), c('d')]],
-        A::DiffHead,
-        "Display",
-        "toggle the diff against HEAD",
-    ),
-    bind(
-        W::View,
-        &[&[c('g'), c('D')]],
-        A::DiffSeen,
-        "Display",
-        "toggle the diff against last seen",
     ),
     bind(
         W::View,
@@ -773,10 +753,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('w'), c('w')], &[c(' '), c(' ')]],
+        &[&[c(' '), c('w'), c('w')]],
         A::WindowNext,
         "Space menu",
         "next pane",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c(' ')]],
+        A::CancelPrefix,
+        "Space menu",
+        "cancel",
     ),
     bind(
         W::Any,
@@ -1017,13 +1004,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Tree",
         "open and focus the text",
     ),
-    bind(W::Tree, &[&[c('g'), c('g')]], A::Top, "Tree", "top"),
+    bind(W::Tree, &[&[c('g'), c('g')]], A::Top, "Tree", "goto top"),
     bind(
         W::Tree,
         &[&[c('g'), c('e')], &[c('G')]],
         A::Bottom,
         "Tree",
-        "bottom",
+        "goto bottom",
     ),
     bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
     bind(
@@ -1152,14 +1139,14 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('g'), c('g')]],
         A::Top,
         "Review list",
-        "first thread",
+        "goto top",
     ),
     bind(
         W::Review,
         &[&[c('g'), c('e')], &[c('G')]],
         A::Bottom,
         "Review list",
-        "last thread",
+        "goto bottom",
     ),
     bind(
         W::Review,
@@ -1567,6 +1554,33 @@ mod tests {
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
 
+    #[test]
+    fn goto_menu_is_navigation_only_and_policy_keys_use_space() {
+        assert_eq!(
+            menu(Where::View, &[c('g')]),
+            [
+                ("g", "goto top"),
+                ("e", "goto bottom"),
+                ("l", "goto line end"),
+                ("h", "goto line start"),
+                ("f", "open linked file/URL"),
+            ]
+            .map(|(key, label)| (key.to_owned(), label.to_owned()))
+        );
+        for suffix in ['s', 'd', 'D', 'y', 'x'] {
+            assert_eq!(lookup(Where::View, &[c('g'), c(suffix)]), Match::Miss);
+        }
+        for place in PANES {
+            for (keys, action) in [
+                ([c(' '), c('v'), c('s')], Action::SourceView),
+                ([c(' '), c('d'), c('d')], Action::DiffHead),
+                ([c(' '), c('d'), c('D')], Action::DiffSeen),
+            ] {
+                assert_eq!(lookup(place, &keys), Match::Exact(action));
+            }
+        }
+    }
+
     /// An action nobody can press is dead code the table would hide.
     #[test]
     fn every_action_is_bound() {
@@ -1715,7 +1729,7 @@ mod tests {
         assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);
         assert_eq!(
             lookup(Where::ThreadsPane, &[c(' '), c(' ')]),
-            Match::Exact(Action::WindowNext)
+            Match::Exact(Action::CancelPrefix)
         );
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }

@@ -457,7 +457,7 @@ fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
 }
 
 #[test]
-fn links_copy_and_open_from_the_keys_and_the_menu() -> anyhow::Result<()> {
+fn links_open_from_one_key_and_menu_action() -> anyhow::Result<()> {
     let dir = fixture("links")?;
     let mut app = app(&dir)?;
     let row = row_of(&app, "the guide")?;
@@ -476,28 +476,64 @@ fn links_copy_and_open_from_the_keys_and_the_menu() -> anyhow::Result<()> {
     left(&mut app, column, screen_row);
     assert_eq!(app.view().link_at_cursor(), Some(LINK));
     handle_key(&mut app, key('g'));
-    assert_eq!(
-        handle_key(&mut app, key('y')),
-        Effect::Copy(LINK.to_owned())
-    );
+    assert_eq!(handle_key(&mut app, key('y')), Effect::None);
+    handle_key(&mut app, key('g'));
+    assert_eq!(handle_key(&mut app, key('x')), Effect::None);
     handle_key(&mut app, key('g'));
     assert_eq!(
-        handle_key(&mut app, key('x')),
+        handle_key(&mut app, key('f')),
         Effect::Open(LINK.to_owned())
     );
 
     right(&mut app, column, screen_row);
     let keys: Vec<(String, String)> = entries(&app)?;
-    assert!(keys.contains(&("gy".to_owned(), "copy link".to_owned())));
-    assert!(keys.contains(&("gx".to_owned(), "open link".to_owned())));
+    assert!(keys.contains(&("gf".to_owned(), "open linked file/URL".to_owned())));
+    assert!(!keys.iter().any(|(key, _)| key == "gy" || key == "gx"));
     // A two-key entry waits for its second key.
     assert_eq!(handle_key(&mut app, key('g')), Effect::None);
     assert!(app.menu().is_some());
     assert_eq!(
-        handle_key(&mut app, key('x')),
+        handle_key(&mut app, key('f')),
         Effect::Open(LINK.to_owned())
     );
     assert!(app.menu().is_none());
+    assert_eq!(
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: u16::try_from(column)?,
+                row: u16::try_from(screen_row)?,
+                modifiers: KeyModifiers::CONTROL,
+            },
+        ),
+        Effect::Open(LINK.to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn chord_helpers_anchor_to_the_viewer_bottom_right_from_every_pane() -> anyhow::Result<()> {
+    let dir = fixture("menu-corner")?;
+    let mut app = app(&dir)?;
+    for (width, height) in [(120, 30), (60, 12), (25, 5), (10, 2), (1, 1)] {
+        app.resize(width, height);
+        for focus in [Focus::View, Focus::Tree, Focus::ThreadsPane, Focus::Review] {
+            app.focus = focus;
+            for prefix in ["g", " ", " v", " d"] {
+                app.take_prefix();
+                for ch in prefix.chars() {
+                    handle_key(&mut app, key(ch));
+                }
+                let place = super::super::keys::place(&app).context("pane receives keys")?;
+                let shown = bindings::menu(place, app.prefix());
+                let grid = draw::which_key_grid(&app, &shown);
+                assert_eq!(grid.x + grid.width, width);
+                assert_eq!(grid.y + grid.height, height.saturating_sub(1));
+                assert!(grid.height <= height.saturating_sub(1));
+            }
+        }
+    }
     Ok(())
 }
 

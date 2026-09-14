@@ -1435,19 +1435,16 @@ fn truncate_left(text: &str, max: usize) -> String {
     format!("…{}", chars.into_iter().collect::<String>())
 }
 
-/// A Helix-style key menu anchored to the bottom of `pane`, under a
-/// breadcrumb row naming the prefix (ADR 0049), laid out in columns when
-/// the entries do not fit in the rows available.
-/// The which-key menu's grid along the bottom of the text column, the
-/// one the mouse reads back (ADR 0050).
+/// The which-key grid at the viewer's bottom right, above the status
+/// line, shared with mouse hit testing (ADR 0050).
 pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
     Grid::bottom(
         entries,
         &bindings::menu_title(app.prefix()),
-        app.sidebar_width(),
         0,
-        app.column_width(),
-        app.pane_rows(),
+        0,
+        app.size().0,
+        app.size().1.saturating_sub(1),
     )
 }
 

@@ -181,7 +181,7 @@ mod tests {
         app.open(Path::new("a.md"));
         assert!(!app.text_bar_shown(), "no diff, no thread: no bar");
 
-        press(&mut app, "gd");
+        press(&mut app, " dd");
         assert!(app.text_bar_shown(), "a diff is something to say");
         assert_eq!(
             bar(&app)?,

@@ -22,6 +22,13 @@ the bar was a permanent row that stood empty in a file with no thread,
 which read as a bug; it now replaces the bottom text row while it has
 something to say and takes no row of its own.
 
+Amended 2026-09-14: the bar still paints over the same bottom row, with
+no permanent empty footer, but cursor visibility and scroll limits use
+the unobscured height. The one `~` EOF row can therefore scroll above
+the bar, rather than underneath it. Showing a bar preserves the viewport
+unless its cursor would be covered; hiding it restores the row. The
+draft no longer reserves a second row when revealing its cursor.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys
@@ -125,7 +132,9 @@ resolve. This record undoes both, the same day, for one rule.
   to the module.
 - `App::text_bar_shown` says whether the bar has something to say and
   `text_bar_row` which screen row it covers; `text_rows` is unchanged.
-  `draw` paints the bar over the column after the text.
+  `draw` paints the bar over the column after the text. Since 2026-09-14,
+  the view's scrolling height subtracts this covered row and is updated
+  on navigation, stub/draft changes, and relayout.
 - `expanded_header` and `entry_header` take no focus and no cursor;
   `draft_header` is words alone and `draft_hints` is the list the bar
   reads. `stub_line` loses `hinted` and gains the bold mark.

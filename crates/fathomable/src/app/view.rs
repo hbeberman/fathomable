@@ -16,6 +16,8 @@ use regex::Regex;
 
 use super::diff::{DiffBody, DiffView, Side, Text};
 
+mod navigation;
+
 /// Rendered lines kept visible above and below the cursor.
 const SCROLLOFF: usize = 3;
 
@@ -45,7 +47,7 @@ pub(crate) enum Display {
     /// Rendered Markdown.
     #[default]
     Rendered,
-    /// The raw source (`gs`, ADR 0010).
+    /// The raw source (`Space v s`, ADR 0010).
     Source,
     /// A unified diff between two sides (ADR 0060): `HEAD`, the
     /// last-seen snapshot, a checkpoint, a commit, or the working file.
@@ -107,7 +109,7 @@ pub(crate) enum Effect {
     None,
     Quit,
     Copy(String),
-    /// Open a URL with the desktop's opener (`gx`, ADR 0050).
+    /// Open a URL with the desktop's opener (`gf`, ADR 0052).
     Open(String),
     /// A `:` command the app handles (`:auto ...`, ADR 0015).
     Command(String),
@@ -694,6 +696,19 @@ impl View {
         self.relayout();
     }
 
+    /// Update the unobscured viewport without rewrapping or moving visible text.
+    pub(crate) fn set_height(&mut self, height: usize) {
+        let height = height.max(1);
+        if self.height == height {
+            return;
+        }
+        self.height = height;
+        self.scroll = self.scroll.min(self.max_scroll());
+        if self.cursor.row < self.scroll || self.cursor.row >= self.scroll + height {
+            self.ensure_visible();
+        }
+    }
+
     /// Replace the document text after a change on disk (ADR 0010 reload).
     pub(crate) fn reload(&mut self, text: String) {
         self.text = text;
@@ -742,7 +757,7 @@ impl View {
         self.relayout();
     }
 
-    /// `gd` / `:diff`: the diff `HEAD · now` (ADR 0017, ADR 0060), or
+    /// `Space d d` / `:diff`: the diff `HEAD · now` (ADR 0017, ADR 0060), or
     /// back to the file when that pair is shown.
     pub(crate) fn toggle_head_diff(&mut self) {
         if self
@@ -757,7 +772,7 @@ impl View {
         }
     }
 
-    /// `gD` / `:diff seen`: the diff `last seen · now` (ADR 0015, ADR
+    /// `Space d D` / `:diff seen`: the diff `last seen · now` (ADR 0015, ADR
     /// 0060), or back to the file when that pair is shown.
     pub(crate) fn toggle_seen_diff(&mut self) {
         if self
@@ -1232,25 +1247,6 @@ impl View {
     #[must_use]
     pub(crate) fn link_at_cursor(&self) -> Option<&str> {
         self.link_at(self.cursor.row, self.cursor.col)
-    }
-
-    /// `gy` (ADR 0050): copy the link under the cursor.
-    pub(crate) fn copy_link(&mut self) -> Effect {
-        let Some(url) = self.link_at_cursor().map(str::to_owned) else {
-            self.message = Some("no link here".to_owned());
-            return Effect::None;
-        };
-        self.message = Some("copied link".to_owned());
-        Effect::Copy(url)
-    }
-
-    /// `gx` (ADR 0050): open the link under the cursor.
-    pub(crate) fn open_link(&mut self) -> Effect {
-        let Some(url) = self.link_at_cursor().map(str::to_owned) else {
-            self.message = Some("no link here".to_owned());
-            return Effect::None;
-        };
-        Effect::Open(url)
     }
 
     /// Drop the selection and return to normal mode.
@@ -2135,7 +2131,7 @@ mod tests {
         assert!(v.diff_view());
         assert_eq!(v.diff_base(), Some(&Side::Head));
         v.toggle_head_diff();
-        assert!(!v.diff_view(), "gd is a toggle");
+        assert!(!v.diff_view(), "Space d d is a toggle");
 
         v.toggle_seen_diff();
         assert!(v.diff_view());
@@ -2151,7 +2147,7 @@ mod tests {
         assert_eq!(
             v.diff_base(),
             Some(&Side::Head),
-            "gd from the seen diff goes to HEAD"
+            "Space d d from the seen diff goes to HEAD"
         );
         v.start_command();
         for ch in "diff seen".chars() {
@@ -2162,7 +2158,7 @@ mod tests {
         assert_eq!(
             v.diff_base(),
             Some(&Side::Seen),
-            "gD from the HEAD diff goes to seen"
+            "Space d D from the HEAD diff goes to seen"
         );
         v.toggle_seen_diff();
         assert!(!v.diff_view());

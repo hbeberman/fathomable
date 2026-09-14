@@ -1519,7 +1519,9 @@ impl App {
     }
 
     fn relayout(&mut self) {
-        let rows = self.text_rows();
+        let rows = self
+            .text_rows()
+            .saturating_sub(usize::from(self.text_bar_shown()));
         let sidebar = self.sidebar_width();
         let text_width = self
             .width
@@ -1528,6 +1530,14 @@ impl App {
             .max(1);
         self.view_mut().resize(text_width, rows);
         self.scroll_tree();
+    }
+
+    /// Scrolling uses only rows the key bar does not cover.
+    fn sync_text_height(&mut self) {
+        let rows = self
+            .text_rows()
+            .saturating_sub(usize::from(self.text_bar_shown()));
+        self.view_mut().set_height(rows);
     }
 
     pub(crate) fn clear_message(&mut self) {

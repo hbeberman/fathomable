@@ -186,6 +186,9 @@ impl App {
             return Effect::None;
         };
         match action {
+            Action::CancelPrefix => {
+                self.take_prefix();
+            }
             Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
@@ -261,9 +264,7 @@ impl App {
             Action::MoveRight if self.view().diff_view() => self.diff_page(1),
             // `Esc` clears, then leaves the diff (ADR 0060).
             Action::Escape => self.escape_view(),
-            Action::CopyLink => return self.view_mut().copy_link(),
-            Action::OpenLink => return self.view_mut().open_link(),
-            Action::GotoFile => self.goto_file(),
+            Action::GotoFile => return self.goto_file(),
             // `c` opens the thread on the cursor row, else annotates the
             // selection or the cursor line; `C` always annotates (ADR 0027).
             Action::Comment => self.start_comment(),
@@ -296,6 +297,8 @@ impl App {
                     Action::MoveRight => view.move_right(),
                     Action::LineStart => view.line_start(),
                     Action::LineEnd => view.line_end(),
+                    Action::GotoLineStart => view.goto_line_start(),
+                    Action::GotoLineEnd => view.goto_line_end(),
                     Action::Top => view.goto_top(),
                     Action::Bottom => view.goto_bottom(),
                     Action::HalfPageDown => view.half_page_down(),
@@ -591,7 +594,7 @@ mod tests {
 
     /// `Space w h` shows a hidden files pane with its highlight on the
     /// current file and takes the keys there; `Space w j` and `Space w k`
-    /// step between the panes; `Space w l` returns; `Space Space` cycles,
+    /// step between the panes; `Space w l` returns; `Space w w` cycles,
     /// skipping a hidden pane; a move with nowhere to go does nothing;
     /// `Space v s` toggles the view from the files pane (ADR 0056); and
     /// `Space w f` and `Space w t` name a pane, showing it first when it
@@ -626,15 +629,15 @@ mod tests {
         press(&mut app, " wl");
         assert_eq!(app.focus(), Focus::View);
 
-        press(&mut app, "  ");
+        press(&mut app, " ww");
         assert_eq!(app.focus(), Focus::Tree);
-        press(&mut app, "  ");
+        press(&mut app, " ww");
         assert_eq!(app.focus(), Focus::ThreadsPane);
         press(&mut app, " ww");
         assert_eq!(app.focus(), Focus::View);
         press(&mut app, " pf");
         assert!(!app.sidebar.tree);
-        press(&mut app, "  ");
+        press(&mut app, " ww");
         assert_eq!(app.focus(), Focus::ThreadsPane, "a hidden pane is skipped");
         press(&mut app, " wl");
         assert_eq!(app.focus(), Focus::View);
@@ -654,6 +657,37 @@ mod tests {
         assert_eq!(app.focus(), Focus::ThreadsPane, "already there");
         press(&mut app, " wf");
         assert_eq!(app.focus(), Focus::Tree, "from the threads pane");
+        Ok(())
+    }
+
+    #[test]
+    fn space_space_cancels_only_the_prefix() -> anyhow::Result<()> {
+        let dir = fixture("cancel-space")?;
+        let mut app = source_app(&dir)?;
+        app.show_tree();
+        app.show_threads_pane();
+        app.view_mut().goto_source_line(3);
+        app.view_mut().select_chars();
+        let cursor = app.view().cursor();
+        let selection = app.view().selection();
+        for focus in [Focus::View, Focus::Tree, Focus::ThreadsPane, Focus::Review] {
+            app.focus = focus;
+            press(&mut app, " ");
+            assert!(!app.prefix().is_empty());
+            press(&mut app, " ");
+            assert!(app.prefix().is_empty());
+            assert_eq!(app.focus(), focus);
+            assert_eq!(app.view().cursor(), cursor);
+            assert_eq!(app.view().selection(), selection);
+        }
+        app.focus = Focus::View;
+        app.view_mut().clear_selection();
+        app.view_mut()
+            .set_bases(None, None, Some("before\n".to_owned()));
+        app.toggle_head_diff();
+        press(&mut app, "  ");
+        assert!(app.view().diff_view(), "cancel does not act as Escape");
+        assert!(app.prefix().is_empty());
         Ok(())
     }
 

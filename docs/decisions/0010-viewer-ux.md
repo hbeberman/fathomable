@@ -5,6 +5,7 @@ description: Cursor, gutter, status line, selection-to-clipboard, search, and re
 resource: crates/fathomable/src/app/view.rs
 related_resources:
   - crates/fathomable/src/app/clipboard.rs
+  - crates/fathomable/src/app/view/navigation.rs
 tags:
   - decision
   - input
@@ -52,6 +53,16 @@ viewer, the layout engine, and later themes agree.
     read as a second highlight beside the thread and selection tints.
 - `scrolloff` is 3 rendered lines. `Ctrl-d`/`Ctrl-u` move half a page,
   `gg`/`G` go to the first and last rendered line.
+- Amended 2026-09-14: `gh` and `gl` go to the start and end of the
+  logical source line across wrapped rows. Start includes indentation,
+  end is the last displayed grapheme, and both extend a selection.
+  Hidden Markdown syntax is not a cursor stop; synthesized and thread
+  rows without source keep row-local boundaries. `0`/`$` and
+  `Home`/`End` retain their rendered-row behavior.
+- The viewport scrolls to one `~` gutter row after the document. Its
+  usable height excludes the text's key bar while shown, so the EOF
+  marker and the last content row remain above the bar. No extra cursor
+  stop or numbered source line is added.
 - Synthesised lines (table rules, block spacing) are valid cursor rows; they
   simply carry no source range.
 - Amended 2026-09-04: **`h` and `l` wrap.** At the first column `h` moves
@@ -145,10 +156,10 @@ viewer, the layout engine, and later themes agree.
 
 ### Source view
 
-- `gs` toggles between rendered Markdown and the raw source (`:source` does
-  the same); the cursor keeps its source line across the toggle. The key was
-  chosen during implementation (2026-08-26) as an unused `g` prefix; change
-  it here if a better one emerges.
+- `Space v s` toggles between rendered Markdown and the raw source
+  (`:source` does the same); the cursor keeps its source line across the
+  toggle. The original `gs` alias was removed on 2026-09-14 to reserve
+  `g` for navigation.
 
 ### Width and wrapping
 

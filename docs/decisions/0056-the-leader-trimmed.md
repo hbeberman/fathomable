@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The leader, trimmed
-description: The Space menu loses the tree actions and the change-queue clear, gains Helix's window submenu on Space w and a Space Space pane cycle, keeps the pane hides under Space p f and Space p t, moves the review list to Space r, the file picker's extras under Space F, wake under Space a, and the new-thread entry to Space c c; every label is a few words; the tree pane is the files pane; and the menu draws on its own ui.menu surface.
+description: The Space menu groups window navigation, pane visibility, files, threads, and viewer policies under short labels; Space Space cancels the pending chord, Space w w cycles panes, and menus draw on ui.menu.
 resource: crates/fathomable/src/app/window.rs
 related_resources:
   - crates/fathomable/src/app/input/bindings.rs
@@ -27,6 +27,10 @@ submenu, `Space v` is `s` / `t` / `x`, and `Space c` loses `x`.
 Amended 2026-09-14 by [0078](0078-all-keys-stays-reachable.md): help
 keeps its separate `ui.popup` role, while the built-ins give it and
 `ui.menu` the same overlay treatment.
+
+Amended 2026-09-14: `Space Space` cancels the Space chord without changing
+focus, selection, or the open view. It no longer cycles panes; only
+`Space w w` does that.
 
 ## Context
 
@@ -58,7 +62,7 @@ Space F i / r     files: open file incl. ignored / recent files
 Space r           review list
 Space w h/j/k/l   window: left / down / up / right
 Space w w         window: next
-Space Space       next pane
+Space Space       cancel
 Space p f / t     panes: toggle files pane / toggle threads pane
 Space c c/r/o/e/d threads: new thread, reply, resolve, edit, delete
 Space c x         threads: toggle resolved stubs
@@ -81,8 +85,9 @@ unbound.
   is hidden; the files pane is shown if neither is), `l` returns to
   the text, `j` and `k` step between the files pane and the threads
   pane when both are shown, `w` cycles text, files pane, threads
-  pane, skipping hidden panes. `Space Space` is the same cycle at
-  two keys. "The text" is the review list while it is open.
+  pane, skipping hidden panes. `Space Space` cancels the pending chord
+  without performing an `Esc` action. "The text" is the review list
+  while it is open.
 - A move with nowhere to go does nothing, quietly. `Esc` in a pane
   and `h` at column 0 keep doing what they did.
 - Hides stay under `Space p`, "panes": `Space p f` toggles the files

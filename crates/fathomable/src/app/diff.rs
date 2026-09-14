@@ -3,7 +3,7 @@
 //! the current file, with a header naming the pair and a badge naming
 //! the base.
 //!
-//! `gd` / `Space d d` shows `HEAD · now`, `gD` / `Space d D` shows
+//! `Space d d` shows `HEAD · now`, `Space d D` shows
 //! `last seen · now`, and `Space d r` the newest checkpoint pair; each
 //! closes the diff when its own pair is on screen. `b` and `t` pick
 //! either side from the file's checkpoints, the working file, the
@@ -72,7 +72,7 @@ pub(crate) struct DiffView {
 }
 
 impl DiffView {
-    /// `HEAD · now`, the pair `gd` shows.
+    /// `HEAD · now`, the pair `Space d d` shows.
     pub(crate) fn head() -> Self {
         Self {
             base: Side::Head,
@@ -86,7 +86,7 @@ impl DiffView {
         }
     }
 
-    /// `last seen · now`, the pair `gD` shows.
+    /// `last seen · now`, the pair `Space d D` shows.
     pub(crate) fn seen() -> Self {
         Self {
             base: Side::Seen,
@@ -113,14 +113,14 @@ impl DiffView {
 }
 
 impl App {
-    /// `gd` / `:diff` / `Space d d`: the diff against `HEAD`, or back
+    /// `Space d d` / `:diff`: the diff against `HEAD`, or back
     /// to the file when that pair is shown.
     pub(crate) fn toggle_head_diff(&mut self) {
         self.view_mut().toggle_head_diff();
         self.relayout();
     }
 
-    /// `gD` / `:diff seen` / `Space d D`: the diff against the last-seen
+    /// `Space d D` / `:diff seen`: the diff against the last-seen
     /// snapshot, or back to the file when that pair is shown.
     pub(crate) fn toggle_seen_diff(&mut self) {
         self.view_mut().toggle_seen_diff();
@@ -516,8 +516,8 @@ mod tests {
         Ok(app)
     }
 
-    /// `gd` shows `HEAD · now` with its header and badge and one chrome
-    /// row when the file has no checkpoint; `gd` again closes it; `gD`
+    /// `Space d d` shows `HEAD · now` with its header and badge and one chrome
+    /// row when the file has no checkpoint; again closes it; `Space d D`
     /// from the `HEAD` diff switches; `Esc` leaves; `:diff` is the same
     /// toggle through the command line (ADR 0060).
     #[test]
@@ -525,26 +525,30 @@ mod tests {
         let dir = TempDir::new("app-diff-pairs")?;
         let mut app = git_app(&dir)?;
 
-        press(&mut app, "gd");
+        press(&mut app, " dd");
         assert_eq!(header(&app), "HEAD · now");
         assert_eq!(badge(&app), "DIFF HEAD");
         assert_eq!(app.diff_chrome_rows(), 1, "a header, no strip");
         assert_eq!(app.text_rows(), 30 - 1 - 1);
         assert!(shown(&app).iter().any(|l| l.contains("-two")));
-        press(&mut app, "gd");
-        assert!(!app.view().diff_view(), "gd on its own pair closes");
+        press(&mut app, " dd");
+        assert!(!app.view().diff_view(), "Space d d on its own pair closes");
         assert_eq!(app.text_rows(), 29);
 
-        press(&mut app, "gD");
+        press(&mut app, " dD");
         assert!(!app.view().diff_view(), "never seen: no seen diff");
         assert!(app.message().is_some_and(|m| m.contains("last-seen")));
         app.view_mut()
             .set_bases(Some("one\n".to_owned()), None, Some("two\n".to_owned()));
-        press(&mut app, "gD");
+        press(&mut app, " dD");
         assert_eq!(header(&app), "last seen · now");
         assert_eq!(badge(&app), "DIFF seen");
-        press(&mut app, "gd");
-        assert_eq!(header(&app), "HEAD · now", "gd from the seen diff switches");
+        press(&mut app, " dd");
+        assert_eq!(
+            header(&app),
+            "HEAD · now",
+            "Space d d from the seen diff switches"
+        );
         app.command("diff seen");
         assert_eq!(
             header(&app),
@@ -591,7 +595,7 @@ mod tests {
 
         fs::write(dir.0.join("a.md"), "  two  \n")?;
         app.on_changes(vec![dir.0.join("a.md")]);
-        press(&mut app, "gd");
+        press(&mut app, " dd");
         assert_eq!(app.view().pair_counts(), Some((1, 1)));
         press(&mut app, "w");
         assert_eq!(app.compare().whitespace, Whitespace::Ignore);
@@ -693,10 +697,10 @@ mod tests {
             app.message(),
             Some("pick a checkpoint as the base (b) to page the timeline")
         );
-        press(&mut app, "gd");
+        press(&mut app, " dd");
         assert!(
             !app.view().diff_view(),
-            "gd closes the HEAD pair the picker made"
+            "Space d d closes the HEAD pair the picker made"
         );
         press(&mut app, " dd");
 
@@ -732,8 +736,8 @@ mod tests {
         app.on_changes(vec![dir.0.join("a.md")]);
         press(&mut app, " dc");
         assert_eq!(app.checkpoint_strip().len(), 3);
-        press(&mut app, "gs");
-        assert!(!app.view().diff_view(), "gs leaves the diff");
+        press(&mut app, " vs");
+        assert!(!app.view().diff_view(), "Space v s leaves the diff");
         assert!(app.view().source_view());
         Ok(())
     }

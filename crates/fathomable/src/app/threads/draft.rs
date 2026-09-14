@@ -440,8 +440,7 @@ impl App {
     fn draft_changed(&mut self) {
         self.place_stub_rows();
         if let Some((row, _)) = self.draft_cursor_cell() {
-            let bar = usize::from(self.text_bar_shown());
-            self.view_mut().reveal_row(row, bar);
+            self.view_mut().reveal_row(row, 0);
         }
     }
 

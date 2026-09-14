@@ -40,6 +40,12 @@ hover uses `ui.list.hover`, never a keyboard-selection bar; overlays and
 pending prefixes deactivate underlying list highlights. The old
 `ui.picker.selected` drawing rule below is superseded.
 
+Amended 2026-09-14: [0052](0052-goto-file.md) replaces the separate
+`gy`/`gx` and copy/open-link entries below with one `gf` action,
+`open linked file/URL`, also used by Ctrl-click. Prefix helpers use the
+whole viewer's bottom-right corner above the status line; drawing and
+hit testing share that grid.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):

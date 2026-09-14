@@ -43,7 +43,7 @@ impl App {
 
     /// A new status landed: the files pane lists by it.
     pub(super) fn sift_tree(&mut self) {
-        if let Some(tree) = self.tree.as_mut().filter(|tree| !tree.shown().is_all()) {
+        if let Some(tree) = self.tree.as_mut() {
             tree.sift(&self.status);
             self.scroll_tree();
         }
@@ -238,6 +238,53 @@ mod tests {
         press(&mut app, " Fc");
         app.show_tree();
         assert_eq!(names(&app), ["notes.txt", "README.md"]);
+        Ok(())
+    }
+
+    #[test]
+    fn live_deletion_restoration_and_commit_update_the_default_list() -> anyhow::Result<()> {
+        use std::path::Path;
+
+        use crate::app::watch::Event;
+
+        let dir = fixture("deleted")?;
+        let root = testing::root(&dir);
+        let mut app = AppBuilder::new(&dir).build()?;
+        app.show_tree();
+        let file = Path::new("src/lib.rs");
+        app.with_tree_result(|tree, workspace| tree.reveal(workspace, file).map(|_| None));
+        fs::remove_file(root.join(file))?;
+        app.on_events(vec![Event::Removed(root.join(file))]);
+        assert!(names(&app).contains(&"src/lib.rs".to_owned()));
+        assert_eq!(
+            app.tree()
+                .and_then(|tree| tree.current())
+                .map(fathomable_core::tree::Row::path),
+            Some(file)
+        );
+
+        // A restored tombstone is already listed, but still needs a disk listing.
+        fs::write(root.join(file), "fn lib() {}\n")?;
+        app.on_events(vec![Event::Change(root.join(file))]);
+        assert!(names(&app).contains(&"src/lib.rs".to_owned()));
+        assert!(!app.status().contains(file));
+        fs::remove_file(root.join(file))?;
+        app.on_events(vec![Event::Removed(root.join(file))]);
+        press(&mut app, " Fc Fu");
+        assert!(names(&app).contains(&"src/lib.rs".to_owned()));
+
+        git::commit_and_stage(
+            &root,
+            &[
+                ("README.md", "# Readme\n\nhello again\n"),
+                (".gitignore", "*.log\n"),
+            ],
+        )?;
+        app.on_events(vec![Event::Change(root.join(".git/index"))]);
+        app.settle_status();
+        assert!(names(&app).is_empty());
+        press(&mut app, " Fc Fu");
+        assert!(!names(&app).contains(&"src/lib.rs".to_owned()));
         Ok(())
     }
 

@@ -87,9 +87,15 @@ Settled in a question round on 2026-08-28; the choices are below.
   threads re-anchor through the reload diff as in
   [0019](0019-reanchoring-edited-lines.md). Switching to another file
   and back shows the file-info pane with "deleted" if it is still gone.
-- The tree row disappears with the rebuild; the sidebar highlight
-  stays on the neighbouring row and the view keeps the deleted
-  document until the reader moves.
+  Opening a git-reported deletion not previously loaded shows the same
+  file-info pane, backed by an empty document that can reload if restored;
+  no file is created (amended 2026-09-14).
+- A tracked deletion keeps its tree row, red `D`, removed-line count,
+  and highlight until git no longer reports the deletion
+  ([0017](0017-git-status-navigation.md), amended 2026-09-14).
+  Other removed files disappear with the rebuild; the highlight stays
+  on the neighbouring row and the view keeps the deleted document until
+  the reader moves.
 
 ### A rename carries its threads
 

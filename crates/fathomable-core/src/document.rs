@@ -38,6 +38,19 @@ impl LoadError {
 }
 
 impl Document {
+    /// Remember a missing file without reading or creating it.
+    ///
+    /// The placeholder has empty text. [`Self::reload`] reads the file
+    /// under `policy` if it reappears.
+    #[must_use]
+    pub fn missing(path: impl Into<PathBuf>, policy: Policy) -> Self {
+        Self {
+            path: path.into(),
+            policy,
+            content: Content::Text(String::new()),
+        }
+    }
+
     /// Read `path` under `policy`: as UTF-8 text, or as a binary or
     /// over-limit file whose bytes are left on disk.
     ///

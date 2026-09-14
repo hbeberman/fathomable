@@ -66,12 +66,15 @@ Space F r    recent files                            (unchanged)
 ```
 
 - **Only changed** lists the files that differ from `HEAD` as the
-  status walk of 0017 reports them, `M`, `A`, `D`, and `?`, so untracked
+  status walk of 0017 reports them, `M`, `A`, `D`, and `U`, so untracked
   files count as changed. Directories with nothing to show are not
   drawn, expanded or not. A file that becomes clean leaves the pane on
   the next status; one that changes appears.
-- **Hide untracked** drops the `?` files. Under *only changed* it leaves
+- **Hide untracked** drops the `U` files. Under *only changed* it leaves
   the tracked changes; on its own it leaves everything git knows.
+- Deleted files and their missing parent directories remain listed under
+  these rules, as in [0017](0017-git-status-navigation.md) (amended
+  2026-09-14); every new status updates them even with no filter enabled.
 - **Show ignored** lists what `.gitignore` hides, as the picker at
   `Space F i` finds it; `.git` itself stays hidden. It changes what the
   tree reads, so the pane re-reads its listings when it flips. An

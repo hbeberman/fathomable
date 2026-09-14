@@ -220,11 +220,49 @@ fn the_files_cursor_keeps_git_marks_and_mouse_navigation() -> anyhow::Result<()>
     assert_eq!(buffer[(1, y)].symbol(), "M");
     assert_eq!(Some(buffer[(1, y)].fg), theme.git_unstaged.fg);
     let second_y = row_containing(&buffer, 0, width, "second.rs")?;
+    assert_eq!(buffer[(1, second_y)].symbol(), "U");
+    assert_eq!(Some(buffer[(1, second_y)].fg), theme.diff_plus.fg);
     testing::click(&mut app, 0, usize::from(second_y));
     assert_eq!(app.current_path(), std::path::Path::new("second.rs"));
     assert_selection(&render(&app, &theme)?, 0, second_y, width - 1, &theme, true);
     press_key(&mut app, KeyCode::Up);
     assert_eq!(app.current_path(), std::path::Path::new("README.md"));
+    Ok(())
+}
+
+#[test]
+fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
+    let dir = testing::workspace("list-focus-deleted", testing::README)?;
+    let root = testing::root(&dir);
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(
+        &root,
+        &[
+            ("README.md", testing::README),
+            ("main.c", "int main() {\n    return 0;\n}\n"),
+        ],
+    )?;
+    let mut app = testing::source_app(&dir)?;
+    app.window_files();
+    let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    let width = u16::try_from(app.sidebar_width())?;
+    for staged in [false, true] {
+        if staged {
+            fathomable_testing::git::stage(&root, &[("README.md", testing::README)])?;
+            app.on_events(vec![crate::app::watch::Event::Change(
+                root.join(".git/index"),
+            )]);
+            app.settle_status();
+        }
+        let buffer = render(&app, &theme)?;
+        let y = row_containing(&buffer, 0, width, "main.c -3")?;
+        assert_eq!(buffer[(1, y)].symbol(), "D");
+        assert_eq!(Some(buffer[(1, y)].fg), theme.diff_minus.fg);
+        testing::click(&mut app, 0, usize::from(y));
+        assert_eq!(app.current_path(), std::path::Path::new("main.c"));
+        assert_selection(&render(&app, &theme)?, 0, y, width - 1, &theme, true);
+        assert!(app.deleted_info());
+    }
     Ok(())
 }
 

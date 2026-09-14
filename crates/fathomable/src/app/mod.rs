@@ -59,7 +59,7 @@ use fathomable_core::picker::{Match, Picker};
 use fathomable_core::reach::Reach;
 use fathomable_core::seen;
 use fathomable_core::session::{Record, Request, Response};
-use fathomable_core::status::Status;
+use fathomable_core::status::{State, Status};
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{EntryKind, Filter, Workspace, WorkspaceError, is_rules_file};
 use fathomable_core::{Document, XdgDirs};
@@ -734,6 +734,7 @@ impl App {
                 changed.push(from.to_path_buf());
             }
             changed.push(relative.clone());
+            let created = matches!(&event, watch::Event::Created(_));
             match event {
                 watch::Event::Change(absolute) | watch::Event::Created(absolute) => {
                     if !seen_paths.insert(relative.clone()) {
@@ -743,7 +744,13 @@ impl App {
                         .tree
                         .as_ref()
                         .is_some_and(|tree| tree.contains(&relative));
-                    if !listed {
+                    if !listed
+                        || created
+                        || self
+                            .status
+                            .get(&relative)
+                            .is_some_and(|entry| entry.state() == State::Deleted)
+                    {
                         self.note_dir(&relative, &mut dirs);
                     }
                     self.on_change(&relative, &absolute);
@@ -1578,7 +1585,17 @@ impl App {
                 attr: self.workspace.diff_attr(&relative),
                 max_bytes: self.viewer.max_file_bytes(),
             };
-            match Document::load(&absolute, policy) {
+            let deleted = self
+                .status
+                .get(&relative)
+                .is_some_and(|entry| entry.state() == State::Deleted)
+                && matches!(absolute.try_exists(), Ok(false));
+            let document = if deleted {
+                Ok(Document::missing(&absolute, policy))
+            } else {
+                Document::load(&absolute, policy)
+            };
+            match document {
                 Ok(document) => {
                     // A binary or over-limit file has no text: the view is
                     // empty and the file-info pane draws instead (ADR 0026).
@@ -1596,7 +1613,7 @@ impl App {
                         marks: Vec::new(),
                         draft: None,
                         seen_dirty: true,
-                        deleted: None,
+                        deleted: deleted.then_some(Deleted::Info),
                     });
                     self.docs.len() - 1
                 }
@@ -1878,7 +1895,8 @@ impl App {
             return true;
         }
         match Tree::new(&mut self.workspace) {
-            Ok(tree) => {
+            Ok(mut tree) => {
+                tree.sift(&self.status);
                 self.tree = Some(tree);
                 true
             }

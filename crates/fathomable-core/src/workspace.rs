@@ -1057,15 +1057,7 @@ impl Workspace {
                 is_link,
             });
         }
-        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            _ => a
-                .name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then_with(|| a.name.cmp(&b.name)),
-        });
+        entries.sort_by(|a, b| entry_order(a.is_dir, &a.name, b.is_dir, &b.name));
         Ok(entries)
     }
 
@@ -1235,6 +1227,14 @@ pub fn is_rules_file(relative: &Path) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| matches!(name, ".gitignore" | ".gitattributes"))
+}
+
+/// Directory listings put directories first, then names case-insensitively.
+pub(crate) fn entry_order(a_dir: bool, a: &str, b_dir: bool, b: &str) -> Ordering {
+    b_dir
+        .cmp(&a_dir)
+        .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+        .then_with(|| a.cmp(b))
 }
 
 /// The order [`Workspace::walk_files`] lists root-relative paths in: at

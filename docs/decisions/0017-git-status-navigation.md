@@ -16,7 +16,8 @@ Status: accepted (2026-08-26); amended 2026-09-05 by
 diff against `HEAD` is the one diff view with `HEAD` as its base; amended
 2026-09-06: a file event re-examines only the paths it names, and the
 full walk runs on a thread of its own, and racily clean entries are
-hashed.
+hashed. Amended 2026-09-14: deleted files stay in the files pane with a
+red `D`; untracked files use a green `U`.
 
 ## Context
 
@@ -122,8 +123,10 @@ letters follow Helix; the sidebar shows a git letter and line counts.
 - A dirty file's tree row shows a state letter in the gutter column
   (column 0, ahead of the indent, so names stay aligned) and its line
   counts after the name and one space: `M   mod.rs +12 -3`,
-  `?   new.rs +40`, `D   old.rs -18`. Letters are `M`, `A`, `D`, `?`, in
-  `git.unstaged` or, when the path is staged, `git.staged`; `+a` in
+  `U   new.rs +40`, `D   old.rs -18`. Letters are `M`, `A`, `D`, `U`.
+  `D` uses `diff.minus` (red), and `U` uses `diff.plus` (green);
+  `M` and `A` use `git.unstaged` or, when the path is staged,
+  `git.staged`. Counts are `+a` in
   `diff.plus` and `-r` in `diff.minus`, each omitted when zero. The counts
   are not padded to a column; colour tells the parts apart.
 - The root header carries the summed counts of the whole dirty set
@@ -131,13 +134,19 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   on `ui.header` and names the pane's active filters after the counts;
   the pane may list a subset; see
   [0068](0068-what-the-files-pane-shows.md).)
-- A collapsed directory shows the letter of its most advanced descendant
-  (`?` > `A` > `D` > `M`) and the summed counts, so a dirty tree is visible
+- A collapsed directory shows the summed counts, so a dirty tree is visible
   however it is folded. The follow `●` of 0015 sits after the git mark
   when both apply.
-- Deleted files are not tree entries (nothing is on disk); they appear in
-  `]G` order and in the diff view as an all-removed file, and the parent
-  directory's summary counts them.
+- Deleted files remain tree entries until git no longer reports their
+  deletion, in the usual directory and name order, with their removed
+  line counts. Missing parent directories remain expandable to reach
+  them. This applies on startup and after live changes, in both the
+  default and only-changed listings; hiding untracked files does not hide
+  deletions. Restoring a file replaces its deleted entry, and committing
+  its deletion removes the entry and any now-empty missing ancestors.
+  The filesystem-only picker and workspace walk are unchanged. Deleted
+  files also appear in `]G` order and in the diff view as all-removed
+  files, and the parent directory's summary counts them.
 
 ### Theme
 

@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fathomable_testing::TempDir;
+use fathomable_testing::{TempDir, git};
 
 use fathomable_core::status::{Entry, State, Status};
 use fathomable_core::tree::{Activation, Row, Rule, Shown, Tree};
@@ -375,5 +375,83 @@ fn showing_ignored_rereads_the_listings() -> Result<(), Box<dyn std::error::Erro
     tree.set_shown(&mut workspace, &status, Shown::all())?;
     assert!(!tree.contains(Path::new("src/app.log")));
     assert!(tree.shown().is_all());
+    Ok(())
+}
+
+#[test]
+fn deleted_files_stay_sorted_browsable_and_filtered() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = TempDir::new("tree-deleted")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(
+        &dir.0,
+        &[
+            ("main.c", "int main() {\n    return 0;\n}\n"),
+            ("src/nested/old.c", "old\n"),
+        ],
+    )?;
+    fs::write(dir.0.join("new.c"), "new\n")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let status = workspace.status()?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.sift(&status);
+    assert_eq!(names(&tree), ["src", "main.c", "new.c"]);
+    assert_eq!(workspace.walk_files(Filter::Visible), ["new.c"]);
+
+    assert!(tree.reveal(&mut workspace, Path::new("src/nested/old.c"))?);
+    assert_eq!(
+        names(&tree),
+        ["src", "  nested", "    old.c", "main.c", "new.c"]
+    );
+    assert_eq!(
+        tree.activate(&mut workspace)?,
+        Some(Activation::Open(PathBuf::from("src/nested/old.c")))
+    );
+    tree.refresh(&mut workspace)?;
+    assert_eq!(tree.current().map(Row::name), Some("old.c"));
+    assert!(tree.refresh_dir(&mut workspace, Path::new("src/nested"))?);
+    assert_eq!(tree.current().map(Row::name), Some("old.c"));
+
+    tree.set_shown(
+        &mut workspace,
+        &status,
+        Shown::all().toggled(Rule::Changed).toggled(Rule::Untracked),
+    )?;
+    assert_eq!(names(&tree), ["src", "  nested", "    old.c", "main.c"]);
+    tree.set_shown(&mut workspace, &status, tree.shown().toggled(Rule::Ignored))?;
+    assert_eq!(tree.current().map(Row::name), Some("old.c"));
+
+    // A committed deletion removes both the file and its synthetic parents.
+    git::commit_and_stage(&dir.0, &[])?;
+    tree.sift(&workspace.status()?);
+    assert!(tree.rows().is_empty());
+    let status = workspace.status()?;
+    tree.set_shown(&mut workspace, &status, Shown::all())?;
+    assert_eq!(names(&tree), ["new.c"]);
+    Ok(())
+}
+
+#[test]
+fn live_directory_deletion_keeps_tracked_files_and_cursor() -> Result<(), Box<dyn std::error::Error>>
+{
+    let dir = TempDir::new("tree-live-deletion")?;
+    git::init(&dir.0)?;
+    fs::create_dir_all(dir.0.join("src/nested"))?;
+    fs::write(dir.0.join("src/nested/main.c"), "main\n")?;
+    fs::write(dir.0.join("src/nested/scratch.c"), "scratch\n")?;
+    git::commit_and_stage(&dir.0, &[("src/nested/main.c", "main\n")])?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.sift(&workspace.status()?);
+    tree.reveal(&mut workspace, Path::new("src/nested/main.c"))?;
+
+    fs::remove_dir_all(dir.0.join("src"))?;
+    tree.sift(&workspace.status()?);
+    tree.refresh_dir(&mut workspace, Path::new(""))?;
+    assert_eq!(names(&tree), ["src", "  nested", "    main.c"]);
+    assert_eq!(tree.current().map(Row::name), Some("main.c"));
+
+    git::commit_and_stage(&dir.0, &[])?;
+    tree.sift(&workspace.status()?);
+    assert!(tree.rows().is_empty());
     Ok(())
 }

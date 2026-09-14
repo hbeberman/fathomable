@@ -492,7 +492,7 @@ the sidebar drawn while either is. The files pane's header row names
 the repo's directory with its summed `+n -m`; three session toggles
 under `Space F` narrow what it lists, and the header names each active
 one after the counts by what is on screen: `Space F c` lists **only
-changed** files (`M`, `A`, `D`, and `?` against `HEAD`, directories with
+changed** files (`M`, `A`, `D`, and `U` against `HEAD`, directories with
 nothing to show left out; the header reads `· changed`), `Space F u`
 **hides untracked** files (`tracked`), and `Space F g` **shows ignored**
 files (`ignored`; an ignored file is never a changed one, so only
@@ -616,11 +616,13 @@ on into the next uncommitted file in path order, wrapping at the end, so
 holding `]g` from the top of the tree visits every uncommitted change.
 `]G` and `[G` step by file instead, landing on the first hunk. The tree
 shows every uncommitted file with a letter in its gutter column,
-`M`odified, `A`dded, `D`eleted, or `?` untracked, in one colour when the
-change is staged and another when it is not, and its `+added -removed`
-counts after the name (`bin` for a binary file, which has no lines to
-count); a collapsed folder shows the most advanced letter
-and the summed counts of everything beneath it, and the root header shows
+`M`odified, `A`dded, red `D`eleted, or green `U`ntracked, and its
+`+added -removed` counts after the name (`bin` for a binary file, which
+has no lines to count). `M` and `A` use one colour when staged and
+another when not. Deleted files stay listed with their removed-line
+count, even if their parent folders are gone, until the deletion is
+committed or the file is restored. A collapsed folder shows the summed
+counts of everything beneath it, and the root header shows
 the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
 of this within a beat. A separate cursor cell before the git gutter holds
 the active file selection's bar; it never replaces the status letter.

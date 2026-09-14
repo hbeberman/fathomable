@@ -27,6 +27,35 @@ fn load_reads_path_and_text() -> TestResult {
 }
 
 #[test]
+fn missing_placeholder_creates_nothing_and_reloads_under_its_policy() -> TestResult {
+    let dir = fathomable_testing::TempDir::new("missing-document")?;
+    let path = dir.0.join("main.c");
+    let mut document = Document::missing(
+        &path,
+        Policy {
+            attr: Attr::Text,
+            max_bytes: 4,
+        },
+    );
+    assert_eq!(document.path(), path);
+    assert!(!path.exists());
+    let Err(error) = document.reload() else {
+        return Err("reloading a missing placeholder must fail".into());
+    };
+    assert_eq!(error.path(), path);
+    fs::write(&path, "a\n")?;
+    assert!(document.reload()?);
+    assert_eq!(document.text(), Some("a\n"));
+    fs::write(&path, "too big\n")?;
+    assert!(document.reload()?);
+    assert!(matches!(
+        document.content(),
+        Content::TooLarge { max_bytes: 4, .. }
+    ));
+    Ok(())
+}
+
+#[test]
 fn reload_reports_whether_text_changed() -> TestResult {
     let path = scratch_file("reload.md", b"one\n")?;
     let mut document = Document::load(&path, Policy::default())?;

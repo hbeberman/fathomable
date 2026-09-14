@@ -12,11 +12,11 @@
 //! rows are filtered as they are built, so the cursor, clicks, and
 //! [`Tree::reveal`] see only the listed rows.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use crate::status::{State, Status};
-use crate::workspace::{Filter, Workspace, WorkspaceError};
+use crate::workspace::{Filter, Workspace, WorkspaceError, entry_order};
 
 /// What the tree lists (ADR 0068): every file, or a subset by three rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -201,6 +201,82 @@ struct Node {
     expanded: bool,
     /// `None` until first expanded.
     children: Option<Vec<Node>>,
+    /// Supplied by git status rather than a directory listing.
+    deleted: bool,
+}
+
+impl Node {
+    fn mark_deleted(&mut self) {
+        self.deleted = true;
+        if let Some(children) = &mut self.children {
+            for child in children {
+                child.mark_deleted();
+            }
+        }
+    }
+}
+
+/// Deleted files and their ancestors, grouped into directory listings.
+#[derive(Debug, Clone, Default)]
+struct Deleted {
+    children: HashMap<PathBuf, Vec<Node>>,
+}
+
+impl Deleted {
+    fn new(status: &Status) -> Self {
+        let mut deleted = Self::default();
+        for entry in status
+            .entries()
+            .iter()
+            .filter(|e| e.state() == State::Deleted)
+        {
+            for path in entry.path().ancestors() {
+                let Some((parent, name)) = path
+                    .parent()
+                    .zip(path.file_name().and_then(|name| name.to_str()))
+                else {
+                    break;
+                };
+                let children = deleted.children.entry(parent.to_path_buf()).or_default();
+                if children.iter().any(|child| child.name == name) {
+                    break;
+                }
+                children.push(Node {
+                    name: name.to_owned(),
+                    is_dir: path != entry.path(),
+                    expanded: false,
+                    children: None,
+                    deleted: true,
+                });
+            }
+        }
+        deleted
+    }
+
+    fn merge(&self, path: &Path, children: &mut Vec<Node>) {
+        let deleted = self.children.get(path).map_or(&[][..], Vec::as_slice);
+        children
+            .retain(|child| !child.deleted || deleted.iter().any(|entry| entry.name == child.name));
+        let mut added = false;
+        for entry in deleted {
+            if !children.iter().any(|child| child.name == entry.name) {
+                children.push(entry.clone());
+                added = true;
+            }
+        }
+        if added {
+            children.sort_by(|a, b| entry_order(a.is_dir, &a.name, b.is_dir, &b.name));
+        }
+    }
+
+    fn sync(&self, node: &mut Node, path: &Path) {
+        if let Some(children) = node.children.as_mut() {
+            self.merge(path, children);
+            for child in children {
+                self.sync(child, &path.join(&child.name));
+            }
+        }
+    }
 }
 
 /// What happened when the user activated the row under the cursor.
@@ -220,6 +296,7 @@ pub struct Tree {
     cursor: usize,
     shown: Shown,
     admitted: Admitted,
+    deleted: Deleted,
 }
 
 impl Tree {
@@ -235,11 +312,13 @@ impl Tree {
                 is_dir: true,
                 expanded: true,
                 children: None,
+                deleted: false,
             },
             rows: Vec::new(),
             cursor: 0,
             shown: Shown::all(),
             admitted: Admitted::default(),
+            deleted: Deleted::default(),
         };
         tree.refresh(workspace)?;
         Ok(tree)
@@ -274,9 +353,11 @@ impl Tree {
     }
 
     /// Re-apply the rules to a new `status`: a file that became clean
-    /// leaves an only-changed listing, one that changed appears.
+    /// leaves an only-changed listing, one that changed appears. Deleted
+    /// files remain listed, together with any missing parent directories.
     pub fn sift(&mut self, status: &Status) {
         self.admitted = Admitted::new(self.shown, status);
+        self.deleted = Deleted::new(status);
         let cursor_path = self.current().map(|row| row.path.clone());
         self.rebuild();
         if let Some(path) = cursor_path {
@@ -319,6 +400,7 @@ impl Tree {
             workspace,
             Path::new(""),
             self.shown.filter(),
+            &self.deleted,
         )?);
         for path in expanded {
             if let Err(error) = self.expand_path(workspace, &path) {
@@ -362,7 +444,7 @@ impl Tree {
         let Some(node) = find_node(&mut self.root, dir) else {
             return Ok(false);
         };
-        let fresh = match read_children(workspace, dir, filter) {
+        let fresh = match read_children(workspace, dir, filter, &self.deleted) {
             Ok(fresh) => fresh,
             Err(error) if !workspace.root().join(dir).is_dir() => {
                 tracing::debug!(%error, "directory gone; collapsing it");
@@ -382,7 +464,14 @@ impl Tree {
                         .iter()
                         .position(|o| o.name == child.name && o.is_dir == child.is_dir)
                     {
-                        Some(index) => old.swap_remove(index),
+                        Some(index) => {
+                            let mut kept = old.swap_remove(index);
+                            if child.deleted && !kept.deleted {
+                                kept.mark_deleted();
+                            }
+                            kept.deleted = child.deleted;
+                            kept
+                        }
                         None => child,
                     }
                 })
@@ -567,7 +656,7 @@ impl Tree {
             return Ok(false);
         }
         if node.children.is_none() {
-            node.children = Some(read_children(workspace, path, filter)?);
+            node.children = Some(read_children(workspace, path, filter, &self.deleted)?);
         }
         node.expanded = true;
         Ok(true)
@@ -580,6 +669,7 @@ impl Tree {
     }
 
     fn rebuild(&mut self) {
+        self.deleted.sync(&mut self.root, Path::new(""));
         let mut rows = Vec::new();
         push_rows(&self.root, &PathBuf::new(), 0, &self.admitted, &mut rows);
         self.rows = rows;
@@ -606,17 +696,31 @@ fn read_children(
     workspace: &mut Workspace,
     path: &Path,
     filter: Filter,
+    deleted: &Deleted,
 ) -> Result<Vec<Node>, WorkspaceError> {
-    Ok(workspace
-        .list_dir_with(path, filter)?
+    let entries = match workspace.list_dir_with(path, filter) {
+        Ok(entries) => entries,
+        Err(_)
+            if deleted.children.contains_key(path)
+                && matches!(workspace.root().join(path).try_exists(), Ok(false)) =>
+        {
+            // A removed directory is still browsable through its deleted files.
+            Vec::new()
+        }
+        Err(error) => return Err(error),
+    };
+    let mut children = entries
         .into_iter()
         .map(|entry| Node {
             is_dir: entry.is_dir(),
             name: entry.name().to_owned(),
             expanded: false,
             children: None,
+            deleted: false,
         })
-        .collect())
+        .collect();
+    deleted.merge(path, &mut children);
+    Ok(children)
 }
 
 /// The listing to re-read so the tree reflects a change at `dir`: `dir`

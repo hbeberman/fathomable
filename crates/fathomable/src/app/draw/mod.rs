@@ -25,7 +25,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use fathomable_core::diff::LineStatus;
-use fathomable_core::status::Summary;
+use fathomable_core::status::{State, Summary};
 
 use crate::app::draw::author::{
     CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, name_style, row_style,
@@ -694,10 +694,11 @@ fn tree_marks<'a>(
     let mut letter = None;
     let mut tail = Vec::new();
     if let Some(git) = git {
-        let letter_style = if git.staged {
-            theme.git_staged
-        } else {
-            theme.git_unstaged
+        let letter_style = match git.state {
+            State::Deleted => theme.diff_minus,
+            State::Untracked => theme.diff_plus,
+            _ if git.staged => theme.git_staged,
+            _ => theme.git_unstaged,
         };
         if !row.is_dir() {
             letter = Some(Span::styled(

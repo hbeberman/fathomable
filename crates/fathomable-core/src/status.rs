@@ -50,7 +50,7 @@ impl State {
             Self::Modified => 'M',
             Self::Deleted => 'D',
             Self::Added => 'A',
-            Self::Untracked => '?',
+            Self::Untracked => 'U',
         }
     }
 }
@@ -148,7 +148,7 @@ impl Entry {
 /// What a collapsed directory shows for the dirty paths beneath it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Summary {
-    /// The most advanced state beneath (`?` > `A` > `D` > `M`).
+    /// The most advanced state beneath (`U` > `A` > `D` > `M`).
     pub state: State,
     /// Whether every dirty path beneath is staged.
     pub staged: bool,

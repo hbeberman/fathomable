@@ -44,11 +44,7 @@ fn answer_later(app: &mut App, index: usize) -> anyhow::Result<()> {
 }
 
 fn sidebar_column(app: &App) -> anyhow::Result<Vec<String>> {
-    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
-    let theme = crate::app::draw::Theme::from_core(&core);
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
-    terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
-    let buffer = terminal.backend().buffer().clone();
+    let (_, buffer) = sidebar_buffer(app)?;
     Ok((0..buffer.area.height)
         .map(|y| {
             (0..u16::try_from(app.sidebar_width()).unwrap_or(0))
@@ -56,6 +52,15 @@ fn sidebar_column(app: &App) -> anyhow::Result<Vec<String>> {
                 .collect::<String>()
         })
         .collect())
+}
+
+fn sidebar_buffer(app: &App) -> anyhow::Result<(crate::app::draw::Theme, ratatui::buffer::Buffer)> {
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = crate::app::draw::Theme::from_core(&core);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
+    terminal.draw(|frame| crate::app::draw::draw(frame, app, &theme))?;
+    let buffer = terminal.backend().buffer().clone();
+    Ok((theme, buffer))
 }
 
 /// The paths of the pane's file rows, `▸` before a folded one.
@@ -109,7 +114,11 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     // colour, two rows per thread.
     let column = sidebar_column(&app)?;
     let top = app.tree_rows();
-    assert!(column[top].starts_with("───"), "rule: {:?}", column[top]);
+    assert!(
+        column[top].starts_with("───") && column[top].ends_with('┤'),
+        "connected rule: {:?}",
+        column[top]
+    );
     assert!(
         column[top + 1].contains("threads · file") && column[top + 1].contains("● 2"),
         "{:?}",
@@ -125,6 +134,22 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     assert!(column[top + 4].contains("● L7 "), "{:?}", column[top + 4]);
     assert!(column[top + 4].contains(" now"), "{:?}", column[top + 4]);
     assert!(column[top + 5].contains("seven"), "{:?}", column[top + 5]);
+
+    let (theme, buffer) = sidebar_buffer(&app)?;
+    let divider = u16::try_from(app.sidebar_width())? - 1;
+    let divider_bg = theme.sidebar.bg.unwrap_or(ratatui::style::Color::Reset);
+    assert_ne!(
+        divider_bg,
+        theme.header.bg.unwrap_or(ratatui::style::Color::Reset),
+        "the test theme must distinguish the sidebar and header surfaces"
+    );
+    for row in [0, top + 1] {
+        assert_eq!(
+            buffer[(divider, u16::try_from(row)?)].bg,
+            divider_bg,
+            "header row {row} must not paint the divider"
+        );
+    }
 
     // A reply becomes the summary and earns the reply count.
     app.thread_reply();

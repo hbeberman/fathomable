@@ -554,7 +554,7 @@ fn tree_lines<'a>(
     rows: usize,
 ) -> Vec<Line<'a>> {
     let inner = width.saturating_sub(1);
-    let divider = Span::styled("│", theme.marker);
+    let divider = Span::styled("│", sidebar_divider_style(theme));
     let root = app
         .workspace()
         .root()
@@ -643,6 +643,11 @@ fn tree_lines<'a>(
         ]));
     }
     out
+}
+
+/// The sidebar divider keeps its own surface when appended to a styled row.
+pub(super) fn sidebar_divider_style(theme: &Theme) -> Style {
+    theme.marker.bg(theme.sidebar.bg.unwrap_or(Color::Reset))
 }
 
 /// The marks around a files pane name: the git letter for the gutter column

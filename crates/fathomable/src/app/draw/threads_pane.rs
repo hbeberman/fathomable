@@ -17,7 +17,9 @@ use ratatui::text::{Line, Span};
 
 use crate::app::draw::header::{threads_pane_footer, threads_pane_header};
 use crate::app::draw::nest::NEST;
-use crate::app::draw::{Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style};
+use crate::app::draw::{
+    Theme, file_chevron, fit, fit_ellipsis, format_age_short, mark_style, sidebar_divider_style,
+};
 use crate::app::threads::pane::{PaneEntry, PaneLine, PaneRow, PaneScope, pane_lines};
 use crate::app::{App, Focus};
 
@@ -33,16 +35,17 @@ pub(super) fn threads_pane_lines<'a>(
     rows: usize,
 ) -> Vec<Line<'a>> {
     let inner = width.saturating_sub(1);
-    let divider = Span::styled("│", theme.marker);
+    let divider_style = sidebar_divider_style(theme);
+    let divider = Span::styled("│", divider_style);
     let with_divider = |mut line: Line<'a>| {
         line.spans.push(divider.clone());
         line
     };
     let mut out = Vec::with_capacity(rows);
-    out.push(with_divider(Line::from(Span::styled(
-        "─".repeat(inner),
-        theme.info,
-    ))));
+    out.push(Line::from(vec![
+        Span::styled("─".repeat(inner), theme.info),
+        Span::styled("┤", divider_style),
+    ]));
     out.push(with_divider(threads_pane_header(app).line(theme, inner)));
     let entries = app.threads_pane_rows();
     if entries.is_empty() {

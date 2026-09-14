@@ -84,15 +84,20 @@ Do not bypass hooks with `--no-verify`.
 
 ## Committing
 
-- Commit after every completed task: once the change is done and
-  `scripts/gates.sh` passes, commit it rather than leaving the work
-  uncommitted in the tree.
+- Treat each task request as implicit authorization to commit its completed
+  changes. Once the change is done and `scripts/gates.sh` passes, commit it
+  automatically, without asking for approval. Do not leave completed work
+  uncommitted unless the user explicitly asks you to.
 - Keep each commit to one task; do not batch unrelated tasks into a
   single commit.
 
 ## Commit messages
 
-- Do not add `Co-Authored-By:` lines naming Copilot, Claude, or Codex, or any `Claude-Session:` line; the commit hook rejects this assistant metadata.
+- Always omit assistant metadata from commit messages, including
+  `Co-Authored-By:` lines naming Copilot, Claude, or Codex, and any
+  `Claude-Session:` line. This is an explicit instruction to omit those
+  trailers, not a choice to confirm with the user. Do not ask for permission
+  to omit them; the commit hook rejects them.
 
 Commit messages follow Conventional Commits:
 

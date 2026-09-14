@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Gutter brackets rendered rows, focus in a second colour
-description: The note cell decides its bracket from the neighbouring rendered rows, so a wrapped one-line thread is bracketed rather than dotted on every row; the open thread's lines take a blue (dark) or teal (light) tint instead of a stronger yellow.
+description: The note cell brackets neighbouring rendered rows, the git bar bridges matching marks across synthetic Markdown rows, and the original focus tint uses a second colour.
 resource: crates/fathomable/src/app/draw/gutter.rs
 tags:
   - decision
@@ -85,3 +85,16 @@ taken:
   the open thread shows the selection, as it did over the yellow.
 - `note_in` gains two parameters; it is only called from `note_on_row`
   and the tests.
+
+## Git gutter continuity (2026-09-14)
+
+In rendered Markdown, a row without source mapping (paragraph spacing or a
+table border) carries the git bar when the nearest source-backed rows above
+and below have the same added or modified status and staging state. Both
+the colour and the thin unstaged or thick staged glyph are preserved.
+Neighbours are found in the full layout, not only the visible viewport.
+
+Source-backed rows keep their own status, including unchanged blank lines.
+Deletion ticks, document edges, thread rows, and source or unified diff
+displays are not bridged. This is a drawing rule only: source mappings,
+diff counts, and hunk navigation are unchanged.

@@ -6,13 +6,41 @@
 //! and below that have source lines, so a one-line thread that wraps
 //! over several rows is bracketed like any other range, and a blank row
 //! of rendered markdown inside a thread's lines draws `│`.
+//! The git bar bridges sourceless Markdown rows between matching added
+//! or modified bars with the same staging state.
 
 use fathomable_core::annotations::LineRange;
+use fathomable_core::diff::LineStatus;
 
 use crate::app::App;
 use crate::app::threads::{Mark, ThreadState, overlaps};
 
 impl App {
+    /// The git status and staging state drawn on `row`, including
+    /// synthetic Markdown rows between matching non-deletion bars.
+    pub(super) fn git_on_row(&self, row: usize) -> Option<(LineStatus, bool)> {
+        let view = self.view();
+        view.layout().lines().get(row)?;
+        let status = |line| {
+            view.line_status(line)
+                .map(|status| (status, view.line_staged(line)))
+        };
+        if let Some(line) = view.source_line_of_row(row) {
+            return status(line);
+        }
+        if view.source_view()
+            || view.diff_view()
+            || view.stub_slot_of_row(row).is_some()
+            || view.detached_anchor_of_row(row).is_some()
+        {
+            return None;
+        }
+        let (above, below) = self.sourced_neighbours(row);
+        let above = status(above?.start())?;
+        let below = status(below?.start())?;
+        (above == below && above.0 != LineStatus::Removed).then_some(above)
+    }
+
     /// The note-cell glyph and colour of rendered row `row` of the
     /// current view, or `None` when no thread touches it: the bracket
     /// of the threads on its lines, `│` on a sourceless row a thread
@@ -113,9 +141,12 @@ impl App {
 #[cfg(test)]
 mod tests {
 
+    use anyhow::Context as _;
     use fathomable_core::annotations::LineRange;
+    use ratatui::text::Span;
 
     use crate::app::App;
+    use crate::app::draw::{Theme, gutter_width, text_lines};
     use fathomable_testing::TempDir;
 
     use crate::app::testing::{self, AppBuilder};
@@ -133,6 +164,204 @@ mod tests {
             app.compose_insert(&ch.to_string());
         }
         app.compose_submit();
+    }
+
+    fn git_cells(app: &App) -> anyhow::Result<Vec<Span<'_>>> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        Ok(text_lines(
+            app,
+            &theme,
+            gutter_width(app.view()),
+            app.view().layout().lines().len() - app.view().scroll(),
+        )
+        .into_iter()
+        .map(|line| line.spans[3].clone())
+        .collect())
+    }
+
+    #[test]
+    fn git_bars_bridge_markdown_spacing_with_matching_colour_and_thickness() -> anyhow::Result<()> {
+        let text = "first\n\nsecond\n";
+        let dir = testing::workspace("git-gutter-spacing", text)?;
+        let mut app = app(&dir, 100)?;
+        for (head, index, glyph) in [
+            ("", "", "▎"),
+            ("", text, "▌"),
+            ("old first\n\nold second\n", "", "▎"),
+            ("old first\n\nold second\n", text, "▌"),
+        ] {
+            app.view_mut()
+                .set_bases(None, Some(index.to_owned()), Some(head.to_owned()));
+            let cells = git_cells(&app)?;
+            assert_eq!(app.view().source_line_of_row(1), None);
+            assert_eq!(cells[0].content, glyph);
+            assert_eq!(cells[1], cells[0], "gap keeps colour and thickness");
+            assert_eq!(cells[2], cells[0]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn git_bars_leave_status_boundaries_and_deletion_ticks_separate() -> anyhow::Result<()> {
+        let text = "first\n\nsecond\n";
+        let dir = testing::workspace("git-gutter-boundaries", text)?;
+        let mut app = app(&dir, 100)?;
+        for (head, index, expected) in [
+            ("", "first\n", ["▌", " ", "▎"]),
+            ("", "second\n", ["▎", " ", "▌"]),
+            ("first\n", "", [" ", " ", "▎"]),
+            ("second\n", "", ["▎", " ", " "]),
+            ("old first\n\n", "", ["▎", " ", "▎"]),
+            (
+                "removed\nfirst\n\nremoved too\nsecond\n",
+                "",
+                ["▔", " ", "▔"],
+            ),
+            (text, text, [" ", " ", " "]),
+        ] {
+            app.view_mut()
+                .set_bases(None, Some(index.to_owned()), Some(head.to_owned()));
+            let cells = git_cells(&app)?;
+            let glyphs: Vec<_> = cells
+                .iter()
+                .take(3)
+                .map(|cell| cell.content.as_ref())
+                .collect();
+            assert_eq!(glyphs, expected, "head: {head:?}, index: {index:?}");
+        }
+        app.view_mut().set_bases(None, None, None);
+        assert!(git_cells(&app)?.iter().all(|cell| cell.content == " "));
+        Ok(())
+    }
+
+    #[test]
+    fn git_bars_bridge_table_borders_but_not_document_edges() -> anyhow::Result<()> {
+        let dir = testing::workspace("git-gutter-table", "| key |\n| --- |\n| a |\n| b |\n")?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut()
+            .set_bases(None, Some(String::new()), Some(String::new()));
+        let cells = git_cells(&app)?;
+        assert_eq!(cells.first().context("table top border")?.content, " ");
+        assert_eq!(cells.last().context("table bottom border")?.content, " ");
+        assert!(
+            cells[1..cells.len() - 1]
+                .iter()
+                .all(|cell| cell.content == "▎")
+        );
+        let synthetic = app
+            .view()
+            .layout()
+            .lines()
+            .iter()
+            .enumerate()
+            .filter(|(row, _)| app.view().source_line_of_row(*row).is_none())
+            .map(|(row, line)| (row, line.text()))
+            .collect::<Vec<_>>();
+        assert!(synthetic.len() >= 4, "{synthetic:?}");
+        assert_eq!(app.git_on_row(cells.len()), None);
+        Ok(())
+    }
+
+    #[test]
+    fn git_bars_stay_continuous_through_wrapping_and_consecutive_synthetic_rows()
+    -> anyhow::Result<()> {
+        let text = format!(
+            "{}\n\n| key |\n| --- |\n| value |\n\nafter\n",
+            "wrapped words ".repeat(20)
+        );
+        let dir = testing::workspace("git-gutter-continuous", &text)?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut()
+            .set_bases(None, Some(String::new()), Some(String::new()));
+        let lines = app.view().layout().lines();
+        assert!(
+            lines
+                .windows(2)
+                .any(|pair| { pair[0].source().is_none() && pair[1].source().is_none() })
+        );
+        assert!(
+            (0..lines.len())
+                .filter(|&row| app.view().source_line_of_row(row) == Some(1))
+                .count()
+                > 1
+        );
+        assert!(git_cells(&app)?.iter().all(|cell| cell.content == "▎"));
+        Ok(())
+    }
+
+    #[test]
+    fn git_bars_leave_unchanged_code_blanks_and_thread_rows_unmarked() -> anyhow::Result<()> {
+        let dir = testing::workspace("git-gutter-code-blank", "```\nfirst\n\nsecond\n```\n")?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut().set_bases(
+            None,
+            Some(String::new()),
+            Some("```\nold first\n\nold second\n```\n".to_owned()),
+        );
+        let blank = (0..app.view().layout().lines().len())
+            .find(|&row| app.view().source_line_of_row(row) == Some(3))
+            .context("source-backed blank code line")?;
+        assert_eq!(git_cells(&app)?[blank].content, " ");
+
+        app.view_mut()
+            .set_bases(None, Some(String::new()), Some(String::new()));
+        annotate(&mut app, 2, 2, "a thread");
+        let stub = (0..app.view().layout().lines().len())
+            .find(|&row| app.view().stub_slot_of_row(row).is_some())
+            .context("thread stub row")?;
+        assert_eq!(app.git_on_row(stub), None);
+        app.view_mut().set_detached_anchors(vec![4]);
+        let detached = (0..app.view().layout().lines().len())
+            .find(|&row| app.view().detached_anchor_of_row(row).is_some())
+            .context("detached thread row")?;
+        assert_eq!(app.git_on_row(detached), None);
+        Ok(())
+    }
+
+    #[test]
+    fn git_gap_bars_do_not_depend_on_visible_neighbours() -> anyhow::Result<()> {
+        let dir = testing::workspace("git-gutter-scroll", "first\n\nsecond\n\nthird\n")?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut()
+            .set_bases(None, Some(String::new()), Some(String::new()));
+        let before = git_cells(&app)?[1].style;
+        let width = app.view().layout().width();
+        app.view_mut().resize(width, 1);
+        app.view_mut().scroll_by(1);
+        assert_eq!(app.view().scroll(), 1);
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let visible = text_lines(&app, &theme, gutter_width(app.view()), 1);
+        assert_eq!(visible[0].spans[3].style, before);
+        assert_eq!(visible[0].spans[3].content, "▎");
+        Ok(())
+    }
+
+    #[test]
+    fn git_gap_bars_do_not_change_source_or_unified_diff_rows() -> anyhow::Result<()> {
+        let dir = testing::workspace("git-gutter-displays", "first\n\nsecond\n")?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut().set_bases(
+            None,
+            Some(String::new()),
+            Some("old first\n\nold second\n".to_owned()),
+        );
+        app.view_mut().toggle_source_view();
+        assert_eq!(app.view().source_line_of_row(1), Some(2));
+        assert_eq!(git_cells(&app)?[1].content, " ");
+
+        app.view_mut().toggle_head_diff();
+        let cells = git_cells(&app)?;
+        let mut synthetic = 0;
+        for (row, cell) in cells.iter().enumerate() {
+            if app.view().source_line_of_row(row).is_none() {
+                synthetic += 1;
+                assert_eq!(cell.content, " ", "diff row {row}");
+            }
+        }
+        assert!(synthetic >= 3, "hunk header and removed lines");
+        Ok(())
     }
 
     /// ADR 0027: the gutter brackets a range, dots a one-row thread, and

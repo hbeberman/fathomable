@@ -600,9 +600,13 @@ re-draws the corners on the outer one's line. The rows are the rendered
 ones, so a thread on a long markdown paragraph is bracketed across the rows
 it wraps to, and the blank rows between paragraphs inside a thread draw `│`.
 The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
-for one that is staged; a new untracked file is all thin green. `Space d d` swaps
-the pane for the **diff view** with `HEAD` as its base: a unified diff of
-the file, a header naming the two sides (`HEAD · now`) with the diff keys
+for one that is staged; a new untracked file is all thin green.
+In rendered Markdown, spacing and table borders between matching added or
+changed bars carry the same bar when both sides have the same staging state.
+Source-backed rows keep their own status; deletion rules and document edges
+are not extended.
+`Space d d` swaps the pane for the **diff view** with `HEAD` as its base:
+a unified diff of the file, a header naming the two sides (`HEAD · now`) with the diff keys
 at its right, the badge `DIFF HEAD` after the path, and `+added -removed`
 counts in the status line. `Space d d` again, or `Esc` once there is nothing
 else to clear, returns to the file.

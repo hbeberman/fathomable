@@ -913,25 +913,19 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         // Note cell (ADR 0013), number, space, diff bar (ADR 0006). A
         // removal has no line of its own, so it draws as a thin rule along
         // the top of the cell of the line below it.
-        let bar = view
-            .source_line_of_row(row)
-            .and_then(|line| view.line_status(line))
-            .map_or_else(
-                || Span::raw(" "),
-                |status| {
-                    // A hunk the index already holds draws thicker
-                    // (ADR 0017): `▌` staged, `▎` not yet.
-                    let staged = view
-                        .source_line_of_row(row)
-                        .is_some_and(|line| view.line_staged(line));
-                    let glyph = match (status, staged) {
-                        (LineStatus::Removed, _) => "▔",
-                        (_, true) => "▌",
-                        (_, false) => "▎",
-                    };
-                    Span::styled(glyph, status_style(theme, status))
-                },
-            );
+        let bar = app.git_on_row(row).map_or_else(
+            || Span::raw(" "),
+            |(status, staged)| {
+                // A hunk the index already holds draws thicker
+                // (ADR 0017): `▌` staged, `▎` not yet.
+                let glyph = match (status, staged) {
+                    (LineStatus::Removed, _) => "▔",
+                    (_, true) => "▌",
+                    (_, false) => "▎",
+                };
+                Span::styled(glyph, status_style(theme, status))
+            },
+        );
         let mut spans = vec![
             note,
             Span::styled(number, theme.line_number),

@@ -93,8 +93,10 @@ table border) carries the git bar when the nearest source-backed rows above
 and below have the same added or modified status and staging state. Both
 the colour and the thin unstaged or thick staged glyph are preserved.
 Neighbours are found in the full layout, not only the visible viewport.
+At the end of the document, the view's trailing `~` line approves the same
+extension through any synthetic rows above it, while carrying no bar itself.
 
 Source-backed rows keep their own status, including unchanged blank lines.
-Deletion ticks, document edges, thread rows, and source or unified diff
-displays are not bridged. This is a drawing rule only: source mappings,
+Deletion ticks, the leading document edge, thread rows, and source or unified
+diff displays are not bridged. This is a drawing rule only: source mappings,
 diff counts, and hunk navigation are unchanged.

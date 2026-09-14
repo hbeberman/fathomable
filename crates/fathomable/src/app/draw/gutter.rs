@@ -7,7 +7,8 @@
 //! over several rows is bracketed like any other range, and a blank row
 //! of rendered markdown inside a thread's lines draws `│`.
 //! The git bar bridges sourceless Markdown rows between matching added
-//! or modified bars with the same staging state.
+//! or modified bars with the same staging state, and extends through
+//! trailing synthetic rows to the view's `~` line.
 
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::LineStatus;
@@ -17,7 +18,8 @@ use crate::app::threads::{Mark, ThreadState, overlaps};
 
 impl App {
     /// The git status and staging state drawn on `row`, including
-    /// synthetic Markdown rows between matching non-deletion bars.
+    /// synthetic Markdown rows between matching non-deletion bars or
+    /// between one such bar and the view's trailing `~` line.
     pub(super) fn git_on_row(&self, row: usize) -> Option<(LineStatus, bool)> {
         let view = self.view();
         view.layout().lines().get(row)?;
@@ -37,8 +39,8 @@ impl App {
         }
         let (above, below) = self.sourced_neighbours(row);
         let above = status(above?.start())?;
-        let below = status(below?.start())?;
-        (above == below && above.0 != LineStatus::Removed).then_some(above)
+        let continues = below.is_none_or(|below| status(below.start()).is_some_and(|s| s == above));
+        (continues && above.0 != LineStatus::Removed).then_some(above)
     }
 
     /// The note-cell glyph and colour of rendered row `row` of the
@@ -374,19 +376,15 @@ mod tests {
     }
 
     #[test]
-    fn git_bars_bridge_table_borders_but_not_document_edges() -> anyhow::Result<()> {
+    fn git_bars_bridge_table_borders_through_the_trailing_edge() -> anyhow::Result<()> {
         let dir = testing::workspace("git-gutter-table", "| key |\n| --- |\n| a |\n| b |\n")?;
         let mut app = app(&dir, 100)?;
         app.view_mut()
             .set_bases(None, Some(String::new()), Some(String::new()));
         let cells = git_cells(&app)?;
         assert_eq!(cells.first().context("table top border")?.content, " ");
-        assert_eq!(cells.last().context("table bottom border")?.content, " ");
-        assert!(
-            cells[1..cells.len() - 1]
-                .iter()
-                .all(|cell| cell.content == "▎")
-        );
+        assert_eq!(cells.last().context("table bottom border")?.content, "▎");
+        assert!(cells[1..].iter().all(|cell| cell.content == "▎"));
         let synthetic = app
             .view()
             .layout()
@@ -397,6 +395,12 @@ mod tests {
             .map(|(row, line)| (row, line.text()))
             .collect::<Vec<_>>();
         assert!(synthetic.len() >= 4, "{synthetic:?}");
+        assert_eq!(
+            synthetic.last().context("trailing synthetic row")?.0,
+            cells.len() - 1
+        );
+        // The `~` approves the synthetic rows above it; it does not carry
+        // a bar itself and remains outside the document layout.
         assert_eq!(app.git_on_row(cells.len()), None);
         Ok(())
     }

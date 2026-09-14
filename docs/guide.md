@@ -609,8 +609,10 @@ The bar is thin (`▎`) for a change not yet in the index and thick (`▌`)
 for one that is staged; a new untracked file is all thin green.
 In rendered Markdown, spacing and table borders between matching added or
 changed bars carry the same bar when both sides have the same staging state.
-Source-backed rows keep their own status; deletion rules and document edges
-are not extended.
+At the end of the file, the `~` line lets the last bar extend through trailing
+table borders or other injected rows, but carries no bar itself. Source-backed
+rows keep their own status; deletion rules and the leading edge are not
+extended.
 `Space d d` swaps the pane for the **diff view** with `HEAD` as its base:
 a unified diff of the file, a header naming the two sides (`HEAD · now`) with the diff keys
 at its right, the badge `DIFF HEAD` after the path, and `+added -removed`

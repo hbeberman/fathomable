@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Sidebar paging
-description: The tree highlight is the file the main pane shows, and the sidebar wheel steps one row per tick, so the tree pages the viewer through files.
+description: The tree highlight previews a file or directory summary in the main pane, and the sidebar wheel steps one row per tick.
 resource: crates/fathomable/src/app/files_pane.rs
 tags:
   - decision
@@ -16,7 +16,9 @@ Status: accepted (2026-08-27); amended 2026-09-04 by
 unchanged. Amended 2026-09-05 by [0057](0057-the-sidebar.md): the
 column is the sidebar again, the pane is the **files pane**, and the
 module is `app/files_pane.rs`. Amended 2026-09-14: `l` / Right only
-navigates directories; `Enter` is the file-row key that gives the text focus.
+navigates directories; `Enter` is the file-row key that gives the text
+focus. Amended 2026-09-14: a highlighted directory replaces the prior
+file with a brief directory summary.
 
 ## Context
 
@@ -33,8 +35,13 @@ highlight drives the pane.
 - The highlight is what the main pane shows. A tree key or wheel tick that
   lands the highlight on a *file* opens that file in the main pane without
   taking focus: `j`/`k`, `gg`/`G`, the wheel, and the step `l` takes into
-  an expanded directory all page the viewer. A directory row leaves the
-  pane on the file it already shows.
+  an expanded directory all page the viewer.
+- While the files pane owns the keys, a highlight on a *directory*
+  replaces the prior file with a read-only summary: the root-relative path;
+  counts of its direct files and subdirectories under the files pane's
+  active filters; then, when nonzero, the changed-file and `+n -m` totals
+  and the open and waiting thread counts across its whole subtree. The
+  summary has no navigation hints: the files pane owns directory navigation.
 - Landing keeps `open`'s semantics: paged-through files join the open-file
   history and the recent list ([0012](0012-workspace-mode.md)), and the
   file left behind is snapshotted as seen ([0015](0015-follow-mode.md)),
@@ -65,3 +72,6 @@ highlight drives the pane.
 - Wheel-paging a long directory writes real entries into the history and
   the seen snapshots. That is the intent: every file paged through was
   shown.
+- `Tree::current_directory_counts` reads one directory level without
+  expanding it, so a collapsed directory can describe its immediate
+  contents without recursively walking the workspace.

@@ -342,7 +342,7 @@ fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
     assert_eq!(
         app.current_path(),
         Path::new("README.md"),
-        "a directory row leaves the pane on the file it shows"
+        "the loaded document stays available behind the directory card"
     );
     keys::handle_key(&mut app, key('l'));
     keys::handle_key(&mut app, key('j'));
@@ -385,6 +385,94 @@ fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
     // Enter commits: focus moves to the viewer.
     keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::View);
+    Ok(())
+}
+
+#[test]
+fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow::Result<()> {
+    use crossterm::event::KeyCode;
+    use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
+
+    use crate::app::testing::{press, press_key, screen};
+
+    let dir = fixture("directory-summary")?;
+    fs::create_dir_all(dir.0.join("docs/reference"))?;
+    fs::write(dir.0.join("docs/reference/api.md"), "# API\n")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(
+        &dir.0,
+        &[
+            ("README.md", "# Readme\n\nhello\n"),
+            ("docs/guide.md", "# Guide\n"),
+            ("docs/notes.md", "# Notes\n"),
+            ("docs/reference/api.md", "# API\n"),
+        ],
+    )?;
+    fs::write(dir.0.join("docs/guide.md"), "# Guide\n\nchanged\n")?;
+    fs::write(dir.0.join("docs/draft.md"), "draft\n")?;
+
+    let store_path = dir.0.join(".state/threads.jsonl");
+    let mut store = Store::open(&store_path)?;
+    store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("docs/guide.md"),
+            LineRange::new(1, 1),
+            "open",
+        ),
+        "# Guide\n\nchanged\n",
+        1,
+    )?;
+    let waiting = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("docs/notes.md"),
+            LineRange::new(1, 1),
+            "question",
+        ),
+        "# Notes\n",
+        2,
+    )?;
+    store.reply(&waiting, Reply::new(Author::agent("agent"), 3, "answer"))?;
+
+    let mut app = app_with(
+        &dir,
+        Options {
+            store: Some(Store::open(&store_path)?),
+            ..Options::for_test(dir.0.clone())
+        },
+    )?;
+    app.settle_status();
+    app.open(Path::new("README.md"));
+    app.toggle_tree_focus();
+    press(&mut app, "k");
+
+    let info = app
+        .directory_info()
+        .ok_or_else(|| anyhow::anyhow!("directory summary not shown"))?;
+    assert_eq!(info.path, Path::new("docs"));
+    assert_eq!((info.files, info.subdirectories), (Some(3), Some(1)));
+    assert_eq!(
+        (
+            info.changed_files,
+            info.added,
+            info.removed,
+            info.open_threads,
+            info.waiting_threads,
+        ),
+        (2, 3, 0, 1, 1)
+    );
+    let output = screen(&app)?.join("\n");
+    assert!(output.contains("docs/"), "{output}");
+    assert!(output.contains("files  3"), "{output}");
+    assert!(output.contains("subdirectories  1"), "{output}");
+    assert!(output.contains("changes  2 files · +3 -0"), "{output}");
+    assert!(output.contains("threads  1 open · 1 waiting"), "{output}");
+    assert!(!output.contains("Readme"), "{output}");
+
+    press_key(&mut app, KeyCode::Esc);
+    assert!(app.directory_info().is_none());
+    assert!(screen(&app)?.join("\n").contains("Readme"));
     Ok(())
 }
 

@@ -17,7 +17,7 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{Author, LineRange, Thread, ThreadId};
+use fathomable_core::annotations::{Author, LineRange, Store, Thread, ThreadId};
 use fathomable_core::layout::{Layout, Line};
 
 use crate::app::draw::nest::NEST;
@@ -495,6 +495,27 @@ impl App {
             }
         }
         counts
+    }
+
+    /// Open and waiting threads in the active worktree under `directory`.
+    pub(crate) fn directory_thread_counts(&self, directory: &Path) -> (usize, usize) {
+        let mut open = 0;
+        let mut waiting = 0;
+        for thread in self
+            .store
+            .iter()
+            .flat_map(Store::threads)
+            .filter(|thread| self.reach.includes(thread))
+            .filter(|thread| thread.path().starts_with(directory))
+            .filter(|thread| self.worktree_of(thread.id()).is_none())
+        {
+            match ThreadState::of(thread) {
+                ThreadState::Open => open += 1,
+                ThreadState::Waiting => waiting += 1,
+                ThreadState::Resolved => {}
+            }
+        }
+        (open, waiting)
     }
 
     /// The circle each file with listed threads shows in the files pane

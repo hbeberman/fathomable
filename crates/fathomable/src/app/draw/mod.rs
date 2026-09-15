@@ -407,12 +407,15 @@ fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
 }
 
 /// The text column: the review list when it is open (ADR 0025), else the
-/// file-info pane for a binary or over-limit file (ADR 0026), else the
-/// document, else the welcome block.
+/// selected directory's summary (ADR 0023), else the file-info pane for
+/// a binary or over-limit file (ADR 0026), else the document, else the
+/// welcome block.
 fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
     let text_rows = usize::from(text_area.height);
     if app.review_list().is_open() {
         draw_review(frame, app, theme, text_area);
+    } else if let Some(directory) = app.directory_info() {
+        draw_directory_info(frame, theme, text_area, &directory);
     } else if let Some(info) = app.info() {
         draw_info(frame, app, theme, text_area, &info);
     } else if app.has_document() {
@@ -502,6 +505,7 @@ fn place_cursor(
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
     } else if app.focus() != Focus::View
         || !app.has_document()
+        || app.directory_path().is_some()
         || app.review_list().is_open()
         || app.info().is_some()
         || view.stub_slot_of_row(view.cursor().row).is_some()
@@ -1232,13 +1236,17 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     // Keep the right-hand block visible by trimming the path from the left.
     let badges: usize = parts.badges.iter().map(|b| display_width(b) + 2).sum();
     let fixed = display_width(parts.pill) + 3 + badges + parts.right_width() + 8;
-    let path = app.current_path().to_string_lossy();
+    let directory = app.directory_path();
+    let path = directory.map_or_else(
+        || app.current_path().to_string_lossy().into_owned(),
+        |directory| format!("{}/", directory.display()),
+    );
     let path = truncate_left(&path, width.saturating_sub(fixed));
     let mut left = vec![
         Span::styled(format!(" {} ", parts.pill), pill_style),
         Span::raw(format!(" {path}")),
     ];
-    if view.changed() {
+    if directory.is_none() && view.changed() {
         left.push(Span::styled(" [+]", theme.info));
     }
     for badge in &parts.badges {
@@ -1346,6 +1354,7 @@ enum StatusTone {
 
 pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
+    let directory = app.directory_path();
     let pill = match app.focus() {
         Focus::Tree => "FILES",
         Focus::Review => "REVIEW",
@@ -1358,53 +1367,58 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         },
     };
     let mut badges = Vec::new();
-    if let Some(diff) = view.diff() {
-        badges.push(diff.badge.clone());
-    } else if view.source_view() {
-        badges.push("SRC".to_owned());
+    if directory.is_none() {
+        if let Some(diff) = view.diff() {
+            badges.push(diff.badge.clone());
+        } else if view.source_view() {
+            badges.push("SRC".to_owned());
+        }
     }
     if app.auto_jump() {
         badges.push("AUTO".to_owned());
     }
-    let (line, col) = view.source_position();
-    let mut position = format!(" {line}:{col}  {}%", view.percent());
-    let counts = if view.diff_view() {
-        view.pair_counts()
-    } else {
-        view.diff_counts()
-    };
-    if let Some((added, removed)) = counts.filter(|(a, r)| a + r > 0) {
-        // Infallible: writing to a `String` cannot fail.
-        let _ = write!(position, "  +{added} -{removed}");
-    }
-    let mut right = vec![StatusSegment::plain(position)];
-    let proposed = app.proposed_count();
-    if proposed > 0 {
-        right.push(StatusSegment::plain(format!("  {proposed} proposed")));
-    }
-    let waiting = app.waiting_count();
-    if waiting > 0 {
-        // A teal circle before the count (ADR 0066); a click opens the
-        // review list.
-        right.push(StatusSegment::plain("  "));
-        right.push(StatusSegment {
-            text: "●".to_owned(),
-            tone: StatusTone::Waiting,
-            action: Some(Action::Review),
-        });
-        right.push(StatusSegment {
-            text: format!(" {waiting} waiting"),
-            tone: StatusTone::Plain,
-            action: Some(Action::Review),
-        });
-    }
-    let threads = app.thread_counts().1;
-    if threads > 0 {
-        right.push(StatusSegment {
-            text: format!("  {threads} threads"),
-            tone: StatusTone::Plain,
-            action: Some(Action::WindowThreads),
-        });
+    let mut right = Vec::new();
+    if directory.is_none() {
+        let (line, col) = view.source_position();
+        let mut position = format!(" {line}:{col}  {}%", view.percent());
+        let counts = if view.diff_view() {
+            view.pair_counts()
+        } else {
+            view.diff_counts()
+        };
+        if let Some((added, removed)) = counts.filter(|(a, r)| a + r > 0) {
+            // Infallible: writing to a `String` cannot fail.
+            let _ = write!(position, "  +{added} -{removed}");
+        }
+        right.push(StatusSegment::plain(position));
+        let proposed = app.proposed_count();
+        if proposed > 0 {
+            right.push(StatusSegment::plain(format!("  {proposed} proposed")));
+        }
+        let waiting = app.waiting_count();
+        if waiting > 0 {
+            // A teal circle before the count (ADR 0066); a click opens the
+            // review list.
+            right.push(StatusSegment::plain("  "));
+            right.push(StatusSegment {
+                text: "●".to_owned(),
+                tone: StatusTone::Waiting,
+                action: Some(Action::Review),
+            });
+            right.push(StatusSegment {
+                text: format!(" {waiting} waiting"),
+                tone: StatusTone::Plain,
+                action: Some(Action::Review),
+            });
+        }
+        let threads = app.thread_counts().1;
+        if threads > 0 {
+            right.push(StatusSegment {
+                text: format!("  {threads} threads"),
+                tone: StatusTone::Plain,
+                action: Some(Action::WindowThreads),
+            });
+        }
     }
     right.push(StatusSegment::plain("  "));
     StatusParts {
@@ -1418,7 +1432,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
 /// counts when it is the open file.
 fn change_hint(app: &App) -> Option<String> {
     let change = app.queue().newest()?;
-    let counts = if app.current_path() == change.path {
+    let counts = if app.directory_path().is_none() && app.current_path() == change.path {
         app.view().diff_counts()
     } else {
         None
@@ -1842,9 +1856,78 @@ fn draw_info(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect, info: 
             Span::raw(format!("  {value}")),
         ]));
     }
+
     lines.push(Line::default());
     for line in &info.notice {
         lines.push(Line::from(Span::styled(format!("  {line}"), theme.info)));
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .style(theme.text)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+/// A selected directory's path and brief repository summary (ADR 0023).
+fn draw_directory_info(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    area: Rect,
+    info: &crate::app::files_pane::DirectoryInfo,
+) {
+    let count = |value: Option<usize>| {
+        value.map_or_else(|| "unavailable".to_owned(), |value| value.to_string())
+    };
+    let mut rows = vec![
+        ("files", count(info.files)),
+        ("subdirectories", count(info.subdirectories)),
+    ];
+    if info.changed_files > 0 {
+        rows.push((
+            "changes",
+            format!(
+                "{} {} · +{} -{}",
+                info.changed_files,
+                if info.changed_files == 1 {
+                    "file"
+                } else {
+                    "files"
+                },
+                info.added,
+                info.removed
+            ),
+        ));
+    }
+    if info.open_threads + info.waiting_threads > 0 {
+        let mut parts = Vec::new();
+        if info.open_threads > 0 {
+            parts.push(format!("{} open", info.open_threads));
+        }
+        if info.waiting_threads > 0 {
+            parts.push(format!("{} waiting", info.waiting_threads));
+        }
+        rows.push(("threads", parts.join(" · ")));
+    }
+    let label_width = rows
+        .iter()
+        .map(|(label, _)| display_width(label))
+        .max()
+        .unwrap_or(0);
+    let width = usize::from(area.width);
+    let header = vec![Span::styled(
+        format!(" {}/", info.path.display()),
+        theme.popup_key,
+    )];
+    let mut lines = vec![
+        padded_line(header, width).style(theme.header),
+        Line::default(),
+    ];
+    for (label, value) in rows {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {label:>label_width$}"), theme.popup_key),
+            Span::raw(format!("  {value}")),
+        ]));
     }
     frame.render_widget(
         Paragraph::new(lines)

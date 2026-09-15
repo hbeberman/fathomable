@@ -266,6 +266,8 @@ pub(crate) struct App {
     search_origin: Option<jumplist::Position>,
     welcome: View,
     tree: Option<Tree>,
+    /// Directory card shown while the files-pane cursor names a directory.
+    directory: Option<files_pane::DirectorySelection>,
     /// The sidebar's panes, scope, split, and sizes (ADR 0049, ADR 0057).
     sidebar: sidebar::Sidebar,
     /// Whether stubs are drawn, and for resolved threads (ADR 0049).
@@ -412,6 +414,7 @@ impl App {
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             tree: None,
+            directory: None,
             sidebar: sidebar::Sidebar::new(sidebar),
             stubs: threads::stubs::StubState::from_config(&threads),
             expanded: HashSet::new(),
@@ -817,6 +820,7 @@ impl App {
                     tree.refresh_dir(workspace, &dir).map(|_| None)
                 });
             }
+            self.refresh_directory_selection();
         }
     }
 
@@ -1556,6 +1560,9 @@ impl App {
 
     /// The banner over retained source while the worktree file is gone.
     pub(crate) fn banner(&self) -> Option<&'static str> {
+        if self.directory_path().is_some() {
+            return None;
+        }
         self.current
             .and_then(|i| self.docs.get(i))
             .filter(|_| !self.review_list.is_open())
@@ -1591,6 +1598,7 @@ impl App {
     /// no bar of this kind.
     pub(crate) fn text_bar_shown(&self) -> bool {
         self.has_document()
+            && self.directory_path().is_none()
             && !self.review_list().is_open()
             && self.info().is_none()
             && (self.view().diff_view()
@@ -1669,6 +1677,7 @@ impl App {
 
     /// Open the root-relative `path`, loading it or switching to it.
     pub(crate) fn open(&mut self, path: &Path) {
+        let had_directory = self.directory.take().is_some();
         let relative = self.workspace.relative(&self.workspace.root().join(path));
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
         let index = if let Some(index) = loaded {
@@ -1740,6 +1749,9 @@ impl App {
                 }
                 Err(error) => {
                     self.notice(format!("{error:#}"));
+                    if had_directory {
+                        self.relayout();
+                    }
                     return;
                 }
             }
@@ -1857,6 +1869,7 @@ impl App {
     }
 
     fn show(&mut self, index: usize) {
+        self.directory = None;
         if let Some(previous) = self.current
             && previous != index
         {
@@ -2063,11 +2076,13 @@ impl App {
             self.sidebar.tree = true;
             self.reveal_current();
             self.focus = Focus::Tree;
+            self.show_highlight();
         } else if self.focus == Focus::Tree {
             self.focus = Focus::View;
         } else {
             self.reveal_current();
             self.focus = Focus::Tree;
+            self.show_highlight();
         }
         self.relayout();
     }

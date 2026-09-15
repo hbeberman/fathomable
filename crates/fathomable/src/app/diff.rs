@@ -298,6 +298,7 @@ impl App {
     /// has one.
     pub(crate) fn diff_chrome_rows(&self) -> usize {
         if !self.has_document()
+            || self.directory_path().is_some()
             || self.review_list().is_open()
             || self.info().is_some()
             || !self.view().diff_view()

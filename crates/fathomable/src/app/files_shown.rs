@@ -29,6 +29,7 @@ impl App {
             return;
         }
         self.scroll_tree();
+        self.refresh_directory_selection();
         if !self.sidebar.tree {
             // The header that names the state is not on screen.
             let words = shown_words(shown);
@@ -46,6 +47,7 @@ impl App {
         if let Some(tree) = self.tree.as_mut() {
             tree.sift(&self.status);
             self.scroll_tree();
+            self.refresh_directory_selection();
         }
     }
 

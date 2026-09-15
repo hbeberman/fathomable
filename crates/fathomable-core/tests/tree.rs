@@ -97,6 +97,34 @@ fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
+fn directory_counts_read_one_level_and_follow_tree_filters()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("directory-counts")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.move_down(1);
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src")));
+    assert_eq!(
+        tree.current_directory_counts(&mut workspace)?
+            .map(|counts| (counts.files(), counts.subdirectories())),
+        Some((1, 1))
+    );
+    assert!(!tree.current().is_some_and(Row::expanded));
+
+    tree.set_shown(
+        &mut workspace,
+        &dirty_status(),
+        Shown::all().toggled(Rule::Changed),
+    )?;
+    assert_eq!(
+        tree.current_directory_counts(&mut workspace)?
+            .map(|counts| (counts.files(), counts.subdirectories())),
+        Some((1, 0))
+    );
+    Ok(())
+}
+
+#[test]
 fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("reveal")?;
     let mut workspace = Workspace::discover(&dir.0)?;

@@ -227,7 +227,7 @@ Files pane and picker:
 
 | Keys | Action |
 | --- | --- |
-| `j` `k` / `Down` `Up` | move, previewing the highlighted file without leaving the files pane |
+| `j` `k` / `Down` `Up` | move, previewing the highlighted file or a brief summary of the highlighted directory without leaving the files pane |
 | `h` / `Left` | collapse a directory or go to the parent |
 | `l` / `Right` | expand or descend into a directory; do nothing on a file |
 | `Enter` | open the file and focus the text; toggle a directory |
@@ -536,6 +536,12 @@ file opening in workspace scope, `Enter` opens the file with the thread
 expanded, and `r` and `o` act on the highlight. A file with listed
 threads shows its most urgent circle after its name in the files pane,
 and a collapsed directory its children's.
+
+While the files pane has the keys and its highlight rests on a directory,
+the text column shows that directory's path, direct file and subdirectory
+counts under the active files-pane filters, and any changed-file, `+n -m`,
+open-thread, and waiting-thread totals across its subtree. It does not
+repeat navigation hints; directory navigation remains in the files pane.
 
 The text, the threads pane, and the review list show one **thread
 cursor**: a thread and a message in it. Whichever surface you move it

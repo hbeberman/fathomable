@@ -194,6 +194,27 @@ impl Row {
     }
 }
 
+/// Counts of the entries directly inside a directory.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DirectoryCounts {
+    files: usize,
+    subdirectories: usize,
+}
+
+impl DirectoryCounts {
+    /// Number of files admitted by the tree's current filters.
+    #[must_use]
+    pub const fn files(self) -> usize {
+        self.files
+    }
+
+    /// Number of subdirectories admitted by the tree's current filters.
+    #[must_use]
+    pub const fn subdirectories(self) -> usize {
+        self.subdirectories
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Node {
     name: String,
@@ -381,6 +402,49 @@ impl Tree {
     #[must_use]
     pub fn current(&self) -> Option<&Row> {
         self.rows.get(self.cursor)
+    }
+
+    /// Count the visible entries directly inside the selected directory,
+    /// reading its listing without expanding it.
+    ///
+    /// Returns `None` when the selected row is not a directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the directory cannot be read.
+    pub fn current_directory_counts(
+        &mut self,
+        workspace: &mut Workspace,
+    ) -> Result<Option<DirectoryCounts>, WorkspaceError> {
+        let Some(path) = self
+            .current()
+            .filter(|row| row.is_dir)
+            .map(|row| row.path.clone())
+        else {
+            return Ok(None);
+        };
+        let filter = self.shown.filter();
+        let Some(node) = find_node(&mut self.root, &path) else {
+            return Ok(None);
+        };
+        if node.children.is_none() {
+            node.children = Some(read_children(workspace, &path, filter, &self.deleted)?);
+        }
+        let counts = node
+            .children
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|child| self.admitted.admits(&path.join(&child.name)))
+            .fold(DirectoryCounts::default(), |mut counts, child| {
+                if child.is_dir {
+                    counts.subdirectories += 1;
+                } else {
+                    counts.files += 1;
+                }
+                counts
+            });
+        Ok(Some(counts))
     }
 
     /// Re-read every expanded directory, keeping expansion state and the

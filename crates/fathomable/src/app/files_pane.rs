@@ -1,14 +1,36 @@
 // @okf-doc: /decisions/0023-sidebar-paging.md
 //! The files pane's hands on the app: tree operations, and the rule that
-//! the highlighted file is the one the main pane shows (ADR 0023; the
-//! pane is the sidebar's upper half since ADR 0049, the column named by
-//! ADR 0057).
+//! the highlighted file or directory summary is what the main pane shows
+//! (ADR 0023; the pane is the sidebar's upper half since ADR 0049, the
+//! column named by ADR 0057).
 
-use fathomable_core::tree::{Activation, Tree};
+use std::path::PathBuf;
+
+use fathomable_core::tree::{Activation, DirectoryCounts, Tree};
 use fathomable_core::workspace::Workspace;
 
 use super::view::Effect;
 use super::{App, Focus, TREE_SCROLLOFF};
+
+/// The selected directory and the direct counts read for its card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct DirectorySelection {
+    path: PathBuf,
+    counts: Option<DirectoryCounts>,
+}
+
+/// The directory facts drawn in place of the last file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DirectoryInfo {
+    pub(crate) path: PathBuf,
+    pub(crate) files: Option<usize>,
+    pub(crate) subdirectories: Option<usize>,
+    pub(crate) changed_files: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
+    pub(crate) open_threads: usize,
+    pub(crate) waiting_threads: usize,
+}
 
 impl App {
     /// Run `f` on the tree, then keep the cursor on screen.
@@ -61,6 +83,7 @@ impl App {
             tree.activate(workspace)
         });
         self.focus = Focus::Tree;
+        self.show_highlight();
     }
 
     /// A right-click on tree row `row` (ADR 0050): the highlight moves
@@ -113,24 +136,116 @@ impl App {
         self.tree_scroll = self.tree_scroll.min(max);
     }
 
-    /// Show the file under the tree cursor, leaving focus where it is: the
-    /// tree highlight is what the main pane shows (ADR 0023), so `j`,
-    /// `k`, and the wheel page the viewer through files. A directory row
-    /// leaves the pane on the file it already shows.
+    /// Show the file or directory summary under the tree cursor, leaving
+    /// focus where it is (ADR 0023), so `j`, `k`, and the wheel page the
+    /// main pane through entries.
     pub(super) fn show_highlight(&mut self) {
-        let Some(path) = self
+        let Some((path, is_dir)) = self
             .tree()
             .and_then(Tree::current)
-            .filter(|row| !row.is_dir())
-            .map(|row| row.path().to_path_buf())
+            .map(|row| (row.path().to_path_buf(), row.is_dir()))
         else {
+            self.directory = None;
             return;
         };
+        if is_dir {
+            if self
+                .directory
+                .as_ref()
+                .is_none_or(|directory| directory.path != path)
+                && let Some(index) = self.current
+            {
+                self.mark_seen(index);
+            }
+            let counts = match self.tree.as_mut().and_then(|tree| {
+                match tree.current_directory_counts(&mut self.workspace) {
+                    Ok(counts) => counts.map(Ok),
+                    Err(error) => Some(Err(error)),
+                }
+            }) {
+                Some(Ok(counts)) => Some(counts),
+                Some(Err(error)) => {
+                    self.notice(error.to_string());
+                    None
+                }
+                None => None,
+            };
+            self.directory = Some(DirectorySelection { path, counts });
+            self.relayout();
+            return;
+        }
+        let had_directory = self.directory.take().is_some();
         if self.current_path() == path {
+            if had_directory {
+                self.relayout();
+            }
             return;
         }
         let focus = self.focus;
         self.open(&path);
         self.focus = focus;
+    }
+
+    /// Refresh the selected directory's direct counts after its listing or
+    /// the files-pane filters change.
+    pub(super) fn refresh_directory_selection(&mut self) {
+        let Some(path) = self
+            .directory
+            .as_ref()
+            .map(|directory| directory.path.clone())
+        else {
+            return;
+        };
+        let selected = self
+            .tree()
+            .and_then(Tree::current)
+            .filter(|row| row.is_dir() && row.path() == path);
+        if selected.is_none() {
+            self.directory = None;
+            self.relayout();
+            return;
+        }
+        self.show_highlight();
+    }
+
+    /// Facts about the directory currently replacing the file view.
+    pub(crate) fn directory_info(&self) -> Option<DirectoryInfo> {
+        let directory = self
+            .directory
+            .as_ref()
+            .filter(|_| self.focus == Focus::Tree)?;
+        let shown = self
+            .tree
+            .as_ref()
+            .map_or_else(Default::default, Tree::shown);
+        let changes: Vec<_> = self
+            .status
+            .entries()
+            .iter()
+            .filter(|entry| entry.path().starts_with(&directory.path))
+            .filter(|entry| shown.untracked() || !entry.changes().is_only_untracked())
+            .collect();
+        let changed_files = changes.len();
+        let added = changes.iter().map(|entry| entry.added()).sum();
+        let removed = changes.iter().map(|entry| entry.removed()).sum();
+        let (open_threads, waiting_threads) = self.directory_thread_counts(&directory.path);
+        Some(DirectoryInfo {
+            path: directory.path.clone(),
+            files: directory.counts.map(DirectoryCounts::files),
+            subdirectories: directory.counts.map(DirectoryCounts::subdirectories),
+            changed_files,
+            added,
+            removed,
+            open_threads,
+            waiting_threads,
+        })
+    }
+
+    /// The directory replacing the file view while the files pane has focus.
+    pub(crate) fn directory_path(&self) -> Option<&std::path::Path> {
+        self.directory
+            .as_ref()
+            .filter(|_| self.focus == Focus::Tree)
+            .map(|directory| directory.path.as_path())
     }
 }

@@ -6,6 +6,8 @@
 //! The `git` functions build repositories the way the tests need them,
 //! with `GIT_*` environment overrides ignored as the workspace itself
 //! ignores them.
+//! The [`vocabulary`] module checks agent-facing prose against the
+//! production vocabulary without adding those helpers to the runtime API.
 //!
 //! # Examples
 //!
@@ -25,6 +27,7 @@ use std::io;
 use std::path::PathBuf;
 
 pub mod git;
+pub mod vocabulary;
 
 /// A directory under the system temp dir, created empty and removed on
 /// drop. The path is the public field: tests join onto it directly.

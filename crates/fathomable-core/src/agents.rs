@@ -1048,6 +1048,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::annotations::{Author, Draft, LineRange, Reply, Store, ThreadId};
+    use fathomable_testing::vocabulary as test_vocab;
 
     use super::{Blob, Register, Subscriber, WatchWhen};
     use crate::bond::Process;
@@ -1409,11 +1410,8 @@ mod tests {
         assert!(text.lines().count() <= 20 + 6, "{text}");
         // Every tool or parameter the blob names is one the vocabulary
         // knows, which the fathomable crate checks against the schema.
-        for ident in crate::vocabulary::idents(&text) {
-            assert!(
-                crate::vocabulary::is_known(ident),
-                "blob names unknown `{ident}`"
-            );
+        for ident in test_vocab::idents(&text) {
+            assert!(test_vocab::is_known(ident), "blob names unknown `{ident}`");
         }
         assert!(
             blob.shown().count() + blob.listed.len() == 6,

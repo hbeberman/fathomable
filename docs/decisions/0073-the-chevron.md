@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The chevron
-description: An expanded thread's header row draws a bold ▾ in the thread's gutter and a stub's first row a bold ▸ in the same column; a click on either, or a double-click anywhere on the header or the stub, folds or expands the thread, while one click elsewhere on the row only places the cursor.
+description: An expanded thread's header row draws a bold ▾ in the thread's gutter and a stub's first row a bold ▸ in the same column; a click in that gutter, or a double-click anywhere on the row, toggles the thread, while a single click elsewhere rests the cursor on the clicked header or stub.
 resource: crates/fathomable/src/app/input/mouse.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -54,50 +54,23 @@ its own: its edge cell, the circle, and the name.
   does not fold.
 - **The stub's chevron.** A collapsed stub's first row draws `▸` in
   the same column, bold too, so a folded thread and an expanded one
-  show their chevrons under each other. The stub gains the two cells: its edge
-  cell, the chevron or a space, a space, then the circle and the name
-  as before. The circle stays on the newest message's row
-  ([0066](0066-one-circle-language.md)); on a two-row stub the chevron
-  is on the older row and the circle on the newer. (A stub has been one
-  row since later on 2026-09-09, [0049](0049-inline-threads-and-the-rail.md):
-  the chevron and the circle share it.)
-- **A click on the chevron.** A left press on the thread's gutter of
-  the header row, the bar's cell or the chevron's, folds the thread;
-  the same press on the chevron's column of a stub's rows expands it.
-- **A double-click on the row.** Two presses on one cell within the
-  multi-click window (400 ms, as the word and line gestures of
-  [0050](0050-mouse-menus-and-gestures.md)) fold the header's thread
-  or expand the stub's, wherever on the row they land. One press
-  elsewhere on either row only places the cursor: on the header as it
-  did, on a stub on the row the stub hangs under, as 0049 gives the
-  right button. 0049's *a click on a stub expands it* no longer holds.
-  (Since 2026-09-11 the review list's thread rows take the same
-  chevron click and double-click, and a stub is a stop for `j`/`k`,
-  [0076](0076-threads-fold-in-the-list.md).)
-  The expanding press and the folding press both end the gesture, so
-  a double-click on a stub opens the thread and stops: a third press
-  is a first press on the header, not a fold. (Amended 2026-09-09: one
-  press on a stub's words rests the text cursor on the stub's own row,
-  not on the row it hangs under. The user clicked a stub and saw the
-  block cursor jump to the line above, a line the click was not on; a
-  stub has no column for a block cursor, so the terminal cursor hides
-  there as on the expanded rows and the stub's `▎` bar marks the place,
-  as [0049](0049-inline-threads-and-the-rail.md)'s stub bullet and
-  [0071](0071-author-stripes.md)'s bar rule now say. A press in the
-  global gutter of the row still selects the line it hangs under.
-  Amended 2026-09-10: the expanded header's words rest the cursor the
-  same way, on the header row itself. *On the header as it did* had
-  settled the click to the row above, the header being no stop for a
-  motion, so the block cursor jumped off the row the user clicked
-  just as it had on a stub; the terminal cursor hides there as on the
-  thread's other rows, the header's `▎` bar marks the place, and `j`
-  steps on to the first message, `k` back to the line above. And a
-  fold from the thread's rows, by the chevron, a double-click, or `z`,
-  rests the cursor on the stub the header becomes, not on the line
-  above, as [0065](0065-z-folds-and-unfolds.md) now says.)
-- **The gutter's presses are unchanged.** A press in the global
-  gutter of the header row still selects the line it settles on, as a
-  gutter press does everywhere.
+  show their chevrons under each other. The one-row stub gains the two
+  cells: its edge cell, the chevron, a space, then the circle and the
+  newest message's name ([0066](0066-one-circle-language.md)).
+- **Clicks and double-clicks.** A left press in either cell of the
+  thread's two-cell gutter folds an expanded header or expands a stub.
+  Two presses on one cell within the 400 ms multi-click window fold or
+  expand wherever on that header or stub row they land. The toggling
+  press clears the gesture, so a double-click opens a stub and stops.
+  A single press elsewhere rests the cursor on the clicked header or
+  stub row; a press in the global gutter instead selects that row's
+  underlying source line. In the review list, the chevron cell or a
+  double-click toggles the thread. A stub is a stop for `j`/`k`
+  ([0076](0076-threads-fold-in-the-list.md)).
+- **After a toggle.** Expanding a stub moves to its newest message.
+  Folding from a thread row, by the chevron, a double-click, or `z`,
+  leaves the cursor on the resulting stub. Message rows retain their
+  ordinary text-click behavior.
 
 ## Consequences
 
@@ -116,3 +89,17 @@ its own: its edge cell, the circle, and the name.
   0071's stub note carry dated notes pointing here.
 - The guide's mouse and threads passages say the chevron folds and
   unfolds and a double-click on the header folds.
+
+## Amendment history
+
+- **2026-09-09 — stub cursor.** A click on a stub's words was changed
+  from expanding it to resting the cursor on the stub's own row; the
+  global gutter still selects the source line represented by the stub.
+  The stub was also reduced to one row, with its chevron and circle
+  sharing that row ([0049](0049-inline-threads-and-the-rail.md)).
+- **2026-09-10 — header and fold cursor.** A click on header words now
+  rests on the header row itself, and folding leaves the cursor on the
+  resulting stub rather than the line above.
+- **2026-09-11 — review-list parity.** Review-list thread rows gained
+  the same chevron and double-click behavior, and stubs became stops
+  for `j`/`k` ([0076](0076-threads-fold-in-the-list.md)).

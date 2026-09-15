@@ -12,6 +12,7 @@ related_resources:
   - crates/fathomable/src/app/agents.rs
   - scripts/okf-lint.py
   - crates/fathomable-testing/src/lib.rs
+  - crates/fathomable-testing/src/vocabulary.rs
 tags:
   - decision
   - architecture
@@ -63,6 +64,9 @@ an existing module, which is how the directory got that way.
   gone. Since 2026-09-04 the core crate uses it too, as a
   dev-dependency: Cargo allows a dev-dependency on a crate that depends
   on the crate under test, so the core's own copies went the same way.
+  Its `vocabulary` module also holds the identifier parser and membership
+  check used only by prose-contract tests; the production names and `ALL`
+  table remain in `fathomable-core`.
   The app crate's own scaffolding, an `App` builder on such a temp dir
   and key presses against it, is `app/testing.rs`, compiled for tests
   only; the fourteen per-module `fixture`/`app`/`press` copies it

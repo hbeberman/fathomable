@@ -4,10 +4,10 @@
 //! and a press on a border starts a drag. The right button opens the
 //! context menu for what is under the pointer, the drawn key menus and
 //! pane-header hints take clicks, and the gutter, a double- or
-//! triple-click, and Shift-click select (ADR 0050). A click on a
-//! stub's `▸` or a double-click on the stub expands its thread, and a
-//! click on the expanded header's `▾` or a double-click on the header
-//! folds it; one click on either places the cursor (ADR 0073).
+//! triple-click, and Shift-click select (ADR 0050). A click in a
+//! thread's gutter or a double-click anywhere on its header or stub
+//! toggles the thread; a single click elsewhere rests the cursor on
+//! that row (ADR 0073).
 
 use std::time::{Duration, Instant};
 

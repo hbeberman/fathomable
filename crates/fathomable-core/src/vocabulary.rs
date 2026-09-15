@@ -6,10 +6,8 @@
 //! parameters through the constants here, and the `fathomable` crate
 //! proves the table against its live tool schema (ADR 0043). This module
 //! knows names only: no MCP types, so the core crate stays free of them.
-//!
-//! [`idents`] lists the backticked identifiers of a text and
-//! [`is_known`] says whether one is in the table; tests on both sides of
-//! the crate boundary use them to fail on a name that drifted.
+//! Test-only prose checks live in `fathomable_testing::vocabulary`, keeping
+//! the runtime vocabulary limited to names and the [`ALL`] table.
 
 /// A tool with the names of its top-level parameters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,42 +132,9 @@ pub const ALL: [Tool; 7] = [
     THREAD_WATCH,
 ];
 
-/// Whether `ident` is a tool name, a parameter name, a `when` or
-/// `status` value, or the `pending`, `answered`, or `worktree` field.
-#[must_use]
-pub fn is_known(ident: &str) -> bool {
-    [
-        WHEN_MESSAGE,
-        WHEN_RESOLVED,
-        STATUS_OPEN,
-        STATUS_ALL,
-        PENDING,
-        ANSWERED,
-        WORKTREE,
-    ]
-    .contains(&ident)
-        || ALL
-            .iter()
-            .any(|t| t.name == ident || t.params.contains(&ident))
-}
-
-/// The backticked identifiers of `text`, in order, repeats included.
-///
-/// A span is an identifier when it is one word of letters, digits,
-/// underscores, dots, or dashes; a span with spaces or other punctuation
-/// (a command line, a call shape) is skipped.
-pub fn idents(text: &str) -> impl Iterator<Item = &str> {
-    text.split('`').skip(1).step_by(2).filter(|span| {
-        !span.is_empty()
-            && span
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ALL, idents, is_known};
+    use super::ALL;
 
     #[test]
     fn tool_names_are_distinct_and_params_have_no_repeats() {
@@ -187,14 +152,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn idents_picks_single_words_only() {
-        let text = "call `follow` with `id`, not `fathomable --mcp` or ``; `when` is `message`";
-        let found: Vec<_> = idents(text).collect();
-        assert_eq!(found, ["follow", "id", "when", "message"]);
-        assert!(found.iter().all(|i| is_known(i)));
-        assert!(!is_known("fathomable"));
     }
 }

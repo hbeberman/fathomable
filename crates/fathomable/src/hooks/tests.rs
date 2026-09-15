@@ -9,7 +9,6 @@ use fathomable_core::agents::Register;
 use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
 use fathomable_core::config::AgentsConfig;
 use fathomable_core::session::Marker;
-use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use serde_json::json;
 
@@ -20,6 +19,7 @@ use super::{
 use fathomable_core::clock::now;
 use fathomable_testing::TempDir;
 use fathomable_testing::git;
+use fathomable_testing::vocabulary as vocab;
 
 use crate::app::testing;
 

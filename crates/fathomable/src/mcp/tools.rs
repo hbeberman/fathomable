@@ -494,10 +494,10 @@ impl<'a> Trees<'a> {
         if let Some((_, tree)) = self.others.iter_mut().find(|(r, _)| *r == root) {
             return tree.place(thread);
         }
-        self.others.push((root, Tree::new(root)));
-        self.others
-            .last_mut()
-            .map_or(Placement::File, |(_, tree)| tree.place(thread))
+        let mut tree = Tree::new(root);
+        let placement = tree.place(thread);
+        self.others.push((root, tree));
+        placement
     }
 }
 
@@ -1513,6 +1513,7 @@ mod tests {
     };
     use fathomable_core::config::AgentsConfig;
     use fathomable_testing::TempDir;
+    use fathomable_testing::vocabulary as test_vocab;
     use serde_json::Value;
 
     use super::{
@@ -1863,6 +1864,47 @@ mod tests {
         Ok(())
     }
 
+    /// A newly created alternate-worktree tree places the thread, and a
+    /// later lookup reuses its hashes instead of rereading the file.
+    #[test]
+    fn alternate_worktree_trees_place_and_cache() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = testing::bare("mcp-worktree-cache")?;
+        let caller = dir.0.join("ws");
+        let other = dir.0.join("other");
+        fs::create_dir_all(&other)?;
+        fs::write(caller.join("a.md"), "one\ntwo\n")?;
+        fs::write(other.join("a.md"), "zero\none\ntwo\n")?;
+        let source = "one\ntwo\n";
+        let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+        let id = store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
+            source,
+            1,
+        )?;
+        let thread = store.thread(&id).cloned().ok_or("gone")?;
+        let mut trees = super::Trees::new(&caller);
+
+        assert_eq!(
+            trees.place(None, &thread),
+            Placement::Anchored(LineRange::new(1, 1))
+        );
+        assert_eq!(
+            trees.place(Some(&other), &thread),
+            Placement::Anchored(LineRange::new(2, 2))
+        );
+        fs::write(other.join("a.md"), "unrelated\n")?;
+        assert_eq!(
+            trees.place(Some(&other), &thread),
+            Placement::Anchored(LineRange::new(2, 2))
+        );
+        Ok(())
+    }
+
     /// `follow` subscribes, says so again on a bare call, refuses a bare
     /// call from a session that never subscribed, and ends with `end`.
     #[test]
@@ -1921,9 +1963,9 @@ mod tests {
     const ALLOWED: [&str; 4] = ["hello", "fathomable", "agents.types", "user.name"];
 
     fn assert_known(text: &str, site: &str) {
-        for ident in vocab::idents(text) {
+        for ident in test_vocab::idents(text) {
             assert!(
-                ALLOWED.contains(&ident) || vocab::is_known(ident),
+                ALLOWED.contains(&ident) || test_vocab::is_known(ident),
                 "{site} names unknown `{ident}`"
             );
         }
@@ -1986,7 +2028,7 @@ mod tests {
             let mut cells = row.trim_matches('|').splitn(2, " | ");
             let tools = cells.next().unwrap_or_default();
             let usage = cells.next().unwrap_or_default();
-            for ident in vocab::idents(tools) {
+            for ident in test_vocab::idents(tools) {
                 assert!(
                     vocab::ALL.iter().any(|t| t.name == ident),
                     "guide table row names `{ident}`, not a tool"

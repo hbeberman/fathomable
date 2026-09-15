@@ -2,7 +2,7 @@
 
 use std::error::Error;
 
-use fathomable_core::layout::{Face, Layout, Line, LineIndex, wrap_text};
+use fathomable_core::layout::{Face, Layout, Line, LineIndex};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -42,6 +42,9 @@ fn wrapping_counts_wide_and_combining_characters() {
     // A single word wider than the pane breaks between clusters, not inside one.
     let layout = Layout::render("日本語日本語\n", 5);
     assert_eq!(texts(&layout), ["日本", "語日", "本語"]);
+
+    let layout = Layout::render("abcdefgh\n", 3);
+    assert_eq!(texts(&layout), ["abc", "def", "gh"]);
 }
 
 #[test]
@@ -274,14 +277,41 @@ fn line_at_offset_finds_containing_or_nearest_line() {
     // Offset inside the blank gap snaps to the nearest sourced line.
     assert_eq!(layout.line_at_offset(6), Some(2));
     assert_eq!(layout.line_at_offset(1000), Some(2));
-    assert_eq!(Layout::render("", 80).line_at_offset(0), None);
+    let empty = Layout::render("", 80);
+    assert!(empty.lines().is_empty());
+    assert_eq!(empty.line_at_offset(0), None);
 }
 
 #[test]
-fn layout_is_deterministic_for_a_width() {
-    let src = include_str!("../../../README.md");
-    assert_eq!(Layout::render(src, 72), Layout::render(src, 72));
-    assert_ne!(Layout::render(src, 72), Layout::render(src, 40));
+fn layout_reflows_text_and_preserves_source_boundaries() -> TestResult {
+    let src = "## Title\n\nalpha beta\nsecond line\n\nlast\n";
+    let layout = Layout::render(src, 10);
+    assert_eq!(
+        texts(&layout),
+        ["Title", "", "alpha beta", "second", "line", "", "last"]
+    );
+    assert_eq!(
+        numbers(&layout),
+        [Some(1), None, Some(3), Some(4), None, None, Some(6)]
+    );
+    for (line, expected) in [
+        (&layout.lines()[0], "Title"),
+        (&layout.lines()[2], "alpha beta"),
+        (&layout.lines()[3], "second"),
+        (&layout.lines()[4], "line"),
+        (&layout.lines()[6], "last"),
+    ] {
+        let range = line.source().ok_or("line has no source")?;
+        assert_eq!(&src[range], expected);
+    }
+
+    let wide = Layout::render(src, 22);
+    assert_eq!(
+        texts(&wide),
+        ["Title", "", "alpha beta second line", "", "last"]
+    );
+    assert_eq!(numbers(&wide), [Some(1), None, Some(3), None, Some(6)]);
+    Ok(())
 }
 
 #[test]
@@ -400,15 +430,6 @@ fn source_layout_colours_by_extension_and_keeps_line_ranges() -> TestResult {
             .all(|s| s.style().fg.is_none())
     );
     Ok(())
-}
-
-#[test]
-fn wrap_text_breaks_at_words_and_splits_wide_ones() {
-    assert_eq!(wrap_text("aa bb cc", 5), vec!["aa bb", "cc"]);
-    assert_eq!(wrap_text("abcdefgh", 3), vec!["abc", "def", "gh"]);
-    assert_eq!(wrap_text("", 3), vec![""]);
-    // Width is display cells, not chars: two wide graphemes fill four.
-    assert_eq!(wrap_text("日本 語", 4), vec!["日本", "語"]);
 }
 
 /// A comment's newline is a line break; a file's is a space (ADR 0037).

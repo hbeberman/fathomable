@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One vocabulary for the agent-facing text
-description: The MCP tool and parameter names that hook output, the pending blob, the server instructions, and the guide may name live in one table in the core crate; every such string is composed from it and tested against the live tool schema; the hello text is one shared body with a per-harness spelling of tool names and an optional harness line; and the follow tool's schema carries the configured agent types.
+description: Shared tool names and schema checks keep agent-facing prose consistent, with harness-specific tool spelling and configured agent types.
 tags:
   - decision
   - sessions
@@ -54,9 +54,10 @@ hook cadence differ per host.
   table (`Tool { name, params }`, `ALL`). It knows names only — no
   `rmcp` types. Every agent-facing string in either crate names a tool
   or parameter through it: the blob header and overflow line, the
-  `hello` body, the server instructions. A small helper, `idents`,
-  lists the backticked identifiers of a text; `is_known` says whether
-  one is in the table.
+  `hello` body, the server instructions. The test-only
+  `fathomable_testing::vocabulary` module provides `idents`, which lists
+  backticked identifiers, and `is_known`, which says whether one is in
+  the table.
 - **Name-level generation, not templating.** The prose stays prose,
   written where it is read; only the identifiers are interpolated. The
   shapes a model is shown (`follow { paths: [...], type: "...", id:
@@ -110,7 +111,8 @@ and `id` only.
   check.
 - The core crate's strings depend on a table it owns and the
   `fathomable` crate proves the table against the schema; the layering
-  of [0002](0002-crate-layout.md) is kept.
+  of [0002](0002-crate-layout.md) is kept. The identifier parser and
+  membership check remain test-only shared scaffolding.
 - A model on Codex is told `fathomable.follow`; if Codex changes its
   spelling the fix is one match arm. Copilot and VS Code get the bare
   name until someone verifies theirs.

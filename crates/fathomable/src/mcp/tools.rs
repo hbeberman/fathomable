@@ -72,9 +72,9 @@ pub(crate) struct OpenParams {
 /// `follow` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub(crate) struct FollowParams {
-    /// Your harness session id, as the `hello` hook told you. Optional
-    /// when Fathomable can tell your session from the harness that
-    /// started it; the reply says whether it could.
+    /// Your harness session id. Omit it when known from Copilot's launch
+    /// environment or the `hello` hook; the reply says whether it could
+    /// be identified. An explicit id overrides the detected session.
     #[serde(default)]
     id: Option<String>,
     /// Your agent type, one of the configured ones; fixed for the session.
@@ -613,10 +613,10 @@ impl Server {
     }
 
     #[tool(
-        description = "Subscribe this session to the whole workspace with your `type` (and \
-                       the session `id` the hello hook gave you, when asked for it): the \
-                       hooks then hand you every comment the user has the last word on, \
-                       once, as your turns start and end. You sign as your harness's name \
+        description = "Subscribe this session to the whole workspace with your `type`; \
+                       omit `id` when identified from the harness. With hooks installed, \
+                       comments arrive once as your turns start and end; without hooks, \
+                       use `threads` to fetch them. You sign as your harness's name \
                        unless you give a `persona` here, once. `end: true` ends the \
                        subscription, its deliveries, and its watches instead. Works with no \
                        viewer running.",
@@ -653,7 +653,7 @@ impl Server {
             p.persona.as_deref(),
             client.as_deref(),
         ) {
-            Ok(message) => text(message),
+            Ok(message) => text(format!("{message}\nworkspace: {}", target.root.display())),
             Err(error) => failure(error),
         }
     }
@@ -814,7 +814,10 @@ impl Server {
         let client = context.client_info().map(|c| c.name);
         // The name was fixed at `follow`; without one, the harness names
         // the agent (ADR 0058).
-        let signed = self.signer(p.id, &target.key, client);
+        let signed = match self.signer(p.id, &target.key, client) {
+            Ok(signed) => signed,
+            Err(error) => return failure(error),
+        };
         let author = signed.author;
         let mut items = p.replies;
         match (p.thread, p.body) {
@@ -976,26 +979,27 @@ impl Server {
         let given = persona.is_some();
         let name = identity::agent_name(persona, client);
         match (id, kind) {
-            (Some(id), Some(kind)) => {
+            (id, Some(kind)) => {
+                let automatic = id.is_none();
                 let mut register = self.register(key, when)?;
-                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
-                Ok(format!(
-                    "subscribed {id} as {kind}, signing as {name}; {COVERAGE}"
-                ))
-            }
-            (None, Some(kind)) => {
-                let mut register = self.register(key, when)?;
-                let Some(id) = register.session_for(&self.ancestors).map(str::to_owned) else {
+                let Some(id) = self.session_id(id, &register) else {
                     return Err(format!(
-                        "`{}` needs the session `{}` the hello hook gave you; this session \
-                         could not be told from the harness",
+                        "`{}` needs a session `{}`: none was identified from the harness. \
+                         Pass the id if already known, or use `{}` without subscribing. \
+                         Do not ask the user to find an internal session id",
                         vocab::TYPE,
-                        vocab::ID
+                        vocab::ID,
+                        vocab::THREADS.name
                     ));
                 };
                 self.subscribe(&mut register, &id, &kind, &name, client, when)?;
+                let source = if automatic {
+                    " (your session, found from the harness)"
+                } else {
+                    ""
+                };
                 Ok(format!(
-                    "subscribed {id} (your session, found from the harness) as {kind}, \
+                    "subscribed {id}{source} as {kind}, \
                      signing as {name}; {COVERAGE}"
                 ))
             }
@@ -1007,8 +1011,8 @@ impl Server {
             (None, None) => {
                 let nudge = || {
                     format!(
-                        "not subscribed: pass `{}` (one of {types}), and the `{}` the hello \
-                         hook gave you if asked for it",
+                        "not subscribed: pass `{}` (one of {types}); omit `{}` when \
+                         identified from the harness",
                         vocab::TYPE,
                         vocab::ID
                     )
@@ -1055,7 +1059,7 @@ impl Server {
             .subscribe(id, kind, Some(name), client, when)
             .map_err(|e| e.to_string())?;
         if let Ok(mut current) = self.subscriber.lock() {
-            *current = Some((id.to_owned(), kind.to_owned(), Some(name.to_owned())));
+            *current = Some(id.to_owned());
         }
         Ok(())
     }
@@ -1078,7 +1082,7 @@ impl Server {
         }
         register.unsubscribe(&id, when).map_err(|e| e.to_string())?;
         if let Ok(mut current) = self.subscriber.lock()
-            && current.as_ref().is_some_and(|(own, ..)| *own == id)
+            && current.as_ref().is_some_and(|own| *own == id)
         {
             *current = None;
         }
@@ -1185,7 +1189,7 @@ impl Server {
 }
 
 /// What subscribing means, appended to every `follow` reply.
-const COVERAGE: &str = "comments anywhere in the workspace reach you as your turns start and end";
+const COVERAGE: &str = "whole workspace; automatic comment delivery requires hooks";
 
 /// Why `item` cannot be replied to, if it cannot: the thread is unknown,
 /// resolved, or detached with no line to place it at.
@@ -1477,10 +1481,10 @@ pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
 pub(super) fn instructions() -> String {
     format!(
         "Fathomable is the user's read-only viewer, where they leave review comments \
-         on the lines you write. Call `{follow}` with your `{kind}` (and the session `{id}` \
-         the hello hook gave you, when asked for it) to subscribe to the workspace; the \
-         hooks then hand you each new comment once, as your turns start and end — never \
-         poll for comments, and after a wait just end your turn. Answer with one `{reply}` \
+         on the lines you write. When using Fathomable, call `{follow}` with your `{kind}`; \
+         omit `{id}` when identified from the harness. With hooks installed, comments \
+         arrive once as your turns start and end: do not poll. Without hooks, fetch \
+         comments with `{list}`. Answer with one `{reply}` \
          carrying `{replies}`; it returns each thread as it now stands. `{list}` lists the \
          open threads, marks the ones waiting on you, and takes `{status}` for resolved \
          ones: call it when a hook says more are pending, when no hook is installed, or to \
@@ -1912,7 +1916,7 @@ mod tests {
         let dir = testing::bare("mcp-follow")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
-        let server = Server::new(dirs.clone(), AgentsConfig::default());
+        let server = Server::new(dirs.clone(), AgentsConfig::default(), None);
         let bare = server.subscription(&root, None, None, None, None);
         assert!(
             bare.as_deref()

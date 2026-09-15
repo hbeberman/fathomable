@@ -117,7 +117,10 @@ impl Server {
             Err(error) => return failure(error),
         };
         let client = context.client_info().map(|c| c.name);
-        let signed = self.signer(p.id, &target.key, client);
+        let signed = match self.signer(p.id, &target.key, client) {
+            Ok(signed) => signed,
+            Err(error) => return failure(error),
+        };
         let mut items = p.comments;
         match (p.path, p.body) {
             (Some(path), Some(body)) => items.insert(

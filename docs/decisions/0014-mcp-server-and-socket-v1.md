@@ -137,6 +137,14 @@ Note (2026-09-05): [0062](0062-one-version-no-compatibility.md) takes
 `ping` and `session_info` off the socket, refuses every protocol
 version but the one the binary speaks, and restarts the number at 1.
 
+Note (2026-09-15): `--mcp` also captures Copilot's
+`COPILOT_AGENT_SESSION_ID` launch environment as an automatic identity
+fallback ([0041](0041-session-bonds.md)). It remembers only the last
+subscribed id, not a globally cached type or persona: each signature
+looks up a live subscription in the addressed workspace. An explicit
+per-call id wins over connection memory. Detecting an id does not
+subscribe it, select a workspace, or establish automatic delivery.
+
 ## Consequences
 
 - The tool surface is a pure function of the request plus the socket reply,

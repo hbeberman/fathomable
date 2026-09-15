@@ -8,10 +8,12 @@
 //! it falls back to. The tools themselves are in [`tools`] (ADR 0055)
 //! and, for `thread_start`, in [`start`] (ADR 0061).
 //!
-//! The server holds two pieces of state: the pinned workspace set by
-//! `workspaces`, and the subscriber this connection last registered
-//! with `follow` (ADR 0040), which signs its replies and is the default
-//! `id` of the subscription tools. Every call otherwise resolves the
+//! The server remembers the pinned workspace set by `workspaces` and the
+//! session this connection last registered with `follow` (ADR 0040).
+//! Otherwise it discovers the session from Copilot's launch environment
+//! or the hook's process bonds (ADR 0041). Discovering an id does not
+//! subscribe it: signatures and deliveries require a live subscription
+//! in the addressed workspace. Every call otherwise resolves the
 //! workspace afresh: an explicit `workspace` argument, then the pin, then
 //! the known workspace whose root is the longest prefix of the current
 //! directory. `open` reaches every live viewer of that workspace or the
@@ -57,12 +59,22 @@ use fathomable_core::clock::now;
 
 /// Run the server on stdin/stdout until the client disconnects.
 pub(crate) fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
+    let copilot_session =
+        env::var_os("COPILOT_AGENT_SESSION_ID").and_then(|value| match value.into_string() {
+            Ok(id) if !id.trim().is_empty() => Some(id),
+            _ => {
+                tracing::warn!(
+                    "ignoring COPILOT_AGENT_SESSION_ID: expected a nonempty Unicode session id"
+                );
+                None
+            }
+        });
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start async runtime")?;
     runtime.block_on(async {
-        let server = Server::new(dirs.clone(), agents);
+        let server = Server::new(dirs.clone(), agents, copilot_session);
         let service = server
             .serve(rmcp::transport::stdio())
             .await
@@ -78,8 +90,10 @@ pub(crate) struct Server {
     dirs: XdgDirs,
     agents: AgentsConfig,
     pinned: Mutex<Option<PathBuf>>,
-    /// The `(id, type, persona)` this connection subscribed with, if it did.
-    subscriber: Mutex<Option<(String, String, Option<String>)>>,
+    /// The session this connection subscribed with, if it did.
+    subscriber: Mutex<Option<String>>,
+    /// Copilot's launch identity, not a workspace or per-request identity.
+    copilot_session: Option<String>,
     /// This process's ancestors, nearest first, matched against the
     /// session bonds the `hello` hook recorded (ADR 0041).
     ancestors: Vec<Process>,
@@ -128,7 +142,7 @@ impl Target {
 }
 
 impl Server {
-    fn new(dirs: XdgDirs, agents: AgentsConfig) -> Self {
+    fn new(dirs: XdgDirs, agents: AgentsConfig, copilot_session: Option<String>) -> Self {
         let cwd = env::current_dir().unwrap_or_default();
         if let Some(target) = bind(&targets(&dirs), &cwd) {
             tracing::info!(root = %target.root.display(), viewers = target.viewers.len(), "workspace contains the cwd");
@@ -140,6 +154,7 @@ impl Server {
             agents,
             pinned: Mutex::new(None),
             subscriber: Mutex::new(None),
+            copilot_session,
             ancestors: bond::ancestors(),
             tool_router: Self::router(),
         }
@@ -150,18 +165,16 @@ impl Server {
     }
 
     fn subscriber_id(&self) -> Option<String> {
-        self.subscriber
-            .lock()
-            .ok()
-            .and_then(|s| s.as_ref().map(|(id, ..)| id.clone()))
+        self.subscriber.lock().ok().and_then(|s| s.clone())
     }
 
     /// The session a call speaks for: the `id` it passed, else the one
-    /// this connection subscribed with, else the one bonded to this
-    /// process's ancestors (ADR 0041).
+    /// this connection subscribed with, else Copilot's launch identity,
+    /// else the one bonded to this process's ancestors (ADR 0041).
     fn session_id(&self, given: Option<String>, register: &Register) -> Option<String> {
         given
             .or_else(|| self.subscriber_id())
+            .or_else(|| self.copilot_session.clone())
             .or_else(|| register.session_for(&self.ancestors).map(str::to_owned))
     }
 
@@ -173,45 +186,31 @@ impl Server {
     /// Who a reply or a comment from this connection is: the name fixed
     /// at `follow`, the subscription's id and type when there is one, and
     /// the harness's name otherwise (ADR 0058).
-    fn signer(&self, given: Option<String>, key: &Path, client: Option<String>) -> Signature {
-        let subscription = self.signature(given, key);
+    fn signer(
+        &self,
+        given: Option<String>,
+        key: &Path,
+        client: Option<String>,
+    ) -> Result<Signature, String> {
+        let register = self.register(key, now())?;
+        let subscription = self
+            .session_id(given, &register)
+            .and_then(|id| register.subscriber(&id));
         let mut author = Author::Agent {
             name: subscription
-                .as_ref()
-                .and_then(|(.., name)| name.clone())
+                .and_then(|subscriber| subscriber.name().map(str::to_owned))
                 .unwrap_or_else(|| identity::agent_name(None, client.as_deref())),
             client,
             id: None,
             kind: None,
         };
-        if let Some((id, kind, _)) = &subscription {
-            author = author.subscribed(id, kind);
+        if let Some(subscriber) = subscription {
+            author = author.subscribed(subscriber.id(), subscriber.kind());
         }
-        Signature {
+        Ok(Signature {
             author,
             subscribed: subscription.is_some(),
-        }
-    }
-
-    /// The `(id, type, persona)` a reply from this connection is signed
-    /// with: its own `follow`, else the subscription of `given` or of
-    /// the bonded session, when there is one.
-    fn signature(
-        &self,
-        given: Option<String>,
-        key: &Path,
-    ) -> Option<(String, String, Option<String>)> {
-        if let Some(own) = self.subscriber.lock().ok().and_then(|s| s.clone()) {
-            return Some(own);
-        }
-        let register = self.register(key, now()).ok()?;
-        let id = self.session_id(given, &register)?;
-        let subscriber = register.subscriber(&id)?;
-        Some((
-            id,
-            subscriber.kind().to_owned(),
-            subscriber.name().map(str::to_owned),
-        ))
+        })
     }
 
     /// The workspace's agent register at `now`; `key` is the workspace key.

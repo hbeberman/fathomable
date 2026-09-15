@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Session bonds between hooks and the MCP server
-description: The hello hook records which processes its session runs under; the MCP server finds the nearest of those among its own ancestors and signs as that session, so replies stay signed after a resume and the model no longer has to repeat its id — with a soft nudge as the fallback wherever the bond cannot be made.
+description: The MCP server learns its session from Copilot's launch environment or the hello hook's process bonds, without subscribing automatically or confusing session identity with workspace selection.
 resource: crates/fathomable-core/src/bond.rs
 tags:
   - decision
@@ -98,8 +98,39 @@ that shell would then bond to whichever session had recorded the shell.
   under 30 s before the harness is recorded, and a hand-run `--mcp` in
   that shell would sign as that session until another session under the
   same shell makes it ambiguous. Documented in the guide, not guarded.
-- Copilot's `COPILOT_AGENT_SESSION_ID` and VS Code parity are left to
-  their acceptance tests; the fallback carries them until then.
+- Copilot's `COPILOT_AGENT_SESSION_ID` was initially left to acceptance
+  tests; the amendment below implements it. VS Code parity remains open.
+
+### Copilot launch identity (2026-09-15)
+
+Copilot CLI supplies `COPILOT_AGENT_SESSION_ID` to its stdio MCP
+subprocesses, announced in its
+[1.0.29 release](https://github.com/github/copilot-cli/releases/tag/v1.0.29)
+and observed on 1.0.82. `--mcp` reads it once at startup. An empty,
+whitespace-only, or non-Unicode value is ignored with a diagnostic.
+
+Every session-aware tool resolves the explicit `id` first, then the
+connection's most recent `follow` id, then Copilot's launch id, then a
+process bond. An explicit `follow` can therefore rebind a connection.
+An explicit id on an individual call overrides the default for that
+call only. Missing identity leaves manual reading and writing available;
+the error does not ask the user to retrieve an internal session id.
+
+Discovery is not subscription. Only `follow` opts the session in, and
+signatures, deliveries, and watches require a live subscription in the
+addressed workspace. The id neither registers nor selects a workspace:
+the explicit workspace argument, connection pin, and cwd retain their
+existing precedence. A connection's cached id cannot carry another
+workspace's type or persona into a signature.
+
+The environment is launch-scoped evidence, not per-call MCP metadata.
+Copilot 1.0.78 says switching sessions no longer restarts MCP servers;
+whether a client retains separate session-scoped servers must not be
+inferred from that wording. Session switching and subagent attribution
+remain harness lifecycle questions, not guarantees of this fallback.
+Hooks are still required for automatic comment delivery, but Copilot
+does not need `hello` merely to identify itself. Without delivery hooks,
+agents fetch comments with `threads`.
 
 Note (2026-08-29): "`hello` … is the only writer of bonds; `pending`
 records nothing" still holds for bonds, but `hello` now writes more than

@@ -19,8 +19,9 @@ page holds what to type. Linux only for now (see the
 Requires Rust 1.97 or newer and Linux: `rust-toolchain.toml` pins the
 toolchain, so rustup installs 1.97.0 for you inside the checkout. Whether a
 viewer is alive and which harness session a headless `--mcp` serves are
-both read from `/proc`, so on another OS every viewer looks dead and
-the tools ask for the session `id` every time.
+both normally read from `/proc`, so on another OS every viewer looks
+dead and process-bond session discovery is unavailable. Copilot's
+environment-based session discovery does not use `/proc`.
 
 ```sh
 git clone <this repository> fathomable
@@ -913,7 +914,7 @@ repository, and the tools are:
 | --- | --- |
 | `workspaces` | see known workspaces, each with its worktrees (root, branch, whether it is the *main* one, the caller's marked) and its viewers with the worktree each shows; `switch` (a worktree root, or a viewer name or id) pins one for the connection when the cwd heuristic is wrong |
 | `open` | show a file, relative to the caller's worktree, in every viewer, or in the one named by `viewer`, optionally at a line or line range; a viewer on another worktree pages to the caller's first; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum) and `id` (the session id from the `hello` hook, optional when the session is known from the harness), so the hooks hand it every thread the user has the last word on, as its turns start and end; the session is named here, once: a `persona` when given, else its harness — Claude, Copilot, Codex — else the client string ([0058](decisions/0058-the-user-has-the-last-word.md)); `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
+| `follow` | subscribe the session to the whole workspace with `type` (one of the configured `agents.types`, which the tool's schema lists as an enum); omit `id` when identified from Copilot's launch environment or a `hello` hook bond, or pass it explicitly to override the default; the reply names the workspace; installed hooks deliver comments automatically, otherwise fetch them with `threads`; the session is named here, once: a `persona` when given, else its harness — Claude, Copilot, Codex — else the client string ([0058](decisions/0058-the-user-has-the-last-word.md)); `end` ends the subscription, forgetting its deliveries and watches; works without a viewer |
 | `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `pending` (open, and the user has the last word), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, *detached*, or *file* for a comment on the file as a whole — and its current range (none for a *file* thread), and no anchor hashes; a resolved thread is only its head; an open thread says whose word is last: `pending` when it is the user's, `answered by name (type)` or `proposed by name (type)` when an agent's ([0058](decisions/0058-the-user-has-the-last-word.md)), and a message the user edited says so; when the session is subscribed, the pending threads count as shown to it, so the hooks do not repeat them; a fired watch is reported first with the `remind` threads in full; a thread only another worktree's branch reaches is placed in that worktree's file and names it in `worktree` ([0070](decisions/0070-one-workspace-many-worktrees.md)); works without a viewer; not for polling — the hooks deliver |
 | `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown id, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; signed with the session's id, type, and the name fixed at `follow` when the connection subscribed, the session is known from the harness, or `id` is passed, and with the harness's name when it is not, saying so; works without a viewer |
 | `thread_start` | start a thread of the agent's own on lines of a file, or on the file as a whole when `line` is omitted: one with `path`, `line`, `end_line`, and `body`, or several in `comments`, and get each back as it now stands; the comment is signed as a reply is and stamped with the checkout's commit as yours are, so the thread waits on you from birth, shows the agent's name on its comment, and reaches no agent until you reply, edit, or reopen it; the batch is checked first, so a path that is not a file, a range past the end of the file, a file that is not text, or an empty body refuses the whole call and nothing is written ([0061](decisions/0061-agents-start-threads.md)); works without a viewer |
@@ -945,7 +946,7 @@ the requests that have a client and one protocol version.
 
 ### Hooks: comments reach the agent
 
-Without a hook the agent only sees comments when it polls. With the
+Without a hook the agent only sees comments when it calls `threads`. With the
 hooks, the harness runs `fathomable pending` at up to three points,
 and each thread reaches the agent once, at whichever comes first
 ([0042](decisions/0042-turn-start-delivery.md)):
@@ -957,11 +958,33 @@ and each thread reaches the agent once, at whichever comes first
 | `PostToolUse` · `postToolUse` | every tool result | the threads as context before the agent's next step, so a comment posted mid-task lands within the turn | one spawn and two small file reads per tool call; silent unless something is new; optional, for long turns |
 | — · `notification` | a detached (`async`) shell the agent started finishes (`shell_detached_completed`; every other notification type, permission prompts included, gets silence) | the threads queued as a message that starts a turn, even if the agent was idle | one spawn per notification; silent unless something is new |
 
-A session that never called `follow` with an `id`, a subagent, or a
+A session that never subscribed with `follow`, a subagent, or a
 directory Fathomable has not seen all get silence and exit 0 at every
 point ([0040](decisions/0040-agent-subscriptions-and-hooks.md)). The
-agent is told not to poll: after a wait it ends its turn, and the
-hooks do the rest.
+agent is told not to poll when hooks are installed: after a wait it
+ends its turn, and the hooks do the rest. Without hooks, `threads`
+provides manual access.
+
+Copilot CLI supplies `COPILOT_AGENT_SESSION_ID` to its stdio MCP
+subprocess. Fathomable uses it automatically: `follow` with just `type`
+subscribes without `hello` or a pasted id. Reading this variable does
+not opt the session in, create a workspace, or inject context. It does
+not install delivery hooks either. Empty, whitespace-only, and
+non-Unicode values are ignored with a diagnostic.
+
+An explicit tool `id` wins, then the connection's last subscribed id,
+then Copilot's launch id, then a hook bond. An explicit `follow` rebinds
+the connection; an explicit id on another tool affects that call only.
+The launch environment is not per-call identity: if a harness reuses
+one server for another conversation, rebind explicitly rather than
+assuming the environment changes. Session-switching and subagent
+behavior are not guaranteed by this fallback.
+
+Identity never selects the workspace. The explicit `workspace`
+argument, the pin set by `workspaces`, and the cwd retain that job.
+Signatures and deliveries require a live subscription in the workspace
+being addressed; subscribing in one does not subscribe in another.
+
 `hello` also notes which processes it ran under, so the `fathomable
 --mcp` the same harness started can tell the session it serves from its
 own process ancestry: a `follow` with only a `type`, and a `thread_reply`
@@ -1065,6 +1088,11 @@ Codex CLI, in `~/.codex/hooks.json` (then trust it with `/hooks`):
   }
 }
 ```
+
+Copilot may omit the `sessionStart` entry below: the MCP launch
+environment supplies its identity without adding the hello paragraph
+to context. Keep the delivery hooks for automatic comments. Other
+harnesses still need their identity handshake or an explicit id.
 
 Copilot and VS Code are experimental: Copilot's hook input was captured
 from CLI 1.0.82, but the tool name its model sees was never checked, and

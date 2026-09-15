@@ -1124,6 +1124,7 @@ impl App {
                         Some((index, source, doc.relative.clone()))
                     })
                     .collect();
+                let mut marks_to_refresh = Vec::new();
                 for (index, source, relative) in deleted_updates {
                     let current = self.docs[index].deleted;
                     if current.is_none() {
@@ -1151,6 +1152,7 @@ impl App {
                                                 .unwrap_or_default()
                                                 .to_owned();
                                             self.docs[index].view.reload(text);
+                                            marks_to_refresh.push(index);
                                         }
                                         self.docs[index].view.set_worktree_missing(true);
                                     }
@@ -1167,6 +1169,9 @@ impl App {
                             Err(error) => self.notice(error.to_string()),
                         }
                     }
+                }
+                for index in marks_to_refresh {
+                    self.refresh_marks(index);
                 }
                 for doc in &mut self.docs {
                     doc.view.set_index_missing(

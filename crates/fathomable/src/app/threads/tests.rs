@@ -191,6 +191,34 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
 }
 
 #[test]
+fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-tombstone-source", testing::README)?;
+    let root = testing::root(&dir);
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+
+    let mut original = app(&dir)?;
+    annotate(&mut original, "tracks alpha through gamma")?;
+    drop(original);
+
+    let index_text = testing::README.replace("\nalpha", "\ninserted\nalpha");
+    fathomable_testing::git::stage(&root, &[("README.md", &index_text)])?;
+    fs::remove_file(root.join("README.md"))?;
+    let mut tombstone = testing::AppBuilder::new(&dir).unopened().build()?;
+    tombstone.open(Path::new("README.md"));
+    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(4, 6)));
+
+    fathomable_testing::git::stage(&root, &[])?;
+    tombstone.on_events(vec![crate::app::watch::Event::Change(
+        root.join(".git/index"),
+    )]);
+    tombstone.settle_status();
+    assert_eq!(tombstone.view().text(), testing::README);
+    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
+    Ok(())
+}
+
+#[test]
 fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-annotate", testing::README)?;
     let mut app = app(&dir)?;

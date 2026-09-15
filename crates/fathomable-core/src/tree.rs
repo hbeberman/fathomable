@@ -121,7 +121,7 @@ impl Admitted {
         let counted = status
             .entries()
             .iter()
-            .filter(|entry| shown.untracked || entry.state() != State::Untracked);
+            .filter(|entry| shown.untracked || !entry.changes().is_only_untracked());
         let keep = shown.changed_only.then(|| {
             let mut keep = HashSet::new();
             for entry in counted.clone() {
@@ -140,7 +140,7 @@ impl Admitted {
             status
                 .entries()
                 .iter()
-                .filter(|entry| entry.state() == State::Untracked)
+                .filter(|entry| entry.changes().is_only_untracked())
                 .map(|entry| entry.path().to_path_buf())
                 .collect()
         };
@@ -225,11 +225,11 @@ struct Deleted {
 impl Deleted {
     fn new(status: &Status) -> Self {
         let mut deleted = Self::default();
-        for entry in status
-            .entries()
-            .iter()
-            .filter(|e| e.state() == State::Deleted)
-        {
+        for entry in status.entries().iter().filter(|entry| {
+            entry.unstaged_state() == Some(State::Deleted)
+                || (entry.staged_state() == Some(State::Deleted)
+                    && entry.unstaged_state().is_none())
+        }) {
             for path in entry.path().ancestors() {
                 let Some((parent, name)) = path
                     .parent()

@@ -3,11 +3,11 @@
 //! the current file, with a header naming the pair and a badge naming
 //! the base.
 //!
-//! `Space d d` shows `HEAD · now`, `Space d D` shows
+//! `Space d d` shows the net `HEAD · now` diff, `Space d D` shows
 //! `last seen · now`, and `Space d r` the newest checkpoint pair; each
 //! closes the diff when its own pair is on screen. `b` and `t` pick
 //! either side from the file's checkpoints, the working file, the
-//! last-seen snapshot, `HEAD`, and the commits that touched the file;
+//! index, the last-seen snapshot, `HEAD`, and commits that touched it;
 //! `Space d g` picks a commit for the base with the working file as the
 //! target; `h` / `l` page the checkpoint timeline; `w` ignores
 //! whitespace; `Esc` leaves. The checkpoint marks and the strip live in
@@ -33,6 +33,8 @@ pub(crate) enum Side {
     Commit(String),
     /// The file as committed at `HEAD`.
     Head,
+    /// The file as staged in the index.
+    Index,
     /// The last-seen snapshot of the file (ADR 0015).
     Seen,
     /// The working file, as the view shows it.
@@ -44,6 +46,7 @@ pub(crate) enum Side {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Text {
     Working,
+    Index,
     Head,
     Seen,
     Owned(String),
@@ -63,22 +66,30 @@ pub(crate) enum DiffBody {
 pub(crate) struct DiffView {
     pub(crate) base: Side,
     pub(crate) target: Side,
-    /// `checkpoint 2/3  5m ago · now`, `HEAD · now`, or the two labels.
+    /// `checkpoint 2/3  5m ago · now`, `HEAD · INDEX`, or the two labels.
     pub(crate) header: String,
-    /// The status badge: `DIFF` and the base (`DIFF HEAD`, `DIFF seen`,
-    /// `DIFF cp 2/3`, `DIFF a1b2c3d`).
+    /// The status badge: the Git layer or base (`DIFF unstaged`,
+    /// `DIFF staged`, `DIFF net`, `DIFF seen`, `DIFF cp 2/3`).
     pub(crate) badge: String,
     pub(crate) body: DiffBody,
 }
 
 impl DiffView {
-    /// `HEAD · now`, the pair `Space d d` shows.
-    pub(crate) fn head() -> Self {
+    /// The net `HEAD -> worktree` pair `Space d d` shows.
+    #[cfg(test)]
+    pub(crate) fn head(worktree_missing: bool) -> Self {
         Self {
             base: Side::Head,
             target: Side::Working,
-            header: "HEAD · now".to_owned(),
-            badge: "DIFF HEAD".to_owned(),
+            header: format!(
+                "HEAD · {}",
+                if worktree_missing {
+                    "WORKTREE (missing)"
+                } else {
+                    "now"
+                }
+            ),
+            badge: "DIFF net".to_owned(),
             body: DiffBody::Diff {
                 base: Text::Head,
                 target: Text::Working,
@@ -87,11 +98,19 @@ impl DiffView {
     }
 
     /// `last seen · now`, the pair `Space d D` shows.
-    pub(crate) fn seen() -> Self {
+    #[cfg(test)]
+    pub(crate) fn seen(worktree_missing: bool) -> Self {
         Self {
             base: Side::Seen,
             target: Side::Working,
-            header: "last seen · now".to_owned(),
+            header: format!(
+                "last seen · {}",
+                if worktree_missing {
+                    "WORKTREE (missing)"
+                } else {
+                    "now"
+                }
+            ),
             badge: "DIFF seen".to_owned(),
             body: DiffBody::Diff {
                 base: Text::Seen,
@@ -116,15 +135,33 @@ impl App {
     /// `Space d d` / `:diff`: the diff against `HEAD`, or back
     /// to the file when that pair is shown.
     pub(crate) fn toggle_head_diff(&mut self) {
-        self.view_mut().toggle_head_diff();
-        self.relayout();
+        if self
+            .view()
+            .diff()
+            .is_some_and(|diff| diff.is_pair(&Side::Head, &Side::Working))
+        {
+            self.leave_diff();
+        } else if self.view().has_head() {
+            self.show_diff(Side::Head, Side::Working);
+        } else {
+            self.notice("no diff base: not in a git repository");
+        }
     }
 
     /// `Space d D` / `:diff seen`: the diff against the last-seen
     /// snapshot, or back to the file when that pair is shown.
     pub(crate) fn toggle_seen_diff(&mut self) {
-        self.view_mut().toggle_seen_diff();
-        self.relayout();
+        if self
+            .view()
+            .diff()
+            .is_some_and(|diff| diff.is_pair(&Side::Seen, &Side::Working))
+        {
+            self.leave_diff();
+        } else if self.view().has_seen() {
+            self.show_diff(Side::Seen, Side::Working);
+        } else {
+            self.notice("no last-seen snapshot of this file yet");
+        }
     }
 
     /// `Space d r`: the diff of the current file on its newest checkpoint
@@ -303,6 +340,7 @@ impl App {
         }
         if self.workspace.is_git() {
             choices.push(("HEAD".to_owned(), Side::Head));
+            choices.push(("index".to_owned(), Side::Index));
             for commit in self.workspace.file_history(&relative, HISTORY_LIMIT) {
                 choices.push((
                     format!(
@@ -351,11 +389,20 @@ impl App {
     pub(super) fn show_diff(&mut self, base: Side, target: Side) {
         let relative = self.current_path().to_path_buf();
         let count = self.timeline_len();
+        let layered_net_empty = base == Side::Head
+            && target == Side::Working
+            && self.view().net_diff_empty()
+            && self.status().get(&relative).is_some_and(|entry| {
+                entry.staged_state().is_some() && entry.unstaged_state().is_some()
+            });
         let body = match (&base, &target) {
             (Side::Working, Side::Working) if count == 0 => DiffBody::Notice(
                 "no checkpoint of this file yet; Space d c makes one, b picks another base"
                     .to_owned(),
             ),
+            _ if layered_net_empty => {
+                DiffBody::Notice("net diff is empty; staged and unstaged changes cancel".to_owned())
+            }
             _ => match (
                 self.side_text(&base, &relative),
                 self.side_text(&target, &relative),
@@ -378,12 +425,16 @@ impl App {
             }
             _ => format!("{base_label} · {target_label}"),
         };
-        let badge = match &base {
-            Side::Working => "DIFF now".to_owned(),
-            Side::Head => "DIFF HEAD".to_owned(),
-            Side::Seen => "DIFF seen".to_owned(),
-            Side::Commit(hex) => format!("DIFF {}", &hex[..hex.len().min(7)]),
-            Side::Checkpoint(i) => format!("DIFF cp {}/{count}", i + 1),
+        let badge = match (&base, &target) {
+            (Side::Head, Side::Working) => "DIFF net".to_owned(),
+            (Side::Head, Side::Index) => "DIFF staged".to_owned(),
+            (Side::Index, Side::Working) => "DIFF unstaged".to_owned(),
+            (Side::Working, _) => "DIFF now".to_owned(),
+            (Side::Head, _) => "DIFF HEAD".to_owned(),
+            (Side::Index, _) => "DIFF index".to_owned(),
+            (Side::Seen, _) => "DIFF seen".to_owned(),
+            (Side::Commit(hex), _) => format!("DIFF {}", &hex[..hex.len().min(7)]),
+            (Side::Checkpoint(i), _) => format!("DIFF cp {}/{count}", i + 1),
         };
         self.view_mut().show_diff(DiffView {
             base,
@@ -399,6 +450,11 @@ impl App {
     fn side_text(&self, side: &Side, relative: &Path) -> Result<Text, String> {
         match side {
             Side::Working => Ok(Text::Working),
+            Side::Index => self
+                .view()
+                .has_index()
+                .then_some(Text::Index)
+                .ok_or_else(|| "no index: not in a git repository".to_owned()),
             Side::Head => self
                 .view()
                 .has_head()
@@ -434,7 +490,10 @@ impl App {
 
     fn side_label(&self, side: &Side, relative: &Path) -> String {
         match side {
+            Side::Working if self.view().worktree_missing() => "WORKTREE (missing)".to_owned(),
             Side::Working => "now".to_owned(),
+            Side::Index if self.view().index_missing() => "INDEX (missing)".to_owned(),
+            Side::Index => "INDEX".to_owned(),
             Side::Head => "HEAD".to_owned(),
             Side::Seen => "last seen".to_owned(),
             Side::Commit(hex) => hex[..hex.len().min(7)].to_owned(),
@@ -513,6 +572,7 @@ mod tests {
         };
         let mut app = App::new(Workspace::discover(&dir.0)?, 100, 30, options);
         app.open(Path::new("a.md"));
+        app.settle_status();
         Ok(app)
     }
 
@@ -527,7 +587,7 @@ mod tests {
 
         press(&mut app, " dd");
         assert_eq!(header(&app), "HEAD · now");
-        assert_eq!(badge(&app), "DIFF HEAD");
+        assert_eq!(badge(&app), "DIFF net");
         assert_eq!(app.diff_chrome_rows(), 1, "a header, no strip");
         assert_eq!(app.text_rows(), 30 - 1 - 1);
         assert!(shown(&app).iter().any(|l| l.contains("-two")));
@@ -566,6 +626,35 @@ mod tests {
         assert!(
             !app.view().source_view(),
             "a Markdown file's home is the rendered view"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn net_diff_explains_canceling_staged_and_unstaged_layers() -> anyhow::Result<()> {
+        let dir = TempDir::new("app-diff-canceling-layers")?;
+        git::init(&dir.0)?;
+        git::stage(&dir.0, &[("new.md", "staged\n")])?;
+        let mut app = App::new(
+            Workspace::discover(&dir.0)?,
+            100,
+            30,
+            Options::for_test(dir.0.clone()),
+        );
+        app.settle_status();
+        app.open(Path::new("new.md"));
+        assert_eq!(app.view().text(), "staged\n");
+        assert_eq!(app.banner(), Some("deleted from worktree · showing INDEX"));
+
+        press(&mut app, " dd");
+        assert_eq!(header(&app), "HEAD · WORKTREE (missing)");
+        assert_eq!(badge(&app), "DIFF net");
+        let lines = shown(&app);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("staged and unstaged changes cancel")),
+            "{lines:?}"
         );
         Ok(())
     }
@@ -678,19 +767,20 @@ mod tests {
         let items = picker_items(&app);
         assert_eq!(
             items.len(),
-            2 + 2 + 2,
-            "two checkpoints, working, HEAD, two commits: {items:?}"
+            2 + 3 + 2,
+            "two checkpoints, working, HEAD, index, two commits: {items:?}"
         );
         assert!(items[0].starts_with("checkpoint 2"));
         assert_eq!(items[2], "working file  now");
         assert_eq!(items[3], "HEAD");
-        assert!(items[4].ends_with("  commit"), "{}", items[4]);
+        assert_eq!(items[4], "index");
+        assert!(items[5].ends_with("  commit"), "{}", items[5]);
         for ch in "HEAD".chars() {
             app.picker_char(ch);
         }
         app.picker_confirm();
         assert_eq!(header(&app), "HEAD · now");
-        assert_eq!(badge(&app), "DIFF HEAD");
+        assert_eq!(badge(&app), "DIFF net");
         assert!(shown(&app).iter().any(|l| l.contains("-two")));
         press(&mut app, "h");
         assert_eq!(

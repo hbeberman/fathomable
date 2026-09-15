@@ -146,7 +146,10 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
     fs::remove_file(dir.0.join("ws/README.md"))?;
     app.on_events(vec![Event::Removed(dir.0.join("ws/README.md"))]);
     assert!(app.deleted());
-    assert_eq!(app.banner(), Some("deleted"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted from worktree · showing last loaded")
+    );
     assert!(app.view().text().contains("alpha"), "last content stays");
     assert_eq!(app.thread_counts(), (1, 1), "threads still read");
     assert!(
@@ -161,13 +164,16 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
     app.thread_reply();
     assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
 
-    // Shown again while still gone: the file-info pane.
+    // Shown again while still gone: the retained source remains searchable.
     app.open(Path::new("other.md"));
     assert!(app.info().is_none());
     app.open(Path::new("README.md"));
-    let info = app.info().context("no info pane for the deleted file")?;
-    assert!(info.rows.iter().any(|(_, v)| v == "deleted"));
-    assert_eq!(app.banner(), None);
+    assert!(app.info().is_none());
+    assert!(app.view().text().contains("alpha"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted from worktree · showing last loaded")
+    );
 
     // Back on disk: reloaded, banner gone, thread re-anchored.
     fs::write(

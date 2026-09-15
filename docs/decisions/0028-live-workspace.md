@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Live workspace
-description: The tree follows the agent creating, deleting, and renaming files without R; a deleted open file keeps its last content under a banner; a rename carries the file's threads to the new path and is recorded in the store.
+description: The tree follows workspace changes without R; deleted tracked files retain a searchable Git snapshot under a banner; renames carry threads to the new path.
 resource: crates/fathomable/src/app/watch.rs
 tags:
   - decision
@@ -12,7 +12,8 @@ tags:
 
 # 0028 Live workspace
 
-Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded watches)
+Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded
+watches); amended 2026-09-14 (searchable Git tombstones)
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -74,22 +75,33 @@ Settled in a question round on 2026-08-28; the choices are below.
   This matches [0023](0023-sidebar-paging.md): the highlight is the
   shown file.
 
-### A deleted open file keeps its content
+### Deleted files retain explorable source
 
 - When the open document's file is removed, the view keeps rendering
-  its last content and a banner row at the top of the text reads
-  `deleted` in the warning face; the pill and `:status` say so too.
+  its last content and a banner row identifies it as
+  `deleted from worktree · showing last loaded`; the pill and `:status`
+  say it is deleted too.
   Scrolling, search, and reading threads keep working on the last
   content; `c`/`C` and replies are refused with a notice, since a new
   thread would anchor to a snapshot no file matches.
 - If the file reappears (an editor's write-then-rename, or the agent
   restoring it), the next change event reloads it and the banner goes;
   threads re-anchor through the reload diff as in
-  [0019](0019-reanchoring-edited-lines.md). Switching to another file
-  and back shows the file-info pane with "deleted" if it is still gone.
-  Opening a git-reported deletion not previously loaded shows the same
-  file-info pane, backed by an empty document that can reload if restored;
-  no file is created (amended 2026-09-14).
+  [0019](0019-reanchoring-edited-lines.md). Switching away and back
+  keeps the retained source visible.
+- Opening a Git-reported deletion not previously loaded creates a
+  read-only, searchable tombstone without creating a worktree file.
+  For an `index -> missing worktree` deletion (` D`, `MD`, or `AD`), it
+  shows the index blob under
+  `deleted from worktree · showing INDEX`. For a staged deletion (`D `),
+  it shows the `HEAD` blob under `staged deletion · showing HEAD`.
+  Binary and over-limit snapshots use the ordinary file-info
+  presentation beneath the same banner. A recreated worktree file is
+  loaded normally even when its staged deletion remains.
+- Retained source is presentation state, not the worktree side of a
+  comparison. Diffs and aggregate counts continue to treat a missing
+  endpoint as empty, and deleted tombstones are never written to the
+  last-seen or checkpoint stores.
 - A tracked deletion keeps its tree row, red `D`, removed-line count,
   and highlight until git no longer reports the deletion
   ([0017](0017-git-status-navigation.md), amended 2026-09-14).

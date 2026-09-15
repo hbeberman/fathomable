@@ -118,8 +118,12 @@ fn head_text_is_the_committed_content() -> TestResult {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one scenario covers every index/worktree status combination"
+)]
 fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
-    use fathomable_core::status::State;
+    use fathomable_core::status::{Changes, State};
 
     let dir = TempDir::new("git-status")?;
     init(&dir.0)?;
@@ -130,6 +134,7 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
         ("clean.md", "c\n"),
         ("edited.md", "one\ntwo\n"),
         ("gone.md", "g\n"),
+        ("mixed.md", "m1\n"),
         ("staged.md", "s\n"),
     ];
     commit(&dir.0, &head)?;
@@ -140,13 +145,16 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
             ("clean.md", "c\n"),
             ("edited.md", "one\ntwo\n"),
             ("gone.md", "g\n"),
+            ("mixed.md", "m2\n"),
             ("staged.md", "s2\n"),
             ("new.md", "n\n"),
+            ("added-deleted.md", "temporary\n"),
         ],
     )?;
     for (name, content) in [
         ("clean.md", "c\n"),
         ("edited.md", "one\nthree\nfour\n"),
+        ("mixed.md", "m3\n"),
         ("staged.md", "s2\n"),
         ("new.md", "n\n"),
         ("untracked.md", "u\nu\n"),
@@ -158,14 +166,13 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
 
     let mut workspace = Workspace::discover(&dir.0)?;
     let status = workspace.status().map_err(|e| format!("status: {e}"))?;
-    let describe: Vec<(String, State, bool, usize, usize)> = status
+    let describe: Vec<(String, Changes, usize, usize)> = status
         .entries()
         .iter()
         .map(|e| {
             (
                 e.path().display().to_string(),
-                e.state(),
-                e.is_staged(),
+                e.changes(),
                 e.added(),
                 e.removed(),
             )
@@ -174,12 +181,55 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     assert_eq!(
         describe,
         vec![
-            (".gitignore".to_owned(), State::Untracked, false, 1, 0),
-            ("edited.md".to_owned(), State::Modified, false, 2, 1),
-            ("gone.md".to_owned(), State::Deleted, false, 0, 1),
-            ("new.md".to_owned(), State::Added, true, 1, 0),
-            ("staged.md".to_owned(), State::Modified, true, 1, 1),
-            ("untracked.md".to_owned(), State::Untracked, false, 2, 0),
+            (
+                ".gitignore".to_owned(),
+                Changes::Unstaged(State::Untracked),
+                1,
+                0,
+            ),
+            (
+                "added-deleted.md".to_owned(),
+                Changes::Both {
+                    staged: State::Added,
+                    unstaged: State::Deleted,
+                },
+                0,
+                0,
+            ),
+            (
+                "edited.md".to_owned(),
+                Changes::Unstaged(State::Modified),
+                2,
+                1,
+            ),
+            (
+                "gone.md".to_owned(),
+                Changes::Unstaged(State::Deleted),
+                0,
+                1,
+            ),
+            (
+                "mixed.md".to_owned(),
+                Changes::Both {
+                    staged: State::Modified,
+                    unstaged: State::Modified,
+                },
+                1,
+                1,
+            ),
+            ("new.md".to_owned(), Changes::Staged(State::Added), 1, 0,),
+            (
+                "staged.md".to_owned(),
+                Changes::Staged(State::Modified),
+                1,
+                1,
+            ),
+            (
+                "untracked.md".to_owned(),
+                Changes::Unstaged(State::Untracked),
+                2,
+                0,
+            ),
         ]
     );
     assert_eq!(
@@ -201,6 +251,7 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
         &[
             ("clean.md", "c\n"),
             ("edited.md", "one\ntwo\n"),
+            ("mixed.md", "m2\n"),
             ("staged.md", "s2\n"),
         ],
     )?;
@@ -208,8 +259,8 @@ fn status_tells_staged_unstaged_and_untracked_apart() -> TestResult {
     assert_eq!(
         status
             .get(Path::new("gone.md"))
-            .map(|gone| (gone.state(), gone.is_staged())),
-        Some((State::Deleted, true))
+            .map(fathomable_core::status::Entry::changes),
+        Some(Changes::Staged(State::Deleted))
     );
     Ok(())
 }
@@ -350,8 +401,8 @@ fn status_after_examines_only_the_named_paths() -> TestResult {
     assert!(!current.contains(Path::new("a.md")));
     assert!(!current.contains(Path::new("build/out.o")));
 
-    // A staged deletion is covered by the file coming back untracked,
-    // and uncovered when it goes again.
+    // A staged deletion and a recreated worktree file remain distinct
+    // layers, and the staged deletion remains when it goes again.
     fs::remove_file(dir.0.join("gone.md"))?;
     stage(&dir.0, &tree[..3])?;
     current = workspace.status()?;
@@ -367,8 +418,11 @@ fn status_after_examines_only_the_named_paths() -> TestResult {
     assert_eq!(
         untracked_again
             .get(Path::new("gone.md"))
-            .map(|e| (e.state(), e.is_staged())),
-        Some((State::Untracked, false))
+            .map(fathomable_core::status::Entry::changes),
+        Some(fathomable_core::status::Changes::Both {
+            staged: State::Deleted,
+            unstaged: State::Untracked,
+        })
     );
     fs::remove_file(dir.0.join("gone.md"))?;
     current = workspace.status_after(&untracked_again, &paths(&["gone.md"]))?;

@@ -123,9 +123,9 @@ Text:
 | `/` `?`, `n` `N`, `:noh` | search, next / previous match, clear highlight |
 | `:N` | go to source line N |
 | `Space v s` / `:source` | toggle raw source view |
-| `Space d d` / `:diff`, `Space d D` / `:diff seen` | the diff against `HEAD` (`HEAD · now`); against last seen; the same key again, or `Esc`, closes it |
-| `h` `l`, `b` `t`, `w` in a diff | earlier / later pair along the file's checkpoint timeline; pick the base / the target from its checkpoints, the working file, last seen, `HEAD`, and the commits that touched it; ignore whitespace |
-| `D` | the next diff: `HEAD`, last seen, the newest checkpoint, then the file again, skipping what the file lacks |
+| `Space d d` / `:diff`, `Space d D` / `:diff seen` | the net diff from `HEAD` to the worktree; the diff against last seen; the same key again, or `Esc`, closes it |
+| `h` `l`, `b` `t`, `w` in a diff | earlier / later pair along the file's checkpoint timeline; pick the base / target from checkpoints, the worktree, last seen, `HEAD`, `INDEX`, and commits; ignore whitespace |
+| `D` | the next diff: unstaged (`INDEX → WORKTREE`), staged (`HEAD → INDEX`), last seen, newest checkpoint, then the file, skipping unavailable pairs |
 | `]g` `[g`, `]G` `[G` | next / previous hunk, crossing into the next uncommitted file; next / previous uncommitted file |
 | `]f` `[f` | next / previous changed file |
 | `]w` `[w` | next / previous worktree of the repository, wrapping ([0070](decisions/0070-one-workspace-many-worktrees.md)) |
@@ -152,7 +152,6 @@ The `Space` menu, from any pane:
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
 | `Space w w` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
-| `Space Space` | cancel the Space chord without changing focus, selection, or the current view |
 | `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
 | `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
 | `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
@@ -613,23 +612,31 @@ At the end of the file, the `~` line lets the last bar extend through trailing
 table borders or other injected rows, but carries no bar itself. Source-backed
 rows keep their own status; deletion rules and the leading edge are not
 extended.
-`Space d d` swaps the pane for the **diff view** with `HEAD` as its base:
-a unified diff of the file, a header naming the two sides (`HEAD · now`) with the diff keys
-at its right, the badge `DIFF HEAD` after the path, and `+added -removed`
+`Space d d` swaps the pane for the **net diff view**, `HEAD` to the
+worktree: a unified diff of the file, a header naming the two sides
+(`HEAD · now`), the badge `DIFF net` after the path, and `+added -removed`
 counts in the status line. `Space d d` again, or `Esc` once there is nothing
 else to clear, returns to the file.
 
 `]g` and `[g` walk the hunks, and when a file's hunks run out they carry
 on into the next uncommitted file in path order, wrapping at the end, so
 holding `]g` from the top of the tree visits every uncommitted change.
-`]G` and `[G` step by file instead, landing on the first hunk. The tree
-shows every uncommitted file with a letter in its gutter column,
-`M`odified, `A`dded, red `D`eleted, or green `U`ntracked, and its
-`+added -removed` counts after the name (`bin` for a binary file, which
-has no lines to count). `M` and `A` use one colour when staged and
-another when not. Deleted files stay listed with their removed-line
-count, even if their parent folders are gone, until the deletion is
-committed or the file is restored. A collapsed folder shows the summed
+`]G` and `[G` step by file instead, landing on the first hunk. The tree shows every uncommitted file with Git's two-character `XY`
+status in its gutter: the first column is `HEAD → INDEX`, the second is
+`INDEX → WORKTREE`, and an untracked file is `??`. Thus ` D` is a
+worktree deletion, `D ` a staged deletion, and `MD` or `AD` preserves
+both layers. Deletions are red, untracked marks green, and modifications
+or additions use the staged or unstaged colour for their column. The
+aggregate `HEAD → WORKTREE` `+added -removed` counts follow the name
+(`bin` for a binary file, which has no lines to count).
+
+Deleted files stay listed, even if their parent folders are gone, until
+the deletion is committed or the file is restored. Opening one shows a
+searchable, read-only tombstone: the index content for a worktree
+deletion, or the `HEAD` content for a staged deletion. A banner names
+the missing layer and retained source. Diffs still treat the missing
+worktree or index as empty; the retained text is never mistaken for the
+live file. A collapsed folder shows the summed
 counts of everything beneath it, and the root header shows
 the repo's totals (`demo +12 -3`). A save, `git add`, or commit updates all
 of this within a beat. A separate cursor cell before the git gutter holds
@@ -664,16 +671,18 @@ page to the earlier or later pair along the timeline, and, while the
 file has a checkpoint, a strip along the bottom lists them, `◆` on the
 workspace-wide ones. The diff's keys sit on the text's key bar, the
 bottom text row, while the text has focus: `h/l page` on a checkpoint
-base, then `b base · t target · D next base · w whitespace · Esc
+base, then `b base · t target · D next diff · w whitespace · Esc
 close`; the header is the pair's names alone. With no checkpoint the view says so and names
 `Space d c`; `Space d r` again leaves it.
 
 Every diff is the same view with two **sides**, so its keys work in all
-of them. `D` steps through the diffs the file has, `HEAD · now`, `last
-seen · now`, the newest checkpoint against the working file, then the
-file again, skipping any it lacks; from a pair off that row it returns
-to the file. `b` and `t` pick the base or the target from the file's
-checkpoints, the working file, last seen, `HEAD`, and the commits that
+of them. `D` steps through the layers the file has: unstaged
+(`INDEX · now`) first, staged (`HEAD · INDEX`) second, then last seen,
+the newest checkpoint against the working file, and the file again.
+Unavailable pairs are skipped; the aggregate `HEAD · now` pair is
+available explicitly through `Space d d`. From a pair off the cycle,
+`D` returns to the file. `b` and `t` pick the base or target from the
+file's checkpoints, the working file, last seen, `HEAD`, `INDEX`, and the commits that
 touched it (the fifty most recent reachable from `HEAD`); the header
 names the pair (`a1b2c3d · HEAD`) and the badge the base (`DIFF
 a1b2c3d`). From outside a diff they open one against the working file;

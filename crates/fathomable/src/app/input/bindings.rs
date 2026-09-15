@@ -277,7 +277,6 @@ actions! {
     JumpBack,
     JumpForward,
     CommandLine,
-    CancelPrefix,
     Escape,
     Confirm,
     TreeToggle,
@@ -594,7 +593,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('D')]],
         A::DiffNext,
         "Display",
-        "diff: next base (HEAD, last seen, checkpoint, file)",
+        "diff: next diff (unstaged, staged, last seen, checkpoint, file)",
     ),
     bind(
         W::View,
@@ -757,13 +756,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::WindowNext,
         "Space menu",
         "next pane",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c(' ')]],
-        A::CancelPrefix,
-        "Space menu",
-        "cancel",
     ),
     bind(
         W::Any,
@@ -1727,10 +1719,7 @@ mod tests {
         );
         assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "t"]);
         assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);
-        assert_eq!(
-            lookup(Where::ThreadsPane, &[c(' '), c(' ')]),
-            Match::Exact(Action::CancelPrefix)
-        );
+        assert_eq!(lookup(Where::ThreadsPane, &[c(' '), c(' ')]), Match::Miss);
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
 

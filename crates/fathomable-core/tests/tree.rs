@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use fathomable_testing::{TempDir, git};
 
-use fathomable_core::status::{Entry, State, Status};
+use fathomable_core::status::{Changes, Entry, State, Status};
 use fathomable_core::tree::{Activation, Row, Rule, Shown, Tree};
 use fathomable_core::workspace::{EntryKind, Filter, Workspace};
 
@@ -283,8 +283,18 @@ fn git_workspace_roots_at_the_repository_and_ignores_files()
 /// (ADR 0068).
 fn dirty_status() -> Status {
     Status::from_entries(vec![
-        Entry::new(PathBuf::from("src/main.rs"), State::Modified, 2, 1),
-        Entry::new(PathBuf::from("b.txt"), State::Untracked, 3, 0),
+        Entry::new(
+            PathBuf::from("src/main.rs"),
+            Changes::Unstaged(State::Modified),
+            2,
+            1,
+        ),
+        Entry::new(
+            PathBuf::from("b.txt"),
+            Changes::Unstaged(State::Untracked),
+            3,
+            0,
+        ),
     ])
 }
 
@@ -315,7 +325,7 @@ fn only_changed_lists_the_dirty_files_and_their_directories()
     // A new status re-sifts: `main.rs` clean, `src` has nothing to show.
     tree.sift(&Status::from_entries(vec![Entry::new(
         PathBuf::from("b.txt"),
-        State::Untracked,
+        Changes::Unstaged(State::Untracked),
         3,
         0,
     )]));

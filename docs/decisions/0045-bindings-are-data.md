@@ -28,8 +28,12 @@ and `f open linked file/URL`. The line motions cross wraps as
 [0010](0010-viewer-ux.md) describes; [0052](0052-goto-file.md) unifies
 opening. `gy`/`gx` are removed; `gs`/`gd`/`gD` are removed in favor
 of `Space v s`/`Space d d`/`Space d D`, which already work from every
-pane. `Space Space` cancels only the pending Space chord; pane cycling
-is `Space w w`, and cancellation does not run the broader `Esc` action.
+pane. Pane cycling is `Space w w`.
+
+Amended 2026-09-14: the explicit `Space Space` binding and menu entry
+are removed. A second Space is simply an unmatched continuation, so the
+existing miss behavior still clears the pending chord without running
+the broader `Esc` action.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

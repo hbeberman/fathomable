@@ -25,7 +25,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use fathomable_core::diff::LineStatus;
-use fathomable_core::status::{State, Summary};
+use fathomable_core::status::Summary;
 
 use crate::app::draw::author::{
     CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, name_style, row_style,
@@ -601,7 +601,7 @@ fn tree_lines<'a>(
         };
         let text = format!(
             "{}{marker}{}{}",
-            " ".repeat(row.depth() + 1),
+            " ".repeat(row.depth() + 2),
             row.name(),
             if row.is_dir() { "/" } else { "" }
         );
@@ -619,7 +619,7 @@ fn tree_lines<'a>(
         } else {
             app.queue().contains(row.path())
         };
-        let (letter, mut tail) = tree_marks(app, row, theme, style, badge, &circles);
+        let (letters, mut tail) = tree_marks(app, row, theme, style, badge, &circles);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
@@ -629,18 +629,15 @@ fn tree_lines<'a>(
             tail_width = 0;
         }
         let name = fit(&text, content_width - tail_width).trim_end().to_owned();
-        // The git letter takes the gutter column ahead of the indent, which
-        // is the name's leading space; a sidebar too narrow to hold any of
-        // the name has no such column to take.
-        let letter = letter.filter(|_| !name.is_empty());
+        // The Git XY code takes the two gutter columns ahead of the indent.
+        let letters = if name.len() >= 2 { letters } else { Vec::new() };
         let used = display_width(&name) + tail_width;
         let mut spans = vec![selection.marker(theme)];
-        match letter {
-            Some(letter) => {
-                spans.push(letter);
-                spans.push(Span::styled(name[1..].to_owned(), style));
-            }
-            None => spans.push(Span::styled(name, style)),
+        if letters.is_empty() {
+            spans.push(Span::styled(name, style));
+        } else {
+            spans.extend(letters);
+            spans.push(Span::styled(name[2..].to_owned(), style));
         }
         spans.extend(tail);
         spans.push(Span::styled(
@@ -664,7 +661,7 @@ pub(super) fn sidebar_divider_style(theme: &Theme) -> Style {
     theme.marker.bg(theme.sidebar.bg.unwrap_or(Color::Reset))
 }
 
-/// The marks around a files pane name: the git letter for the gutter column
+/// The marks around a files pane name: Git's XY code in the gutter
 /// (ADR 0017; files only, a folder's state is its children's), then the
 /// counts, the follow badge (ADR 0015), and the thread circle (ADR 0066)
 /// that follow the name, each drawn over the row's background.
@@ -675,7 +672,7 @@ fn tree_marks<'a>(
     style: Style,
     badge: bool,
     circles: &[(std::path::PathBuf, Words)],
-) -> (Option<Span<'a>>, Vec<Span<'a>>) {
+) -> (Vec<Span<'a>>, Vec<Span<'a>>) {
     // A collapsed directory folds what is beneath it.
     let git = if row.is_dir() {
         (!row.expanded())
@@ -685,26 +682,28 @@ fn tree_marks<'a>(
         app.status().get(row.path()).map(|entry| Summary {
             state: entry.state(),
             staged: entry.is_staged(),
+            changes: entry.changes(),
             added: entry.added(),
             removed: entry.removed(),
             binary: entry.is_binary(),
         })
     };
     let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
-    let mut letter = None;
+    let mut letters = Vec::new();
     let mut tail = Vec::new();
     if let Some(git) = git {
-        let letter_style = match git.state {
-            State::Deleted => theme.diff_minus,
-            State::Untracked => theme.diff_plus,
-            _ if git.staged => theme.git_staged,
-            _ => theme.git_unstaged,
-        };
         if !row.is_dir() {
-            letter = Some(Span::styled(
-                git.state.letter().to_string(),
-                on_bg(letter_style),
-            ));
+            let [staged, unstaged] = git.changes.code();
+            for (letter, staged_side) in [(staged, true), (unstaged, false)] {
+                let letter_style = match letter {
+                    'D' => theme.diff_minus,
+                    '?' | 'U' => theme.diff_plus,
+                    _ if staged_side => theme.git_staged,
+                    ' ' => Style::default(),
+                    _ => theme.git_unstaged,
+                };
+                letters.push(Span::styled(letter.to_string(), on_bg(letter_style)));
+            }
         }
         if git.added > 0 {
             tail.push(Span::styled(
@@ -750,7 +749,7 @@ fn tree_marks<'a>(
             on_bg(mark_style(theme, words.state())),
         ));
     }
-    (letter, tail)
+    (letters, tail)
 }
 
 /// The sidebar (ADR 0049): the files pane on top, the threads pane along

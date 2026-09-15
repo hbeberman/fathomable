@@ -83,7 +83,9 @@ never saw the 0049 discussion.
   pane's highlight on the current file. 0056's window submenu is
   spatial, for the reader who knows where the pane is; these two name
   the pane, for the reader who knows which one they want. `Space w
-  h/j/k/l/w`, `Space Space`, and the `Space p` hides are untouched.
+  h/j/k/l/w` and the `Space p` hides are untouched. (`Space Space` was
+  later removed as an explicit binding by the 2026-09-14 amendment to
+  [0056](0056-the-leader-trimmed.md).)
 
 ## Consequences
 

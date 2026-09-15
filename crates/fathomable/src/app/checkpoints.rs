@@ -64,6 +64,10 @@ impl App {
             self.notice("no file open to checkpoint");
             return;
         };
+        if doc.deleted.is_some() {
+            self.notice("a deleted file cannot be checkpointed");
+            return;
+        }
         let Some(text) = doc.document.text().map(str::to_owned) else {
             self.notice("only text files are checkpointed");
             return;

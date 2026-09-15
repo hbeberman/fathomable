@@ -13,11 +13,21 @@
 //! ```
 //! use std::path::{Path, PathBuf};
 //!
-//! use fathomable_core::status::{Entry, State, Status};
+//! use fathomable_core::status::{Changes, Entry, State, Status};
 //!
 //! let status = Status::from_entries(vec![
-//!     Entry::new(PathBuf::from("src/b.rs"), State::Modified, 2, 1),
-//!     Entry::new(PathBuf::from("src/a.rs"), State::Untracked, 9, 0),
+//!     Entry::new(
+//!         PathBuf::from("src/b.rs"),
+//!         Changes::Unstaged(State::Modified),
+//!         2,
+//!         1,
+//!     ),
+//!     Entry::new(
+//!         PathBuf::from("src/a.rs"),
+//!         Changes::Unstaged(State::Untracked),
+//!         9,
+//!         0,
+//!     ),
 //! ]);
 //! assert_eq!(status.len(), 2);
 //! assert_eq!(status.entries()[0].path(), Path::new("src/a.rs"));
@@ -66,26 +76,123 @@ impl fmt::Display for State {
     }
 }
 
+/// The independently dirty sides of Git's `HEAD -> index -> worktree` model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Changes {
+    /// Only `HEAD -> index` differs.
+    Staged(State),
+    /// Only `index -> worktree` differs.
+    Unstaged(State),
+    /// Both comparisons differ.
+    Both {
+        /// The `HEAD -> index` state.
+        staged: State,
+        /// The `index -> worktree` state.
+        unstaged: State,
+    },
+}
+
+impl Changes {
+    /// Builds a status from its optional staged and unstaged sides.
+    #[must_use]
+    pub const fn from_sides(staged: Option<State>, unstaged: Option<State>) -> Option<Self> {
+        match (staged, unstaged) {
+            (Some(staged), Some(unstaged)) => Some(Self::Both { staged, unstaged }),
+            (Some(state), None) => Some(Self::Staged(state)),
+            (None, Some(state)) => Some(Self::Unstaged(state)),
+            (None, None) => None,
+        }
+    }
+
+    /// The `HEAD -> index` state, when that layer differs.
+    #[must_use]
+    pub const fn staged(self) -> Option<State> {
+        match self {
+            Self::Staged(state) | Self::Both { staged: state, .. } => Some(state),
+            Self::Unstaged(_) => None,
+        }
+    }
+
+    /// The `index -> worktree` state, when that layer differs.
+    #[must_use]
+    pub const fn unstaged(self) -> Option<State> {
+        match self {
+            Self::Unstaged(state)
+            | Self::Both {
+                unstaged: state, ..
+            } => Some(state),
+            Self::Staged(_) => None,
+        }
+    }
+
+    /// The most immediate dirty state, preferring the worktree side.
+    #[must_use]
+    pub const fn state(self) -> State {
+        match self {
+            Self::Staged(state) | Self::Unstaged(state) => state,
+            Self::Both { unstaged, .. } => unstaged,
+        }
+    }
+
+    /// Git's two-character `XY` status code.
+    #[must_use]
+    pub const fn code(self) -> [char; 2] {
+        match self {
+            Self::Staged(state) => [state.letter(), ' '],
+            Self::Unstaged(State::Untracked) => ['?', '?'],
+            Self::Unstaged(state) => [' ', state.letter()],
+            Self::Both {
+                staged,
+                unstaged: State::Untracked,
+            } => [staged.letter(), '?'],
+            Self::Both { staged, unstaged } => [staged.letter(), unstaged.letter()],
+        }
+    }
+
+    /// Whether this represents only a path unknown to the index.
+    #[must_use]
+    pub const fn is_only_untracked(self) -> bool {
+        matches!(self, Self::Unstaged(State::Untracked))
+    }
+
+    fn merged(self, other: Self) -> Self {
+        let staged = match (self.staged(), other.staged()) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (left, right) => left.or(right),
+        };
+        let unstaged = match (self.unstaged(), other.unstaged()) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (left, right) => left.or(right),
+        };
+        Self::from_sides(staged, unstaged).unwrap_or(self)
+    }
+}
+
+impl fmt::Display for Changes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let [index, worktree] = self.code();
+        write!(f, "{index}{worktree}")
+    }
+}
+
 /// One dirty path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     path: PathBuf,
-    state: State,
-    staged: bool,
+    changes: Changes,
     binary: bool,
     added: usize,
     removed: usize,
 }
 
 impl Entry {
-    /// An unstaged dirty `path` in `state`; `added` and `removed` are
-    /// line counts of the working tree against `HEAD`.
+    /// A dirty `path`; `added` and `removed` are line counts of the
+    /// working tree against `HEAD`.
     #[must_use]
-    pub fn new(path: PathBuf, state: State, added: usize, removed: usize) -> Self {
+    pub fn new(path: PathBuf, changes: Changes, added: usize, removed: usize) -> Self {
         Self {
             path,
-            state,
-            staged: false,
+            changes,
             binary: false,
             added,
             removed,
@@ -100,13 +207,6 @@ impl Entry {
         self
     }
 
-    /// Mark the entry as staged: the index differs from `HEAD` for it.
-    #[must_use]
-    pub fn staged(mut self) -> Self {
-        self.staged = true;
-        self
-    }
-
     /// Root-relative path.
     #[must_use]
     pub fn path(&self) -> &Path {
@@ -116,14 +216,32 @@ impl Entry {
     /// How the path differs; for a path that is both staged and further
     /// edited, the working tree's state.
     #[must_use]
-    pub fn state(&self) -> State {
-        self.state
+    pub const fn state(&self) -> State {
+        self.changes.state()
+    }
+
+    /// The independently dirty Git layers for this path.
+    #[must_use]
+    pub const fn changes(&self) -> Changes {
+        self.changes
+    }
+
+    /// The `HEAD -> index` state, when that layer differs.
+    #[must_use]
+    pub const fn staged_state(&self) -> Option<State> {
+        self.changes.staged()
+    }
+
+    /// The `index -> worktree` state, when that layer differs.
+    #[must_use]
+    pub const fn unstaged_state(&self) -> Option<State> {
+        self.changes.unstaged()
     }
 
     /// Whether the index differs from `HEAD` for this path.
     #[must_use]
-    pub fn is_staged(&self) -> bool {
-        self.staged
+    pub const fn is_staged(&self) -> bool {
+        self.staged_state().is_some()
     }
 
     /// Whether the file is binary by git's rule (ADR 0026).
@@ -152,6 +270,8 @@ pub struct Summary {
     pub state: State,
     /// Whether every dirty path beneath is staged.
     pub staged: bool,
+    /// The independently dirty Git layers beneath.
+    pub changes: Changes,
     /// Summed additions.
     pub added: usize,
     /// Summed removals.
@@ -239,15 +359,17 @@ impl Status {
         for entry in under {
             summary = Some(match summary {
                 None => Summary {
-                    state: entry.state,
-                    staged: entry.staged,
+                    state: entry.state(),
+                    staged: entry.is_staged(),
+                    changes: entry.changes(),
                     added: entry.added,
                     removed: entry.removed,
                     binary: entry.binary,
                 },
                 Some(acc) => Summary {
-                    state: acc.state.max(entry.state),
-                    staged: acc.staged && entry.staged,
+                    state: acc.state.max(entry.state()),
+                    staged: acc.staged && entry.is_staged(),
+                    changes: acc.changes.merged(entry.changes()),
                     added: acc.added + entry.added,
                     removed: acc.removed + entry.removed,
                     binary: acc.binary && entry.binary,
@@ -301,8 +423,16 @@ mod tests {
     use super::*;
 
     fn entry(path: &str, state: State, staged: bool) -> Entry {
-        let entry = Entry::new(PathBuf::from(path), state, 1, 1);
-        if staged { entry.staged() } else { entry }
+        Entry::new(
+            PathBuf::from(path),
+            if staged {
+                Changes::Staged(state)
+            } else {
+                Changes::Unstaged(state)
+            },
+            1,
+            1,
+        )
     }
 
     #[test]
@@ -317,6 +447,29 @@ mod tests {
         assert!(status.entries()[1].is_staged());
         assert!(status.contains(Path::new("a")));
         assert!(!status.contains(Path::new("c")));
+    }
+
+    #[test]
+    fn changes_render_git_xy_without_collapsing_layers() {
+        assert_eq!(Changes::Staged(State::Deleted).code(), ['D', ' ']);
+        assert_eq!(Changes::Unstaged(State::Deleted).code(), [' ', 'D']);
+        assert_eq!(
+            Changes::Both {
+                staged: State::Modified,
+                unstaged: State::Deleted,
+            }
+            .code(),
+            ['M', 'D']
+        );
+        assert_eq!(
+            Changes::Both {
+                staged: State::Added,
+                unstaged: State::Deleted,
+            }
+            .code(),
+            ['A', 'D']
+        );
+        assert_eq!(Changes::Unstaged(State::Untracked).code(), ['?', '?']);
     }
 
     #[test]
@@ -359,15 +512,24 @@ mod tests {
     #[test]
     fn summary_folds_state_staging_and_counts() {
         let status = Status::from_entries(vec![
-            Entry::new(PathBuf::from("d/a"), State::Modified, 1, 2).staged(),
-            Entry::new(PathBuf::from("d/b"), State::Untracked, 3, 0),
-            Entry::new(PathBuf::from("e"), State::Deleted, 0, 5).staged(),
+            Entry::new(PathBuf::from("d/a"), Changes::Staged(State::Modified), 1, 2),
+            Entry::new(
+                PathBuf::from("d/b"),
+                Changes::Unstaged(State::Untracked),
+                3,
+                0,
+            ),
+            Entry::new(PathBuf::from("e"), Changes::Staged(State::Deleted), 0, 5),
         ]);
         assert_eq!(
             status.summary_under(Path::new("d")),
             Some(Summary {
                 state: State::Untracked,
                 staged: false,
+                changes: Changes::Both {
+                    staged: State::Modified,
+                    unstaged: State::Untracked,
+                },
                 added: 4,
                 removed: 2,
                 binary: false,

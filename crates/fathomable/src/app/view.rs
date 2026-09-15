@@ -14,7 +14,9 @@ use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
-use super::diff::{DiffBody, DiffView, Side, Text};
+#[cfg(test)]
+use super::diff::Side;
+use super::diff::{DiffBody, DiffView, Text};
 
 mod navigation;
 
@@ -49,7 +51,7 @@ pub(crate) enum Display {
     Rendered,
     /// The raw source (`Space v s`, ADR 0010).
     Source,
-    /// A unified diff between two sides (ADR 0060): `HEAD`, the
+    /// A unified diff between two sides (ADR 0060): `HEAD`, the index,
     /// last-seen snapshot, a checkpoint, a commit, or the working file.
     Diff,
 }
@@ -169,6 +171,8 @@ pub(crate) struct View {
     index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
     head: Option<String>,
+    /// Absent Git endpoints whose retained display text must not replace them.
+    missing: Missing,
     /// The diff's sides while it is shown (ADR 0060).
     diff_shown: Option<DiffView>,
     /// How diffs are compared and listed (ADR 0060).
@@ -194,6 +198,12 @@ pub(crate) struct View {
     detached: Vec<usize>,
     /// The stub blocks hanging under rows, in row order (ADR 0049).
     stubs: Vec<StubBlock>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Missing {
+    index: bool,
+    worktree: bool,
 }
 
 /// A block of rows inserted under a row for a thread (ADR 0049): where
@@ -249,6 +259,7 @@ impl View {
             seen: None,
             index: None,
             head: None,
+            missing: Missing::default(),
             diff_shown: None,
             compare: Compare::default(),
             diff: None,
@@ -460,7 +471,9 @@ impl View {
     /// fetched for it; `None` when the copy does not exist.
     fn text_of<'a>(&'a self, text: &'a Text) -> Option<&'a str> {
         match text {
+            Text::Working if self.missing.worktree => Some(""),
             Text::Working => Some(&self.text),
+            Text::Index => self.index.as_deref(),
             Text::Head => self.head.as_deref(),
             Text::Seen => self.seen.as_deref(),
             Text::Owned(owned) => Some(owned),
@@ -491,7 +504,9 @@ impl View {
     /// The display the file returns to when a diff closes: rendered for
     /// Markdown, source for anything else.
     fn home(&self) -> Display {
-        if self.syntax.markdown {
+        if self.missing.worktree {
+            Display::Source
+        } else if self.syntax.markdown {
             Display::Rendered
         } else {
             Display::Source
@@ -554,6 +569,41 @@ impl View {
     /// Whether the file has a `HEAD` text to diff against.
     pub(crate) fn has_head(&self) -> bool {
         self.head.is_some()
+    }
+
+    /// Whether the file has an index text to diff against.
+    pub(crate) fn has_index(&self) -> bool {
+        self.index.is_some()
+    }
+
+    /// Whether the worktree side of a diff is absent.
+    pub(crate) fn worktree_missing(&self) -> bool {
+        self.missing.worktree
+    }
+
+    /// Whether the index side of a diff is absent.
+    pub(crate) fn index_missing(&self) -> bool {
+        self.missing.index
+    }
+
+    /// Set whether an empty index side represents an absent path.
+    pub(crate) fn set_index_missing(&mut self, missing: bool) {
+        self.missing.index = missing;
+    }
+
+    /// Set whether retained source stands in front of a missing worktree.
+    pub(crate) fn set_worktree_missing(&mut self, missing: bool) {
+        if self.missing.worktree == missing {
+            return;
+        }
+        self.missing.worktree = missing;
+        if missing && self.display != Display::Diff {
+            self.display = Display::Source;
+        }
+        self.rediff();
+        if self.diff_view() {
+            self.relayout();
+        }
     }
 
     /// Whether the file has a last-seen snapshot to diff against.
@@ -668,6 +718,13 @@ impl View {
         self.diff.as_ref().map(Diff::counts)
     }
 
+    /// Whether the aggregate `HEAD -> worktree` comparison has no hunks.
+    pub(crate) fn net_diff_empty(&self) -> bool {
+        self.diff
+            .as_ref()
+            .is_some_and(|diff| diff.hunks().is_empty())
+    }
+
     /// Progress through the document as a percentage of rendered lines.
     pub(crate) fn percent(&self) -> usize {
         let last = self.layout.lines().len().saturating_sub(1);
@@ -712,6 +769,7 @@ impl View {
     /// Replace the document text after a change on disk (ADR 0010 reload).
     pub(crate) fn reload(&mut self, text: String) {
         self.text = text;
+        self.missing.worktree = false;
         self.changed = true;
         self.rediff();
         self.relayout();
@@ -738,11 +796,13 @@ impl View {
     }
 
     fn rediff(&mut self) {
-        self.diff = self.head.as_deref().map(|base| Diff::new(base, &self.text));
-        self.unstaged = self
-            .index
-            .as_deref()
-            .map(|base| Diff::new(base, &self.text));
+        let worktree = if self.missing.worktree {
+            ""
+        } else {
+            &self.text
+        };
+        self.diff = self.head.as_deref().map(|base| Diff::new(base, worktree));
+        self.unstaged = self.index.as_deref().map(|base| Diff::new(base, worktree));
         if let Some(diff) = &self.diff {
             tracing::debug!(hunks = diff.hunks().len(), "diff against HEAD");
         }
@@ -759,6 +819,7 @@ impl View {
 
     /// `Space d d` / `:diff`: the diff `HEAD · now` (ADR 0017, ADR 0060), or
     /// back to the file when that pair is shown.
+    #[cfg(test)]
     pub(crate) fn toggle_head_diff(&mut self) {
         if self
             .diff()
@@ -766,7 +827,7 @@ impl View {
         {
             self.leave_diff();
         } else if self.head.is_some() {
-            self.show_diff(DiffView::head());
+            self.show_diff(DiffView::head(self.missing.worktree));
         } else {
             self.message = Some("no diff base: not in a git repository".to_owned());
         }
@@ -774,6 +835,7 @@ impl View {
 
     /// `Space d D` / `:diff seen`: the diff `last seen · now` (ADR 0015, ADR
     /// 0060), or back to the file when that pair is shown.
+    #[cfg(test)]
     pub(crate) fn toggle_seen_diff(&mut self) {
         if self
             .diff()
@@ -781,7 +843,7 @@ impl View {
         {
             self.leave_diff();
         } else if self.seen.is_some() {
-            self.show_diff(DiffView::seen());
+            self.show_diff(DiffView::seen(self.missing.worktree));
         } else {
             self.message = Some("no last-seen snapshot of this file yet".to_owned());
         }

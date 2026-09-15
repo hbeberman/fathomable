@@ -215,18 +215,41 @@ struct Doc {
     /// Whether the text has changed or been read since it was last
     /// snapshotted as seen.
     seen_dirty: bool,
-    /// Set while the file is gone from disk (ADR 0028); the last content
-    /// stays loaded until it returns.
+    /// Set while the file is gone from disk (ADR 0028); retained content
+    /// stays available until it returns.
     deleted: Option<Deleted>,
 }
 
-/// How a deleted open file is shown (ADR 0028).
+/// Which retained source a deleted file shows (ADR 0028).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Deleted {
-    /// Deleted under the reader: the last content under a banner row.
-    Banner,
-    /// Shown again while still gone: the file-info pane.
-    Info,
+    /// The file vanished while open, so its last loaded content remains.
+    Loaded,
+    /// The worktree file is absent; the index blob is shown.
+    Index,
+    /// The deletion is staged; the `HEAD` blob is shown.
+    Head,
+}
+
+impl Deleted {
+    const fn banner(self) -> &'static str {
+        match self {
+            Self::Loaded => "deleted from worktree · showing last loaded",
+            Self::Index => "deleted from worktree · showing INDEX",
+            Self::Head => "staged deletion · showing HEAD",
+        }
+    }
+}
+
+fn deleted_source(entry: Option<&fathomable_core::status::Entry>) -> Option<Deleted> {
+    let entry = entry?;
+    if entry.unstaged_state() == Some(State::Deleted) {
+        Some(Deleted::Index)
+    } else if entry.staged_state() == Some(State::Deleted) && entry.unstaged_state().is_none() {
+        Some(Deleted::Head)
+    } else {
+        None
+    }
 }
 
 /// All application state.
@@ -926,7 +949,8 @@ impl App {
                 continue;
             }
             tracing::info!(path = %doc.relative.display(), "open file deleted; keeping its last content");
-            doc.deleted = Some(Deleted::Banner);
+            doc.deleted = Some(Deleted::Loaded);
+            doc.view.set_worktree_missing(true);
             if self.current == Some(index) {
                 self.notice(format!("{} was deleted", relative.display()));
             }
@@ -963,6 +987,7 @@ impl App {
             doc.relative.clone_from(&target);
             doc.document.rename(root.join(&target));
             doc.deleted = None;
+            doc.view.set_worktree_missing(false);
             if self.current == Some(index) {
                 current_moved = Some(target);
             }
@@ -1079,9 +1104,81 @@ impl App {
                 if status != self.status {
                     tracing::info!(dirty = status.len(), "dirty set changed");
                 }
+                let shown = self
+                    .current
+                    .and_then(|index| self.docs.get(index))
+                    .and_then(|doc| doc.view.diff())
+                    .map(|diff| (diff.base.clone(), diff.target.clone()));
                 self.status = status;
                 self.status_stale = false;
+                let root = self.workspace.root().to_path_buf();
+                let deleted_updates: Vec<(usize, Deleted, PathBuf)> = self
+                    .docs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, doc)| {
+                        let missing = !root.join(&doc.relative).is_file();
+                        let source = missing
+                            .then(|| deleted_source(self.status.get(&doc.relative)))
+                            .flatten()?;
+                        Some((index, source, doc.relative.clone()))
+                    })
+                    .collect();
+                for (index, source, relative) in deleted_updates {
+                    let current = self.docs[index].deleted;
+                    if current.is_none() {
+                        self.docs[index].deleted = Some(Deleted::Loaded);
+                        self.docs[index].view.set_worktree_missing(true);
+                    } else if current != Some(Deleted::Loaded) {
+                        let bytes = match source {
+                            Deleted::Index => self.workspace.index_bytes(&relative),
+                            Deleted::Head => self.workspace.head_bytes(&relative),
+                            Deleted::Loaded => unreachable!("loaded content is not a Git source"),
+                        };
+                        match bytes {
+                            Ok(Some(bytes)) => {
+                                let changed = self.docs[index]
+                                    .document
+                                    .replace_snapshot(bytes)
+                                    .map_err(|error| error.to_string());
+                                match changed {
+                                    Ok(changed) => {
+                                        self.docs[index].deleted = Some(source);
+                                        if changed {
+                                            let text = self.docs[index]
+                                                .document
+                                                .text()
+                                                .unwrap_or_default()
+                                                .to_owned();
+                                            self.docs[index].view.reload(text);
+                                        }
+                                        self.docs[index].view.set_worktree_missing(true);
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(%error, "cannot refresh deleted snapshot");
+                                        self.notice(error);
+                                    }
+                                }
+                            }
+                            Ok(None) => self.notice(format!(
+                                "no Git snapshot is available for {}",
+                                relative.display()
+                            )),
+                            Err(error) => self.notice(error.to_string()),
+                        }
+                    }
+                }
+                for doc in &mut self.docs {
+                    doc.view.set_index_missing(
+                        self.status
+                            .get(&doc.relative)
+                            .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
+                    );
+                }
                 self.sift_tree();
+                if let Some((base, target)) = shown {
+                    self.show_diff(base, target);
+                }
             }
             Err(error) => {
                 self.status_stale = true;
@@ -1200,6 +1297,7 @@ impl App {
         if let Some(index) = loaded
             && self.docs[index].deleted.take().is_some()
         {
+            self.docs[index].view.set_worktree_missing(false);
             tracing::info!(path = %relative.display(), "deleted file is back");
             if self.current == Some(index) {
                 self.notice(format!("{} is back", relative.display()));
@@ -1451,21 +1549,12 @@ impl App {
             .is_some_and(|doc| doc.deleted.is_some())
     }
 
-    /// The banner row over the text: `deleted` while the current file is
-    /// gone and its last content is still shown (ADR 0028).
+    /// The banner over retained source while the worktree file is gone.
     pub(crate) fn banner(&self) -> Option<&'static str> {
         self.current
             .and_then(|i| self.docs.get(i))
-            .filter(|doc| doc.deleted == Some(Deleted::Banner) && !self.review_list.is_open())
-            .map(|_| "deleted")
-    }
-
-    /// Whether the current document is shown as the file-info pane
-    /// because it was deleted and shown again while gone (ADR 0028).
-    pub(super) fn deleted_info(&self) -> bool {
-        self.current
-            .and_then(|i| self.docs.get(i))
-            .is_some_and(|doc| doc.deleted == Some(Deleted::Info))
+            .filter(|_| !self.review_list.is_open())
+            .and_then(|doc| doc.deleted.map(Deleted::banner))
     }
 
     /// Rows available to panes once the status line is taken.
@@ -1585,15 +1674,36 @@ impl App {
                 attr: self.workspace.diff_attr(&relative),
                 max_bytes: self.viewer.max_file_bytes(),
             };
-            let deleted = self
-                .status
-                .get(&relative)
-                .is_some_and(|entry| entry.state() == State::Deleted)
-                && matches!(absolute.try_exists(), Ok(false));
-            let document = if deleted {
-                Ok(Document::missing(&absolute, policy))
-            } else {
-                Document::load(&absolute, policy)
+            let deleted = matches!(absolute.try_exists(), Ok(false))
+                .then(|| deleted_source(self.status.get(&relative)))
+                .flatten();
+            let document = match deleted {
+                Some(Deleted::Index) => self
+                    .workspace
+                    .index_bytes(&relative)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        bytes
+                            .ok_or_else(|| "no index snapshot is available".to_owned())
+                            .and_then(|bytes| {
+                                Document::from_snapshot(&absolute, bytes, policy)
+                                    .map_err(|error| error.to_string())
+                            })
+                    }),
+                Some(Deleted::Head) => self
+                    .workspace
+                    .head_bytes(&relative)
+                    .map_err(|error| error.to_string())
+                    .and_then(|bytes| {
+                        bytes
+                            .ok_or_else(|| "no HEAD snapshot is available".to_owned())
+                            .and_then(|bytes| {
+                                Document::from_snapshot(&absolute, bytes, policy)
+                                    .map_err(|error| error.to_string())
+                            })
+                    }),
+                Some(Deleted::Loaded) => unreachable!("new documents have no loaded snapshot"),
+                None => Document::load(&absolute, policy).map_err(|error| error.to_string()),
             };
             match document {
                 Ok(document) => {
@@ -1606,6 +1716,12 @@ impl App {
                         self.syntax_for(&relative),
                     );
                     view.set_compare(self.compare);
+                    view.set_worktree_missing(deleted.is_some());
+                    view.set_index_missing(
+                        self.status
+                            .get(&relative)
+                            .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
+                    );
                     self.docs.push(Doc {
                         document,
                         relative: relative.clone(),
@@ -1613,7 +1729,7 @@ impl App {
                         marks: Vec::new(),
                         draft: None,
                         seen_dirty: true,
-                        deleted: deleted.then_some(Deleted::Info),
+                        deleted,
                     });
                     self.docs.len() - 1
                 }
@@ -1743,14 +1859,6 @@ impl App {
             self.mark_seen(previous);
         }
         self.current = Some(index);
-        // Shown again while still gone: the file-info pane says so
-        // (ADR 0028).
-        if let Some(doc) = self.docs.get_mut(index)
-            && doc.deleted.is_some()
-            && !doc.document.path().is_file()
-        {
-            doc.deleted = Some(Deleted::Info);
-        }
         // A document takes the column back from the list (ADR 0025).
         self.review_list.close();
         self.focus = Focus::View;
@@ -1883,8 +1991,23 @@ impl App {
                     None
                 }
             });
+        let shown = self
+            .docs
+            .get(index)
+            .and_then(|doc| doc.view.diff())
+            .map(|diff| (diff.base.clone(), diff.target.clone()));
         if let Some(doc) = self.docs.get_mut(index) {
             doc.view.set_bases(seen, staged, head);
+            doc.view.set_index_missing(
+                self.status
+                    .get(&relative)
+                    .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
+            );
+        }
+        if self.current == Some(index)
+            && let Some((base, target)) = shown
+        {
+            self.show_diff(base, target);
         }
     }
 

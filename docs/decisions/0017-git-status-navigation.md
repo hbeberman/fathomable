@@ -12,12 +12,14 @@ tags:
 # 0017 Git status as the primary change layer
 
 Status: accepted (2026-08-26); amended 2026-09-05 by
-[0060](0060-one-diff-two-sides.md): the badge reads `DIFF HEAD`, and the
-diff against `HEAD` is the one diff view with `HEAD` as its base; amended
+[0060](0060-one-diff-two-sides.md): the diff against `HEAD` is the one
+diff view with `HEAD` as its base; amended
 2026-09-06: a file event re-examines only the paths it names, and the
 full walk runs on a thread of its own, and racily clean entries are
 hashed. Amended 2026-09-14: deleted files stay in the files pane with a
-red `D`; untracked files use a green `U`.
+red `D`; untracked files use a green `U`. Amended 2026-09-14: each path
+retains Git's separate `HEAD -> index` and `index -> worktree` states,
+and the files pane renders their `XY` code.
 
 ## Context
 
@@ -42,13 +44,13 @@ letters follow Helix; the sidebar shows a git letter and line counts.
 
 ### Dirty set
 
-- `Workspace::status()` walks the repository with `gix`'s status support
-  (worktree against index, index against `HEAD`) and returns one
-  `GitEntry { path, state, staged }` per dirty path, sorted by path.
-  `state` is `Modified`, `Added`, `Deleted`, or `Untracked`; `staged` is
-  whether the index differs from `HEAD` for that path. A path with both
-  staged and unstaged changes is one entry with `staged: true` and the
-  worktree's state. Ignored paths are never in the set; untracked files
+- `Workspace::status()` walks the repository and returns one entry per
+  dirty path, sorted by path. Each entry retains both optional states:
+  `HEAD -> index` (staged) and `index -> worktree` (unstaged), rather
+  than collapsing them into one state plus a boolean. Each state is
+  `Modified`, `Added`, `Deleted`, or `Untracked`. This preserves `MD`,
+  `AD`, `D `, and ` D`; a file recreated after a staged deletion is
+  retained as `D?`. Ignored paths are never in the set; untracked files
   are, so a new file appears the moment it is written.
 - The set is walked whole at start, on the same `.git` events that
   refresh `HEAD` bases in 0015 (`HEAD`, `ORIG_HEAD`, the index), on an
@@ -103,10 +105,10 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   path order, opened at its first hunk.
 - `]c` / `[c` become the annotation-thread keys (`c` is the comment key),
   replacing `]a` / `[a`.
-- `gd` / `:diff` cycles rendered, `DIFF` (worktree against `HEAD`, the
-  margin showing `▎`/`▌` per hunk), `DIFF seen` (against the last-seen
-  snapshot, when one exists and differs), then rendered. The pill reads
-  `DIFF` and `DIFF seen`; there is no `DIFF head`.
+- `Space d d` / `:diff` explicitly toggles the aggregate
+  `HEAD -> worktree` comparison, whose pill is `DIFF net`. The bare `D`
+  cycle defined by [0069](0069-the-diffs-keys-on-the-bar.md) visits the
+  unstaged and staged comparisons separately.
 
 ### Last-seen
 
@@ -120,15 +122,15 @@ letters follow Helix; the sidebar shows a git letter and line counts.
 
 ### Sidebar
 
-- A dirty file's tree row shows a state letter in the gutter column
-  (column 0, ahead of the indent, so names stay aligned) and its line
-  counts after the name and one space: `M   mod.rs +12 -3`,
-  `U   new.rs +40`, `D   old.rs -18`. Letters are `M`, `A`, `D`, `U`.
-  `D` uses `diff.minus` (red), and `U` uses `diff.plus` (green);
-  `M` and `A` use `git.unstaged` or, when the path is staged,
-  `git.staged`. Counts are `+a` in
+- A dirty file's tree row shows Git's two-character `XY` code in two
+  gutter columns ahead of the indent. The first character describes
+  `HEAD -> index`; the second describes `index -> worktree`; purely
+  untracked files use `??`. `D` uses `diff.minus` (red), `?` uses
+  `diff.plus` (green), and `M` and `A` use `git.staged` in the first
+  column or `git.unstaged` in the second. Counts are `+a` in
   `diff.plus` and `-r` in `diff.minus`, each omitted when zero. The counts
-  are not padded to a column; colour tells the parts apart.
+  remain the aggregate `HEAD -> worktree` comparison; they are not
+  padded to a column, and colour tells the parts apart.
 - The root header carries the summed counts of the whole dirty set
   (`demo +12 -3`) in the same colours. (2026-09-06: the header row is
   on `ui.header` and names the pane's active filters after the counts;
@@ -147,6 +149,9 @@ letters follow Helix; the sidebar shows a git letter and line counts.
   The filesystem-only picker and workspace walk are unchanged. Deleted
   files also appear in `]G` order and in the diff view as all-removed
   files, and the parent directory's summary counts them.
+- Hiding untracked files hides only a pure `??` path. A worktree file
+  recreated over a staged deletion remains visible because its `D?`
+  row still carries staged state.
 
 ### Theme
 

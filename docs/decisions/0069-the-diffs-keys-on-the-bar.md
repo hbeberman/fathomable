@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The diff's keys on the bar
-description: The diff header gives up its keys to the text's key bar, so a header is its words everywhere; `h/l page` is drawn only on a checkpoint base; `D` steps the diff through the file, `HEAD`, last seen, and the newest checkpoint; `Space d s` marks every file seen, so a later last-seen diff shows only what came after.
+description: The diff header gives up its keys to the text's key bar; `D` steps through unstaged and staged Git layers, last seen, and the newest checkpoint; `Space d s` marks every file seen.
 resource: crates/fathomable/src/app/diff_keys.rs
 related_resources:
   - crates/fathomable/src/app/last_seen.rs
@@ -20,7 +20,7 @@ tags:
 
 # 0069 The diff's keys on the bar
 
-Status: accepted (2026-09-06)
+Status: accepted (2026-09-06); amended 2026-09-14 (layer-aware cycle)
 
 ## Context
 
@@ -64,7 +64,7 @@ the key and the shape of the cycle, and no menu entry for it.
   bar has to say, so the bar replaces the bottom text row for every
   diff. While the text has the keys it reads, first, the diff's keys:
   `h/l page` on a checkpoint base only, then `b base`, `t target`,
-  `D next base`, `w whitespace`, `Esc close`. After them the thread
+  `D next diff`, `w whitespace`, `Esc close`. After them the thread
   cursor's keys and `Z` for the file as 0067 has them. The view's keys
   keep their place at the left edge while the cursor's come and go,
   and paging is the most pressed key in a checkpoint diff. On a
@@ -76,16 +76,15 @@ the key and the shape of the cycle, and no menu entry for it.
   is a checkpoint; on any other base the press keeps its notice and the
   hint is not there, under 0064's rule.
 - **`D` steps the diffs.** In the text, `D` shows the next pair along
-  the file's row of diffs: the file itself, `HEAD · now`, `last seen ·
-  now`, the newest checkpoint against the working file, then the file
-  again. A pair the file cannot show is skipped: no `HEAD` outside git
-  or for an untracked file, no last seen without a snapshot, no
-  checkpoint without one. From a pair that is not on the row, a commit
-  base or a picked target, `D` returns to the file, and the next press
-  starts at `HEAD`. With no pair to show, `D` says so. It is forward
-  only. `D` sits in the diff family with `gd`, `gD`, and `Space d`;
-  bare `d` is the prefix of `dd`. `gd`, `gD`, and `Space d r` keep
-  their toggles. There is no `Space d` entry for it, by
+  the file's row of diffs: the file itself, the unstaged
+  `INDEX -> WORKTREE` layer, the staged `HEAD -> INDEX` layer, last
+  seen against the worktree, the newest checkpoint against the
+  worktree, then the file again. Each unavailable pair is skipped. The
+  aggregate `HEAD -> WORKTREE` comparison is deliberately outside this
+  cycle and remains explicit on `Space d d`, `gd`, and `:diff`. From a
+  pair that is not on the row, a commit base, an explicit net diff, or
+  a picked target, `D` returns to the file. With no pair to show, `D`
+  says so. It is forward only. There is no `Space d` entry for it, by
   [0056](0056-the-leader-trimmed.md)'s rule that the menu carries no
   entry that duplicates a bare key; the bar and `Space ?` name it.
 - **`Space d s` marks every file seen.** From any pane, it snapshots

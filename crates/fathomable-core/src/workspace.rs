@@ -35,7 +35,7 @@ use gix::worktree::stack::state::ignore::Source;
 
 use crate::content::{self, Attr};
 use crate::diff::Diff;
-use crate::status::{self, State, Status};
+use crate::status::{self, Changes, State, Status};
 
 /// One directory entry, as the tree pane shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,7 +391,7 @@ impl Workspace {
     /// Returns [`WorkspaceError`] when `HEAD` or the blob cannot be read,
     /// or the blob is not UTF-8 text.
     pub fn head_text(&self, relative: &Path) -> Result<Option<String>, WorkspaceError> {
-        let Some(bytes) = self.head_blob(relative)? else {
+        let Some(bytes) = self.head_bytes(relative)? else {
             return Ok(None);
         };
         String::from_utf8(bytes)
@@ -402,9 +402,15 @@ impl Workspace {
             })
     }
 
-    /// The bytes of root-relative `relative` as committed in `HEAD`;
-    /// see [`Self::head_text`] for the `None` and empty cases.
-    fn head_blob(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
+    /// The bytes of root-relative `relative` as committed in `HEAD`.
+    ///
+    /// Returns `None` outside Git, and an empty blob when `HEAD` has no
+    /// such path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD` or the blob cannot be read.
+    pub fn head_bytes(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let Some(git) = self.ignore.as_ref() else {
             return Ok(None);
         };
@@ -580,6 +586,26 @@ impl Workspace {
     /// Returns [`WorkspaceError`] when the index or the blob cannot be
     /// read, or the blob is not UTF-8 text.
     pub fn index_text(&self, relative: &Path) -> Result<Option<String>, WorkspaceError> {
+        let Some(bytes) = self.index_bytes(relative)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("index blob is not UTF-8 text: {error}"),
+            })
+    }
+
+    /// The bytes of root-relative `relative` as staged in the index.
+    ///
+    /// Returns `None` outside Git, and an empty blob when the index has no
+    /// such path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the index or blob cannot be read.
+    pub fn index_bytes(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let Some(git) = self.ignore.as_ref() else {
             return Ok(None);
         };
@@ -593,7 +619,7 @@ impl Workspace {
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
         let path = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(relative));
         let Some(entry) = index.entry_by_path(path.as_ref()) else {
-            return Ok(Some(String::new()));
+            return Ok(Some(Vec::new()));
         };
         if !matches!(
             entry.mode,
@@ -601,15 +627,13 @@ impl Workspace {
                 | gix::index::entry::Mode::FILE_EXECUTABLE
                 | gix::index::entry::Mode::SYMLINK
         ) {
-            return Ok(Some(String::new()));
+            return Ok(Some(Vec::new()));
         }
         let object = git
             .repo
             .find_object(entry.id)
             .map_err(|error| fail(format!("cannot read blob from the index: {error}")))?;
-        String::from_utf8(object.detach().data)
-            .map(Some)
-            .map_err(|error| fail(format!("index blob is not UTF-8 text: {error}")))
+        Ok(Some(object.detach().data))
     }
 
     /// Every uncommitted path (ADR 0017): the index against `HEAD` for
@@ -645,7 +669,7 @@ impl Workspace {
                 .map_err(|error| fail(format!("cannot walk HEAD tree: {error}")))?;
         }
         let hash = git.repo.object_hash();
-        let mut dirty: BTreeMap<BString, (State, bool)> = BTreeMap::new();
+        let mut dirty: BTreeMap<BString, (Option<State>, Option<State>)> = BTreeMap::new();
         let mut in_index: BTreeSet<BString> = BTreeSet::new();
         for entry in index.entries() {
             if !is_status_entry(entry) {
@@ -660,25 +684,30 @@ impl Workspace {
             };
             let absolute = self.root.join(gix::path::from_bstr(path.as_bstr()));
             let worktree = worktree_state(&absolute, entry, hash, &index);
-            if let Some(state) = worktree.or(staged) {
-                dirty.insert(path, (state, staged.is_some()));
+            if Changes::from_sides(staged, worktree).is_some() {
+                dirty.insert(path, (staged, worktree));
             }
         }
         for path in head.keys() {
             if !in_index.contains(path) {
-                dirty.insert(path.clone(), (State::Deleted, true));
+                dirty.insert(path.clone(), (Some(State::Deleted), None));
             }
         }
         for file in self.walk_files(Filter::Visible) {
             let path = BString::from(file);
             if !in_index.contains(&path) {
-                dirty.insert(path, (State::Untracked, false));
+                dirty
+                    .entry(path)
+                    .and_modify(|(_, unstaged)| *unstaged = Some(State::Untracked))
+                    .or_insert((None, Some(State::Untracked)));
             }
         }
         let mut entries = Vec::with_capacity(dirty.len());
-        for (path, (state, staged)) in dirty {
+        for (path, (staged, unstaged)) in dirty {
             let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
-            entries.push(self.dirty_entry(relative, state, staged));
+            if let Some(changes) = Changes::from_sides(staged, unstaged) {
+                entries.push(self.dirty_entry(relative, changes));
+            }
         }
         let status = Status::from_entries(entries);
         tracing::debug!(dirty = status.len(), elapsed = ?started.elapsed(), "git status");
@@ -742,8 +771,8 @@ impl Workspace {
             .cloned()
             .collect();
         for relative in &examine {
-            if let Some((state, staged)) = self.dirty_state(&index, &head, previous, relative)? {
-                entries.push(self.dirty_entry(relative.clone(), state, staged));
+            if let Some(changes) = self.dirty_state(&index, &head, previous, relative)? {
+                entries.push(self.dirty_entry(relative.clone(), changes));
             }
         }
         let status = Status::from_entries(entries);
@@ -817,7 +846,7 @@ impl Workspace {
         head: &Head<'_>,
         previous: &Status,
         relative: &Path,
-    ) -> Result<Option<(State, bool)>, WorkspaceError> {
+    ) -> Result<Option<Changes>, WorkspaceError> {
         let absolute = self.root.join(relative);
         let tracked = index
             .entry_by_path(unix_path(relative).as_ref())
@@ -831,15 +860,23 @@ impl Workspace {
                 Some(_) => Some(State::Modified),
                 None => Some(State::Added),
             };
-            return Ok(worktree_state(&absolute, entry, head.hash, index)
-                .or(staged)
-                .map(|state| (state, staged.is_some())));
+            return Ok(Changes::from_sides(
+                staged,
+                worktree_state(&absolute, entry, head.hash, index),
+            ));
         }
         let on_disk = absolute
             .symlink_metadata()
             .is_ok_and(|meta| meta.is_file() || meta.is_symlink());
         if on_disk && !self.is_ignored(relative, EntryKind::File) {
-            return Ok(Some((State::Untracked, false)));
+            let staged = head
+                .id_of(relative)
+                .map_err(|message| WorkspaceError {
+                    path: absolute,
+                    message,
+                })?
+                .map(|_| State::Deleted);
+            return Ok(Changes::from_sides(staged, Some(State::Untracked)));
         }
         // Gone from the index and now from disk too: the staged deletion
         // the file had covered, when there was one.
@@ -852,39 +889,26 @@ impl Workspace {
                 })?
                 .is_some()
         {
-            return Ok(Some((State::Deleted, true)));
+            return Ok(Some(Changes::Staged(State::Deleted)));
         }
         Ok(None)
     }
 
-    /// The entry for a dirty `relative` in `state`, with its line counts.
-    fn dirty_entry(&mut self, relative: PathBuf, state: State, staged: bool) -> status::Entry {
-        let entry = match self.count_lines(&relative, state) {
-            Lines::Text { added, removed } => status::Entry::new(relative, state, added, removed),
-            Lines::Binary => status::Entry::new(relative, state, 0, 0).binary(),
-        };
-        if staged { entry.staged() } else { entry }
+    /// The entry for a dirty `relative`, with its aggregate line counts.
+    fn dirty_entry(&mut self, relative: PathBuf, changes: Changes) -> status::Entry {
+        match self.count_lines(&relative) {
+            Lines::Text { added, removed } => status::Entry::new(relative, changes, added, removed),
+            Lines::Binary => status::Entry::new(relative, changes, 0, 0).binary(),
+        }
     }
 
     /// Line counts of the working tree against `HEAD`, or that the file
     /// is binary by git's rule (ADR 0026): the `diff` attribute, else a
     /// `NUL` in the first bytes of whichever side exists.
-    fn count_lines(&mut self, relative: &Path, state: State) -> Lines {
+    fn count_lines(&mut self, relative: &Path) -> Lines {
         let attr = self.diff_attr(relative);
-        let head = match state {
-            State::Untracked => Some(Vec::new()),
-            _ => self.head_blob(relative).ok().flatten(),
-        };
-        let worktree = match state {
-            State::Deleted => Some(Vec::new()),
-            _ => self.worktree_bytes(relative),
-        };
-        let (Some(old), Some(new)) = (head, worktree) else {
-            return Lines::Text {
-                added: 0,
-                removed: 0,
-            };
-        };
+        let old = self.head_bytes(relative).ok().flatten().unwrap_or_default();
+        let new = self.worktree_bytes(relative).unwrap_or_default();
         let binary = attr
             .decided()
             .unwrap_or_else(|| content::is_binary(&old) || content::is_binary(&new));

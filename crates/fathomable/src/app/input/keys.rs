@@ -186,9 +186,6 @@ impl App {
             return Effect::None;
         };
         match action {
-            Action::CancelPrefix => {
-                self.take_prefix();
-            }
             Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
@@ -661,7 +658,7 @@ mod tests {
     }
 
     #[test]
-    fn space_space_cancels_only_the_prefix() -> anyhow::Result<()> {
+    fn unmatched_second_space_cancels_only_the_prefix() -> anyhow::Result<()> {
         let dir = fixture("cancel-space")?;
         let mut app = source_app(&dir)?;
         app.show_tree();

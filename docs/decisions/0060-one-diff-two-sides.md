@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One diff, two sides
-description: The HEAD diff, the last-seen diff, and the checkpoint diff become one diff view with a named base and target, every diff carrying the pair header and the side pickers; the status badge reads `DIFF` and the base; the comparisons and the checkpoint marks move from `Space v` to a `Space d` diff submenu with a whitespace toggle backed by a `diff` config block; `Space v` keeps source view and gains the stub toggles.
+description: All comparisons share one two-sided diff view; Git exposes HEAD, index, and worktree endpoints with staged, unstaged, and net badges alongside snapshots, checkpoints, and commit sides.
 resource: crates/fathomable/src/app/diff.rs
 related_resources:
   - crates/fathomable/src/app/checkpoints.rs
@@ -21,7 +21,8 @@ tags:
 
 # 0060 One diff, two sides
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05); amended 2026-09-14 (index side and
+layer-labelled diffs)
 
 ## Context
 
@@ -58,9 +59,12 @@ would have to bring that back or cut rows, either its own decision.
 - The view has one diff display, `Display::Diff`, backed by a **pair**:
   a base `Side` and a target `Side`. `Side` is what 0049's checkpoint
   diff had, plus `Seen`, the last-seen snapshot of
-  [0015](0015-follow-mode.md). `Head` and `Seen` read the texts the view
-  already holds for the gutter, so the diff and the gutter agree.
-- `gd` / `:diff` / `Space d d` shows `HEAD · now`; `gD` / `:diff seen`
+  [0015](0015-follow-mode.md), and `Index`, the staged snapshot.
+  `Head`, `Index`, and `Seen` read the texts the view already holds.
+  A missing index or worktree remains an empty diff endpoint even when
+  the source display retains a tombstone from another endpoint.
+- `gd` / `:diff` / `Space d d` shows the aggregate `HEAD · now` pair
+  with badge `DIFF net`; `gD` / `:diff seen`
   / `Space d D` shows `last seen · now`; `Space d r` shows the newest
   checkpoint pair, `checkpoint 3/3  5m ago · now`, or the notice that
   there is no checkpoint. Each key **closes** the diff when the pair on
@@ -82,7 +86,8 @@ would have to bring that back or cut rows, either its own decision.
   [0069](0069-the-diffs-keys-on-the-bar.md): the hints are on the
   text's key bar, `h/l page` on a checkpoint base only, and the header
   is the pair's names alone.) `b` and `t` open the side pickers from any diff, and their
-  lists gain `last seen` when the file has a snapshot. `h` and `l` page
+  lists gain `last seen` when the file has a snapshot and always include
+  `HEAD` and `INDEX` inside Git. `h` and `l` page
   the timeline when the base is a checkpoint and say so when it is not,
   as before. The **strip** of the file's checkpoints draws under the
   diff only while the file has one; a diff against `HEAD` of a file
@@ -92,8 +97,10 @@ would have to bring that back or cut rows, either its own decision.
 
 ### The badge
 
-- The status line's badge is one family: `DIFF` and the base, `DIFF
-  HEAD`, `DIFF seen`, `DIFF cp 2/3`, `DIFF a1b2c3d`. The header names
+- The status line's badge is one family: `DIFF net`, `DIFF staged`,
+  `DIFF unstaged`, `DIFF seen`, `DIFF cp 2/3`, `DIFF a1b2c3d`.
+  `HEAD -> INDEX` is staged, `INDEX -> WORKTREE` is unstaged, and
+  `HEAD -> WORKTREE` is net. The header names
   the target, which is the working file nearly always. `CHECK` goes;
   `SRC` and `AUTO` stay. `:status` says `diff HEAD · now`.
 
@@ -156,7 +163,7 @@ diff {
   record amends.
 - 0056's map: `Space v` is `s` / `t` / `x`, `Space d` is new, `Space c`
   loses `x`; `SUBMENUS` gains `d` diff.
-- 0017's `gd` bullet: the badge reads `DIFF HEAD`, and `DIFF seen` is
+- 0017's `gd` bullet: the badge reads `DIFF net`, and `DIFF seen` is
   the same family; 0010's badge list reads `SRC`, `DIFF <base>`, `AUTO`.
 - 0050's checkpoint header click is the diff header click: a hint runs
   its key, the base name opens the base picker, the target name the

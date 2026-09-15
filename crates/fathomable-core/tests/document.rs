@@ -56,6 +56,53 @@ fn missing_placeholder_creates_nothing_and_reloads_under_its_policy() -> TestRes
 }
 
 #[test]
+fn snapshot_content_is_visible_and_reloads_when_the_file_returns() -> TestResult {
+    let dir = fathomable_testing::TempDir::new("snapshot-document")?;
+    let path = dir.0.join("main.c");
+    let mut document =
+        Document::from_snapshot(&path, b"int main(void) {}\n".to_vec(), Policy::default())?;
+    assert_eq!(document.path(), path);
+    assert_eq!(document.text(), Some("int main(void) {}\n"));
+    assert!(!path.exists());
+
+    fs::write(&path, "int main(void) { return 0; }\n")?;
+    assert!(document.reload()?);
+    assert_eq!(document.text(), Some("int main(void) { return 0; }\n"));
+    Ok(())
+}
+
+#[test]
+fn snapshot_content_obeys_binary_and_size_policy() -> TestResult {
+    let dir = fathomable_testing::TempDir::new("snapshot-policy")?;
+    let binary = Document::from_snapshot(
+        dir.0.join("image.png"),
+        b"\x89PNG\r\n\x1a\n\0".to_vec(),
+        Policy::default(),
+    )?;
+    assert!(matches!(
+        binary.content(),
+        Content::Binary {
+            format: Some(Format::Png),
+            ..
+        }
+    ));
+
+    let large = Document::from_snapshot(
+        dir.0.join("large.txt"),
+        b"too large\n".to_vec(),
+        Policy {
+            attr: Attr::Text,
+            max_bytes: 4,
+        },
+    )?;
+    assert!(matches!(
+        large.content(),
+        Content::TooLarge { max_bytes: 4, .. }
+    ));
+    Ok(())
+}
+
+#[test]
 fn reload_reports_whether_text_changed() -> TestResult {
     let path = scratch_file("reload.md", b"one\n")?;
     let mut document = Document::load(&path, Policy::default())?;

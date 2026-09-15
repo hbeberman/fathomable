@@ -51,6 +51,33 @@ impl Document {
         }
     }
 
+    /// Retain snapshot `bytes` for a missing file under `policy`.
+    ///
+    /// The document still points at its worktree path, so [`Self::reload`]
+    /// reads the live file if it reappears.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError`] when text bytes are not valid UTF-8.
+    pub fn from_snapshot(
+        path: impl Into<PathBuf>,
+        bytes: Vec<u8>,
+        policy: Policy,
+    ) -> Result<Self, LoadError> {
+        let path = path.into();
+        let content = classify_bytes(&path, bytes, policy)?;
+        tracing::debug!(
+            path = %path.display(),
+            content = ?Summary(&content),
+            "loaded snapshot document"
+        );
+        Ok(Self {
+            path,
+            policy,
+            content,
+        })
+    }
+
     /// Read `path` under `policy`: as UTF-8 text, or as a binary or
     /// over-limit file whose bytes are left on disk.
     ///
@@ -81,6 +108,20 @@ impl Document {
         let content = read(&self.path, self.policy)?;
         let changed = content != self.content;
         tracing::debug!(path = %self.path.display(), changed, "reloaded document");
+        self.content = content;
+        Ok(changed)
+    }
+
+    /// Replace retained snapshot bytes under the document's existing policy.
+    ///
+    /// Returns `Ok(true)` when the retained content changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError`] when text bytes are not valid UTF-8.
+    pub fn replace_snapshot(&mut self, bytes: Vec<u8>) -> Result<bool, LoadError> {
+        let content = classify_bytes(&self.path, bytes, self.policy)?;
+        let changed = content != self.content;
         self.content = content;
         Ok(changed)
     }
@@ -157,6 +198,44 @@ fn read(path: &Path, policy: Policy) -> Result<Content, LoadError> {
         });
     }
     let bytes = fs::read(path).map_err(fail)?;
+    if policy.attr.classify(&bytes) == Some(true) {
+        return Ok(Content::Binary {
+            size,
+            format: Format::sniff(&bytes),
+        });
+    }
+    String::from_utf8(bytes)
+        .map(Content::Text)
+        .map_err(|error| fail(io::Error::new(io::ErrorKind::InvalidData, error)))
+}
+
+fn classify_bytes(path: &Path, bytes: Vec<u8>, policy: Policy) -> Result<Content, LoadError> {
+    let fail = |source| LoadError {
+        path: path.to_path_buf(),
+        source,
+    };
+    let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if policy.attr.decided() == Some(true) {
+        return Ok(Content::Binary {
+            size,
+            format: Format::sniff(&bytes),
+        });
+    }
+    if size > policy.max_bytes {
+        return Ok(
+            if policy.attr.decided() == Some(false) || !crate::content::is_binary(&bytes) {
+                Content::TooLarge {
+                    size,
+                    max_bytes: policy.max_bytes,
+                }
+            } else {
+                Content::Binary {
+                    size,
+                    format: Format::sniff(&bytes),
+                }
+            },
+        );
+    }
     if policy.attr.classify(&bytes) == Some(true) {
         return Ok(Content::Binary {
             size,

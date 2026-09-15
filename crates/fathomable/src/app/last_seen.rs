@@ -20,6 +20,9 @@ impl App {
             return;
         };
         doc.seen_dirty = false;
+        if doc.deleted.is_some() {
+            return;
+        }
         let (Some(seen), Some(text)) = (self.seen.as_mut(), doc.document.text()) else {
             return;
         };

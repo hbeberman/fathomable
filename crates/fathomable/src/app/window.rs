@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0056-the-leader-trimmed.md
 //! Moving the keys between the panes: Helix's window submenu, `Space w
-//! h/j/k/l/w`, and `Space Space`, over the panes that are shown and the
+//! h/j/k/l/w` over the panes that are shown and the
 //! review list while it is open (ADR 0056); `Space w f` and `Space w t`
 //! name the sidebar's panes, showing a hidden one first (ADR 0057).
 //!
@@ -46,7 +46,7 @@ impl App {
         }
     }
 
-    /// `Space w w`, `Space Space`: text, files pane, threads pane, text,
+    /// `Space w w`: text, files pane, threads pane, text,
     /// skipping hidden panes.
     pub(crate) fn window_next(&mut self) {
         let in_text = matches!(self.focus, Focus::View | Focus::Review);

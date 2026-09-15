@@ -35,8 +35,9 @@ pub const UNKNOWN_AGENT_NAME: &str = "agent";
 pub fn harness_name(client: &str) -> Option<&'static str> {
     match client {
         "claude-code" => Some("Claude"),
-        "copilot-cli" | "github-copilot-developer" => Some("Copilot"),
+        "copilot" | "copilot-cli" | "github-copilot-developer" => Some("Copilot"),
         "codex-mcp-client" | "codex" => Some("Codex"),
+        "Visual Studio Code" | "Visual Studio Code - Insiders" | "Code - OSS" => Some("VS Code"),
         _ => None,
     }
 }

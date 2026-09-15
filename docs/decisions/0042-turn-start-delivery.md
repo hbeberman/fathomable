@@ -13,6 +13,14 @@ tags:
 
 Status: accepted (2026-08-29)
 
+Bootstrap amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): `hello` and its session-start
+resume delivery are removed. The supported `pending` delivery events
+below remain, keyed by the harness-qualified caller id after normalizing
+the hook's native id. Identity comes from the harness, not a hook
+paragraph; a resumed chat receives pending work at its next supported
+prompt or stop hook. A live subscription is still required.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

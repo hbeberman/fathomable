@@ -316,7 +316,7 @@ pub enum Author {
         name: String,
         /// The MCP client that carried the reply, when known.
         client: Option<String>,
-        /// The harness session it subscribed as (ADR 0040), when it did.
+        /// The harness-qualified chat identity, independent of subscription.
         id: Option<String>,
         /// The agent type it subscribed with (ADR 0040), when it did.
         kind: Option<String>,
@@ -373,7 +373,7 @@ impl Author {
         }
     }
 
-    /// The subscriber id the message was signed with, if any.
+    /// The chat identity the message was signed with, if known.
     #[must_use]
     pub fn id(&self) -> Option<&str> {
         match self {

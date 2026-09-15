@@ -16,6 +16,11 @@ tags:
 
 Status: accepted (2026-08-27)
 
+Routing amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): the default is anchored by
+`fathomable --mcp [DIR]` at startup, with per-call workspace overrides
+and no mutable pin. Chat identity never selects a workspace.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

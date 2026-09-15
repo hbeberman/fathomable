@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fs;
 use std::path::Path;
+use std::process::ExitCode;
 
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::Register;
@@ -12,14 +13,10 @@ use fathomable_core::session::Marker;
 use fathomable_core::workspace::Workspace;
 use serde_json::json;
 
-use super::{
-    Bound, Diag, Event, Harness, Input, Occasion, compose, hello_text, prefix_warning,
-    workspace_for,
-};
+use super::{Bound, Diag, Event, Harness, Input, Occasion, compose, pending_input, workspace_for};
 use fathomable_core::clock::now;
 use fathomable_testing::TempDir;
 use fathomable_testing::git;
-use fathomable_testing::vocabulary as vocab;
 
 use crate::app::testing;
 
@@ -33,7 +30,186 @@ fn fixture(name: &str) -> std::io::Result<TempDir> {
 
 fn dirs(dir: &TempDir) -> XdgDirs {
     let state = dir.0.join("state").into_os_string();
-    XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
+    let config = dir.0.join("config").into_os_string();
+    XdgDirs::resolve(move |name| match name {
+        "XDG_STATE_HOME" => Some(state.clone()),
+        "XDG_CONFIG_HOME" => Some(config.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn hooks_deliver_only_to_the_matching_harness_subscription() -> TestResult {
+    for (harness, key) in [
+        (Harness::Claude, "claude:s-1"),
+        (Harness::Copilot, "copilot:s-1"),
+        (Harness::Codex, "codex:s-1"),
+        (Harness::Vscode, "vscode:s-1"),
+    ] {
+        let dir = fixture(&format!("qualified-{harness:?}"))?;
+        let dirs = dirs(&dir);
+        let root = dir.0.join("ws").canonicalize()?;
+        Marker::new(root.clone(), vec![root.clone()]).write(&dirs)?;
+        let mut store = Store::open(dirs.threads_file(&root))?;
+        store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
+            "one\n",
+            now(),
+        )?;
+        let payload = if harness == Harness::Copilot {
+            json!({"sessionId": "s-1", "cwd": root})
+        } else {
+            json!({"session_id": "s-1", "cwd": root})
+        };
+        let run = || {
+            let mut diag = Diag::new(true, "pending", Some(harness));
+            diag.flushed = true;
+            let code = pending_input(
+                &dirs,
+                Some(harness),
+                None,
+                false,
+                Input::parse(harness, &payload),
+                &mut diag,
+            );
+            (code, diag.lines.clone())
+        };
+        let (code, lines) = run();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "silent: nothing to deliver")
+        );
+        assert!(
+            !dirs.agents_file(&root).exists(),
+            "no implicit subscription"
+        );
+
+        let other = if harness == Harness::Copilot {
+            "claude:s-1"
+        } else {
+            "copilot:s-1"
+        };
+        let expiry = AgentsConfig::default().expire_after;
+        let mut register = Register::open(dirs.agents_file(&root), now(), expiry)?;
+        register.subscribe(other, "coder", None, None, now())?;
+        let before = fs::read(register.path())?;
+        let (code, lines) = run();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "silent: nothing to deliver")
+        );
+        assert_eq!(
+            fs::read(register.path())?,
+            before,
+            "another harness stays untouched"
+        );
+
+        register.subscribe(key, "coder", None, None, now())?;
+        let (code, lines) = run();
+        let expected = match harness {
+            Harness::Claude | Harness::Codex => ExitCode::from(2),
+            Harness::Copilot | Harness::Vscode => ExitCode::SUCCESS,
+        };
+        assert_eq!(code, expected);
+        assert!(lines.iter().any(|line| line.starts_with("answer: ")));
+        let register = Register::open(register.path(), now(), expiry)?;
+        let subscriber = register.subscriber(key).ok_or("missing subscriber")?;
+        assert!(register.deliverable(subscriber, store.threads()).is_empty());
+        let other = register
+            .subscriber(other)
+            .ok_or("missing other subscriber")?;
+        assert_eq!(register.deliverable(other, store.threads()).len(), 1);
+        let (code, lines) = run();
+        assert_eq!(code, ExitCode::SUCCESS);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line == "silent: nothing to deliver")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_hook_ids_are_native_and_manual_ids_are_qualified() -> TestResult {
+    for (index, (harness, explicit, delivered)) in [
+        (Some(Harness::Claude), "explicit", true),
+        (None, "claude:explicit", true),
+        (Some(Harness::Claude), " ", false),
+        (None, "explicit", false),
+        (None, "claude: ", false),
+        (None, "unknown:explicit", false),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let dir = fixture(&format!("explicit-{index}"))?;
+        let dirs = dirs(&dir);
+        let root = dir.0.join("ws").canonicalize()?;
+        Marker::new(root.clone(), vec![root.clone()]).write(&dirs)?;
+        let mut store = Store::open(dirs.threads_file(&root))?;
+        store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "why?",
+            ),
+            "one\n",
+            now(),
+        )?;
+        let expiry = AgentsConfig::default().expire_after;
+        let path = dirs.agents_file(&root);
+        let mut register = Register::open(&path, now(), expiry)?;
+        register.subscribe("claude:explicit", "coder", None, None, now())?;
+        let before = fs::read(&path)?;
+        let input = Input::parse(
+            Harness::Claude,
+            &json!({"session_id": "stdin", "cwd": root}),
+        );
+        let mut diag = Diag::new(true, "pending", harness);
+        diag.flushed = true;
+        assert_eq!(
+            pending_input(
+                &dirs,
+                harness,
+                Some(explicit.to_owned()),
+                true,
+                input,
+                &mut diag
+            ),
+            ExitCode::SUCCESS
+        );
+        let register = Register::open(&path, now(), expiry)?;
+        let subscriber = register
+            .subscriber("claude:explicit")
+            .ok_or("missing subscriber")?;
+        assert_eq!(
+            register.deliverable(subscriber, store.threads()).is_empty(),
+            delivered
+        );
+        if delivered {
+            assert!(diag.lines.iter().any(|line| line.starts_with("answer: ")));
+        } else {
+            assert!(
+                diag.lines
+                    .iter()
+                    .any(|line| line == "silent: invalid chat identity")
+            );
+            assert!(!diag.lines.iter().any(|line| line.starts_with("answer: ")));
+            assert_eq!(fs::read(&path)?, before);
+        }
+    }
+    Ok(())
 }
 
 /// A subscribed session is handed a thread once; the next check is
@@ -166,14 +342,14 @@ fn overflow_threads_survive_for_the_threads_tool() -> TestResult {
     Ok(())
 }
 
-/// A resume or a turn start hands the blob over as context, not as a
+/// A turn start hands the blob over as context, not as a
 /// forced turn, so it must not spend the nag cadence that ADR 0040
 /// counts in turn-ends — otherwise a harness that runs its
 /// prompt-submit hook on every continuation would nag about threads
 /// no turn ever refused to answer.
 #[test]
 fn context_does_not_count_toward_the_nag() -> TestResult {
-    let dir = fixture("resume")?;
+    let dir = fixture("context")?;
     let dirs = dirs(&dir);
     let root = dir.0.join("ws").canonicalize()?;
     Marker::new(root.clone(), vec![root.clone()]).write(&dirs)?;
@@ -224,13 +400,7 @@ fn subagents_are_told_apart_per_harness() {
     );
     assert!(claude.subagent && claude.continuation);
     assert_eq!(claude.session.as_deref(), Some("s"));
-    assert_eq!(claude.source, None, "Stop carries no source");
-    let resumed = Input::parse(
-        Harness::Claude,
-        &json!({"session_id": "s", "cwd": "/w", "source": "resume"}),
-    );
-    assert_eq!(resumed.source.as_deref(), Some("resume"));
-    assert_eq!((resumed.event, claude.event), (Event::Stop, Event::Stop));
+    assert_eq!(claude.event, Event::Stop);
     let main = Input::parse(Harness::Codex, &json!({"session_id": "s", "cwd": "/w"}));
     assert!(!main.subagent && !main.continuation);
     let copilot_main = Input::parse(
@@ -337,88 +507,6 @@ fn context_events_are_told_from_stop() {
         ),
         Event::Other
     );
-}
-
-/// Every harness's hello names only tools and parameters the
-/// vocabulary knows — the call shapes after the harness's prefix is
-/// stripped, and anything backticked — and lists every type.
-#[test]
-fn hello_names_only_known_tools() {
-    let types = ["coder".to_owned(), "qa".to_owned()];
-    for harness in [
-        Harness::Claude,
-        Harness::Codex,
-        Harness::Copilot,
-        Harness::Vscode,
-    ] {
-        let text = hello_text(harness, Path::new("/ws"), "s-1", &types, "Henry");
-        assert!(text.contains("types      coder, qa"), "{text}");
-        assert!(text.contains("session    s-1"), "{text}");
-        assert!(text.contains("user       Henry"), "{text}");
-        let mut shapes = 0;
-        for line in text.lines() {
-            let Some(rest) = line.strip_prefix("  ") else {
-                continue;
-            };
-            let Some((call, _)) = rest.split_once(" { ") else {
-                continue;
-            };
-            shapes += 1;
-            let bare = call
-                .strip_prefix("mcp__fathomable__")
-                .or_else(|| call.strip_prefix("fathomable."))
-                .unwrap_or(call);
-            assert!(
-                vocab::is_known(bare),
-                "{harness:?} hello calls unknown `{call}`"
-            );
-        }
-        assert_eq!(shapes, 5, "{harness:?}: {text}");
-        for ident in vocab::idents(&text) {
-            assert!(
-                ident == "fathomable" || vocab::is_known(ident),
-                "{harness:?} hello names unknown `{ident}`"
-            );
-        }
-    }
-    assert!(
-        hello_text(Harness::Copilot, Path::new("/ws"), "s", &types, "user").contains("detached")
-    );
-    assert!(
-        !hello_text(Harness::Claude, Path::new("/ws"), "s", &types, "user").contains("detached")
-    );
-}
-
-/// The hello says `resolve` only proposes (ADR 0053), and its
-/// single-reply example no longer carries it, so an agent copying
-/// the example does not propose closing every thread it answers.
-#[test]
-fn hello_says_resolve_only_proposes() {
-    let types = ["coder".to_owned()];
-    let text = hello_text(Harness::Claude, Path::new("/ws"), "s-1", &types, "user");
-    assert!(text.contains("the user closes it"), "{text}");
-    let single = text
-        .lines()
-        .find(|line| line.contains("<thread id>"))
-        .unwrap_or_default();
-    assert!(!single.contains("resolve"), "{single}");
-}
-
-/// A workspace that contains the cwd only by prefix — neither the
-/// cwd itself nor its git root — is called out; the two honest
-/// matches are not.
-#[test]
-fn hello_warns_on_a_prefix_match() {
-    let home = Path::new("/home/h");
-    let repo = Path::new("/home/h/repos/demo");
-    let sub = Path::new("/home/h/repos/demo/src");
-    assert!(prefix_warning(repo, repo, None).is_none());
-    assert!(prefix_warning(repo, sub, Some(repo)).is_none());
-    let warning = prefix_warning(home, sub, Some(repo)).unwrap_or_default();
-    assert!(warning.contains("matched by prefix"), "{warning}");
-    assert!(warning.contains("/home/h/repos/demo/src"), "{warning}");
-    assert!(warning.contains("fathomable --register"), "{warning}");
-    assert!(prefix_warning(home, sub, None).is_some());
 }
 
 /// A cwd in a linked worktree binds to the repository's workspace at

@@ -105,7 +105,6 @@ mkdir -p .claude
 cat > .claude/settings.local.json <<'EOF'
 {
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "fathomable hello --hook claude", "timeout": 5 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
     "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
     "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
@@ -119,7 +118,7 @@ STATE_DIR=$("$FATHOMABLE" --register "$DIR" | sed -n 2p)
 # 3–4. Seed threads and a subscriber through the binary, so the store
 # formats have one writer (`fathomable seed`, hidden; its file shape is
 # documented in crates/fathomable/src/seed.rs).
-AGENT_ID=${DEMO_AGENT_ID:-demo-1}
+AGENT_ID=claude:${DEMO_AGENT_ID:-demo-1}
 SEED=$(mktemp -t fathomable-seed.XXXXXX.json)
 trap 'rm -f "$SEED"' EXIT
 cat > "$SEED" <<EOF
@@ -129,7 +128,7 @@ cat > "$SEED" <<EOF
      "comment": "This splits on a single space; two spaces in a row give a phantom word. Use split_whitespace."},
     {"key": "readme-replied", "path": "README.md", "line": 14, "end_line": 16,
      "comment": "Please update this table once the fix lands.",
-     "replies": [{"author": {"name": "rev", "id": "other", "type": "reviewer"},
+     "replies": [{"author": {"name": "rev", "id": "claude:other", "type": "reviewer"},
                   "body": "Agreed; the coder should do this after fixing word_count."}]},
     {"key": "plan-open", "path": "docs/plan.md", "line": 3, "end_line": 5,
      "comment": "Step 2 first: a failing test for the empty string proves the fix."},

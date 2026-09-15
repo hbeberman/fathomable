@@ -46,8 +46,9 @@ Permanent non-goals:
 - **Not an agent runtime or chat client.** It does not run, host, or converse
   with an agent; it exposes an MCP endpoint and otherwise stays out of the way.
 - **Not an IDE or file manager.** No build, run, rename, move, or delete.
-- **Not bound to one agent product.** Anything that can speak MCP over stdio
-  can use it.
+- **Not bound to one agent product.** Any stdio MCP client can read;
+  writes and subscriptions require a supported harness identity channel
+  ([0080](decisions/0080-automatic-chat-identity.md)).
 
 Deferred, not rejected:
 
@@ -94,8 +95,10 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
 - **Workspace**: the directory tree Fathomable is viewing, and the home of
   its threads; there is no separate word for a workspace's annotation state.
 - **Viewer**: one running Fathomable showing a workspace, named or by id.
-- **Agent session**: the harness session an agent runs in, identified by the
-  `id` the `hello` hook gives it.
+- **Agent session**: the concrete harness chat an agent runs in, identified
+  automatically by a harness-qualified native id, independently of its
+  workspace or optional display profile
+  ([0080](decisions/0080-automatic-chat-identity.md)).
 - **Subscriber**: an agent session that registered with `follow`, so the
   hooks hand it every thread the user has the last word on.
 - **Thread**: a comment on a line range of a document plus the replies

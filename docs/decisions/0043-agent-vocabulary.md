@@ -14,6 +14,12 @@ tags:
 Status: accepted (2026-08-29); the table in `vocabulary.rs` is backed by
 [0047](0047-one-vocabulary.md) since 2026-09-03, which renamed its entries.
 
+Bootstrap superseded 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): the `hello` body and its
+rendering checks are removed, not replaced by connect-time context.
+Schema, delivery-text, and guide-table vocabulary checks remain;
+caller `id` and `workspaces.switch` are no longer tool parameters.
+
 ## Context
 
 A Codex session on 2026-08-29 was asked to subscribe to a file and

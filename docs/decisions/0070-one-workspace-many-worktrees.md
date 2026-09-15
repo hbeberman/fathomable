@@ -25,6 +25,13 @@ tags:
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
 
+MCP routing amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): `workspaces` only lists and
+has no `switch`. `fathomable --mcp [DIR]` anchors the default at startup;
+per-call workspace roots select other worktrees. Shared-server callers
+must name that override rather than rely on a subagent's cwd or chat
+metadata to change the default. Process bonds and `hello` are removed.
+
 ## Context
 
 An agent that is asked for a change increasingly does not make it where

@@ -43,9 +43,9 @@ mod tests {
 
     #[test]
     fn idents_picks_single_words_only() {
-        let text = "call `follow` with `id`, not `fathomable --mcp` or ``; `when` is `message`";
+        let text = "call `follow` with `type`, not `fathomable --mcp` or ``; `when` is `message`";
         let found: Vec<_> = idents(text).collect();
-        assert_eq!(found, ["follow", "id", "when", "message"]);
+        assert_eq!(found, ["follow", "type", "when", "message"]);
         assert!(found.iter().all(|ident| is_known(ident)));
         assert!(!is_known("fathomable"));
     }

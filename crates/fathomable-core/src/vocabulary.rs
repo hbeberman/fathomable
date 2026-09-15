@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0047-one-vocabulary.md
 //! The tool and parameter names the agent-facing text may use.
 //!
-//! Every string a model reads — the `hello` hook, the pending blob, the
+//! Every string a model reads — the pending blob, the
 //! MCP server instructions, the tool descriptions — names tools and
 //! parameters through the constants here, and the `fathomable` crate
 //! proves the table against its live tool schema (ADR 0043). This module
@@ -21,12 +21,8 @@ pub struct Tool {
 /// The `workspace` parameter every tool but `workspaces` takes: a
 /// root, or a viewer name or id (ADR 0047).
 pub const WORKSPACE: &str = "workspace";
-/// The workspace `workspaces` pins (ADR 0055).
-pub const SWITCH: &str = "switch";
 /// A viewer name or id.
 pub const VIEWER: &str = "viewer";
-/// A harness session id.
-pub const ID: &str = "id";
 /// An agent type, `kind` in Rust.
 pub const TYPE: &str = "type";
 /// Whether `follow` ends the subscription instead (ADR 0055).
@@ -82,10 +78,10 @@ pub const STATUS_OPEN: &str = "open";
 /// The `status` that lists open and resolved threads alike.
 pub const STATUS_ALL: &str = "all";
 
-/// List the known workspaces and their viewers; pin one with `switch`.
+/// List the known workspaces and their viewers.
 pub const WORKSPACES: Tool = Tool {
     name: "workspaces",
-    params: &[SWITCH],
+    params: &[],
 };
 /// Show a file in the viewer.
 pub const OPEN: Tool = Tool {
@@ -95,30 +91,28 @@ pub const OPEN: Tool = Tool {
 /// Subscribe the session to the workspace, or end the subscription.
 pub const FOLLOW: Tool = Tool {
     name: "follow",
-    params: &[ID, TYPE, PERSONA, END, WORKSPACE],
+    params: &[TYPE, PERSONA, END, WORKSPACE],
 };
 /// Read threads: open by default, the ones waiting on the caller
 /// flagged and delivered.
 pub const THREADS: Tool = Tool {
     name: "threads",
-    params: &[STATUS, PATH, SINCE, LIMIT, ID, WORKSPACE],
+    params: &[STATUS, PATH, SINCE, LIMIT, WORKSPACE],
 };
 /// Answer one thread or several.
 pub const THREAD_REPLY: Tool = Tool {
     name: "thread_reply",
-    params: &[
-        THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, ID, WORKSPACE,
-    ],
+    params: &[THREAD, BODY, RESOLVE, LINE, END_LINE, REPLIES, WORKSPACE],
 };
 /// Start a thread, or several, on lines of a file (ADR 0061).
 pub const THREAD_START: Tool = Tool {
     name: "thread_start",
-    params: &[PATH, LINE, END_LINE, BODY, COMMENTS, ID, WORKSPACE],
+    params: &[PATH, LINE, END_LINE, BODY, COMMENTS, WORKSPACE],
 };
 /// Be woken when another thread moves, or cancel the watch.
 pub const THREAD_WATCH: Tool = Tool {
     name: "thread_watch",
-    params: &[ON, WHEN, REMIND, CANCEL, ID, WORKSPACE],
+    params: &[ON, WHEN, REMIND, CANCEL, WORKSPACE],
 };
 
 /// Every tool, in the order the guide lists them (ADR 0055, 0061).

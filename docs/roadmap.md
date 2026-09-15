@@ -147,7 +147,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     its process under the session id; the MCP server signs as the
     session of the nearest unique one among its own ancestors, so
     replies stay signed after a resume; `thread_reply` takes an `id`
-    as the fallback ([0041](decisions/0041-session-bonds.md)).
+    as the fallback ([0041](decisions/0041-session-bonds.md)); superseded
+    by automatic chat identity in milestone 71.
 33. **Delivery at both ends of a turn.** `fathomable pending` also runs
     from the prompt-submit hook, adding undelivered threads to context
     and exiting 0, so a comment posted while an agent waits is there on
@@ -389,3 +390,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     author stripes, and muted ancestor-file context remain independent; four
     `ui.list.*` roles replace the old sidebar and picker selection keys
     ([0079](decisions/0079-list-focus-language.md)).
+71. **Automatic chat identity.** Harness-qualified caller ids come
+    from launch environment or per-call MCP metadata, not tool
+    arguments or process bonds. Every write has identity; profiles
+    and delivery remain opt-in through `follow`. `workspaces` only
+    lists, each call may override the immutable startup workspace,
+    and delivery hooks need no `hello` bootstrap
+    ([0080](decisions/0080-automatic-chat-identity.md)).

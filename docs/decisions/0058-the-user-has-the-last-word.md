@@ -22,6 +22,14 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Identity amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): every write carries an automatic
+harness-qualified caller id, before `follow` as well as after it.
+The optional type/persona profile is fixed by `follow` and read from
+the addressed workspace's live subscription, not connection memory.
+The `hello` text is removed; names still appear in tools and delivery
+blobs. The last-act and pending rules below are unchanged.
+
 ## Context
 
 [0040](0040-agent-subscriptions-and-hooks.md) made a thread *pending*

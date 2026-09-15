@@ -8,35 +8,31 @@
 //! it falls back to. The tools themselves are in [`tools`] (ADR 0055)
 //! and, for `thread_start`, in [`start`] (ADR 0061).
 //!
-//! The server remembers the pinned workspace set by `workspaces` and the
-//! session this connection last registered with `follow` (ADR 0040).
-//! Otherwise it discovers the session from Copilot's launch environment
-//! or the hook's process bonds (ADR 0041). Discovering an id does not
-//! subscribe it: signatures and deliveries require a live subscription
-//! in the addressed workspace. Every call otherwise resolves the
-//! workspace afresh: an explicit `workspace` argument, then the pin, then
-//! the known workspace whose root is the longest prefix of the current
-//! directory. `open` reaches every live viewer of that workspace or the
+//! Each request identifies its chat through a harness adapter (ADR 0080).
+//! No caller or workspace pin is cached on the connection. Authorship
+//! does not require subscription; delivery does, in the addressed workspace.
+//! Every call resolves the workspace afresh: an explicit `workspace`
+//! argument, else the known workspace containing the startup directory.
+//! `open` reaches every live viewer of that workspace or the
 //! one named by `viewer`; `threads` and `thread_reply` go through a
 //! viewer when one runs and to the store on disk when none does. Client
 //! identity is read from the request context on each call, so the server
 //! behaves the same under the legacy `initialize` flow and discovery-first
 //! startup.
 
+mod identity;
 mod start;
 mod tools;
 
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::Register;
 use fathomable_core::annotations::{Author, Store};
-use fathomable_core::bond::{self, Process};
 use fathomable_core::config::AgentsConfig;
-use fathomable_core::identity;
 use fathomable_core::reach::Reach;
 use fathomable_core::seen;
 use fathomable_core::session::{Marker, Record, Request, Response};
@@ -56,25 +52,23 @@ use tokio::net::UnixStream;
 use crate::app::threads::reach;
 use crate::app::threads::reanchor::follow_snapshots;
 use fathomable_core::clock::now;
+use identity::Launch;
 
 /// Run the server on stdin/stdout until the client disconnects.
-pub(crate) fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
-    let copilot_session =
-        env::var_os("COPILOT_AGENT_SESSION_ID").and_then(|value| match value.into_string() {
-            Ok(id) if !id.trim().is_empty() => Some(id),
-            _ => {
-                tracing::warn!(
-                    "ignoring COPILOT_AGENT_SESSION_ID: expected a nonempty Unicode session id"
-                );
-                None
-            }
-        });
+pub(crate) fn run(dirs: &XdgDirs, agents: AgentsConfig, root: Option<&Path>) -> anyhow::Result<()> {
+    let directory = match root {
+        Some(root) => root
+            .canonicalize()
+            .context("cannot resolve MCP workspace directory")?,
+        None => env::current_dir().context("cannot read MCP startup directory")?,
+    };
+    anyhow::ensure!(directory.is_dir(), "MCP workspace must be a directory");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("cannot start async runtime")?;
     runtime.block_on(async {
-        let server = Server::new(dirs.clone(), agents, copilot_session);
+        let server = Server::new(dirs.clone(), agents, directory, Launch::from_env());
         let service = server
             .serve(rmcp::transport::stdio())
             .await
@@ -89,14 +83,8 @@ pub(crate) fn run(dirs: &XdgDirs, agents: AgentsConfig) -> anyhow::Result<()> {
 pub(crate) struct Server {
     dirs: XdgDirs,
     agents: AgentsConfig,
-    pinned: Mutex<Option<PathBuf>>,
-    /// The session this connection subscribed with, if it did.
-    subscriber: Mutex<Option<String>>,
-    /// Copilot's launch identity, not a workspace or per-request identity.
-    copilot_session: Option<String>,
-    /// This process's ancestors, nearest first, matched against the
-    /// session bonds the `hello` hook recorded (ADR 0041).
-    ancestors: Vec<Process>,
+    directory: PathBuf,
+    launch: Launch,
     tool_router: ToolRouter<Self>,
 }
 
@@ -142,40 +130,19 @@ impl Target {
 }
 
 impl Server {
-    fn new(dirs: XdgDirs, agents: AgentsConfig, copilot_session: Option<String>) -> Self {
-        let cwd = env::current_dir().unwrap_or_default();
-        if let Some(target) = bind(&targets(&dirs), &cwd) {
+    fn new(dirs: XdgDirs, agents: AgentsConfig, directory: PathBuf, launch: Launch) -> Self {
+        if let Some(target) = bind(&targets(&dirs), &directory) {
             tracing::info!(root = %target.root.display(), viewers = target.viewers.len(), "workspace contains the cwd");
         } else {
-            tracing::warn!(cwd = %cwd.display(), "no known workspace contains the cwd");
+            tracing::warn!(cwd = %directory.display(), "no known workspace contains the startup directory");
         }
         Self {
             dirs,
             agents,
-            pinned: Mutex::new(None),
-            subscriber: Mutex::new(None),
-            copilot_session,
-            ancestors: bond::ancestors(),
+            directory,
+            launch,
             tool_router: Self::router(),
         }
-    }
-
-    fn pinned(&self) -> Option<PathBuf> {
-        self.pinned.lock().ok().and_then(|p| p.clone())
-    }
-
-    fn subscriber_id(&self) -> Option<String> {
-        self.subscriber.lock().ok().and_then(|s| s.clone())
-    }
-
-    /// The session a call speaks for: the `id` it passed, else the one
-    /// this connection subscribed with, else Copilot's launch identity,
-    /// else the one bonded to this process's ancestors (ADR 0041).
-    fn session_id(&self, given: Option<String>, register: &Register) -> Option<String> {
-        given
-            .or_else(|| self.subscriber_id())
-            .or_else(|| self.copilot_session.clone())
-            .or_else(|| register.session_for(&self.ancestors).map(str::to_owned))
     }
 
     /// Every tool: the six of ADR 0055 and `thread_start` (ADR 0061).
@@ -188,25 +155,20 @@ impl Server {
     /// the harness's name otherwise (ADR 0058).
     fn signer(
         &self,
-        given: Option<String>,
+        context: &RequestContext<RoleServer>,
         key: &Path,
-        client: Option<String>,
     ) -> Result<Signature, String> {
+        let caller = self.launch.require(context)?;
         let register = self.register(key, now())?;
-        let subscription = self
-            .session_id(given, &register)
-            .and_then(|id| register.subscriber(&id));
-        let mut author = Author::Agent {
+        let subscription = register.subscriber(&caller.id);
+        let author = Author::Agent {
             name: subscription
                 .and_then(|subscriber| subscriber.name().map(str::to_owned))
-                .unwrap_or_else(|| identity::agent_name(None, client.as_deref())),
-            client,
-            id: None,
-            kind: None,
+                .unwrap_or_else(|| caller.harness.name().to_owned()),
+            client: Some(caller.client),
+            id: Some(caller.id),
+            kind: subscription.map(|subscriber| subscriber.kind().to_owned()),
         };
-        if let Some(subscriber) = subscription {
-            author = author.subscribed(subscriber.id(), subscriber.kind());
-        }
         Ok(Signature {
             author,
             subscribed: subscription.is_some(),
@@ -220,16 +182,26 @@ impl Server {
     }
 
     /// The workspace a call addresses: `workspace` when given (a worktree
-    /// root, or a viewer name or id), else the pin, else the one
-    /// containing the cwd, at the worktree that contains it (ADR 0070).
+    /// root, or a viewer name or id), else the one containing the startup
+    /// directory, at the worktree that contains it (ADR 0070).
     fn resolve(&self, workspace: Option<&str>) -> Result<Target, String> {
         let all = targets(&self.dirs);
         if let Some(key) = workspace {
-            if let Some((found, viewer)) = all
-                .iter()
-                .find_map(|s| s.viewers.iter().find(|v| v.is_called(key)).map(|v| (s, v)))
-            {
-                return Ok(found.at(viewer.root()));
+            let mut named = all.iter().flat_map(|target| {
+                target
+                    .viewers
+                    .iter()
+                    .filter(|viewer| viewer.is_called(key))
+                    .map(|viewer| target.at(viewer.root()))
+            });
+            if let Some(found) = named.next() {
+                if named.any(|other| other.root != found.root) {
+                    return Err(format!(
+                        "ambiguous viewer `{key}`; pass an explicit `{}` root",
+                        vocab::WORKSPACE
+                    ));
+                }
+                return Ok(found);
             }
             let path = PathBuf::from(key);
             let path = path.canonicalize().unwrap_or(path);
@@ -250,18 +222,12 @@ impl Server {
                     )
                 });
         }
-        if let Some(pinned) = self.pinned()
-            && let Some(found) = all.iter().find(|s| s.roots.contains(&pinned))
-        {
-            return Ok(found.at(&pinned));
-        }
-        let cwd = env::current_dir().unwrap_or_default();
-        bind(&all, &cwd).ok_or_else(|| {
+        bind(&all, &self.directory).ok_or_else(|| {
             format!(
-                "no known workspace contains the current directory; call `{ws}` to see them, \
-                 then `{ws}` with `{switch}` to pin one",
+                "no known workspace contains the MCP startup directory; call `{ws}` to see \
+                 them, then pass `{workspace}` on the call",
                 ws = vocab::WORKSPACES.name,
-                switch = vocab::SWITCH,
+                workspace = vocab::WORKSPACE,
             )
         })
     }
@@ -448,7 +414,7 @@ fn headless_store(dirs: &XdgDirs, target: &Target) -> Result<(Store, Reach), Str
 
 /// The tools as listed to a client: `follow`'s `type` carries the
 /// configured agent types as an `enum`, so a model that never saw the
-/// hello hook still knows the valid values (ADR 0043).
+/// startup context still knows the valid values (ADR 0043).
 fn with_types(mut tools: Vec<Tool>, types: &[String]) -> Vec<Tool> {
     if let Some(follow) = tools.iter_mut().find(|t| t.name == vocab::FOLLOW.name) {
         let schema = Arc::make_mut(&mut follow.input_schema);
@@ -552,11 +518,13 @@ mod tests {
             follow.input_schema["properties"]["type"]["enum"],
             serde_json::json!(["coder", "qa"])
         );
-        assert!(
-            tools
-                .iter()
-                .all(|t| t.name == "follow" || t.input_schema["properties"].get("type").is_none())
-        );
+        assert!(tools.iter().all(|t| {
+            t.name == "follow"
+                || t.input_schema
+                    .get("properties")
+                    .and_then(|p| p.get("type"))
+                    .is_none()
+        }));
         Ok(())
     }
 }

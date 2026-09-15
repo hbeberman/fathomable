@@ -19,6 +19,17 @@ tags:
 
 Status: accepted (2026-09-04)
 
+Tool identity and routing amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): remove every caller `id`
+argument and `workspaces.switch`. `workspaces` only lists; the startup
+workspace is immutable and overrides are per call. `follow` without
+arguments is status only and first subscription needs a configured
+type. Every annotation write requires automatic identity, whether
+subscribed or not; only a live subscription records deliveries.
+Missing identity errors name the required harness channel rather than
+requesting an id. The original surface below is historical; the
+[guide](../guide.md#8-connect-an-agent) holds the current table.
+
 ## Context
 
 [0014](0014-mcp-server-and-socket-v1.md) gave the server four tools;

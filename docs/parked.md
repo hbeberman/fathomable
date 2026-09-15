@@ -52,9 +52,10 @@ rejected for good (record rejections in the [charter](charter.md)).
   back with the animation.
 - **macOS / Windows support.** Origin: charter; Linux only for now.
   `Record::is_alive` (`session.rs`) stats `/proc/<pid>`, so elsewhere
-  every viewer reads as dead and `sweep_dead` removes live records; the
-  session bonds of [0041](decisions/0041-session-bonds.md) walk
-  `/proc/<pid>/stat` and never form. A portable liveness check needs
+  every viewer reads as dead and `sweep_dead` removes live records.
+  Chat identity no longer uses process ancestry
+  ([0080](decisions/0080-automatic-chat-identity.md)).
+  A portable liveness check needs
   `kill(pid, 0)`, which the standard library does not expose: `libc` or
   `nix` is a dependency decision under
   [0001](decisions/0001-dependency-policy.md).
@@ -71,9 +72,10 @@ rejected for good (record rejections in the [charter](charter.md)).
   means deleting a hashed directory under
   `$XDG_STATE_HOME/fathomable/workspaces/` by hand. A marker on a parent
   directory such as the home directory catches every session below it
-  by prefix; the `hello` hook now warns about that match
-  ([0043](decisions/0043-agent-vocabulary.md)), but nothing removes the
-  marker. Origin: the 2026-08-29 vocabulary handoff, after it happened.
+  by prefix. Select the intended root explicitly with
+  `fathomable --mcp DIR` or the per-call workspace argument
+  ([0080](decisions/0080-automatic-chat-identity.md)); nothing removes
+  the marker. Origin: the 2026-08-29 vocabulary handoff, after it happened.
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

@@ -5,8 +5,11 @@ agent-driven work. You read files as they change, leave threads on the
 lines an agent wrote, and the agent answers over MCP. New here? Read the
 [setup guide](docs/guide.md).
 
-Linux only: viewer liveness and the session bonds that let a headless
-`--mcp` learn its session read `/proc`.
+Linux only: viewer liveness reads `/proc`. Agent chat identity comes
+automatically from supported harness environment or MCP metadata;
+automatic comment delivery remains opt-in. See the
+[agent setup](docs/guide.md#8-connect-an-agent) for supported channels
+and lifecycle limits.
 
 ## Install
 

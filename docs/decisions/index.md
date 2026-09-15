@@ -44,7 +44,7 @@ supersede rather than edit history.
 - [0038 Re-anchoring without a snapshot](0038-reanchoring-without-a-snapshot.md)
 - [0039 Gutter colour says status, detached threads get a row](0039-gutter-colour-and-detached-rows.md)
 - [0040 Agent subscriptions, pending threads, and harness hooks](0040-agent-subscriptions-and-hooks.md)
-- [0041 Session bonds between hooks and the MCP server](0041-session-bonds.md)
+- [0041 Session bonds between hooks and the MCP server](0041-session-bonds.md) — superseded by 0080
 - [0042 Delivery at both ends of a turn](0042-turn-start-delivery.md)
 - [0043 One vocabulary for the agent-facing text](0043-agent-vocabulary.md)
 - [0044 Width-bounded wrapping in every display mode](0044-wrap-all-lines.md)
@@ -83,3 +83,4 @@ supersede rather than edit history.
 - [0077 Threads nest under their file](0077-threads-nest-under-their-file.md)
 - [0078 All keys stays reachable](0078-all-keys-stays-reachable.md)
 - [0079 List focus language](0079-list-focus-language.md)
+- [0080 Automatic chat identity](0080-automatic-chat-identity.md)

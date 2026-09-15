@@ -9,7 +9,7 @@ use fathomable_core::agents::{Register, Subscriber};
 use fathomable_core::annotations::ThreadId;
 
 use crate::app::{App, PickerKind};
-use crate::hooks;
+use crate::{caller, hooks};
 use fathomable_core::clock::now;
 
 impl App {
@@ -124,6 +124,13 @@ impl App {
             .iter()
             .find(|s| s.id() == id)
             .map_or_else(|| id.to_owned(), Subscriber::label);
+        let session = match caller::session(id) {
+            Ok(session) => session,
+            Err(error) => {
+                self.notice(format!("cannot wake {label}: {error}"));
+                return;
+            }
+        };
         let bound = hooks::Bound {
             key: self.workspace.key().to_path_buf(),
             root: self.workspace.root().to_path_buf(),
@@ -162,7 +169,7 @@ impl App {
             .arg("-c")
             .arg(&script)
             .arg("fathomable")
-            .arg(id)
+            .arg(session)
             .arg(&prompt)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -202,6 +209,47 @@ mod tests {
         XdgDirs::resolve(move |name| (name == "XDG_STATE_HOME").then(|| state.clone()))
     }
 
+    fn assert_wake_identity(app: &mut App, register: &mut Register, output: &Path) -> TestResult {
+        app.agents.wake = Some(format!("printf '%s' {{id}} > '{}'", output.display()));
+        register.subscribe("unqualified", "coder", Some("invalid"), None, now())?;
+        app.reload_agents();
+        let before = fs::read(register.path())?;
+        app.wake_subscriber("unqualified");
+        assert!(
+            app.message()
+                .is_some_and(|message| message.contains("invalid harness-qualified")),
+            "{:?}",
+            app.message()
+        );
+        assert_eq!(
+            fs::read(register.path())?,
+            before,
+            "invalid wake consumes no delivery"
+        );
+        assert!(!output.exists(), "invalid wake launches no command");
+        register.unsubscribe("unqualified", now())?;
+        app.reload_agents();
+        app.wake();
+        assert!(
+            app.message()
+                .is_some_and(|m| m.contains("woke bot (coder)")),
+            "{:?}",
+            app.message()
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while fs::read_to_string(output).unwrap_or_default() != "s-1"
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            fs::read_to_string(output)?,
+            "s-1",
+            "wake receives the native id"
+        );
+        Ok(())
+    }
+
     /// The status row and the thread header read the register; `Space a w`
     /// refuses without a command, wakes one subscriber directly, and
     /// offers a picker for several.
@@ -228,8 +276,8 @@ mod tests {
             when,
             AgentsConfig::default().expire_after,
         )?;
-        register.subscribe("s-1", "coder", Some("bot"), None, when)?;
-        register.watch("s-1", &id, WatchWhen::Resolved, vec![], when)?;
+        register.subscribe("claude:s-1", "coder", Some("bot"), None, when)?;
+        register.watch("claude:s-1", &id, WatchWhen::Resolved, vec![], when)?;
         let workspace = Workspace::discover(&root)?;
         let options = Options {
             dirs: dirs.clone(),
@@ -243,8 +291,8 @@ mod tests {
             .find(|(k, _)| k == "subscribers")
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        assert!(row.contains("bot (coder) s-1"), "{row}");
-        register.subscribe("s-2", "reviewer", None, None, when)?;
+        assert!(row.contains("bot (coder) claude:s-1"), "{row}");
+        register.subscribe("copilot:s-2", "reviewer", None, None, when)?;
         let cached = app
             .status_lines()
             .into_iter()
@@ -263,28 +311,21 @@ mod tests {
             refreshed.contains("s-2"),
             "register events refresh the cache: {refreshed}"
         );
-        register.unsubscribe("s-2", when + 1)?;
+        register.unsubscribe("copilot:s-2", when + 1)?;
         assert!(app.reload_agents());
         app.open("a.md".as_ref());
         app.expand_thread(id.clone());
         assert_eq!(app.watchers_of(&id), ["bot (coder)"]);
         app.wake();
         assert!(app.message().is_some_and(|m| m.contains("agents.wake")));
-        app.agents.wake = Some("true".to_owned());
-        app.wake();
-        assert!(
-            app.message()
-                .is_some_and(|m| m.contains("woke bot (coder)")),
-            "{:?}",
-            app.message()
-        );
+        assert_wake_identity(&mut app, &mut register, &dir.0.join("wake-id"))?;
         app.wake();
         assert!(
             app.message().is_some_and(|m| m.contains("nothing pending")),
             "{:?}",
             app.message()
         );
-        register.subscribe("s-2", "reviewer", None, None, when + 2)?;
+        register.subscribe("copilot:s-2", "reviewer", None, None, when + 2)?;
         app.reload_agents();
         app.wake();
         assert!(matches!(app.popup(), Some(Popup::Picker(p)) if p.kind() == PickerKind::Wake));

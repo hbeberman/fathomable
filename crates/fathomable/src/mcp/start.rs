@@ -33,6 +33,7 @@ use super::{Server, Target, call};
 
 /// One comment in a `thread_start` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct StartItem {
     /// Workspace-relative path of the file.
     path: PathBuf,
@@ -49,6 +50,7 @@ pub(crate) struct StartItem {
 
 /// `thread_start` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct StartParams {
     /// Workspace-relative path of the file, for a single comment.
     #[serde(default)]
@@ -67,11 +69,6 @@ pub(crate) struct StartParams {
     /// `body`. Tag every place in one turn this way.
     #[serde(default)]
     comments: Vec<StartItem>,
-    /// Your session id, to sign the comments with your subscription when
-    /// this connection did not call `follow` and Fathomable cannot tell
-    /// your session from the harness that started it.
-    #[serde(default)]
-    id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
@@ -116,8 +113,7 @@ impl Server {
             Ok(target) => target,
             Err(error) => return failure(error),
         };
-        let client = context.client_info().map(|c| c.name);
-        let signed = match self.signer(p.id, &target.key, client) {
+        let signed = match self.signer(&context, &target.key) {
             Ok(signed) => signed,
             Err(error) => return failure(error),
         };
@@ -172,7 +168,7 @@ impl Server {
         if !signed.subscribed {
             lines.push(format!(
                 "signed as {} with no subscription; call `{}` with `{}` to be told \
-                 about answers",
+                 about answers when delivery hooks are installed",
                 signed.author,
                 vocab::FOLLOW.name,
                 vocab::TYPE

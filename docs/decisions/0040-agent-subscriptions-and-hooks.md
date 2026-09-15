@@ -16,6 +16,16 @@ tags:
 
 Status: accepted (2026-08-29)
 
+Identity and bootstrap superseded 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): native harness channels supply
+qualified chat ids; tools accept no caller id and retain no connection
+subscriber cache. Every write is identified before subscription.
+`follow` still opts into workspace delivery with a configured type;
+bare `follow` is status only. `hello`, session-start delivery, and
+bonds are removed. The register keeps subscriptions, deliveries, and
+watches; hook ids are normalized and wake commands receive native ids.
+The older contract below is retained as history.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

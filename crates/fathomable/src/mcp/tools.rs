@@ -35,21 +35,22 @@ use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use super::identity::Caller;
 use super::{Server, Target, call, headless_store};
 use crate::app::threads::open::follow_reply_lines;
 
 /// `workspaces` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub(crate) struct WorkspacesParams {
-    /// A workspace root as listed, or a viewer name or id (which selects
-    /// that viewer's workspace): pin it as the default for later calls
-    /// on this connection, then list.
-    #[serde(default)]
-    switch: Option<String>,
-}
+#[serde(deny_unknown_fields)]
+#[expect(
+    clippy::empty_structs_with_brackets,
+    reason = "MCP arguments are an empty JSON object, not null; unknown fields must be rejected"
+)]
+pub(crate) struct WorkspacesParams {}
 
 /// `open` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OpenParams {
     /// Workspace-relative file path.
     path: PathBuf,
@@ -71,12 +72,8 @@ pub(crate) struct OpenParams {
 
 /// `follow` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct FollowParams {
-    /// Your harness session id. Omit it when known from Copilot's launch
-    /// environment or the `hello` hook; the reply says whether it could
-    /// be identified. An explicit id overrides the detected session.
-    #[serde(default)]
-    id: Option<String>,
     /// Your agent type, one of the configured ones; fixed for the session.
     #[serde(default, rename = "type")]
     kind: Option<String>,
@@ -96,6 +93,7 @@ pub(crate) struct FollowParams {
 
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ThreadsParams {
     /// Which threads: `open` (the default), `pending` (open, and the
     /// user has the last word), `resolved`, or `all`.
@@ -112,11 +110,6 @@ pub(crate) struct ThreadsParams {
     /// summary says how many more there are and the `since` to pass.
     #[serde(default)]
     limit: Option<usize>,
-    /// Your session id, when this connection did not call `follow` and
-    /// Fathomable cannot tell your session from the harness; with a
-    /// subscription, the `pending` threads count as shown to you.
-    #[serde(default)]
-    id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
@@ -125,6 +118,7 @@ pub(crate) struct ThreadsParams {
 
 /// One reply in a `thread_reply` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ReplyItem {
     /// Thread id from `threads`.
     thread: String,
@@ -146,6 +140,7 @@ pub(crate) struct ReplyItem {
 
 /// `thread_reply` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ReplyParams {
     /// Thread id from `threads`, for a single reply.
     #[serde(default)]
@@ -169,11 +164,6 @@ pub(crate) struct ReplyParams {
     /// Answer every pending thread this way in one turn.
     #[serde(default)]
     replies: Vec<ReplyItem>,
-    /// Your session id, to sign the replies with your subscription when
-    /// this connection did not call `follow` and Fathomable cannot tell
-    /// your session from the harness that started it.
-    #[serde(default)]
-    id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
@@ -182,6 +172,7 @@ pub(crate) struct ReplyParams {
 
 /// `thread_watch` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WatchParams {
     /// The thread to watch, or whose watch to cancel.
     on: String,
@@ -195,9 +186,6 @@ pub(crate) struct WatchParams {
     /// Cancel the watch on `on` instead of setting one.
     #[serde(default)]
     cancel: bool,
-    /// The session id you subscribed with; defaults to this connection's.
-    #[serde(default)]
-    id: Option<String>,
     /// Workspace root, viewer name, or viewer id; defaults to the bound
     /// workspace.
     #[serde(default)]
@@ -504,30 +492,18 @@ impl<'a> Trees<'a> {
 #[tool_router(vis = "pub(super)")]
 impl Server {
     #[tool(
-        description = "List the workspaces Fathomable knows and the viewers running in each, \
-                       the one later calls address marked; `switch` (a root, or a viewer name \
-                       or id) pins one for this connection first. Call it when a call says no \
-                       workspace contains the current directory. Returns roots and viewer \
-                       names, not threads.",
+        description = "List known workspaces and their viewers, marking the default from \
+                       the MCP startup directory. Pass `workspace` on other calls to choose \
+                       a different one; this list changes no defaults. Returns roots and \
+                       viewer names, not threads.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
             open_world_hint = false
         )
     )]
-    fn workspaces(&self, Parameters(p): Parameters<WorkspacesParams>) -> CallToolResult {
+    fn workspaces(&self, Parameters(_): Parameters<WorkspacesParams>) -> CallToolResult {
         let mut lines = Vec::new();
-        if let Some(key) = p.switch.as_deref() {
-            match self.resolve(Some(key)) {
-                Ok(target) => {
-                    if let Ok(mut pinned) = self.pinned.lock() {
-                        *pinned = Some(target.root.clone());
-                    }
-                    lines.push(format!("pinned {}", target.root.display()));
-                }
-                Err(error) => return failure(error),
-            }
-        }
         let all = super::targets(&self.dirs);
         let default = self.resolve(None).ok();
         let workspaces: Vec<Value> = all
@@ -613,8 +589,8 @@ impl Server {
     }
 
     #[tool(
-        description = "Subscribe this session to the whole workspace with your `type`; \
-                       omit `id` when identified from the harness. With hooks installed, \
+        description = "Opt this automatically identified chat into comment delivery for \
+                       the whole workspace with your `type`. With hooks installed, \
                        comments arrive once as your turns start and end; without hooks, \
                        use `threads` to fetch them. You sign as your harness's name \
                        unless you give a `persona` here, once. `end: true` ends the \
@@ -639,20 +615,17 @@ impl Server {
             Ok(target) => target,
             Err(error) => return failure(error),
         };
+        let caller = match self.launch.require(&context) {
+            Ok(caller) => caller,
+            Err(error) => return failure(error),
+        };
         if p.end {
-            return match self.end_subscription(&target.key, p.id) {
+            return match self.end_subscription(&target.key, &caller) {
                 Ok(message) => text(message),
                 Err(error) => failure(error),
             };
         }
-        let client = context.client_info().map(|c| c.name);
-        match self.subscription(
-            &target.key,
-            p.id,
-            p.kind,
-            p.persona.as_deref(),
-            client.as_deref(),
-        ) {
+        match self.subscription(&target.key, &caller, p.kind, p.persona.as_deref()) {
             Ok(message) => text(format!("{message}\nworkspace: {}", target.root.display())),
             Err(error) => failure(error),
         }
@@ -671,7 +644,11 @@ impl Server {
                        board. Works with no viewer running.",
         annotations(destructive_hint = false, open_world_hint = false)
     )]
-    async fn threads(&self, Parameters(p): Parameters<ThreadsParams>) -> CallToolResult {
+    async fn threads(
+        &self,
+        Parameters(p): Parameters<ThreadsParams>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
         let target = match self.resolve(p.workspace.as_deref()) {
             Ok(target) => target,
             Err(error) => return failure(error),
@@ -684,6 +661,10 @@ impl Server {
             Ok(path) => path,
             Err(error) => return failure(error),
         };
+        let caller = match self.launch.resolve(&context) {
+            Ok(caller) => caller,
+            Err(error) => return failure(error),
+        };
         let (all, scope) = match self.fetch(&target).await {
             Ok(all) => all,
             Err(error) => return failure(error),
@@ -693,9 +674,9 @@ impl Server {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
-        let subscriber: Option<Subscriber> = self
-            .session_id(p.id, &register)
-            .and_then(|id| register.subscriber(&id).cloned());
+        let subscriber: Option<Subscriber> = caller
+            .as_ref()
+            .and_then(|caller| register.subscriber(&caller.id).cloned());
 
         // A watch that fired outranks every filter: it is spent now, and
         // what it reminds of need not be pending, so neither could be
@@ -811,10 +792,9 @@ impl Server {
             Ok(target) => target,
             Err(error) => return failure(error),
         };
-        let client = context.client_info().map(|c| c.name);
         // The name was fixed at `follow`; without one, the harness names
         // the agent (ADR 0058).
-        let signed = match self.signer(p.id, &target.key, client) {
+        let signed = match self.signer(&context, &target.key) {
             Ok(signed) => signed,
             Err(error) => return failure(error),
         };
@@ -873,7 +853,7 @@ impl Server {
         if !signed.subscribed {
             lines.push(format!(
                 "signed as {author} with no subscription; call `{}` with `{}` to be told \
-                 about answers",
+                 about answers when delivery hooks are installed",
                 vocab::FOLLOW.name,
                 vocab::TYPE
             ));
@@ -898,13 +878,25 @@ impl Server {
             open_world_hint = false
         )
     )]
-    fn thread_watch(&self, Parameters(p): Parameters<WatchParams>) -> CallToolResult {
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "the tool macro hands the request context over by value"
+    )]
+    fn thread_watch(
+        &self,
+        Parameters(p): Parameters<WatchParams>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let caller = match self.launch.require(&context) {
+            Ok(caller) => caller,
+            Err(error) => return failure(error),
+        };
         let on = match thread_id(&p.on) {
             Ok(id) => id,
             Err(error) => return failure(error),
         };
         if p.cancel {
-            return self.with_subscriber(p.workspace.as_deref(), p.id, |register, id, now| {
+            return self.with_subscriber(p.workspace.as_deref(), &caller, |register, id, now| {
                 register
                     .unwatch(id, &on, now)
                     .map(|()| format!("no longer watching {}", p.on))
@@ -951,7 +943,7 @@ impl Server {
         ) {
             return failure(error);
         }
-        self.with_subscriber(p.workspace.as_deref(), p.id, |register, id, now| {
+        self.with_subscriber(p.workspace.as_deref(), &caller, |register, id, now| {
             register
                 .watch(id, &on, when, remind.clone(), now)
                 .map(|()| format!("watching {} for {when}", p.on))
@@ -960,141 +952,75 @@ impl Server {
 }
 
 impl Server {
-    /// The subscription side of `follow`: subscribe `id` as `kind`,
-    /// refuse a half-given pair, or, with neither, say whether this
-    /// connection already speaks for a subscribed session. Returns the
-    /// reply.
+    /// Opt the identified caller in, or report its workspace subscription.
     fn subscription(
         &self,
         key: &Path,
-        id: Option<String>,
+        caller: &Caller,
         kind: Option<String>,
         persona: Option<&str>,
-        client: Option<&str>,
     ) -> Result<String, String> {
         let when = now();
         let types = self.agents.types.join(", ");
-        // The name is fixed here, once (ADR 0058): the persona, else the
-        // harness's name, else the client string.
-        let given = persona.is_some();
-        let name = identity::agent_name(persona, client);
-        match (id, kind) {
-            (id, Some(kind)) => {
-                let automatic = id.is_none();
-                let mut register = self.register(key, when)?;
-                let Some(id) = self.session_id(id, &register) else {
-                    return Err(format!(
-                        "`{}` needs a session `{}`: none was identified from the harness. \
-                         Pass the id if already known, or use `{}` without subscribing. \
-                         Do not ask the user to find an internal session id",
-                        vocab::TYPE,
-                        vocab::ID,
-                        vocab::THREADS.name
-                    ));
-                };
-                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
-                let source = if automatic {
-                    " (your session, found from the harness)"
-                } else {
-                    ""
-                };
-                Ok(format!(
-                    "subscribed {id}{source} as {kind}, \
-                     signing as {name}; {COVERAGE}"
-                ))
-            }
-            (Some(_), None) => Err(format!(
-                "`{}` needs a `{}`; configured types: {types}",
-                vocab::ID,
-                vocab::TYPE
-            )),
-            (None, None) => {
-                let nudge = || {
-                    format!(
-                        "not subscribed: pass `{}` (one of {types}); omit `{}` when \
-                         identified from the harness",
-                        vocab::TYPE,
-                        vocab::ID
-                    )
-                };
-                let mut register = self.register(key, when)?;
-                let Some(id) = self.session_id(None, &register) else {
-                    return Err(nudge());
-                };
-                let Some(existing) = register.subscriber(&id) else {
-                    return Err(nudge());
-                };
-                let kind = existing.kind().to_owned();
-                let name = if given {
-                    name
-                } else {
-                    existing.name().map_or(name, str::to_owned)
-                };
-                self.subscribe(&mut register, &id, &kind, &name, client, when)?;
-                Ok(format!(
-                    "still subscribed {id} as {kind}, signing as {name}; {COVERAGE}"
-                ))
-            }
-        }
-    }
-
-    /// Subscribe `id` as `kind` in `register`, signing as `name`, and
-    /// remember it as this connection's signature.
-    fn subscribe(
-        &self,
-        register: &mut Register,
-        id: &str,
-        kind: &str,
-        name: &str,
-        client: Option<&str>,
-        when: u64,
-    ) -> Result<(), String> {
-        if !self.agents.allows(kind) {
+        let mut register = self.register(key, when)?;
+        let existing = register.subscriber(&caller.id);
+        let Some(kind) = kind else {
+            return match existing {
+                Some(existing) if persona.is_none() => Ok(format!(
+                    "subscribed {} as {}; {COVERAGE}",
+                    caller.id,
+                    existing.label(),
+                )),
+                _ => Err(format!(
+                    "not subscribed: pass `{}` (one of {types})",
+                    vocab::TYPE
+                )),
+            };
+        };
+        if !self.agents.allows(&kind) {
             return Err(format!(
                 "unknown agent type `{kind}`; configured types: {}",
                 self.agents.types.join(", ")
             ));
         }
-        register
-            .subscribe(id, kind, Some(name), client, when)
-            .map_err(|e| e.to_string())?;
-        if let Ok(mut current) = self.subscriber.lock() {
-            *current = Some(id.to_owned());
+        let name = identity::agent_name(
+            persona.or_else(|| existing.and_then(Subscriber::name)),
+            Some(&caller.client),
+        );
+        if existing
+            .and_then(Subscriber::name)
+            .is_some_and(|old| old != name)
+        {
+            return Err("the persona is fixed for this chat's workspace subscription".to_owned());
         }
-        Ok(())
+        register
+            .subscribe(&caller.id, &kind, Some(&name), Some(&caller.client), when)
+            .map_err(|e| e.to_string())?;
+        Ok(format!(
+            "subscribed {} as {kind}, signing as {name}; {COVERAGE}",
+            caller.id,
+        ))
     }
 
     /// `follow` with `end`: forget the session's subscription, its
     /// deliveries, and its watches.
-    fn end_subscription(&self, key: &Path, id: Option<String>) -> Result<String, String> {
+    fn end_subscription(&self, key: &Path, caller: &Caller) -> Result<String, String> {
         let when = now();
         let mut register = self.register(key, when)?;
-        let Some(id) = self.session_id(id, &register) else {
-            return Err(format!(
-                "nothing to end: pass `{}`, or call `{}` with `{}` first",
-                vocab::ID,
-                vocab::FOLLOW.name,
-                vocab::TYPE
-            ));
-        };
-        if register.subscriber(&id).is_none() {
-            return Ok(format!("{id} was not subscribed"));
+        if register.subscriber(&caller.id).is_none() {
+            return Ok(format!("{} was not subscribed", caller.id));
         }
-        register.unsubscribe(&id, when).map_err(|e| e.to_string())?;
-        if let Ok(mut current) = self.subscriber.lock()
-            && current.as_ref().is_some_and(|own| *own == id)
-        {
-            *current = None;
-        }
-        Ok(format!("unsubscribed {id}"))
+        register
+            .unsubscribe(&caller.id, when)
+            .map_err(|e| e.to_string())?;
+        Ok(format!("unsubscribed {}", caller.id))
     }
 
-    /// Run `act` on the register for the subscriber `id` (or this
-    /// connection's), answering with its message.
+    /// Run `act` for this caller's subscription in the addressed workspace.
     fn with_subscriber(
         &self,
         workspace: Option<&str>,
-        id: Option<String>,
+        caller: &Caller,
         act: impl FnOnce(
             &mut Register,
             &str,
@@ -1110,15 +1036,14 @@ impl Server {
             Ok(register) => register,
             Err(error) => return failure(error),
         };
-        let Some(id) = self.session_id(id, &register) else {
+        if register.subscriber(&caller.id).is_none() {
             return failure(format!(
-                "no subscription: call `{}` with `{}` first, or pass `{}`",
+                "no subscription in this workspace: call `{}` with `{}` first",
                 vocab::FOLLOW.name,
                 vocab::TYPE,
-                vocab::ID
             ));
-        };
-        match act(&mut register, &id, when) {
+        }
+        match act(&mut register, &caller.id, when) {
             Ok(message) => text(message),
             Err(error) => failure(error.to_string()),
         }
@@ -1481,8 +1406,9 @@ pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
 pub(super) fn instructions() -> String {
     format!(
         "Fathomable is the user's read-only viewer, where they leave review comments \
-         on the lines you write. When using Fathomable, call `{follow}` with your `{kind}`; \
-         omit `{id}` when identified from the harness. With hooks installed, comments \
+         on the lines you write. Your chat identity comes from the harness automatically; \
+         reading and posting need no registration. To opt into delivery, call `{follow}` \
+         with your `{kind}`. With hooks installed, comments \
          arrive once as your turns start and end: do not poll. Without hooks, fetch \
          comments with `{list}`. Answer with one `{reply}` \
          carrying `{replies}`; it returns each thread as it now stands. `{list}` lists the \
@@ -1490,11 +1416,11 @@ pub(super) fn instructions() -> String {
          ones: call it when a hook says more are pending, when no hook is installed, or to \
          read history. `{start}` opens threads of your own on lines the user should look \
          at. `{open}` shows a file in the viewer; everything else works with no viewer \
-         running. `{watch}` wakes you when another thread moves; `{workspaces}` lists and \
-         pins workspaces.",
+         running. `{watch}` watches another thread; `{workspaces}` lists workspaces. \
+         Pass `{workspace}` on a call to override the MCP startup directory; this changes \
+         no other chat's defaults.",
         follow = vocab::FOLLOW.name,
         kind = vocab::TYPE,
-        id = vocab::ID,
         reply = vocab::THREAD_REPLY.name,
         replies = vocab::REPLIES,
         list = vocab::THREADS.name,
@@ -1503,6 +1429,7 @@ pub(super) fn instructions() -> String {
         start = vocab::THREAD_START.name,
         watch = vocab::THREAD_WATCH.name,
         workspaces = vocab::WORKSPACES.name,
+        workspace = vocab::WORKSPACE,
     )
 }
 
@@ -1515,7 +1442,6 @@ mod tests {
     use fathomable_core::annotations::{
         Author, Draft, LineRange, MessageTarget, Placement, Reply, Status, Store,
     };
-    use fathomable_core::config::AgentsConfig;
     use fathomable_testing::TempDir;
     use fathomable_testing::vocabulary as test_vocab;
     use serde_json::Value;
@@ -1909,62 +1835,9 @@ mod tests {
         Ok(())
     }
 
-    /// `follow` subscribes, says so again on a bare call, refuses a bare
-    /// call from a session that never subscribed, and ends with `end`.
-    #[test]
-    fn follow_subscribes_and_ends() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = testing::bare("mcp-follow")?;
-        let dirs = dirs(&dir);
-        let root = dir.0.join("ws").canonicalize()?;
-        let server = Server::new(dirs.clone(), AgentsConfig::default(), None);
-        let bare = server.subscription(&root, None, None, None, None);
-        assert!(
-            bare.as_deref()
-                .is_err_and(|e| e.starts_with("not subscribed: pass `type`")),
-            "{bare:?}"
-        );
-        assert_eq!(
-            server.subscription(&root, Some("s1".to_owned()), None, None, None),
-            Err("`id` needs a `type`; configured types: coder, reviewer, planner".to_owned())
-        );
-        let note = server.subscription(
-            &root,
-            Some("s1".to_owned()),
-            Some("coder".to_owned()),
-            Some("bot"),
-            None,
-        )?;
-        assert!(
-            note.starts_with("subscribed s1 as coder, signing as bot; "),
-            "{note}"
-        );
-        let again = server.subscription(&root, None, None, None, None)?;
-        assert!(
-            again.starts_with("still subscribed s1 as coder, signing as bot; "),
-            "{again}"
-        );
-        let subscriber = server
-            .register(&root, 10)?
-            .subscriber("s1")
-            .cloned()
-            .ok_or("s1 is not subscribed")?;
-        assert_eq!(subscriber.name(), Some("bot"));
-        assert_eq!(server.end_subscription(&root, None)?, "unsubscribed s1");
-        assert!(server.register(&root, 10)?.subscriber("s1").is_none());
-        assert_eq!(
-            server.end_subscription(&root, None),
-            Err("nothing to end: pass `id`, or call `follow` with `type` first".to_owned())
-        );
-        assert_eq!(
-            server.end_subscription(&root, Some("s1".to_owned()))?,
-            "s1 was not subscribed"
-        );
-        Ok(())
-    }
-
     /// Words the agent-facing text may backtick that are not tools or
     /// parameters: the hook, and the config nodes the guide names.
-    const ALLOWED: [&str; 4] = ["hello", "fathomable", "agents.types", "user.name"];
+    const ALLOWED: [&str; 3] = ["fathomable", "agents.types", "user.name"];
 
     fn assert_known(text: &str, site: &str) {
         for ident in test_vocab::idents(text) {

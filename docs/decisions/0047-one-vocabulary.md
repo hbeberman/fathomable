@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Identity vocabulary amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): **agent session** means the
+concrete harness chat; its **caller id** is automatically qualified
+with the harness namespace, not an MCP tool parameter. A configured
+type and optional persona are a subscription's display profile, not
+identity. The old `id` argument and workspace-switch parameter retire.
+
 The production agent-facing table is `fathomable_core::vocabulary`; the
 test-only identifier parser and membership check used by [0043](0043-agent-vocabulary.md)
 live in `fathomable_testing::vocabulary`.

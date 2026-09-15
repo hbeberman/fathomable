@@ -22,6 +22,14 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Identity amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): `thread_start` no longer accepts
+a caller `id`. Every comment requires and records the automatic chat
+identity, even without `follow`; a live subscription in the addressed
+workspace supplies its optional display profile. No connection cache
+or `hello` text remains. Batch validation and thread behavior below are
+unchanged.
+
 ## Context
 
 Every thread so far began at the keyboard: the user selects lines,

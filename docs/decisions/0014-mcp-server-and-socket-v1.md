@@ -16,6 +16,13 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Identity and routing amended 2026-09-15 by
+[0080](0080-automatic-chat-identity.md): harness-qualified identity is
+automatic, every annotation write requires it, and no connection-wide
+subscriber cache or workspace pin remains. `fathomable --mcp [DIR]`
+anchors the default at startup; per-call workspace overrides remain.
+The tool table and identity rules below describe the original decision.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -136,14 +143,6 @@ tools live in `mcp/tools.rs`; this record keeps the transport in
 Note (2026-09-05): [0062](0062-one-version-no-compatibility.md) takes
 `ping` and `session_info` off the socket, refuses every protocol
 version but the one the binary speaks, and restarts the number at 1.
-
-Note (2026-09-15): `--mcp` also captures Copilot's
-`COPILOT_AGENT_SESSION_ID` launch environment as an automatic identity
-fallback ([0041](0041-session-bonds.md)). It remembers only the last
-subscribed id, not a globally cached type or persona: each signature
-looks up a live subscription in the addressed workspace. An explicit
-per-call id wins over connection memory. Detecting an id does not
-subscribe it, select a workspace, or establish automatic delivery.
 
 ## Consequences
 

@@ -1,8 +1,7 @@
 ---
 type: Decision
 title: Session bonds between hooks and the MCP server
-description: The MCP server learns its session from Copilot's launch environment or the hello hook's process bonds, without subscribing automatically or confusing session identity with workspace selection.
-resource: crates/fathomable-core/src/bond.rs
+description: Historical process-bond identity design, superseded by automatic harness-qualified chat identity in ADR 0080.
 tags:
   - decision
   - sessions
@@ -11,7 +10,16 @@ tags:
 
 # 0041 Session bonds between hooks and the MCP server
 
-Status: accepted (2026-08-29)
+Status: superseded (2026-09-15) by
+[0080 Automatic chat identity](0080-automatic-chat-identity.md);
+originally accepted 2026-08-29.
+
+This is a historical record, not setup guidance. The bond module and
+register events, `hello` bootstrap, explicit MCP caller ids, and
+connection subscriber cache have been removed. Launch environment or
+per-call metadata now supplies identity through a harness-specific
+adapter; writes require that identity, independently of subscription.
+The deleted bond module no longer has a resource owner.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

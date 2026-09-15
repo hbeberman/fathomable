@@ -37,7 +37,9 @@ Command line:
 - `fathomable [PATH]`: a file opens the single-file view; a directory or no
   argument opens the workspace rooted there (workspace root is the enclosing
   git root when one exists, otherwise the directory itself).
-- `fathomable --mcp`: run the stdio MCP server instead of the TUI.
+- `fathomable --mcp [DIR]`: run the stdio MCP server instead of the TUI;
+  `DIR`, or startup cwd when omitted, anchors its immutable default
+  workspace ([0080](0080-automatic-chat-identity.md)).
 - `--config PATH` overrides the config file; `--theme NAME` selects a theme
   from `$XDG_CONFIG_HOME/fathomable/themes/` for this run.
 - Admin flags, all non-interactive and printing to stdout:
@@ -46,9 +48,9 @@ Command line:
   `--dump-state` (session and thread state as JSON), `--replay-log`
   (re-emit the log for a session in order), `--config-show` (effective
   configuration after defaults and overrides).
-- The hook subcommands `hello` and `pending` (0040, 0042) take
+- The hook subcommand `pending` (0040, 0042, 0080) takes
   `--verbose`: an account of every lookup — stdin, workspace, viewers,
-  config, register, subscriber, bonds, thread counts — and why the hook
+  config, register, subscriber, thread counts — and why the hook
   stayed silent, on stderr so the harness's hook log carries it and
   stdout still means what it did; on stdout only when stderr is the
   answer (a Claude or Codex stop block).

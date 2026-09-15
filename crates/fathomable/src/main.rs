@@ -3,6 +3,7 @@
 //! Fathomable binary: terminal UI, MCP server, and admin flags (ADR 0009).
 
 mod app;
+mod caller;
 mod crash;
 mod doctor;
 mod hooks;
@@ -43,7 +44,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Run the stdio MCP server instead of the TUI.
+    /// Run the stdio MCP server; an optional directory anchors its workspace.
     #[arg(long)]
     mcp: bool,
 
@@ -81,24 +82,12 @@ struct Cli {
 /// to say, so they cost nothing where Fathomable is not in use.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// The session-start hook: tell the agent its session id and how to subscribe.
-    Hello {
-        /// Which harness's hook JSON is on stdin and what shape to answer in.
-        #[arg(long, value_enum)]
-        hook: hooks::Harness,
-        /// Session id, when the hook JSON does not carry it.
-        #[arg(long)]
-        id: Option<String>,
-        /// Explain every lookup on stderr, even when there is nothing to say.
-        #[arg(long)]
-        verbose: bool,
-    },
     /// The stop hook: hand a subscribed agent the threads it has not seen.
     Pending {
         /// Which harness's hook JSON is on stdin and what shape to answer in.
         #[arg(long, value_enum)]
-        hook: Option<hooks::Harness>,
-        /// Session id, when the hook JSON does not carry it.
+        hook: Option<caller::Harness>,
+        /// Native chat id with --hook, or a harness-qualified id without it.
         #[arg(long)]
         id: Option<String>,
         /// Print the prompt to stdout and exit 0 (for waking an idle session).
@@ -125,9 +114,6 @@ fn main() -> ExitCode {
     let dirs = XdgDirs::from_env();
 
     match cli.command {
-        Some(Command::Hello { hook, id, verbose }) => {
-            return hooks::hello(&dirs, hook, id, verbose);
-        }
         Some(Command::Pending {
             hook,
             id,
@@ -174,7 +160,7 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         };
-        return match mcp::run(&dirs, agents) {
+        return match mcp::run(&dirs, agents, cli.path.as_deref()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 tracing::error!(error = format!("{error:#}"), "mcp failed");

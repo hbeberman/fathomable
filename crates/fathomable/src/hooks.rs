@@ -1,14 +1,13 @@
 // @okf-doc: /decisions/0042-turn-start-delivery.md
-//! `fathomable hello` and `fathomable pending`: the harness-hook side of
+//! `fathomable pending`: the harness-hook side of
 //! agent subscriptions (ADR 0040, 0042).
 //!
-//! Both read the harness's hook JSON on stdin, resolve the workspace from
-//! its `cwd`, and print in the shape the harness named by `--hook`
-//! expects. Both exit 0 with no output whenever there is nothing to say:
+//! It reads the harness's hook JSON on stdin, resolves the workspace from
+//! its `cwd`, and prints in the shape the harness named by `--hook`
+//! expects. It exits 0 with no output whenever there is nothing to say:
 //! no workspace here, no subscription for the session, a subagent, a
-//! continuation the hook itself caused, or nothing pending. Neither ever
-//! writes to the thread store; both append to the agent register —
-//! `hello` the session bond of ADR 0041, `pending` its deliveries.
+//! continuation the hook itself caused, or nothing pending. It never
+//! writes to the thread store; it appends deliveries to the agent register.
 //!
 //! `pending` runs at both ends of a turn and, optionally, after every
 //! tool call. From the stop hook it blocks the stop with the blob as the
@@ -23,14 +22,13 @@
 //! other notifications (permission prompts) get silence: they fire
 //! mid-turn and their context is queued until the turn ends, by which
 //! time the threads are answered and the blob would only be stale.
-//! `hello` delivers the same way when its
-//! `source` is `resume`. Context is composed as [`Occasion::Context`]:
+//! Context is composed as [`Occasion::Context`]:
 //! deliveries and fired watches are recorded, no check is counted, and
 //! no reminder is composed, so the nag stays measured in turn-ends.
 //!
 //! `--verbose` makes a silent hook explain itself: every lookup on the
 //! way — what stdin said, which workspace matched, the subscriber, its
-//! bonds and watches, the thread counts — goes to stderr, or to stdout
+//! watches, the thread counts — goes to stderr, or to stdout
 //! when stderr is the answer (a Claude or Codex block), so the harness's
 //! hook log becomes a diagnostic channel without changing what the
 //! model sees.
@@ -40,137 +38,17 @@ use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::ValueEnum;
 use fathomable_core::XdgDirs;
 use fathomable_core::agents::{Blob, Register, Subscriber};
 use fathomable_core::annotations::{Store, Thread};
-use fathomable_core::bond;
 use fathomable_core::config::{AgentsConfig, Config, UserConfig};
 use fathomable_core::reach::Reach;
 use fathomable_core::session::{Marker, Record};
-use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use serde_json::{Value, json};
 
+use crate::caller::Harness;
 use fathomable_core::clock::now;
-
-/// The agent harness whose hook is calling.
-///
-/// Claude Code and Codex are exercised end to end. Copilot's hook JSON
-/// was captured from CLI 1.0.82, but the tool name its model sees is
-/// unverified; VS Code is unverified entirely (the same hook file is
-/// documented as read by both). Treat those two as experimental.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum Harness {
-    /// Claude Code: `SessionStart` and `Stop` in `settings.json`.
-    Claude,
-    /// Codex CLI: `SessionStart` and `Stop` in `hooks.json`.
-    Codex,
-    /// Copilot CLI: `sessionStart` and `agentStop` in `.github/hooks`.
-    /// Hooks observed; tool naming unverified.
-    Copilot,
-    /// VS Code agent mode: `SessionStart` and `Stop` in `.github/hooks`.
-    /// Unverified against the real harness.
-    Vscode,
-}
-
-impl Harness {
-    /// The name the harness shows the model for a Fathomable tool.
-    ///
-    /// Claude Code and Codex prefix MCP tools with the server name in
-    /// their own ways; Copilot and VS Code have not been verified, so
-    /// the bare name is used there rather than a guess (ADR 0043).
-    pub(crate) fn tool(self, tool: vocab::Tool) -> String {
-        match self {
-            Self::Claude => format!("mcp__fathomable__{}", tool.name),
-            Self::Codex => format!("fathomable.{}", tool.name),
-            Self::Copilot | Self::Vscode => tool.name.to_owned(),
-        }
-    }
-
-    /// One line of the hello text that only this harness needs.
-    pub(crate) const fn extra(self) -> Option<&'static str> {
-        match self {
-            Self::Copilot => {
-                Some("A detached shell of yours finishing also brings any new comments with it.")
-            }
-            Self::Claude | Self::Codex | Self::Vscode => None,
-        }
-    }
-}
-
-/// The hello text: what Fathomable is, the session's facts as labelled
-/// fields, and the calls to make, spelled as `harness` shows them.
-pub(crate) fn hello_text(
-    harness: Harness,
-    root: &Path,
-    id: &str,
-    types: &[String],
-    user: &str,
-) -> String {
-    let first = types.first().map_or("coder", String::as_str);
-    let extra = harness
-        .extra()
-        .map_or_else(String::new, |line| format!(" {line}"));
-    format!(
-        "Fathomable is the user's read-only viewer on this workspace. They watch the files \
-         you touch and leave review comments anchored to lines; you answer them in place.\n\
-         It is already connected to you as the MCP server `fathomable` — everything below \
-         is a tool call on it, not a shell command, a file to grep for, or something to \
-         look up.\n\
-         \n  workspace  {root}\
-         \n  session    {id}\
-         \n  user       {user}   ← who leaves the comments\
-         \n  types      {types}   ← the whole list; do not look elsewhere\n\
-         \nSubscribe before you edit; it covers the whole workspace:\
-         \n  {follow} {{ {kind}: \"{first}\", {id_key}: \"{id}\" }}\n\
-         \nComments then reach you as your turns start and end. Never poll; after a wait, \
-         just end your turn.{extra}\
-         \nAnswer one thread, or several in one call; `{resolve}: true` says you believe \
-         the thread is done, and the user closes it:\
-         \n  {reply} {{ {thread}: \"<thread id>\", {body}: \"…\" }}\
-         \n  {reply} {{ {replies}: [ {{ {thread}, {body}, {resolve} }}, … ] }}\
-         \nStart threads of your own on lines the user should look at; they wait on \
-         the user:\
-         \n  {start} {{ {comments}: [ {{ {path}, {line}, {end_line}, {body} }}, … ] }}\
-         \nBe woken when a thread you are not following moves:\
-         \n  {watch} {{ {on}: \"<thread id>\", {when}: \"{message}\" }}",
-        root = root.display(),
-        types = types.join(", "),
-        follow = harness.tool(vocab::FOLLOW),
-        kind = vocab::TYPE,
-        id_key = vocab::ID,
-        reply = harness.tool(vocab::THREAD_REPLY),
-        thread = vocab::THREAD,
-        body = vocab::BODY,
-        resolve = vocab::RESOLVE,
-        replies = vocab::REPLIES,
-        start = harness.tool(vocab::THREAD_START),
-        comments = vocab::COMMENTS,
-        path = vocab::PATH,
-        line = vocab::LINE,
-        end_line = vocab::END_LINE,
-        watch = harness.tool(vocab::THREAD_WATCH),
-        on = vocab::ON,
-        when = vocab::WHEN,
-        message = vocab::WHEN_MESSAGE,
-    )
-}
-
-/// The warning `hello` appends when `root` contains `cwd` only by prefix:
-/// it is neither the cwd nor the cwd's git root, so nothing is registered
-/// where the agent actually works and comments left there go unseen —
-/// the shape of the 2026-08-29 incident behind ADR 0043.
-pub(crate) fn prefix_warning(root: &Path, cwd: &Path, git_root: Option<&Path>) -> Option<String> {
-    if root == cwd || git_root == Some(root) {
-        return None;
-    }
-    Some(format!(
-        "\n\nWARNING: matched by prefix — nothing is registered at your cwd ({}). Comments \
-         left there will not reach you. Open Fathomable there, or run `fathomable --register`.",
-        cwd.display()
-    ))
-}
 
 /// Why a blob is being composed, which decides how hard it lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +56,7 @@ pub(crate) enum Occasion {
     /// A `Stop` hook or the viewer's `Space a w`: the blob forces a turn,
     /// and a delivered-but-unanswered thread counts toward the nag.
     TurnEnd,
-    /// A `SessionStart` resume or a prompt-submit hook: the blob is only
+    /// A prompt-submit, post-tool-use, or notification hook: the blob is only
     /// added to context, so it does not count a check and never carries
     /// a reminder — the nag cadence of ADR 0040 is measured in turn-ends.
     Context,
@@ -210,9 +88,6 @@ enum Event {
 struct Input {
     session: Option<String>,
     cwd: Option<PathBuf>,
-    /// `SessionStart`'s `source`: `startup`, `resume`, `clear`,
-    /// `compact`, or `fork`. Absent on the other events.
-    source: Option<String>,
     continuation: bool,
     subagent: bool,
     event: Event,
@@ -256,7 +131,6 @@ impl Input {
         Self {
             session,
             cwd: field("cwd").map(PathBuf::from),
-            source: field("source"),
             continuation: value
                 .get("stop_hook_active")
                 .and_then(Value::as_bool)
@@ -323,13 +197,12 @@ impl Drop for Diag {
 impl Input {
     fn describe(&self, diag: &mut Diag) {
         diag.note(format!(
-            "input: event {:?}, session {}, cwd {}, source {}, subagent {}, continuation {}",
+            "input: event {:?}, session {}, cwd {}, subagent {}, continuation {}",
             self.event,
             self.session.as_deref().unwrap_or("none"),
             self.cwd
                 .as_ref()
                 .map_or_else(|| "none".to_owned(), |c| c.display().to_string()),
-            self.source.as_deref().unwrap_or("none"),
             self.subagent,
             self.continuation
         ));
@@ -457,24 +330,6 @@ fn describe_state(dirs: &XdgDirs, bound: &Bound, id: &str, config: &AgentsConfig
         subscribers.len(),
         subscribers.join("; ")
     ));
-    let bonds: Vec<_> = register
-        .bonds()
-        .iter()
-        .map(|b| {
-            let pids: Vec<_> = b.processes().iter().map(|p| p.pid().to_string()).collect();
-            format!(
-                "{} pids [{}] {}",
-                b.id(),
-                pids.join(", "),
-                ago(b.created(), when)
-            )
-        })
-        .collect();
-    diag.note(format!(
-        "bonds (MCP servers signing as a session): {} [{}]",
-        bonds.len(),
-        bonds.join("; ")
-    ));
     let watches = register
         .watches()
         .iter()
@@ -482,7 +337,7 @@ fn describe_state(dirs: &XdgDirs, bound: &Bound, id: &str, config: &AgentsConfig
         .count();
     match register.subscriber(id) {
         None => diag.note(format!(
-            "subscriber {id}: not subscribed here (no `follow` with this id)"
+            "subscriber {id}: this chat has not subscribed here with `follow`"
         )),
         Some(subscriber) => {
             diag.note(format!(
@@ -564,96 +419,6 @@ fn agents_config(dirs: &XdgDirs) -> (AgentsConfig, String) {
     )
 }
 
-/// `fathomable hello`: tell the model its session id and how to subscribe.
-pub(crate) fn hello(
-    dirs: &XdgDirs,
-    harness: Harness,
-    id: Option<String>,
-    verbose: bool,
-) -> ExitCode {
-    let mut diag = Diag::new(verbose, "hello", Some(harness));
-    let input = read_input(harness, &mut diag);
-    input.describe(&mut diag);
-    let Some(id) = id.or(input.session) else {
-        diag.note("silent: no session id on stdin or --id");
-        return ExitCode::SUCCESS;
-    };
-    if input.subagent {
-        diag.note("silent: a subagent");
-        return ExitCode::SUCCESS;
-    }
-    let cwd = input
-        .cwd
-        .or_else(|| env::current_dir().ok())
-        .unwrap_or_default();
-    let bound = workspace_for(dirs, &cwd);
-    describe_workspaces(
-        dirs,
-        &cwd,
-        bound.as_ref().map(|b| b.root.as_path()),
-        &mut diag,
-    );
-    let Some(bound) = bound else {
-        diag.note("silent: no known workspace");
-        return ExitCode::SUCCESS;
-    };
-    let root = bound.root.clone();
-    let (config, user) = agents_config(dirs);
-    bond_session(dirs, &bound.key, &id, &config);
-    describe_state(dirs, &bound, &id, &config, &mut diag);
-    diag.note("answer: the hello text");
-    let mut text = hello_text(harness, &root, &id, &config.types, &user);
-    let canonical = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
-    let git_root = Workspace::discover(&cwd)
-        .ok()
-        .map(|w| w.root().to_path_buf());
-    if let Some(warning) = prefix_warning(&root, &canonical, git_root.as_deref()) {
-        diag.note(format!(
-            "prefix match: {} is neither the cwd nor its git root",
-            root.display()
-        ));
-        text.push_str(&warning);
-    }
-    // A resume comes back with the connection's memory gone and may have
-    // missed comments while the session was stopped, so it is handed them
-    // here rather than waiting for a turn to end (ADR 0040 note). The
-    // other sources are left alone: `startup` and `fork` have not
-    // subscribed yet, and `compact` is mid-task, where consuming a
-    // delivery — and firing a watch, which `Register::fire` removes —
-    // into context the model may not act on would lose it, with the stop
-    // hook then silent because it is recorded as delivered.
-    if input.source.as_deref() == Some("resume")
-        && let Ok(Some(blob)) = compose(dirs, &bound, &id, &config, &user, Occasion::Context)
-    {
-        text.push_str("\n\n");
-        text.push_str(&blob);
-    }
-    match harness {
-        Harness::Claude | Harness::Codex => println!("{text}"),
-        Harness::Copilot => println!("{}", json!({ "additionalContext": text })),
-        Harness::Vscode => println!(
-            "{}",
-            json!({ "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": text } })
-        ),
-    }
-    ExitCode::SUCCESS
-}
-
-/// Record the young ancestors of this hook process under `id`, so the
-/// MCP server spawned by the same harness can sign as it (ADR 0041).
-fn bond_session(dirs: &XdgDirs, key: &Path, id: &str, config: &AgentsConfig) {
-    let processes = bond::ancestors_within(bond::BOND_WINDOW);
-    if processes.is_empty() {
-        return;
-    }
-    let when = now();
-    let outcome = Register::open(dirs.agents_file(key), when, config.expire_after)
-        .and_then(|mut register| register.bond(id, processes, when));
-    if let Err(error) = outcome {
-        tracing::warn!(%error, "cannot record the session bond");
-    }
-}
-
 /// `fathomable pending`: hand the subscriber what it has not seen.
 pub(crate) fn pending(
     dirs: &XdgDirs,
@@ -664,7 +429,18 @@ pub(crate) fn pending(
 ) -> ExitCode {
     let mut diag = Diag::new(verbose, "pending", harness);
     let input = harness.map_or_else(Input::default, |h| read_input(h, &mut diag));
-    input.describe(&mut diag);
+    pending_input(dirs, harness, id, prompt, input, &mut diag)
+}
+
+fn pending_input(
+    dirs: &XdgDirs,
+    harness: Option<Harness>,
+    id: Option<String>,
+    prompt: bool,
+    input: Input,
+    diag: &mut Diag,
+) -> ExitCode {
+    input.describe(diag);
     let Some(id) = id.or(input.session) else {
         diag.note("silent: no session id on stdin or --id");
         return ExitCode::SUCCESS;
@@ -677,23 +453,29 @@ pub(crate) fn pending(
         diag.note("silent: a notification that is not a detached shell finishing");
         return ExitCode::SUCCESS;
     }
+    let id = match harness.map_or_else(
+        || crate::caller::session(&id).map(|_| id.clone()),
+        |harness| harness.key(&id),
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            eprintln!("fathomable: {error}");
+            diag.note("silent: invalid chat identity");
+            return ExitCode::SUCCESS;
+        }
+    };
     let cwd = input
         .cwd
         .or_else(|| env::current_dir().ok())
         .unwrap_or_default();
     let bound = workspace_for(dirs, &cwd);
-    describe_workspaces(
-        dirs,
-        &cwd,
-        bound.as_ref().map(|b| b.root.as_path()),
-        &mut diag,
-    );
+    describe_workspaces(dirs, &cwd, bound.as_ref().map(|b| b.root.as_path()), diag);
     let Some(bound) = bound else {
         diag.note("silent: no known workspace");
         return ExitCode::SUCCESS;
     };
     let (config, user) = agents_config(dirs);
-    describe_state(dirs, &bound, &id, &config, &mut diag);
+    describe_state(dirs, &bound, &id, &config, diag);
     let occasion = match input.event {
         Event::Stop => Occasion::TurnEnd,
         Event::Prompt | Event::PostTool | Event::Notification | Event::Other => Occasion::Context,

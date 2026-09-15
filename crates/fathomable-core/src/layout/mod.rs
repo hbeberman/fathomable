@@ -34,7 +34,7 @@ use crate::theme::Color;
 
 use blocks::{Align, Block, Inline, Item, Table};
 #[doc(inline)]
-pub use text::{LineIndex, display_width};
+pub use text::{LineIndex, display_width, graphemes};
 use wrap::{Chunk, wrap, wrap_hard, wrap_hard_chunks};
 
 /// Word-wrap plain `text` to `width` cells, breaking at whitespace.

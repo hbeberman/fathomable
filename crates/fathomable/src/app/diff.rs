@@ -75,50 +75,6 @@ pub(crate) struct DiffView {
 }
 
 impl DiffView {
-    /// The net `HEAD -> worktree` pair `Space d d` shows.
-    #[cfg(test)]
-    pub(crate) fn head(worktree_missing: bool) -> Self {
-        Self {
-            base: Side::Head,
-            target: Side::Working,
-            header: format!(
-                "HEAD · {}",
-                if worktree_missing {
-                    "WORKTREE (missing)"
-                } else {
-                    "now"
-                }
-            ),
-            badge: "DIFF net".to_owned(),
-            body: DiffBody::Diff {
-                base: Text::Head,
-                target: Text::Working,
-            },
-        }
-    }
-
-    /// `last seen · now`, the pair `Space d D` shows.
-    #[cfg(test)]
-    pub(crate) fn seen(worktree_missing: bool) -> Self {
-        Self {
-            base: Side::Seen,
-            target: Side::Working,
-            header: format!(
-                "last seen · {}",
-                if worktree_missing {
-                    "WORKTREE (missing)"
-                } else {
-                    "now"
-                }
-            ),
-            badge: "DIFF seen".to_owned(),
-            body: DiffBody::Diff {
-                base: Text::Seen,
-                target: Text::Working,
-            },
-        }
-    }
-
     /// Whether this is the diff from `base` to `target`.
     pub(crate) fn is_pair(&self, base: &Side, target: &Side) -> bool {
         self.base == *base && self.target == *target
@@ -604,6 +560,11 @@ mod tests {
         press(&mut app, " dD");
         assert_eq!(header(&app), "last seen · now");
         assert_eq!(badge(&app), "DIFF seen");
+        assert!(shown(&app).iter().any(|l| l.contains("-one")));
+        press(&mut app, " dD");
+        assert!(!app.view().diff_view(), "Space d D on its own pair closes");
+        assert_eq!(app.text_rows(), 29);
+        press(&mut app, " dD");
         press(&mut app, " dd");
         assert_eq!(
             header(&app),
@@ -628,6 +589,46 @@ mod tests {
             !app.view().source_view(),
             "a Markdown file's home is the rendered view"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn diff_toggles_preserve_cursor_and_reject_missing_bases() -> anyhow::Result<()> {
+        use crate::app::testing;
+
+        let dir = testing::workspace("app-diff-cursor", "# Title\n\n- one\n- two\n- three\n")?;
+        let mut app = testing::app(&dir)?;
+        app.view_mut().goto_source_line(4);
+        app.toggle_head_diff();
+        assert!(!app.view().diff_view());
+        assert_eq!(app.message(), Some("no diff base: not in a git repository"));
+        assert_eq!(app.view().source_position().0, 4);
+
+        app.view_mut().set_bases(
+            Some("# Title\n\n- one\n- three\n".to_owned()),
+            None,
+            Some("# Title\n".to_owned()),
+        );
+        app.toggle_seen_diff();
+        assert_eq!(app.view().source_position().0, 4);
+        assert_eq!(app.view().pair_counts(), Some((1, 0)));
+        assert_eq!(app.view().diff_counts(), Some((4, 0)));
+        assert_eq!(app.view().first_hunk_line(), Some(2));
+        assert!(shown(&app).iter().any(|line| line == "+- two"));
+
+        app.toggle_head_diff();
+        assert_eq!(app.view().source_position().0, 4);
+        app.toggle_head_diff();
+        assert_eq!(app.view().source_position().0, 4);
+        assert!(!app.view().source_view());
+
+        app.toggle_seen_diff();
+        app.view_mut()
+            .set_bases(Some("# Title\n\n- one\n- three\n".to_owned()), None, None);
+        app.toggle_head_diff();
+        assert_eq!(app.view().diff_base(), Some(&Side::Seen));
+        assert_eq!(app.message(), Some("no diff base: not in a git repository"));
+        assert_eq!(app.view().source_position().0, 4);
         Ok(())
     }
 

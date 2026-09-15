@@ -919,7 +919,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn jump_watch_and_viewer_blocks_parse_every_key() {
+    fn jump_watch_and_viewer_blocks_parse_every_key() -> Result<(), ConfigError> {
         let config = Config::parse(
             r#"
 jump {
@@ -943,9 +943,7 @@ threads {
     stubs-resolved #true
 }
 "#,
-        )
-        .map_err(|e| e.to_string());
-        let config = config.unwrap_or_default();
+        )?;
         assert!(config.jump().auto);
         assert_eq!(config.jump().debounce, Duration::from_secs(2));
         assert_eq!(config.jump().toast, Duration::ZERO);
@@ -958,12 +956,12 @@ threads {
         assert!(config.threads().stubs_resolved);
         assert_eq!(Config::default().threads(), &ThreadsConfig::default());
         assert_eq!(Config::default().sidebar(), &SidebarConfig::default());
+        Ok(())
     }
 
     #[test]
-    fn markdown_block_parses_and_matches() {
-        let config = Config::parse("markdown { extensions \".MD\" \"txt\"\n names \"Notes\" }")
-            .unwrap_or_default();
+    fn markdown_block_parses_and_matches() -> Result<(), ConfigError> {
+        let config = Config::parse("markdown { extensions \".MD\" \"txt\"\n names \"Notes\" }")?;
         let markdown = config.markdown();
         assert_eq!(markdown.extensions, ["md", "txt"]);
         assert_eq!(markdown.names, ["notes"]);
@@ -972,6 +970,7 @@ threads {
         assert!(markdown.matches(Path::new("docs/NOTES")));
         assert!(!markdown.matches(Path::new("README")));
         assert!(!markdown.matches(Path::new("main.rs")));
+        Ok(())
     }
 
     #[test]
@@ -1010,11 +1009,10 @@ threads {
     }
 
     #[test]
-    fn agents_block_parses_every_key() {
+    fn agents_block_parses_every_key() -> Result<(), ConfigError> {
         let config = Config::parse(
             "agents {\n types \"coder\" \"qa\"\n nag-after 0\n expire-after 2\n max-lines 10\n wake \"claude -r {id} {prompt}\"\n}",
-        )
-        .unwrap_or_default();
+        )?;
         let agents = config.agents();
         assert_eq!(agents.types, ["coder", "qa"]);
         assert!(agents.allows("qa") && !agents.allows("planner"));
@@ -1022,7 +1020,7 @@ threads {
         assert_eq!(agents.expire_after, Duration::from_hours(2));
         assert_eq!(agents.max_lines, 10);
         assert_eq!(agents.wake.as_deref(), Some("claude -r {id} {prompt}"));
-        let defaults = Config::parse("agents { wake \"\" }").unwrap_or_default();
+        let defaults = Config::parse("agents { wake \"\" }")?;
         assert_eq!(defaults.agents().wake, None);
         assert!(defaults.agents().allows("planner"));
         assert_eq!(defaults.agents().nag_after, 5);
@@ -1038,14 +1036,15 @@ threads {
                 .unwrap_or_default();
             assert!(error.contains(needle), "{text}: {error}");
         }
+        Ok(())
     }
 
     /// The `user` block names the person at the viewer (ADR 0058): `User`
     /// unless set, never blank.
     #[test]
-    fn user_block_names_the_user() {
+    fn user_block_names_the_user() -> Result<(), ConfigError> {
         assert_eq!(Config::default().user().name, "User");
-        let config = Config::parse("user { name \"Henry\" }").unwrap_or_default();
+        let config = Config::parse("user { name \"Henry\" }")?;
         assert_eq!(config.user().name, "Henry");
         for (text, needle) in [
             ("user { name \"  \" }", "must not be empty"),
@@ -1058,14 +1057,14 @@ threads {
                 .unwrap_or_default();
             assert!(error.contains(needle), "{text}: {error}");
         }
+        Ok(())
     }
 
     /// The `diff` block (ADR 0060) sets the context lines and whether the
     /// session starts with whitespace ignored; anything else is a typo.
     #[test]
-    fn diff_block_sets_context_and_whitespace() {
-        let config =
-            Config::parse("diff { context 5; ignore-whitespace #true }").unwrap_or_default();
+    fn diff_block_sets_context_and_whitespace() -> Result<(), ConfigError> {
+        let config = Config::parse("diff { context 5; ignore-whitespace #true }")?;
         assert_eq!(config.diff().context, 5);
         assert!(config.diff().ignore_whitespace);
         assert_eq!(
@@ -1090,13 +1089,15 @@ threads {
                 .unwrap_or_default();
             assert!(error.contains(needle), "{text}: {error}");
         }
+        Ok(())
     }
 
     #[test]
-    fn jump_defaults_apply_per_key() {
-        let config = Config::parse("jump { auto #true }").unwrap_or_default();
+    fn jump_defaults_apply_per_key() -> Result<(), ConfigError> {
+        let config = Config::parse("jump { auto #true }")?;
         assert!(config.jump().auto);
         assert_eq!(config.jump().toast, Duration::from_secs(4));
+        Ok(())
     }
 
     #[test]

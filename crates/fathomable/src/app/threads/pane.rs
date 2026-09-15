@@ -60,6 +60,8 @@ pub(crate) struct PaneEntry {
     words: Words,
     /// Who wrote the newest message, as `name (role)`.
     author: String,
+    /// The same author's name without the optional role.
+    author_name: String,
     /// The first line of the newest message.
     summary: String,
     replies: usize,
@@ -98,6 +100,10 @@ impl PaneEntry {
 
     pub(crate) fn author(&self) -> &str {
         &self.author
+    }
+
+    pub(crate) fn author_name(&self) -> &str {
+        &self.author_name
     }
 
     pub(crate) fn summary(&self) -> &str {
@@ -273,6 +279,12 @@ impl App {
                         range: entry.range(),
                         words: entry.words(),
                         author: author_label(author, self.user_name()),
+                        author_name: if author.is_user() {
+                            self.user_name()
+                        } else {
+                            author.name()
+                        }
+                        .to_owned(),
                         summary: body.lines().next().unwrap_or("").to_owned(),
                         replies: thread.replies().len(),
                         updated: thread.updated(),

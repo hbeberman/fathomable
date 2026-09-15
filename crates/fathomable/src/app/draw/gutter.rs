@@ -295,7 +295,7 @@ mod tests {
 
         app.view_mut()
             .set_bases(None, None, Some("old paragraph\n".to_owned()));
-        app.view_mut().toggle_head_diff();
+        app.toggle_head_diff();
         app.view_mut().goto_top();
         let rows = app.view().layout().lines().len();
         let mut numbered = 0;
@@ -493,7 +493,7 @@ mod tests {
         assert_eq!(app.view().source_line_of_row(1), Some(2));
         assert_eq!(git_cells(&app)?[1].content, " ");
 
-        app.view_mut().toggle_head_diff();
+        app.toggle_head_diff();
         let cells = git_cells(&app)?;
         let mut synthetic = 0;
         for (row, cell) in cells.iter().enumerate() {

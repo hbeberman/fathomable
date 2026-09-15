@@ -162,7 +162,7 @@ fn first_line<'a>(
     // it fits, `name` when it does not, cut with `…` beyond that.
     let free = inner.saturating_sub(lead + display_width(&tail) + 1);
     let full = entry.author();
-    let short = full.split(" (").next().unwrap_or(full);
+    let short = entry.author_name();
     let author = if display_width(full) <= free {
         full.to_owned()
     } else if display_width(short) <= free {
@@ -237,6 +237,74 @@ mod tests {
 
     use crate::app::testing::{self, source_app};
     use crate::app::{App, Focus};
+
+    #[test]
+    fn narrow_author_rows_preserve_parentheses_in_names() -> anyhow::Result<()> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::draw::Theme::from_core(&core);
+        for (case, author, name, full) in [
+            ("user", Author::User, "Henry (work)", "Henry (work)"),
+            (
+                "agent",
+                Author::agent("Bot (work)").subscribed("s-1", "coder"),
+                "Bot (work)",
+                "Bot (work) (coder)",
+            ),
+            (
+                "agent-no-role",
+                Author::agent("Bot (work)"),
+                "Bot (work)",
+                "Bot (work)",
+            ),
+        ] {
+            let dir = testing::workspace(&format!("pane-author-{case}"), testing::README)?;
+            let mut app = source_app(&dir)?;
+            app.user.name = "Henry (work)".to_owned();
+            app.view_mut().goto_source_line(3);
+            app.start_new_comment();
+            app.compose_insert("question");
+            app.compose_submit();
+            let id = app.file_threads()[0].clone();
+            let reply = app.handle_request(Request::ThreadReply {
+                thread: id,
+                author,
+                body: "answer".to_owned(),
+                resolve: false,
+                lines: None,
+            });
+            assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
+            let entries = app.threads_pane_entries();
+            let entry = &entries[0];
+            assert_eq!(entry.author(), full);
+            assert_eq!(entry.author_name(), name);
+            for (free, expected) in [
+                (full.len(), full),
+                (name.len(), name),
+                (
+                    8,
+                    if case == "user" {
+                        "Henry (…"
+                    } else {
+                        "Bot (wo…"
+                    },
+                ),
+            ] {
+                // L3, the nest, and the reply/age tail reserve fifteen cells.
+                let inner = free + 15;
+                let line = super::first_line(
+                    &theme,
+                    entry,
+                    inner,
+                    entry.updated(),
+                    super::Navigation::Inactive,
+                );
+                assert_eq!(line.spans[4].content, expected, "{case} at {free}");
+                assert_eq!(line.width(), inner);
+                assert!(line.to_string().ends_with("↩1 now"));
+            }
+        }
+        Ok(())
+    }
 
     fn sidebar_column(app: &App, width: u16) -> anyhow::Result<Vec<String>> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;

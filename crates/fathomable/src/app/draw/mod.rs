@@ -17,7 +17,7 @@ mod threads_pane;
 
 use std::fmt::Write as _;
 
-use fathomable_core::layout::{Face, Style as Face_, display_width};
+use fathomable_core::layout::{Face, Style as Face_, display_width, graphemes};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -803,33 +803,41 @@ fn draw_sidebar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
 
 /// Pad or truncate `text` to exactly `width` cells.
 pub(super) fn fit(text: &str, width: usize) -> String {
-    let mut out = String::new();
-    let mut used = 0;
-    for ch in text.chars() {
-        let w = display_width(&ch.to_string());
-        if used + w > width {
-            break;
-        }
-        out.push(ch);
-        used += w;
-    }
-    if used < width {
-        out.push_str(&" ".repeat(width - used));
-    }
+    let (prefix, used) = fitting_prefix(text, width);
+    let mut out = String::with_capacity(prefix.len() + width - used);
+    out.push_str(prefix);
+    out.push_str(&" ".repeat(width - used));
     out
+}
+
+/// The longest whole-grapheme prefix fitting `width`, and its cell width.
+fn fitting_prefix(text: &str, width: usize) -> (&str, usize) {
+    if width == 0 {
+        return ("", 0);
+    }
+    let mut used = 0;
+    for (offset, grapheme) in graphemes(text) {
+        let cells = display_width(grapheme);
+        if cells > width - used {
+            return (&text[..offset], used);
+        }
+        used += cells;
+    }
+    (text, used)
 }
 
 /// Pad `text` to exactly `width` cells, or cut it to fit with `…` as
 /// its last cell (ADR 0066).
 pub(super) fn fit_ellipsis(text: &str, width: usize) -> String {
-    if display_width(text) <= width || width == 0 {
+    if width == 0 || display_width(text) <= width {
         return fit(text, width);
     }
-    let mut shortened: String = text.chars().collect();
-    while display_width(&shortened) + 1 > width && !shortened.is_empty() {
-        shortened.pop();
-    }
-    fit(&format!("{shortened}…"), width)
+    let (prefix, used) = fitting_prefix(text, width - 1);
+    let mut out = String::with_capacity(prefix.len() + '…'.len_utf8() + width - used - 1);
+    out.push_str(prefix);
+    out.push('…');
+    out.push_str(&" ".repeat(width - used - 1));
+    out
 }
 
 pub(super) fn face_style(theme: &Theme, face: &Face_) -> Style {
@@ -2243,7 +2251,40 @@ mod tests {
 
     use crate::app::threads::list::Row;
 
-    use super::{Theme, format_age, format_age_short, format_time, list_row};
+    use super::{Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row};
+
+    #[test]
+    fn fitting_keeps_whole_graphemes_and_exact_cell_width() {
+        for (text, width, plain, ellipsis) in [
+            ("", 0, "", ""),
+            ("anything", 0, "", ""),
+            ("", 1, " ", " "),
+            ("a", 1, "a", "a"),
+            ("ab", 1, "a", "…"),
+            ("abc", 5, "abc  ", "abc  "),
+            ("abcdef", 4, "abcd", "abc…"),
+            ("界界", 3, "界 ", "界…"),
+            ("界界", 2, "界", "… "),
+            ("界", 1, " ", "…"),
+            ("e\u{301}", 1, "e\u{301}", "e\u{301}"),
+            ("e\u{301}xy", 2, "e\u{301}x", "e\u{301}…"),
+            ("👩‍💻xy", 3, "👩‍💻x", "👩‍💻…"),
+            ("👩‍💻xy", 2, "👩‍💻", "… "),
+            ("👩‍💻", 3, "👩‍💻 ", "👩‍💻 "),
+            ("\u{301}", 0, "", ""),
+        ] {
+            assert_eq!(fit(text, width), plain, "{text:?} at {width}");
+            assert_eq!(fit_ellipsis(text, width), ellipsis, "{text:?} at {width}");
+            assert_eq!(display_width(plain), width);
+            assert_eq!(display_width(ellipsis), width);
+        }
+    }
+
+    #[test]
+    fn fitting_a_long_label_only_copies_its_visible_prefix() {
+        let text = "label".repeat(20_000);
+        assert_eq!(fit_ellipsis(&text, 6), "label…");
+    }
 
     /// ADR 0071: the cursor's message in the list fills its rows with
     /// the author's stripe and starts each with the bar.

@@ -317,7 +317,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
             0 => app.view_mut().toggle_source_view(),
             1 => {
                 app.view_mut().set_bases(None, None, Some(String::new()));
-                app.view_mut().toggle_head_diff();
+                app.toggle_head_diff();
             }
             _ => {}
         }

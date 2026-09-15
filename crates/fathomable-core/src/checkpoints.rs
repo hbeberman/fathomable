@@ -101,7 +101,7 @@ pub struct Store {
     dir: PathBuf,
     timelines: BTreeMap<PathBuf, Vec<Checkpoint>>,
     events: usize,
-    log: Option<File>,
+    log: File,
 }
 
 impl Store {
@@ -123,7 +123,10 @@ impl Store {
             dir: dir.to_path_buf(),
             timelines: BTreeMap::new(),
             events: 0,
-            log: None,
+            log: OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&log_path)?,
         };
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             match serde_json::from_str::<Event>(line) {
@@ -134,12 +137,6 @@ impl Store {
                 Err(error) => tracing::warn!(%error, "skipping malformed checkpoint record"),
             }
         }
-        store.log = Some(
-            OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(&log_path)?,
-        );
         Ok(store)
     }
 
@@ -235,11 +232,9 @@ impl Store {
             origin,
             files: refs,
         };
-        if let Some(log) = self.log.as_mut() {
-            let mut line = serde_json::to_string(&event)?;
-            line.push('\n');
-            log.write_all(line.as_bytes())?;
-        }
+        let mut line = serde_json::to_string(&event)?;
+        line.push('\n');
+        self.log.write_all(line.as_bytes())?;
         let stored = event.files.len();
         self.apply(&event);
         Ok(stored)
@@ -351,7 +346,9 @@ mod tests {
         )?;
         drop(log);
 
+        let original_log = fs::read(tmp.0.join(INDEX_FILE))?;
         let store = Store::open(&tmp.0)?;
+        assert_eq!(fs::read(tmp.0.join(INDEX_FILE))?, original_log);
         assert_eq!(store.events(), 3, "malformed and foreign lines are skipped");
         assert_eq!(store.len(), 2);
         assert_eq!(store.timeline(Path::new("a.md")).len(), 2);
@@ -362,6 +359,35 @@ mod tests {
             .count();
         assert_eq!(blobs, 2, "identical content across files is stored once");
         assert!(store.blob_bytes() > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_log_write_does_not_advance_timeline() -> io::Result<()> {
+        let tmp = TempDir::new("checkpoints-log-error")?;
+        let mut store = Store::open(&tmp.0)?;
+        let path = Path::new("a.md");
+        store.record(Origin::File, [(path, "one\n")])?;
+        store.log = File::open(tmp.0.join(INDEX_FILE))?;
+
+        if let Ok(stored) = store.record(Origin::File, [(path, "two\n")]) {
+            return Err(io::Error::other(format!(
+                "record succeeded with a read-only log: stored={stored}"
+            )));
+        }
+        assert_eq!(store.events(), 1);
+        assert_eq!(store.timeline(path).len(), 1);
+        assert!(store.is_current(path, "one\n"));
+        drop(store);
+
+        let mut store = Store::open(&tmp.0)?;
+        assert_eq!(store.events(), 1);
+        assert_eq!(store.record(Origin::File, [(path, "two\n")])?, 1);
+        drop(store);
+        let store = Store::open(&tmp.0)?;
+        assert_eq!(store.events(), 2);
+        assert_eq!(store.timeline(path).len(), 2);
+        assert!(store.is_current(path, "two\n"));
         Ok(())
     }
 }

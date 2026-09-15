@@ -817,38 +817,6 @@ impl View {
         self.relayout();
     }
 
-    /// `Space d d` / `:diff`: the diff `HEAD · now` (ADR 0017, ADR 0060), or
-    /// back to the file when that pair is shown.
-    #[cfg(test)]
-    pub(crate) fn toggle_head_diff(&mut self) {
-        if self
-            .diff()
-            .is_some_and(|d| d.is_pair(&Side::Head, &Side::Working))
-        {
-            self.leave_diff();
-        } else if self.head.is_some() {
-            self.show_diff(DiffView::head(self.missing.worktree));
-        } else {
-            self.message = Some("no diff base: not in a git repository".to_owned());
-        }
-    }
-
-    /// `Space d D` / `:diff seen`: the diff `last seen · now` (ADR 0015, ADR
-    /// 0060), or back to the file when that pair is shown.
-    #[cfg(test)]
-    pub(crate) fn toggle_seen_diff(&mut self) {
-        if self
-            .diff()
-            .is_some_and(|d| d.is_pair(&Side::Seen, &Side::Working))
-        {
-            self.leave_diff();
-        } else if self.seen.is_some() {
-            self.show_diff(DiffView::seen(self.missing.worktree));
-        } else {
-            self.message = Some("no last-seen snapshot of this file yet".to_owned());
-        }
-    }
-
     /// `]g` within the file: the cursor to the next hunk against `HEAD`.
     /// Reports a wrap instead of taking it, so the app can cross into the
     /// next dirty file (ADR 0017).
@@ -1762,7 +1730,7 @@ mod tests {
 
     use fathomable_core::annotations::LineRange;
 
-    use super::{Cursor, Effect, HunkStep, Mode, Side, View};
+    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Side, Text, View};
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
@@ -2110,9 +2078,6 @@ mod tests {
         assert_eq!(v.diff_counts(), None);
         assert_eq!(v.line_status(1), None);
         assert_eq!(v.next_hunk(), HunkStep::NoBase);
-        v.toggle_head_diff();
-        assert!(!v.diff_view(), "no base, no diff view");
-        assert_eq!(v.message(), Some("no diff base: not in a git repository"));
 
         // The committed text lacked "- two" and had a different last line;
         // the index already holds "- two", so that hunk is staged.
@@ -2139,9 +2104,19 @@ mod tests {
         assert_eq!(v.prev_hunk(), HunkStep::Wrapped);
         v.goto_source_line(9);
 
-        v.toggle_head_diff();
+        let diff = DiffView {
+            base: Side::Head,
+            target: Side::Working,
+            header: String::new(),
+            badge: String::new(),
+            body: DiffBody::Diff {
+                base: Text::Head,
+                target: Text::Working,
+            },
+        };
+        v.show_diff(diff.clone());
         assert!(v.diff_view());
-        assert_eq!(v.source_position().0, 9, "toggle keeps the source line");
+        assert_eq!(v.source_position().0, 9, "relayout keeps the source line");
         let texts: Vec<String> = v
             .layout()
             .lines()
@@ -2158,14 +2133,14 @@ mod tests {
             matches!(v.confirm(), Effect::Command(c) if c == "diff"),
             ":diff is the app's to run"
         );
-        v.toggle_head_diff();
+        v.leave_diff();
         assert!(!v.diff_view());
 
         // A reload against the same base re-diffs; an identical text is clean.
         v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
         assert_eq!(v.diff_counts(), Some((0, 0)));
         assert_eq!(v.next_hunk(), HunkStep::Clean);
-        v.toggle_head_diff();
+        v.show_diff(diff);
         assert_eq!(v.layout().lines().len(), 1);
         v.set_bases(None, None, None);
         assert_eq!(v.diff_counts(), None);
@@ -2174,57 +2149,13 @@ mod tests {
     }
 
     #[test]
-    fn head_and_seen_diffs_toggle_independently() {
+    fn app_commands_are_forwarded_and_activity_is_tracked() {
         let mut v = view();
-        v.toggle_seen_diff();
-        assert!(!v.diff_view(), "never seen: no seen diff");
-        assert!(v.message().is_some_and(|m| m.contains("last-seen")));
-
-        let seen = v.text().replace("- two\n", "");
-        let head = "# Title\n".to_owned();
-        v.set_bases(Some(seen), Some(head.clone()), Some(head));
-        assert!(
-            v.diff_counts().is_some_and(|(added, _)| added > 1),
-            "the gutter counts against HEAD, not seen"
-        );
-        assert_eq!(v.first_hunk_line(), Some(2));
-
-        v.toggle_head_diff();
-        assert!(v.diff_view());
-        assert_eq!(v.diff_base(), Some(&Side::Head));
-        v.toggle_head_diff();
-        assert!(!v.diff_view(), "Space d d is a toggle");
-
-        v.toggle_seen_diff();
-        assert!(v.diff_view());
-        assert_eq!(v.diff_base(), Some(&Side::Seen));
-        let texts: Vec<String> = v
-            .layout()
-            .lines()
-            .iter()
-            .map(fathomable_core::layout::Line::text)
-            .collect();
-        assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
-        v.toggle_head_diff();
-        assert_eq!(
-            v.diff_base(),
-            Some(&Side::Head),
-            "Space d d from the seen diff goes to HEAD"
-        );
         v.start_command();
         for ch in "diff seen".chars() {
             v.input_char(ch);
         }
         assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff seen"));
-        v.toggle_seen_diff();
-        assert_eq!(
-            v.diff_base(),
-            Some(&Side::Seen),
-            "Space d D from the HEAD diff goes to seen"
-        );
-        v.toggle_seen_diff();
-        assert!(!v.diff_view());
-
         v.start_command();
         for ch in "follow".chars() {
             v.input_char(ch);

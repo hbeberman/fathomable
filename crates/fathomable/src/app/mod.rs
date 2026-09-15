@@ -70,8 +70,6 @@ pub(crate) use threads::{Compose, Mark};
 use view::{HunkStep, Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
-/// How long to wait after a change notification before re-reading, so an
-/// editor's write-then-rename lands as one reload.
 /// Toasts visible at once.
 pub(crate) const MAX_TOASTS: usize = 3;
 
@@ -291,7 +289,6 @@ pub(crate) struct App {
     thread_cursor_anchor: Option<(Option<usize>, usize)>,
     /// The review list shown in place of the document (ADR 0025).
     review_list: ReviewList,
-    /// File-threads pane height once dragged; the default follows its
     /// The border a mouse drag is moving.
     drag: Option<Border>,
     /// The cell the pointer was last seen at, for hover (ADR 0050).

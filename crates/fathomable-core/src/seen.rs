@@ -53,7 +53,7 @@ struct Entry {
 pub struct Store {
     dir: PathBuf,
     entries: BTreeMap<PathBuf, Entry>,
-    log: Option<File>,
+    log: File,
 }
 
 impl Store {
@@ -103,14 +103,12 @@ impl Store {
             let _ = writeln!(compacted, "{}", serde_json::to_string(entry)?);
         }
         fs::write(&log_path, compacted)?;
-        let mut store = Self {
+        prune_blobs(dir, &entries);
+        Ok(Self {
             dir: dir.to_path_buf(),
             entries,
-            log: None,
-        };
-        store.prune_blobs();
-        store.log = Some(OpenOptions::new().append(true).open(&log_path)?);
-        Ok(store)
+            log: OpenOptions::new().append(true).open(&log_path)?,
+        })
     }
 
     /// The store directory.
@@ -168,11 +166,9 @@ impl Store {
             sha256,
             at: clock::now(),
         };
-        if let Some(log) = self.log.as_mut() {
-            let mut line = serde_json::to_string(&entry)?;
-            line.push('\n');
-            log.write_all(line.as_bytes())?;
-        }
+        let mut line = serde_json::to_string(&entry)?;
+        line.push('\n');
+        self.log.write_all(line.as_bytes())?;
         self.entries.insert(path.to_path_buf(), entry);
         Ok(true)
     }
@@ -203,18 +199,18 @@ impl Store {
     fn blob_path(&self, sha256: &str) -> PathBuf {
         self.dir.join(BLOBS_DIR).join(sha256)
     }
+}
 
-    fn prune_blobs(&self) {
-        let live: HashSet<&str> = self.entries.values().map(|e| e.sha256.as_str()).collect();
-        let Ok(dir) = fs::read_dir(self.dir.join(BLOBS_DIR)) else {
-            return;
-        };
-        for entry in dir.filter_map(Result::ok) {
-            let name = entry.file_name();
-            let keep = name.to_str().is_some_and(|n| live.contains(n));
-            if !keep && let Err(error) = fs::remove_file(entry.path()) {
-                tracing::warn!(%error, path = %entry.path().display(), "cannot prune blob");
-            }
+fn prune_blobs(dir: &Path, entries: &BTreeMap<PathBuf, Entry>) {
+    let live: HashSet<&str> = entries.values().map(|e| e.sha256.as_str()).collect();
+    let Ok(dir) = fs::read_dir(dir.join(BLOBS_DIR)) else {
+        return;
+    };
+    for entry in dir.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let keep = name.to_str().is_some_and(|n| live.contains(n));
+        if !keep && let Err(error) = fs::remove_file(entry.path()) {
+            tracing::warn!(%error, path = %entry.path().display(), "cannot prune blob");
         }
     }
 }
@@ -300,6 +296,30 @@ mod tests {
         let big = "x".repeat(MAX_BYTES + 1);
         assert!(!store.record(Path::new("big"), &big)?);
         assert!(!store.contains(Path::new("big")));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_log_write_does_not_advance_snapshot() -> io::Result<()> {
+        let tmp = TempDir::new("seen-log-error")?;
+        let mut store = Store::open(&tmp.0)?;
+        let path = Path::new("a.md");
+        store.record(path, "one\n")?;
+        store.log = File::open(tmp.0.join(LOG_FILE))?;
+
+        if let Ok(recorded) = store.record(path, "two\n") {
+            return Err(io::Error::other(format!(
+                "record succeeded with a read-only log: recorded={recorded}"
+            )));
+        }
+        assert_eq!(store.text(path)?.as_deref(), Some("one\n"));
+        drop(store);
+
+        let mut store = Store::open(&tmp.0)?;
+        assert_eq!(store.text(path)?.as_deref(), Some("one\n"));
+        assert!(store.record(path, "two\n")?);
+        drop(store);
+        assert_eq!(Store::open(&tmp.0)?.text(path)?.as_deref(), Some("two\n"));
         Ok(())
     }
 }

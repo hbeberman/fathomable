@@ -36,6 +36,33 @@ fn plain_directory_has_no_diff_base() -> TestResult {
 }
 
 #[test]
+fn worktree_watch_paths_are_existing_directories() -> TestResult {
+    let dir = TempDir::new("git-worktree-watch-paths")?;
+    let main = dir.0.join("main");
+    fs::create_dir(&main)?;
+    init(&main)?;
+    commit(&main, &[("a.md", "one\n")])?;
+    let workspace = Workspace::discover(&main)?;
+    let common = workspace.key().to_path_buf();
+    let registry = common.join("worktrees");
+
+    assert!(!registry.exists(), "one worktree needs no registry");
+    let paths = workspace.worktree_watch_paths();
+    assert!(paths.contains(&common));
+    assert!(paths.contains(&common.join("refs")));
+    assert!(!paths.contains(&registry));
+    assert!(paths.iter().all(|path| path.is_dir()), "{paths:?}");
+
+    let linked = dir.0.join("linked");
+    fathomable_testing::git::worktree_add(&main, &linked, "feature")?;
+    let paths = workspace.worktree_watch_paths();
+    assert!(paths.contains(&registry));
+    assert!(paths.contains(&registry.join("linked")));
+    assert!(paths.iter().all(|path| path.is_dir()), "{paths:?}");
+    Ok(())
+}
+
+#[test]
 fn unborn_head_and_untracked_files_have_an_empty_base() -> TestResult {
     let dir = TempDir::new("git-unborn")?;
     init(&dir.0)?;

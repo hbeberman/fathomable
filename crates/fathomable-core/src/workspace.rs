@@ -263,9 +263,14 @@ impl Workspace {
         };
         let common = crate::worktrees::canonical(git.repo.common_dir());
         let registry = crate::worktrees::registry(&common);
-        let mut out = vec![common.clone(), common.join("refs"), registry.clone()];
-        if let Ok(entries) = std::fs::read_dir(&registry) {
-            out.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        let mut out = vec![common.clone(), common.join("refs")];
+        match std::fs::read_dir(&registry) {
+            Ok(entries) => {
+                out.push(registry);
+                out.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => out.push(registry),
         }
         out
     }

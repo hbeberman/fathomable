@@ -22,7 +22,8 @@ tags:
 
 # 0070 One workspace, many worktrees
 
-Status: accepted (2026-09-07)
+Status: accepted (2026-09-07); amended 2026-09-15 (the optional
+`worktrees/` registry is watched only while it exists)
 
 ## Context
 
@@ -107,10 +108,12 @@ in the host, labelled with its branch.
   locked one is. The worktree the viewer was opened in is the
   **active** worktree.
 - The viewer watches the common dir for its `HEAD` and index, its
-  `refs` for a branch moving, its `worktrees/` registry for the set
-  changing, and each linked worktree's git dir for its `HEAD`, one
-  watch each and the refs recursively, since a commit in a worktree
-  moves the branch under the common dir, not the worktree's `HEAD`.
+  `refs` for a branch moving, its `worktrees/` registry while that
+  optional directory exists, and each linked worktree's git dir for
+  its `HEAD`, one watch each and the refs recursively. The common-dir
+  watch observes Git creating the registry for the first linked
+  worktree. A commit in a worktree moves the branch under the common
+  dir, not the worktree's `HEAD`.
   Only the active worktree's visible directories are walked and watched;
   ignored trees spend no inotify watches ([0015](0015-follow-mode.md)).
 - No tool adds a worktree. The set is git's; an agent that ran
@@ -231,8 +234,9 @@ in the host, labelled with its branch.
   carries `common_dir` and `roots`.
 - `app/worktrees.rs` holds the active worktree, `]w` / `[w`, the
   re-root, and the picker; `app/watch.rs` watches the common dir, its
-  refs and `worktrees/` registry, and each linked worktree's git dir;
-  `Reach` learns which worktrees reach a thread (`here`, `elsewhere`).
+  refs, its existing `worktrees/` registry, and each linked worktree's
+  git dir; `Reach` learns which worktrees reach a thread (`here`,
+  `elsewhere`).
 - `mcp/mod.rs` resolves a worktree; `mcp/tools.rs` lists them and
   names the caller's; `hooks.rs` resolves the cwd the same way and
   carries `worktree` in a delivery.

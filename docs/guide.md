@@ -1255,7 +1255,7 @@ Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
 `:doctor` opens a fresh, scrollable rendering of the same checks as
 `fathomable --doctor`; use `j`/`k`, PgUp/PgDn, Home/End, or the wheel,
 `r` to rerun, and Esc to close. `:status` inside the app shows the open
-document, the terminal size, the
+document, the terminal size, the exact log file for that viewer, the
 viewer name and id, the worktrees with the active one marked, the
 socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is

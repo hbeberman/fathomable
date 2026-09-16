@@ -45,6 +45,8 @@ use crate::app::App;
 use crate::app::input::bindings::Action;
 use crate::app::threads::words::Words;
 
+pub(super) const UNAVAILABLE: &str = "threads unavailable; run :status for the log path";
+
 /// A thread's status, which is its colour in the gutter, the file-threads
 /// pane, and the review list (ADR 0039); where the thread is placed is
 /// [`Mark::placement`]. Ordered by urgency, so the most urgent of several
@@ -143,7 +145,7 @@ impl App {
     /// The store, or a status-line notice explaining why there is none.
     pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
         if self.store.is_none() {
-            self.notice("threads unavailable; see the log");
+            self.warning(UNAVAILABLE);
         }
         self.store.as_mut()
     }
@@ -413,10 +415,7 @@ impl App {
             command = command.idempotent(caller, key);
         }
         let outcome = {
-            let store = self
-                .store
-                .as_mut()
-                .ok_or("threads unavailable; see the log")?;
+            let store = self.store.as_mut().ok_or(UNAVAILABLE)?;
             store.agent_reply(id, command, |path| {
                 std::fs::read_to_string(root.join(path)).map_err(|error| {
                     fathomable_core::annotations::StoreError::message(format!(
@@ -473,10 +472,7 @@ impl App {
         .at_commit(self.workspace.head_commit());
         let result = if let Some(key) = idempotency_key {
             let root = self.workspace.root().to_path_buf();
-            let store = self
-                .store
-                .as_mut()
-                .ok_or("threads unavailable; see the log")?;
+            let store = self.store.as_mut().ok_or(UNAVAILABLE)?;
             store
                 .annotate_idempotent_for_caller(draft, now(), &caller, &key, |path| {
                     std::fs::read_to_string(root.join(path)).map_err(|error| {
@@ -493,10 +489,7 @@ impl App {
         } else {
             let text = std::fs::read_to_string(self.workspace.root().join(path))
                 .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-            let store = self
-                .store
-                .as_mut()
-                .ok_or("threads unavailable; see the log")?;
+            let store = self.store.as_mut().ok_or(UNAVAILABLE)?;
             store.annotate(draft, &text, now()).map(|id| (id, false))
         };
         self.reconcile_agent_activity();

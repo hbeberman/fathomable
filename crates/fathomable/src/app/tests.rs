@@ -14,7 +14,7 @@ use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
 
 use super::input::bindings::Action;
-use super::{App, Focus, Options, PickerKind, Popup};
+use super::{App, Focus, NoticeTone, Options, PickerKind, Popup};
 
 fn fixture(name: &str) -> std::io::Result<TempDir> {
     let dir = TempDir::new(&format!("app-{name}"))?;
@@ -1379,6 +1379,39 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     assert!(
         app.message()
             .is_some_and(|m| m.starts_with("not a command"))
+    );
+    Ok(())
+}
+
+#[test]
+fn unavailable_threads_point_to_the_warning_log_path() -> anyhow::Result<()> {
+    let dir = fixture("threads-unavailable")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("README.md"));
+
+    app.start_new_comment();
+
+    assert_eq!(
+        app.message(),
+        Some("threads unavailable; run :status for the log path")
+    );
+    assert_eq!(app.message_tone(), NoticeTone::Warning);
+    let rows = app.status_lines();
+    let log = rows
+        .iter()
+        .find_map(|(label, value)| (label == "log").then_some(value));
+    assert_eq!(
+        log.map(String::as_str),
+        Some(
+            crate::logging::log_path(&app.dirs, app.record.id())
+                .to_string_lossy()
+                .as_ref()
+        )
+    );
+    assert!(
+        rows.iter()
+            .any(|(label, value)| label == "threads"
+                && value == "unavailable (see log path above)")
     );
     Ok(())
 }

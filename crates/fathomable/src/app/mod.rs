@@ -88,6 +88,20 @@ impl Toast {
     }
 }
 
+/// How a status-line notice should draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NoticeTone {
+    Info,
+    Warning,
+}
+
+/// The answer to the reader's last action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Notice {
+    text: String,
+    tone: NoticeTone,
+}
+
 /// Fewest text columns a drag leaves the view.
 const TEXT_MIN_WIDTH: usize = 20;
 
@@ -313,7 +327,7 @@ pub(crate) struct App {
     file_index: file_index::FileIndex,
     /// The same with ignored files, for `I`.
     all_index: file_index::FileIndex,
-    message: Option<String>,
+    message: Option<Notice>,
     /// The keys typed so far of a longer binding (ADR 0045).
     prefix: Vec<Chord>,
     /// The thread a first `d` armed for deletion (ADR 0034).
@@ -1536,7 +1550,17 @@ impl App {
     /// from the app or from the view. A toast, by contrast, reports what
     /// happened without the reader (ADR 0010).
     pub(crate) fn message(&self) -> Option<&str> {
-        self.message.as_deref().or_else(|| self.view().message())
+        self.message
+            .as_ref()
+            .map(|notice| notice.text.as_str())
+            .or_else(|| self.view().message())
+    }
+
+    /// The visual urgency of the current status-line notice.
+    pub(crate) fn message_tone(&self) -> NoticeTone {
+        self.message
+            .as_ref()
+            .map_or(NoticeTone::Info, |notice| notice.tone)
     }
 
     /// The keys typed so far of a binding that is not complete.
@@ -1708,7 +1732,19 @@ impl App {
     fn notice(&mut self, message: impl Into<String>) {
         let message = message.into();
         tracing::info!(message = %message, "status");
-        self.message = Some(message);
+        self.message = Some(Notice {
+            text: message,
+            tone: NoticeTone::Info,
+        });
+    }
+
+    fn warning(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        tracing::warn!(message = %message, "status warning");
+        self.message = Some(Notice {
+            text: message,
+            tone: NoticeTone::Warning,
+        });
     }
 
     /// Open the root-relative `path`, loading it or switching to it.

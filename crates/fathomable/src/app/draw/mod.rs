@@ -51,7 +51,7 @@ use crate::app::input::help;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, Menu};
 use crate::app::menu_bar::{self, Focused, MenuLayout, Row as MenuRow};
-use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
+use crate::app::{App, Focus, MAX_TOASTS, NoticeTone, PickerState, Popup};
 
 /// Ratatui styles for the chrome and Markdown faces.
 ///
@@ -1566,7 +1566,10 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         ));
     }
     if let Some(message) = app.message() {
-        left.push(Span::styled(format!("  {message}"), theme.info));
+        left.push(Span::styled(
+            format!("  {message}"),
+            status_message_style(app, theme),
+        ));
     } else if let Some(hint) = hint {
         left.push(Span::styled(format!("  {hint}"), theme.diff_delta));
     }
@@ -1584,6 +1587,13 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         left.push(Span::styled(segment.text, style));
     }
     Paragraph::new(Line::from(left)).style(theme.statusline)
+}
+
+fn status_message_style(app: &App, theme: &Theme) -> Style {
+    match app.message_tone() {
+        NoticeTone::Info => theme.info,
+        NoticeTone::Warning => theme.warning,
+    }
 }
 
 /// The status line's words (ADR 0010, amended by 0046's session): the
@@ -2519,11 +2529,14 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 mod tests {
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::layout::{Layout, display_width};
+    use ratatui::style::{Color, Style};
 
+    use crate::app::testing;
     use crate::app::threads::list::Row;
 
     use super::{
         ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
+        status_message_style,
     };
 
     #[test]
@@ -2557,6 +2570,22 @@ mod tests {
     fn fitting_a_long_label_only_copies_its_visible_prefix() {
         let text = "label".repeat(20_000);
         assert_eq!(fit_ellipsis(&text, 6), "label…");
+    }
+
+    #[test]
+    fn warning_status_messages_use_the_warning_face() -> anyhow::Result<()> {
+        let dir = testing::workspace("status-warning", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let mut theme = Theme::from_core(&core);
+        theme.info = Style::default().fg(Color::Blue);
+        theme.warning = Style::default().fg(Color::White).bg(Color::Red);
+
+        app.notice("ordinary");
+        assert_eq!(status_message_style(&app, &theme), theme.info);
+        app.warning("failed");
+        assert_eq!(status_message_style(&app, &theme), theme.warning);
+        Ok(())
     }
 
     /// ADR 0071: the cursor's message in the list fills its rows with

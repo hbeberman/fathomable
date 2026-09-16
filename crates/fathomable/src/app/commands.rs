@@ -82,7 +82,7 @@ impl App {
 
     /// The rows of the `:status` overlay: label, value.
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
-        let unavailable = || "unavailable (see the log)".to_owned();
+        let unavailable = || "unavailable (see log path above)".to_owned();
         let view = self.view();
         let (line, column) = view.source_position();
         let base = view
@@ -111,6 +111,12 @@ impl App {
                 format!("{} columns x {} rows", self.width, self.height),
             ),
             ("viewer".to_owned(), self.viewer_label()),
+            (
+                "log".to_owned(),
+                crate::logging::log_path(&self.dirs, self.record.id())
+                    .display()
+                    .to_string(),
+            ),
             (
                 "workspace".to_owned(),
                 self.workspace.root().display().to_string(),

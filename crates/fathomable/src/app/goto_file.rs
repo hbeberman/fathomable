@@ -172,7 +172,7 @@ mod tests {
         cursor_on(&mut app, 2, "src/)")?;
         app.act(Action::GotoFile);
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-        assert_eq!(app.message.as_deref(), Some("src is a directory"));
+        assert_eq!(app.message(), Some("src is a directory"));
 
         cursor_on(&mut app, 4, "example")?;
         assert_eq!(
@@ -183,7 +183,7 @@ mod tests {
 
         app.view_mut().line_end();
         app.act(Action::GotoFile);
-        assert_eq!(app.message.as_deref(), Some("no file nothing"));
+        assert_eq!(app.message(), Some("no file nothing"));
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
         Ok(())
     }

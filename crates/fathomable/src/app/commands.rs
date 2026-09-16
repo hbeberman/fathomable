@@ -103,6 +103,7 @@ impl App {
         } else {
             "none (the welcome screen)".to_owned()
         };
+        let thread_counts = self.review_counts(false);
         vec![
             ("document".to_owned(), document),
             (
@@ -144,7 +145,11 @@ impl App {
             ),
             ("changes".to_owned(), self.queue.len().to_string()),
             ("proposed".to_owned(), self.proposed_total().to_string()),
-            ("waiting".to_owned(), self.waiting_total().to_string()),
+            (
+                "thread count".to_owned(),
+                (thread_counts.active + thread_counts.proposed + thread_counts.resolved)
+                    .to_string(),
+            ),
         ]
     }
 }

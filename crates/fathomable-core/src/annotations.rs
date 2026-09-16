@@ -43,7 +43,7 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 3;
+pub(crate) const FORMAT_VERSION: u32 = 4;
 
 /// Maximum size of a persisted idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
@@ -432,7 +432,7 @@ pub struct Reply {
     created: u64,
     body: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    proposed_resolved: bool,
+    resolution_proposed: bool,
     /// When the user last edited it (ADR 0058); only a user's reply can be.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     edited: Option<u64>,
@@ -446,7 +446,7 @@ impl Reply {
             author,
             created,
             body: body.into(),
-            proposed_resolved: false,
+            resolution_proposed: false,
             edited: None,
         }
     }
@@ -454,7 +454,7 @@ impl Reply {
     /// Mark the reply as proposing that the thread be resolved.
     #[must_use]
     pub fn proposing_resolution(mut self) -> Self {
-        self.proposed_resolved = true;
+        self.resolution_proposed = true;
         self
     }
 
@@ -479,7 +479,7 @@ impl Reply {
     /// Whether the author proposed resolving the thread.
     #[must_use]
     pub fn proposes_resolution(&self) -> bool {
-        self.proposed_resolved
+        self.resolution_proposed
     }
 
     /// When the user last edited it, in Unix seconds (ADR 0058).
@@ -499,6 +499,115 @@ pub enum MessageTarget {
     Reply(usize),
 }
 
+/// A message projected uniformly from a thread's comment or replies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Message<'a> {
+    target: MessageTarget,
+    author: &'a Author,
+    body: &'a str,
+    created: u64,
+    modified: u64,
+    resolution_proposed: bool,
+}
+
+impl<'a> Message<'a> {
+    /// Stable identity within the thread.
+    #[must_use]
+    pub fn target(&self) -> MessageTarget {
+        self.target
+    }
+
+    /// Who wrote the message.
+    #[must_use]
+    pub fn author(&self) -> &'a Author {
+        self.author
+    }
+
+    /// Message text.
+    #[must_use]
+    pub fn body(&self) -> &'a str {
+        self.body
+    }
+
+    /// When the message was appended, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// Creation or latest edit time, whichever is later.
+    #[must_use]
+    pub fn modified(&self) -> u64 {
+        self.modified
+    }
+
+    /// Whether this message historically proposed resolution.
+    #[must_use]
+    pub fn resolution_proposed(&self) -> bool {
+        self.resolution_proposed
+    }
+}
+
+/// Messages in append order, including the opening comment.
+#[derive(Debug, Clone)]
+pub struct Messages<'a> {
+    thread: &'a Thread,
+    range: std::ops::Range<usize>,
+}
+
+impl<'a> Messages<'a> {
+    fn project(&self, index: usize) -> Message<'a> {
+        if index == 0 {
+            Message {
+                target: MessageTarget::Comment,
+                author: &self.thread.author,
+                body: &self.thread.comment,
+                created: self.thread.created,
+                modified: self
+                    .thread
+                    .comment_edited
+                    .map_or(self.thread.created, |edited| {
+                        edited.max(self.thread.created)
+                    }),
+                resolution_proposed: false,
+            }
+        } else {
+            let reply_index = index - 1;
+            let reply = &self.thread.replies[reply_index];
+            Message {
+                target: MessageTarget::Reply(reply_index),
+                author: &reply.author,
+                body: &reply.body,
+                created: reply.created,
+                modified: reply
+                    .edited
+                    .map_or(reply.created, |edited| edited.max(reply.created)),
+                resolution_proposed: reply.resolution_proposed,
+            }
+        }
+    }
+}
+
+impl<'a> Iterator for Messages<'a> {
+    type Item = Message<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.range.next().map(|index| self.project(index))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.range.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for Messages<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.range.next_back().map(|index| self.project(index))
+    }
+}
+
+impl ExactSizeIterator for Messages<'_> {}
+
 /// Whether a thread is open or resolved.
 ///
 /// Only the user resolves (ADR 0053); an agent's reply can propose it,
@@ -509,6 +618,87 @@ pub enum Status {
     /// Awaiting action.
     Open,
     /// Resolved by the user.
+    Resolved,
+}
+
+/// Presentation lifecycle of an annotation thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Lifecycle {
+    /// Unresolved without a current resolution proposal.
+    Active,
+    /// Unresolved with a current agent resolution proposal.
+    ResolutionProposed,
+    /// Resolved by the user or an authorized agent reply.
+    Resolved,
+}
+
+/// One-shot permission for the next agent reply to resolve a thread.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoResolve {
+    /// No agent reply may resolve the thread.
+    #[default]
+    Disabled,
+    /// The next agent reply may resolve and consumes this permission.
+    Enabled,
+}
+
+impl AutoResolve {
+    /// Whether the one-shot permission is enabled.
+    #[must_use]
+    pub fn is_enabled(self) -> bool {
+        self == Self::Enabled
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            Self::Disabled => Self::Enabled,
+            Self::Enabled => Self::Disabled,
+        }
+    }
+}
+
+/// Extra state applied atomically with a user submission.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserSubmit {
+    /// Submit without changing existing one-shot permission.
+    #[default]
+    Normal,
+    /// Submit and enable one-shot auto-resolve.
+    EnableAutoResolve,
+}
+
+/// Result of a user write that refuses to reopen a resolved thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UserWriteOutcome {
+    /// The message or edit was persisted.
+    Applied,
+    /// The thread was resolved while the draft was open; nothing was written.
+    ReopenRequired,
+}
+
+/// Whether an agent says its reply completes the work.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionIntent {
+    /// The reply does not request resolution.
+    #[default]
+    NotRequested,
+    /// The reply requests resolution.
+    Resolve,
+}
+
+/// Durable result of an agent reply's resolution intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionOutcome {
+    /// Resolution was not requested.
+    NotRequested,
+    /// Resolution was requested without one-shot permission.
+    ResolutionProposed,
+    /// Resolution was requested and authorized.
     Resolved,
 }
 
@@ -528,18 +718,19 @@ pub struct Thread {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     anchor: Option<Anchor>,
     created: u64,
-    updated: u64,
+    #[serde(rename = "updated")]
+    modified: u64,
     /// Who wrote the comment (ADR 0061); the user unless the record says
     /// otherwise, so it is written only for an agent.
     #[serde(default, skip_serializing_if = "Author::is_user")]
     author: Author,
     comment: String,
     replies: Vec<Reply>,
-    status: Status,
-    /// When the thread was last re-anchored to rewritten lines, until the
-    /// user replies, resolves, or reopens (ADR 0019).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    edited: Option<u64>,
+    lifecycle: Lifecycle,
+    auto_resolve: AutoResolve,
+    /// When the thread was last re-anchored to rewritten lines (ADR 0019).
+    #[serde(default, rename = "edited", skip_serializing_if = "Option::is_none")]
+    reanchored_at: Option<u64>,
     /// The `HEAD` commit the annotation was written against, when the
     /// workspace had one (ADR 0024); `None` reads as unscoped.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -625,11 +816,19 @@ impl Thread {
         self.created
     }
 
-    /// When the thread last changed (reply, resolve, reopen), in Unix
-    /// seconds; equals [`created`](Self::created) until then.
+    /// When the thread last changed, in Unix seconds.
+    ///
+    /// This includes messages, edits, lifecycle and auto-resolve changes,
+    /// relocation, moves, and commit rescoping.
+    #[must_use]
+    pub fn modified(&self) -> u64 {
+        self.modified
+    }
+
+    /// Compatibility name for [`Thread::modified`].
     #[must_use]
     pub fn updated(&self) -> u64 {
-        self.updated
+        self.modified()
     }
 
     /// The user's comment.
@@ -644,24 +843,52 @@ impl Thread {
         &self.replies
     }
 
+    /// Opening comment and replies in append order.
+    #[must_use]
+    pub fn messages(&self) -> Messages<'_> {
+        Messages {
+            thread: self,
+            range: 0..self.replies.len() + 1,
+        }
+    }
+
     /// Open or resolved.
     #[must_use]
     pub fn status(&self) -> Status {
-        self.status
+        match self.lifecycle {
+            Lifecycle::Active | Lifecycle::ResolutionProposed => Status::Open,
+            Lifecycle::Resolved => Status::Resolved,
+        }
     }
 
-    /// Whether the thread is open and its newest reply proposes resolving
-    /// it (ADR 0053), so the user's `o` is all it needs.
+    /// Current presentation lifecycle.
+    #[must_use]
+    pub fn lifecycle(&self) -> Lifecycle {
+        self.lifecycle
+    }
+
+    /// Current one-shot auto-resolve permission.
+    #[must_use]
+    pub fn auto_resolve(&self) -> AutoResolve {
+        self.auto_resolve
+    }
+
+    /// Whether the thread currently has a resolution proposal.
     #[must_use]
     pub fn proposes_resolution(&self) -> bool {
-        self.status == Status::Open && self.replies.last().is_some_and(Reply::proposes_resolution)
+        self.lifecycle == Lifecycle::ResolutionProposed
     }
 
-    /// When the lines under the thread were last rewritten, if the user
-    /// has not answered since.
+    /// When the thread was last explicitly re-anchored.
+    #[must_use]
+    pub fn reanchored_at(&self) -> Option<u64> {
+        self.reanchored_at
+    }
+
+    /// Compatibility name for [`Thread::reanchored_at`].
     #[must_use]
     pub fn edited(&self) -> Option<u64> {
-        self.edited
+        self.reanchored_at()
     }
 
     /// The `HEAD` commit the annotation was written against, if any.
@@ -716,24 +943,24 @@ impl Thread {
     /// user's reply, edit, reopen, or resolve ends the wait.
     #[must_use]
     pub fn awaits_user(&self) -> bool {
-        self.status == Status::Open && !self.last_act().0.is_user()
+        self.status() == Status::Open && !self.last_act().0.is_user()
     }
 
     /// Whether the thread is open and the user has the last word, so an
     /// agent's reply would be the next act.
     #[must_use]
     pub fn awaits_agent(&self) -> bool {
-        self.status == Status::Open && self.last_act().0.is_user()
+        self.status() == Status::Open && self.last_act().0.is_user()
     }
 
     /// The newest message: the last reply, or the comment when there
     /// are none, as its author and `created` time.
     #[must_use]
     pub fn newest(&self) -> (&Author, u64) {
-        self.replies
-            .last()
-            .map_or((&Author::User, self.created), |reply| {
-                (reply.author(), reply.created())
+        self.messages()
+            .next_back()
+            .map_or((&self.author, self.created), |message| {
+                (message.author(), message.created())
             })
     }
 
@@ -752,7 +979,7 @@ impl Thread {
         let (Some(anchor), Some(range)) = (&self.anchor, self.range) else {
             return Placement::File;
         };
-        match (anchor.locate_in(hashes, range), self.edited) {
+        match (anchor.locate_in(hashes, range), self.reanchored_at) {
             (Some(range), Some(_)) => Placement::Edited(range),
             (Some(range), None) => Placement::Anchored(range),
             (None, _) => Placement::Detached(range),
@@ -850,6 +1077,149 @@ impl<T> WriteOutcome<T> {
     }
 }
 
+/// Parameters for one atomic agent reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReplyCommand {
+    reply: Reply,
+    resolution: ResolutionIntent,
+    relocation: Option<LineRange>,
+    head: Option<String>,
+    idempotency: Option<Idempotency>,
+}
+
+impl AgentReplyCommand {
+    /// Create an ordinary agent reply.
+    #[must_use]
+    pub fn new(author: Author, created: u64, body: impl Into<String>) -> Self {
+        Self {
+            reply: Reply::new(author, created, body),
+            resolution: ResolutionIntent::NotRequested,
+            relocation: None,
+            head: None,
+            idempotency: None,
+        }
+    }
+
+    /// Request resolution as part of the reply.
+    #[must_use]
+    pub fn resolve(mut self) -> Self {
+        self.resolution = ResolutionIntent::Resolve;
+        self
+    }
+
+    /// Re-anchor the thread to `range` as part of the reply.
+    #[must_use]
+    pub fn relocate(mut self, range: LineRange) -> Self {
+        self.relocation = Some(range);
+        self
+    }
+
+    /// Supply the current checkout's `HEAD` for an authorized resolution.
+    #[must_use]
+    pub fn at_head(mut self, head: Option<String>) -> Self {
+        self.head = head;
+        self
+    }
+
+    /// Protect the reply with a caller-scoped idempotency key.
+    #[must_use]
+    pub fn idempotent(mut self, caller: impl Into<String>, key: impl Into<String>) -> Self {
+        self.idempotency = Some(Idempotency {
+            caller: caller.into(),
+            key: key.into(),
+        });
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Idempotency {
+    caller: String,
+    key: String,
+}
+
+/// Stable position after an append-log event.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ActivityCursor(u64);
+
+impl ActivityCursor {
+    /// One-based append ordinal, or zero before the first event.
+    #[must_use]
+    pub fn ordinal(self) -> u64 {
+        self.0
+    }
+}
+
+/// An agent-authored opening comment or reply observed in the append log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentActivity {
+    cursor: ActivityCursor,
+    thread: ThreadId,
+    target: MessageTarget,
+    author: Author,
+    path: PathBuf,
+    range: Option<LineRange>,
+    body: String,
+    created: u64,
+    resolution: ResolutionOutcome,
+}
+
+impl AgentActivity {
+    /// Cursor immediately after this event.
+    #[must_use]
+    pub fn cursor(&self) -> ActivityCursor {
+        self.cursor
+    }
+
+    /// Thread the message belongs to.
+    #[must_use]
+    pub fn thread(&self) -> &ThreadId {
+        &self.thread
+    }
+
+    /// Stable message identity within the thread.
+    #[must_use]
+    pub fn target(&self) -> MessageTarget {
+        self.target
+    }
+
+    /// Agent that authored the message.
+    #[must_use]
+    pub fn author(&self) -> &Author {
+        &self.author
+    }
+
+    /// Path the thread occupied when the message was appended.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Range the thread occupied when the message was appended.
+    #[must_use]
+    pub fn range(&self) -> Option<LineRange> {
+        self.range
+    }
+
+    /// Message text.
+    #[must_use]
+    pub fn body(&self) -> &str {
+        &self.body
+    }
+
+    /// Append time in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// Resolution result recorded by the containing operation.
+    #[must_use]
+    pub fn resolution(&self) -> ResolutionOutcome {
+        self.resolution
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum IdempotentOperation {
@@ -864,6 +1234,8 @@ struct IdempotencyReceipt {
     operation: IdempotentOperation,
     intent: String,
     target: ThreadId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolution: Option<ResolutionOutcome>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -930,6 +1302,7 @@ enum Event {
         /// for a comment on the file as a whole.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<Context>,
+        auto_resolve: AutoResolve,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt: Option<IdempotencyReceipt>,
     },
@@ -938,8 +1311,23 @@ enum Event {
         thread: ThreadId,
         #[serde(flatten)]
         reply: Reply,
+        submission: UserSubmit,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         relocation: Option<ReplyRelocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<IdempotencyReceipt>,
+    },
+    /// One agent reply and all of its lifecycle effects.
+    AgentReply {
+        v: u32,
+        thread: ThreadId,
+        #[serde(flatten)]
+        reply: Reply,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relocation: Option<ReplyRelocation>,
+        resolution: ResolutionOutcome,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt: Option<IdempotencyReceipt>,
     },
@@ -950,12 +1338,15 @@ enum Event {
         target: MessageTarget,
         body: String,
         created: u64,
+        submission: UserSubmit,
     },
-    /// The user resolved the thread; only the user can (ADR 0053).
+    /// The user resolved the thread and optionally pinned it to `HEAD`.
     Resolve {
         v: u32,
         thread: ThreadId,
         created: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        commit: Option<String>,
     },
     Reopen {
         v: u32,
@@ -995,6 +1386,13 @@ enum Event {
         commit: String,
         created: u64,
     },
+    /// The user changed one-shot auto-resolve permission.
+    SetAutoResolve {
+        v: u32,
+        thread: ThreadId,
+        value: AutoResolve,
+        created: u64,
+    },
 }
 
 impl Event {
@@ -1003,26 +1401,31 @@ impl Event {
         match self {
             Self::Annotate { .. } => None,
             Self::Reply { thread, .. }
+            | Self::AgentReply { thread, .. }
             | Self::Edit { thread, .. }
             | Self::Resolve { thread, .. }
             | Self::Reopen { thread, .. }
             | Self::Relocate { thread, .. }
             | Self::Move { thread, .. }
             | Self::Delete { thread, .. }
-            | Self::Rescope { thread, .. } => Some(thread),
+            | Self::Rescope { thread, .. }
+            | Self::SetAutoResolve { thread, .. } => Some(thread),
         }
     }
 
     fn receipt(&self) -> Option<&IdempotencyReceipt> {
         match self {
-            Self::Annotate { receipt, .. } | Self::Reply { receipt, .. } => receipt.as_ref(),
+            Self::Annotate { receipt, .. }
+            | Self::Reply { receipt, .. }
+            | Self::AgentReply { receipt, .. } => receipt.as_ref(),
             Self::Edit { .. }
             | Self::Resolve { .. }
             | Self::Reopen { .. }
             | Self::Relocate { .. }
             | Self::Move { .. }
             | Self::Delete { .. }
-            | Self::Rescope { .. } => None,
+            | Self::Rescope { .. }
+            | Self::SetAutoResolve { .. } => None,
         }
     }
 }
@@ -1036,6 +1439,8 @@ pub struct Store {
     /// (a headless reply) is skipped rather than rejected as unknown.
     deleted: HashSet<ThreadId>,
     receipts: HashMap<ReceiptKey, IdempotencyReceipt>,
+    cursor: ActivityCursor,
+    agent_activity: Vec<AgentActivity>,
 }
 
 impl Store {
@@ -1053,6 +1458,8 @@ impl Store {
             threads: Vec::new(),
             deleted: HashSet::new(),
             receipts: HashMap::new(),
+            cursor: ActivityCursor::default(),
+            agent_activity: Vec::new(),
         };
         let mut file = match OpenOptions::new().read(true).open(&store.path) {
             Ok(file) => file,
@@ -1079,6 +1486,8 @@ impl Store {
             threads: Vec::new(),
             deleted: HashSet::new(),
             receipts: HashMap::new(),
+            cursor: ActivityCursor::default(),
+            agent_activity: Vec::new(),
         };
         for (index, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
@@ -1091,13 +1500,16 @@ impl Store {
             }
             let event: Event = serde_json::from_str(line)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
+            let cursor = ActivityCursor(loaded.cursor.0 + 1);
             loaded
-                .apply(event)
+                .apply(event, cursor)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
         }
         self.threads = loaded.threads;
         self.deleted = loaded.deleted;
         self.receipts = loaded.receipts;
+        self.cursor = loaded.cursor;
+        self.agent_activity = loaded.agent_activity;
         Ok(())
     }
 
@@ -1132,6 +1544,22 @@ impl Store {
         &self.threads
     }
 
+    /// Cursor at the current end of the append log.
+    #[must_use]
+    pub fn activity_cursor(&self) -> ActivityCursor {
+        self.cursor
+    }
+
+    /// Agent-authored message events appended after `cursor`.
+    pub fn agent_activity_since(
+        &self,
+        cursor: ActivityCursor,
+    ) -> impl Iterator<Item = &AgentActivity> {
+        self.agent_activity
+            .iter()
+            .filter(move |activity| activity.cursor > cursor)
+    }
+
     /// The distinct commits threads were written against.
     pub fn commits(&self) -> impl Iterator<Item = &str> + '_ {
         let mut found: Vec<&str> = Vec::new();
@@ -1159,7 +1587,7 @@ impl Store {
         let mut found: Vec<&Path> = Vec::new();
         self.threads
             .iter()
-            .filter(|thread| thread.status == Status::Open)
+            .filter(|thread| thread.status() == Status::Open)
             .map(|thread| thread.path.as_path())
             .filter(move |path| {
                 let new = !found.contains(path);
@@ -1184,6 +1612,37 @@ impl Store {
     /// Returns [`StoreError`] when the range runs past the end of `text` or
     /// the file cannot be appended to.
     pub fn annotate(&mut self, draft: Draft, text: &str, now: u64) -> Result<ThreadId, StoreError> {
+        self.annotate_with_submission(draft, text, now, UserSubmit::Normal)
+    }
+
+    /// Start a user thread and atomically apply submission state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when `draft` is agent-authored, its range runs
+    /// past the text, or the store cannot be appended to.
+    pub fn annotate_user(
+        &mut self,
+        draft: Draft,
+        text: &str,
+        now: u64,
+        submission: UserSubmit,
+    ) -> Result<ThreadId, StoreError> {
+        if !draft.author.is_user() {
+            return Err(StoreError::message(
+                "a user annotation requires a user-authored draft",
+            ));
+        }
+        self.annotate_with_submission(draft, text, now, submission)
+    }
+
+    fn annotate_with_submission(
+        &mut self,
+        draft: Draft,
+        text: &str,
+        now: u64,
+        submission: UserSubmit,
+    ) -> Result<ThreadId, StoreError> {
         let (anchor, context, snippet) = capture_annotation(&draft, text)?;
         let mut file = self.lock_for_write()?;
         let id = ThreadId(format!(
@@ -1203,6 +1662,7 @@ impl Store {
             comment: draft.comment,
             commit: draft.commit,
             context,
+            auto_resolve: auto_resolve_for_new_thread(submission),
             receipt: None,
         };
         let result = self.append_locked(&mut file, event);
@@ -1291,6 +1751,7 @@ impl Store {
             operation: IdempotentOperation::Start,
             intent,
             target: id.clone(),
+            resolution: None,
         };
         let event = Event::Annotate {
             v: FORMAT_VERSION,
@@ -1304,6 +1765,7 @@ impl Store {
             comment: draft.comment,
             commit: draft.commit,
             context,
+            auto_resolve: AutoResolve::Disabled,
             receipt: Some(receipt),
         };
         self.append_locked(&mut file, event)?;
@@ -1317,14 +1779,215 @@ impl Store {
     ///
     /// Returns [`StoreError`] when the thread is unknown or the file cannot
     /// be appended to.
-    pub fn reply(&mut self, id: &ThreadId, reply: Reply) -> Result<(), StoreError> {
+    pub fn reply(&mut self, id: &ThreadId, mut reply: Reply) -> Result<(), StoreError> {
+        if reply.author().is_user() {
+            reply.resolution_proposed = false;
+            return self.commit(Event::Reply {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                reply,
+                submission: UserSubmit::Normal,
+                relocation: None,
+                receipt: None,
+            });
+        }
+        let resolution = if reply.proposes_resolution() {
+            ResolutionIntent::Resolve
+        } else {
+            ResolutionIntent::NotRequested
+        };
+        reply.resolution_proposed = false;
+        self.agent_reply_command(
+            id,
+            AgentReplyCommand {
+                reply,
+                resolution,
+                relocation: None,
+                head: None,
+                idempotency: None,
+            },
+            |_| Err(StoreError::message("an ordinary reply has no relocation")),
+        )
+        .map(|_| ())
+    }
+
+    /// Append a user reply and atomically apply submission state.
+    ///
+    /// A reply to a resolved thread reopens it in the same event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the store cannot
+    /// be appended to.
+    pub fn reply_user(
+        &mut self,
+        id: &ThreadId,
+        created: u64,
+        body: impl Into<String>,
+        submission: UserSubmit,
+    ) -> Result<(), StoreError> {
         self.commit(Event::Reply {
             v: FORMAT_VERSION,
             thread: id.clone(),
-            reply,
+            reply: Reply::new(Author::User, created, body),
+            submission,
             relocation: None,
             receipt: None,
         })
+    }
+
+    /// Append a user reply only while the thread remains unresolved.
+    ///
+    /// The lifecycle check and append happen under one store lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the store cannot
+    /// be read or appended to.
+    pub fn reply_user_if_unresolved(
+        &mut self,
+        id: &ThreadId,
+        created: u64,
+        body: impl Into<String>,
+        submission: UserSubmit,
+    ) -> Result<UserWriteOutcome, StoreError> {
+        let mut file = self.lock_for_write()?;
+        let Some(thread) = self.thread(id) else {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::UnknownThread(id.clone()),
+            });
+        };
+        let lifecycle = thread.lifecycle();
+        if lifecycle == Lifecycle::Resolved {
+            let _ = file.unlock();
+            return Ok(UserWriteOutcome::ReopenRequired);
+        }
+        let result = self.append_locked(
+            &mut file,
+            Event::Reply {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                reply: Reply::new(Author::User, created, body),
+                submission,
+                relocation: None,
+                receipt: None,
+            },
+        );
+        let _ = file.unlock();
+        result?;
+        Ok(UserWriteOutcome::Applied)
+    }
+
+    /// Apply one agent reply and all related state in one append event.
+    ///
+    /// Idempotent replay is recognized under the store lock before thread
+    /// lifecycle or relocation validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the author is not an agent, idempotency
+    /// input conflicts, the thread is missing or resolved, relocation is
+    /// invalid, source loading fails, or the append fails.
+    pub fn agent_reply<F>(
+        &mut self,
+        id: &ThreadId,
+        command: AgentReplyCommand,
+        load_text: F,
+    ) -> Result<WriteOutcome<ResolutionOutcome>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        self.agent_reply_command(id, command, load_text)
+    }
+
+    fn agent_reply_command<F>(
+        &mut self,
+        id: &ThreadId,
+        mut command: AgentReplyCommand,
+        load_text: F,
+    ) -> Result<WriteOutcome<ResolutionOutcome>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        if command.reply.author().is_user() {
+            return Err(StoreError::message(
+                "an agent reply requires an agent author",
+            ));
+        }
+        command.reply.resolution_proposed = false;
+        let lines = command.relocation.map(normalize_range);
+        let intent = agent_reply_intent(id, &command.reply, command.resolution, lines)?;
+        let receipt_key = if let Some(idempotency) = &command.idempotency {
+            validate_caller(&idempotency.caller, &idempotency.key)?;
+            Some(ReceiptKey {
+                key: idempotency.key.clone(),
+                caller: idempotency.caller.clone(),
+                operation: IdempotentOperation::Reply,
+            })
+        } else {
+            None
+        };
+
+        let mut file = self.lock_for_write()?;
+        if let Some(receipt_key) = &receipt_key
+            && let Some(receipt) = self.receipts.get(receipt_key)
+        {
+            ensure_intent(receipt, &intent)?;
+            if self.thread(&receipt.target).is_none() {
+                return Err(StoreError {
+                    kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+                });
+            }
+            let outcome = receipt.resolution.ok_or_else(|| {
+                StoreError::message("reply receipt is missing its resolution outcome")
+            })?;
+            let _ = file.unlock();
+            return Ok(WriteOutcome::from_replay(outcome));
+        }
+
+        let thread = self.thread(id).ok_or_else(|| StoreError {
+            kind: ErrorKind::UnknownThread(id.clone()),
+        })?;
+        if thread.status() != Status::Open {
+            return Err(StoreError::message(format!(
+                "{id} is resolved; only the user can reopen it"
+            )));
+        }
+        let relocation =
+            capture_reply_relocation(thread, lines, command.reply.created(), load_text)?;
+        let outcome = match command.resolution {
+            ResolutionIntent::NotRequested => ResolutionOutcome::NotRequested,
+            ResolutionIntent::Resolve if thread.auto_resolve().is_enabled() => {
+                ResolutionOutcome::Resolved
+            }
+            ResolutionIntent::Resolve => ResolutionOutcome::ResolutionProposed,
+        };
+        command.reply.resolution_proposed = outcome == ResolutionOutcome::ResolutionProposed;
+        let receipt = command.idempotency.map(|idempotency| IdempotencyReceipt {
+            key: idempotency.key,
+            caller: idempotency.caller,
+            operation: IdempotentOperation::Reply,
+            intent,
+            target: id.clone(),
+            resolution: Some(outcome),
+        });
+        self.append_locked(
+            &mut file,
+            Event::AgentReply {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                reply: command.reply,
+                relocation,
+                resolution: outcome,
+                commit: (outcome == ResolutionOutcome::Resolved)
+                    .then_some(command.head)
+                    .flatten(),
+                receipt,
+            },
+        )?;
+        let _ = file.unlock();
+        Ok(WriteOutcome::applied(outcome))
     }
 
     /// Append a reply and optional relocation under one durable receipt.
@@ -1374,6 +2037,30 @@ impl Store {
     where
         F: FnOnce(&Path) -> Result<String, StoreError>,
     {
+        if !reply.author().is_user() {
+            let resolution = if reply.proposes_resolution() {
+                ResolutionIntent::Resolve
+            } else {
+                ResolutionIntent::NotRequested
+            };
+            let command = AgentReplyCommand {
+                reply,
+                resolution,
+                relocation: lines,
+                head: None,
+                idempotency: Some(Idempotency {
+                    caller: caller.to_owned(),
+                    key: key.to_owned(),
+                }),
+            };
+            let outcome = self.agent_reply_command(id, command, load_text)?;
+            return Ok(if outcome.replayed() {
+                WriteOutcome::from_replay(())
+            } else {
+                WriteOutcome::applied(())
+            });
+        }
+
         validate_caller(caller, key)?;
         let lines = lines.map(normalize_range);
         let intent = reply_intent(id, &reply, lines)?;
@@ -1397,48 +2084,14 @@ impl Store {
         let thread = self.thread(id).ok_or_else(|| StoreError {
             kind: ErrorKind::UnknownThread(id.clone()),
         })?;
-        if thread.status() != Status::Open {
-            return Err(StoreError::message(format!(
-                "{id} is resolved; only the user can reopen it"
-            )));
-        }
-        let relocation = if let Some(range) = lines {
-            if thread.is_on_file() {
-                return Err(StoreError {
-                    kind: ErrorKind::OnFile(id.clone()),
-                });
-            }
-            let text = load_text(thread.path())?;
-            if thread.range() == Some(range)
-                && matches!(
-                    thread.locate(&text),
-                    Placement::Anchored(current) | Placement::Edited(current) if current == range
-                )
-            {
-                None
-            } else {
-                let anchor = Anchor::capture(&text, range).ok_or(StoreError {
-                    kind: ErrorKind::BadRange(range),
-                })?;
-                let context = Context::capture(&text, range).ok_or(StoreError {
-                    kind: ErrorKind::BadRange(range),
-                })?;
-                Some(ReplyRelocation {
-                    range,
-                    anchor,
-                    created: reply.created(),
-                    context,
-                })
-            }
-        } else {
-            None
-        };
+        let relocation = capture_reply_relocation(thread, lines, reply.created(), load_text)?;
         let receipt = IdempotencyReceipt {
             key: key.to_owned(),
             caller: caller.to_owned(),
             operation: IdempotentOperation::Reply,
             intent,
             target: id.clone(),
+            resolution: None,
         };
         self.append_locked(
             &mut file,
@@ -1446,6 +2099,7 @@ impl Store {
                 v: FORMAT_VERSION,
                 thread: id.clone(),
                 reply,
+                submission: UserSubmit::Normal,
                 relocation,
                 receipt: Some(receipt),
             },
@@ -1559,19 +2213,81 @@ impl Store {
         body: impl Into<String>,
         now: u64,
     ) -> Result<(), StoreError> {
+        self.edit_user(id, target, body, now, UserSubmit::Normal)
+    }
+
+    /// Edit a user message and atomically apply submission state.
+    ///
+    /// Editing a resolved thread reopens it in the same event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread or message is unknown, the
+    /// message is agent-authored, or the append fails.
+    pub fn edit_user(
+        &mut self,
+        id: &ThreadId,
+        target: MessageTarget,
+        body: impl Into<String>,
+        now: u64,
+        submission: UserSubmit,
+    ) -> Result<(), StoreError> {
         self.commit(Event::Edit {
             v: FORMAT_VERSION,
             thread: id.clone(),
             target,
             body: body.into(),
             created: now,
+            submission,
         })
     }
 
+    /// Edit a user message only while the thread remains unresolved.
+    ///
+    /// The lifecycle check and append happen under one store lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread or message is unknown, the
+    /// message is agent-authored, or the store cannot be read or appended to.
+    pub fn edit_user_if_unresolved(
+        &mut self,
+        id: &ThreadId,
+        target: MessageTarget,
+        body: impl Into<String>,
+        now: u64,
+        submission: UserSubmit,
+    ) -> Result<UserWriteOutcome, StoreError> {
+        let mut file = self.lock_for_write()?;
+        let Some(thread) = self.thread(id) else {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::UnknownThread(id.clone()),
+            });
+        };
+        let lifecycle = thread.lifecycle();
+        if lifecycle == Lifecycle::Resolved {
+            let _ = file.unlock();
+            return Ok(UserWriteOutcome::ReopenRequired);
+        }
+        let result = self.append_locked(
+            &mut file,
+            Event::Edit {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                target,
+                body: body.into(),
+                created: now,
+                submission,
+            },
+        );
+        let _ = file.unlock();
+        result?;
+        Ok(UserWriteOutcome::Applied)
+    }
+
     /// Resolve the thread `id`, as the user, fixing it to `head`, the
-    /// workspace's `HEAD` commit (ADR 0072): when the thread is at another
-    /// commit, or at none, a rescope to `head` is appended first, so the
-    /// thread shows only while that commit is `HEAD`. `None` outside git.
+    /// workspace's `HEAD` commit (ADR 0072), in the same append event.
     ///
     /// # Errors
     ///
@@ -1583,16 +2299,11 @@ impl Store {
         head: Option<&str>,
         now: u64,
     ) -> Result<(), StoreError> {
-        let at = self.thread(id).and_then(Thread::commit);
-        if let Some(head) = head
-            && at != Some(head)
-        {
-            self.rescope(id, head, now)?;
-        }
         self.commit(Event::Resolve {
             v: FORMAT_VERSION,
             thread: id.clone(),
             created: now,
+            commit: head.map(str::to_owned),
         })
     }
 
@@ -1611,9 +2322,61 @@ impl Store {
         })
     }
 
+    /// Set one-shot auto-resolve permission on an unresolved thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is missing, resolved, or the
+    /// append fails.
+    pub fn set_auto_resolve(
+        &mut self,
+        id: &ThreadId,
+        value: AutoResolve,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        self.commit(Event::SetAutoResolve {
+            v: FORMAT_VERSION,
+            thread: id.clone(),
+            value,
+            created: now,
+        })
+    }
+
+    /// Toggle one-shot auto-resolve permission under the write lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is missing, resolved, or the
+    /// append fails.
+    pub fn toggle_auto_resolve(
+        &mut self,
+        id: &ThreadId,
+        now: u64,
+    ) -> Result<AutoResolve, StoreError> {
+        let mut file = self.lock_for_write()?;
+        let value = self
+            .thread(id)
+            .ok_or_else(|| StoreError {
+                kind: ErrorKind::UnknownThread(id.clone()),
+            })?
+            .auto_resolve()
+            .toggled();
+        let result = self.append_locked(
+            &mut file,
+            Event::SetAutoResolve {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                value,
+                created: now,
+            },
+        );
+        let _ = file.unlock();
+        result?;
+        Ok(value)
+    }
+
     /// Move the thread `id` onto `range` of `text`, the lines that replaced
-    /// the ones it was written on (ADR 0019). The thread reads as edited
-    /// until the user replies, resolves, or reopens it.
+    /// the ones it was written on (ADR 0019).
     ///
     /// # Errors
     ///
@@ -1699,6 +2462,15 @@ impl Store {
     /// took it, so what the viewer shows is what the next reload reads.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
         let mut file = self.lock_for_write()?;
+        if let Some(id) = event.thread_id()
+            && self.thread(id).is_none()
+        {
+            let id = id.clone();
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::UnknownThread(id),
+            });
+        }
         let result = self.append_locked(&mut file, event);
         let _ = file.unlock();
         result
@@ -1730,9 +2502,18 @@ impl Store {
             self.threads.clone(),
             self.deleted.clone(),
             self.receipts.clone(),
+            self.cursor,
+            self.agent_activity.clone(),
         );
-        if let Err(error) = self.apply(event) {
-            (self.threads, self.deleted, self.receipts) = before;
+        let cursor = ActivityCursor(self.cursor.0 + 1);
+        if let Err(error) = self.apply(event, cursor) {
+            (
+                self.threads,
+                self.deleted,
+                self.receipts,
+                self.cursor,
+                self.agent_activity,
+            ) = before;
             return Err(error);
         }
         line.push('\n');
@@ -1743,18 +2524,25 @@ impl Store {
             .write_all(line.as_bytes())
             .and_then(|()| file.sync_all())
         {
-            (self.threads, self.deleted, self.receipts) = before;
+            (
+                self.threads,
+                self.deleted,
+                self.receipts,
+                self.cursor,
+                self.agent_activity,
+            ) = before;
             return Err(StoreError::io(&self.path, error));
         }
         Ok(())
     }
 
     #[expect(clippy::too_many_lines, reason = "one arm per event kind")]
-    fn apply(&mut self, event: Event) -> Result<(), StoreError> {
+    fn apply(&mut self, event: Event, cursor: ActivityCursor) -> Result<(), StoreError> {
         if let Some(receipt) = event.receipt() {
             let key = receipt_key(receipt);
             if let Some(existing) = self.receipts.get(&key) {
                 if existing == receipt {
+                    self.cursor = cursor;
                     return Ok(());
                 }
                 return Err(StoreError {
@@ -1765,6 +2553,7 @@ impl Store {
         if let Some(id) = event.thread_id()
             && self.deleted.contains(id)
         {
+            self.cursor = cursor;
             return Ok(());
         }
         match event {
@@ -1779,6 +2568,7 @@ impl Store {
                 comment,
                 commit,
                 context,
+                auto_resolve,
                 receipt,
                 ..
             } => {
@@ -1787,6 +2577,17 @@ impl Store {
                         kind: ErrorKind::AnnotationShape,
                     });
                 }
+                let activity = (!author.is_user()).then(|| AgentActivity {
+                    cursor,
+                    thread: id.clone(),
+                    target: MessageTarget::Comment,
+                    author: author.clone(),
+                    path: path.clone(),
+                    range,
+                    body: comment.clone(),
+                    created,
+                    resolution: ResolutionOutcome::NotRequested,
+                });
                 self.threads.push(Thread {
                     id,
                     path,
@@ -1794,17 +2595,21 @@ impl Store {
                     snippet,
                     anchor,
                     created,
-                    updated: created,
+                    modified: created,
                     author,
                     comment,
                     replies: Vec::new(),
-                    status: Status::Open,
-                    edited: None,
+                    lifecycle: Lifecycle::Active,
+                    auto_resolve,
+                    reanchored_at: None,
                     commit,
                     comment_edited: None,
                     reopened: None,
                     context,
                 });
+                if let Some(activity) = activity {
+                    self.agent_activity.push(activity);
+                }
                 if let Some(receipt) = receipt {
                     self.receipts.insert(receipt_key(&receipt), receipt);
                 }
@@ -1812,24 +2617,105 @@ impl Store {
             Event::Reply {
                 thread,
                 reply,
+                submission,
                 relocation,
                 receipt,
                 ..
             } => {
+                let mut activity = None;
                 {
                     let thread = self.thread_mut(&thread)?;
+                    let reply_index = thread.replies.len();
                     if let Some(relocation) = relocation {
                         thread.range = Some(relocation.range);
                         thread.anchor = Some(relocation.anchor);
-                        thread.edited = Some(relocation.created);
+                        thread.reanchored_at = Some(relocation.created);
                         thread.context = Some(relocation.context);
                     }
-                    thread.updated = thread.updated.max(reply.created);
+                    thread.modified = thread.modified.max(reply.created);
                     if reply.author.is_user() {
-                        thread.edited = None;
+                        if thread.lifecycle == Lifecycle::Resolved {
+                            thread.reopened = Some(reply.created);
+                        }
+                        thread.lifecycle = Lifecycle::Active;
+                        apply_user_submission(thread, submission);
+                    } else {
+                        thread.auto_resolve = AutoResolve::Disabled;
+                        thread.lifecycle = if reply.resolution_proposed {
+                            Lifecycle::ResolutionProposed
+                        } else {
+                            Lifecycle::Active
+                        };
+                        activity = Some(AgentActivity {
+                            cursor,
+                            thread: thread.id.clone(),
+                            target: MessageTarget::Reply(reply_index),
+                            author: reply.author.clone(),
+                            path: thread.path.clone(),
+                            range: thread.range,
+                            body: reply.body.clone(),
+                            created: reply.created,
+                            resolution: if reply.resolution_proposed {
+                                ResolutionOutcome::ResolutionProposed
+                            } else {
+                                ResolutionOutcome::NotRequested
+                            },
+                        });
                     }
                     thread.replies.push(reply);
                 };
+                if let Some(activity) = activity {
+                    self.agent_activity.push(activity);
+                }
+                if let Some(receipt) = receipt {
+                    self.receipts.insert(receipt_key(&receipt), receipt);
+                }
+            }
+            Event::AgentReply {
+                thread,
+                reply,
+                relocation,
+                resolution,
+                commit,
+                receipt,
+                ..
+            } => {
+                let activity;
+                {
+                    let thread = self.thread_mut(&thread)?;
+                    let reply_index = thread.replies.len();
+                    if let Some(relocation) = relocation {
+                        thread.range = Some(relocation.range);
+                        thread.anchor = Some(relocation.anchor);
+                        thread.reanchored_at = Some(relocation.created);
+                        thread.context = Some(relocation.context);
+                    }
+                    thread.modified = thread.modified.max(reply.created);
+                    thread.auto_resolve = AutoResolve::Disabled;
+                    thread.lifecycle = match resolution {
+                        ResolutionOutcome::NotRequested => Lifecycle::Active,
+                        ResolutionOutcome::ResolutionProposed => Lifecycle::ResolutionProposed,
+                        ResolutionOutcome::Resolved => Lifecycle::Resolved,
+                    };
+                    if resolution == ResolutionOutcome::Resolved
+                        && let Some(commit) = commit
+                    {
+                        thread.commit = Some(commit);
+                    }
+                    activity = AgentActivity {
+                        cursor,
+                        thread: thread.id.clone(),
+                        target: MessageTarget::Reply(reply_index),
+                        author: reply.author.clone(),
+                        path: thread.path.clone(),
+                        range: thread.range,
+                        body: reply.body.clone(),
+                        created: reply.created,
+                        resolution,
+                    };
+                    thread.replies.push(reply);
+                };
+                self.agent_activity.push(activity);
                 if let Some(receipt) = receipt {
                     self.receipts.insert(receipt_key(&receipt), receipt);
                 }
@@ -1839,6 +2725,7 @@ impl Store {
                 target,
                 body,
                 created,
+                submission,
                 ..
             } => {
                 let id = thread.clone();
@@ -1861,23 +2748,34 @@ impl Store {
                         reply.edited = Some(created);
                     }
                 }
-                thread.updated = thread.updated.max(created);
+                thread.modified = thread.modified.max(created);
+                if thread.lifecycle == Lifecycle::Resolved {
+                    thread.lifecycle = Lifecycle::Active;
+                    thread.reopened = Some(created);
+                }
+                apply_user_submission(thread, submission);
             }
             Event::Resolve {
-                thread, created, ..
+                thread,
+                created,
+                commit,
+                ..
             } => {
                 let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(created);
-                thread.edited = None;
-                thread.status = Status::Resolved;
+                thread.modified = thread.modified.max(created);
+                thread.lifecycle = Lifecycle::Resolved;
+                thread.auto_resolve = AutoResolve::Disabled;
+                if let Some(commit) = commit {
+                    thread.commit = Some(commit);
+                }
             }
             Event::Reopen {
                 thread, created, ..
             } => {
                 let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(created);
-                thread.status = Status::Open;
-                thread.edited = None;
+                thread.modified = thread.modified.max(created);
+                thread.lifecycle = Lifecycle::Active;
+                thread.auto_resolve = AutoResolve::Disabled;
                 thread.reopened = Some(created);
             }
             Event::Relocate {
@@ -1889,10 +2787,10 @@ impl Store {
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(created);
+                thread.modified = thread.modified.max(created);
                 thread.range = Some(range);
                 thread.anchor = Some(anchor);
-                thread.edited = Some(created);
+                thread.reanchored_at = Some(created);
                 thread.context = Some(context);
             }
             Event::Move {
@@ -1902,7 +2800,7 @@ impl Store {
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(created);
+                thread.modified = thread.modified.max(created);
                 thread.path = path;
             }
             Event::Delete { thread, .. } => {
@@ -1917,10 +2815,27 @@ impl Store {
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(created);
+                thread.modified = thread.modified.max(created);
                 thread.commit = Some(commit);
             }
+            Event::SetAutoResolve {
+                thread,
+                value,
+                created,
+                ..
+            } => {
+                let thread = self.thread_mut(&thread)?;
+                if thread.lifecycle == Lifecycle::Resolved {
+                    return Err(StoreError::message(format!(
+                        "{} is resolved; reopen it before changing auto-resolve",
+                        thread.id
+                    )));
+                }
+                thread.modified = thread.modified.max(created);
+                thread.auto_resolve = value;
+            }
         }
+        self.cursor = cursor;
         Ok(())
     }
 
@@ -1997,6 +2912,19 @@ fn normalize_range(range: LineRange) -> LineRange {
     LineRange::new(range.start(), range.end())
 }
 
+fn auto_resolve_for_new_thread(submission: UserSubmit) -> AutoResolve {
+    match submission {
+        UserSubmit::Normal => AutoResolve::Disabled,
+        UserSubmit::EnableAutoResolve => AutoResolve::Enabled,
+    }
+}
+
+fn apply_user_submission(thread: &mut Thread, submission: UserSubmit) {
+    if submission == UserSubmit::EnableAutoResolve {
+        thread.auto_resolve = AutoResolve::Enabled;
+    }
+}
+
 fn normalize_repo_path(path: &Path) -> Result<PathBuf, StoreError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
@@ -2052,6 +2980,64 @@ fn reply_intent(
     serde_json::to_string(&intent).map_err(|error| StoreError {
         kind: ErrorKind::Parse(0, error.to_string()),
     })
+}
+
+fn agent_reply_intent(
+    id: &ThreadId,
+    reply: &Reply,
+    resolution: ResolutionIntent,
+    lines: Option<LineRange>,
+) -> Result<String, StoreError> {
+    let intent = ReplyIntent {
+        operation: IdempotentOperation::Reply,
+        thread: id,
+        body: reply.body(),
+        resolve: resolution == ResolutionIntent::Resolve,
+        lines,
+    };
+    serde_json::to_string(&intent).map_err(|error| StoreError {
+        kind: ErrorKind::Parse(0, error.to_string()),
+    })
+}
+
+fn capture_reply_relocation<F>(
+    thread: &Thread,
+    lines: Option<LineRange>,
+    created: u64,
+    load_text: F,
+) -> Result<Option<ReplyRelocation>, StoreError>
+where
+    F: FnOnce(&Path) -> Result<String, StoreError>,
+{
+    let Some(range) = lines else {
+        return Ok(None);
+    };
+    if thread.is_on_file() {
+        return Err(StoreError {
+            kind: ErrorKind::OnFile(thread.id.clone()),
+        });
+    }
+    let text = load_text(thread.path())?;
+    if thread.range() == Some(range)
+        && matches!(
+            thread.locate(&text),
+            Placement::Anchored(current) | Placement::Edited(current) if current == range
+        )
+    {
+        return Ok(None);
+    }
+    let anchor = Anchor::capture(&text, range).ok_or(StoreError {
+        kind: ErrorKind::BadRange(range),
+    })?;
+    let context = Context::capture(&text, range).ok_or(StoreError {
+        kind: ErrorKind::BadRange(range),
+    })?;
+    Ok(Some(ReplyRelocation {
+        range,
+        anchor,
+        created,
+        context,
+    }))
 }
 
 fn capture_annotation(

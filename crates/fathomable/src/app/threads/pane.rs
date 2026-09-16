@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
-use crate::app::threads::author_label;
+use crate::app::threads::summary::ThreadSummary;
 use crate::app::threads::words::Words;
 use crate::app::threads::{Mark, ThreadState};
 use crate::app::{App, Focus};
@@ -58,30 +58,21 @@ pub(crate) struct PaneEntry {
     /// `None` for a thread on the file as a whole (ADR 0063).
     range: Option<LineRange>,
     words: Words,
-    /// Who wrote the newest message, as `name (role)`.
-    author: String,
-    /// The same author's name without the optional role.
-    author_name: String,
-    /// The first line of the newest message.
-    summary: String,
-    replies: usize,
-    /// When the thread last changed.
-    updated: u64,
     /// The thread is on the current document.
     current: bool,
     /// The thread cursor's thread.
     selected: bool,
     /// The branch of the worktree showing it (ADR 0070), or the commit
     /// a past thread was resolved at (ADR 0072).
-    note: Option<String>,
+    summary_facts: ThreadSummary,
 }
 
 impl PaneEntry {
     /// After the author: the branch when another worktree shows the
     /// thread (ADR 0070), the commit when it is resolved at an earlier
     /// one of this branch (ADR 0072).
-    pub(crate) fn note(&self) -> Option<&str> {
-        self.note.as_deref()
+    pub(crate) fn summary_facts(&self) -> &ThreadSummary {
+        &self.summary_facts
     }
 
     #[cfg(test)]
@@ -98,24 +89,29 @@ impl PaneEntry {
         self.words
     }
 
+    #[cfg(test)]
     pub(crate) fn author(&self) -> &str {
-        &self.author
+        self.summary_facts.author()
     }
 
+    #[cfg(test)]
     pub(crate) fn author_name(&self) -> &str {
-        &self.author_name
+        self.summary_facts.author()
     }
 
+    #[cfg(test)]
     pub(crate) fn summary(&self) -> &str {
-        &self.summary
+        self.summary_facts.preview()
     }
 
+    #[cfg(test)]
     pub(crate) fn replies(&self) -> usize {
-        self.replies
+        self.summary_facts.replies()
     }
 
+    #[cfg(test)]
     pub(crate) fn updated(&self) -> u64 {
-        self.updated
+        self.summary_facts.modified()
     }
 
     pub(crate) fn current(&self) -> bool {
@@ -130,9 +126,9 @@ impl PaneEntry {
     /// on the file as a whole (ADR 0063). The file itself is on the
     /// group row (ADR 0066).
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn place(&self) -> String {
-        self.range
-            .map_or_else(|| "file".to_owned(), |range| format!("L{range}"))
+        self.summary_facts.location().to_owned()
     }
 }
 
@@ -263,33 +259,15 @@ impl App {
             }
             if !folded {
                 for entry in &entries[index..group_end] {
-                    let Some(thread) = self.thread(entry.id()) else {
-                        continue;
-                    };
-                    let (author, body) = thread
-                        .replies()
-                        .last()
-                        .map_or((thread.author(), thread.comment()), |reply| {
-                            (reply.author(), reply.body())
-                        });
+                    let summary_facts = entry.summary().clone();
                     out.push(PaneRow::Thread(PaneEntry {
-                        note: entry.note().map(str::to_owned),
                         id: entry.id().clone(),
                         path: path.clone(),
                         range: entry.range(),
                         words: entry.words(),
-                        author: author_label(author, self.user_name()),
-                        author_name: if author.is_user() {
-                            self.user_name()
-                        } else {
-                            author.name()
-                        }
-                        .to_owned(),
-                        summary: body.lines().next().unwrap_or("").to_owned(),
-                        replies: thread.replies().len(),
-                        updated: thread.updated(),
                         current: path == self.current_path(),
                         selected: cursor.as_ref() == Some(entry.id()),
+                        summary_facts,
                     }));
                 }
             }
@@ -400,14 +378,6 @@ impl App {
     pub(crate) fn focus_threads_pane(&mut self) {
         self.show_threads_pane();
         self.focus = Focus::ThreadsPane;
-    }
-
-    /// `t` in the files pane, or its menu's `threads` (ADR 0066): the
-    /// pane in file scope on the highlighted file, with the keys.
-    pub(crate) fn threads_on_file(&mut self) {
-        self.show_highlight();
-        self.sidebar.scope = PaneScope::File;
-        self.focus_threads_pane();
     }
 
     /// Esc in the pane: the keys go back to the text; the pane stays.

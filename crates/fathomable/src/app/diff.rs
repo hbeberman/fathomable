@@ -796,7 +796,7 @@ mod tests {
         );
         press(&mut app, " dd");
 
-        press(&mut app, "t");
+        press(&mut app, " dt");
         assert!(
             matches!(app.popup(), Some(Popup::Picker(p)) if p.kind() == PickerKind::DiffTarget)
         );

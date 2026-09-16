@@ -7,8 +7,10 @@ use fathomable_testing::TempDir;
 use crate::reach::Reach;
 
 use super::{
-    Anchor, Author, Draft, Event, FORMAT_VERSION, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES,
-    MessageTarget, Placement, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
+    AgentReplyCommand, Anchor, Author, AutoResolve, Draft, Event, FORMAT_VERSION, Lifecycle,
+    LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MessageTarget, Placement, Reply,
+    ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit, UserWriteOutcome,
+    line_hash,
 };
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -88,13 +90,13 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
         1,
     )?;
     let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
-    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":1"#);
+    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":3"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
     let error = Store::open(&file.0).err().map(|e| e.to_string());
     assert_eq!(
         error,
         Some(format!(
-            "threads.jsonl line 1: format version 1, this build writes {FORMAT_VERSION}; delete {} to start over",
+            "threads.jsonl line 1: format version 3, this build writes {FORMAT_VERSION}; delete {} to start over",
             file.0.display()
         ))
     );
@@ -340,6 +342,7 @@ fn a_deleted_thread_is_gone_and_later_events_on_it_are_ignored() -> Result<(), S
         v: FORMAT_VERSION,
         thread: gone.clone(),
         reply: Reply::new(Author::agent("claude"), 14, "late"),
+        submission: UserSubmit::Normal,
         relocation: None,
         receipt: None,
     })
@@ -368,7 +371,7 @@ fn anchor_follows_moved_lines_and_detaches_when_gone() -> Result<(), String> {
 }
 
 #[test]
-fn relocate_moves_a_thread_and_the_user_acknowledges_the_edit() -> Result<(), StoreError> {
+fn relocate_moves_a_thread_and_keeps_the_reanchor_fact() -> Result<(), StoreError> {
     let file = TempFile::new("relocate")?;
     let mut store = Store::open(&file.0)?;
     let id = store.annotate(
@@ -398,15 +401,15 @@ fn relocate_moves_a_thread_and_the_user_acknowledges_the_edit() -> Result<(), St
     );
     assert!(thread.locate(edited).is_edited());
     assert!(thread.locate(TEXT).is_detached());
-    // An agent's reply leaves the edit flag; the user's clears it.
+    // Replies preserve the factual re-anchor time.
     store.reply(&id, Reply::new(Author::agent("claude"), 111, "fixed"))?;
     assert!(store.thread(&id).is_some_and(|t| t.edited().is_some()));
     store.reply(&id, Reply::new(Author::User, 112, "ok"))?;
-    assert!(store.thread(&id).is_some_and(|t| t.edited().is_none()));
+    assert_eq!(store.thread(&id).and_then(Thread::reanchored_at), Some(110));
     assert!(
         store
             .thread(&id)
-            .is_some_and(|t| !t.locate(edited).is_edited())
+            .is_some_and(|t| t.locate(edited).is_edited())
     );
     // A bad range is an error and writes nothing.
     assert!(
@@ -706,7 +709,7 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
     assert_eq!(thread.status(), Status::Open);
     assert_eq!(thread.replies().len(), 1);
     assert!(thread.replies()[0].proposes_resolution());
-    assert!(thread.proposes_resolution());
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
     assert_eq!(thread.replies()[0].author().to_string(), "claude");
     assert_eq!(thread.updated(), 105);
     assert_eq!(
@@ -824,9 +827,8 @@ fn resolving_fixes_the_thread_to_head() -> Result<(), Box<dyn std::error::Error>
     store.resolve(&unscoped, Some("head"), 22)?;
     store.resolve(&no_git, None, 23)?;
     let lines = std::fs::read_to_string(&file.0)?.lines().count();
-    // Four comments, four resolves, and a rescope for the two that
-    // were not at `head`.
-    assert_eq!(lines, 10);
+    // Four comments and four atomic resolve-plus-pin events.
+    assert_eq!(lines, 8);
 
     let again = Store::open(&file.0)?;
     let commit_of = |id: &ThreadId| again.thread(id).and_then(Thread::commit);
@@ -1322,5 +1324,646 @@ fn thread_locate_reports_placement() -> Result<(), StoreError> {
     let placement = thread.locate("nothing here\n");
     assert!(placement.is_detached());
     assert_eq!(placement.range(), Some(LineRange::new(5, 5)));
+    Ok(())
+}
+
+#[test]
+fn messages_project_opening_comment_and_replies_uniformly() -> Result<(), StoreError> {
+    let file = TempFile::new("messages")?;
+    let mut store = Store::open(&file.0)?;
+    let bot = Author::agent("bot");
+    let id = store.annotate(
+        Draft::on_file(bot.clone(), Path::new("a.md"), "opening"),
+        TEXT,
+        10,
+    )?;
+    store.reply_user(&id, 11, "answer", UserSubmit::Normal)?;
+    store.edit(&id, MessageTarget::Reply(0), "edited answer", 12)?;
+
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    let messages = thread.messages().collect::<Vec<_>>();
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].target(), MessageTarget::Comment);
+    assert_eq!(messages[0].author(), &bot);
+    assert_eq!(messages[0].body(), "opening");
+    assert_eq!((messages[0].created(), messages[0].modified()), (10, 10));
+    assert!(!messages[0].resolution_proposed());
+    assert_eq!(messages[1].target(), MessageTarget::Reply(0));
+    assert_eq!(messages[1].body(), "edited answer");
+    assert_eq!((messages[1].created(), messages[1].modified()), (11, 12));
+    assert_eq!(thread.newest(), (&Author::User, 11));
+    Ok(())
+}
+
+#[test]
+fn historical_proposal_does_not_resurrect_after_reopen() -> Result<(), StoreError> {
+    let file = TempFile::new("proposal-reopen")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let proposed = store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 2, "done").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert_eq!(proposed.into_value(), ResolutionOutcome::ResolutionProposed);
+    store.resolve(&id, Some("head"), 3)?;
+    store.reopen(&id, 4)?;
+
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert!(thread.replies()[0].proposes_resolution());
+    assert!(
+        thread
+            .messages()
+            .nth(1)
+            .is_some_and(|m| m.resolution_proposed())
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinary_message_supersedes_current_proposal() -> Result<(), StoreError> {
+    let file = TempFile::new("proposal-superseded")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 2, "done").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 3, "one more thing"),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert_eq!(
+        store.thread(&id).map(Thread::lifecycle),
+        Some(Lifecycle::Active)
+    );
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 4, "now done").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.reply_user(&id, 5, "not yet", UserSubmit::Normal)?;
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert!(thread.replies()[0].proposes_resolution());
+    Ok(())
+}
+
+#[test]
+fn editing_an_older_message_preserves_current_proposal() -> Result<(), StoreError> {
+    let file = TempFile::new("proposal-edit")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    store.reply_user(&id, 2, "detail", UserSubmit::Normal)?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 3, "done").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.edit(&id, MessageTarget::Comment, "clearer question", 4)?;
+    assert_eq!(
+        store.thread(&id).map(Thread::lifecycle),
+        Some(Lifecycle::ResolutionProposed)
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinary_agent_reply_consumes_auto_resolve() -> Result<(), StoreError> {
+    let file = TempFile::new("auto-consume")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    store.set_auto_resolve(&id, AutoResolve::Enabled, 2)?;
+    let outcome = store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 3, "progress"),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert_eq!(outcome.into_value(), ResolutionOutcome::NotRequested);
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.auto_resolve(), AutoResolve::Disabled);
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    Ok(())
+}
+
+#[test]
+fn authorized_resolving_agent_reply_is_one_atomic_event() -> Result<(), StoreError> {
+    let file = TempFile::new("agent-resolve")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "question",
+        )
+        .at_commit(Some("old".to_owned())),
+        TEXT,
+        1,
+    )?;
+    store.set_auto_resolve(&id, AutoResolve::Enabled, 2)?;
+    let before = fs::read_to_string(&file.0)
+        .map_err(|error| StoreError::io(&file.0, error))?
+        .lines()
+        .count();
+    let outcome = store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 3, "fixed")
+            .resolve()
+            .relocate(LineRange::new(3, 4))
+            .at_head(Some("head".to_owned())),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert_eq!(outcome.into_value(), ResolutionOutcome::Resolved);
+    let raw = fs::read_to_string(&file.0).map_err(|error| StoreError::io(&file.0, error))?;
+    assert_eq!(raw.lines().count(), before + 1);
+    assert!(raw.lines().last().is_some_and(|line| {
+        line.contains(r#""event":"agent_reply""#)
+            && line.contains(r#""resolution":"resolved""#)
+            && line.contains(r#""commit":"head""#)
+            && line.contains(r#""relocation""#)
+    }));
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Resolved);
+    assert_eq!(thread.auto_resolve(), AutoResolve::Disabled);
+    assert_eq!(thread.commit(), Some("head"));
+    assert_eq!(thread.range(), Some(LineRange::new(3, 4)));
+    assert_eq!(thread.reanchored_at(), Some(3));
+    Ok(())
+}
+
+#[test]
+fn unauthorized_resolving_agent_reply_records_a_proposal() -> Result<(), StoreError> {
+    let file = TempFile::new("agent-propose")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let outcome = store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 2, "fixed").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert_eq!(outcome.into_value(), ResolutionOutcome::ResolutionProposed);
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::ResolutionProposed);
+    assert_eq!(thread.status(), Status::Open);
+    assert!(thread.replies()[0].proposes_resolution());
+    Ok(())
+}
+
+#[test]
+fn replay_preserves_original_outcome_and_new_permission() -> Result<(), StoreError> {
+    let file = TempFile::new("agent-replay-outcome")?;
+    let author = keyed_author("copilot:one");
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let command = AgentReplyCommand::new(author, 2, "fixed")
+        .resolve()
+        .idempotent("copilot:one", "reply-1");
+    let first = store.agent_reply(&id, command.clone(), |_| Ok(TEXT.to_owned()))?;
+    assert_eq!(first.into_value(), ResolutionOutcome::ResolutionProposed);
+    store.set_auto_resolve(&id, AutoResolve::Enabled, 3)?;
+    let before = fs::read_to_string(&file.0)
+        .map_err(|error| StoreError::io(&file.0, error))?
+        .lines()
+        .count();
+    let replay = store.agent_reply(&id, command, |_| {
+        Err(StoreError::message("replay must not load source"))
+    })?;
+    assert!(replay.replayed());
+    assert_eq!(replay.into_value(), ResolutionOutcome::ResolutionProposed);
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.auto_resolve(), AutoResolve::Enabled);
+    assert_eq!(thread.replies().len(), 1);
+    assert_eq!(
+        fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .lines()
+            .count(),
+        before
+    );
+    Ok(())
+}
+
+#[test]
+fn direct_resolve_pins_head_in_one_event() -> Result<(), StoreError> {
+    let file = TempFile::new("direct-resolve")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question")
+            .at_commit(Some("old".to_owned())),
+        TEXT,
+        1,
+    )?;
+    store.resolve(&id, Some("head"), 2)?;
+    let raw = fs::read_to_string(&file.0).map_err(|error| StoreError::io(&file.0, error))?;
+    assert_eq!(raw.lines().count(), 2);
+    let last = raw
+        .lines()
+        .last()
+        .ok_or_else(|| StoreError::message("missing event"))?;
+    assert!(last.contains(r#""event":"resolve""#));
+    assert!(last.contains(r#""commit":"head""#));
+    assert!(!raw.contains(r#""event":"rescope""#));
+    assert_eq!(store.thread(&id).and_then(Thread::commit), Some("head"));
+    Ok(())
+}
+
+#[test]
+fn same_second_lifecycle_transitions_follow_event_order() -> Result<(), StoreError> {
+    let file = TempFile::new("same-second")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        10,
+    )?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 10, "done").resolve(),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.reply_user(&id, 10, "wait", UserSubmit::EnableAutoResolve)?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 10, "now done")
+            .resolve()
+            .at_head(Some("head".to_owned())),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.reopen(&id, 10)?;
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert_eq!(thread.auto_resolve(), AutoResolve::Disabled);
+    assert_eq!(thread.modified(), 10);
+    Ok(())
+}
+
+#[test]
+fn reanchor_time_survives_reply_resolve_and_reopen() -> Result<(), StoreError> {
+    let file = TempFile::new("lasting-reanchor")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "question",
+        ),
+        TEXT,
+        1,
+    )?;
+    store.relocate(&id, LineRange::new(3, 4), TEXT, 2)?;
+    store.reply_user(&id, 3, "answer", UserSubmit::Normal)?;
+    store.resolve(&id, Some("head"), 4)?;
+    store.reopen(&id, 5)?;
+    assert_eq!(store.thread(&id).and_then(Thread::reanchored_at), Some(2));
+    assert_eq!(store.thread(&id).map(Thread::modified), Some(5));
+    Ok(())
+}
+
+#[test]
+fn activity_cursor_observes_consecutive_agent_messages_without_replay_duplicates()
+-> Result<(), StoreError> {
+    let file = TempFile::new("activity")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let cursor = store.activity_cursor();
+    let first = AgentReplyCommand::new(keyed_author("copilot:one"), 2, "first")
+        .idempotent("copilot:one", "reply-1");
+    store.agent_reply(&id, first.clone(), |_| Ok(TEXT.to_owned()))?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 3, "second"),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    let before_replay = store.activity_cursor();
+    let replay = store.agent_reply(&id, first, |_| {
+        Err(StoreError::message("replay must not load source"))
+    })?;
+    assert!(replay.replayed());
+    assert_eq!(store.activity_cursor(), before_replay);
+    let activity = store.agent_activity_since(cursor).collect::<Vec<_>>();
+    assert_eq!(activity.len(), 2);
+    assert_eq!(activity[0].target(), MessageTarget::Reply(0));
+    assert_eq!(activity[0].body(), "first");
+    assert_eq!(activity[0].path(), Path::new("a.md"));
+    assert_eq!(activity[0].range(), None);
+    assert_eq!(activity[1].target(), MessageTarget::Reply(1));
+    assert_eq!(activity[1].body(), "second");
+
+    store.delete(&id, 4)?;
+    let reloaded = Store::open(&file.0)?;
+    assert_eq!(reloaded.agent_activity_since(cursor).count(), 2);
+    Ok(())
+}
+
+#[test]
+fn activity_cursor_observes_agent_opening_comments() -> Result<(), StoreError> {
+    let file = TempFile::new("activity-opening")?;
+    let mut store = Store::open(&file.0)?;
+    let cursor = store.activity_cursor();
+    let id = store.annotate(
+        Draft::on_file(Author::agent("bot"), Path::new("a.md"), "finding"),
+        TEXT,
+        1,
+    )?;
+    let activity = store.agent_activity_since(cursor).collect::<Vec<_>>();
+    assert_eq!(activity.len(), 1);
+    assert_eq!(activity[0].thread(), &id);
+    assert_eq!(activity[0].target(), MessageTarget::Comment);
+    assert_eq!(activity[0].body(), "finding");
+    assert_eq!(activity[0].path(), Path::new("a.md"));
+    assert_eq!(activity[0].range(), None);
+    Ok(())
+}
+
+#[test]
+fn a_user_write_reloads_unseen_agent_activity() -> Result<(), StoreError> {
+    let file = TempFile::new("activity-import")?;
+    let mut observer = Store::open(&file.0)?;
+    let id = observer.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let cursor = observer.activity_cursor();
+    let mut writer = Store::open(&file.0)?;
+    writer.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 2, "answer"),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+
+    observer.reply_user(&id, 3, "thanks", UserSubmit::Normal)?;
+    let activity = observer.agent_activity_since(cursor).collect::<Vec<_>>();
+    assert_eq!(activity.len(), 1);
+    assert_eq!(activity[0].body(), "answer");
+    Ok(())
+}
+
+#[test]
+fn concurrent_agent_reply_retries_share_one_outcome() -> Result<(), StoreError> {
+    let file = TempFile::new("agent-concurrent")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    store.set_auto_resolve(&id, AutoResolve::Enabled, 2)?;
+    let command = AgentReplyCommand::new(keyed_author("copilot:one"), 3, "done")
+        .resolve()
+        .at_head(Some("head".to_owned()))
+        .idempotent("copilot:one", "reply-1");
+    let first_path = file.0.clone();
+    let second_path = file.0.clone();
+    let first_id = id.clone();
+    let second_id = id.clone();
+    let first_command = command.clone();
+    let first = std::thread::spawn(move || -> Result<_, StoreError> {
+        Store::open(first_path)?.agent_reply(&first_id, first_command, |_| Ok(TEXT.to_owned()))
+    });
+    let second = std::thread::spawn(move || -> Result<_, StoreError> {
+        Store::open(second_path)?.agent_reply(&second_id, command, |_| Ok(TEXT.to_owned()))
+    });
+    let first = first
+        .join()
+        .map_err(|_panic| StoreError::message("thread panicked"))??;
+    let second = second
+        .join()
+        .map_err(|_panic| StoreError::message("thread panicked"))??;
+    assert_eq!(*first.value(), ResolutionOutcome::Resolved);
+    assert_eq!(*second.value(), ResolutionOutcome::Resolved);
+    assert_ne!(first.replayed(), second.replayed());
+    let reloaded = Store::open(&file.0)?;
+    let thread = reloaded
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.replies().len(), 1);
+    assert_eq!(thread.lifecycle(), Lifecycle::Resolved);
+    assert_eq!(thread.commit(), Some("head"));
+    Ok(())
+}
+
+#[test]
+fn user_submissions_enable_auto_resolve_atomically() -> Result<(), StoreError> {
+    let file = TempFile::new("user-submit")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate_user(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+        UserSubmit::EnableAutoResolve,
+    )?;
+    assert_eq!(
+        store.thread(&id).map(Thread::auto_resolve),
+        Some(AutoResolve::Enabled)
+    );
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("bot"), 2, "progress"),
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    store.edit_user(
+        &id,
+        MessageTarget::Comment,
+        "clearer",
+        3,
+        UserSubmit::EnableAutoResolve,
+    )?;
+    assert_eq!(
+        store.thread(&id).map(Thread::auto_resolve),
+        Some(AutoResolve::Enabled)
+    );
+    assert_eq!(store.toggle_auto_resolve(&id, 4)?, AutoResolve::Disabled);
+    store.resolve(&id, None, 5)?;
+    let before = fs::read_to_string(&file.0)
+        .map_err(|error| StoreError::io(&file.0, error))?
+        .lines()
+        .count();
+    store.reply_user(&id, 6, "reopen", UserSubmit::EnableAutoResolve)?;
+    assert_eq!(
+        fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .lines()
+            .count(),
+        before + 1
+    );
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing"))?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert_eq!(thread.auto_resolve(), AutoResolve::Enabled);
+    assert_eq!(thread.reopened(), Some(6));
+    store.resolve(&id, None, 7)?;
+    assert!(
+        store
+            .set_auto_resolve(&id, AutoResolve::Enabled, 8)
+            .is_err()
+    );
+    Ok(())
+}
+#[test]
+fn guarded_user_writes_preserve_a_resolved_draft_until_confirmed() -> Result<(), StoreError> {
+    let file = TempFile::new("guarded-user-write")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "question",
+        ),
+        TEXT,
+        1,
+    )?;
+    store.resolve(&id, Some("abc123"), 2)?;
+
+    assert_eq!(
+        store.reply_user_if_unresolved(&id, 3, "preserved reply", UserSubmit::EnableAutoResolve,)?,
+        UserWriteOutcome::ReopenRequired
+    );
+    let resolved = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread"))?;
+    assert_eq!(resolved.lifecycle(), Lifecycle::Resolved);
+    assert!(resolved.replies().is_empty());
+
+    store.reply_user(&id, 4, "preserved reply", UserSubmit::EnableAutoResolve)?;
+    let reopened = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread"))?;
+    assert_eq!(reopened.lifecycle(), Lifecycle::Active);
+    assert_eq!(reopened.auto_resolve(), AutoResolve::Enabled);
+    assert_eq!(reopened.replies().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn user_writes_reject_a_thread_deleted_while_its_draft_was_open() -> Result<(), StoreError> {
+    let file = TempFile::new("guarded-user-write-deleted")?;
+    let mut creator = Store::open(&file.0)?;
+    let reply_id = creator.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "reply target",
+        ),
+        TEXT,
+        1,
+    )?;
+    let edit_id = creator.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(4, 4),
+            "edit target",
+        ),
+        TEXT,
+        2,
+    )?;
+    let mut stale = Store::open(&file.0)?;
+    let mut deleter = Store::open(&file.0)?;
+    deleter.delete(&reply_id, 3)?;
+    deleter.delete(&edit_id, 4)?;
+    let lines_after_delete = fs::read_to_string(&file.0)
+        .map_err(|error| StoreError::io(&file.0, error))?
+        .lines()
+        .count();
+
+    let reply =
+        stale.reply_user_if_unresolved(&reply_id, 5, "must remain a draft", UserSubmit::Normal);
+    assert!(
+        reply
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("unknown thread"))
+    );
+    let edit = stale.edit_user_if_unresolved(
+        &edit_id,
+        MessageTarget::Comment,
+        "must also remain a draft",
+        6,
+        UserSubmit::Normal,
+    );
+    assert!(
+        edit.as_ref()
+            .is_err_and(|error| error.to_string().contains("unknown thread"))
+    );
+    assert!(
+        stale
+            .reply_user(&reply_id, 7, "confirmed reopen", UserSubmit::Normal)
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("unknown thread")),
+        "confirmation after deletion must not report success"
+    );
+    assert!(
+        stale
+            .edit_user(
+                &edit_id,
+                MessageTarget::Comment,
+                "confirmed edit",
+                8,
+                UserSubmit::Normal,
+            )
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("unknown thread")),
+        "confirmed edit after deletion must not report success"
+    );
+    assert_eq!(
+        fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .lines()
+            .count(),
+        lines_after_delete,
+        "failed writes append no ignored events"
+    );
     Ok(())
 }

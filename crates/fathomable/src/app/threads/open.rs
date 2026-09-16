@@ -4,10 +4,7 @@
 //! where those lines are now so the thread follows a rewrite it would
 //! otherwise have lost.
 
-use std::fs;
-use std::path::Path;
-
-use fathomable_core::annotations::{LineRange, Store, ThreadId};
+use fathomable_core::annotations::LineRange;
 
 use crate::app::App;
 
@@ -28,47 +25,6 @@ impl App {
             .filter(|mark| mark.id() == shown)
             .any(|mark| mark.covers(lines))
     }
-}
-
-/// Re-anchor `id` onto `lines` of its file as it is on disk, because an
-/// agent's reply said so. The file is read from disk, not from the
-/// viewer's document: the agent speaks of the text it just wrote, which
-/// the viewer may not have reloaded yet.
-///
-/// A range already occupied by the thread needs no relocation. Otherwise
-/// the move is a `relocate` event (ADR 0019), so the thread shows as *edited*
-/// until the user answers, exactly as a rewrite the reload diff followed
-/// would.
-pub(crate) fn follow_reply_lines(
-    store: &mut Store,
-    root: &Path,
-    id: &ThreadId,
-    lines: LineRange,
-    when: u64,
-) -> Result<(), String> {
-    let path = store
-        .thread(id)
-        .map(|thread| thread.path().to_path_buf())
-        .ok_or_else(|| format!("unknown thread {id}"))?;
-    let text = fs::read_to_string(root.join(&path))
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let already_there = store.thread(id).is_some_and(|thread| {
-        thread.range() == Some(lines)
-            && matches!(
-                thread.locate(&text),
-                fathomable_core::annotations::Placement::Anchored(current)
-                    | fathomable_core::annotations::Placement::Edited(current)
-                    if current == lines
-            )
-    });
-    if already_there {
-        return Ok(());
-    }
-    store
-        .relocate(id, lines, &text, when)
-        .map_err(|error| format!("cannot move {id} to {lines}: {error}"))?;
-    tracing::info!(%id, path = %path.display(), %lines, "thread re-anchored by an agent's reply");
-    Ok(())
 }
 
 #[cfg(test)]
@@ -147,7 +103,7 @@ mod tests {
             lines: Some(LineRange::new(3, 6)),
             idempotency_key: None,
         });
-        assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
+        assert!(matches!(reply, Response::ThreadReply(_)), "{reply:?}");
         assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 6)));
         assert!(app.marks()[0].placement().is_edited());
         app.threads_pane_open();
@@ -164,7 +120,7 @@ mod tests {
             lines: Some(LineRange::new(40, 41)),
             idempotency_key: None,
         });
-        assert!(matches!(reply, Response::Error(message) if message.contains("cannot move")));
+        assert!(matches!(reply, Response::Error(message) if message.contains("past the end")));
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
         Ok(())
     }
@@ -191,7 +147,7 @@ mod tests {
             idempotency_key: None,
         });
 
-        assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
+        assert!(matches!(reply, Response::ThreadReply(_)), "{reply:?}");
         let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
         assert_eq!(
             thread.locate(testing::README),

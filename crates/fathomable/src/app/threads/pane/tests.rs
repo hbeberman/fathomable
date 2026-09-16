@@ -162,7 +162,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     // header still counts them.
     app.focus_threads_pane();
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    press(&mut app, "o");
+    press(&mut app, "r");
     assert_eq!(app.marks()[1].kind(), ThreadState::Resolved, "L3 resolved");
     assert_eq!(app.threads_pane_entries().len(), 1);
     assert_eq!(
@@ -178,7 +178,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     // With the keys, the bottom row is the key bar.
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("s scope") && bar.contains("x resolved"),
+        bar.contains("c reply") && bar.contains("r reopen"),
         "{bar:?}"
     );
     assert!(
@@ -203,7 +203,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
 fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     let (_dir, mut app) = three_threads("workspace")?;
     app.focus_threads_pane();
-    press(&mut app, "o");
+    press(&mut app, "r");
     assert_eq!(app.marks()[1].kind(), ThreadState::Resolved, "L3 resolved");
     answer_later(&mut app, 0)?;
     press(&mut app, "s");
@@ -226,7 +226,10 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
         "{file_row:?}"
     );
     let bar = &column[app.pane_rows() - 1];
-    assert!(bar.contains("z fold"), "{bar:?}");
+    assert!(
+        bar.contains("r reopen") && bar.contains("z fold"),
+        "{bar:?}"
+    );
 
     // `j` steps across files and keeps the keys in the pane.
     app.view_mut().goto_source_line(7);

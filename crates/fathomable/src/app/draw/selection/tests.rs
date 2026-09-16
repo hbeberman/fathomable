@@ -363,7 +363,7 @@ fn explicit_semantic_backgrounds_do_not_split_selected_rows() -> anyhow::Result<
     app.open_review();
     let mut theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
     theme.info = Style::default().fg(Color::White).bg(Color::Red);
-    theme.thread_open = Style::default().fg(Color::Green).bg(Color::Magenta);
+    theme.thread_active = Style::default().fg(Color::Green).bg(Color::Magenta);
     let buffer = render(&app, &theme)?;
     let x = u16::try_from(app.sidebar_width())?;
     let y = row_containing(&buffer, x, 100, "L3")?;

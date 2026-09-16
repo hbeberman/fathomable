@@ -150,10 +150,11 @@ fn first_line<'a>(
     navigation: Navigation,
 ) -> Line<'a> {
     let style = row_style(theme, entry.current(), entry.selected(), navigation);
-    let place = format!(" {} ", entry.place());
-    let age = format_age_short(entry.updated(), now);
-    let tail = if entry.replies() > 0 {
-        format!("↩{} {age}", entry.replies())
+    let summary = entry.summary_facts();
+    let place = format!(" {} ", summary.location());
+    let age = format_age_short(summary.modified(), now);
+    let tail = if summary.replies() > 0 {
+        format!("↩{} {age}", summary.replies())
     } else {
         age
     };
@@ -161,8 +162,8 @@ fn first_line<'a>(
     // The author takes what is left before the tail: its full name when it
     // fits, cut with `…` beyond that.
     let free = inner.saturating_sub(lead + display_width(&tail) + 1);
-    let full = entry.author();
-    let short = entry.author_name();
+    let full = summary.author();
+    let short = summary.author();
     let author = if display_width(full) <= free {
         full.to_owned()
     } else if display_width(short) <= free {
@@ -173,8 +174,8 @@ fn first_line<'a>(
     // The branch of the worktree showing it (ADR 0070), or the commit a
     // past thread was resolved at (ADR 0072), dim, after the author;
     // dropped before the author is cut.
-    let branch = entry
-        .note()
+    let branch = summary
+        .context()
         .map(|note| format!(" {note}"))
         .filter(|branch| {
             lead + display_width(&author) + display_width(branch) + display_width(&tail) < inner
@@ -191,7 +192,17 @@ fn first_line<'a>(
             on(style, mark_style(theme, entry.kind())),
         ),
         Span::styled(place, on(style, theme.info)),
-        Span::styled(author, on(style, theme.popup_key)),
+        Span::styled(
+            author,
+            on(
+                style,
+                if summary.author_is_user() {
+                    theme.thread_user
+                } else {
+                    theme.thread_agent
+                },
+            ),
+        ),
         Span::styled(branch, on(style, theme.info)),
         Span::styled(" ".repeat(pad), style),
         Span::styled(tail, on(style, theme.info)),
@@ -220,7 +231,10 @@ fn second_line<'a>(
             style,
         ),
         Span::styled(
-            fit_ellipsis(entry.summary(), inner.saturating_sub(SUMMARY_INDENT)),
+            fit_ellipsis(
+                entry.summary_facts().preview(),
+                inner.saturating_sub(SUMMARY_INDENT),
+            ),
             text_style,
         ),
     ])
@@ -259,16 +273,22 @@ mod tests {
             app.compose_insert("question");
             app.compose_submit();
             let id = app.file_threads()[0].clone();
-            let reply = app.handle_request(Request::ThreadReply {
-                thread: id,
-                author,
-                caller: "test:viewer".to_owned(),
-                body: "answer".to_owned(),
-                resolve: false,
-                lines: None,
-                idempotency_key: None,
-            });
-            assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
+            if author.is_user() {
+                app.thread_reply();
+                app.compose_insert("answer");
+                app.compose_submit();
+            } else {
+                let reply = app.handle_request(Request::ThreadReply {
+                    thread: id,
+                    author,
+                    caller: "test:viewer".to_owned(),
+                    body: "answer".to_owned(),
+                    resolve: false,
+                    lines: None,
+                    idempotency_key: None,
+                });
+                assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
+            }
             let entries = app.threads_pane_entries();
             let entry = &entries[0];
             assert_eq!(entry.author(), full);
@@ -359,8 +379,8 @@ mod tests {
             column[top + 3]
         );
         assert!(
-            column[top + 1].contains("◐ 1 resolve?"),
-            "one proposed, with its word (ADR 0075): {:?}",
+            column[top + 1].contains("◐ 1"),
+            "one proposed; narrow headers drop all words together: {:?}",
             column[top + 1]
         );
 
@@ -402,7 +422,7 @@ mod tests {
 
         app.focus_threads_pane();
         let focused = sidebar_column(&app, 100)?;
-        assert!(focused[last].contains("s scope"), "{:?}", focused[last]);
+        assert!(focused[last].contains("c reply"), "{:?}", focused[last]);
         assert_eq!(
             focused[top + 2].chars().skip(1).collect::<String>(),
             column[top + 2].chars().skip(1).collect::<String>(),

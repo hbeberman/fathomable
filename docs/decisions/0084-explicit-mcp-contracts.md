@@ -12,10 +12,25 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Reply contract amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md). The reply-specific
+`propose_resolve` input, returned `proposed_resolved` flag, and plain thread
+array are historical. `thread_reply` now accepts `resolve`; each successful
+request-order `results` item contains the complete current `thread`, its
+original `resolution.outcome` (`not_requested`, `resolution_proposed`, or
+`resolved`), and `replayed`. A proposal is successful and adds
+`reason: pending_fathomable_user_review` plus guidance not to ask in chat or
+retry. Execution-time failure returns `PARTIAL_BATCH` with indexed
+`completed`, one `failed` item and error, and indexed `unattempted` items;
+whole-batch prevalidation still returns `INVALID_BATCH`. Reads and returned
+threads use one uniform `messages` array with `author`, `body`, `created`,
+`modified`, and `resolution_proposed`. Idempotency, location, author
+objects, output-schema, and text/structured parity below remain.
+
 Amends [0082](0082-three-tool-review-core.md) without changing the
-three-tool surface, automatic authorship, repository binding, or human-only
-resolution. The MCP author projection is distinct from the stored and
-internal socket representation described in
+three-tool surface, automatic authorship, or repository binding. Its
+human-only resolution boundary was later replaced by [0085](0085-thread-lifecycle-and-auto-resolve.md).
+The MCP author projection is distinct from the stored and internal socket representation described in
 [0083](0083-single-user-alpha-clean-slate.md).
 
 ## Context

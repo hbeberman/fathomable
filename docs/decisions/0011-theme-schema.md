@@ -34,6 +34,14 @@ and `ui.menu` independently customizable.
 Amended 2026-09-14 by [0079](0079-list-focus-language.md): four shared
 `ui.list.*` roles replace `ui.sidebar.selected` and `ui.picker.selected`;
 active, remembered, and hover treatments are distinct from neutral headers.
+Amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md) and
+[0086](0086-one-thread-summary-and-its-actions.md): `thread.open` and
+`thread.waiting` retire. Lifecycle now uses `thread.active`,
+`thread.proposed`, and `thread.resolved`, independently of message-author
+styles. A hovered direct header action composes
+`ui.header.patch(ui.list.hover)` only on that action; no new hover role is
+added. Exact-current loading means the retired keys are unknown.
 
 ## Context
 
@@ -116,12 +124,13 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.list.active` | `bg` of the selected entry while its list owns the keys: files, threads pane (including file groups), review file/thread headers and folded rows, and every picker result ([0079](0079-list-focus-language.md)) |
 | `ui.list.inactive` | quieter `bg` of the remembered selected entry while its list does not own the keys, including under overlays, Compose, and pending key prefixes (0079) |
 | `ui.list.cursor` | `fg` of the active list selection's left-edge bar, including the selected review thread's header and message rows together without replacing message author stripes, and of the document's current source line number while it owns navigation; these cues ignore this role's `bg`; ancestor-file context bars stay muted (0079) |
-| `ui.list.hover` | subtle `bg` of hovered help and menu entries; no keyboard selection or cursor bar (0079) |
+| `ui.list.hover` | subtle `bg` of hovered help and menu entries; no keyboard selection or cursor bar (0079). On inline/review thread headers it patches only the hovered direct action over `ui.header`, leaving adjacent actions and facts unchanged ([0086](0086-one-thread-summary-and-its-actions.md)) |
 | `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, and key labels (0012); the space menu drew on `ui.popup` before [0056](0056-the-leader-trimmed.md) |
 | `ui.menu` | the `Space` menu and the right-click menu's surface; the built-ins share its visual ground with `ui.popup`, while a custom theme may set either independently; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match` | matched characters in pickers and help filtering (0012, [0078](0078-all-keys-stays-reachable.md)) |
-| `thread.open`, `thread.resolved` | gutter note cell, list rows, and file-threads rows of an open or resolved thread ([0013](0013-annotation-storage-and-ux.md)); `annotation.resolved.auto`, `annotation.detached`, and `annotation.edited` were removed by [0039](0039-gutter-colour-and-detached-rows.md) |
-| `thread.waiting` | gutter note cell, list rows, and tree-pane tag of an open thread whose newest message is an agent's ([0030](0030-waiting-threads.md)); in the built-in themes `thread.open` is the hue of `thread.user` and `thread.waiting` that of `thread.agent` ([0071](0071-author-stripes.md)) |
+| `thread.active` | lifecycle glyph and aggregate colour for an unresolved thread without a current resolution proposal; independent of message authorship ([0085](0085-thread-lifecycle-and-auto-resolve.md)) |
+| `thread.proposed` | lifecycle glyph and aggregate colour for an unresolved thread with a current resolution proposal; independent of message authorship (0085) |
+| `thread.resolved` | lifecycle glyph and aggregate colour for a resolved thread (0085) |
 | `thread.focus` | the threads pane's current-file context tint ([0066](0066-one-circle-language.md)), overridden by actual active or remembered list selection (0079); the rows of the thread the cursor is on before [0074](0074-the-bracket-marks-the-focused-thread.md) ([0033](0033-open-thread-lines.md)); `thread.line`, the background of annotated rows (0013), was removed by 0074 |
 | `thread.bracket` | background of the gutter's note cell on the rows of the thread the cursor is on, where it draws a glyph ([0074](0074-the-bracket-marks-the-focused-thread.md)) |
 | `thread.inline` | background of a thread's stub rows under its lines; `none` marks them with `▎` instead ([0049](0049-inline-threads-and-the-rail.md)) |
@@ -147,6 +156,11 @@ background to `ui.list.active`, then set a quieter `ui.list.inactive`
 background, a `ui.list.cursor` foreground, and a subtle `ui.list.hover`
 background. `ui.picker.match`, `ui.sidebar`, and `ui.sidebar.dir` remain.
 
+Since [0085](0085-thread-lifecycle-and-auto-resolve.md),
+`thread.open` and `thread.waiting` are also unknown keys. Replace them with
+`thread.active` and `thread.proposed`; keep `thread.resolved`. Author
+stripes remain separate under `thread.user` and `thread.agent`.
+
 ### Selection and built-ins
 
 - `default-dark` and `default-light` are compiled into `fathomable-core`
@@ -169,6 +183,11 @@ background. `ui.picker.match`, `ui.sidebar`, and `ui.sidebar.dir` remain.
   | `ui.list.inactive` `bg` | `#202830` | `#e2e9ef` |
   | `ui.list.hover` `bg` | `#263342` | `#dce6ef` |
   | `ui.list.cursor` `fg` | `#9bc3ed` | `#1f5fbf` |
+
+- Both built-ins use blue for `thread.active`, bold green for
+  `thread.proposed`, and bright black for `thread.resolved`. These are
+  lifecycle choices only; `thread.user` and `thread.agent` continue to
+  style message authors and stripes independently.
 
 - Palette names and the list colour values above are built-in authoring
   choices, not additional schema keys. A custom theme may preserve the

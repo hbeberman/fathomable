@@ -13,6 +13,14 @@ tags:
 
 Status: accepted (2026-09-09)
 
+Amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md): direct user resolution
+and an authorized one-shot agent reply both atomically pin the resolved
+thread to the acting checkout's `HEAD`. An unauthorized completion reply
+leaves it open as `resolution_proposed`. The reach, past-history, and
+reopen rules below are unchanged; references to user-only resolution are
+historical.
+
 ## Context
 
 A thread belongs to the commit it was written against and shows while

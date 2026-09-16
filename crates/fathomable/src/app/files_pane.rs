@@ -28,8 +28,9 @@ pub(crate) struct DirectoryInfo {
     pub(crate) changed_files: usize,
     pub(crate) added: usize,
     pub(crate) removed: usize,
-    pub(crate) open_threads: usize,
-    pub(crate) waiting_threads: usize,
+    pub(crate) active_threads: usize,
+    pub(crate) proposed_threads: usize,
+    pub(crate) resolved_threads: usize,
 }
 
 impl App {
@@ -228,7 +229,7 @@ impl App {
         let changed_files = changes.len();
         let added = changes.iter().map(|entry| entry.added()).sum();
         let removed = changes.iter().map(|entry| entry.removed()).sum();
-        let (open_threads, waiting_threads) = self.directory_thread_counts(&directory.path);
+        let threads = self.directory_thread_counts(&directory.path);
         Some(DirectoryInfo {
             path: directory.path.clone(),
             files: directory.counts.map(DirectoryCounts::files),
@@ -236,8 +237,9 @@ impl App {
             changed_files,
             added,
             removed,
-            open_threads,
-            waiting_threads,
+            active_threads: threads.active,
+            proposed_threads: threads.proposed,
+            resolved_threads: threads.resolved,
         })
     }
 

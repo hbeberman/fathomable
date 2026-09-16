@@ -14,7 +14,13 @@ tags:
 
 # 0075 The header names its counts
 
-Status: accepted (2026-09-11)
+Status: superseded in part (2026-09-16) by
+[0085](0085-thread-lifecycle-and-auto-resolve.md) and
+[0086](0086-one-thread-summary-and-its-actions.md). Header and directory
+counts now partition lifecycle as `● n active`, `◐ n resolution proposed`,
+and `○ n resolved`; user/agent last-act counts and waiting retire. Zero
+counts are omitted, all words still drop together before counts, and the
+resolved count remains the `x` hit target. Historical wording follows.
 
 ## Context
 

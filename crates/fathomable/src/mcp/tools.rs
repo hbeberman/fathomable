@@ -11,7 +11,8 @@ use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    Author, LineHashes, LineRange, Placement, Reply, Status, Store, Thread, ThreadId,
+    AgentReplyCommand, Author, AutoResolve, Lifecycle, LineHashes, LineRange, Message, Placement,
+    Reply, ResolutionOutcome, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -28,8 +29,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{Server, Target, call};
-use crate::app::threads::open::follow_reply_lines;
-
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -102,7 +101,7 @@ impl<'de> Deserialize<'de> for StatusFilter {
 }
 
 /// One reply in a `thread_reply` batch.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(transform = require_line_for_end_line)]
 pub(crate) struct ReplyItem {
@@ -110,9 +109,9 @@ pub(crate) struct ReplyItem {
     thread: String,
     /// Reply text in Markdown.
     body: String,
-    /// Propose resolving the discussion. Only the user can close it.
+    /// This reply completes the work and should resolve when authorized.
     #[serde(default)]
-    propose_resolve: bool,
+    resolve: bool,
     /// Optional retry key: non-whitespace text, at most 256 UTF-8 bytes.
     #[schemars(length(min = 1, max = 256))]
     #[serde(default)]
@@ -237,17 +236,21 @@ pub(super) struct Shown {
     location: LocationOutput,
     /// Current discussion status.
     status: StatusOutput,
+    /// Current active, resolution-proposed, or resolved lifecycle.
+    lifecycle: LifecycleOutput,
     created: u64,
-    updated: u64,
-    author: AuthorOutput,
-    comment: String,
+    /// Latest persisted thread change.
+    modified: u64,
+    /// Whether the next agent reply has one-shot resolution permission.
+    auto_resolve: bool,
+    /// Opening comment and replies in append order.
+    messages: Vec<MessageOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snippet: Option<String>,
-    replies: Vec<ReplyOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    edited: Option<u64>,
+    reanchored_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree: Option<PathBuf>,
 }
@@ -316,26 +319,24 @@ impl From<&Author> for AuthorOutput {
     }
 }
 
-/// A reply projected into the MCP result shape.
+/// One uniformly projected thread message.
 #[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
-pub(super) struct ReplyOutput {
+pub(super) struct MessageOutput {
     author: AuthorOutput,
-    created: u64,
     body: String,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    proposed_resolved: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    edited: Option<u64>,
+    created: u64,
+    modified: u64,
+    resolution_proposed: bool,
 }
 
-impl From<&Reply> for ReplyOutput {
-    fn from(reply: &Reply) -> Self {
+impl From<Message<'_>> for MessageOutput {
+    fn from(message: Message<'_>) -> Self {
         Self {
-            author: AuthorOutput::from(reply.author()),
-            created: reply.created(),
-            body: reply.body().to_owned(),
-            proposed_resolved: reply.proposes_resolution(),
-            edited: reply.edited(),
+            author: AuthorOutput::from(message.author()),
+            body: message.body().to_owned(),
+            created: message.created(),
+            modified: message.modified(),
+            resolution_proposed: message.resolution_proposed(),
         }
     }
 }
@@ -389,6 +390,18 @@ enum StatusOutput {
     Resolved,
 }
 
+/// The current lifecycle in an MCP result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum LifecycleOutput {
+    /// Unresolved without a current resolution proposal.
+    Active,
+    /// Unresolved after an agent reported completion without permission.
+    ResolutionProposed,
+    /// Resolved by the user or an authorized agent reply.
+    Resolved,
+}
+
 /// The complete result returned by a read.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct ThreadsOutput {
@@ -404,6 +417,71 @@ pub(super) struct WriteOutput {
     pub(super) threads: Vec<Shown>,
 }
 
+/// The durable resolution result of one completed reply.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub(super) struct ResolutionResult {
+    outcome: ResolutionOutcomeOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<ResolutionReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    guidance: Option<String>,
+}
+
+/// The resolution outcome values returned to an MCP caller.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ResolutionOutcomeOutput {
+    /// The item did not ask to resolve.
+    NotRequested,
+    /// The item asked to resolve but awaits review in Fathomable.
+    ResolutionProposed,
+    /// The item resolved with one-shot permission.
+    Resolved,
+}
+
+/// Why a requested resolution remains open.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ResolutionReason {
+    /// The Fathomable user must review the proposal in Fathomable.
+    PendingFathomableUserReview,
+}
+
+impl From<ResolutionOutcome> for ResolutionResult {
+    fn from(outcome: ResolutionOutcome) -> Self {
+        let pending = outcome == ResolutionOutcome::ResolutionProposed;
+        Self {
+            outcome: match outcome {
+                ResolutionOutcome::NotRequested => ResolutionOutcomeOutput::NotRequested,
+                ResolutionOutcome::ResolutionProposed => {
+                    ResolutionOutcomeOutput::ResolutionProposed
+                }
+                ResolutionOutcome::Resolved => ResolutionOutcomeOutput::Resolved,
+            },
+            reason: pending.then_some(ResolutionReason::PendingFathomableUserReview),
+            guidance: pending.then(|| {
+                "Do not ask for confirmation in chat and do not retry; the Fathomable user will \
+                 review it in Fathomable."
+                    .to_owned()
+            }),
+        }
+    }
+}
+
+/// One completed reply result in request order.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ReplyResult {
+    thread: Shown,
+    resolution: ResolutionResult,
+    replayed: bool,
+}
+
+/// The complete successful `thread_reply` result.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ReplyWriteOutput {
+    results: Vec<ReplyResult>,
+}
+
 impl Shown {
     pub(super) fn new(thread: &Thread, placement: Placement) -> Self {
         Self {
@@ -414,14 +492,14 @@ impl Shown {
             anchor_range: thread.range().map(RangeOutput::from),
             location: location_output(thread.range(), placement),
             status: status_output(thread.status()),
+            lifecycle: lifecycle_output(thread.lifecycle()),
             created: thread.created(),
-            updated: thread.updated(),
-            author: AuthorOutput::from(thread.author()),
-            comment: thread.comment().to_owned(),
+            modified: thread.modified(),
+            auto_resolve: thread.auto_resolve() == AutoResolve::Enabled,
+            messages: thread.messages().map(MessageOutput::from).collect(),
             snippet: (!thread.is_on_file()).then(|| thread.snippet().to_owned()),
-            replies: thread.replies().iter().map(ReplyOutput::from).collect(),
             commit: thread.commit().map(str::to_owned),
-            edited: thread.edited(),
+            reanchored_at: thread.reanchored_at(),
             worktree: None,
         }
     }
@@ -459,6 +537,14 @@ const fn status_output(status: Status) -> StatusOutput {
     match status {
         Status::Open => StatusOutput::Open,
         Status::Resolved => StatusOutput::Resolved,
+    }
+}
+
+const fn lifecycle_output(lifecycle: Lifecycle) -> LifecycleOutput {
+    match lifecycle {
+        Lifecycle::Active => LifecycleOutput::Active,
+        Lifecycle::ResolutionProposed => LifecycleOutput::ResolutionProposed,
+        Lifecycle::Resolved => LifecycleOutput::Resolved,
     }
 }
 
@@ -689,12 +775,13 @@ impl Server {
     }
 
     #[tool(
-        output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOutput>(),
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ReplyWriteOutput>(),
         description = "Continue one or more existing review discussions. Pass exactly one \
                        non-empty `replies` array; each item names a thread and body, with optional \
-                       current line placement, proposal to resolve, and retry `idempotency_key`. \
-                       Only the user closes discussions. The whole batch is validated before any \
-                       reply is written.",
+                       current line placement, `resolve` completion intent, and retry \
+                       `idempotency_key`. Resolution succeeds only with one-shot permission; \
+                       otherwise the successful result directs review to Fathomable. The whole \
+                       batch is validated before any reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -769,7 +856,7 @@ impl Server {
             let replay = if let (Some(key), Some(store)) =
                 (item.idempotency_key.as_deref(), probe_store.as_ref())
             {
-                let reply = reply_for(author.clone(), &item);
+                let reply = reply_probe(author.clone(), &item);
                 match store.probe_reply_idempotency_for_caller(
                     &id,
                     &reply,
@@ -804,33 +891,42 @@ impl Server {
         }
 
         let mut answered = Vec::with_capacity(validated.len());
-        for item in validated {
-            let index = item.index;
-            let root = item.root.clone();
+        for position in 0..validated.len() {
+            let item = &validated[position];
             match self.reply_one(author.clone(), caller.clone(), item).await {
-                Ok(thread) => answered.push(Answered { thread, root }),
+                Ok(answer) => answered.push(answer),
                 Err(error) => {
-                    let mut lines =
-                        answer_lines(&answered, &self.dirs, &self.target.key, &self.target.root);
-                    lines.push(format!("replies[{index}]: {error}"));
-                    return failure(lines.join("\n"));
+                    return partial_reply_failure(
+                        &answered,
+                        item,
+                        &validated[position + 1..],
+                        error,
+                        &self.dirs,
+                        &self.target.key,
+                        &self.target.root,
+                    );
                 }
             }
         }
         let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
-        let shown: Vec<Shown> = answered
+        let results = answered
             .iter()
             .map(|answered| {
                 let placement = trees.place(&self.target.root, &answered.root, &answered.thread);
-                Shown::new(&answered.thread, placement).in_worktree(
-                    (answered.root != self.target.root).then_some(answered.root.as_path()),
-                )
+                ReplyResult {
+                    thread: Shown::new(&answered.thread, placement).in_worktree(
+                        (answered.root != self.target.root).then_some(answered.root.as_path()),
+                    ),
+                    resolution: ResolutionResult::from(answered.resolution),
+                    replayed: answered.replayed,
+                }
             })
             .collect();
-        CallToolResult::structured(json!(WriteOutput { threads: shown }))
+        CallToolResult::structured(json!(ReplyWriteOutput { results }))
     }
 }
 
+#[derive(Debug, Clone)]
 struct ValidatedReply {
     index: usize,
     item: ReplyItem,
@@ -838,8 +934,11 @@ struct ValidatedReply {
 }
 
 struct Answered {
+    index: usize,
     thread: Thread,
     root: PathBuf,
+    resolution: ResolutionOutcome,
+    replayed: bool,
 }
 
 impl Server {
@@ -847,17 +946,17 @@ impl Server {
         &self,
         author: Author,
         caller: String,
-        validated: ValidatedReply,
-    ) -> Result<Thread, String> {
-        let item = validated.item;
+        validated: &ValidatedReply,
+    ) -> Result<Answered, String> {
+        let item = &validated.item;
         let thread = thread_id(&item.thread)?;
-        let lines = item_lines(&item);
+        let lines = item_lines(item);
         let request = Request::ThreadReply {
             thread: thread.clone(),
             author: author.clone(),
             caller: caller.clone(),
             body: item.body.clone(),
-            resolve: item.propose_resolve,
+            resolve: item.resolve,
             lines,
             idempotency_key: item.idempotency_key.clone(),
         };
@@ -870,13 +969,28 @@ impl Server {
                 &thread,
                 author,
                 &caller,
-                &item,
+                item,
                 lines,
             )
-            .map(|thread| Response::Threads(vec![thread])),
+            .map(|answer| {
+                if answer.replayed {
+                    Response::thread_reply_replayed(answer.thread, answer.resolution)
+                } else {
+                    Response::thread_reply_applied(answer.thread, answer.resolution)
+                }
+            }),
         };
         match outcome {
-            Ok(Response::Threads(mut threads)) if threads.len() == 1 => Ok(threads.remove(0)),
+            Ok(Response::ThreadReply(response)) => {
+                let (thread, resolution, replayed) = response.into_parts();
+                Ok(Answered {
+                    index: validated.index,
+                    thread,
+                    root: validated.root.clone(),
+                    resolution,
+                    replayed,
+                })
+            }
             Ok(Response::Error(message)) | Err(message) => {
                 Err(format!("{}: {message}", item.thread))
             }
@@ -1012,9 +1126,14 @@ fn validate_reply(
     Ok(location.root)
 }
 
-fn reply_for(author: Author, item: &ReplyItem) -> Reply {
+/// Encode the requested resolve intent for the Phase A idempotency probe.
+///
+/// The actual write uses [`AgentReplyCommand`]; this historical message flag
+/// is only the compatibility input through which the probe reconstructs the
+/// same request fingerprint.
+fn reply_probe(author: Author, item: &ReplyItem) -> Reply {
     let reply = Reply::new(author, now(), item.body.clone());
-    if item.propose_resolve {
+    if item.resolve {
         reply.proposing_resolution()
     } else {
         reply
@@ -1115,17 +1234,6 @@ pub(super) fn shown_lines(threads: &[Thread], tree: &mut Tree, verb: &str) -> Ve
         .map(|thread| {
             let placement = tree.place(thread);
             shown_line(thread, placement, verb)
-        })
-        .collect()
-}
-
-fn answer_lines(answered: &[Answered], dirs: &XdgDirs, key: &Path, bound: &Path) -> Vec<String> {
-    let mut trees = Trees::new(dirs, key, bound);
-    answered
-        .iter()
-        .map(|answered| {
-            let placement = trees.place(bound, &answered.root, &answered.thread);
-            shown_line(&answered.thread, placement, "replied to")
         })
         .collect()
 }
@@ -1243,47 +1351,132 @@ fn headless_reply(
     caller: &str,
     item: &ReplyItem,
     lines: Option<LineRange>,
-) -> Result<Thread, String> {
+) -> Result<HeadlessAnswer, String> {
     let mut store =
         Store::open(dirs.threads_file(&target.key)).map_err(|error| error.to_string())?;
     let when = now();
-    let reply = Reply::new(author, when, item.body.clone());
-    let reply = if item.propose_resolve {
-        reply.proposing_resolution()
-    } else {
-        reply
-    };
-    if let Some(key) = item.idempotency_key.as_deref() {
-        store
-            .reply_idempotent_for_caller(thread, reply, lines, caller, key, |path| {
-                fs::read_to_string(root.join(path)).map_err(|error| {
-                    fathomable_core::annotations::StoreError::message(format!(
-                        "cannot read {}: {error}",
-                        path.display()
-                    ))
-                })
-            })
-            .map_err(|error| error.to_string())?;
-    } else {
-        if store.thread(thread).is_none() {
-            return Err(format!("thread {thread} disappeared before the reply"));
-        }
-        if let Some(lines) = lines {
-            follow_reply_lines(&mut store, root, thread, lines, when)?;
-        }
-        store
-            .reply(thread, reply)
-            .map_err(|error| error.to_string())?;
+    let head = Workspace::discover(root)
+        .map_err(|error| error.to_string())?
+        .head_commit();
+    let mut command = AgentReplyCommand::new(author, when, item.body.clone()).at_head(head);
+    if item.resolve {
+        command = command.resolve();
     }
-    tracing::info!(%thread, proposes = item.propose_resolve, "agent reply added headlessly");
-    store
+    if let Some(lines) = lines {
+        command = command.relocate(lines);
+    }
+    if let Some(key) = item.idempotency_key.as_deref() {
+        command = command.idempotent(caller, key);
+    }
+    let outcome = store
+        .agent_reply(thread, command, |path| {
+            fs::read_to_string(root.join(path)).map_err(|error| {
+                fathomable_core::annotations::StoreError::message(format!(
+                    "cannot read {}: {error}",
+                    path.display()
+                ))
+            })
+        })
+        .map_err(|error| error.to_string())?;
+    let resolution = *outcome.value();
+    let replayed = outcome.replayed();
+    tracing::info!(%thread, ?resolution, replayed, "agent reply added headlessly");
+    let thread = store
         .thread(thread)
         .cloned()
-        .ok_or_else(|| format!("thread {thread} vanished after the reply"))
+        .ok_or_else(|| format!("thread {thread} vanished after the reply"))?;
+    Ok(HeadlessAnswer {
+        thread,
+        resolution,
+        replayed,
+    })
+}
+
+struct HeadlessAnswer {
+    thread: Thread,
+    resolution: ResolutionOutcome,
+    replayed: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct IndexedReplyResult {
+    item_index: usize,
+    result: ReplyResult,
+}
+
+#[derive(Debug, Serialize)]
+struct FailedReply {
+    item_index: usize,
+    item: ReplyItem,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct UnattemptedReply {
+    item_index: usize,
+    item: ReplyItem,
+}
+
+#[derive(Debug, Serialize)]
+struct PartialReplyFailure {
+    error_code: &'static str,
+    completed: Vec<IndexedReplyResult>,
+    failed: FailedReply,
+    unattempted: Vec<UnattemptedReply>,
+}
+
+fn partial_reply_failure(
+    answered: &[Answered],
+    failed: &ValidatedReply,
+    unattempted: &[ValidatedReply],
+    error: String,
+    dirs: &XdgDirs,
+    key: &Path,
+    bound: &Path,
+) -> CallToolResult {
+    let mut trees = Trees::new(dirs, key, bound);
+    let completed = answered
+        .iter()
+        .map(|answered| {
+            let placement = trees.place(bound, &answered.root, &answered.thread);
+            IndexedReplyResult {
+                item_index: answered.index,
+                result: ReplyResult {
+                    thread: Shown::new(&answered.thread, placement)
+                        .in_worktree((answered.root != bound).then_some(answered.root.as_path())),
+                    resolution: ResolutionResult::from(answered.resolution),
+                    replayed: answered.replayed,
+                },
+            }
+        })
+        .collect();
+    structured_error(json!(PartialReplyFailure {
+        error_code: "PARTIAL_BATCH",
+        completed,
+        failed: FailedReply {
+            item_index: failed.index,
+            item: failed.item.clone(),
+            error,
+        },
+        unattempted: unattempted
+            .iter()
+            .map(|item| UnattemptedReply {
+                item_index: item.index,
+                item: item.item.clone(),
+            })
+            .collect(),
+    }))
 }
 
 pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
+}
+
+fn structured_error(value: Value) -> CallToolResult {
+    let text = value.to_string();
+    let mut result = CallToolResult::structured_error(value);
+    result.content = vec![ContentBlock::text(text)];
+    result
 }
 
 #[derive(Debug, Serialize)]
@@ -1310,13 +1503,11 @@ pub(super) fn invalid_batch(items: &str, issues: &[BatchIssue]) -> CallToolResul
         .map(|issue| format!("{items}[{}]: {}", issue.item_index, issue.message))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut result = CallToolResult::structured_error(json!({
+    structured_error(json!({
         "error_code": "INVALID_BATCH",
         "message": message,
         "issues": issues,
-    }));
-    result.content = vec![ContentBlock::text(message)];
-    result
+    }))
 }
 
 /// Instructions supplied to every MCP client.
@@ -1324,9 +1515,9 @@ pub(super) fn instructions() -> String {
     "Fathomable holds review discussions attached to files in this repository. \
      When asked, read the relevant threads and their history. Use thread_start \
      for new findings or questions and thread_reply to continue existing \
-     discussions. Treat proposals as proposals; follow the user's stated \
-     decisions and your assigned task. Reading a thread does not authorize \
-     changes. Only the user closes threads."
+     discussions. A resolution_proposed result is successful and awaits the \
+     Fathomable user's review in Fathomable; do not ask for confirmation in \
+     chat and do not retry it. Reading a thread does not authorize changes."
         .to_owned()
 }
 
@@ -1416,11 +1607,15 @@ mod tests {
         let shown = Shown::new(thread, tree.place(thread));
         let value = serde_json::to_value(shown)?;
         assert_eq!(value["status"], "resolved");
-        assert_eq!(value["author"], json!({"kind": "user", "name": "user"}));
-        assert_eq!(value["comment"], "Should we rename this?");
-        assert_eq!(value["replies"][0]["body"], "I propose `other`.");
+        assert_eq!(value["lifecycle"], "resolved");
         assert_eq!(
-            value["replies"][0]["author"],
+            value["messages"][0]["author"],
+            json!({"kind": "user", "name": "user"})
+        );
+        assert_eq!(value["messages"][0]["body"], "Should we rename this?");
+        assert_eq!(value["messages"][1]["body"], "I propose `other`.");
+        assert_eq!(
+            value["messages"][1]["author"],
             json!({"kind": "agent", "name": "Copilot"})
         );
         Ok(())
@@ -1563,7 +1758,7 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: " ".to_owned(),
-                    propose_resolve: false,
+                    resolve: false,
                     idempotency_key: None,
                     line: None,
                     end_line: None,
@@ -1574,7 +1769,7 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: "x".to_owned(),
-                    propose_resolve: false,
+                    resolve: false,
                     idempotency_key: None,
                     line: None,
                     end_line: Some(2),
@@ -1585,7 +1780,7 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: "x".to_owned(),
-                    propose_resolve: false,
+                    resolve: false,
                     idempotency_key: None,
                     line: Some(2),
                     end_line: None,
@@ -1596,7 +1791,7 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: "x".to_owned(),
-                    propose_resolve: false,
+                    resolve: false,
                     idempotency_key: None,
                     line: Some(2),
                     end_line: Some(1),

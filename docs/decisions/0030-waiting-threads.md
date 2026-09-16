@@ -2,7 +2,6 @@
 type: Decision
 title: Threads waiting on the user
 description: An open thread whose newest message is an agent's is waiting on the user; it gets its own gutter colour, a count in the status line and a toast when it arrives, and ]r and [r jump through them across files.
-resource: crates/fathomable/src/app/threads/waiting.rs
 tags:
   - decision
   - annotations
@@ -11,7 +10,15 @@ tags:
 
 # 0030 Threads waiting on the user
 
-Status: accepted (2026-08-28). Amended 2026-09-05 by
+Status: superseded (2026-09-16) by
+[0085](0085-thread-lifecycle-and-auto-resolve.md). Waiting is no longer a
+thread state, count, colour, traversal set, or theme role; `Tab`,
+`Shift-Tab`, `]r`, and `[r` are unbound. Agent starts, replies, proposals,
+and resolutions are reported as append-log activity instead. The deleted
+`app/threads/waiting.rs` therefore has no replacement resource; the
+historical decision remains below.
+
+Previously amended 2026-09-05 by
 [0066](0066-one-circle-language.md): the files pane's `↩` tag is a circle in
 the state colour after a file with listed threads.
 

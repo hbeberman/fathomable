@@ -28,10 +28,13 @@ impl App {
     /// than rewritten, or that have neither a snapshot nor a context
     /// window stay detached.
     pub(crate) fn reanchor_from_snapshots(&mut self) {
-        let (Some(store), Some(seen)) = (self.store.as_mut(), self.seen.as_ref()) else {
-            return;
+        {
+            let (Some(store), Some(seen)) = (self.store.as_mut(), self.seen.as_ref()) else {
+                return;
+            };
+            follow_snapshots(store, seen, self.workspace.root())
         };
-        follow_snapshots(store, seen, self.workspace.root());
+        self.reconcile_agent_activity();
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }

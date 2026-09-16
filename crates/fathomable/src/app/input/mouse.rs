@@ -19,10 +19,9 @@ use super::bindings::{self, Where};
 use super::help;
 use super::keys::{self, WHEEL_LINES, tree_highlight};
 use crate::app::draw;
-use crate::app::draw::author::THREAD_GUTTER;
 use crate::app::draw::header;
-use crate::app::draw::nest::NEST;
 use crate::app::threads::draft::DraftRow;
+use crate::app::threads::list::Row;
 use crate::app::view::Effect;
 use crate::app::{doctor_view, menu_bar};
 
@@ -182,9 +181,41 @@ fn review_mouse(
         // 0073); one press elsewhere selects.
         MouseEventKind::Down(MouseButton::Left) => {
             let list_row = row - 1;
-            if let Some(id) = app.review_thread_row(list_row) {
-                let chevron = column.saturating_sub(app.sidebar_width()) == 1 + NEST;
-                if chevron || press(app, column, screen_row, false) == 2 {
+            let width = app.column_width();
+            let rows = app.review_rows(width);
+            let at = app.review_list().scroll() + list_row;
+            let summary_row = rows.rows.get(at).and_then(|row| match row {
+                Row::Header {
+                    entry,
+                    summary,
+                    selected,
+                    ..
+                } => Some((*entry, summary, *selected, true)),
+                Row::Stub {
+                    entry,
+                    summary,
+                    selected,
+                    ..
+                } => Some((*entry, summary, *selected, false)),
+                _ => None,
+            });
+            if let Some((_entry, summary, selected, expanded)) = summary_row {
+                let local = column.saturating_sub(app.sidebar_width());
+                let layout = header::entry_header(
+                    summary,
+                    fathomable_core::clock::now(),
+                    selected,
+                    expanded,
+                    width,
+                );
+                if let Some(action) = layout.action_at(local) {
+                    let id = summary.id().clone();
+                    app.thread_summary_action(&id, action);
+                    app.press = None;
+                    return Effect::None;
+                }
+                if layout.disclosure_at(local) || press(app, column, screen_row, false) == 2 {
+                    let id = summary.id().clone();
                     app.review_click(list_row);
                     app.review_toggle_thread(&id);
                     app.press = None;
@@ -404,8 +435,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     if right && matches!(app.popup(), Some(Popup::Compose(_))) {
         return Effect::None;
     }
-    // The status line's waiting and thread counts take a click (ADR
-    // 0066).
+    // The status line's thread total takes a click.
     if left && pane_row == rows {
         let parts = draw::status_parts(app);
         let start = app.size().0.saturating_sub(parts.right_width());
@@ -447,6 +477,10 @@ fn header_bar(app: &App) -> header::Header {
 /// The mouse over the text: the wheel scrolls; a right-click opens the
 /// menu; a left press places the cursor, expands a stub, or begins a
 /// selection gesture; a drag extends the selection.
+#[expect(
+    clippy::too_many_lines,
+    reason = "Text mouse precedence is kept in one ordered dispatcher."
+)]
 fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Effect {
     let sidebar = app.sidebar_width();
     let gutter = sidebar + crate::app::draw::gutter_width(app.view());
@@ -493,8 +527,22 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             && let Some(id) = stub.thread().cloned()
             && (!stub.expanded() || index == 0)
         {
-            let chevron = !in_gutter && col < THREAD_GUTTER;
-            if chevron || press(app, column, row, in_gutter) == 2 {
+            let Some(thread) = app.thread(&id) else {
+                return Effect::None;
+            };
+            let marked =
+                app.threads_at_cursor().contains(&id) && app.thread_cursor().thread() == Some(&id);
+            let width = app
+                .column_width()
+                .saturating_sub(crate::app::draw::gutter_width(app.view()));
+            let layout = header::expanded_header(app, thread, marked, stub.expanded(), width);
+            if let Some(action) = layout.action_at(col) {
+                app.thread_summary_action(&id, action);
+                app.press = None;
+                return Effect::None;
+            }
+            if (!in_gutter && layout.disclosure_at(col)) || press(app, column, row, in_gutter) == 2
+            {
                 if stub.expanded() {
                     app.fold_thread(&id);
                 } else {

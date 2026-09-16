@@ -13,7 +13,6 @@ use fathomable_core::session::Marker;
 use fathomable_core::workspace::Workspace;
 use fathomable_core::worktrees::Worktree;
 
-use crate::app::threads::words::Words;
 use crate::app::{App, PickerKind};
 
 /// What the loop's watcher must move to after the app re-rooted or
@@ -348,16 +347,6 @@ impl App {
             out.insert(thread.id().clone(), placement);
         }
         self.elsewhere = out;
-    }
-
-    /// Range and words of a thread another worktree shows.
-    pub(super) fn elsewhere_words(
-        &self,
-        id: &ThreadId,
-    ) -> Option<(Option<fathomable_core::annotations::LineRange>, Words)> {
-        let placement = self.elsewhere_placement(id)?;
-        let thread = self.thread(id)?;
-        Some((placement.range(), Words::of(Some(placement), thread)))
     }
 
     /// The `worktrees` row of `:status`: each by label and root, the

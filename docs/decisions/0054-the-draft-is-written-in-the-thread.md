@@ -27,6 +27,15 @@ Status: accepted (2026-09-04). Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the author row is ` user  draft`
 alone; the draft keys are on the text's key bar.
 
+Amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md): `Enter` submits or saves
+normally, `Ctrl-Enter` submits or saves and enables one-shot auto-resolve,
+and `Alt-Enter` alone inserts a newline. If another writer resolves the
+thread during a reply or edit draft, the first submit writes nothing and
+keeps the draft intact; the bar offers `Enter` to atomically reopen and
+submit with the original Ctrl-Enter intent, or `Esc` to keep editing while
+the thread remains resolved.
+
 ## Context
 
 [0013](0013-annotation-storage-and-ux.md) gave the viewer a comment box

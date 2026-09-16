@@ -288,3 +288,13 @@ fn key_names_round_trip() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn retired_thread_theme_keys_are_rejected_without_aliases() -> TestResult {
+    for key in ["thread.open", "thread.waiting"] {
+        let source = format!("colors {{ \"{key}\" fg=\"red\" }}");
+        let error = must_fail("old", &[("old", &source)])?;
+        assert!(error.to_string().contains("unknown theme key"), "{error}");
+    }
+    Ok(())
+}

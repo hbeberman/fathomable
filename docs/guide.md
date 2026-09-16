@@ -123,7 +123,7 @@ keys rather than moving it away from its label.
 started, Doctor, View keymap), then Status, About, and Quit. **Go** contains
 the file pickers, Back/Forward, and Newest change. **Review**
 contains the review view and filters plus new thread, file comment, reply,
-edit, and resolve/reopen. **Diff** contains comparisons, base and target
+edit, auto-resolve, and resolve/reopen. **Diff** contains comparisons, base and target
 pickers, whitespace, checkpoints, and mark-seen state. Cursor movement,
 selection, deletion, and bracket-pair navigation stay in the keymap and
 contextual surfaces rather than filling these application menus.
@@ -174,11 +174,12 @@ Text:
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
 | `gf`, Ctrl-click | open linked file/URL: local files open in the viewer at their line, URLs through `xdg-open`; accepts Markdown links and bare references, including `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns from a file hop |
 | `c` | comment on the selection or cursor line; reply when the cursor rests on a thread's stub or message rows |
-| `e` `o`, `dd` | edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
+| `e`, `dd` | edit the message here when yours; delete the thread at the cursor |
+| `r`, `R` | resolve or reopen the cursor thread; enable or disable one-shot auto-resolve for its next agent reply |
+| `t` | toggle the full review view from any normal non-input pane |
 | `Enter` on a thread header or folded stub | fold or unfold that thread in place |
 | `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
-| `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
 | `:help`, `:doctor`, `:about` | reopen the first-workspace Getting started page; run the in-app diagnostics view; show project identity and repository link |
 | `:status`, `:name NAME` | viewer and path popup; name this viewer window (`:name` alone clears it) |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight, else leave the diff; quit |
@@ -190,14 +191,13 @@ The `Space` menu, from any pane:
 | `Space f` | file picker |
 | `Space F i`, `Space F r` | files: the picker including ignored files; the recent files |
 | `Space F c`, `Space F u`, `Space F g` | files: only changed files in the files pane; hide untracked files; show ignored files (session toggles, from any pane; each entry says what pressing it does now) |
-| `Space r` | the review list: every thread on the work in place of the document, by file then line under a row per file, resolved hidden; on the focused list, close it |
 | `Space w h`, `Space w l` | window: the pane left of the text (the files pane, or the threads pane when the files pane is hidden; the files pane is shown when neither is); back to the text |
 | `Space w j`, `Space w k` | window: from the files pane down to the threads pane, and back up, when both are shown |
 | `Space w w` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
 | `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
 | `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
 | `Space p s`, `Space p m` | panes: hide/show the whole sidebar with its remembered composition; hide/show the persistent menu bar |
-| `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
+| `Space c c`, `Space c r`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, edit your newest message, delete |
 | `Space c f` | threads: a comment on the open file as a whole, written in a block above its first line |
 | `Space v s`, `Space v t`, `Space v x` | view: toggle source view, thread stubs, stubs for resolved threads (hidden by default) |
 | `Space d d`, `Space d D` | diff: the diff against `HEAD`, against last seen |
@@ -212,9 +212,9 @@ The `Space` menu, from any pane:
 | `:` | the command line, from any pane |
 
 Threads pane (the sidebar's lower pane; its header reads `threads ·
-file` or `threads · workspace` with the counts by colour at its right
-edge, `● 2 user ● 1 agent ◐ 1 resolve? ○ 3 resolved` when the row holds
-the words and `● 2 ● 1 ◐ 1 ○ 3` when it does not; in workspace scope a
+file` or `threads · workspace` with lifecycle counts at its right edge,
+`● 2 active ◐ 1 resolution proposed ○ 3 resolved` when the row holds
+the words and `● 2 ◐ 1 ○ 3` when it does not; in workspace scope a
 row per file over its threads, each thread's two rows sitting two cells
 in under the path as the files pane nests a directory's children, and
 in file scope the threads alone at the same indent; while the pane has
@@ -226,11 +226,11 @@ the keys, its bottom row is a key bar naming them):
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the review list shares the flag) |
 | `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all; a file row carries `▾` open and `▸` folded, here and in the review list |
-| `c` `o`, `dd` | reply, resolve or reopen, delete |
+| `c`, `r`, `R`, `dd` | reply; resolve or reopen; toggle one-shot auto-resolve; delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
-Review list (`Space r`; its header reads `review threads  ● 2 user ● 1
-agent ◐ 1 resolve? ○ 3 resolved`, the counts by colour as the threads
+Review list (`t`; its header reads `review threads  ● 2 active ◐ 1
+resolution proposed ○ 3 resolved`, the counts by lifecycle as the threads
 pane's, each with its word while the row holds them all and bare
 otherwise, then ` · path` while `f` narrows it;
 the keys below sit on a bar along the list's bottom row, and the
@@ -248,17 +248,18 @@ row itself is selected):
 | `gg` `ge` `G` | first / last stop |
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
-| `c` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
+| `c`, `e`, `r`, `R`, `dd` | reply, edit your highlighted message, resolve or reopen, toggle one-shot auto-resolve, delete |
 | `x`, `f` | show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the threads pane shares the flag); only this file |
 | `z`, `Z` | fold or expand the thread here (one row, the stub's form, with no blank row after it), or on a file row fold the file to its row or unfold it; fold every thread, or expand them all when every one is folded; the list opens with every thread expanded and remembers its folds while the viewer runs |
-| `Esc` | close the list, back to the document (`Space r` does too) |
+| `Esc` | close the list, back to the document (`t` does too) |
 
 The draft, a comment, reply, or edit written in the thread's rows:
 
 | Keys | Action |
 | --- | --- |
 | `Enter` | submit, or save an edit |
-| `Alt-Enter` / `Ctrl-Enter` | newline |
+| `Ctrl-Enter` | submit or save and enable one-shot auto-resolve for the next agent reply |
+| `Alt-Enter` | newline |
 | arrows, `Home` `End` `Ctrl-a`, `Alt-b` `Alt-f` | move by character or line, line start / end, word |
 | `Ctrl-w` `Ctrl-u` `Ctrl-k`, `Delete` | delete word back, to line start, to line end, forward |
 | paste, click, `Alt-j` `Alt-k` / `Alt-Down` `Alt-Up` | insert at the cursor, place the cursor, scroll the text around the draft |
@@ -276,7 +277,7 @@ Files pane and picker:
 | `Enter` | open the file and focus the text; toggle a directory |
 | `gg` `ge` `G` | top / bottom |
 | `y` | copy the highlighted entry's path, relative to the root |
-| `t` | the threads pane in file scope on the highlighted file, with the keys |
+| `t` | toggle the full review view |
 | `Esc` | back to the text; the pane stays |
 | picker `Ctrl-j` `Ctrl-k` / arrows, `Enter`, `Esc` | move, open, close |
 
@@ -346,14 +347,14 @@ sidebar's divider or the threads pane's rule to resize them.
 A **right-click** opens a menu of what the pointer is on, each entry
 showing the key that does the same: on a selection, comment, new
 thread, copy, and clear; on a line a thread covers, expand or fold,
-reply, resolve or reopen, edit, and delete; on a URL or a path that names
+reply, enable or disable auto-resolve, resolve or reopen, edit, and delete; on a URL or a path that names
 a file, `open linked file/URL`;
 on any line, comment, select, and copy. In the files pane it offers open,
 checkpoint, copy path, the three filter toggles worded as they would
 act now, and, on a file with threads, `threads` (the
 threads pane on it) and `review`; on a threads pane thread, go to,
-reply, resolve, edit, delete, and fold file; on a review list thread,
-fold or expand thread, then go to, reply, resolve, edit, and delete;
+reply, auto-resolve, resolve, edit, delete, and fold file; on a review list thread,
+fold or expand thread, then go to, reply, auto-resolve, resolve, edit, and delete;
 on a file row of either, fold or unfold, in the pane fold all or
 unfold all, open file, and the resolved toggle. A right-click
 outside the selection moves the cursor there first; inside it keeps the
@@ -367,8 +368,8 @@ lands on it and one on a file row folds or unfolds it; a click
 on the threads pane header's words toggles its scope and one on its
 resolved count toggles `x`, as in the review list's header; on the
 diff header's base or target
-name opens that picker; and on the status line the waiting count opens
-the review list and the thread count focuses the threads pane.
+name opens that picker; and on the status line the thread count focuses
+the threads pane.
 In `Space ?`, a click on any wrapped row runs that binding when it
 applies to the pane that had focus; filtering, scrolling, and resizing
 all update the click targets.
@@ -392,35 +393,46 @@ startup arrangement.
 Select with `v`, `V`, or the mouse and press `c`. The comment becomes a
 thread anchored to the content (an agent can start one too, through
 `thread_start` in section 8, and its comment then carries the agent's
-name and waits on you), so it follows the lines when text above
+name), so it follows the lines when text above
 them changes, moves onto the rewritten lines and shows as *edited* when an
-agent changes the lines themselves (until you reply or resolve), and shows
+agent changes the lines themselves, and shows
 as *detached* when the lines are gone: a blank row then appears where
 the lines were, carrying the thread's mark, and the lines now at that
 place are left alone. `z` on that row opens the thread; `c` replies to
-it rather than starting a comment, because the row is not text. The colour of a mark is the thread's status
-alone, and it is the colour of whoever has the last word: your blue
-while open (`thread.open`, the hue of `thread.user`), an agent's bold
-green when it waits on you (`thread.waiting`, the hue of
-`thread.agent`), grey once resolved (`thread.resolved`); *edited* and
-*detached* are words in an expanded
-thread's header, not colours. Every surface that names a thread draws
-one **circle** in that colour, the fill saying where the thread is in
-its life:
+it rather than starting a comment, because the row is not text.
+
+Lifecycle and placement are independent. Every surface that names a thread
+draws exactly one lifecycle glyph and colour:
 
 | glyph | meaning |
 | --- | --- |
-| `●` | open (your blue), or waiting on you (the agents' green) |
-| `◐` | an agent's newest reply proposes resolving it |
+| `●` | active: unresolved with no current resolution proposal |
+| `◐` | resolution proposed: an agent reported completion without one-shot permission |
 | `○` | resolved |
-| `?` | the thread's lines are gone (detached) |
 
-The gutter, a stub, an expanded thread's header, the threads pane, the
-review list, the files pane, and the status line's waiting count all
-draw it. A comment on the file as a whole
+The theme roles are `thread.active`, `thread.proposed`, and
+`thread.resolved`. They do not encode who spoke last; message authors
+remain `thread.user` and `thread.agent`. Placement is shown separately as
+`file`, `L3-5`, or `L3-5?` when detached. The gutter, collapsed and
+expanded inline headers, review headers, sidebar cards, files pane, and
+counts all use the same lifecycle vocabulary.
+
+Header and directory counts partition the set: `● 4 active ◐ 1 resolution
+proposed ○ 2 resolved`. Zero counts are omitted, and all words drop
+together before narrow rows drop counts. A proposal is not counted again
+as active. Aggregate priority is resolution proposed, then active, then
+resolved. The status line has no waiting count; it may show the current
+file's proposal count and total thread count.
+
+Only the user controls one-shot auto-resolve. `R` enables or disables it
+on an unresolved cursor thread. The next agent reply consumes it whether
+that reply sets `resolve` or not; resolving and reopening also leave it
+disabled.
+
+A comment on the file as a whole
 (`Space c f`, or an agent's `thread_start` with no `line`) has no
-lines: its stub stands above the first line, its header reads
-`file · open`, and it never moves, detaches, or re-anchors. The lines themselves carry no tint;
+lines: its collapsed row stands above the first line, its location is
+`file`, and it never moves, detaches, or re-anchors. The lines themselves carry no tint;
 the gutter's bracket on the lines of the thread the cursor is on
 lights up in yellow (`thread.bracket`), so the corners and the line
 between them say which thread the keys act on
@@ -444,14 +456,13 @@ warm surface (`thread.draft`) and takes your stripe on submit
 Comment and reply bodies in an expanded thread render as Markdown:
 lists, emphasis, `inline code`, and fenced blocks coloured by their
 language, with a newline kept as a line break as in a GitHub comment;
-the text in `threads.jsonl` is the source you typed. Where the lines
-went and what state the thread is in are separate: an expanded thread's
-header reads `detached · resolved` or `edited · waiting`, placement
-first, and a thread at its own lines shows the state alone. A third
-word, `proposed`, follows when an agent's newest reply proposes
-resolving the thread (`waiting · proposed`): only you resolve, so the
-thread stays open and waiting until your `o` accepts the proposal or
-your reply keeps it going. Edits made while Fathomable was not
+the text in `threads.jsonl` is the source you typed. An ordinary message
+clears a current proposal and returns the unresolved thread to active;
+editing an older message does not reorder the conversation or clear it.
+Resolving or reopening clears a proposal, and reopening returns active.
+Historical messages retain their `resolution_proposed` fact.
+
+Edits made while Fathomable was not
 running are followed too, on the next start, through the file's last-seen
 snapshot (section 5); commenting snapshots the file so there is always
 one. A file too large to snapshot, or whose snapshot was deleted, is
@@ -464,25 +475,27 @@ outside the repository at
 `<hash>` is of the repository's git common dir, so every worktree
 reads the same file, or of the root outside git
 ([0070](decisions/0070-one-workspace-many-worktrees.md)).
-Each line carries format version **3**, the only annotation version this
+Each line carries format version **4**, the only annotation version this
 build reads or writes. A file of another version is refused with the line
 to blame, both versions, and actionable path/reset guidance; there is no
 migration or older reader
 ([0062](decisions/0062-one-version-no-compatibility.md)).
 
-Every open thread shows a **stub** under the last of its lines: one row,
-its newest message, with a `▸`, the thread's circle, the author
-(the configured user name, or an agent's stored name; no subscription
-type), the age, and the first line of the message, on the author's stripe
-with the name in the author's
-colour, as the message reads once expanded (`thread.user`,
-`thread.agent`, over `thread.inline`; a theme that sets no background
-gets a `▎` at the left edge instead). Stubs are not lines: they carry
+Every open thread shows a **collapsed summary** under the last of its
+lines: one row with the lifecycle glyph, `▸`, the latest author and
+ellipsized first body line, then a right-aligned tail of optional
+worktree/commit context, location, `↩n` reply count, and compact thread
+modification time (`now`, `5m`, `2h`, `3d`). The reply count excludes the
+opening comment. The modification time includes messages, edits, lifecycle,
+auto-resolve, relocation, move, and rescope changes. A cursor summary also
+shows its direct actions, consuming preview width when needed.
+
+Collapsed summaries are not lines: they carry
 no line number and selection never takes one; but `j`/`k` and the
-other motions stop on a stub as on a line, the cursor resting on the
-stub itself with the `▎` bar at its left edge standing in for the
-block cursor (a click rests it there too), the stub's thread the
-cursor's, and `z`, its `▸`, or a double-click expands it. Stubs of
+other motions stop on one as on a line, the cursor resting on the
+summary itself with the `▎` bar at its left edge standing in for the
+block cursor (a click rests it there too), its thread the cursor's, and
+`z`, its `▸`, or a double-click expands it. Summaries of
 threads stacked on one row follow one another in line order. The stub
 of the thread under the cursor reads in the text colour, bold for the
 thread the cursor is on; the others are dimmed.
@@ -494,22 +507,38 @@ only while that commit is `HEAD`: the next commit or checkout takes it
 out of the file and the tools, and checking that commit out again brings
 it back ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
 
-`z` on a line a thread covers **expands** its stub in place, the
-view staying still: a header row with a `▾`, the state and placement,
-then every message rendered as Markdown. The text's keys sit
+`z` on a line a thread covers **expands** its summary in place, the
+view staying still. Inline and review headers use the same one-row layout:
+the lifecycle glyph and `▾`, direct actions, then the same right-aligned
+tail. Expanded headers omit latest author and preview because the
+conversation below already shows them. On the cursor thread the controls
+read `Auto-resolve  R` or `Disable auto-resolve  R`, followed by
+`Resolve  r` or, when resolved, `Reopen  r`; the trailing key labels are
+subdued. A non-cursor expanded header keeps clickable action words without
+key labels.
+
+The factual tail is right-aligned. When space is tight the preview goes
+first, then optional context, reply count, modification time, and location.
+Only visible text has a hit region. Hover patches only the action under the
+pointer with `ui.header.patch(ui.list.hover)`. The arrow and its three
+following cells form the disclosure target; separator cells are inert, and
+an action hit wins over double-click folding.
+
+The text's keys sit
 on a **key bar** that replaces the bottom text row while it has
 something to say (a thread under the cursor, a thread in the file, or a
 draft); the viewport stays put unless its cursor would be covered, and
 scrolling keeps the last line and its `~` marker above the bar. While the text has the keys it
-names the keys of the thread the cursor is on (`c reply · e edit · o
-resolve · z fold` while resting in its rows; `e edit · o resolve ·
-z expand` from its source line, `e` only on your own message) and `Z
+names reply, edit, and fold for the cursor thread. The `r`/`R` lifecycle
+hints stay out of the bar while that thread's inline header is visible and
+return when it has scrolled outside the viewport. The bar also names `Z
 fold all` or `Z unfold all` while the file has threads;
 while another pane has the keys it reads `click or Space w l to
 focus`. A hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `c` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
-`o` resolves or reopens, `dd` deletes the thread, and `z` on any
+`r` resolves or reopens, `R` toggles one-shot auto-resolve, `dd` deletes
+the thread, and `z` on any
 of its rows folds it. On a source line, `c` starts a new comment
 whether or not it already has a thread. `Z` expands every thread in the file, or folds them all when
 any is expanded. A click on a stub's `▸` or a double-click on the stub expands
@@ -520,8 +549,9 @@ it. Folding from the thread's rows leaves the cursor on the stub, its
 Writing happens in the same rows: the **draft** is not a box along the
 bottom but rows of the text. A reply is written at the end of its
 thread's expanded rows, under a ` User  draft` row (the name from `user.name`); the draft keys are
-on the text's key bar (`Enter submit · Alt-Enter newline · Alt-k/j
-scroll · Ctrl-e $EDITOR · Esc`, or `Esc again to discard` once you have
+on the text's key bar (`Enter submit · Ctrl-Enter submit + auto-resolve ·
+Alt-Enter newline · Alt-k/j scroll · Ctrl-e $EDITOR · Esc`, or
+`Esc again to discard` once you have
 pressed Esc on a changed draft); an edit replaces the message it edits,
 seeded with its text; and a new comment (`c` or `Space c c`) gets a
 block of its own under its lines, headed
@@ -532,6 +562,13 @@ screen while the text cursor stays on the message; a click in the draft
 places its cursor. Submit, cancel, or clear an empty draft and the rows
 go: a reply becomes the newest message under the cursor, a new comment
 becomes a stub.
+
+If another writer resolves a thread while its reply or edit draft is open,
+the first `Enter` or `Ctrl-Enter` writes nothing and preserves the draft.
+The bar reads `resolved while editing; Enter reopen and submit · Esc keep
+editing`. `Enter` then atomically reopens and submits, retaining the
+original Ctrl-Enter auto-resolve intent; `Esc` returns to the intact draft
+and leaves the thread resolved.
 
 A draft stays with the file where you started it. Switch to another file
 and it is hidden, not submitted or discarded; return and its text and
@@ -562,41 +599,46 @@ drop out of the list and is highlighted again when it qualifies. The threads pan
 threads in line order or, after `s`, the whole workspace's grouped by
 file, resolved ones hidden until `x` shows them, the ones resolved at
 earlier commits of the branch among them. Each thread takes two
-rows: its circle, `L3-5` (or `file`), and who wrote its newest message
+rows and never expands inside the sidebar: its lifecycle glyph,
+`L3-5`, detached `L3-5?` (or `file`), and who wrote its newest message
 (`name`), then the
 branch of the worktree that shows it when the active one does not
 ([0070](decisions/0070-one-workspace-many-worktrees.md)), with
-`↩n` when replied and the age at the edge; then that message's first
-line, cut with `…`. In workspace scope a row per file in the files
+`↩n` when replied and compact thread modification time at the edge; then
+that message's first line, cut with `…`. `Enter` opens the selected
+conversation in the text. In workspace scope a row per file in the files
 pane's order sits over its threads with the count at the edge; `z`
 folds a file to `▸ path  n` and `Z` every file, the fold outliving a
 scope or file switch, and the current file's rows carry the focus
 tint (`thread.focus`), independent of selection and overridden by an
-actual active or remembered selected row. The header counts by colour
-(`● 2 user ● 1 agent ◐ 1 resolve? ○ 3
-resolved`, the words dropping together when the row is too narrow for
+actual active or remembered selected row. The header counts by lifecycle
+(`● 2 active ◐ 1 resolution proposed ○ 3 resolved`, the words dropping
+together when the row is too narrow for
 them; the resolved count is dim while hidden), and while the
-pane has the keys its bottom row is a key bar (`s scope · x resolved ·
-z fold · Z fold all`, from the end as the column narrows). Beside the
+pane has the keys its bottom row is a key bar with reply,
+`R` auto-resolve, `r` resolve/reopen, fold, scope, and resolved-filter
+actions, dropping from the end as the column narrows. Beside the
 files pane it keeps `sidebar.split` rows (8 by default; drag its rule to
 change that for the session), and alone it takes the whole column. The
 highlighted entry is the thread under the cursor, both rows on the active
 or remembered list surface according to which pane owns the keys, so
 reading the file walks the pane; `j`/`k` step the cursor and the text follows, another
 file opening in workspace scope, `Enter` opens the file with the thread
-expanded, and `r` and `o` act on the highlight. A file with listed
+expanded, `r` resolves or reopens, and `R` toggles one-shot auto-resolve.
+A file with listed
 threads shows its most urgent circle after its name in the files pane,
 and a collapsed directory its children's.
 
 While the files pane has the keys and its highlight rests on a directory,
 the text column shows that directory's path, direct file and subdirectory
 counts under the active files-pane filters, and any changed-file, `+n -m`,
-open-thread, and waiting-thread totals across its subtree. It does not
+active-thread, resolution-proposed, and resolved-thread totals across its
+subtree. It does not
 repeat navigation hints; directory navigation remains in the files pane.
 
 The text, the threads pane, and the review list show one **thread
 cursor**: a thread and a message in it. Whichever surface you move it
-from, the others follow, and `c`, `e`, `o`, and `dd` act on it wherever
+from, the others follow, and `c`, `e`, `r`, `R`, and `dd` act on it wherever
 the keys came from. While the list is open the cursor is what you last
 stepped to or clicked; once it is closed and you move in the text, the
 cursor rides the text cursor again: the thread starting on the cursor
@@ -607,48 +649,54 @@ uppercase crosses files: `]c`/`[c` step to the previous or next thread
 of this file, wrapping, and `]C`/`[C` across the workspace, files in
 path order, opening the file they land in.
 
-`Space r` shows the whole review at once: the threads pane full
+Bare `t` shows the whole review at once, or closes it when review has the
+keys: the threads pane full
 screen. Every thread on the current work (the ones whose commit `HEAD`
 can reach) sits under a row per file, files in the files pane's order
-and threads by line, each open with its messages under a header that
-reads as the expanded thread in the text does (`●  L14-16  waiting
-10m ago`). Resolved threads
+and threads by line. Expanded and folded review headers use the same
+summary layout as inline threads, including direct actions, reply count,
+compact modification time, and detached location suffix. Resolved threads
 are hidden until `x` shows them dimmed (the threads pane shares the
 flag), and with them the threads resolved at earlier commits of the
 branch, which the file no longer shows: each names its commit after the
-state (`○  L3  resolved  ab12cd3  2d ago`) at the lines its record
+location (`○ ▾ Reopen  r  ab12cd3  L3  2d`) at the lines its record
 holds, `Enter` lands on those lines with nothing to expand, `c` and `e`
-are refused, and `o` reopens it and brings it back into the file
+are refused, and `r` reopens it and brings it back into the file
 ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)). It takes the text column
 the way a document does; the sidebar stays beside it. The newest message
-in the selected thread starts highlighted, and the thread's header
-carries the thread keys; `j`/`k` move between
+in the selected thread starts highlighted, and the selected thread's
+header carries subdued `R`/`r` labels after its action words; other
+expanded headers keep mouse action words without key labels. `j`/`k` move between
 threads (a folded file counting once), `l`/`h` move between their
 messages, `Ctrl-d`/`Ctrl-u` move by
-half a page of rows, `z` folds the cursor's file to its row and `Z`
-every file (the list's folds are its own, apart from the pane's), and
+half a page of rows, `z` folds the thread under the cursor or its file
+when the cursor rests on a file row, and `Z` folds or expands every thread
+(the list's folds are its own, apart from the pane's), and
 `e` edits a highlighted
 message you wrote. `Enter` opens the file with the thread expanded and
-the cursor on that message, `o` resolves in place, `c` and `e` open the
+the cursor on that message, `r` resolves in place, `R` toggles one-shot
+auto-resolve, `c` and `e` open the
 file the way `Enter` does to write the reply or edit in the thread's
 rows and bring the list back when the draft closes, `f` narrows the
 list to the file you were reading, and `Esc` goes back to it.
 
-A thread is **waiting** on you when it is open and an agent has the
-last word on it; your reply, edit, resolve, or reopen ends the wait,
-and until then the viewer keeps it in the human-facing waiting set
-([0058](decisions/0058-the-user-has-the-last-word.md)). Waiting
-threads have their own colour (`thread.waiting`) in the gutter
-bracket, the threads pane, and the review list, the status line
-counts them (`● 2 waiting` with a green circle, and `1 proposed` before
-it while a thread on
-the document carries a proposal; `:status` has both totals), the files
-pane's circle after their file turns green, and a reply landing while you read raises a toast
-(`reply on src/lib.rs:42`, or `reply on src/lib.rs:42, proposes
-resolving` when the agent proposed closing it). `]r`
-and `[r`, or `Tab` and `Shift-Tab`, step through them — this file
-first, then the others in path order, wrapping — and expand each one,
-so holding `Tab` reads every reply that needs an answer.
+### Agent activity
+
+Agent activity is notification, not thread state. Every newly observed
+agent opening comment or reply raises a toast, including consecutive
+replies to the same thread:
+
+- `<agent> started a thread on <place>`
+- `<agent> replied on <place>`
+- `<agent> replied and proposed resolution on <place>`
+- `<agent> replied and resolved <place>`
+
+Several newly observed events reconcile to one `<n> agent updates` toast.
+User-authored activity does not toast. Startup seeds the append-log cursor
+without replaying history, idempotent replays do not notify again, and
+refresh/write paths reconcile imported agent events before moving the
+cursor. There is no waiting state, count, colour, or traversal; `Tab`,
+`Shift-Tab`, `]r`, and `[r` are unbound.
 
 ## 5. Changes against git
 
@@ -857,6 +905,9 @@ List selection uses four shared theme roles: `ui.list.active` background,
 `ui.header`; the exact colours are in
 [0011](decisions/0011-theme-schema.md#selection-and-built-ins).
 Review message backgrounds keep `thread.user` and `thread.agent` stripes.
+Thread lifecycle uses `thread.active`, `thread.proposed`, and
+`thread.resolved`. Header action hover composes
+`ui.header.patch(ui.list.hover)` only on the hovered action.
 
 **Theme migration:** remove `ui.sidebar.selected` and `ui.picker.selected`
 from custom theme files, including any parent theme you maintain. They
@@ -865,6 +916,9 @@ or move your selected background to `ui.list.active` and choose a quieter
 `ui.list.inactive` background, a distinct `ui.list.cursor` foreground, and
 a subtle `ui.list.hover` background. Keep `ui.picker.match`,
 `ui.sidebar`, and `ui.sidebar.dir`; no navigation settings change.
+Also replace `thread.open` and `thread.waiting` with `thread.active` and
+`thread.proposed`; keep `thread.resolved`, `thread.user`, and
+`thread.agent`. Retired keys are unknown-key errors, not aliases.
 
 ## 8. Connect an agent
 
@@ -886,7 +940,7 @@ changes. Exact `ids` use the same direct store, bypassing ordinary checkout
 and status visibility as described below.
 
 The viewer and MCP child must run matching builds. The internal socket accepts
-protocol version **6** only. An “unsupported protocol version” error means
+protocol version **7** only. An “unsupported protocol version” error means
 one process is stale: stop and restart the affected viewer and MCP child,
 then reconnect the host if needed. Deleting annotation state does not repair
 a process mismatch, and ordinary startup never deletes state.
@@ -967,9 +1021,11 @@ discussion. The tools are:
 | --- | --- |
 | `threads` | Read open discussions regardless of who spoke last, with their actual history, authors, and current placement. Filter by `status` (`open`, `resolved`, or `all`), `path`, or `since`; use `ids` alone for exact discussions, including older resolved history. |
 | `thread_start` | Start discussions with a non-empty `comments` array of `{path, line?, end_line?, body, idempotency_key?}`. Paths are relative to the bound checkout; omit `line` for a file-wide comment. |
-| `thread_reply` | Continue discussions with a non-empty `replies` array of `{thread, body, propose_resolve?, line?, end_line?, idempotency_key?}`. A range re-anchors rewritten lines; `propose_resolve` proposes closure, and only the human closes or reopens a thread. |
+| `thread_reply` | Continue discussions with a non-empty `replies` array of `{thread, body, resolve?, line?, end_line?, idempotency_key?}`. `resolve` says the reply completes the work. A range re-anchors rewritten lines. |
 
 Reads include discussions reached by any current worktree of this repository.
+The default `status: "open"` includes both active and
+resolution-proposed discussions.
 When the relevant checkout differs from the bound one, the result names it in
 `worktree`; exact-ID reads retain the same placement. Replies use that
 discussion's checkout without moving a viewer. A `path` filter must name a
@@ -986,14 +1042,50 @@ duplicate or missing IDs fail.
 
 All three tools publish output schemas. Success results contain complete
 JSON in both `structuredContent` and the text fallback, not an abbreviated
-prose summary. Each discussion includes `placement` (`anchored`, `edited`,
-`detached`, or `file`) and `location` (`unchanged`, `moved`, `detached`, or
-`file`). `anchor_range` is the last stored anchor, not immutable creation
-history; a re-anchor changes it. `range` is the projected current range
-unless detached, when it is only last-known. Location and content edits
-are separate: neither decides whether a finding still needs attention.
+prose summary. Each discussion includes `status`, `lifecycle` (`active`,
+`resolution_proposed`, or `resolved`), `modified`, `auto_resolve`, and one
+uniform `messages` array in append order. Every message has `author`, `body`,
+`created`, `modified`, and `resolution_proposed`; the opening comment and
+replies no longer use different result fields.
+
+Placement remains separate: each discussion includes `placement`
+(`anchored`, `edited`, `detached`, or `file`) and `location` (`unchanged`,
+`moved`, `detached`, or `file`). `anchor_range` is the last stored anchor,
+not immutable creation history; a re-anchor changes it. `range` is the
+projected current range unless detached, when it is only last-known.
 Supplying its unchanged stored range while the thread still anchors there
-records the reply without re-anchoring it or marking its placement as edited.
+records the reply without re-anchoring it or marking its placement as
+edited.
+
+`thread_reply` returns request-order `results`, one per completed item:
+
+```json
+{
+  "results": [{
+    "thread": { "...": "complete current discussion" },
+    "resolution": {
+      "outcome": "not_requested | resolution_proposed | resolved"
+    },
+    "replayed": false
+  }]
+}
+```
+
+`resolve: false` records an ordinary reply, consumes any one-shot
+permission, and leaves an unresolved thread active. `resolve: true` with
+`auto_resolve: true` records the reply, consumes permission, resolves, and
+pins the thread to that checkout's `HEAD`. Without permission it still
+succeeds, records `resolution_proposed`, leaves the thread open, and adds:
+
+```json
+{
+  "reason": "pending_fathomable_user_review",
+  "guidance": "Do not ask for confirmation in chat and do not retry; the Fathomable user will review it in Fathomable."
+}
+```
+
+That is a completed outcome, not an error or a request to seek permission
+in chat.
 
 Both write tools reject invalid batches before writing any item: empty
 bodies, unknown fields, invalid 1-based ranges, an `end_line` before `line`,
@@ -1004,8 +1096,12 @@ line. Prevalidation errors carry `error_code: "INVALID_BATCH"` and identify
 each failing item by its zero-based `item_index`; their text fallback uses
 the corresponding `comments[index]` or `replies[index]` path.
 Prevalidation is not an I/O transaction: a later runtime failure can
-leave earlier items written, and the error names those completed items.
-The former `resolve` argument is rejected; use `propose_resolve`.
+leave earlier items written. Such an execution failure returns
+`error_code: "PARTIAL_BATCH"` with indexed `completed` results, one
+`failed` object containing `item_index`, the original `item`, and `error`,
+and indexed `unattempted` items. Batch prevalidation still writes nothing.
+The retired `propose_resolve` input and `proposed_resolved` output are
+rejected; use `resolve` and `resolution_proposed`.
 
 Use an optional per-item `idempotency_key` when a call might be retried.
 Keys must contain non-whitespace text and occupy at most 256 UTF-8 bytes.
@@ -1014,7 +1110,8 @@ and effective arguments return the existing discussion without writing
 again; different arguments fail with a conflict. Receipts survive server
 restarts and protect concurrent calls. Replay returns current discussion
 state, even if the file changed or the discussion was resolved after the
-write; a deleted discussion is not recreated. Duplicate keys within a batch
+write; its stored resolution outcome is also preserved even if the current
+thread later changes. A deleted discussion is not recreated. Duplicate keys within a batch
 are rejected. Without keys, repeated starts and replies remain independent
 writes. This is retry protection, not similarity-based finding deduplication.
 See [0084](decisions/0084-explicit-mcp-contracts.md) for these contracts and
@@ -1063,8 +1160,9 @@ and agent `{name, client?, id?}` representation. New MCP writes include
 `client` and `id`. Human labels in the viewer use the configured
 user name; agent labels use the stored name, or `name (client)` when the
 observed client is shown, never a subscription type. Replies retain
-`author`, `created`, `body`, and optional `proposed_resolved` and `edited`;
-a proposal does not change the thread's open status.
+their stored author, creation time, body, edit time, and historical
+proposal flag; MCP projects all of that through the uniform `messages`
+fields above.
 
 Identity records authorship only. It does not select a repository, register a
 role, create a subscription, or establish delivery. Unknown clients and calls
@@ -1107,8 +1205,10 @@ to read them and what job it has. A useful handoff is:
 
 > Read the relevant Fathomable threads and their history. The user decided
 > [decision in the user's words]. Implement or defend only that scope, and
-> reply where useful. Treat proposals as proposals. Reading a thread does not
-> authorize other changes, and only the user closes threads.
+> reply where useful. Set `resolve: true` only when the reply completes the
+> work. If Fathomable returns `resolution_proposed`, do not ask for
+> confirmation in chat or retry; the user reviews it in Fathomable. Reading
+> a thread does not authorize other changes.
 
 A reviewer may start findings, the human may discuss them, and a coder may
 later read the same actual conversation. An answer by one agent does not hide
@@ -1120,9 +1220,9 @@ The server itself gives agents this short instruction:
 > Fathomable holds review discussions attached to files in this repository.
 > When asked, read the relevant threads and their history. Use thread_start
 > for new findings or questions and thread_reply to continue existing
-> discussions. Treat proposals as proposals; follow the user's stated
-> decisions and your assigned task. Reading a thread does not authorize
-> changes. Only the user closes threads.
+> discussions. A resolution_proposed result is successful and awaits the
+> Fathomable user's review in Fathomable; do not ask for confirmation in
+> chat and do not retry it. Reading a thread does not authorize changes.
 
 `scripts/demo-repo.sh` (`just demo`) builds an isolated throwaway
 repository and seeds discussion threads through the hidden `fathomable seed`

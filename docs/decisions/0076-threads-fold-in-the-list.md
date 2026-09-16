@@ -22,6 +22,14 @@ tags:
 
 Status: accepted (2026-09-11)
 
+Amended 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): review-list folding,
+stops, file rows, and nesting remain, but expanded and folded thread rows
+now use the shared summary facts and layout. Expanded rows expose direct
+mouse actions; the cursor's folded row may trade preview width for the same
+actions. Reply count, compact modification time, detached `?` suffix, and
+current lifecycle replace the historical packed-row state wording below.
+
 ## Context
 
 In the text a thread has two states and a full set of controls

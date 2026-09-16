@@ -26,6 +26,13 @@ is muted info-colour context. This supersedes the review's
 yellow-bar and no-selected-surface rules below; inline document threads
 retain `thread.cursor`, and `ui.picker.selected` is retired everywhere.
 
+Lifecycle colour amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md) and
+[0086](0086-one-thread-summary-and-its-actions.md): authorship remains
+`thread.user` and `thread.agent`, but lifecycle is independent and uses
+`thread.active`, `thread.proposed`, and `thread.resolved`. The old mapping
+from the last author to `thread.open` or `thread.waiting` is historical.
+
 ## Context
 
 A thread is a conversation between the user and one or more agents, and

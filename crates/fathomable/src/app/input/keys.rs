@@ -159,8 +159,6 @@ fn is_far_move(action: Action) -> bool {
             | Action::ThreadPrev
             | Action::ThreadNextAcross
             | Action::ThreadPrevAcross
-            | Action::WaitingNext
-            | Action::WaitingPrev
             | Action::HunkNext
             | Action::HunkPrev
             | Action::DirtyNext
@@ -235,6 +233,7 @@ impl App {
             Action::FileComment => self.start_file_comment(),
             Action::Reply => self.thread_reply(),
             Action::ToggleResolved => self.thread_toggle_resolved(),
+            Action::ToggleAutoResolve => self.thread_toggle_auto_resolve(),
             Action::EditNewestOwn => self.thread_edit_newest_own(),
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
             Action::DeleteThread => self.thread_delete_here(),
@@ -309,8 +308,6 @@ impl App {
             Action::ThreadPrev => self.thread_step_in_file(-1),
             Action::ThreadNextAcross => self.thread_step_across(1),
             Action::ThreadPrevAcross => self.thread_step_across(-1),
-            Action::WaitingNext => self.waiting_next(),
-            Action::WaitingPrev => self.waiting_prev(),
             Action::HunkNext => self.hunk_next(),
             Action::HunkPrev => self.hunk_prev(),
             Action::DirtyNext => self.dirty_next(),
@@ -367,8 +364,6 @@ impl App {
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
             Action::CopyPath => return self.copy_tree_path(),
-            // The threads pane in file scope on this file (ADR 0066).
-            Action::ThreadsOnFile => self.threads_on_file(),
             Action::Top => self.with_tree(|tree, _| {
                 tree.goto_top();
                 None
@@ -447,6 +442,7 @@ impl App {
         match action {
             Action::Escape => self.compose_cancel(),
             Action::Confirm => self.compose_submit(),
+            Action::SubmitAutoResolve => self.compose_submit_auto_resolve(),
             Action::Newline => self.compose_edit(Edit::Newline),
             Action::EditDraft => return Effect::EditDraft,
             Action::ScrollUp => self.compose_scroll(-WHEEL_LINES),
@@ -502,7 +498,7 @@ mod tests {
     use std::path::Path;
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use fathomable_core::annotations::MessageTarget;
+    use fathomable_core::annotations::{AutoResolve, MessageTarget};
     use fathomable_testing::TempDir;
 
     use crate::app::testing::{self, press, source_app};
@@ -561,9 +557,7 @@ mod tests {
         Ok(text)
     }
 
-    /// `Space c` acts on the thread at the cursor from the text and from
-    /// the tree: reply, resolve, edit the newest own message, delete
-    /// (ADR 0049).
+    /// Thread actions follow the Phase C key grammar.
     #[test]
     fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {
         let dir = fixture("threads")?;
@@ -598,26 +592,67 @@ mod tests {
         assert_eq!(draft, "answer", "the draft is seeded with the reply");
         app.compose_cancel();
 
-        // From the tree the same keys reach the same thread.
+        // Literal thread keys do not steal input or act from the tree.
         app.show_tree();
         assert_eq!(app.focus(), Focus::Tree);
-        press(&mut app, " co");
+        press(&mut app, "rR");
+        assert_eq!(app.marks()[0].kind(), ThreadState::Active);
+
+        // In the text, `R` toggles permission and `r` resolves/reopens.
+        app.toggle_tree_focus();
+        press(&mut app, "R");
+        assert_eq!(
+            app.thread(&id)
+                .map(fathomable_core::annotations::Thread::auto_resolve),
+            Some(AutoResolve::Enabled)
+        );
+        press(&mut app, "r");
         assert_eq!(app.marks()[0].kind(), ThreadState::Resolved);
-        press(&mut app, " co");
-        assert_eq!(app.marks()[0].kind(), ThreadState::Open);
+        press(&mut app, "R");
+        assert_eq!(
+            app.thread(&id)
+                .map(fathomable_core::annotations::Thread::auto_resolve),
+            Some(AutoResolve::Disabled),
+            "R is unavailable on a resolved thread"
+        );
+        press(&mut app, "r");
+        assert_eq!(app.marks()[0].kind(), ThreadState::Active);
         press(&mut app, " cd");
         assert_eq!(app.marks().len(), 1);
         assert_eq!(app.marks()[0].range().map(|r| r.start()), Some(5));
-        assert_eq!(app.focus(), Focus::Tree, "focus stays where it was");
+        assert_eq!(app.focus(), Focus::View);
 
         // `Space c c` starts a new thread on the cursor line.
-        app.toggle_tree_focus();
         app.view_mut().goto_source_line(4);
         press(&mut app, " cc");
         assert!(matches!(
             compose_target(&app),
             Some(ComposeTarget::New(range)) if range.start() == 4
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn bare_t_toggles_review_from_every_normal_pane() -> anyhow::Result<()> {
+        let dir = fixture("review-toggle")?;
+        let mut app = source_app(&dir)?;
+        annotate(&mut app, 3, "three");
+
+        press(&mut app, "t");
+        assert!(app.review_list().is_open());
+        app.focus_threads_pane();
+        press(&mut app, "t");
+        assert!(!app.review_list().is_open());
+
+        app.show_tree();
+        press(&mut app, "t");
+        assert!(app.review_list().is_open());
+        press(&mut app, "t");
+        assert!(!app.review_list().is_open());
+
+        app.start_new_comment();
+        press(&mut app, "tRr");
+        assert_eq!(app.compose_draft(), Some("tRr"));
         Ok(())
     }
 

@@ -420,8 +420,20 @@ Milestones are ordered; each is usable on its own. Details live in the
     unrelated stores gain no format machinery
     ([0083](decisions/0083-single-user-alpha-clean-slate.md)).
 75. **Explicit MCP contracts.** Review tools advertise constrained inputs
-    and typed results, use author objects and `propose_resolve`, return
-    complete JSON in both MCP result channels, expose location relative to
-    the stored anchor independently of content edits, and offer durable
-    per-item idempotency keys for starts and replies
+    and typed results, use author objects, return complete JSON in both MCP
+    result channels, expose location relative to the stored anchor
+    independently of content edits, and offer durable per-item idempotency
+    keys for starts and replies. Its original `propose_resolve` contract is
+    replaced by milestone 76
     ([0084](decisions/0084-explicit-mcp-contracts.md)).
+76. **Thread lifecycle and one-shot auto-resolve.** Waiting and last-act
+    presentation retire in favour of active, resolution-proposed, and
+    resolved lifecycle facts; user-controlled one-shot auto-resolve lets one
+    agent reply finish a thread, while replies, placement, commit pinning,
+    replay outcomes, and activity observation remain atomic
+    ([0085](decisions/0085-thread-lifecycle-and-auto-resolve.md)).
+77. **One thread summary and its actions.** Inline and review headers share
+    one factual layout and direct hoverable actions, sidebar threads retain
+    two-row cards from the same facts, lifecycle counts no longer overlap,
+    and `t`, `r`, and `R` form the direct review grammar
+    ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).

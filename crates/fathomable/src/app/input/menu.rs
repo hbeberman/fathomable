@@ -396,6 +396,20 @@ impl App {
             let resolved = self
                 .thread(id)
                 .is_some_and(|thread| Words::of(None, thread).is_resolved());
+            if !resolved {
+                let enabled = self
+                    .thread(id)
+                    .is_some_and(|thread| thread.auto_resolve().is_enabled());
+                menu.push(
+                    Action::ToggleAutoResolve,
+                    Action::ToggleAutoResolve,
+                    if enabled {
+                        "disable auto-resolve"
+                    } else {
+                        "enable auto-resolve"
+                    },
+                );
+            }
             menu.push(
                 Action::ToggleResolved,
                 Action::ToggleResolved,
@@ -442,10 +456,8 @@ impl App {
                 "checkpoint this file",
             );
         }
-        // A file with listed threads offers its two thread views (ADR
-        // 0066).
+        // A file with listed threads offers the review view.
         if has_threads {
-            menu.push(Action::ThreadsOnFile, Action::ThreadsOnFile, "threads");
             menu.push(Action::Review, Action::Review, "review");
         }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
@@ -578,6 +590,22 @@ impl App {
             .thread()
             .and_then(|id| self.thread(id))
             .is_some_and(|thread| Words::of(None, thread).is_resolved());
+        if !resolved {
+            let enabled = self
+                .thread_cursor()
+                .thread()
+                .and_then(|id| self.thread(id))
+                .is_some_and(|thread| thread.auto_resolve().is_enabled());
+            menu.push(
+                Action::ToggleAutoResolve,
+                Action::ToggleAutoResolve,
+                if enabled {
+                    "disable auto-resolve"
+                } else {
+                    "enable auto-resolve"
+                },
+            );
+        }
         menu.push(
             Action::ToggleResolved,
             Action::ToggleResolved,

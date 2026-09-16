@@ -12,7 +12,9 @@
 //! the keys here; nothing pops up. Leaving a file parks its draft in
 //! the document; showing that document again restores it.
 
-use fathomable_core::annotations::{Author, Draft, LineRange, MessageTarget, Reply, ThreadId};
+use fathomable_core::annotations::{
+    Author, Draft, LineRange, MessageTarget, ThreadId, UserSubmit, UserWriteOutcome,
+};
 use fathomable_core::clock::now;
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
@@ -72,6 +74,8 @@ pub(crate) struct Compose {
     original: String,
     /// Esc was pressed on a non-empty draft; the next Esc discards it.
     confirm_discard: bool,
+    /// Submission paused because another writer resolved the thread.
+    confirm_reopen: Option<UserSubmit>,
     /// The review list was showing when the draft opened; it comes back
     /// when the draft closes.
     from_review: bool,
@@ -90,6 +94,11 @@ impl Compose {
     /// Whether the draft is asking for a second Esc.
     pub(crate) fn confirming_discard(&self) -> bool {
         self.confirm_discard
+    }
+
+    /// Whether Enter will atomically reopen and submit this intact draft.
+    pub(crate) fn confirming_reopen(&self) -> bool {
+        self.confirm_reopen.is_some()
     }
 }
 
@@ -188,7 +197,7 @@ impl App {
             return;
         }
         // A thread resolved at an earlier commit is not written in from
-        // the past: `o` brings it back first (ADR 0072).
+        // the past: `r` brings it back first (ADR 0072).
         if let ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } = &target
             && let Some(commit) = self
                 .thread(id)
@@ -196,7 +205,7 @@ impl App {
                 .and_then(|thread| thread.commit())
         {
             let commit = crate::app::threads::list::short_commit(commit);
-            self.notice(format!("resolved at {commit}; o reopens it"));
+            self.notice(format!("resolved at {commit}; r reopens it"));
             return;
         }
         let original = match &target {
@@ -244,6 +253,7 @@ impl App {
             buffer,
             original,
             confirm_discard: false,
+            confirm_reopen: None,
             from_review,
         }));
         self.draft_changed();
@@ -260,7 +270,7 @@ impl App {
         }
     }
 
-    /// Give the current document's waiting draft its rows and keys back.
+    /// Give the current document's parked draft its rows and keys back.
     pub(in crate::app) fn resume_draft(&mut self) {
         if self.popup.is_some() {
             return;
@@ -290,6 +300,7 @@ impl App {
         match self.popup.as_mut() {
             Some(Popup::Compose(compose)) => {
                 compose.confirm_discard = false;
+                compose.confirm_reopen = None;
                 Some(compose)
             }
             _ => None,
@@ -339,6 +350,10 @@ impl App {
         let Some(Popup::Compose(compose)) = self.popup.as_mut() else {
             return;
         };
+        if compose.confirm_reopen.take().is_some() {
+            self.notice("continued editing; the thread remains resolved");
+            return;
+        }
         let editing = matches!(compose.target, ComposeTarget::Edit { .. });
         let changed = if editing {
             compose.buffer.text() != compose.original
@@ -384,6 +399,15 @@ impl App {
 
     /// Enter: write the comment, reply, or edit to the store.
     pub(crate) fn compose_submit(&mut self) {
+        self.compose_submit_with(UserSubmit::Normal);
+    }
+
+    /// Ctrl-Enter: submit or save and enable one-shot auto-resolve.
+    pub(crate) fn compose_submit_auto_resolve(&mut self) {
+        self.compose_submit_with(UserSubmit::EnableAutoResolve);
+    }
+
+    fn compose_submit_with(&mut self, requested: UserSubmit) {
         let Some(Popup::Compose(compose)) = self.popup.as_ref() else {
             return;
         };
@@ -397,18 +421,32 @@ impl App {
             self.notice("empty comment discarded");
             return;
         }
-        let Some(Popup::Compose(compose)) = self.popup.take() else {
-            return;
-        };
-        match compose.target {
-            ComposeTarget::New(range) => self.submit_annotation(Some(range), text),
-            ComposeTarget::OnFile => self.submit_annotation(None, text),
-            ComposeTarget::Reply(id) => self.submit_reply(&id, text),
+        let target = compose.target.clone();
+        let from_review = compose.from_review;
+        let submission = compose.confirm_reopen.unwrap_or(requested);
+        let reopen = compose.confirm_reopen.is_some();
+        let result = match target {
+            ComposeTarget::New(range) => self.submit_annotation(Some(range), text, submission),
+            ComposeTarget::OnFile => self.submit_annotation(None, text, submission),
+            ComposeTarget::Reply(id) => self.submit_reply(&id, text, submission, reopen),
             ComposeTarget::Edit { thread, message } => {
-                self.submit_message_edit(&thread, message, text);
+                self.submit_message_edit(&thread, message, text, submission, reopen)
             }
+        };
+        match result {
+            Ok(SubmitResult::Applied) => {
+                self.popup = None;
+                self.draft_closed(from_review);
+            }
+            Ok(SubmitResult::ReopenRequired) => {
+                if let Some(Popup::Compose(compose)) = self.popup.as_mut() {
+                    compose.confirm_reopen = Some(submission);
+                }
+                self.refresh_all_marks();
+                self.notice("thread was resolved while editing; Enter reopens and submits");
+            }
+            Err(error) => self.notice(error),
         }
-        self.draft_closed(compose.from_review);
     }
 
     /// Drop the draft without writing anything.
@@ -513,9 +551,14 @@ impl App {
 
     /// Start the thread on `range` of the open file, or on the file as a
     /// whole with no range (ADR 0063).
-    fn submit_annotation(&mut self, range: Option<LineRange>, comment: String) {
+    fn submit_annotation(
+        &mut self,
+        range: Option<LineRange>,
+        comment: String,
+        submission: UserSubmit,
+    ) -> Result<SubmitResult, String> {
         let Some(index) = self.current else {
-            return;
+            return Err("no open file".to_owned());
         };
         let path = self.docs[index].relative.clone();
         let text = self.docs[index]
@@ -531,9 +574,11 @@ impl App {
         .at_commit(self.workspace.head_commit());
         let where_at = range.map_or_else(|| "the file".to_owned(), |range| format!("L{range}"));
         let Some(store) = self.store_mut() else {
-            return;
+            return Err("threads unavailable; see the log".to_owned());
         };
-        match store.annotate(draft, &text, now()) {
+        let result = store.annotate_user(draft, &text, now(), submission);
+        self.reconcile_agent_activity();
+        match result {
             Ok(id) => {
                 tracing::info!(%id, path = %path.display(), %where_at, "thread started");
                 self.refresh_reach();
@@ -542,40 +587,80 @@ impl App {
                 self.mark_seen(index);
                 self.view_mut().clear_selection();
                 self.notice(format!("commented on {where_at}"));
+                Ok(SubmitResult::Applied)
             }
-            Err(error) => self.notice(format!("cannot save comment: {error}")),
+            Err(error) => Err(format!("cannot save comment: {error}")),
         }
     }
 
-    fn submit_reply(&mut self, id: &ThreadId, body: String) {
+    fn submit_reply(
+        &mut self,
+        id: &ThreadId,
+        body: String,
+        submission: UserSubmit,
+        reopen: bool,
+    ) -> Result<SubmitResult, String> {
         let Some(store) = self.store_mut() else {
-            return;
+            return Err("threads unavailable; see the log".to_owned());
         };
-        match store.reply(id, Reply::new(Author::User, now(), body)) {
-            Ok(()) => {
+        let result = if reopen {
+            store
+                .reply_user(id, now(), body, submission)
+                .map(|()| UserWriteOutcome::Applied)
+        } else {
+            store.reply_user_if_unresolved(id, now(), body, submission)
+        };
+        self.reconcile_agent_activity();
+        match result {
+            Ok(UserWriteOutcome::Applied) => {
                 tracing::info!(%id, "reply added");
                 self.refresh_all_marks();
                 // The reply becomes the highlighted message, under the
                 // draft's rows it replaces (ADR 0049).
                 let newest = self.newest_message(id);
                 self.goto_message(id.clone(), newest);
+                Ok(SubmitResult::Applied)
             }
-            Err(error) => self.notice(format!("cannot save reply: {error}")),
+            Ok(UserWriteOutcome::ReopenRequired) => Ok(SubmitResult::ReopenRequired),
+            Err(error) => Err(format!("cannot save reply: {error}")),
         }
     }
 
-    fn submit_message_edit(&mut self, id: &ThreadId, target: MessageTarget, body: String) {
+    fn submit_message_edit(
+        &mut self,
+        id: &ThreadId,
+        target: MessageTarget,
+        body: String,
+        submission: UserSubmit,
+        reopen: bool,
+    ) -> Result<SubmitResult, String> {
         let Some(store) = self.store_mut() else {
-            return;
+            return Err("threads unavailable; see the log".to_owned());
         };
-        match store.edit(id, target, body, now()) {
-            Ok(()) => {
+        let result = if reopen {
+            store
+                .edit_user(id, target, body, now(), submission)
+                .map(|()| UserWriteOutcome::Applied)
+        } else {
+            store.edit_user_if_unresolved(id, target, body, now(), submission)
+        };
+        self.reconcile_agent_activity();
+        match result {
+            Ok(UserWriteOutcome::Applied) => {
                 tracing::info!(%id, ?target, "thread message edited");
                 self.refresh_all_marks();
                 self.follow_cursor_message();
                 self.notice("message edited");
+                Ok(SubmitResult::Applied)
             }
-            Err(error) => self.notice(format!("cannot edit message: {error}")),
+            Ok(UserWriteOutcome::ReopenRequired) => Ok(SubmitResult::ReopenRequired),
+            Err(error) => Err(format!("cannot edit message: {error}")),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubmitResult {
+    Applied,
+    ReopenRequired,
 }

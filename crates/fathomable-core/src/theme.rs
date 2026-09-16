@@ -194,9 +194,9 @@ pub enum Key {
     DiffMinus,
     GitStaged,
     GitUnstaged,
-    ThreadOpen,
+    ThreadActive,
+    ThreadProposed,
     ThreadResolved,
-    ThreadWaiting,
     /// The threads pane's current-file rows (ADR 0066); the focused
     /// thread's lines before ADR 0074.
     ThreadFocus,
@@ -251,9 +251,9 @@ impl Key {
         ("diff.minus", Self::DiffMinus),
         ("git.staged", Self::GitStaged),
         ("git.unstaged", Self::GitUnstaged),
-        ("thread.open", Self::ThreadOpen),
+        ("thread.active", Self::ThreadActive),
+        ("thread.proposed", Self::ThreadProposed),
         ("thread.resolved", Self::ThreadResolved),
-        ("thread.waiting", Self::ThreadWaiting),
         ("thread.focus", Self::ThreadFocus),
         ("thread.bracket", Self::ThreadBracket),
         ("thread.inline", Self::ThreadInline),

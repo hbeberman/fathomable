@@ -35,6 +35,15 @@ with shared list roles, overriding current-file `thread.focus` context;
 overlays and prefixes deactivate them. Review messages keep author
 stripes, with a bright bar only while review owns the keys.
 
+Lifecycle and summary presentation superseded 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md) and
+[0086](0086-one-thread-summary-and-its-actions.md). Every surface still uses
+one glyph, but it now means lifecycle only: `●` active, `◐` resolution
+proposed, `○` resolved. Detached placement is the `?` suffix on `Lx-y?`,
+not a glyph; last-author colours, waiting, and overlapping counts retire.
+The sidebar's grouped two-row cards and file folding remain, backed by the
+shared summary facts.
+
 ## Context
 
 A thread's state was said four ways. The gutter drew `╭ │ ╰` and a

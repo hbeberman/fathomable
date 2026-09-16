@@ -9,9 +9,9 @@
 //! (`stubs`) read a thread in place. The submodules
 //! are the thread cursor (`cursor`), the threads pane (`pane`),
 //! the review list (`list`), deletion, detached rows, the open thread's
-//! lines (`open`), git reach, re-anchoring, waiting threads, and the
-//! placement and state words. All of it is plain state, tested without a
-//! terminal (ADRs 0013 and 0046).
+//! lines (`open`), git reach, re-anchoring, lifecycle, and summary facts.
+//! All of it is plain state, tested without a terminal (ADRs 0013, 0046,
+//! and 0086).
 
 pub(crate) mod cursor;
 pub(crate) mod delete;
@@ -27,7 +27,7 @@ pub(crate) mod proposed;
 pub(crate) mod reach;
 pub(crate) mod reanchor;
 pub(crate) mod stubs;
-pub(crate) mod waiting;
+pub(crate) mod summary;
 pub(crate) mod words;
 
 pub(crate) use draft::{Compose, ComposeTarget};
@@ -35,13 +35,14 @@ pub(crate) use draft::{Compose, ComposeTarget};
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    Author, Draft, LineHashes, LineRange, MessageTarget, Placement, Reply, Status, Store, Thread,
-    ThreadId,
+    AgentReplyCommand, Author, Draft, Lifecycle, LineHashes, LineRange, MessageTarget, Placement,
+    ResolutionOutcome, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::clock::now;
 use fathomable_core::reanchor::{Mapping, map_range};
 
 use crate::app::App;
+use crate::app::input::bindings::Action;
 use crate::app::threads::words::Words;
 
 /// A thread's status, which is its colour in the gutter, the file-threads
@@ -51,19 +52,16 @@ use crate::app::threads::words::Words;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ThreadState {
     Resolved,
-    Open,
-    /// Open, and an agent has the last word (ADR 0030, ADR 0058).
-    Waiting,
+    Active,
+    Proposed,
 }
 
 impl ThreadState {
     pub(super) fn of(thread: &Thread) -> Self {
-        if thread.awaits_user() {
-            return Self::Waiting;
-        }
-        match thread.status() {
-            Status::Open => Self::Open,
-            Status::Resolved => Self::Resolved,
+        match thread.lifecycle() {
+            Lifecycle::Active => Self::Active,
+            Lifecycle::ResolutionProposed => Self::Proposed,
+            Lifecycle::Resolved => Self::Resolved,
         }
     }
 }
@@ -182,14 +180,14 @@ impl App {
             .max()
     }
 
-    /// `(open, total)` threads on the current document.
+    /// `(unresolved, total)` threads on the current document.
     pub(crate) fn thread_counts(&self) -> (usize, usize) {
-        let open = self
+        let unresolved = self
             .marks()
             .iter()
-            .filter(|mark| matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting))
+            .filter(|mark| matches!(mark.kind(), ThreadState::Active | ThreadState::Proposed))
             .count();
-        (open, self.marks().len())
+        (unresolved, self.marks().len())
     }
 
     /// Re-locate every thread of the document at `index` in its text.
@@ -237,6 +235,7 @@ impl App {
                 Err(error) => tracing::warn!(%id, %error, "cannot re-anchor thread"),
             }
         }
+        self.reconcile_agent_activity();
         self.refresh_marks(index);
     }
 
@@ -293,6 +292,7 @@ impl App {
                 Err(error) => tracing::warn!(%id, %error, "cannot move thread"),
             }
         }
+        self.reconcile_agent_activity();
         self.refresh_all_marks();
     }
 
@@ -355,17 +355,6 @@ impl App {
         Some((index + 1, order.len()))
     }
 
-    #[cfg(test)]
-    /// `(current, total)`, 1-based, of the cursor's thread among the
-    /// workspace's, for the pane header.
-    pub(crate) fn thread_position_across(&self) -> Option<(usize, usize)> {
-        let cursor = self.thread_cursor();
-        let id = cursor.thread()?;
-        let order = self.workspace_threads();
-        let index = order.iter().position(|other| other == id)?;
-        Some((index + 1, order.len()))
-    }
-
     /// Threads whose range touches the cursor's rendered row, or the
     /// detached threads standing on it (ADR 0039).
     pub(crate) fn threads_at_cursor(&self) -> Vec<ThreadId> {
@@ -395,16 +384,10 @@ impl App {
             .collect()
     }
 
-    /// A reply arriving over the socket (ADR 0014), optionally proposing
-    /// that the thread be resolved (ADR 0053); the thread stays open either
-    /// way, and the open panel is refreshed when it shows that thread.
+    /// Apply an agent reply and its lifecycle effects as one core operation.
     #[expect(
         clippy::too_many_arguments,
         reason = "Keep the socket request fields explicit at the viewer boundary."
-    )]
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "The caller scope follows the owned socket request into this handler."
     )]
     pub(super) fn agent_reply(
         &mut self,
@@ -415,52 +398,39 @@ impl App {
         resolve: bool,
         lines: Option<LineRange>,
         idempotency_key: Option<String>,
-    ) -> Result<(Thread, bool), String> {
+    ) -> Result<(Thread, ResolutionOutcome, bool), String> {
         let root = self.workspace.root().to_path_buf();
-        let store = self
-            .store
-            .as_mut()
-            .ok_or("threads unavailable; see the log")?;
+        let head = self.workspace.head_commit();
         let when = now();
-        let reply = Reply::new(author, when, body);
-        let reply = if resolve {
-            reply.proposing_resolution()
-        } else {
-            reply
-        };
-        let replayed = if let Some(key) = idempotency_key {
-            let outcome = store
-                .reply_idempotent_for_caller(id, reply, lines, &caller, &key, |path| {
-                    std::fs::read_to_string(root.join(path)).map_err(|error| {
-                        fathomable_core::annotations::StoreError::message(format!(
-                            "cannot read {}: {error}",
-                            path.display()
-                        ))
-                    })
-                })
-                .map_err(|error| error.to_string())?;
-            outcome.replayed()
-        } else {
-            if store.thread(id).is_none() {
-                return Err(format!("unknown thread {id}"));
-            }
-            if let Some(lines) = lines {
-                crate::app::threads::open::follow_reply_lines(store, &root, id, lines, when)?;
-            }
-            store.reply(id, reply).map_err(|e| e.to_string())?;
-            false
-        };
-        tracing::info!(%id, proposes = resolve, "agent reply added");
-        // The toast a store reload would raise (ADR 0030), for the viewer
-        // the reply came through; a proposing reply says so (ADR 0053).
-        if !replayed && let Some(thread) = store.thread(id) {
-            let place = file::toast_place(thread);
-            self.push_toast(if resolve {
-                format!("reply on {place}, proposes resolving")
-            } else {
-                format!("reply on {place}")
-            });
+        let mut command = AgentReplyCommand::new(author, when, body).at_head(head);
+        if resolve {
+            command = command.resolve();
         }
+        if let Some(lines) = lines {
+            command = command.relocate(lines);
+        }
+        if let Some(key) = idempotency_key {
+            command = command.idempotent(caller, key);
+        }
+        let outcome = {
+            let store = self
+                .store
+                .as_mut()
+                .ok_or("threads unavailable; see the log")?;
+            store.agent_reply(id, command, |path| {
+                std::fs::read_to_string(root.join(path)).map_err(|error| {
+                    fathomable_core::annotations::StoreError::message(format!(
+                        "cannot read {}: {error}",
+                        path.display()
+                    ))
+                })
+            })
+        };
+        self.reconcile_agent_activity();
+        let outcome = outcome.map_err(|error| error.to_string())?;
+        let resolution = *outcome.value();
+        let replayed = outcome.replayed();
+        tracing::info!(%id, ?resolution, replayed, "agent reply added");
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
@@ -469,7 +439,7 @@ impl App {
             .as_ref()
             .and_then(|store| store.thread(id))
             .cloned()
-            .map(|thread| (thread, replayed))
+            .map(|thread| (thread, resolution, replayed))
             .ok_or_else(|| format!("thread {id} vanished after the reply"))
     }
 
@@ -501,13 +471,13 @@ impl App {
             None => Draft::on_file(author, path, body),
         }
         .at_commit(self.workspace.head_commit());
-        let store = self
-            .store
-            .as_mut()
-            .ok_or("threads unavailable; see the log")?;
-        let (id, replayed) = if let Some(key) = idempotency_key {
+        let result = if let Some(key) = idempotency_key {
             let root = self.workspace.root().to_path_buf();
-            let outcome = store
+            let store = self
+                .store
+                .as_mut()
+                .ok_or("threads unavailable; see the log")?;
+            store
                 .annotate_idempotent_for_caller(draft, now(), &caller, &key, |path| {
                     std::fs::read_to_string(root.join(path)).map_err(|error| {
                         fathomable_core::annotations::StoreError::message(format!(
@@ -516,25 +486,24 @@ impl App {
                         ))
                     })
                 })
-                .map_err(|error| error.to_string())?;
-            let replayed = outcome.replayed();
-            (outcome.into_value(), replayed)
+                .map(|outcome| {
+                    let replayed = outcome.replayed();
+                    (outcome.into_value(), replayed)
+                })
         } else {
             let text = std::fs::read_to_string(self.workspace.root().join(path))
                 .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-            (
-                store
-                    .annotate(draft, &text, now())
-                    .map_err(|error| error.to_string())?,
-                false,
-            )
+            let store = self
+                .store
+                .as_mut()
+                .ok_or("threads unavailable; see the log")?;
+            store.annotate(draft, &text, now()).map(|id| (id, false))
         };
+        self.reconcile_agent_activity();
+        let (id, replayed) = result.map_err(|error| error.to_string())?;
         tracing::info!(%id, %place, %label, "agent thread started");
         self.refresh_reach();
         self.refresh_all_marks();
-        if !replayed {
-            self.push_toast(format!("comment on {place} from {label}"));
-        }
         self.store
             .as_ref()
             .and_then(|store| store.thread(&id))
@@ -594,6 +563,7 @@ impl App {
         } else {
             store.reopen(id, now())
         };
+        self.reconcile_agent_activity();
         match result {
             Ok(()) => {
                 tracing::info!(%id, resolved = open, "thread status changed");
@@ -602,6 +572,45 @@ impl App {
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),
         }
+    }
+
+    /// Toggle one-shot auto-resolve for an unresolved thread.
+    pub(super) fn toggle_auto_resolve(&mut self, id: &ThreadId) {
+        if self
+            .thread(id)
+            .is_some_and(|thread| thread.lifecycle() == Lifecycle::Resolved)
+        {
+            self.notice("auto-resolve is unavailable on a resolved thread");
+            return;
+        }
+        let Some(store) = self.store_mut() else {
+            return;
+        };
+        let result = store.toggle_auto_resolve(id, now());
+        self.reconcile_agent_activity();
+        match result {
+            Ok(value) => {
+                tracing::info!(%id, ?value, "thread auto-resolve changed");
+                self.refresh_all_marks();
+                self.notice(if value.is_enabled() {
+                    "auto-resolve enabled"
+                } else {
+                    "auto-resolve disabled"
+                });
+            }
+            Err(error) => self.notice(format!("cannot update thread: {error}")),
+        }
+    }
+
+    /// Run a direct header action against the row's explicit thread.
+    pub(crate) fn thread_summary_action(&mut self, id: &ThreadId, action: Action) {
+        let place = self.review_selected_index();
+        match action {
+            Action::ToggleAutoResolve => self.toggle_auto_resolve(id),
+            Action::ToggleResolved => self.toggle_resolved(id),
+            _ => {}
+        }
+        self.review_reselect(place);
     }
 }
 

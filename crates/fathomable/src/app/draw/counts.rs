@@ -3,9 +3,8 @@
 //! 0075).
 //!
 //! The review list's and the threads pane's headers count the threads
-//! in scope by circle: `● 2 user`, `● 3 agent`, `◐ 1 resolve?`, `○ 1
-//! resolved`, each circle in its state colour and the word after the
-//! number saying whose it is. A zero count is left out. The resolved
+//! in scope by lifecycle: `● 2 active`, `◐ 1 resolution proposed`, and
+//! `○ 1 resolved`. A zero count is left out. The resolved
 //! count is a click on `x` and reads dim while resolved threads are
 //! hidden. The words are one set: [`super::header::Header`] draws them
 //! all or none, dropping them together when its row is too narrow.
@@ -16,35 +15,23 @@ use crate::app::threads::ThreadState;
 use crate::app::threads::list::Counts;
 
 /// The word after the user's `●`: the user has the last word.
-const USER: &str = "user";
-/// The word after the agents' `●`: an agent has the last word.
-const AGENT: &str = "agent";
-/// The word after `◐`: an agent's newest reply proposes resolving.
-const PROPOSED: &str = "resolve?";
+const ACTIVE: &str = "active";
+/// The words after `◐`.
+const PROPOSED: &str = "resolution proposed";
 /// The word after `○`.
 const RESOLVED: &str = "resolved";
 
-/// The hints for `counts`: open, waiting, proposed, and resolved in
+/// The hints for `counts`: active, proposed, and resolved in
 /// that order, a zero left out, the resolved count dim while
 /// `resolved_shown` is false.
 pub(crate) fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
-    let mut hints = Vec::with_capacity(4);
-    if counts.open > 0 {
+    let mut hints = Vec::with_capacity(3);
+    if counts.active > 0 {
         hints.push(HintOf::count(
             "●",
-            USER,
-            ThreadState::Open,
-            counts.open,
-            false,
-            &[],
-        ));
-    }
-    if counts.waiting > 0 {
-        hints.push(HintOf::count(
-            "●",
-            AGENT,
-            ThreadState::Waiting,
-            counts.waiting,
+            ACTIVE,
+            ThreadState::Active,
+            counts.active,
             false,
             &[],
         ));
@@ -53,7 +40,7 @@ pub(crate) fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
         hints.push(HintOf::count(
             "◐",
             PROPOSED,
-            ThreadState::Waiting,
+            ThreadState::Proposed,
             counts.proposed,
             false,
             &[],
@@ -106,14 +93,13 @@ mod tests {
     #[test]
     fn a_wide_header_names_every_count() -> anyhow::Result<()> {
         let counts = Counts {
-            open: 2,
-            waiting: 3,
+            active: 2,
             proposed: 1,
             resolved: 1,
         };
         assert_eq!(
             text(&header(counts), 80)?,
-            " review threads  ● 2 user ● 3 agent ◐ 1 resolve? ○ 1 resolved"
+            " review threads  ● 2 active ◐ 1 resolution proposed ○ 1 resolved"
         );
         let quiet = Counts {
             resolved: 1,
@@ -131,7 +117,7 @@ mod tests {
 
         let theme = theme()?;
         let counts = Counts {
-            open: 2,
+            active: 2,
             resolved: 1,
             ..Counts::default()
         };
@@ -144,7 +130,7 @@ mod tests {
         };
         assert_eq!(span("2"), Some(theme.text), "the number");
         assert_eq!(
-            span(" user"),
+            span(" active"),
             Some(theme.info.add_modifier(Modifier::DIM)),
             "the word"
         );
@@ -161,14 +147,13 @@ mod tests {
     #[test]
     fn a_narrow_header_drops_the_words_together() -> anyhow::Result<()> {
         let counts = Counts {
-            open: 2,
-            waiting: 3,
+            active: 2,
             proposed: 1,
             resolved: 1,
         };
         let header = header(counts);
-        assert_eq!(text(&header, 56)?, " review threads  ● 2 ● 3 ◐ 1 ○ 1");
-        assert_eq!(text(&header, 26)?, " review threads  ● 2 ● 3");
+        assert_eq!(text(&header, 56)?, " review threads  ● 2 ◐ 1 ○ 1");
+        assert_eq!(text(&header, 26)?, " review threads  ● 2 ◐ 1");
         Ok(())
     }
 
@@ -176,13 +161,12 @@ mod tests {
     #[test]
     fn the_resolved_count_takes_a_click_with_or_without_its_word() {
         let counts = Counts {
-            open: 2,
-            waiting: 0,
+            active: 2,
             proposed: 0,
             resolved: 1,
         };
         let header = header(counts);
-        let worded = " review threads  ● 2 user ○ 1 resolved";
+        let worded = " review threads  ● 2 active ○ 1 resolved";
         let at = |s: &str| fathomable_core::layout::display_width(s);
         assert_eq!(
             header.action_at(80, at(worded) - 1),
@@ -190,7 +174,7 @@ mod tests {
             "the word is part of the hint"
         );
         assert_eq!(
-            header.action_at(80, at(" review threads  ● 2 user")),
+            header.action_at(80, at(" review threads  ● 2 active")),
             None,
             "the space between the hints runs nothing"
         );

@@ -17,7 +17,15 @@ tags:
 
 # 0053 Resolution is the user's
 
-Status: accepted (2026-09-04). Amended 2026-09-05 by
+Status: superseded (2026-09-16) by
+[0085](0085-thread-lifecycle-and-auto-resolve.md). `thread_reply.resolve`
+now records completion intent: with user-enabled one-shot auto-resolve it
+atomically replies and resolves; without permission it succeeds with the
+durable `resolution_proposed` lifecycle and
+`pending_fathomable_user_review`. The historical human-only proposal model
+and `proposed_resolved` spelling remain below.
+
+Previously amended 2026-09-05 by
 [0066](0066-one-circle-language.md): a proposed thread draws `◐` everywhere and
 counts under the waiting circle in the headers. Amended 2026-09-11 by
 [0075](0075-the-header-names-its-counts.md): the headers count `◐`

@@ -17,6 +17,13 @@ tags:
 
 Status: accepted (2026-09-09)
 
+Amended 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): the shared inline/review
+summary owns the disclosure geometry. The arrow and its three following
+cells are one fold target; visible action regions begin on their first
+character, separators are inert, and action hits win over double-click
+folding. The folding behavior below remains.
+
 ## Context
 
 A thread in the file opens and closes from the keyboard: `z` folds and

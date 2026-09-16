@@ -215,6 +215,7 @@ fn the_thread_menu_replies_and_deletes_at_once() -> anyhow::Result<()> {
         [
             "expand thread",
             "reply",
+            "enable auto-resolve",
             "resolve thread",
             "edit message",
             "delete thread",
@@ -373,13 +374,13 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
     // The cursor is on the thread's line, so its stub carries the bar
     // in the edge cell (ADR 0071, amended 2026-09-09).
     assert!(
-        rows.iter().any(|row| after(row).starts_with("▎▸ ●")),
+        rows.iter().any(|row| after(row).starts_with("▎● ▸")),
         "the stub draws the chevron: {rows:?}"
     );
 
     // One click on the stub's words places the cursor; two expand it
     // and stop.
-    let (words, _) = at(&app, top, 12);
+    let (words, _) = at(&app, top, 70);
     left(&mut app, words, screen_row);
     assert!(
         !app.is_expanded(&id),
@@ -398,12 +399,12 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
     );
     let rows = testing::screen(&app)?;
     assert!(
-        rows.iter().any(|row| after(row).starts_with("▎▾ ●")),
+        rows.iter().any(|row| after(row).starts_with("▎● ▾")),
         "the header draws the chevron after the bar: {rows:?}"
     );
 
     // A click on the chevron folds.
-    let (chevron, _) = at(&app, top, 1);
+    let (chevron, _) = at(&app, top, 3);
     left(&mut app, chevron, screen_row);
     assert!(!app.is_expanded(&id), "a click on the chevron folds");
 
@@ -423,6 +424,232 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
     assert_eq!(app.view().mode(), Mode::Normal, "and selects nothing");
     left(&mut app, words, screen_row);
     assert!(!app.is_expanded(&id), "a double-click on the header folds");
+    Ok(())
+}
+
+#[test]
+fn header_actions_use_exact_cells_and_the_rows_explicit_thread() -> anyhow::Result<()> {
+    let dir = fixture("header-actions")?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app)?;
+    let first = app.file_threads()[0].clone();
+    app.view_mut().goto_source_line(5);
+    app.start_new_comment();
+    app.compose_insert("second");
+    app.compose_submit();
+    let second = app.file_threads()[1].clone();
+    app.expand_thread(first.clone());
+    app.goto_message(second.clone(), 0);
+
+    let stubs = app.stubs();
+    let block = stubs
+        .iter()
+        .position(|stub| stub.thread() == Some(&first))
+        .context("first thread block")?;
+    let view_row = app
+        .view()
+        .row_of_stub_slot(block, 0)
+        .context("first header row")?;
+    let screen_row = app.text_top() + view_row - app.view().scroll();
+    let gutter = draw::gutter_width(app.view());
+    let origin = app.sidebar_width() + gutter;
+    let width = app.column_width().saturating_sub(gutter);
+    let thread = app.thread(&first).context("first thread")?;
+    let layout = header::expanded_header(&app, thread, false, true, width);
+
+    let auto = (0..width)
+        .find(|column| layout.action_at(*column) == Some(Action::ToggleAutoResolve))
+        .context("auto-resolve action")?;
+    left(&mut app, origin + auto, screen_row);
+    assert!(
+        app.thread(&first)
+            .context("first thread")?
+            .auto_resolve()
+            .is_enabled()
+    );
+    assert!(
+        !app.thread(&second)
+            .context("second thread")?
+            .auto_resolve()
+            .is_enabled(),
+        "the non-cursor row action targets its own thread"
+    );
+    left(&mut app, origin + auto, screen_row);
+    assert!(
+        app.is_expanded(&first),
+        "action clicks take precedence over double-click folding"
+    );
+    left(&mut app, origin + auto, screen_row);
+
+    let thread = app.thread(&first).context("first thread")?;
+    let enabled_layout = header::expanded_header(&app, thread, false, true, width);
+    let enabled_auto = (0..width)
+        .find(|column| enabled_layout.action_at(*column) == Some(Action::ToggleAutoResolve))
+        .context("enabled auto-resolve action")?;
+    let first_action_end = (enabled_auto..width)
+        .find(|column| enabled_layout.action_at(*column) != Some(Action::ToggleAutoResolve))
+        .context("separator after auto-resolve")?;
+    left(&mut app, origin + first_action_end, screen_row);
+    assert!(
+        app.thread(&first)
+            .context("first thread")?
+            .auto_resolve()
+            .is_enabled(),
+        "the separator is inert"
+    );
+
+    let padded_disclosure = (0..width)
+        .rev()
+        .find(|column| layout.disclosure_at(*column))
+        .context("disclosure padding")?;
+    left(&mut app, origin + padded_disclosure, screen_row);
+    assert!(!app.is_expanded(&first), "the disclosure padding folds");
+    Ok(())
+}
+
+#[test]
+fn a_collapsed_header_has_no_invisible_actions_away_from_the_thread() -> anyhow::Result<()> {
+    let dir = fixture("collapsed-header-actions")?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app)?;
+    let id = app.file_threads()[0].clone();
+    if app.is_expanded(&id) {
+        app.fold_thread(&id);
+    }
+    handle_key(&mut app, key('G'));
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    assert!(!app.threads_at_cursor().contains(&id));
+
+    let stubs = app.stubs();
+    let block = stubs
+        .iter()
+        .position(|stub| stub.thread() == Some(&id))
+        .context("thread block")?;
+    let view_row = app
+        .view()
+        .row_of_stub_slot(block, 0)
+        .context("collapsed header row")?;
+    let screen_row = app.text_top() + view_row - app.view().scroll();
+    let gutter = draw::gutter_width(app.view());
+    let origin = app.sidebar_width() + gutter;
+    let width = app.column_width().saturating_sub(gutter);
+    let thread = app.thread(&id).context("thread")?;
+    let hypothetical = header::expanded_header(&app, thread, true, false, width);
+    let hidden_action = (0..width)
+        .find(|column| hypothetical.action_at(*column) == Some(Action::ToggleAutoResolve))
+        .context("action shown while the thread is selected")?;
+
+    left(&mut app, origin + hidden_action, screen_row);
+    assert!(
+        !app.thread(&id)
+            .context("thread")?
+            .auto_resolve()
+            .is_enabled(),
+        "clicking preview text cannot run a hidden action"
+    );
+    Ok(())
+}
+
+#[test]
+fn header_hover_patches_only_the_visible_action_cells() -> anyhow::Result<()> {
+    use ratatui::style::{Color, Style};
+
+    let dir = fixture("header-hover")?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app)?;
+    let id = app.file_threads()[0].clone();
+    let stubs = app.stubs();
+    let block = stubs
+        .iter()
+        .position(|stub| stub.thread() == Some(&id))
+        .context("thread block")?;
+    let view_row = app
+        .view()
+        .row_of_stub_slot(block, 0)
+        .context("header row")?;
+    let screen_row = app.text_top() + view_row - app.view().scroll();
+    let gutter = draw::gutter_width(app.view());
+    let origin = app.sidebar_width() + gutter;
+    let width = app.column_width().saturating_sub(gutter);
+    let thread = app.thread(&id).context("thread")?;
+    let layout = header::expanded_header(&app, thread, true, false, width);
+    let action = (0..width)
+        .find(|column| layout.action_at(*column) == Some(Action::ToggleAutoResolve))
+        .context("visible action")?;
+    mouse(&mut app, MouseEventKind::Moved, origin + action, screen_row);
+
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let mut theme = draw::Theme::from_core(&core);
+    let hover = Color::Rgb(1, 2, 3);
+    theme.list_hover = Style::default().bg(hover);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
+    terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
+    let buffer = terminal.backend().buffer();
+    assert_eq!(
+        buffer[(u16::try_from(origin + action)?, u16::try_from(screen_row)?)].bg,
+        hover
+    );
+    assert_ne!(
+        buffer[(
+            u16::try_from(origin + action.saturating_sub(1))?,
+            u16::try_from(screen_row)?,
+        )]
+            .bg,
+        hover,
+        "hover does not bleed into disclosure padding"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_header_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
+    use fathomable_core::annotations::Lifecycle;
+
+    let dir = fixture("review-header-action")?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    annotate(&mut app)?;
+    let first = app.file_threads()[0].clone();
+    app.view_mut().goto_source_line(5);
+    app.start_new_comment();
+    app.compose_insert("second");
+    app.compose_submit();
+    let second = app.file_threads()[1].clone();
+    app.goto_message(second.clone(), 0);
+    app.open_review();
+
+    let width = app.column_width();
+    let rows = app.review_rows(width);
+    let (model_row, summary, selected) = rows
+        .rows
+        .iter()
+        .enumerate()
+        .find_map(|(row, item)| match item {
+            crate::app::threads::list::Row::Header {
+                summary, selected, ..
+            } if summary.id() == &first => Some((row, summary, *selected)),
+            _ => None,
+        })
+        .context("first review header")?;
+    assert!(!selected);
+    let layout = header::entry_header(summary, fathomable_core::clock::now(), false, true, width);
+    let action = (0..width)
+        .find(|column| layout.action_at(*column) == Some(Action::ToggleResolved))
+        .context("resolve action")?;
+    let screen_row = app.pane_top() + 1 + model_row - app.review_list().scroll();
+    let column = app.sidebar_width() + action;
+    left(&mut app, column, screen_row);
+    assert_eq!(
+        app.thread(&first).context("first")?.lifecycle(),
+        Lifecycle::Resolved
+    );
+    assert_eq!(
+        app.thread(&second).context("second")?.lifecycle(),
+        Lifecycle::Active
+    );
     Ok(())
 }
 
@@ -623,8 +850,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The status line's counts take clicks (ADR 0066): the waiting count
-/// opens the review list and the thread count focuses the threads pane.
+/// The status line has no waiting count; its thread total focuses the pane.
 #[test]
 fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
     use fathomable_core::annotations::Author;
@@ -645,16 +871,9 @@ fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
     .map_err(anyhow::Error::msg)?;
     let parts = draw::status_parts(&app);
     let text = parts.right_text();
-    assert!(text.contains("● 1 waiting"), "{text}");
+    assert!(!text.contains("waiting"), "{text}");
     let start = app.size().0 - parts.right_width();
-    let waiting = text.find("1 waiting").context("the count")?;
     let status_row = app.pane_rows();
-    left(&mut app, start + waiting, status_row);
-    assert!(
-        app.review_list().is_open(),
-        "the waiting count opens the review"
-    );
-    app.close_review();
     let threads = text.find("1 threads").context("the count")?;
     left(&mut app, start + threads, status_row);
     assert_eq!(app.focus(), Focus::ThreadsPane);
@@ -684,35 +903,35 @@ fn the_list_folds_a_thread_by_chevron_double_click_and_menu() -> anyhow::Result<
     // chevron under the path's first letter.
     let header_y = rows
         .iter()
-        .position(|row| after(row).starts_with("▎  ▾ ●"))
+        .position(|row| after(row).starts_with("▎  ● ▾"))
         .with_context(|| format!("the header with its chevron: {rows:?}"))?;
 
     // The chevron cell folds and expands.
-    left(&mut app, edge + 3, header_y);
+    left(&mut app, edge + 5, header_y);
     assert!(app.review_list().is_thread_folded(&id), "the chevron folds");
     let rows = testing::screen(&app)?;
     assert!(
-        after(&rows[header_y]).starts_with("▎  ▸ ●"),
+        after(&rows[header_y]).starts_with("▎  ● ▸"),
         "the folded row draws `▸`: {rows:?}"
     );
-    left(&mut app, edge + 3, header_y);
+    left(&mut app, edge + 5, header_y);
     assert!(
         !app.review_list().is_thread_folded(&id),
         "the chevron expands"
     );
 
     // One click on the words selects; two fold and end the gesture.
-    left(&mut app, edge + 12, header_y);
+    left(&mut app, edge + 70, header_y);
     assert!(
         !app.review_list().is_thread_folded(&id),
         "one click selects"
     );
-    left(&mut app, edge + 12, header_y);
+    left(&mut app, edge + 70, header_y);
     assert!(
         app.review_list().is_thread_folded(&id),
         "a double-click folds"
     );
-    left(&mut app, edge + 12, header_y);
+    left(&mut app, edge + 70, header_y);
     assert!(
         app.review_list().is_thread_folded(&id),
         "the third press is a first press"
@@ -784,7 +1003,8 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     assert_eq!(labels[..2], ["unfold", "unfold all"]);
     app.close_popup();
 
-    // The files pane: `threads` puts the pane in file scope on the file.
+    // The files pane keeps review but no longer gives bare `t` a
+    // file-scoped threads shortcut.
     let readme_row = (0..app.tree_rows())
         .find(|&row| {
             app.tree()
@@ -794,15 +1014,8 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
         .context("README in the tree")?;
     right(&mut app, 2, readme_row + 1);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert!(labels.contains(&"threads".to_owned()), "{labels:?}");
+    assert!(!labels.contains(&"threads".to_owned()), "{labels:?}");
     assert!(labels.contains(&"review".to_owned()), "{labels:?}");
-    let cell = entry_cell(&app, "threads")?;
-    left(&mut app, cell.0, cell.1);
-    assert_eq!(app.focus(), Focus::ThreadsPane);
-    assert_eq!(
-        app.sidebar_scope(),
-        crate::app::threads::pane::PaneScope::File
-    );
     Ok(())
 }
 

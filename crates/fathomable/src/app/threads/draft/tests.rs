@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::Context as _;
-use crossterm::event::KeyCode;
-use fathomable_core::annotations::{LineRange, MessageTarget, Store};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use fathomable_core::annotations::{AutoResolve, Lifecycle, LineRange, MessageTarget, Store};
 use fathomable_core::editor::{Edit, Motion};
 
 use super::ComposeTarget;
@@ -179,7 +179,7 @@ fn reopening_the_same_file_or_failing_to_open_keeps_the_draft() -> anyhow::Resul
 }
 
 #[test]
-fn starting_a_reply_from_elsewhere_does_not_replace_a_waiting_draft() -> anyhow::Result<()> {
+fn starting_a_reply_from_elsewhere_does_not_replace_a_parked_draft() -> anyhow::Result<()> {
     let dir = testing::workspace("draft-reply-collision", testing::README)?;
     fs::write(dir.0.join("ws/main.c"), "main\n")?;
     let mut app = testing::source_app(&dir)?;
@@ -229,5 +229,134 @@ fn a_parked_draft_follows_its_documents_rename() -> anyhow::Result<()> {
     assert_eq!(store.threads()[0].path(), Path::new("GUIDE.md"));
     assert_eq!(store.threads()[0].range(), Some(LineRange::new(3, 3)));
     assert_eq!(store.threads()[0].snippet(), "alpha");
+    Ok(())
+}
+
+#[test]
+fn a_resolved_reply_draft_requires_confirmation_and_preserves_ctrl_enter() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-resolved-reply", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    press(&mut app, "opening");
+    app.compose_submit();
+    let id = app.marks()[0].id().clone();
+    app.open_compose(ComposeTarget::Reply(id.clone()));
+    press(&mut app, "kept reply");
+
+    let mut other = Store::open(testing::store_path(&dir))?;
+    other.resolve(&id, Some("abc123"), 20)?;
+
+    app.compose_submit_auto_resolve();
+    assert_eq!(app.compose_draft(), Some("kept reply"));
+    assert!(app.draft().context("draft")?.confirming_reopen());
+    let stored = Store::open(testing::store_path(&dir))?;
+    let thread = stored.thread(&id).context("thread")?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Resolved);
+    assert!(thread.replies().is_empty());
+    assert!(screen(&app)?.join("\n").contains("resolved while editing"));
+
+    app.compose_cancel();
+    assert_eq!(app.compose_draft(), Some("kept reply"));
+    assert!(!app.draft().context("draft")?.confirming_reopen());
+    app.compose_submit_auto_resolve();
+    app.compose_submit();
+
+    let stored = Store::open(testing::store_path(&dir))?;
+    let thread = stored.thread(&id).context("thread")?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert_eq!(thread.auto_resolve(), AutoResolve::Enabled);
+    assert_eq!(thread.replies().len(), 1);
+    assert_eq!(thread.replies()[0].body(), "kept reply");
+    assert!(app.draft().is_none());
+    Ok(())
+}
+
+#[test]
+fn a_resolved_edit_draft_reopens_and_saves_only_after_enter() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-resolved-edit", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    press(&mut app, "opening");
+    app.compose_submit();
+    let id = app.marks()[0].id().clone();
+    app.open_compose(ComposeTarget::Edit {
+        thread: id.clone(),
+        message: MessageTarget::Comment,
+    });
+    app.set_compose_text("edited");
+
+    let mut other = Store::open(testing::store_path(&dir))?;
+    other.resolve(&id, None, 20)?;
+    app.compose_submit();
+    assert_eq!(app.compose_draft(), Some("edited"));
+    assert!(app.draft().context("draft")?.confirming_reopen());
+    assert_eq!(
+        Store::open(testing::store_path(&dir))?
+            .thread(&id)
+            .context("thread")?
+            .comment(),
+        "opening"
+    );
+
+    app.compose_submit();
+    let stored = Store::open(testing::store_path(&dir))?;
+    let thread = stored.thread(&id).context("thread")?;
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    assert_eq!(thread.comment(), "edited");
+    assert!(app.draft().is_none());
+    Ok(())
+}
+
+#[test]
+fn ctrl_enter_submits_with_auto_resolve_and_alt_enter_is_newline() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-submit-keys", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    press(&mut app, "first");
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+    press(&mut app, "second");
+    assert_eq!(app.compose_draft(), Some("first\nsecond"));
+    keys::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+    );
+    let thread = app
+        .marks()
+        .first()
+        .and_then(|mark| app.thread(mark.id()))
+        .context("thread")?;
+    assert_eq!(thread.comment(), "first\nsecond");
+    assert_eq!(thread.auto_resolve(), AutoResolve::Enabled);
+    Ok(())
+}
+
+#[test]
+fn a_persistence_error_keeps_the_draft_intact() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-write-error", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    press(&mut app, "opening");
+    app.compose_submit();
+    app.view_mut().goto_source_line(5);
+    app.start_new_comment();
+    press(&mut app, "keep after failure");
+
+    let path = testing::store_path(&dir);
+    let aside = path.with_extension("aside");
+    fs::rename(&path, &aside)?;
+    fs::create_dir(&path)?;
+    app.compose_submit();
+    assert_eq!(app.compose_draft(), Some("keep after failure"));
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("cannot save comment"))
+    );
+
+    fs::remove_dir(&path)?;
+    fs::rename(aside, path)?;
     Ok(())
 }

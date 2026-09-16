@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{LineRange, MessageTarget, Status, Store, Thread};
+use fathomable_core::annotations::{
+    AgentReplyCommand, Draft, LineRange, MessageTarget, Status, Store, Thread,
+};
 
 use fathomable_core::annotations::Author;
 use fathomable_core::session::{Request, Response};
@@ -100,7 +102,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     assert_eq!(app.message(), Some("renamed to docs/GUIDE.md"));
     assert_eq!(app.view().cursor(), cursor);
     assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 5)));
-    assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
+    assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Active));
     assert_eq!(
         app.thread(&id).map(Thread::path),
         Some(Path::new("docs/GUIDE.md"))
@@ -238,7 +240,7 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     assert!(app.popup().is_none());
     assert_eq!(app.message(), Some("commented on L3-5"));
     assert_eq!(app.thread_counts(), (1, 1));
-    assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Open));
+    assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Active));
     assert_eq!(app.mark_in(LineRange::new(1, 1)), None);
     assert!(
         app.view().selection().is_none(),
@@ -263,7 +265,7 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     app.on_changes(vec![dir.0.join("ws/README.md")]);
     assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     assert!(app.marks()[0].placement().is_edited());
-    assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Open));
+    assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Active));
     let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
     assert!(reopened.threads()[0].edited().is_some());
     assert_eq!(reopened.threads()[0].range(), Some(LineRange::new(5, 7)));
@@ -274,18 +276,18 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     app.thread_reply();
     type_in(&mut app, "still fine");
     app.compose_submit();
-    assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Open));
+    assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Active));
 
     // Rewrite everything: the thread detaches at its last known range.
     fs::write(dir.0.join("ws/README.md"), "# Readme\n\ngone\n")?;
     app.on_changes(vec![dir.0.join("ws/README.md")]);
     assert!(app.marks()[0].is_detached());
     assert_eq!(app.mark_in(LineRange::new(5, 5)), None);
-    // Placement and state are told apart (ADR 0032).
+    // Detachment is a location suffix, never a lifecycle glyph.
     let rows = app.threads_pane_entries();
-    assert_eq!(rows[0].words().placement(), Some("detached"));
-    assert_eq!(rows[0].words().state(), ThreadState::Open);
-    assert_eq!(rows[0].words().glyph(), "?");
+    assert_eq!(rows[0].place(), "L5-7?");
+    assert_eq!(rows[0].words().state(), ThreadState::Active);
+    assert_eq!(rows[0].words().glyph(), "●");
     Ok(())
 }
 
@@ -345,8 +347,8 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
     let screen = rows.join("\n");
     assert!(
         rows.iter()
-            .any(|row| row.contains("waiting · proposed") && !row.contains("fold")),
-        "header carries the state:\n{screen}"
+            .any(|row| row.contains("◐ ▾") && row.contains("Resolve")),
+        "header carries lifecycle and actions:\n{screen}"
     );
     assert!(
         rows[app.text_bar_row()].contains("z fold"),
@@ -415,7 +417,7 @@ fn an_expanded_thread_replies_resolves_and_reopens() -> anyhow::Result<()> {
             .join("\n"),
     );
     app.compose_submit();
-    assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(ThreadState::Open));
+    assert_eq!(app.mark_in(LineRange::new(1, 1)), Some(ThreadState::Active));
 
     app.expand_at_cursor();
     anyhow::ensure!(app.shows_thread(), "the thread did not expand");
@@ -813,8 +815,8 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Esc leaves a pane where it is; `Space w h` focuses it and `Space w
-/// l` hands the keys back, `Space p t` hides it, and `Space r` opens
+/// Esc leaves a pane where it is; `Space w h` focuses it and
+/// `Space w l` hands the keys back, `Space p t` hides it, and `t` opens
 /// and closes the review list (ADR 0010, ADR 0049, ADR 0056).
 #[test]
 fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
@@ -853,15 +855,15 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
     press(&mut app, KeyCode::Char('t'));
     assert!(!app.threads_pane_shown(), "Space p t hides it");
 
-    space(&mut app, 'r');
+    press(&mut app, KeyCode::Char('t'));
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Review);
-    space(&mut app, 'r');
+    press(&mut app, KeyCode::Char('t'));
     assert!(
         !app.review_list().is_open(),
-        "Space r on the focused list closes it"
+        "t on the focused list closes it"
     );
-    space(&mut app, 'r');
+    press(&mut app, KeyCode::Char('t'));
     press(&mut app, KeyCode::Esc);
     assert!(
         !app.review_list().is_open(),
@@ -1019,7 +1021,7 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     assert_eq!(marked.len(), 4, "{rows:?}");
     assert!(marked[0].starts_with("▎▾ README.md"), "{marked:?}");
     assert!(
-        marked[1].starts_with("▎  ▾ ") && marked[1].contains("L3") && marked[1].contains("open"),
+        marked[1].starts_with("▎  ● ▾") && marked[1].contains("L3"),
         "{marked:?}"
     );
     assert!(marked[2].starts_with("▎    User  "), "{marked:?}");
@@ -1042,7 +1044,7 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
         "no file row in file scope: {rows:?}"
     );
     assert!(
-        rows.iter().any(|row| row.starts_with("▎  ▾ ")),
+        rows.iter().any(|row| row.starts_with("▎  ● ▾")),
         "the threads keep the nest in file scope: {rows:?}"
     );
     app.review_toggle_file();
@@ -1054,9 +1056,9 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     let after = |row: &str| row.chars().skip(gutter).collect::<String>();
     let header = rows
         .iter()
-        .find(|row| after(row).starts_with("▎▾ ●"))
+        .find(|row| after(row).starts_with("▎● ▾"))
         .with_context(|| format!("the expanded header: {rows:?}"))?;
-    assert!(header.contains("open"), "{header:?}");
+    assert!(header.contains("Resolve"), "{header:?}");
     let follow = rows
         .iter()
         .find(|row| row.contains("user follow-up"))
@@ -1419,23 +1421,31 @@ fn socket_requests_reply() -> anyhow::Result<()> {
         idempotency_key: None,
     });
     // Answered with the thread as it now stands (ADR 0055).
-    let Response::Threads(answered) = reply else {
+    let Response::ThreadReply(response) = reply else {
         anyhow::bail!("reply answered {reply:?}");
     };
-    assert_eq!(answered.len(), 1);
-    assert_eq!(answered[0].id(), &id);
-    assert_eq!(answered[0].replies().len(), 1);
+    let (answered, resolution, replayed) = response.into_parts();
+    assert_eq!(
+        resolution,
+        fathomable_core::annotations::ResolutionOutcome::ResolutionProposed
+    );
+    assert!(!replayed);
+    assert_eq!(answered.id(), &id);
+    assert_eq!(answered.replies().len(), 1);
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
-        Some("reply on README.md:3, proposes resolving")
+        Some("reviewer replied and proposed resolution on README.md:3")
     );
     let thread = app
         .thread(&id)
         .ok_or_else(|| anyhow::anyhow!("thread lost"))?;
-    // The agent proposed; the thread stays open and waiting (ADR 0053).
+    // The agent proposed; the thread stays unresolved.
     assert_eq!(thread.status(), Status::Open);
     assert!(thread.proposes_resolution());
-    assert!(thread.awaits_user());
+    assert_eq!(
+        thread.lifecycle(),
+        fathomable_core::annotations::Lifecycle::ResolutionProposed
+    );
     assert_eq!(thread.replies()[0].author(), &author);
     assert!(thread.replies()[0].proposes_resolution());
     assert_eq!(
@@ -1445,7 +1455,6 @@ fn socket_requests_reply() -> anyhow::Result<()> {
     app.open(Path::new("README.md"));
     assert_eq!(app.thread_counts(), (1, 1));
     assert_eq!(app.proposed_count(), 1);
-    assert_eq!(app.waiting_count(), 1);
 
     let reply = app.handle_request(Request::ThreadReply {
         thread: serde_json::from_str(r#""9-9-9""#)?,
@@ -1457,6 +1466,64 @@ fn socket_requests_reply() -> anyhow::Result<()> {
         idempotency_key: None,
     });
     assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
+    Ok(())
+}
+
+#[test]
+fn socket_reply_uses_atomic_resolution_with_current_head() -> anyhow::Result<()> {
+    use fathomable_core::annotations::{AutoResolve, ResolutionOutcome};
+    use fathomable_core::workspace::Workspace;
+
+    let dir = testing::workspace("threads-socket-resolve", testing::README)?;
+    let root = testing::root(&dir);
+    fathomable_testing::git::init(&root)?;
+    fathomable_testing::git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("missing HEAD"))?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "finish this")?;
+    let id = app.marks()[0].id().clone();
+    app.store_mut()
+        .ok_or_else(|| anyhow::anyhow!("store"))?
+        .set_auto_resolve(&id, AutoResolve::Enabled, 1)?;
+
+    let reply = app.handle_request(Request::ThreadReply {
+        thread: id.clone(),
+        author: Author::agent("reviewer"),
+        caller: "test:viewer".to_owned(),
+        body: "fixed".to_owned(),
+        resolve: true,
+        lines: None,
+        idempotency_key: Some("resolve-once".to_owned()),
+    });
+    let Response::ThreadReply(response) = reply else {
+        anyhow::bail!("resolve answered {reply:?}");
+    };
+    let (thread, resolution, replayed) = response.into_parts();
+    assert_eq!(resolution, ResolutionOutcome::Resolved);
+    assert!(!replayed);
+    assert_eq!(thread.status(), Status::Resolved);
+    assert_eq!(thread.commit(), Some(head.as_str()));
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer replied and resolved README.md:3")
+    );
+
+    let replayed_reply = app.handle_request(Request::ThreadReply {
+        thread: id,
+        author: Author::agent("reviewer"),
+        caller: "test:viewer".to_owned(),
+        body: "fixed".to_owned(),
+        resolve: true,
+        lines: None,
+        idempotency_key: Some("resolve-once".to_owned()),
+    });
+    assert!(matches!(
+        replayed_reply,
+        Response::ThreadReply(ref response)
+            if response.resolution() == ResolutionOutcome::Resolved && response.replayed()
+    ));
     Ok(())
 }
 
@@ -1487,13 +1554,15 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     assert_eq!(started[0].author(), &author);
     assert_eq!(started[0].comment(), "look here");
     assert_eq!(started[0].range(), Some(LineRange::new(2, 3)));
-    assert!(started[0].awaits_user() && !started[0].awaits_agent());
+    assert_eq!(
+        started[0].lifecycle(),
+        fathomable_core::annotations::Lifecycle::Active
+    );
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
-        Some("comment on README.md:2 from reviewer")
+        Some("reviewer started a thread on README.md:2")
     );
     assert_eq!(app.view().cursor_source_line(), before);
-    assert_eq!(app.waiting_count(), 1);
     assert_eq!(
         app.message_for(&id, MessageTarget::Comment),
         Some(("look here", false))
@@ -1599,17 +1668,280 @@ fn socket_idempotent_reply_replays_without_relocating_or_toasting() -> anyhow::R
         idempotency_key: Some("reply-once".to_owned()),
     };
     let first = app.handle_request(request.clone());
-    assert!(matches!(first, Response::Threads(_)), "{first:?}");
+    assert!(
+        matches!(
+            first,
+            Response::ThreadReply(ref response)
+                if response.resolution()
+                    == fathomable_core::annotations::ResolutionOutcome::NotRequested
+                    && !response.replayed()
+        ),
+        "{first:?}"
+    );
     let toast_count = app.toasts().len();
     std::fs::remove_file(dir.0.join("ws/README.md"))?;
 
     let replay = app.handle_request(request);
-    assert!(matches!(replay, Response::Threads(_)), "{replay:?}");
+    assert!(
+        matches!(
+            replay,
+            Response::ThreadReply(ref response)
+                if response.resolution()
+                    == fathomable_core::annotations::ResolutionOutcome::NotRequested
+                    && response.replayed()
+        ),
+        "{replay:?}"
+    );
     assert_eq!(
         app.thread(&id).map(|thread| thread.replies().len()),
         Some(1)
     );
     assert_eq!(app.toasts().len(), toast_count);
+    Ok(())
+}
+
+#[test]
+fn startup_seeds_historical_agent_activity_without_toasting() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-startup", testing::README)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(2, 3),
+            "finding",
+        ),
+        testing::README,
+        1,
+    )?;
+    store.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 2, "more"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+
+    let app = app(&dir)?;
+    assert!(app.toasts().is_empty());
+    Ok(())
+}
+
+#[test]
+fn reloaded_agent_opening_toasts_once_with_author_and_place() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-reload-opening", testing::README)?;
+    let mut app = app(&dir)?;
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    writer.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(3, 4),
+            "finding",
+        ),
+        testing::README,
+        1,
+    )?;
+
+    app.reload_store();
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer started a thread on README.md:3")
+    );
+    let count = app.toasts().len();
+    app.reload_store();
+    assert_eq!(app.toasts().len(), count, "unchanged refresh is silent");
+    Ok(())
+}
+
+#[test]
+fn consecutive_agent_replies_on_one_thread_each_toast() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-consecutive", testing::README)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "question",
+        ),
+        testing::README,
+        1,
+    )?;
+    let mut app = app(&dir)?;
+    let mut writer = Store::open(testing::store_path(&dir))?;
+
+    writer.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 2, "first"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+    app.reload_store();
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer replied on README.md:3")
+    );
+
+    writer.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 3, "second"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+    app.reload_store();
+    assert_eq!(app.toasts().len(), 2);
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer replied on README.md:3")
+    );
+    Ok(())
+}
+
+#[test]
+fn multiple_agent_activities_aggregate_into_one_toast() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-aggregate", testing::README)?;
+    let mut app = app(&dir)?;
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    for (line, name) in [(2, "alpha"), (4, "beta")] {
+        writer.annotate(
+            Draft::new(
+                Author::agent(name),
+                Path::new("README.md"),
+                LineRange::new(line, line),
+                "finding",
+            ),
+            testing::README,
+            line as u64,
+        )?;
+    }
+
+    app.reload_store();
+    assert_eq!(app.toasts().len(), 1);
+    assert_eq!(app.toasts()[0].text(), "2 agent updates");
+    Ok(())
+}
+
+#[test]
+fn reloaded_user_activity_does_not_toast() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-user", testing::README)?;
+    let mut app = app(&dir)?;
+    Store::open(testing::store_path(&dir))?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "note",
+        ),
+        testing::README,
+        1,
+    )?;
+
+    app.reload_store();
+    assert!(app.toasts().is_empty());
+    Ok(())
+}
+
+#[test]
+fn agent_activity_imported_during_user_write_is_not_missed() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-user-write-import", testing::README)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "question",
+        ),
+        testing::README,
+        1,
+    )?;
+    let mut app = app(&dir)?;
+    Store::open(testing::store_path(&dir))?.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 2, "answer"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+
+    app.set_thread_cursor(id);
+    app.thread_reply();
+    type_in(&mut app, "thanks");
+    app.compose_submit();
+
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer replied on README.md:3")
+    );
+    Ok(())
+}
+
+#[test]
+fn deleted_agent_activity_keeps_its_durable_place() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-deleted", testing::README)?;
+    let mut store = Store::open(testing::store_path(&dir))?;
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(4, 5),
+            "question",
+        ),
+        testing::README,
+        1,
+    )?;
+    let mut app = app(&dir)?;
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    writer.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 2, "answer"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+    writer.delete(&id, 3)?;
+
+    app.reload_store();
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer replied on README.md:4")
+    );
+    Ok(())
+}
+
+#[test]
+fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-reset", testing::README)?;
+    let mut app = app(&dir)?;
+    let replacement = dir.0.join("state/replacement.jsonl");
+    Store::open(&replacement)?.annotate(
+        Draft::new(
+            Author::agent("historical"),
+            Path::new("README.md"),
+            LineRange::new(2, 2),
+            "old",
+        ),
+        testing::README,
+        1,
+    )?;
+
+    app.store = Some(Store::open(&replacement)?);
+    app.reconcile_agent_activity();
+    assert!(app.toasts().is_empty(), "replacement seeds at its end");
+
+    Store::open(&replacement)?.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "new",
+        ),
+        testing::README,
+        2,
+    )?;
+    app.reload_store();
+    assert_eq!(app.toasts().len(), 1);
+
+    fs::write(&replacement, "")?;
+    app.reload_store();
+    assert_eq!(
+        app.toasts().len(),
+        1,
+        "cursor regression reseeds instead of replaying"
+    );
     Ok(())
 }
 
@@ -1879,11 +2211,15 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
 }
 
 /// An agent's `resolve` only proposes (ADR 0053): the thread stays
-/// open and waiting, the status line and the review header count it,
-/// the entry header reads `waiting · proposed`, a later plain reply
+/// resolution-proposed, the status line and review header count it,
+/// the entry header uses `◐`, a later plain reply
 /// withdraws it, and the user's `o` is what closes the thread.
 #[test]
-fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
+#[expect(
+    clippy::too_many_lines,
+    reason = "This lifecycle test covers proposal, supersession, and direct resolution in sequence."
+)]
+fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Result<()> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     let dir = testing::workspace("threads-proposed", testing::README)?;
@@ -1924,9 +2260,16 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     assert!(thread.proposes_resolution());
     assert_eq!(app.proposed_count(), 1);
     assert_eq!(app.proposed_total(), 1);
-    assert_eq!(app.waiting_count(), 1, "a proposal is still waiting");
+    assert_eq!(
+        app.review_counts(false),
+        crate::app::threads::list::Counts {
+            active: 0,
+            proposed: 1,
+            resolved: 0,
+        }
+    );
     let screen = render(&app)?;
-    assert!(screen.contains("1 proposed  ● 1 waiting"), "{screen}");
+    assert!(screen.contains("1 proposed"), "{screen}");
 
     app.open_review();
     let rows = app.review_rows(60);
@@ -1934,18 +2277,23 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     assert!(rows.entries[0].proposed());
     assert!(matches!(
         rows.rows.get(1),
-        Some(Row::Header { words, .. }) if words.proposed() && words.glyph() == "◐"
+        Some(Row::Header { summary, .. })
+            if summary.lifecycle() == fathomable_core::annotations::Lifecycle::ResolutionProposed
+                && summary.glyph() == "◐"
     ));
     let screen = render(&app)?;
     assert!(
-        screen.contains("review threads  ◐ 1 resolve?"),
+        screen.contains("review threads  ◐ 1 resolution proposed"),
         "a proposal counts under its own circle (ADR 0075): {screen}"
     );
-    assert!(screen.contains("◐  L"), "{screen}");
-    assert!(screen.contains("waiting · proposed"), "{screen}");
+    assert!(
+        screen.contains("◐ ▾   Auto-resolve  R  Resolve  r") && screen.contains("L1  ↩1"),
+        "{screen}"
+    );
+    assert!(!screen.contains("waiting"), "{screen}");
     // The keys are on the bar along the list's bottom row (ADR 0059).
     let bar = screen.lines().nth(app.pane_rows() - 1).unwrap_or_default();
-    assert!(bar.contains("x resolved · f file"), "{screen}");
+    assert!(bar.contains("c reply · z fold"), "{screen}");
     app.close_review();
 
     // Only the newest reply is read: a plain reply withdraws the proposal.
@@ -1960,7 +2308,14 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     )
     .map_err(anyhow::Error::msg)?;
     assert_eq!(app.proposed_count(), 0);
-    assert_eq!(app.waiting_count(), 1);
+    assert_eq!(
+        app.review_counts(false),
+        crate::app::threads::list::Counts {
+            active: 1,
+            proposed: 0,
+            resolved: 0,
+        }
+    );
     app.agent_reply(
         &id,
         Author::agent("bot"),
@@ -1980,14 +2335,20 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
     assert_eq!(thread.status(), Status::Resolved);
     assert!(!thread.proposes_resolution());
     assert_eq!(app.proposed_count(), 0);
-    assert_eq!(app.waiting_count(), 0);
+    assert_eq!(
+        app.review_counts(false),
+        crate::app::threads::list::Counts {
+            active: 0,
+            proposed: 0,
+            resolved: 1,
+        }
+    );
     Ok(())
 }
 
-/// A collapsed stub reads as the message does when expanded (ADR 0071):
-/// each row on its author's stripe, the name in the author's colour.
+/// A collapsed header uses the header surface and latest-author colour.
 #[test]
-fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
+fn a_stub_uses_the_header_surface_and_author_colour() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-stub-stripes", testing::README)?;
     let mut app = app(&dir)?;
     app.resize(100, 30);
@@ -2030,15 +2391,25 @@ fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
         (agent_row, theme.thread_agent, "reviewer"),
     ] {
         let body = &buffer[(gutter + 20, y)];
-        assert_eq!(body.bg, kind.bg.unwrap_or_default(), "row {y}: {rows:?}");
+        assert_eq!(
+            body.bg,
+            theme.header.bg.unwrap_or_default(),
+            "row {y}: {rows:?}"
+        );
         let x = u16::try_from(
             rows[usize::from(y)]
-                .find(name)
+                .match_indices(name)
+                .next()
+                .map(|(byte, _)| rows[usize::from(y)][..byte].chars().count())
                 .with_context(|| format!("the name {name:?} on row {y}"))?,
         )?;
         let cell = &buffer[(x, y)];
         assert_eq!(cell.fg, kind.fg.unwrap_or_default(), "row {y}: {rows:?}");
-        assert_eq!(cell.bg, kind.bg.unwrap_or_default(), "row {y}: {rows:?}");
+        assert_eq!(
+            cell.bg,
+            theme.header.bg.unwrap_or_default(),
+            "row {y}: {rows:?}"
+        );
     }
     Ok(())
 }
@@ -2079,7 +2450,10 @@ fn a_stub_shows_the_newest_message_and_its_circle() -> anyhow::Result<()> {
         );
     }
     let newest = stub_row("second answer")?;
-    assert!(newest.contains("▸ ◐ reviewer"), "{newest:?}");
+    assert!(
+        newest.contains("◐ ▸   reviewer second answer"),
+        "{newest:?}"
+    );
     Ok(())
 }
 
@@ -2157,7 +2531,7 @@ fn the_bar_waits_for_the_text_cursor_to_enter_the_thread() -> anyhow::Result<()>
         .iter()
         .find(|row| row.chars().nth(gutter) == Some('▎'))
         .context("the barred row")?;
-    assert!(header.contains("open"), "the header: {header:?}");
+    assert!(header.contains("Resolve"), "the header: {header:?}");
     for _ in 0..10 {
         if app
             .view()
@@ -2279,7 +2653,7 @@ fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
     let rows = testing::screen(&app)?;
     let header_y = rows
         .iter()
-        .position(|row| row.chars().nth(gutter + 1) == Some('▾'))
+        .position(|row| row.chars().nth(gutter + 3) == Some('▾'))
         .with_context(|| format!("the header row: {rows:?}"))?;
     let header_row = app.view().scroll() + header_y - app.text_top();
     let barred = |rows: &[String]| {
@@ -2288,7 +2662,7 @@ fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
             .count()
     };
 
-    testing::click(&mut app, edge_x + 10, header_y);
+    testing::click(&mut app, edge_x + 70, header_y);
     assert_eq!(
         app.view().cursor().row,
         header_row,
@@ -2370,13 +2744,13 @@ fn folding_the_thread_under_the_cursor_rests_it_on_the_stub() -> anyhow::Result<
     let header_y = |app: &App| -> anyhow::Result<usize> {
         let rows = testing::screen(app)?;
         rows.iter()
-            .position(|row| row.chars().nth(gutter + 1) == Some('▾'))
+            .position(|row| row.chars().nth(gutter + 3) == Some('▾'))
             .with_context(|| format!("the header row: {rows:?}"))
     };
     let stub_y = |app: &App| -> anyhow::Result<usize> {
         let rows = testing::screen(app)?;
         rows.iter()
-            .position(|row| row.chars().nth(gutter + 1) == Some('▸'))
+            .position(|row| row.chars().nth(gutter + 3) == Some('▸'))
             .with_context(|| format!("the stub row: {rows:?}"))
     };
     let on_stub = |app: &App, y: usize| -> anyhow::Result<()> {
@@ -2408,22 +2782,22 @@ fn folding_the_thread_under_the_cursor_rests_it_on_the_stub() -> anyhow::Result<
     on_stub(&app, y)?;
 
     // The chevron, from the header row itself.
-    testing::click(&mut app, edge_x + 1, y);
+    testing::click(&mut app, edge_x + 3, y);
     assert!(app.is_expanded(&id), "the stub's chevron expands");
-    testing::click(&mut app, edge_x + 10, y);
+    testing::click(&mut app, edge_x + 70, y);
     assert_eq!(
         app.view().cursor().row,
         app.view().scroll() + y - app.text_top()
     );
-    testing::click(&mut app, edge_x + 1, y);
+    testing::click(&mut app, edge_x + 3, y);
     assert!(!app.is_expanded(&id), "the header's chevron folds");
     on_stub(&app, y)?;
 
     // A double-click on the header's words.
-    testing::click(&mut app, edge_x + 1, y);
+    testing::click(&mut app, edge_x + 3, y);
     assert!(app.is_expanded(&id));
-    testing::click(&mut app, edge_x + 10, y);
-    testing::click(&mut app, edge_x + 10, y);
+    testing::click(&mut app, edge_x + 70, y);
+    testing::click(&mut app, edge_x + 70, y);
     assert!(!app.is_expanded(&id), "a double-click folds");
     on_stub(&app, y)?;
 

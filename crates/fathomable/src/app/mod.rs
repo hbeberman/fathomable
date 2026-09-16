@@ -46,7 +46,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::threads::list::ReviewList;
-use fathomable_core::annotations::{self, Store, ThreadId};
+use fathomable_core::annotations::{
+    self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, ThreadId,
+};
 use fathomable_core::config::{
     DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
     WatchConfig,
@@ -252,6 +254,13 @@ fn deleted_source(entry: Option<&fathomable_core::status::Entry>) -> Option<Dele
     }
 }
 
+fn activity_observation(store: Option<&Store>) -> (Option<PathBuf>, ActivityCursor) {
+    store.map_or_else(
+        || (None, ActivityCursor::default()),
+        |store| (Some(store.path().to_path_buf()), store.activity_cursor()),
+    )
+}
+
 /// All application state.
 #[derive(Debug)]
 pub(crate) struct App {
@@ -313,6 +322,9 @@ pub(crate) struct App {
     height: usize,
     viewer_id: String,
     store: Option<Store>,
+    /// Store identity and append-log position already reported as activity.
+    activity_store: Option<PathBuf>,
+    activity_cursor: ActivityCursor,
     /// Which threads the current `HEAD` shows (ADR 0024).
     reach: Reach,
     record: Record,
@@ -394,6 +406,7 @@ impl App {
                 Ignore::default()
             }
         };
+        let (activity_store, activity_cursor) = activity_observation(store.as_ref());
         let mut app = Self {
             workspace,
             docs: Vec::new(),
@@ -429,6 +442,8 @@ impl App {
             height,
             viewer_id: record.id().to_string(),
             store,
+            activity_store,
+            activity_cursor,
             reach: Reach::everything(),
             record,
             dirs,
@@ -489,6 +504,7 @@ impl App {
             },
             _ => None,
         };
+        self.reconcile_agent_activity();
         // The other worktrees widen the reach (ADR 0070).
         let scope = match active {
             Some((head, reachable)) => self.reach_with_others(head, reachable),
@@ -517,17 +533,14 @@ impl App {
                     .store
                     .as_ref()
                     .is_none_or(|old| old.threads() != store.threads());
+                if changed {
+                    tracing::info!(threads = store.threads().len(), "thread store reloaded");
+                }
+                self.store = Some(store);
+                self.reconcile_agent_activity();
                 if !changed {
                     return;
                 }
-                tracing::info!(threads = store.threads().len(), "thread store reloaded");
-                let before = self
-                    .store
-                    .as_ref()
-                    .map(Self::waiting_ids)
-                    .unwrap_or_default();
-                self.store = Some(store);
-                self.toast_waiting(&before);
                 self.refresh_reach();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
@@ -535,6 +548,71 @@ impl App {
             }
             Err(error) => tracing::warn!(%error, "cannot reload the thread store"),
         }
+    }
+
+    /// Report newly observed agent messages from the append-only store.
+    pub(super) fn reconcile_agent_activity(&mut self) {
+        let Some(store) = self.store.as_ref() else {
+            self.activity_store = None;
+            self.activity_cursor = ActivityCursor::default();
+            return;
+        };
+        let path = store.path();
+        let end = store.activity_cursor();
+        if self.activity_store.as_deref() != Some(path) {
+            tracing::info!(
+                path = %path.display(),
+                cursor = end.ordinal(),
+                "agent activity observation seeded for replacement store"
+            );
+            self.activity_store = Some(path.to_path_buf());
+            self.activity_cursor = end;
+            return;
+        }
+        if end < self.activity_cursor {
+            tracing::warn!(
+                path = %path.display(),
+                observed = self.activity_cursor.ordinal(),
+                current = end.ordinal(),
+                "thread store activity cursor regressed; reseeding without replay"
+            );
+            self.activity_cursor = end;
+            return;
+        }
+
+        let activities = store
+            .agent_activity_since(self.activity_cursor)
+            .collect::<Vec<_>>();
+        if activities.is_empty() {
+            self.activity_cursor = end;
+            return;
+        }
+        let notification = if activities.len() == 1 {
+            let activity = activities[0];
+            let agent = threads::author_label(activity.author(), self.user_name());
+            let place = store.thread(activity.thread()).map_or_else(
+                || threads::file::toast_place_at(activity.path(), activity.range()),
+                threads::file::toast_place,
+            );
+            match (activity.target(), activity.resolution()) {
+                (MessageTarget::Comment, _) => {
+                    format!("{agent} started a thread on {place}")
+                }
+                (MessageTarget::Reply(_), ResolutionOutcome::NotRequested) => {
+                    format!("{agent} replied on {place}")
+                }
+                (MessageTarget::Reply(_), ResolutionOutcome::ResolutionProposed) => {
+                    format!("{agent} replied and proposed resolution on {place}")
+                }
+                (MessageTarget::Reply(_), ResolutionOutcome::Resolved) => {
+                    format!("{agent} replied and resolved {place}")
+                }
+            }
+        } else {
+            format!("{} agent updates", activities.len())
+        };
+        self.push_toast(notification);
+        self.activity_cursor = end;
     }
 
     /// Where the thread store lives, for the watcher.
@@ -1740,7 +1818,13 @@ impl App {
                 lines,
                 idempotency_key,
             ) {
-                Ok((thread, _)) => Response::Threads(vec![thread]),
+                Ok((thread, resolution, replayed)) => {
+                    if replayed {
+                        Response::thread_reply_replayed(thread, resolution)
+                    } else {
+                        Response::thread_reply_applied(thread, resolution)
+                    }
+                }
                 Err(error) => Response::Error(error),
             },
             Request::ThreadStart {

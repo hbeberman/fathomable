@@ -11,7 +11,15 @@ tags:
 
 # 0032 Placement and state
 
-Status: accepted (2026-08-28). Amended 2026-09-05 by
+Status: accepted (2026-08-28); presentation superseded 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md) and
+[0086](0086-one-thread-summary-and-its-actions.md). Placement is now a
+location fact (`file`, `Lx-y`, or detached `Lx-y?`) beside exactly one
+active, resolution-proposed, or resolved lifecycle glyph. The old
+placement/state word pair, waiting and auto-resolved states, and detached
+`?` glyph are historical. The single-write append guarantee remains.
+
+Previously amended 2026-09-05 by
 [0066](0066-one-circle-language.md): the `✓` retires; `Words::glyph()` picks the
 one circle every surface draws.
 

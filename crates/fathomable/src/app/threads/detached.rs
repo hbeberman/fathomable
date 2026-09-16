@@ -41,14 +41,13 @@ impl App {
             .filter(move |mark| mark.is_detached() && self.detached_anchor(mark) == anchor)
     }
 
-    /// The note cell of the detached row before `anchor`: `?` in the
-    /// colour of the most urgent thread there (ADR 0066), or `None` when
-    /// no thread stands there any more.
+    /// The note cell of the detached row before `anchor`: the lifecycle
+    /// glyph and colour of the most urgent thread there (ADR 0086), or
+    /// `None` when no thread stands there any more.
     pub(crate) fn detached_note(&self, anchor: usize) -> Option<(&'static str, ThreadState)> {
         self.detached_marks_at(anchor)
-            .map(Mark::kind)
-            .max()
-            .map(|kind| ("?", kind))
+            .max_by_key(|mark| mark.kind())
+            .map(|mark| (mark.glyph(), mark.kind()))
     }
 }
 
@@ -121,10 +120,10 @@ mod tests {
         let rows = glyphs(&app);
         // one, blank, [detached row], three, blank, four
         assert_eq!(rows[0], (0, Some(1), None));
-        assert_eq!(rows[2], (2, None, Some("?")), "{rows:?}");
+        assert_eq!(rows[2], (2, None, Some("●")), "{rows:?}");
         assert_eq!(app.view().detached_anchor_of_row(2), Some(3));
         assert_eq!(rows[3], (3, Some(3), None), "the real line 3 is not marked");
-        assert_eq!(app.marks()[0].kind(), ThreadState::Open);
+        assert_eq!(app.marks()[0].kind(), ThreadState::Active);
         assert_eq!(app.mark_in(LineRange::new(3, 3)), None);
         Ok(())
     }
@@ -177,7 +176,7 @@ mod tests {
         assert!(app.marks()[0].is_detached());
         let rows = glyphs(&app);
         let last = rows.last().copied();
-        assert_eq!(last.and_then(|(_, _, glyph)| glyph), Some("?"), "{rows:?}");
+        assert_eq!(last.and_then(|(_, _, glyph)| glyph), Some("●"), "{rows:?}");
         assert_eq!(app.view().detached_anchor_of_row(rows.len() - 1), Some(4));
         Ok(())
     }

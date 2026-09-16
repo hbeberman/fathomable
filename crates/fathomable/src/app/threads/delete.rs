@@ -67,7 +67,9 @@ impl App {
         let Some(store) = self.store_mut() else {
             return;
         };
-        if let Err(error) = store.delete(id, now()) {
+        let result = store.delete(id, now());
+        self.reconcile_agent_activity();
+        if let Err(error) = result {
             self.notice(format!("cannot delete thread: {error}"));
             return;
         }

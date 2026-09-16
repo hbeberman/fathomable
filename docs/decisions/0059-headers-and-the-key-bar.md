@@ -30,6 +30,16 @@ pane headers and key bars remain neutral `ui.header`; selected review
 entry headers use shared active/remembered list styles instead of the
 retired `ui.picker.selected`. Message rows keep 0071's author stripes.
 
+Amended 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): inline and review thread
+headers now use one summary layout. Expanded headers expose direct
+auto-resolve and resolve/reopen actions; cursor headers append subdued `R`
+and `r` labels, while non-cursor expanded headers keep clickable words
+without keys. Only the hovered action composes
+`ui.header.patch(ui.list.hover)`. The bottom bar omits those lifecycle hints
+while their cursor header is visible and restores them when it is off-screen.
+The older metadata-only entry-header and count wording remains below.
+
 ## Context
 
 The review list of [0049](0049-inline-threads-and-the-rail.md) drew its

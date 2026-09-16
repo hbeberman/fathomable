@@ -201,7 +201,7 @@ mod tests {
         assert!(app.text_bar_shown(), "a diff is something to say");
         assert_eq!(
             bar(&app)?,
-            "b base · t target · D next diff · w whitespace · Esc close",
+            "b base · Space d t target · D next diff · w whitespace · Esc close",
             "no paging on a HEAD base"
         );
         let rows = screen(&app)?;

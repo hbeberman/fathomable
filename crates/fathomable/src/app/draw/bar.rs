@@ -9,8 +9,8 @@
 //! while another pane has the keys, it says how to focus the text, and
 //! a click on it does; with the keys it reads the draft's keys, else
 //! the diff's keys while a diff is open (ADR 0069), the thread cursor's
-//! keys, then `Z` for the file's threads. Every hint drawn works now
-//! (ADR 0064); the rest are left out.
+//! reply/edit/fold keys, and direct lifecycle keys only when their header
+//! is outside the viewport, then `Z` for the file's threads.
 
 use crate::app::draw::header::{Header, HintOf, draft_hints};
 use crate::app::input::bindings::{Action, Where};
@@ -37,7 +37,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
         let expanded = app.is_expanded(id);
         let on_thread_row = app.cursor_on_thread_row(id);
-        hints.extend(thread_hints(app, place, words, expanded, on_thread_row));
+        hints.extend(thread_hints(app, id, place, words, expanded, on_thread_row));
     }
     let stubs = app.stubs();
     if !stubs.is_empty() {
@@ -60,6 +60,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
 /// `z` to fold an expanded thread or expand a stub.
 fn thread_hints(
     app: &App,
+    id: &fathomable_core::annotations::ThreadId,
     place: Where,
     words: Words,
     expanded: bool,
@@ -77,7 +78,16 @@ fn thread_hints(
     if app.thread_message_editable() {
         hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
     }
-    hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
+    if !app.inline_thread_header_visible(id) {
+        if !words.is_resolved() {
+            hints.push(HintOf::keyed(
+                place,
+                Action::ToggleAutoResolve,
+                "auto-resolve",
+            ));
+        }
+        hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
+    }
     hints.push(HintOf::keyed(
         place,
         Action::Fold,
@@ -190,10 +200,6 @@ mod tests {
     /// thread header is its words alone; another pane's focus leaves the
     /// focus tip.
     #[test]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the bar test covers every cursor-surface key state"
-    )]
     fn the_bar_reads_the_cursor_threads_keys() -> anyhow::Result<()> {
         let dir = testing::workspace("text-bar", testing::README)?;
         // No toasts: the agent's comment would raise one over the bar.
@@ -238,7 +244,7 @@ mod tests {
 
         assert_eq!(
             bar(&app)?.trim(),
-            "c reply · o resolve · z fold · Z fold all",
+            "c reply · z fold · Z fold all",
             "the agent's thread: no edit"
         );
         let rows = screen(&app)?;
@@ -252,27 +258,25 @@ mod tests {
             .thread(&mine)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("mine"))?;
-        assert_eq!(
-            expanded_header(&app, &mine_thread, false).action_at(80, 60),
-            None,
-            "a click on a header runs nothing"
+        assert!(
+            (0..80)
+                .find(|column| {
+                    let layout = expanded_header(&app, &mine_thread, false, true, 80);
+                    layout.action_at(*column) == Some(Action::ToggleResolved)
+                })
+                .is_some(),
+            "a non-cursor expanded header exposes its resolve action"
         );
 
         // On the user's own message `e edit` joins the keys.
         app.goto_message(mine.clone(), 0);
-        assert_eq!(
-            bar(&app)?.trim(),
-            "c reply · e edit · o resolve · z fold · Z fold all"
-        );
+        assert_eq!(bar(&app)?.trim(), "c reply · e edit · z fold · Z fold all");
 
         // A stub reads `z expand`; with none expanded `Z` unfolds.
         app.fold_thread(&mine);
         app.fold_thread(&theirs);
         app.view_mut().goto_source_line(3);
-        assert_eq!(
-            bar(&app)?.trim(),
-            "e edit · o resolve · z expand · Z unfold all"
-        );
+        assert_eq!(bar(&app)?.trim(), "e edit · z expand · Z unfold all");
         assert!(
             !screen(&app)?.iter().any(|row| row.contains("(z expand)")),
             "the stub carries no hint"

@@ -21,6 +21,12 @@ tags:
 Status: accepted (2026-09-05)
 
 Current formats amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md): atomic lifecycle,
+auto-resolve, activity, uniform-message, and reply-outcome records advance
+the annotation event format to **4** and internal socket protocol to **7**.
+The exact-current guards and no-migration rule remain.
+
+Current formats amended 2026-09-16 by
 [0084](0084-explicit-mcp-contracts.md): durable keyed writes advance the
 annotation event format to **3** and internal socket protocol to **6**.
 Exact-only guards and the prohibition on automatic migrations or resets

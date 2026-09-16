@@ -13,6 +13,13 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Current format boundary amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md): the annotation event
+format is now **4** and the internal socket protocol is **7**. Lifecycle,
+one-shot auto-resolve, atomic reply outcomes, uniform messages, and activity
+observation are current-only shapes; the exact-version and operator-only
+reset rules below remain.
+
 MCP presentation amended 2026-09-16 by
 [0084](0084-explicit-mcp-contracts.md): MCP results project both human and
 agent authors as tagged objects. The compact human string described below
@@ -116,8 +123,9 @@ reviews the actual XDG paths before starting a matching build.
   than interpreted. The authorized operator reset is the path to a fresh
   alpha state; ordinary startup remains non-destructive.
 - The three-tool review core, automatic supported-harness identity, current
-  snapshot/context recovery, Git/worktree reach, and human-only resolution
-  remain product behavior.
+  snapshot/context recovery, and Git/worktree reach remain product behavior.
+  Resolution authority is now the one-shot user-controlled contract of
+  [0085](0085-thread-lifecycle-and-auto-resolve.md).
 - Old `hello` and `pending` hooks and obsolete configuration entries require
   manual cleanup. The product neither edits harness configuration nor reads
   `agents.jsonl`.

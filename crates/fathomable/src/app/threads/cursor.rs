@@ -376,7 +376,7 @@ impl App {
             .is_some_and(|(_, editable)| editable)
     }
 
-    /// `o`: resolve the cursor's thread, or reopen it.
+    /// `r`: resolve the cursor's thread, or reopen it.
     pub(crate) fn thread_toggle_resolved(&mut self) {
         let Some(id) = self.thread_cursor().thread().cloned() else {
             self.notice("no thread here");
@@ -388,6 +388,15 @@ impl App {
         let place = self.review_selected_index();
         self.toggle_resolved(&id);
         self.review_reselect(place);
+    }
+
+    /// `R`: toggle one-shot auto-resolve on the cursor's unresolved thread.
+    pub(crate) fn thread_toggle_auto_resolve(&mut self) {
+        let Some(id) = self.thread_cursor().thread().cloned() else {
+            self.notice("no thread here");
+            return;
+        };
+        self.toggle_auto_resolve(&id);
     }
 
     /// The first `d`: arm deletion of the cursor's thread (ADR 0034).

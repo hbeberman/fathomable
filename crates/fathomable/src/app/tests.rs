@@ -455,7 +455,7 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
         "# Guide\n\nchanged\n",
         1,
     )?;
-    let waiting = store.annotate(
+    let answered = store.annotate(
         Draft::new(
             Author::User,
             Path::new("docs/notes.md"),
@@ -465,7 +465,7 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
         "# Notes\n",
         2,
     )?;
-    store.reply(&waiting, Reply::new(Author::agent("agent"), 3, "answer"))?;
+    store.reply(&answered, Reply::new(Author::agent("agent"), 3, "answer"))?;
 
     let mut app = app_with(
         &dir,
@@ -489,17 +489,18 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
             info.changed_files,
             info.added,
             info.removed,
-            info.open_threads,
-            info.waiting_threads,
+            info.active_threads,
+            info.proposed_threads,
+            info.resolved_threads,
         ),
-        (2, 3, 0, 1, 1)
+        (2, 3, 0, 2, 0, 0)
     );
     let output = screen(&app)?.join("\n");
     assert!(output.contains("docs/"), "{output}");
     assert!(output.contains("files  3"), "{output}");
     assert!(output.contains("subdirectories  1"), "{output}");
     assert!(output.contains("changes  2 files · +3 -0"), "{output}");
-    assert!(output.contains("threads  1 open · 1 waiting"), "{output}");
+    assert!(output.contains("threads  ● 2 active"), "{output}");
     assert!(!output.contains("Readme"), "{output}");
 
     press_key(&mut app, KeyCode::Esc);
@@ -871,7 +872,7 @@ fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
     assert!(app.draft().is_none());
     assert_eq!(
         app.message(),
-        Some(format!("resolved at {}; o reopens it", &second[..7]).as_str())
+        Some(format!("resolved at {}; r reopens it", &second[..7]).as_str())
     );
     app.thread_open_in_file();
     assert!(!app.review_list().is_open());

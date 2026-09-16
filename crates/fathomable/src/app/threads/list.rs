@@ -21,6 +21,7 @@ use fathomable_core::annotations::{Author, LineRange, Store, Thread, ThreadId};
 use fathomable_core::layout::{Layout, Line};
 
 use crate::app::draw::nest::NEST;
+use crate::app::threads::summary::ThreadSummary;
 use crate::app::threads::words::Words;
 use crate::app::threads::{ThreadState, author_label};
 use crate::app::{App, Focus};
@@ -73,13 +74,12 @@ impl ReviewList {
 }
 
 /// The threads of one scope by circle, for the headers' counts (ADR
-/// 0066, ADR 0075): a proposed thread counts under `proposed` and not
-/// under `waiting`, and `resolved` counts the resolved threads whether
+/// 0066, ADR 0075): a proposed thread counts only under `proposed`, and
+/// `resolved` counts the resolved threads whether
 /// or not they are listed, so the count says what `x` would reveal.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Counts {
-    pub(crate) open: usize,
-    pub(crate) waiting: usize,
+    pub(crate) active: usize,
     pub(crate) proposed: usize,
     pub(crate) resolved: usize,
 }
@@ -134,6 +134,7 @@ pub(crate) struct Entry {
     /// The commit a past thread was resolved at, short, when no
     /// checkout shows it (ADR 0072).
     commit: Option<String>,
+    summary: ThreadSummary,
 }
 
 /// A commit as an entry names it: its first seven hex digits.
@@ -144,20 +145,16 @@ pub(crate) fn short_commit(commit: &str) -> String {
 impl Entry {
     /// The branch on the entry when another worktree shows the thread
     /// (ADR 0070).
+    #[cfg(test)]
     pub(crate) fn worktree(&self) -> Option<&str> {
         self.worktree.as_deref()
     }
 
     /// The commit on the entry when the thread is resolved at an
     /// earlier commit of this branch (ADR 0072).
+    #[cfg(test)]
     pub(crate) fn commit(&self) -> Option<&str> {
         self.commit.as_deref()
-    }
-
-    /// What follows the state words: the branch of the worktree
-    /// showing the thread, or the commit a past one was resolved at.
-    pub(crate) fn note(&self) -> Option<&str> {
-        self.worktree().or_else(|| self.commit())
     }
 
     pub(crate) fn id(&self) -> &ThreadId {
@@ -179,12 +176,16 @@ impl Entry {
     /// An agent's newest reply proposes resolving it (ADR 0053).
     #[cfg(test)]
     pub(crate) fn proposed(&self) -> bool {
-        self.words.proposed()
+        self.words.state() == ThreadState::Proposed
     }
 
     /// The thread's words and circle (ADR 0032, ADR 0066).
     pub(crate) fn words(&self) -> Words {
         self.words
+    }
+
+    pub(crate) fn summary(&self) -> &ThreadSummary {
+        &self.summary
     }
 }
 
@@ -203,35 +204,17 @@ pub(crate) enum Row {
         inside: bool,
         selected: bool,
     },
-    /// The first row of an entry: the circle, the range, the words,
-    /// the age; `selected` for the cursor's thread.
+    /// An expanded entry's shared one-row summary.
     Header {
         entry: usize,
-        /// `None` for a thread on the file as a whole (ADR 0063).
-        range: Option<LineRange>,
-        words: Words,
-        updated: u64,
+        summary: ThreadSummary,
         selected: bool,
         dim: bool,
-        /// The branch of the worktree showing it (ADR 0070), or the
-        /// commit a past thread was resolved at (ADR 0072).
-        note: Option<String>,
     },
-    /// A folded thread's one row (ADR 0076), the stub's form: the
-    /// chevron, the circle, the range, the newest message's author and
-    /// age, and its first line; `selected` for the cursor's thread.
+    /// A folded entry's shared one-row summary.
     Stub {
         entry: usize,
-        range: Option<LineRange>,
-        words: Words,
-        note: Option<String>,
-        /// The newest message's author, as `author_label` names them,
-        /// and whether they are the user (ADR 0071).
-        author: String,
-        user: bool,
-        created: u64,
-        /// The first line of the newest message.
-        text: String,
+        summary: ThreadSummary,
         selected: bool,
         dim: bool,
     },
@@ -326,14 +309,6 @@ impl Rows {
         }
     }
 
-    /// The thread whose header or folded row `row` is.
-    pub(crate) fn thread_at(&self, row: usize) -> Option<&ThreadId> {
-        match self.landing_at(row)? {
-            Landing::Stop(Stop::Entry(entry)) => self.entries.get(entry).map(|entry| &entry.id),
-            Landing::Stop(Stop::File(_)) | Landing::Message(..) => None,
-        }
-    }
-
     /// The row range occupied by one message.
     fn message_range(&self, entry: usize, message: usize) -> Option<std::ops::Range<usize>> {
         let start = self.rows.iter().position(
@@ -380,7 +355,7 @@ impl Rows {
 }
 
 fn is_open(kind: ThreadState) -> bool {
-    matches!(kind, ThreadState::Open | ThreadState::Waiting)
+    matches!(kind, ThreadState::Active | ThreadState::Proposed)
 }
 
 impl App {
@@ -389,13 +364,10 @@ impl App {
         &self.review_list
     }
 
-    /// `Space r`: show the list in place of the document, or focus it
-    /// when it is open, or close it when it is open and focused.
+    /// `t`: toggle the review list from any normal pane.
     pub(crate) fn toggle_review(&mut self) {
-        if self.review_list.is_open() && self.focus == Focus::Review {
+        if self.review_list.is_open() {
             self.close_review();
-        } else if self.review_list.is_open() {
-            self.focus = Focus::Review;
         } else {
             self.open_review();
         }
@@ -460,7 +432,8 @@ impl App {
             .filter(|thread| self.reach.includes(thread) || (resolved && self.reach.past(thread)))
             .filter(|thread| !file_only || thread.path() == current)
             .filter_map(|thread| {
-                let (range, words) = self.placement_of(thread);
+                let (placement, words) = self.placement_of(thread);
+                let range = placement.range();
                 if !resolved && !is_open(words.state()) {
                     return None;
                 }
@@ -468,6 +441,9 @@ impl App {
                 let commit = (worktree.is_none() && self.reach.past(thread))
                     .then(|| thread.commit().map(short_commit))
                     .flatten();
+                let context = worktree.as_deref().or(commit.as_deref());
+                let summary =
+                    ThreadSummary::new(thread, Some(placement), self.user_name(), context);
                 Some(Entry {
                     id: thread.id().clone(),
                     path: thread.path().to_path_buf(),
@@ -476,6 +452,7 @@ impl App {
                     updated: thread.updated(),
                     worktree,
                     commit,
+                    summary,
                 })
             })
             .collect();
@@ -489,19 +466,17 @@ impl App {
         let mut counts = Counts::default();
         for entry in self.review_entries_showing(file_only, true) {
             match entry.kind() {
-                ThreadState::Open => counts.open += 1,
-                ThreadState::Waiting if entry.words().proposed() => counts.proposed += 1,
-                ThreadState::Waiting => counts.waiting += 1,
+                ThreadState::Active => counts.active += 1,
+                ThreadState::Proposed => counts.proposed += 1,
                 ThreadState::Resolved => counts.resolved += 1,
             }
         }
         counts
     }
 
-    /// Open and waiting threads in the active worktree under `directory`.
-    pub(crate) fn directory_thread_counts(&self, directory: &Path) -> (usize, usize) {
-        let mut open = 0;
-        let mut waiting = 0;
+    /// Active, proposed, and resolved threads under `directory`.
+    pub(crate) fn directory_thread_counts(&self, directory: &Path) -> Counts {
+        let mut counts = Counts::default();
         for thread in self
             .store
             .iter()
@@ -511,12 +486,12 @@ impl App {
             .filter(|thread| self.worktree_of(thread.id()).is_none())
         {
             match ThreadState::of(thread) {
-                ThreadState::Open => open += 1,
-                ThreadState::Waiting => waiting += 1,
-                ThreadState::Resolved => {}
+                ThreadState::Active => counts.active += 1,
+                ThreadState::Proposed => counts.proposed += 1,
+                ThreadState::Resolved => counts.resolved += 1,
             }
         }
-        (open, waiting)
+        counts
     }
 
     /// The circle each file with listed threads shows in the files pane
@@ -617,19 +592,28 @@ impl App {
     /// Range and words of `thread`: from the loaded document's mark when
     /// its file is open this session, else as stored; no range for a
     /// thread on the file as a whole (ADR 0063).
-    pub(super) fn placement_of(&self, thread: &Thread) -> (Option<LineRange>, Words) {
+    pub(super) fn placement_of(
+        &self,
+        thread: &Thread,
+    ) -> (fathomable_core::annotations::Placement, Words) {
         // A thread another worktree shows is placed in that worktree's
         // file (ADR 0070).
-        if let Some(placed) = self.elsewhere_words(thread.id()) {
-            return placed;
+        if let Some(placement) = self.elsewhere_placement(thread.id()) {
+            return (placement, Words::of(Some(placement), thread));
         }
         self.docs
             .iter()
             .find(|doc| doc.relative == thread.path())
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()))
             .map_or_else(
-                || (thread.range(), Words::of(None, thread)),
-                |mark| (mark.range(), mark.words()),
+                || {
+                    let placement = thread.range().map_or(
+                        fathomable_core::annotations::Placement::File,
+                        fathomable_core::annotations::Placement::Anchored,
+                    );
+                    (placement, Words::of(Some(placement), thread))
+                },
+                |mark| (mark.placement(), mark.words()),
             )
     }
 
@@ -649,19 +633,9 @@ impl App {
         // A folded thread is one row, the stub's form, with no blank row
         // after it (ADR 0076).
         if self.review_list.folded_threads.contains(&entry.id) {
-            let (author, created, body) = match thread.replies().last() {
-                Some(reply) => (reply.author(), reply.created(), reply.body()),
-                None => (thread.author(), thread.created(), thread.comment()),
-            };
             out.rows.push(Row::Stub {
                 entry: index,
-                range: entry.range,
-                words: entry.words,
-                note: entry.note().map(str::to_owned),
-                author: author_label(author, user),
-                user: author.is_user(),
-                created,
-                text: body.lines().next().unwrap_or("").to_owned(),
+                summary: entry.summary.clone(),
                 selected,
                 dim,
             });
@@ -669,12 +643,9 @@ impl App {
         }
         out.rows.push(Row::Header {
             entry: index,
-            range: entry.range,
-            words: entry.words,
-            updated: thread.updated(),
+            summary: entry.summary.clone(),
             selected,
             dim,
-            note: entry.note().map(str::to_owned),
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
@@ -799,6 +770,7 @@ impl App {
         if !self.review_list.is_open() {
             return false;
         }
+
         let rows = self.review_rows(self.column_width());
         let Some(index) = self.selected_index(&rows) else {
             return false;
@@ -810,6 +782,21 @@ impl App {
                 .get(entry)
                 .is_some_and(|entry| self.review_list.folded_threads.contains(&entry.id)),
         }
+    }
+
+    /// Whether the cursor thread's header or folded row is visible.
+    pub(crate) fn review_thread_header_visible(&self) -> bool {
+        if !self.review_list.is_open() {
+            return false;
+        }
+        let rows = self.review_rows(self.column_width());
+        let Some(index) = self.selected_index(&rows) else {
+            return false;
+        };
+        let Some(row) = rows.entry_row(index) else {
+            return false;
+        };
+        row >= self.review_list.scroll && row < self.review_list.scroll + self.list_rows()
     }
 
     /// `l` / `h`: the next or previous message of the cursor's thread,
@@ -946,13 +933,6 @@ impl App {
             None => {}
         }
         self.focus = Focus::Review;
-    }
-
-    /// The thread whose header or folded row list row `row` is (ADR
-    /// 0076), for the chevron and the double-click.
-    pub(crate) fn review_thread_row(&self, row: usize) -> Option<ThreadId> {
-        let rows = self.review_rows(self.column_width());
-        rows.thread_at(self.review_list.scroll + row).cloned()
     }
 
     /// A right-click on list row `row` (ADR 0066): on a file row the

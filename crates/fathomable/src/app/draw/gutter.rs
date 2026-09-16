@@ -109,7 +109,7 @@ impl App {
         let mut bracket: Option<(usize, &'static str)> = None;
         // The most urgent one-row thread's circle, when a bracket does
         // not take the cell.
-        let mut point: Option<((ThreadState, u8), &'static str)> = None;
+        let mut point: Option<(ThreadState, &'static str)> = None;
         for mark in self.placed_marks().filter(|mark| mark.covers(lines)) {
             let Some(range) = mark.range() else {
                 continue;

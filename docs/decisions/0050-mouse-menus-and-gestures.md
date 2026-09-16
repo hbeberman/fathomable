@@ -54,6 +54,17 @@ rounded titled border, so the context or prefix name moves out of a body
 row; shortcut columns use the subdued info face. The persistent menu bar
 and its one-level drop-downs join mouse navigation.
 
+Amended 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): inline and review
+thread headers expose direct auto-resolve and resolve/reopen action words.
+Only the hovered action receives `ui.header.patch(ui.list.hover)`;
+non-cursor expanded headers omit key labels but remain clickable. The
+disclosure arrow plus three cells folds, action hits take precedence over
+double-click folding, separators and clipped text have no target, and
+right-click thread menus include auto-resolve. The status line no longer
+has a waiting-count action; its total thread count still focuses the
+threads pane.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):

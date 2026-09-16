@@ -27,6 +27,12 @@ the threads pane gains the same active bar.
 This supersedes the bright ancestor-file bar and pane-without-bar rules
 below, not the nest or the independent current-file tint.
 
+Amended 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): the two-cell nest and
+file-row focus treatment remain. The nested inline/review header content
+and hit geometry now come from the shared thread-summary layout; the
+sidebar keeps two-row cards at the same nest.
+
 ## Context
 
 The review list ([0066](0066-one-circle-language.md),

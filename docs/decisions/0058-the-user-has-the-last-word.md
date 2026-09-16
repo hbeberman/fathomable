@@ -19,6 +19,15 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Last-act presentation superseded 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md). Threads no longer derive
+waiting or pending state, colour, counts, traversal, or resolution authority
+from the latest actor. The current lifecycle is explicit active,
+resolution-proposed, or resolved state; ordinary messages clear a current
+proposal, and agent completion may resolve only through one-shot
+auto-resolve. The automatic author identity and user-mediated workflow
+guidance remain; the historical last-act model stays below.
+
 Agent obligation and delivery state superseded 2026-09-15 by
 [0082](0082-three-tool-review-core.md). `threads` defaults to every open
 discussion regardless of last author and reading changes nothing; there is

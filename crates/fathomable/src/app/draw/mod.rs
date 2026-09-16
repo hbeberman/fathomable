@@ -32,7 +32,7 @@ use crate::app::draw::author::{
 };
 use crate::app::draw::header::{
     Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
-    review_header,
+    review_header, summary_line, summary_rehover,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
@@ -43,7 +43,7 @@ use crate::app::input::bindings::Action;
 use crate::app::threads::list::{BODY_INDENT, Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
 use crate::app::threads::words::Words;
-use crate::app::threads::{Compose, Mark, ThreadState, author_label};
+use crate::app::threads::{Compose, ThreadState};
 use crate::app::view::{Mode, View};
 
 use crate::app::input::bindings;
@@ -89,9 +89,9 @@ pub(crate) struct Theme {
     /// The `Space` menu and the right-click menu (ADR 0056).
     pub(crate) menu: Style,
     pub(crate) picker_match: Style,
-    pub(crate) thread_open: Style,
+    pub(crate) thread_active: Style,
+    pub(crate) thread_proposed: Style,
     pub(crate) thread_resolved: Style,
-    pub(crate) thread_waiting: Style,
     pub(crate) thread_focus: Style,
     pub(crate) thread_bracket: Style,
     /// A stub's background (ADR 0049).
@@ -146,9 +146,9 @@ impl Theme {
             popup_key: style(Key::UiPopupKey),
             menu: style(Key::UiMenu),
             picker_match: style(Key::UiPickerMatch),
-            thread_open: style(Key::ThreadOpen),
+            thread_active: style(Key::ThreadActive),
+            thread_proposed: style(Key::ThreadProposed),
             thread_resolved: style(Key::ThreadResolved),
-            thread_waiting: style(Key::ThreadWaiting),
             thread_focus: style(Key::ThreadFocus),
             thread_bracket: style(Key::ThreadBracket),
             thread_inline: style(Key::ThreadInline),
@@ -747,7 +747,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
         ("Space w h", "browse the files".to_owned()),
-        ("Space r", "review the threads".to_owned()),
+        ("t", "toggle review threads".to_owned()),
         ("Space ?", "view the keymap".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -1190,9 +1190,9 @@ fn status_style(theme: &Theme, status: LineStatus) -> Style {
 
 fn mark_style(theme: &Theme, kind: ThreadState) -> Style {
     match kind {
-        ThreadState::Open => theme.thread_open,
+        ThreadState::Active => theme.thread_active,
+        ThreadState::Proposed => theme.thread_proposed,
         ThreadState::Resolved => theme.thread_resolved,
-        ThreadState::Waiting => theme.thread_waiting,
     }
 }
 
@@ -1218,9 +1218,9 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         if let Some((stub, index, _)) = app.stub_on_row(row) {
             if stub.expanded() {
                 let block = view.stub_slot_of_row(row).map_or(0, |(block, _)| block);
-                let body = expanded
-                    .entry(block)
-                    .or_insert_with(|| expanded_block_lines(app, theme, &stub, width - gutter));
+                let body = expanded.entry(block).or_insert_with(|| {
+                    expanded_block_lines(app, theme, &stub, width - gutter, row - index)
+                });
                 out.push(with_gutter(
                     app,
                     theme,
@@ -1310,17 +1310,7 @@ fn past_end_line<'a>(theme: &Theme, digits: usize) -> Line<'a> {
     ])
 }
 
-/// Row `index` of a collapsed stub (ADR 0049), one row since 2026-09-09:
-/// the gutter's bracket if an outer thread spans the row, the chevron
-/// (ADR 0073), the thread's circle (ADR 0066), the author, the age, and
-/// the first line of the newest message, on
-/// the author's stripe over the `thread.inline` background, the name in
-/// the author's colour as a message of the expanded thread reads (ADR
-/// 0071) — or behind a `▎` in the state colour when the theme sets no
-/// background. The thread under the cursor reads in the text colour,
-/// the others dimmed; the thread cursor's stub reads bold (ADR 0067)
-/// and carries the cursor bar in its edge cell, as the expanded header
-/// does (ADR 0071, amended 2026-09-09).
+/// Row `index` of a collapsed inline thread header.
 fn stub_line<'a>(
     app: &App,
     theme: &Theme,
@@ -1334,75 +1324,53 @@ fn stub_line<'a>(
     let Some(thread) = stub.thread().and_then(|id| app.thread(id)) else {
         return Line::from("");
     };
-    let Some(message) = stub.message_of_row(index) else {
+    let Some(_message) = stub.message_of_row(index) else {
         return Line::from("");
     };
-    let mark = app.mark_of(thread.id());
-    let kind = mark.map_or(ThreadState::Open, Mark::kind);
-    let glyph = mark.map_or("●", Mark::glyph);
-    let (author, created, body) = match message.checked_sub(1) {
-        None => (thread.author(), thread.created(), thread.comment()),
-        Some(index) => {
-            let reply = &thread.replies()[index];
-            (reply.author(), reply.created(), reply.body())
-        }
-    };
     let covered = app.threads_at_cursor().contains(thread.id());
-    // The thread cursor's stub is the marked one (ADR 0067).
     let marked = covered && app.thread_cursor().thread() == Some(thread.id());
-    let surface = theme.thread_inline.patch(row_style(theme, author));
-    let text_style = if covered { theme.text } else { theme.info }.patch(surface);
-    let text_style = if marked {
-        text_style.add_modifier(Modifier::BOLD)
+    let content_width = width.saturating_sub(gutter);
+    let layout = expanded_header(app, thread, marked, false, content_width);
+    let screen_row = app.text_top() + row.saturating_sub(app.view().scroll());
+    let hover = summary_hover(
+        app.pointer(),
+        &layout,
+        screen_row,
+        app.sidebar_width() + gutter,
+    );
+    let leading = vec![if marked {
+        Span::styled(CURSOR_BAR, theme.header.patch(theme.thread_cursor))
     } else {
-        text_style
-    };
-    let note = note_cell(app, theme, row, surface);
-    let edge = if marked {
-        Span::styled(CURSOR_BAR, surface.patch(theme.thread_cursor))
-    } else if surface.bg.is_none() {
-        Span::styled("▎", mark_style(theme, kind))
-    } else {
-        Span::styled(" ", surface)
-    };
-    let now = fathomable_core::clock::now();
-    let lead = format!(" {} ", author_label(author, app.user_name()));
-    // The age in the info colour, as every other row gives it (ADR 0059).
-    let age = format!("{}  ", format_age_short(created, now));
-    // The chevron sits in the same column as the expanded header's
-    // (ADR 0073): the edge cell, then the chevron and a space.
-    let chevron = if index == 0 { CHEVRON_RIGHT } else { " " };
-    let free = width
-        .saturating_sub(gutter)
-        .saturating_sub(1 + THREAD_GUTTER)
-        .saturating_sub(1 + display_width(&lead) + display_width(&age));
-    let first = body.lines().next().unwrap_or("");
-    let text = fit_ellipsis(first, free);
-    let spans = vec![
-        note,
-        Span::styled(" ".repeat(digits), surface),
-        Span::styled(" ", surface),
-        Span::styled(" ", surface),
-        edge,
-        Span::styled(
-            chevron,
-            theme.info.patch(surface).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" ", surface),
-        Span::styled(glyph, mark_style(theme, kind).patch(surface)),
-        Span::styled(lead, name_style(theme, author, marked).patch(surface)),
-        Span::styled(age, theme.info.patch(surface)),
-        Span::styled(text, text_style),
-    ];
-    Line::from(spans).style(surface)
+        Span::styled(" ", theme.header)
+    }];
+    let line = summary_line(theme, &layout, leading, hover);
+    with_gutter(app, theme, line, row, digits)
+}
+
+fn summary_hover(
+    pointer: Option<(usize, usize)>,
+    layout: &crate::app::threads::summary::SummaryLayout,
+    screen_row: usize,
+    column_origin: usize,
+) -> Option<Action> {
+    pointer
+        .filter(|(_, row)| *row == screen_row)
+        .and_then(|(column, _)| column.checked_sub(column_origin))
+        .and_then(|column| layout.action_at(column))
 }
 
 /// The rows of `stub`'s block expanded in place (ADR 0049), at the text
-/// width: a header with the state and placement, then every message as
+/// width: a shared factual header, then every message as
 /// the pane drew them,
 /// the draft in its place among them (ADR 0054); for a draft block, a
 /// header naming the lines and the draft.
-fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
+fn expanded_block_lines<'a>(
+    app: &App,
+    theme: &Theme,
+    stub: &Stub,
+    width: usize,
+    first_row: usize,
+) -> Vec<Line<'a>> {
     let draft = app
         .draft()
         .map(|compose| draft_lines(app, theme, compose, width));
@@ -1437,7 +1405,20 @@ fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize)
                 .expanded_row_message(app.view().cursor().row)
                 .filter(|(on, _)| on == id)
                 .map(|(_, message)| message);
-            let mut lines = vec![expanded_header(app, thread, current).line(theme, width)];
+            let layout = expanded_header(app, thread, current, true, width);
+            let screen_row = app.text_top() + first_row.saturating_sub(app.view().scroll());
+            let hover = summary_hover(
+                app.pointer(),
+                &layout,
+                screen_row,
+                app.sidebar_width() + gutter_width(app.view()),
+            );
+            let leading = vec![if current {
+                Span::styled(CURSOR_BAR, theme.header.patch(theme.thread_cursor))
+            } else {
+                Span::styled(" ", theme.header)
+            }];
+            let mut lines = vec![summary_line(theme, &layout, leading, hover)];
             lines.extend(expanded_lines(
                 theme,
                 app.highlighter(),
@@ -1599,7 +1580,6 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     for segment in parts.right {
         let style = match segment.tone {
             StatusTone::Plain => Style::default(),
-            StatusTone::Waiting => mark_style(theme, ThreadState::Waiting),
         };
         left.push(Span::styled(segment.text, style));
     }
@@ -1611,8 +1591,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 /// the path say how the text is shown (`SRC`, or `DIFF` and the base,
 /// ADR 0060); the right block is
 /// `line:col`, the percentage, and `N word` counts, in segments so the
-/// waiting count draws its teal circle and the counts take clicks
-/// (ADR 0066).
+/// thread total remains clickable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StatusParts {
     pub(crate) pill: &'static str,
@@ -1674,8 +1653,6 @@ impl StatusSegment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StatusTone {
     Plain,
-    /// The waiting circle in `thread.waiting`.
-    Waiting,
 }
 
 pub(super) fn status_parts(app: &App) -> StatusParts {
@@ -1717,22 +1694,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         let proposed = app.proposed_count();
         if proposed > 0 {
             right.push(StatusSegment::plain(format!("  {proposed} proposed")));
-        }
-        let waiting = app.waiting_count();
-        if waiting > 0 {
-            // A teal circle before the count (ADR 0066); a click opens the
-            // review list.
-            right.push(StatusSegment::plain("  "));
-            right.push(StatusSegment {
-                text: "●".to_owned(),
-                tone: StatusTone::Waiting,
-                action: Some(Action::Review),
-            });
-            right.push(StatusSegment {
-                text: format!(" {waiting} waiting"),
-                tone: StatusTone::Plain,
-                action: Some(Action::Review),
-            });
         }
         let threads = app.thread_counts().1;
         if threads > 0 {
@@ -2225,13 +2186,16 @@ fn draw_directory_info(
             ),
         ));
     }
-    if info.open_threads + info.waiting_threads > 0 {
+    if info.active_threads + info.proposed_threads + info.resolved_threads > 0 {
         let mut parts = Vec::new();
-        if info.open_threads > 0 {
-            parts.push(format!("{} open", info.open_threads));
+        if info.active_threads > 0 {
+            parts.push(format!("● {} active", info.active_threads));
         }
-        if info.waiting_threads > 0 {
-            parts.push(format!("{} waiting", info.waiting_threads));
+        if info.proposed_threads > 0 {
+            parts.push(format!("◐ {} resolution proposed", info.proposed_threads));
+        }
+        if info.resolved_threads > 0 {
+            parts.push(format!("○ {} resolved", info.resolved_threads));
         }
         rows.push(("threads", parts.join(" · ")));
     }
@@ -2279,14 +2243,17 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let mut lines = vec![review_header(app).line(theme, width)];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
-    for row in all.iter().skip(scroll).take(body) {
-        lines.push(list_row(
+    for (offset, row) in all.iter().skip(scroll).take(body).enumerate() {
+        let context = ListRender {
             theme,
-            row,
             now,
             width,
-            Navigation::for_pane(app, Focus::Review),
-        ));
+            navigation: Navigation::for_pane(app, Focus::Review),
+            screen_row: app.pane_top() + 1 + offset,
+            pointer: app.pointer(),
+            column_origin: app.sidebar_width(),
+        };
+        lines.push(list_row(&context, row));
     }
     if rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
@@ -2295,13 +2262,28 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }
 
-fn list_row<'a>(
-    theme: &Theme,
-    row: &Row,
+struct ListRender<'a> {
+    theme: &'a Theme,
     now: u64,
     width: usize,
     navigation: Navigation,
-) -> Line<'a> {
+    screen_row: usize,
+    pointer: Option<(usize, usize)>,
+    column_origin: usize,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "One match keeps every review row variant's surface treatment together."
+)]
+fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
+    let theme = context.theme;
+    let now = context.now;
+    let width = context.width;
+    let navigation = context.navigation;
+    let screen_row = context.screen_row;
+    let pointer = context.pointer;
+    let column_origin = context.column_origin;
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour after `▾`, or `▸` when folded (ADR 0076), the
@@ -2337,20 +2319,22 @@ fn list_row<'a>(
         // 0066), on `ui.header` unless selected; the cursor's thread
         // takes the list's active or remembered selection.
         Row::Header {
-            range,
-            words,
-            updated,
-            selected,
-            note,
-            ..
+            summary, selected, ..
         } => {
             let selection = navigation.selection(*selected);
-            let mut line = entry_header(*range, *words, *updated, now, note.as_deref(), false)
-                .line(theme, width);
-            line.spans[0] = selection.marker(theme);
-            selection.paint(theme, line)
+            let layout = entry_header(summary, now, *selected, true, width);
+            let hover = summary_hover(pointer, &layout, screen_row, column_origin);
+            let line = summary_line(
+                theme,
+                &layout,
+                vec![selection.marker(theme), nest_span()],
+                hover,
+            );
+            let mut line = selection.paint(theme, line);
+            summary_rehover(theme, &layout, &mut line, 2, hover);
+            line
         }
-        Row::Stub { .. } => stub_row(theme, row, now, width, navigation),
+        Row::Stub { .. } => stub_row(context, row),
         // A message's rows on its author's stripe, the name in the
         // author's colour, the cursor's message with the bar down its
         // left edge and its name bold (ADR 0071), in the nest (ADR
@@ -2420,63 +2404,32 @@ fn list_row<'a>(
 /// newest message's author on their stripe, its short age, and its
 /// first line cut with `…`; selected rows take the shared list tint
 /// and show the cursor bar only while the list owns navigation.
-fn stub_row<'a>(
-    theme: &Theme,
-    row: &Row,
-    now: u64,
-    width: usize,
-    navigation: Navigation,
-) -> Line<'a> {
+fn stub_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
+    let theme = context.theme;
+    let now = context.now;
+    let width = context.width;
+    let navigation = context.navigation;
+    let screen_row = context.screen_row;
+    let pointer = context.pointer;
+    let column_origin = context.column_origin;
     let Row::Stub {
-        range,
-        words,
-        note,
-        author,
-        user,
-        created,
-        text,
-        selected,
-        dim,
-        ..
+        summary, selected, ..
     } = row
     else {
         return Line::from("");
     };
-    let who = list_author(*user);
     let selection = navigation.selection(*selected);
-    let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
-    let mut lead = vec![
-        selection.marker(theme),
-        nest_span(),
-        Span::styled(CHEVRON_RIGHT, theme.info.add_modifier(Modifier::BOLD)),
-        Span::styled(
-            format!(" {}  ", words.glyph()),
-            mark_style(theme, words.state()),
-        ),
-        Span::styled(format!("{place}  "), theme.info),
-    ];
-    if let Some(note) = note {
-        lead.push(Span::styled(format!("{note}  "), theme.info));
-    }
-    lead.push(Span::styled(
-        author.clone(),
-        if *dim {
-            theme.info
-        } else {
-            name_style(theme, &who, false)
-        },
-    ));
-    lead.push(Span::styled(
-        format!("  {}  ", format_age_short(*created, now)),
-        theme.info,
-    ));
-    let taken: usize = lead.iter().map(|span| display_width(&span.content)).sum();
-    let text_style = if *dim { theme.info } else { theme.text };
-    lead.push(Span::styled(
-        fit_ellipsis(text, width.saturating_sub(taken)),
-        text_style,
-    ));
-    selection.paint(theme, message_line(lead, width, row_style(theme, &who)))
+    let layout = entry_header(summary, now, *selected, false, width);
+    let hover = summary_hover(pointer, &layout, screen_row, column_origin);
+    let line = summary_line(
+        theme,
+        &layout,
+        vec![selection.marker(theme), nest_span()],
+        hover,
+    );
+    let mut line = selection.paint(theme, line);
+    summary_rehover(theme, &layout, &mut line, 2, hover);
+    line
 }
 
 /// The arrow before a file row's path in the list and the threads pane
@@ -2569,7 +2522,9 @@ mod tests {
 
     use crate::app::threads::list::Row;
 
-    use super::{Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row};
+    use super::{
+        ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
+    };
 
     #[test]
     fn fitting_keeps_whole_graphemes_and_exact_cell_width() {
@@ -2631,7 +2586,16 @@ mod tests {
         }));
         assert_eq!(rows.len(), 2);
         for row in rows {
-            let line = list_row(&theme, &row, 0, 30, super::Navigation::Active);
+            let context = ListRender {
+                theme: &theme,
+                now: 0,
+                width: 30,
+                navigation: super::Navigation::Active,
+                screen_row: 0,
+                pointer: None,
+                column_origin: 0,
+            };
+            let line = list_row(&context, &row);
             let width: usize = line
                 .spans
                 .iter()

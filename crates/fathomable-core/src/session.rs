@@ -19,7 +19,7 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":6,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
+//! let request: Request = r#"{"v":7,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
 //! assert!(matches!(request, Request::ThreadStart { .. }));
 //! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -34,10 +34,10 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::XdgDirs;
-use crate::annotations::{Author, LineRange, Thread, ThreadId};
+use crate::annotations::{Author, LineRange, ResolutionOutcome, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 6;
+pub(crate) const PROTOCOL_VERSION: u32 = 7;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -387,11 +387,12 @@ impl Marker {
 /// Paths are relative to the viewer's repository checkout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
+#[serde(deny_unknown_fields)]
 pub enum Request {
-    /// Append a reply to a thread, optionally proposing to resolve it;
-    /// answered with the thread as it then stands (ADR 0055). `lines`,
-    /// when given, says where the thread's lines are now (ADR 0033): the
-    /// thread is re-anchored there before the reply is added.
+    /// Append one atomic agent reply and its lifecycle effects.
+    ///
+    /// The answer carries the complete current thread, the original durable
+    /// resolution outcome, and whether this request replayed an earlier write.
     ThreadReply {
         /// The thread to reply to.
         thread: ThreadId,
@@ -402,7 +403,7 @@ pub enum Request {
         caller: String,
         /// The reply text.
         body: String,
-        /// Propose resolving the thread with this reply (ADR 0053).
+        /// Whether this reply says the work is complete.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         resolve: bool,
         /// Where the thread's lines are now, if they moved.
@@ -479,32 +480,103 @@ impl FromStr for Request {
 /// A response over the session socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Response {
-    /// Answer to a write with the thread as it stands afterward.
+    /// Answer to a thread-start write.
     Threads(Vec<Thread>),
+    /// Answer to an atomic agent reply.
+    ThreadReply(ThreadReplyResponse),
     /// The request was refused; the text says why.
     Error(String),
 }
 
+/// The complete durable answer to one atomic agent reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadReplyResponse {
+    thread: Box<Thread>,
+    resolution: ResolutionOutcome,
+    replayed: bool,
+}
+
+impl ThreadReplyResponse {
+    /// Borrow the complete current thread.
+    #[must_use]
+    pub fn thread(&self) -> &Thread {
+        &self.thread
+    }
+
+    /// Return the original durable resolution outcome.
+    #[must_use]
+    pub fn resolution(&self) -> ResolutionOutcome {
+        self.resolution
+    }
+
+    /// Whether the matching write was already completed.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
+
+    /// Consume the response into its thread, outcome, and replay state.
+    #[must_use]
+    pub fn into_parts(self) -> (Thread, ResolutionOutcome, bool) {
+        (*self.thread, self.resolution, self.replayed)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ResponseWire {
     ok: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     threads: Option<Vec<Thread>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    thread: Option<Thread>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resolution: Option<ResolutionOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replayed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<String>,
 }
 
 impl Response {
+    /// Construct a response for a newly applied atomic agent reply.
+    #[must_use]
+    pub fn thread_reply_applied(thread: Thread, resolution: ResolutionOutcome) -> Self {
+        Self::thread_reply(thread, resolution, false)
+    }
+
+    /// Construct a response for a replayed atomic agent reply.
+    #[must_use]
+    pub fn thread_reply_replayed(thread: Thread, resolution: ResolutionOutcome) -> Self {
+        Self::thread_reply(thread, resolution, true)
+    }
+
+    fn thread_reply(thread: Thread, resolution: ResolutionOutcome, replayed: bool) -> Self {
+        Self::ThreadReply(ThreadReplyResponse {
+            thread: Box::new(thread),
+            resolution,
+            replayed,
+        })
+    }
+
     /// The response as one JSON line without the newline.
     #[must_use]
     pub fn to_line(&self) -> String {
         let mut wire = ResponseWire {
             ok: true,
             threads: None,
+            thread: None,
+            resolution: None,
+            replayed: None,
             error: None,
         };
         match self {
             Self::Threads(threads) => wire.threads = Some(threads.clone()),
+            Self::ThreadReply(response) => {
+                wire.thread = Some(response.thread().clone());
+                wire.resolution = Some(response.resolution());
+                wire.replayed = Some(response.replayed());
+            }
             Self::Error(message) => {
                 wire.ok = false;
                 wire.error = Some(message.clone());
@@ -520,19 +592,22 @@ impl FromStr for Response {
     fn from_str(line: &str) -> Result<Self, Self::Err> {
         let wire: ResponseWire = serde_json::from_str(line)
             .map_err(|error| ProtocolError(format!("malformed response: {error}")))?;
-        match wire {
-            ResponseWire {
-                ok: false, error, ..
-            } => Ok(Self::Error(
+        match (
+            wire.ok,
+            wire.threads,
+            wire.thread,
+            wire.resolution,
+            wire.replayed,
+            wire.error,
+        ) {
+            (false, None, None, None, None, error) => Ok(Self::Error(
                 error.unwrap_or_else(|| "unspecified error".to_owned()),
             )),
-            ResponseWire {
-                threads: Some(threads),
-                ..
-            } => Ok(Self::Threads(threads)),
-            _ => Err(ProtocolError(
-                "malformed response: successful reply has no threads".to_owned(),
-            )),
+            (true, Some(threads), None, None, None, None) => Ok(Self::Threads(threads)),
+            (true, None, Some(thread), Some(resolution), Some(replayed), None) => {
+                Ok(Self::thread_reply(thread, resolution, replayed))
+            }
+            _ => Err(ProtocolError("malformed response shape".to_owned())),
         }
     }
 }
@@ -553,8 +628,10 @@ impl std::error::Error for ProtocolError {}
 mod tests {
     use std::path::PathBuf;
 
+    use fathomable_testing::TempDir;
+
     use super::{Id, ProtocolError, Record, Request, Response};
-    use crate::annotations::{Author, LineRange};
+    use crate::annotations::{Author, Draft, LineRange, ResolutionOutcome, Store};
 
     fn record() -> Record {
         Record::new(
@@ -633,7 +710,7 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":6,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":7,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         Ok(())
@@ -642,7 +719,7 @@ mod tests {
     /// Every request needs the exact version this build speaks (ADR 0062).
     #[test]
     fn every_request_needs_the_current_version() -> Result<(), ProtocolError> {
-        let accepted = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let accepted = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>();
         accepted?;
 
@@ -651,23 +728,29 @@ mod tests {
             .err();
         assert!(missing.is_some_and(|e| e.to_string().contains("missing field `v`")));
 
-        let too_old = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_old = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_old.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 5")
+            e.to_string().contains("unsupported protocol version 6")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        let too_new = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_new = r#"{"v":8,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_new.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 7")
+            e.to_string().contains("unsupported protocol version 8")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        assert_eq!(r#"{"v":6,"op":"invented"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":7,"op":"invented"}"#.parse::<Request>().ok(), None);
+        assert_eq!(
+            r#"{"v":7,"op":"thread_reply","thread":"1-2-3","author":{"name":"bot"},"body":"x","propose_resolve":true}"#
+                .parse::<Request>()
+                .ok(),
+            None
+        );
         assert_eq!("not json".parse::<Request>().ok(), None);
         Ok(())
     }
@@ -689,8 +772,24 @@ mod tests {
 
     #[test]
     fn responses_round_trip() -> Result<(), ProtocolError> {
+        let dir =
+            TempDir::new("session-response").map_err(|error| ProtocolError(error.to_string()))?;
+        let state = dir.0.join("threads.jsonl");
+        let mut store = Store::open(&state).map_err(|error| ProtocolError(error.to_string()))?;
+        let id = store
+            .annotate(
+                Draft::on_file(Author::User, std::path::Path::new("a.md"), "question"),
+                "",
+                1,
+            )
+            .map_err(|error| ProtocolError(error.to_string()))?;
+        let thread = store
+            .thread(&id)
+            .cloned()
+            .ok_or_else(|| ProtocolError("missing fixture thread".to_owned()))?;
         let responses = [
             Response::Threads(Vec::new()),
+            Response::thread_reply_replayed(thread, ResolutionOutcome::ResolutionProposed),
             Response::Error("nope".to_owned()),
         ];
         for response in responses {
@@ -702,6 +801,10 @@ mod tests {
                 .starts_with(r#"{"ok":false"#)
         );
         assert_eq!(r#"{"ok":true}"#.parse::<Response>().ok(), None);
+        assert_eq!(
+            r#"{"ok":true,"threads":[],"replayed":false}"#.parse::<Response>().ok(),
+            None
+        );
         assert_eq!(
             record().socket(),
             Some(std::path::Path::new("/run/fathomable/1700000000-42.sock"))

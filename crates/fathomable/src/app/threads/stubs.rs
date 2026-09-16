@@ -208,7 +208,7 @@ impl App {
                 // draft is written in has them even with stubs hidden.
                 (self.stubs.shown
                     && (self.stubs.resolved
-                        || matches!(mark.kind(), ThreadState::Open | ThreadState::Waiting)
+                        || matches!(mark.kind(), ThreadState::Active | ThreadState::Proposed)
                         || self.expanded.contains(mark.id())))
                     || holds_draft(mark.id())
             })
@@ -319,6 +319,23 @@ impl App {
             .is_some_and(|(stub, _, _)| stub.thread() == Some(id))
             || (self.view().detached_anchor_of_row(row).is_some()
                 && self.thread_cursor().thread() == Some(id))
+    }
+
+    /// Whether `id`'s inline header row is currently visible.
+    pub(crate) fn inline_thread_header_visible(&self, id: &ThreadId) -> bool {
+        let Some((block, _)) = self
+            .stubs()
+            .iter()
+            .enumerate()
+            .find(|(_, stub)| stub.thread() == Some(id))
+        else {
+            return false;
+        };
+        let Some(row) = self.view().row_of_stub_slot(block, 0) else {
+            return false;
+        };
+        let visible = self.text_rows().saturating_sub(1);
+        row >= self.view().scroll() && row < self.view().scroll() + visible
     }
 
     /// The thread and message an expanded row shows, `None` off the
@@ -433,24 +450,13 @@ mod tests {
         app.compose_submit();
     }
 
-    /// The stub rows among `rows` whose text, the row's last cell that
-    /// is not blank, reads bold: the thread cursor's (ADR 0067).
-    fn bold_rows(app: &App, rows: &[usize]) -> anyhow::Result<Vec<usize>> {
-        let buffer = testing::buffer(app)?;
+    fn barred_rows(app: &App, rows: &[usize]) -> anyhow::Result<Vec<usize>> {
+        let shown = screen(app)?;
+        let gutter = crate::app::draw::gutter_width(app.view());
         Ok(rows
             .iter()
             .copied()
-            .filter(|&row| {
-                let y = u16::try_from(row).unwrap_or(u16::MAX);
-                (0..buffer.area.width)
-                    .rev()
-                    .find(|&x| buffer[(x, y)].symbol() != " ")
-                    .is_some_and(|x| {
-                        buffer[(x, y)]
-                            .modifier
-                            .contains(ratatui::style::Modifier::BOLD)
-                    })
-            })
+            .filter(|row| shown[*row].chars().nth(gutter) == Some('▎'))
             .collect())
     }
 
@@ -531,9 +537,8 @@ mod tests {
         assert!(!shown[6].contains("inner point"), "{:?}", shown[6]);
         assert_eq!(shown[7].trim(), "6", "L6 follows: {:?}", shown[7]);
         // The cursor is on L5, which starts the inner thread: its stub
-        // row reads bold, the outer's does not, and the bar says `z
-        // expand` (ADR 0067).
-        assert_eq!(bold_rows(&app, &[5, 6])?, [6], "the inner thread's row");
+        // row carries the cursor bar, the outer's does not.
+        assert_eq!(barred_rows(&app, &[5, 6])?, [6], "the inner thread's row");
         assert!(
             shown[app.text_bar_row()].contains("z expand"),
             "{:?}",
@@ -542,7 +547,7 @@ mod tests {
         assert!(!shown[6].contains("(z expand)"), "{:?}", shown[6]);
         // On L4 only the outer thread covers the cursor.
         app.view_mut().goto_source_line(4);
-        assert_eq!(bold_rows(&app, &[5, 6])?, [5], "the outer thread's row");
+        assert_eq!(barred_rows(&app, &[5, 6])?, [5], "the outer thread's row");
 
         // `j` from L5 stops on the outer stub, then the inner, then L6
         // (ADR 0076), each stub's thread the cursor's; `k` comes back
@@ -599,7 +604,7 @@ mod tests {
         annotate(&mut app, 7, 7, "seven");
         assert_eq!(app.view().layout().lines().len(), 10);
         app.view_mut().goto_source_line(3);
-        press(&mut app, " co");
+        press(&mut app, "r");
         assert_eq!(app.view().layout().lines().len(), 9, "resolved: no stub");
         assert!(app.stubs().iter().all(|stub| stub.messages().len() == 1));
         press(&mut app, " vx");
@@ -695,8 +700,8 @@ mod tests {
         // Outer's collapsed stub, then inner's header, comment, reply.
         assert!(shown[5].contains("outer thread"), "{:?}", shown[5]);
         assert!(
-            shown[6].contains("open") && !shown[6].contains("fold"),
-            "the header is words alone (ADR 0067): {:?}",
+            shown[6].contains("● ▾") && shown[6].contains("Resolve"),
+            "the header carries direct actions: {:?}",
             shown[6]
         );
         assert!(
@@ -774,7 +779,7 @@ mod tests {
             .iter()
             .position(|line| line.contains("second reply") && !line.contains("inner point"))
             .ok_or_else(|| anyhow::anyhow!("inner's stub"))?;
-        let chevron = app.sidebar_width() + crate::app::draw::gutter_width(app.view()) + 1;
+        let chevron = app.sidebar_width() + crate::app::draw::gutter_width(app.view()) + 3;
         click(&mut app, chevron, row);
         assert!(app.is_expanded(&inner));
         assert_eq!(app.thread_cursor().thread(), Some(&inner));

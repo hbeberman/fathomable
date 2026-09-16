@@ -456,6 +456,11 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             )),
             Row::Item(Item::action(
                 app,
+                Action::ToggleAutoResolve,
+                "Toggle auto-resolve",
+            )),
+            Row::Item(Item::action(
+                app,
                 Action::ToggleResolved,
                 "Resolve / reopen",
             )),
@@ -557,6 +562,13 @@ fn action_available(app: &App, action: Action) -> bool {
         Action::Reply | Action::ToggleResolved | Action::EditNewestOwn => {
             app.thread_cursor().thread().is_some()
         }
+        Action::ToggleAutoResolve => app
+            .thread_cursor()
+            .thread()
+            .and_then(|id| app.thread(id))
+            .is_some_and(|thread| {
+                thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
+            }),
         Action::DiffHead | Action::DiffCommit => app.has_document() && app.workspace().is_git(),
         Action::DiffSeen => app.has_document() && app.view().has_seen(),
         Action::DiffCheckpoint | Action::CheckpointFile => {
@@ -1239,7 +1251,7 @@ mod tests {
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 8);
-        assert_eq!(rows(&app, Root::Review).len(), 9);
+        assert_eq!(rows(&app, Root::Review).len(), 10);
         assert_eq!(rows(&app, Root::Diff).len(), 12);
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         assert!(

@@ -11,7 +11,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use fathomable_core::XdgDirs;
-use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Status, Store, ThreadId};
+use fathomable_core::annotations::{
+    AgentReplyCommand, Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, Reply,
+    Status, Store, ThreadId, UserSubmit,
+};
 use fathomable_core::clock::now;
 use fathomable_core::session::{Id, Record, Request, Response};
 use fathomable_core::workspace::Workspace;
@@ -257,6 +260,61 @@ fn referenced_definition<'a>(root: &'a Value, schema: &'a Value) -> Result<&'a V
         .with_context(|| format!("definition {name}"))
 }
 
+fn assert_mcp_output_schemas(tools: &[Value]) -> Result<()> {
+    let output = tools
+        .iter()
+        .find(|tool| tool["name"] == "threads")
+        .context("threads output schema")?["outputSchema"]
+        .clone();
+    for field in [
+        "anchor_range",
+        "location",
+        "lifecycle",
+        "modified",
+        "auto_resolve",
+        "messages",
+        "reanchored_at",
+        "worktree",
+    ] {
+        assert!(
+            schema_has_property(&output, field),
+            "output schema is missing {field}: {output}"
+        );
+    }
+    for values in [
+        &["anchored", "edited", "detached", "file"][..],
+        &["unchanged", "moved", "detached", "file"][..],
+        &["open", "resolved"][..],
+        &["active", "resolution_proposed", "resolved"][..],
+        &["user", "agent"][..],
+    ] {
+        assert!(
+            schema_contains_values(&output, values),
+            "output schema is missing enum {values:?}: {output}"
+        );
+    }
+    let reply_output = tools
+        .iter()
+        .find(|tool| tool["name"] == "thread_reply")
+        .context("thread_reply output schema")?["outputSchema"]
+        .clone();
+    for field in ["results", "thread", "resolution", "outcome", "replayed"] {
+        assert!(
+            schema_has_property(&reply_output, field),
+            "reply output schema is missing {field}: {reply_output}"
+        );
+    }
+    assert!(schema_contains_values(
+        &reply_output,
+        &["not_requested", "resolution_proposed", "resolved"]
+    ));
+    assert!(schema_contains_values(
+        &reply_output,
+        &["pending_fathomable_user_review"]
+    ));
+    Ok(())
+}
+
 fn partial_reply_viewer(
     fixture: &Fixture,
 ) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
@@ -291,34 +349,7 @@ fn serve_partial_replies(listener: &UnixListener, store_path: &Path) -> Result<(
         BufReader::new(stream.try_clone()?).read_line(&mut line)?;
         let request: Request = line.trim_end().parse().map_err(anyhow::Error::msg)?;
         let response = if handled == 0 {
-            let Request::ThreadReply {
-                thread,
-                author,
-                body,
-                resolve,
-                lines,
-                ..
-            } = request
-            else {
-                return Err(anyhow!("expected a thread reply"));
-            };
-            ensure!(lines.is_none(), "test reply unexpectedly re-anchored");
-            let mut store = Store::open(store_path)?;
-            let reply = Reply::new(author, now(), body);
-            store.reply(
-                &thread,
-                if resolve {
-                    reply.proposing_resolution()
-                } else {
-                    reply
-                },
-            )?;
-            Response::Threads(vec![
-                store
-                    .thread(&thread)
-                    .context("first replied thread")?
-                    .clone(),
-            ])
+            apply_viewer_reply(store_path, request)?
         } else {
             Response::Error("injected later viewer failure".to_owned())
         };
@@ -327,6 +358,75 @@ fn serve_partial_replies(listener: &UnixListener, store_path: &Path) -> Result<(
     }
     ensure!(handled == 2, "fake viewer handled only {handled} requests");
     Ok(())
+}
+
+fn apply_viewer_reply(store_path: &Path, request: Request) -> Result<Response> {
+    let Request::ThreadReply {
+        thread,
+        author,
+        body,
+        resolve,
+        lines,
+        idempotency_key,
+        caller,
+    } = request
+    else {
+        return Err(anyhow!("expected a thread reply"));
+    };
+    ensure!(lines.is_none(), "test reply unexpectedly re-anchored");
+    let mut store = Store::open(store_path)?;
+    let mut command = AgentReplyCommand::new(author, now(), body);
+    if resolve {
+        command = command.resolve();
+    }
+    if let Some(key) = idempotency_key {
+        command = command.idempotent(caller, key);
+    }
+    let outcome = store.agent_reply(&thread, command, |_| {
+        Err(fathomable_core::annotations::StoreError::message(
+            "test reply has no relocation",
+        ))
+    })?;
+    let thread = store
+        .thread(&thread)
+        .context("first replied thread")?
+        .clone();
+    Ok(if outcome.replayed() {
+        Response::thread_reply_replayed(thread, *outcome.value())
+    } else {
+        Response::thread_reply_applied(thread, *outcome.value())
+    })
+}
+
+fn successful_reply_viewer(
+    fixture: &Fixture,
+) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
+    let socket = fixture.dir.0.join("successful-viewer.sock");
+    let listener = UnixListener::bind(&socket)?;
+    Record::new(
+        Id::mint(),
+        fixture.root.clone(),
+        fixture.root.clone(),
+        Some(socket.clone()),
+    )
+    .write(&fixture.dirs)?;
+    let store_path = fixture.threads_path()?;
+    let handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        let mut line = String::new();
+        BufReader::new(stream.try_clone()?).read_line(&mut line)?;
+        let request = line
+            .trim_end()
+            .parse::<Request>()
+            .map_err(anyhow::Error::msg)?;
+        writeln!(
+            stream,
+            "{}",
+            apply_viewer_reply(&store_path, request)?.to_line()
+        )?;
+        Ok(())
+    });
+    Ok((socket, handle))
 }
 
 #[test]
@@ -419,11 +519,11 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
     ));
     assert!(reply_item["allOf"].is_array());
     assert!(schema_contains(
-        &reply_item["properties"]["propose_resolve"],
+        &reply_item["properties"]["resolve"],
         "type",
         &json!("boolean")
     ));
-    assert!(reply_item["properties"]["resolve"].is_null());
+    assert!(reply_item["properties"]["propose_resolve"].is_null());
     assert!(schema_contains(
         &start_item["properties"]["idempotency_key"],
         "minLength",
@@ -445,28 +545,7 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
         &json!(256)
     ));
 
-    let output = tools
-        .iter()
-        .find(|tool| tool["name"] == "threads")
-        .context("threads output schema")?["outputSchema"]
-        .clone();
-    for field in ["anchor_range", "location", "author", "replies", "worktree"] {
-        assert!(
-            schema_has_property(&output, field),
-            "output schema is missing {field}: {output}"
-        );
-    }
-    for values in [
-        &["anchored", "edited", "detached", "file"][..],
-        &["unchanged", "moved", "detached", "file"][..],
-        &["open", "resolved"][..],
-        &["user", "agent"][..],
-    ] {
-        assert!(
-            schema_contains_values(&output, values),
-            "output schema is missing enum {values:?}: {output}"
-        );
-    }
+    assert_mcp_output_schemas(&tools)?;
     Ok(())
 }
 
@@ -612,16 +691,28 @@ fn keyed_mcp_writes_replay_without_duplicate_effects() -> Result<()> {
     let first_reply = client.ok("thread_reply", reply_request.clone())?;
     let replay_reply = client.ok("thread_reply", reply_request.clone())?;
     assert_eq!(
-        first_reply["structuredContent"]["threads"][0]["replies"]
+        first_reply["structuredContent"]["results"][0]["thread"]["messages"]
             .as_array()
             .map(Vec::len),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
-        replay_reply["structuredContent"]["threads"][0]["replies"]
+        replay_reply["structuredContent"]["results"][0]["thread"]["messages"]
             .as_array()
             .map(Vec::len),
-        Some(1)
+        Some(2)
+    );
+    assert_eq!(
+        first_reply["structuredContent"]["results"][0]["replayed"],
+        false
+    );
+    assert_eq!(
+        replay_reply["structuredContent"]["results"][0]["replayed"],
+        true
+    );
+    assert_eq!(
+        replay_reply["structuredContent"]["results"][0]["resolution"]["outcome"],
+        "not_requested"
     );
     assert_eq!(
         fixture
@@ -683,11 +774,19 @@ fn keyed_retries_bypass_mutated_start_and_reply_validation() -> Result<()> {
     drop(store);
 
     let replay_reply = client.ok("thread_reply", reply_request.clone())?;
-    let replayed = &replay_reply["structuredContent"]["threads"][0];
+    let replayed = &replay_reply["structuredContent"]["results"][0]["thread"];
     assert_eq!(replayed["id"], thread);
     assert_eq!(replayed["status"], "resolved");
     assert_eq!(replayed["placement"], "detached");
-    assert_eq!(replayed["replies"].as_array().map(Vec::len), Some(1));
+    assert_eq!(replayed["messages"].as_array().map(Vec::len), Some(2));
+    assert_eq!(
+        replay_reply["structuredContent"]["results"][0]["resolution"]["outcome"],
+        "not_requested"
+    );
+    assert_eq!(
+        replay_reply["structuredContent"]["results"][0]["replayed"],
+        true
+    );
     assert_eq!(
         fixture
             .store()?
@@ -746,7 +845,7 @@ fn keyed_batches_replay_after_restart_and_reject_conflicts_before_writing() -> R
     assert_eq!(fs::read(fixture.threads_path()?)?, before);
 
     let reply = json!({"replies": [{
-        "thread": first_id, "body": "answer", "propose_resolve": true,
+        "thread": first_id, "body": "answer", "resolve": true,
         "idempotency_key": "answer"
     }]});
     restarted.ok("thread_reply", reply.clone())?;
@@ -756,7 +855,7 @@ fn keyed_batches_replay_after_restart_and_reject_conflicts_before_writing() -> R
     restarted.ok("thread_reply", reply.clone())?;
     assert_eq!(fs::read(fixture.threads_path()?)?, before);
     let mut changed = reply;
-    changed["replies"][0]["propose_resolve"] = json!(false);
+    changed["replies"][0]["resolve"] = json!(false);
     assert_eq!(restarted.call("thread_reply", changed)?["isError"], true);
     assert_eq!(fs::read(fixture.threads_path()?)?, before);
 
@@ -794,16 +893,21 @@ fn reading_returns_every_open_conversation_without_mutating_state() -> Result<()
         .iter()
         .find(|thread| thread["id"] == second.to_string())
         .context("answered thread")?;
-    assert_eq!(answered["comment"], "another question");
-    assert_eq!(answered["replies"][0]["body"], "my proposal");
-    assert_eq!(answered["author"], json!({"kind": "user", "name": "user"}));
+    assert_eq!(answered["messages"][0]["body"], "another question");
+    assert_eq!(answered["messages"][1]["body"], "my proposal");
     assert_eq!(
-        answered["replies"][0]["author"],
+        answered["messages"][0]["author"],
+        json!({"kind": "user", "name": "user"})
+    );
+    assert_eq!(
+        answered["messages"][1]["author"],
         json!({
             "kind": "agent",
             "name": "Earlier agent",
         })
     );
+    assert_eq!(answered["lifecycle"], "active");
+    assert_eq!(answered["auto_resolve"], false);
     let structured = result["structuredContent"].to_string();
     assert_eq!(result["content"][0]["text"], structured);
     let fresh = threads
@@ -971,7 +1075,7 @@ fn resolved_and_exact_reads_keep_full_history_and_id_order() -> Result<()> {
     let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
     let resolved = client.ok("threads", json!({"status": "resolved"}))?;
     assert_eq!(
-        resolved["structuredContent"]["threads"][0]["replies"][0]["body"],
+        resolved["structuredContent"]["threads"][0]["messages"][1]["body"],
         "I propose the rename."
     );
     let exact = client.ok(
@@ -985,7 +1089,7 @@ fn resolved_and_exact_reads_keep_full_history_and_id_order() -> Result<()> {
     assert_eq!(threads[1]["id"], first.to_string());
     assert_eq!(threads[1]["status"], "resolved");
     assert_eq!(
-        threads[1]["replies"][0]["proposed_resolved"], true,
+        threads[1]["messages"][1]["resolution_proposed"], true,
         "proposal metadata was lost"
     );
     Ok(())
@@ -1011,7 +1115,7 @@ fn writes_require_identity_preserve_harness_authorship_and_user_only_closure() -
         json!({"comments": [{"path": "a.md", "line": 2, "body": "new finding"}]}),
     )?;
     assert_eq!(
-        started_result["structuredContent"]["threads"][0]["author"],
+        started_result["structuredContent"]["threads"][0]["messages"][0]["author"],
         json!({
             "kind": "agent",
             "name": "Copilot",
@@ -1025,10 +1129,10 @@ fn writes_require_identity_preserve_harness_authorship_and_user_only_closure() -
     );
     let replied_result = client.ok(
         "thread_reply",
-        json!({"replies": [{"thread": thread, "body": "my proposal", "propose_resolve": true}]}),
+        json!({"replies": [{"thread": thread, "body": "my proposal", "resolve": true}]}),
     )?;
     assert_eq!(
-        replied_result["structuredContent"]["threads"][0]["replies"][0]["author"],
+        replied_result["structuredContent"]["results"][0]["thread"]["messages"][1]["author"],
         json!({
             "kind": "agent",
             "name": "Copilot",
@@ -1040,6 +1144,20 @@ fn writes_require_identity_preserve_harness_authorship_and_user_only_closure() -
         replied_result["content"][0]["text"],
         replied_result["structuredContent"].to_string()
     );
+    assert_eq!(
+        replied_result["structuredContent"]["results"][0]["resolution"]["outcome"],
+        "resolution_proposed"
+    );
+    assert_eq!(
+        replied_result["structuredContent"]["results"][0]["resolution"]["reason"],
+        "pending_fathomable_user_review"
+    );
+    assert!(
+        replied_result["structuredContent"]["results"][0]["resolution"]["guidance"]
+            .as_str()
+            .context("proposal guidance")?
+            .contains("do not retry")
+    );
     let store = fixture.store()?;
     let started = store.threads().last().context("started")?;
     assert_eq!(started.author().name(), "Copilot");
@@ -1048,6 +1166,289 @@ fn writes_require_identity_preserve_harness_authorship_and_user_only_closure() -
     assert_eq!(replied.replies()[0].author().id(), Some("copilot:chat"));
     assert!(replied.replies()[0].proposes_resolution());
     assert_eq!(replied.status(), Status::Open, "agent closed the thread");
+    assert_eq!(replied.lifecycle(), Lifecycle::ResolutionProposed);
+    Ok(())
+}
+
+#[test]
+fn reply_resolution_outcomes_cover_authorized_proposed_and_not_requested() -> Result<()> {
+    let fixture = Fixture::new("mcp-resolution-outcomes")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
+    let authorized = fixture.user_thread("finish this")?;
+    let ordinary = fixture.user_thread("keep working")?;
+    let proposed = fixture.user_thread("review completion")?;
+    let head = Workspace::discover(&fixture.root)?
+        .head_commit()
+        .context("HEAD")?;
+    let mut store = fixture.store()?;
+    store.set_auto_resolve(&authorized, AutoResolve::Enabled, now())?;
+    store.set_auto_resolve(&ordinary, AutoResolve::Enabled, now())?;
+    drop(store);
+
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+    let resolved = client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": authorized, "body": "fixed", "resolve": true}]}),
+    )?;
+    let resolved = &resolved["structuredContent"]["results"][0];
+    assert_eq!(resolved["resolution"]["outcome"], "resolved");
+    assert!(resolved["resolution"].get("reason").is_none());
+    assert!(resolved["resolution"].get("guidance").is_none());
+    assert_eq!(resolved["thread"]["status"], "resolved");
+    assert_eq!(resolved["thread"]["lifecycle"], "resolved");
+    assert_eq!(resolved["thread"]["auto_resolve"], false);
+    assert_eq!(resolved["thread"]["commit"], head);
+
+    let ordinary_result = client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": ordinary, "body": "progress", "resolve": false}]}),
+    )?;
+    let ordinary_result = &ordinary_result["structuredContent"]["results"][0];
+    assert_eq!(ordinary_result["resolution"]["outcome"], "not_requested");
+    assert!(ordinary_result["resolution"].get("reason").is_none());
+    assert_eq!(ordinary_result["thread"]["lifecycle"], "active");
+    assert_eq!(ordinary_result["thread"]["auto_resolve"], false);
+
+    let proposed_result = client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": proposed, "body": "done", "resolve": true}]}),
+    )?;
+    let proposed_result = &proposed_result["structuredContent"]["results"][0];
+    assert_eq!(
+        proposed_result["resolution"]["outcome"],
+        "resolution_proposed"
+    );
+    assert_eq!(
+        proposed_result["resolution"]["reason"],
+        "pending_fathomable_user_review"
+    );
+    assert!(
+        proposed_result["resolution"]["guidance"]
+            .as_str()
+            .context("proposal guidance")?
+            .to_lowercase()
+            .contains("do not ask for confirmation in chat and do not retry")
+    );
+    assert_eq!(proposed_result["thread"]["status"], "open");
+    assert_eq!(
+        proposed_result["thread"]["lifecycle"],
+        "resolution_proposed"
+    );
+
+    let open = client.ok("threads", json!({"status": "open"}))?;
+    let open_ids: Vec<&str> = open["structuredContent"]["threads"]
+        .as_array()
+        .context("open threads")?
+        .iter()
+        .filter_map(|thread| thread["id"].as_str())
+        .collect();
+    assert!(open_ids.contains(&ordinary.to_string().as_str()));
+    assert!(open_ids.contains(&proposed.to_string().as_str()));
+    assert!(!open_ids.contains(&authorized.to_string().as_str()));
+    Ok(())
+}
+
+#[test]
+fn reply_batch_results_follow_request_order() -> Result<()> {
+    let fixture = Fixture::new("mcp-reply-order")?;
+    let first = fixture.user_thread("first")?;
+    let second = fixture.user_thread("second")?;
+    let third = fixture.user_thread("third")?;
+    let expected = [third.to_string(), first.to_string(), second.to_string()];
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+
+    let result = client.ok(
+        "thread_reply",
+        json!({"replies": [
+            {"thread": expected[0], "body": "third answer"},
+            {"thread": expected[1], "body": "first answer", "resolve": true},
+            {"thread": expected[2], "body": "second answer"}
+        ]}),
+    )?;
+
+    let results = result["structuredContent"]["results"]
+        .as_array()
+        .context("reply results")?;
+    let actual: Vec<&str> = results
+        .iter()
+        .filter_map(|result| result["thread"]["id"].as_str())
+        .collect();
+    assert_eq!(actual, expected);
+    assert_eq!(results[1]["resolution"]["outcome"], "resolution_proposed");
+    Ok(())
+}
+
+#[test]
+fn keyed_resolution_replay_returns_current_thread_and_original_outcome() -> Result<()> {
+    let fixture = Fixture::new("mcp-resolution-replay")?;
+    let thread = fixture.user_thread("is this done?")?;
+    let request = json!({"replies": [{
+        "thread": thread,
+        "body": "done",
+        "resolve": true,
+        "idempotency_key": "resolution-once"
+    }]});
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+    let first = client.ok("thread_reply", request.clone())?;
+    assert_eq!(
+        first["structuredContent"]["results"][0]["resolution"]["outcome"],
+        "resolution_proposed"
+    );
+
+    let mut store = fixture.store()?;
+    store.set_auto_resolve(&thread, AutoResolve::Enabled, now())?;
+    store.reply_user(&thread, now(), "not yet", UserSubmit::Normal)?;
+    let before = fs::read(fixture.threads_path()?)?;
+    drop(store);
+
+    let replay = client.ok("thread_reply", request)?;
+    let result = &replay["structuredContent"]["results"][0];
+    assert_eq!(result["replayed"], true);
+    assert_eq!(
+        result["resolution"]["outcome"], "resolution_proposed",
+        "replay must retain the original durable outcome"
+    );
+    assert_eq!(result["thread"]["lifecycle"], "active");
+    assert_eq!(result["thread"]["auto_resolve"], true);
+    assert_eq!(
+        result["thread"]["messages"].as_array().map(Vec::len),
+        Some(3)
+    );
+    assert_eq!(
+        fs::read(fixture.threads_path()?)?,
+        before,
+        "replay changed durable state"
+    );
+    Ok(())
+}
+
+#[test]
+fn thread_messages_are_uniform_for_edited_and_agent_openings() -> Result<()> {
+    let fixture = Fixture::new("mcp-uniform-messages")?;
+    let mut store = fixture.store()?;
+    let edited = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "original",
+        ),
+        "one\ntwo\n",
+        10,
+    )?;
+    store.edit(&edited, MessageTarget::Comment, "edited opening", 20)?;
+    let agent = store.annotate(
+        Draft::new(
+            Author::Agent {
+                name: "Review bot".to_owned(),
+                client: Some("fixture".to_owned()),
+                id: Some("fixture:agent".to_owned()),
+            },
+            Path::new("a.md"),
+            LineRange::new(2, 2),
+            "agent opening",
+        ),
+        "one\ntwo\n",
+        30,
+    )?;
+    drop(store);
+
+    let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
+    let result = client.ok(
+        "threads",
+        json!({"ids": [edited.to_string(), agent.to_string()]}),
+    )?;
+    let threads = result["structuredContent"]["threads"]
+        .as_array()
+        .context("threads")?;
+    let edited_message = &threads[0]["messages"][0];
+    assert_eq!(edited_message["body"], "edited opening");
+    assert_eq!(edited_message["created"], 10);
+    assert_eq!(edited_message["modified"], 20);
+    assert_eq!(edited_message["resolution_proposed"], false);
+    let keys: std::collections::HashSet<&str> = edited_message
+        .as_object()
+        .context("message object")?
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        keys,
+        std::collections::HashSet::from([
+            "author",
+            "body",
+            "created",
+            "modified",
+            "resolution_proposed"
+        ])
+    );
+    assert_eq!(
+        threads[1]["messages"][0]["author"],
+        json!({
+            "kind": "agent",
+            "name": "Review bot",
+            "client": "fixture",
+            "id": "fixture:agent"
+        })
+    );
+    for obsolete in ["author", "comment", "replies", "updated", "edited"] {
+        assert!(
+            threads[0].get(obsolete).is_none(),
+            "obsolete field {obsolete} remains"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn live_and_headless_replies_return_the_same_contract() -> Result<()> {
+    fn seeded_thread(fixture: &Fixture) -> Result<ThreadId> {
+        Ok(Store::open(fixture.threads_path()?)?.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "question",
+            ),
+            "one\ntwo\n",
+            1,
+        )?)
+    }
+
+    fn without_runtime_identity(mut result: Value) -> Value {
+        result["thread"]["id"] = Value::Null;
+        result["thread"]["modified"] = Value::Null;
+        result["thread"]["messages"][1]["created"] = Value::Null;
+        result["thread"]["messages"][1]["modified"] = Value::Null;
+        result
+    }
+
+    let live_fixture = Fixture::new("mcp-live-parity")?;
+    let live_thread = seeded_thread(&live_fixture)?;
+    let (socket, viewer) = successful_reply_viewer(&live_fixture)?;
+    let mut live_client = Mcp::copilot(&live_fixture, "chat")?;
+    let live = live_client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": live_thread, "body": "answer"}]}),
+    )?;
+    viewer
+        .join()
+        .map_err(|_panic| anyhow!("fake viewer thread panicked"))??;
+    fs::remove_file(socket)?;
+
+    let headless_fixture = Fixture::new("mcp-headless-parity")?;
+    let headless_thread = seeded_thread(&headless_fixture)?;
+    let mut headless_client = Mcp::copilot(&headless_fixture, "chat")?;
+    let headless = headless_client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": headless_thread, "body": "answer"}]}),
+    )?;
+
+    assert_eq!(
+        without_runtime_identity(live["structuredContent"]["results"][0].clone()),
+        without_runtime_identity(headless["structuredContent"]["results"][0].clone())
+    );
     Ok(())
 }
 
@@ -1072,6 +1473,14 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
             .context("start batch error")?
             .contains("comments[1]")
     );
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            start["content"][0]["text"]
+                .as_str()
+                .context("start batch JSON fallback")?
+        )?,
+        start["structuredContent"]
+    );
     assert_eq!(fixture.store()?.threads().len(), 1);
 
     let reply = client.call(
@@ -1089,6 +1498,14 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
             .as_str()
             .context("reply batch error")?
             .contains("replies[1]")
+    );
+    assert_eq!(
+        serde_json::from_str::<Value>(
+            reply["content"][0]["text"]
+                .as_str()
+                .context("reply batch JSON fallback")?
+        )?,
+        reply["structuredContent"]
     );
     assert!(
         fixture
@@ -1142,6 +1559,7 @@ fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
     let fixture = Fixture::new("mcp-partial-reply")?;
     let first = fixture.user_thread("first question")?;
     let second = fixture.user_thread("second question")?;
+    let third = fixture.user_thread("third question")?;
     let (socket, fake) = partial_reply_viewer(&fixture)?;
 
     let mut client = Mcp::copilot(&fixture, "chat")?;
@@ -1149,20 +1567,38 @@ fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
         "thread_reply",
         json!({"replies": [
             {"thread": first, "body": "first answer"},
-            {"thread": second, "body": "second answer"}
+            {"thread": second, "body": "second answer"},
+            {"thread": third, "body": "third answer"}
         ]}),
     )?;
     assert_eq!(result["isError"], true);
     let summary = result["content"][0]["text"]
         .as_str()
         .context("error summary")?;
-    assert!(
-        summary.contains(&format!("replied to {first}")),
-        "{summary}"
+    let fallback: Value = serde_json::from_str(summary)?;
+    assert_eq!(fallback, result["structuredContent"]);
+    assert_eq!(fallback["error_code"], "PARTIAL_BATCH");
+    assert_eq!(fallback["completed"][0]["item_index"], 0);
+    assert_eq!(
+        fallback["completed"][0]["result"]["thread"]["id"],
+        first.to_string()
     );
+    assert_eq!(
+        fallback["completed"][0]["result"]["resolution"]["outcome"],
+        "not_requested"
+    );
+    assert_eq!(fallback["failed"]["item_index"], 1);
+    assert_eq!(fallback["failed"]["item"]["thread"], second.to_string());
     assert!(
-        summary.contains("injected later viewer failure"),
-        "{summary}"
+        fallback["failed"]["error"]
+            .as_str()
+            .context("failed error")?
+            .contains("injected later viewer failure")
+    );
+    assert_eq!(fallback["unattempted"][0]["item_index"], 2);
+    assert_eq!(
+        fallback["unattempted"][0]["item"]["thread"],
+        third.to_string()
     );
     fake.join()
         .map_err(|_panic| anyhow!("fake viewer thread panicked"))??;
@@ -1180,6 +1616,13 @@ fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
         store
             .thread(&second)
             .context("second thread")?
+            .replies()
+            .is_empty()
+    );
+    assert!(
+        store
+            .thread(&third)
+            .context("third thread")?
             .replies()
             .is_empty()
     );
@@ -1211,7 +1654,7 @@ fn unknown_arguments_are_rejected_without_writes() -> Result<()> {
         ),
         (
             "thread_reply",
-            json!({"replies": [{"thread": thread, "body": "x", "resolve": true}]}),
+            json!({"replies": [{"thread": thread, "body": "x", "propose_resolve": true}]}),
         ),
     ] {
         let result = client.call(tool, arguments)?;
@@ -1351,7 +1794,7 @@ fn exact_ids_retrieve_resolved_history_hidden_by_checkout_status() -> Result<()>
     );
     let exact = client.ok("threads", json!({"ids": [thread]}))?;
     assert_eq!(
-        exact["structuredContent"]["threads"][0]["comment"],
+        exact["structuredContent"]["threads"][0]["messages"][0]["body"],
         "old resolved question"
     );
     Ok(())
@@ -1495,11 +1938,11 @@ fn replying_at_the_current_multiline_range_preserves_the_anchor() -> Result<()> 
         }]}),
     )?;
 
-    let shown = &result["structuredContent"]["threads"][0];
+    let shown = &result["structuredContent"]["results"][0]["thread"];
     assert_eq!(shown["placement"], "anchored");
     assert_eq!(shown["range"], json!({"start": 1, "end": 2}));
     assert_eq!(shown["anchor_range"], json!({"start": 1, "end": 2}));
-    assert!(shown["edited"].is_null());
+    assert!(shown["reanchored_at"].is_null());
     Ok(())
 }
 
@@ -1566,11 +2009,20 @@ fn review_shared_repository_threads_keep_their_worktree_placement() -> Result<()
     let before_replay = fs::read(fixture.threads_path()?)?;
     let repeated = client.ok("thread_reply", reply)?;
     assert_eq!(
-        repeated["structuredContent"], first_reply["structuredContent"],
+        repeated["structuredContent"]["results"][0]["thread"],
+        first_reply["structuredContent"]["results"][0]["thread"],
         "replay changed the sibling worktree placement"
     );
     assert_eq!(
-        repeated["structuredContent"]["threads"][0]["worktree"],
+        first_reply["structuredContent"]["results"][0]["replayed"],
+        false
+    );
+    assert_eq!(
+        repeated["structuredContent"]["results"][0]["replayed"],
+        true
+    );
+    assert_eq!(
+        repeated["structuredContent"]["results"][0]["thread"]["worktree"],
         linked.to_string_lossy().as_ref()
     );
     assert_eq!(fs::read(fixture.threads_path()?)?, before_replay);

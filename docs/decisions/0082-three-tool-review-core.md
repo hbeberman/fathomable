@@ -16,13 +16,21 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Reply lifecycle amended 2026-09-16 by
+[0085](0085-thread-lifecycle-and-auto-resolve.md): the three-tool,
+repository-bound, read-without-delivery model remains, but human-only
+resolution and the `propose_resolve` reply contract do not. `thread_reply`
+uses `resolve` completion intent; a user may grant one-shot auto-resolve,
+otherwise the successful result is `resolution_proposed` and waits for
+review in Fathomable.
+
 MCP contract amended 2026-09-16 by
 [0084](0084-explicit-mcp-contracts.md): schemas expose constrained inputs
 and complete typed results, authors are projected as objects, the reply
 argument is `propose_resolve`, location is reported relative to the stored
 anchor, and optional per-item keys protect writes against retries. The
-three tools and human-mediated discussion remain unchanged; the spellings
-and response details below describe this decision's original boundary.
+three tools remain unchanged; the spellings, human-only resolution, and
+response details here describe that intermediate boundary before 0085.
 
 Supersedes the agent subscription, delivery, watch, viewer-routing, and
 auto-jump contracts of [0014](0014-mcp-server-and-socket-v1.md),

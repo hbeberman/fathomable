@@ -33,7 +33,7 @@ supersede rather than edit history.
 - [0027 Revisiting threads](0027-revisiting-threads.md)
 - [0028 Live workspace](0028-live-workspace.md)
 - [0029 Horizontal scroll for long lines](0029-horizontal-scroll.md)
-- [0030 Threads waiting on the user](0030-waiting-threads.md)
+- [0030 Threads waiting on the user](0030-waiting-threads.md) — superseded by 0085
 - [0031 Lazy follow](0031-lazy-follow.md)
 - [0032 Placement and state](0032-placement-and-state.md)
 - [0033 Open thread lines](0033-open-thread-lines.md)
@@ -56,12 +56,12 @@ supersede rather than edit history.
 - [0050 Mouse menus and gestures](0050-mouse-menus-and-gestures.md)
 - [0051 Retire the one-release compatibility](0051-retire-one-release-compatibility.md)
 - [0052 File references open in the viewer](0052-goto-file.md)
-- [0053 Resolution is the user's](0053-resolution-is-the-users.md)
+- [0053 Resolution is the user's](0053-resolution-is-the-users.md) — superseded by 0085
 - [0054 The draft is written in the thread](0054-the-draft-is-written-in-the-thread.md)
 - [0055 Six tools](0055-six-tools.md)
 - [0056 The leader, trimmed](0056-the-leader-trimmed.md)
 - [0057 The sidebar](0057-the-sidebar.md)
-- [0058 The user has the last word](0058-the-user-has-the-last-word.md)
+- [0058 The user has the last word](0058-the-user-has-the-last-word.md) — lifecycle superseded by 0085
 - [0059 Headers and the key bar](0059-headers-and-the-key-bar.md)
 - [0060 One diff, two sides](0060-one-diff-two-sides.md)
 - [0061 Agents start threads](0061-agents-start-threads.md)
@@ -87,4 +87,6 @@ supersede rather than edit history.
 - [0081 The persistent menu bar](0081-the-menu-bar.md)
 - [0082 Three-tool review core](0082-three-tool-review-core.md)
 - [0083 Single-user alpha clean slate](0083-single-user-alpha-clean-slate.md)
-- [0084 Explicit MCP contracts](0084-explicit-mcp-contracts.md)
+- [0084 Explicit MCP contracts](0084-explicit-mcp-contracts.md) — reply contract amended by 0085
+- [0085 Thread lifecycle and one-shot auto-resolve](0085-thread-lifecycle-and-auto-resolve.md)
+- [0086 One thread summary and its actions](0086-one-thread-summary-and-its-actions.md)

@@ -34,6 +34,14 @@ hint is `c reply` only while the text cursor rests on a thread's stub
 or message rows. A source line has no reply hint because `c` starts a
 new comment there; standalone `r` is unbound.
 
+Amended later 2026-09-16 by
+[0086](0086-one-thread-summary-and-its-actions.md): bare `r` and `R` now
+resolve/reopen and toggle one-shot auto-resolve on the cursor thread.
+Their direct controls live in every expanded inline/review header and in
+the selected collapsed header. The text bar omits those two hints while the
+cursor header is visible, restores them when it is outside the viewport,
+and continues to own reply, edit, fold, draft, diff, and focus hints.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys

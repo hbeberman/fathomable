@@ -103,16 +103,14 @@ mod tests {
         Ok(())
     }
 
-    /// ADR 0071: in both built-in themes the state colours are the
-    /// author colours, open the user's and waiting the agents', so the
-    /// circle and the stripe never disagree; resolved stays grey.
+    /// Lifecycle and author colours remain separately configurable.
     #[test]
     fn the_state_colours_are_the_author_colours_in_the_built_in_themes() -> anyhow::Result<()> {
         for name in ["default-dark", "default-light"] {
             let core = fathomable_core::theme::Theme::resolve(name, |_| Ok(None))?;
             let theme = Theme::from_core(&core);
-            assert_eq!(theme.thread_open.fg, theme.thread_user.fg, "{name}");
-            assert_eq!(theme.thread_waiting.fg, theme.thread_agent.fg, "{name}");
+            assert_eq!(theme.thread_active.fg, theme.thread_user.fg, "{name}");
+            assert_eq!(theme.thread_proposed.fg, theme.thread_agent.fg, "{name}");
             assert_ne!(theme.thread_resolved.fg, theme.thread_user.fg, "{name}");
             assert_ne!(theme.thread_resolved.fg, theme.thread_agent.fg, "{name}");
         }

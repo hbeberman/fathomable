@@ -1,11 +1,9 @@
 // @okf-doc: /decisions/0053-resolution-is-the-users.md
 //! Threads an agent proposes resolving (ADR 0053).
 //!
-//! An agent's `resolve` on a reply only proposes: the thread stays open
-//! and waiting ([`Thread::proposes_resolution`]), its rows read
-//! `proposed` after the state word, and the user's `o` closes it. This
-//! module counts the proposals for the status line, the review list's
-//! header, and `:status`; the waiting machinery (ADR 0030) does the rest.
+//! An unauthorized resolving agent reply leaves the thread in the durable
+//! resolution-proposed lifecycle. This module counts those threads for the
+//! status line and `:status`.
 
 use fathomable_core::annotations::{Store, Thread};
 

@@ -241,8 +241,6 @@ actions! {
     NewThread,
     /// `Space c f`: a comment on the open file as a whole (ADR 0063).
     FileComment,
-    WaitingNext,
-    WaitingPrev,
     SourceView,
     DiffHead,
     DiffSeen,
@@ -297,9 +295,6 @@ actions! {
     WindowThreads,
     PaneScope,
     ReviewResolved,
-    /// `t` in the files pane: the threads pane in file scope on the
-    /// highlighted file (ADR 0066).
-    ThreadsOnFile,
     Wake,
     Help,
     ThreadNext,
@@ -311,12 +306,14 @@ actions! {
     EditNewestOwn,
     StubResolvedToggle,
     ToggleResolved,
+    ToggleAutoResolve,
     Delete,
     DeleteThread,
     Fold,
     FoldAll,
     FileOnly,
     Newline,
+    SubmitAutoResolve,
     Backspace,
     DeleteForward,
     WordBack,
@@ -522,10 +519,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
-        &[&[c('o')]],
+        &[&[c('r')]],
         A::ToggleResolved,
         "Threads",
         "resolve or reopen",
+    ),
+    bind(
+        W::View,
+        &[&[c('R')]],
+        A::ToggleAutoResolve,
+        "Threads",
+        "toggle auto-resolve",
     ),
     bind(
         W::View,
@@ -564,31 +568,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
-        &[&[c(']'), c('r')], &[k(K::Tab)]],
-        A::WaitingNext,
-        "Threads",
-        "next waiting thread",
-    ),
-    bind(
-        W::View,
-        &[&[c('['), c('r')], &[k(K::BackTab)]],
-        A::WaitingPrev,
-        "Threads",
-        "previous waiting thread",
-    ),
-    bind(
-        W::View,
         &[&[c('b')]],
         A::DiffBase,
         "Display",
         "diff: pick the base",
-    ),
-    bind(
-        W::View,
-        &[&[c('t')]],
-        A::DiffTarget,
-        "Display",
-        "diff: pick the target",
     ),
     bind(
         W::View,
@@ -719,10 +702,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('r')]],
+        &[&[c('t')]],
         A::Review,
-        "Space menu",
-        "review list",
+        "Threads",
+        "toggle review threads",
     ),
     bind(
         W::Any,
@@ -814,13 +797,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::Reply,
         "Space menu",
         "threads: reply",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('c'), c('o')]],
-        A::ToggleResolved,
-        "Space menu",
-        "threads: resolve or reopen",
     ),
     bind(
         W::Any,
@@ -1016,13 +992,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
     bind(
         W::Tree,
-        &[&[c('t')]],
-        A::ThreadsOnFile,
-        "Tree",
-        "the threads pane on this file",
-    ),
-    bind(
-        W::Tree,
         &[&[k(K::Esc)]],
         A::Escape,
         "Tree",
@@ -1087,10 +1056,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::ThreadsPane,
-        &[&[c('o')]],
+        &[&[c('r')]],
         A::ToggleResolved,
         "Threads pane",
         "resolve or reopen",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('R')]],
+        A::ToggleAutoResolve,
+        "Threads pane",
+        "toggle auto-resolve",
     ),
     bind(
         W::ThreadsPane,
@@ -1180,10 +1156,17 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Review,
-        &[&[c('o')]],
+        &[&[c('r')]],
         A::ToggleResolved,
         "Review list",
         "resolve or reopen",
+    ),
+    bind(
+        W::Review,
+        &[&[c('R')]],
+        A::ToggleAutoResolve,
+        "Review list",
+        "toggle auto-resolve",
     ),
     bind(
         W::Review,
@@ -1237,17 +1220,21 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Draft,
-        &[
-            &[alt(K::Enter)],
-            &[Chord {
-                key: K::Enter,
-                ctrl: true,
-                alt: false,
-            }],
-        ],
+        &[&[alt(K::Enter)]],
         A::Newline,
         "Draft",
         "newline",
+    ),
+    bind(
+        W::Draft,
+        &[&[Chord {
+            key: K::Enter,
+            ctrl: true,
+            alt: false,
+        }]],
+        A::SubmitAutoResolve,
+        "Draft",
+        "submit and enable auto-resolve",
     ),
     bind(
         W::Draft,
@@ -1711,7 +1698,7 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "r", "o", "e", "d", "f"]
+            ["c", "r", "e", "d", "f"]
         );
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
@@ -1845,7 +1832,31 @@ mod tests {
             hint(Where::View, Action::Reply).as_deref(),
             Some("Space c r")
         );
-        assert_eq!(lookup(Where::View, &[c('r')]), Match::Miss);
+        assert_eq!(
+            lookup(Where::View, &[c('r')]),
+            Match::Exact(Action::ToggleResolved)
+        );
+        assert_eq!(
+            lookup(Where::View, &[c('R')]),
+            Match::Exact(Action::ToggleAutoResolve)
+        );
+        assert_eq!(lookup(Where::View, &[c('t')]), Match::Exact(Action::Review));
+        for place in [Where::Draft, Where::Picker, Where::Input] {
+            assert_eq!(lookup(place, &[c('t')]), Match::Miss);
+            assert_eq!(lookup(place, &[c('r')]), Match::Miss);
+            assert_eq!(lookup(place, &[c('R')]), Match::Miss);
+        }
+        assert_eq!(
+            lookup(
+                Where::Draft,
+                &[Chord {
+                    key: Key::Enter,
+                    ctrl: true,
+                    alt: false,
+                }]
+            ),
+            Match::Exact(Action::SubmitAutoResolve)
+        );
         assert_eq!(
             hint(Where::Review, Action::CommandLine).as_deref(),
             Some(":")

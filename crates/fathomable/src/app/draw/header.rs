@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0064-hints-you-can-press.md
-//! Pane headers and their key hints (ADR 0050, ADR 0059, ADR 0064).
+//! Pane chrome plus shared inline and review thread summaries.
 //!
 //! A [`Header`] is the words on a pane's chrome row and the hints after
 //! them, built once so the drawing and the mouse agree on where each
@@ -9,8 +9,9 @@
 //! when every count's fits and dropped with the others when not. Keys
 //! live on a bar along a pane's bottom row,
 //! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
-//! text's in [`super::bar`] (ADR 0067); the diff header alone keeps its
-//! keys at its right edge. Every header row draws on `ui.header`.
+//! text's in [`super::bar`] (ADR 0067). Thread rows use the summary
+//! engine from `app::threads::summary`, including direct actions and
+//! exact hit regions (ADR 0086). Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
 //! and cursor as they are, runs the action it names (ADR 0064): a bar
@@ -24,13 +25,14 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::author::{CHEVRON_DOWN, CURSOR_BAR};
 use crate::app::draw::counts::count_hints;
 use crate::app::draw::nest::NEST;
-use crate::app::draw::{Theme, format_age, mark_style};
+use crate::app::draw::{Theme, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::threads::list::Entry;
-use crate::app::threads::words::{Words, label};
+use crate::app::threads::summary::{
+    SummaryLayout, SummaryLayoutOptions, SummarySpan, SummaryTone, ThreadSummary, layout,
+};
 use crate::app::threads::{Compose, ComposeTarget, ThreadState};
 use crate::app::{App, Focus};
 
@@ -56,11 +58,6 @@ pub(crate) enum Tone {
     /// The diff colours: the files pane header's `+n` and `-m`.
     Added,
     Removed,
-    /// The thread cursor's bar (ADR 0071).
-    Cursor,
-    /// The chevron that folds an expanded thread (ADR 0073): the info
-    /// colour, bold.
-    Chevron,
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
@@ -313,8 +310,6 @@ impl Header {
             Tone::Mark(state) => mark_style(theme, state),
             Tone::Added => theme.diff_plus,
             Tone::Removed => theme.diff_minus,
-            Tone::Cursor => theme.thread_cursor,
-            Tone::Chevron => theme.info.add_modifier(Modifier::BOLD),
         };
         let mut spans: Vec<Span<'static>> = self
             .left
@@ -375,70 +370,133 @@ pub(crate) fn diff_header(text: &str) -> Header {
     Header::new(vec![(format!(" {text}"), Tone::Key)], Vec::new())
 }
 
-/// The state words after a thread's circle: the placement, the state,
-/// and `proposed` (ADR 0032, ADR 0053), in the state's colour.
-fn state_words(words: Words) -> Vec<(String, Tone)> {
-    let tone = Tone::Mark(words.state());
-    let mut left = Vec::new();
-    if let Some(placement) = words.placement() {
-        left.push((placement.to_owned(), tone));
-        left.push((" · ".to_owned(), Tone::Info));
-    }
-    left.push((label(words.state()).to_owned(), tone));
-    if words.proposed() {
-        left.push((" · proposed".to_owned(), tone));
-    }
-    left
-}
-
-/// An expanded thread's header row in the text (ADR 0049): the cursor
-/// cell, the chevron that folds it (ADR 0073), the circle, the
-/// placement and state. Its keys are on the text's key bar (ADR 0067).
+/// An inline thread header laid out by the shared summary engine.
 pub(crate) fn expanded_header(
     app: &App,
     thread: &fathomable_core::annotations::Thread,
     marked: bool,
-) -> Header {
+    expanded: bool,
+    width: usize,
+) -> SummaryLayout {
     let mark = app.marks().iter().find(|mark| mark.id() == thread.id());
-    let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-    let mut left = vec![
-        cursor_tone(marked),
-        (CHEVRON_DOWN.to_owned(), Tone::Chevron),
-        (format!(" {} ", words.glyph()), Tone::Mark(words.state())),
-    ];
-    left.extend(state_words(words));
-    Header::new(left, Vec::new())
+    let summary = ThreadSummary::new(
+        thread,
+        mark.map(crate::app::threads::Mark::placement),
+        app.user_name(),
+        None,
+    );
+    layout(
+        &summary,
+        SummaryLayoutOptions {
+            width,
+            leading: 1,
+            expanded,
+            cursor: marked,
+        },
+        fathomable_core::clock::now(),
+    )
 }
 
-/// A review list entry's header (ADR 0066): after the nest (ADR 0077),
-/// the chevron that folds it (ADR 0076), the circle, the lines, the state words, and the age, as
-/// the expanded thread in the text reads. Its keys are on the list's
-/// key bar (ADR 0067).
+/// A review thread header laid out by the shared summary engine.
 pub(crate) fn entry_header(
-    range: Option<fathomable_core::annotations::LineRange>,
-    words: Words,
-    updated: u64,
+    summary: &ThreadSummary,
     now: u64,
-    note: Option<&str>,
-    marked: bool,
-) -> Header {
-    let place = range.map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
-    // The chevron after the nest (ADR 0077), under the file row's path.
-    let mut left = vec![
-        cursor_tone(marked),
-        (" ".repeat(NEST), Tone::Info),
-        (CHEVRON_DOWN.to_owned(), Tone::Chevron),
-        (format!(" {}  ", words.glyph()), Tone::Mark(words.state())),
-        (format!("{place}  "), Tone::Info),
-    ];
-    left.extend(state_words(words));
-    // The branch of the worktree showing it (ADR 0070), or the commit a
-    // past thread was resolved at (ADR 0072).
-    if let Some(note) = note {
-        left.push((format!("  {note}"), Tone::Info));
+    cursor: bool,
+    expanded: bool,
+    width: usize,
+) -> SummaryLayout {
+    layout(
+        summary,
+        SummaryLayoutOptions {
+            width,
+            leading: 1 + NEST,
+            expanded,
+            cursor,
+        },
+        now,
+    )
+}
+
+/// Draw a shared thread summary after surface-owned leading cells.
+pub(crate) fn summary_line<'a>(
+    theme: &Theme,
+    layout: &SummaryLayout,
+    mut leading: Vec<Span<'a>>,
+    hovered: Option<Action>,
+) -> Line<'a> {
+    let on = |surface: ratatui::style::Style, accent: ratatui::style::Style| {
+        let mut style = surface.patch(accent);
+        style.bg = surface.bg;
+        style
+    };
+    leading.extend(
+        layout
+            .spans
+            .iter()
+            .map(|SummarySpan { text, tone, action }| {
+                let surface = if action.is_some_and(|action| Some(action) == hovered) {
+                    theme.header.patch(theme.list_hover)
+                } else {
+                    theme.header
+                };
+                let style = match tone {
+                    SummaryTone::Surface | SummaryTone::Action => surface,
+                    SummaryTone::Info | SummaryTone::ActionKey => on(surface, theme.info),
+                    SummaryTone::Lifecycle(lifecycle) => on(
+                        surface,
+                        mark_style(
+                            theme,
+                            match lifecycle {
+                                fathomable_core::annotations::Lifecycle::Active => {
+                                    ThreadState::Active
+                                }
+                                fathomable_core::annotations::Lifecycle::ResolutionProposed => {
+                                    ThreadState::Proposed
+                                }
+                                fathomable_core::annotations::Lifecycle::Resolved => {
+                                    ThreadState::Resolved
+                                }
+                            },
+                        ),
+                    ),
+                    SummaryTone::Author { user: true } => on(surface, theme.thread_user),
+                    SummaryTone::Author { user: false } => on(surface, theme.thread_agent),
+                    SummaryTone::Preview => on(surface, theme.text),
+                    SummaryTone::Chevron => on(surface, theme.info).add_modifier(Modifier::BOLD),
+                };
+                Span::styled(text.clone(), style)
+            }),
+    );
+    Line::from(leading).style(theme.header)
+}
+
+/// Restore the exact hovered action after a surface applies row selection.
+pub(crate) fn summary_rehover(
+    theme: &Theme,
+    layout: &SummaryLayout,
+    line: &mut Line<'_>,
+    leading_spans: usize,
+    hovered: Option<Action>,
+) {
+    let Some(hovered) = hovered else {
+        return;
+    };
+    let surface = theme.header.patch(theme.list_hover);
+    for (span, semantic) in line.spans[leading_spans..]
+        .iter_mut()
+        .zip(layout.spans.iter())
+    {
+        if semantic.action == Some(hovered) {
+            span.style = match semantic.tone {
+                SummaryTone::ActionKey => {
+                    let mut style = surface.patch(theme.info);
+                    style.bg = surface.bg;
+                    style
+                }
+                _ => surface,
+            };
+        }
     }
-    left.push((format!("  {}", format_age(updated, now)), Tone::Info));
-    Header::new(left, Vec::new())
 }
 
 /// The review list's header (ADR 0025, ADR 0049, ADR 0066, ADR 0075):
@@ -463,19 +521,33 @@ pub(crate) fn review_header(app: &App) -> Header {
 pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     let place = Where::Review;
     let hints = if app.focus() == Focus::Review {
-        let mut hints = vec![
-            HintOf::keyed(place, Action::ReviewResolved, "resolved"),
-            HintOf::keyed(place, Action::FileOnly, "file"),
-        ];
+        let mut hints = vec![HintOf::keyed(place, Action::Reply, "reply")];
+        if app.thread_message_editable() {
+            hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
+        }
+        if !app.review_thread_header_visible() {
+            let resolved = app
+                .thread_cursor()
+                .thread()
+                .and_then(|id| app.thread(id))
+                .is_some_and(|thread| {
+                    thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
+                });
+            if !resolved {
+                hints.push(HintOf::keyed(place, Action::ToggleAutoResolve, "auto"));
+            }
+            hints.push(HintOf::keyed(
+                place,
+                Action::ToggleResolved,
+                if resolved { "reopen" } else { "resolve" },
+            ));
+        }
         // `z` and `Z` fold threads in file scope too (ADR 0076).
         hints.push(HintOf::keyed(place, Action::Fold, "fold"));
         hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
         hints.push(HintOf::keyed(place, Action::Confirm, "open"));
-        hints.push(HintOf::keyed(place, Action::Reply, "reply"));
-        if app.thread_message_editable() {
-            hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
-        }
-        hints.push(HintOf::keyed(place, Action::ToggleResolved, "resolve"));
+        hints.push(HintOf::keyed(place, Action::ReviewResolved, "resolved"));
+        hints.push(HintOf::keyed(place, Action::FileOnly, "file"));
         if entries.len() > 1 {
             hints.push(HintOf::paired(
                 place,
@@ -551,25 +623,30 @@ pub(crate) fn files_pane_header(app: &App, title: String) -> Header {
 /// scope, where they work (ADR 0064).
 pub(crate) fn threads_pane_footer(app: &App) -> Header {
     let place = Where::ThreadsPane;
-    let mut hints = vec![
-        HintOf::keyed(place, Action::PaneScope, "scope"),
-        HintOf::keyed(place, Action::ReviewResolved, "resolved"),
-    ];
+    let mut hints = Vec::new();
+    if let Some(thread) = app.thread_cursor().thread().and_then(|id| app.thread(id)) {
+        hints.push(HintOf::keyed(place, Action::Reply, "reply"));
+        let resolved = thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved;
+        if !resolved {
+            hints.push(HintOf::keyed(
+                place,
+                Action::ToggleAutoResolve,
+                "auto-resolve",
+            ));
+        }
+        hints.push(HintOf::keyed(
+            place,
+            Action::ToggleResolved,
+            if resolved { "reopen" } else { "resolve" },
+        ));
+    }
     if app.sidebar_scope() == crate::app::threads::pane::PaneScope::Workspace {
         hints.push(HintOf::keyed(place, Action::Fold, "fold"));
         hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
     }
+    hints.push(HintOf::keyed(place, Action::PaneScope, "scope"));
+    hints.push(HintOf::keyed(place, Action::ReviewResolved, "resolved"));
     Header::bar(hints)
-}
-
-/// A header's first cell (ADR 0071): the thread cursor's bar while the
-/// cursor is in the thread, else a space.
-fn cursor_tone(marked: bool) -> (String, Tone) {
-    if marked {
-        (CURSOR_BAR.to_owned(), Tone::Cursor)
-    } else {
-        (" ".to_owned(), Tone::Info)
-    }
 }
 
 /// The draft's keys (ADR 0054), for the text's key bar (ADR 0067):
@@ -577,7 +654,13 @@ fn cursor_tone(marked: bool) -> (String, Tone) {
 /// discard question after an Esc on a changed draft.
 pub(super) fn draft_hints(compose: &Compose) -> Vec<HintOf> {
     let place = Where::Draft;
-    if compose.confirming_discard() {
+    if compose.confirming_reopen() {
+        vec![
+            HintOf::new("", "resolved while editing;", &[]),
+            HintOf::keyed(place, Action::Confirm, "reopen and submit"),
+            HintOf::keyed(place, Action::Escape, "keep editing"),
+        ]
+    } else if compose.confirming_discard() {
         vec![
             HintOf::keyed(place, Action::Escape, "again to discard"),
             HintOf::new("", "any key keeps the draft", &[]),
@@ -593,10 +676,11 @@ pub(super) fn draft_hints(compose: &Compose) -> Vec<HintOf> {
                     "submit"
                 },
             ),
+            HintOf::keyed(place, Action::SubmitAutoResolve, "submit + auto-resolve"),
             HintOf::keyed(place, Action::Newline, "newline"),
+            HintOf::keyed(place, Action::Escape, ""),
             HintOf::paired(place, Action::ScrollUp, Action::ScrollDown, "scroll"),
             HintOf::keyed(place, Action::EditDraft, "$EDITOR"),
-            HintOf::keyed(place, Action::Escape, ""),
         ]
     }
 }
@@ -686,7 +770,7 @@ mod tests {
                 (0..buffer.area.width)
                     .map(|x| buffer[(x, y)].symbol())
                     .collect::<String>()
-                    .contains(" ● open")
+                    .contains("● ▾")
             })
             .ok_or_else(|| anyhow::anyhow!("the header row"))?;
         let gutter_x = text_x - 4;
@@ -722,6 +806,44 @@ mod tests {
         assert_eq!(display_width(&text), 30);
         assert_eq!(text.trim_end(), " review            x resolved");
         assert_eq!(header.action_at(30, 25), Some(Action::ReviewResolved));
+        Ok(())
+    }
+
+    #[test]
+    fn thread_action_keys_trail_words_in_the_subdued_style() -> anyhow::Result<()> {
+        use crate::app::draw::author::CURSOR_BAR;
+        use crate::app::testing::{self, source_app};
+
+        let dir = testing::workspace("header-action-style", testing::README)?;
+        let mut app = source_app(&dir)?;
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("mine");
+        app.compose_submit();
+        let id = app.file_threads()[0].clone();
+        let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
+        let layout = expanded_header(&app, thread, true, true, 80);
+        let theme = theme()?;
+        let line = summary_line(
+            &theme,
+            &layout,
+            vec![Span::styled(CURSOR_BAR, theme.thread_cursor)],
+            None,
+        );
+        let action = line
+            .spans
+            .iter()
+            .position(|span| span.content == "Auto-resolve")
+            .ok_or_else(|| anyhow::anyhow!("action word"))?;
+        let key = line
+            .spans
+            .iter()
+            .position(|span| span.content == "  R")
+            .ok_or_else(|| anyhow::anyhow!("action key"))?;
+        assert!(action < key);
+        assert_eq!(line.spans[key].style.fg, theme.info.fg);
+        assert_eq!(line.spans[key].style.bg, theme.header.bg);
+        assert!(!text(&line).contains('['));
         Ok(())
     }
 }

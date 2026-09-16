@@ -9,17 +9,24 @@
 //! is `file`, and every list names it by its path alone and puts it
 //! before the file's line threads.
 
-use fathomable_core::annotations::Thread;
+use std::path::Path;
+
+use fathomable_core::annotations::{LineRange, Thread};
 
 use crate::app::App;
 use crate::app::threads::ComposeTarget;
 
 /// Where a toast says `thread` is: `path:line` for a thread on lines,
 /// the path alone for one on the file as a whole.
-pub(super) fn toast_place(thread: &Thread) -> String {
-    match thread.range() {
-        Some(range) => format!("{}:{}", thread.path().display(), range.start()),
-        None => thread.path().display().to_string(),
+pub(crate) fn toast_place(thread: &Thread) -> String {
+    toast_place_at(thread.path(), thread.range())
+}
+
+/// Where a toast names a durable activity location.
+pub(crate) fn toast_place_at(path: &Path, range: Option<LineRange>) -> String {
+    match range {
+        Some(range) => format!("{}:{}", path.display(), range.start()),
+        None => path.display().to_string(),
     }
 }
 
@@ -46,7 +53,7 @@ mod tests {
     use crate::app::threads::list::Row;
     use crate::app::threads::pane::PaneRow;
     use crate::app::threads::stubs::{Stub, Subject};
-    use crate::app::threads::{Compose, ComposeTarget, ThreadState};
+    use crate::app::threads::{Compose, ComposeTarget};
     use crate::app::{App, Popup};
 
     fn annotate(app: &mut App, line: usize, text: &str) {
@@ -126,7 +133,7 @@ mod tests {
         assert_eq!(app.thread_cursor().thread(), Some(&file_thread));
         let shown = screen(&app)?;
         assert!(
-            shown[0].contains("file") && shown[0].contains("open"),
+            shown[0].contains("file") && shown[0].contains("Resolve"),
             "{:?}",
             &shown[..4]
         );
@@ -145,12 +152,13 @@ mod tests {
         let rows = app.review_rows(100);
         assert!(matches!(
             rows.rows.get(1),
-            Some(Row::Header { range: None, words, .. }) if words.state() == ThreadState::Open
+            Some(Row::Header { summary, .. })
+                if summary.location() == "file"
+                    && summary.lifecycle() == fathomable_core::annotations::Lifecycle::Active
         ));
         app.close_review();
         let pane = app.threads_pane_entries();
         assert_eq!(pane[0].place(), "file");
-        assert_eq!(pane[0].words().placement(), Some("file"));
         assert_eq!(pane[1].place(), "L3");
         app.threads_pane_toggle_scope();
         assert!(matches!(
@@ -180,12 +188,14 @@ mod tests {
         };
         assert_eq!(started[0].range(), None);
         assert_eq!(started[0].author(), &author);
-        assert!(started[0].awaits_user());
+        assert_eq!(
+            started[0].lifecycle(),
+            fathomable_core::annotations::Lifecycle::Active
+        );
         assert_eq!(
             app.toasts().last().map(crate::app::Toast::text),
-            Some("comment on README.md from reviewer")
+            Some("reviewer started a thread on README.md")
         );
-        assert_eq!(app.waiting_count(), 1);
         Ok(())
     }
 }

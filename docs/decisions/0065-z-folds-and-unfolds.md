@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: z folds and unfolds
-description: In the text `z` opens and closes threads, `Z` folds or expands the file, and `c` replies from a thread row or otherwise starts a comment without changing expansion.
+description: In the text `z` opens and closes threads, `Z` folds or expands the file, Enter toggles a header under the cursor without a hint, and `c` replies from a thread row or otherwise starts a comment without changing expansion.
 resource: crates/fathomable/src/app/threads/fold.rs
 related_resources:
   - crates/fathomable/src/app/threads/stubs.rs
@@ -22,7 +22,9 @@ Status: accepted (2026-09-05). Amended 2026-09-05 by
 are on the text's key bar, not the stub or the header. Amended
 2026-09-16: `c` no longer expands, folds, or cycles threads; it starts
 a comment from source text and replies from a thread row. Standalone
-`C` and the standalone `r` reply binding are unbound.
+`C` and the standalone `r` reply binding are unbound. Amended
+2026-09-16: Enter folds or unfolds a thread only while the text cursor
+rests on its expanded header or folded stub, without adding a hint.
 
 ## Context
 
@@ -58,6 +60,12 @@ thread here, and every thread in the file.
   [0076](0076-threads-fold-in-the-list.md).)
 - **`Z` opens and closes the file.** It expands every stub in the file,
   or, when any thread is expanded, folds every one.
+- **Enter activates a heading.** While the text cursor rests on an
+  expanded thread header, Enter folds it to its stub; on that folded
+  stub, Enter expands it again. The cursor stays on the heading in
+  either form, so repeated presses toggle it in place. Enter does
+  nothing on source or message rows. It is not added to the key bar:
+  `z` remains the visible, context-independent fold key.
 - **`c` writes.** It replies when the cursor rests on a collapsed stub
   or an expanded thread's rows. On a selection or source line it starts
   a new thread, whether or not another thread covers that line. It never
@@ -74,10 +82,12 @@ thread here, and every thread in the file.
 
 ## Consequences
 
-- `Action::Fold` is bound on the text as well as the review list, and
-  `Action::FoldAll` is new; `App::act` gives each surface its meaning.
-- `toggle_thread_here` and `toggle_expand_all` live in
-  `app/threads/fold.rs`, the latter no longer a test-only helper. The
-  old `c` cycle and its session state are removed.
-- `docs/guide.md` names `c` as comment or reply and `z` as fold or
-  unfold.
+- `Action::Fold` is bound on the text as well as the review list,
+  `Action::FoldAll` covers the file, and `Action::Confirm` handles a
+  heading under the text cursor; `App::act` gives each surface its
+  meaning.
+- `toggle_thread_header`, `toggle_thread_here`, and
+  `toggle_expand_all` live in `app/threads/fold.rs`. The old `c` cycle
+  and its session state are removed.
+- `docs/guide.md` names Enter on a heading, `c` as comment or reply,
+  and `z` as fold or unfold.

@@ -1,18 +1,40 @@
 // @okf-doc: /decisions/0065-z-folds-and-unfolds.md
-//! `z` and `Z` fold and unfold threads in the text (ADR 0065).
+//! `z`, `Z`, and Enter on a thread heading fold and unfold threads in
+//! the text (ADR 0065).
 //!
 //! `z` is the one key that only opens and closes: on an expanded
 //! thread's rows it folds the thread back to its stub, and on a row a
 //! thread covers it expands the thread cursor's thread in place. `Z`
 //! does it to the whole file: every stub expands, or, when any thread
-//! is expanded, every one folds. `c` starts a comment and never changes
-//! thread expansion.
+//! is expanded, every one folds. Enter toggles only while the text
+//! cursor rests on an expanded header or its folded stub; it has no
+//! key-bar hint. `c` starts a comment and never changes thread
+//! expansion.
 
 use fathomable_core::annotations::ThreadId;
 
 use crate::app::App;
 
 impl App {
+    /// Enter: fold an expanded header under the cursor, or unfold its
+    /// stub in place. Source and message rows do nothing.
+    pub(crate) fn toggle_thread_header(&mut self) {
+        let row = self.view().cursor().row;
+        let Some((stub, index, _)) = self.stub_on_row(row) else {
+            return;
+        };
+        let Some(id) = stub.thread().cloned() else {
+            return;
+        };
+        if stub.expanded() {
+            if index == 0 {
+                self.fold_thread(&id);
+            }
+        } else {
+            self.expand_thread(id);
+        }
+    }
+
     /// `z`: fold the expanded thread the cursor is on, else the thread
     /// cursor's thread when the cursor line has one: fold it when it is
     /// expanded, expand it when it is a stub.

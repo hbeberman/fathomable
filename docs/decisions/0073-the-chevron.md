@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The chevron
-description: An expanded thread's header row draws a bold ▾ in the thread's gutter and a stub's first row a bold ▸ in the same column; a click in that gutter, or a double-click anywhere on the row, toggles the thread, while a single click elsewhere rests the cursor on the clicked header or stub.
+description: An expanded thread's header row draws a bold ▾ in the thread's gutter and a stub's first row a bold ▸ in the same column; a click in that gutter, a double-click anywhere on the row, or Enter while the text cursor rests there toggles the thread, while a single click elsewhere rests the cursor on the clicked header or stub.
 resource: crates/fathomable/src/app/input/mouse.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -67,10 +67,15 @@ its own: its edge cell, the circle, and the name.
   underlying source line. In the review list, the chevron cell or a
   double-click toggles the thread. A stub is a stop for `j`/`k`
   ([0076](0076-threads-fold-in-the-list.md)).
-- **After a toggle.** Expanding a stub moves to its newest message.
-  Folding from a thread row, by the chevron, a double-click, or `z`,
-  leaves the cursor on the resulting stub. Message rows retain their
-  ordinary text-click behavior.
+- **After a mouse or `z` toggle.** Expanding a stub by its chevron,
+  double-click, or `z` moves to its newest message. Folding from a
+  thread row by the chevron, a double-click, or `z` leaves the cursor
+  on the resulting stub. Message rows retain their ordinary text-click
+  behavior.
+- **Enter on the heading.** A text cursor resting on an expanded
+  header or folded stub can toggle it with Enter, staying on the
+  heading. Source and message rows keep Enter inert. The key bars do
+  not hint Enter; `z` remains their explicit fold action.
 
 ## Consequences
 
@@ -103,3 +108,6 @@ its own: its edge cell, the circle, and the name.
 - **2026-09-11 — review-list parity.** Review-list thread rows gained
   the same chevron and double-click behavior, and stubs became stops
   for `j`/`k` ([0076](0076-threads-fold-in-the-list.md)).
+- **2026-09-16 — Enter on a heading.** Enter now folds or unfolds an
+  inline thread while its expanded header or folded stub is under the
+  text cursor, without adding a key-bar hint ([0065](0065-z-folds-and-unfolds.md)).

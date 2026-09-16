@@ -291,6 +291,9 @@ impl App {
             Action::MoveRight if self.view().diff_view() => self.diff_page(1),
             // `Esc` clears, then leaves the diff (ADR 0060).
             Action::Escape => self.escape_view(),
+            // Enter folds or unfolds only when the cursor rests on a
+            // thread's header or folded stub (ADR 0065).
+            Action::Confirm => self.toggle_thread_header(),
             Action::GotoFile => return self.goto_file(),
             // `c` comments; `z` owns thread expansion and folding (ADR 0065).
             Action::Comment => self.start_comment(),

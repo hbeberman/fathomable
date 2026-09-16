@@ -2143,6 +2143,7 @@ fn a_click_on_a_stub_rests_the_cursor_on_it() -> anyhow::Result<()> {
 /// selects the line it settles on.
 #[test]
 fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
+    use crossterm::event::KeyCode;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
@@ -2186,14 +2187,36 @@ fn a_click_on_the_header_rests_the_cursor_on_it() -> anyhow::Result<()> {
     let rows = testing::screen(&app)?;
     assert_eq!(barred(&rows), 1, "the header alone is barred: {rows:?}");
 
+    testing::press_key(&mut app, KeyCode::Enter);
+    assert!(!app.is_expanded(&id), "Enter on the header folds");
+    let (stub, index, _) = app
+        .stub_on_row(app.view().cursor().row)
+        .context("the folded stub under the cursor")?;
+    assert_eq!(stub.thread(), Some(&id));
+    assert_eq!(index, 0);
+    testing::press_key(&mut app, KeyCode::Enter);
+    assert!(app.is_expanded(&id), "Enter on the stub unfolds");
+    let (stub, index, _) = app
+        .stub_on_row(app.view().cursor().row)
+        .context("the expanded header under the cursor")?;
+    assert_eq!(stub.thread(), Some(&id));
+    assert!(stub.expanded());
+    assert_eq!(index, 0, "the cursor stays on the header");
+
     testing::press(&mut app, "j");
     assert_eq!(
         app.expanded_row_message(app.view().cursor().row),
         Some((id.clone(), 0)),
         "j steps onto the first message"
     );
+    let message_row = app.view().cursor().row;
+    testing::press_key(&mut app, KeyCode::Enter);
+    assert!(app.is_expanded(&id), "Enter on a message does nothing");
+    assert_eq!(app.view().cursor().row, message_row);
     testing::press(&mut app, "k");
     assert_eq!(app.view().cursor().row, header_row - 1, "k steps over it");
+    testing::press_key(&mut app, KeyCode::Enter);
+    assert!(app.is_expanded(&id), "Enter on source text does nothing");
 
     let gutter_x = app.sidebar_width() + 1;
     testing::click(&mut app, gutter_x, header_y);

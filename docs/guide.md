@@ -175,6 +175,7 @@ Text:
 | `gf`, Ctrl-click | open linked file/URL: local files open in the viewer at their line, URLs through `xdg-open`; accepts Markdown links and bare references, including `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns from a file hop |
 | `c` | comment on the selection or cursor line; reply when the cursor rests on a thread's stub or message rows |
 | `e` `o`, `dd` | edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
+| `Enter` on a thread header or folded stub | fold or unfold that thread in place |
 | `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |

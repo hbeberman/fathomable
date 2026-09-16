@@ -494,6 +494,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(W::View, &[&[c('c')]], A::Comment, "Threads", "comment"),
     bind(
         W::View,
+        &[&[k(K::Enter)]],
+        A::Confirm,
+        "Threads",
+        "fold or expand thread header",
+    ),
+    bind(
+        W::View,
         &[&[c('z')]],
         A::Fold,
         "Threads",

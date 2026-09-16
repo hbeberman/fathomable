@@ -1,6 +1,6 @@
 //! Last-seen marks in the app (ADR 0015, ADR 0069). The visible file is
 //! snapshotted as seen when the reader switches away from it, quits, or
-//! leaves it alone for `follow.seen-idle`; `Space d s` snapshots every
+//! leaves it alone for `viewer.seen-idle`; `Space d s` snapshots every
 //! non-ignored text file at once, so a later `last seen · now` diff
 //! shows only what came after. The store is
 //! [`fathomable_core::seen`].

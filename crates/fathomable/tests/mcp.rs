@@ -50,12 +50,20 @@ impl Fixture {
         command
     }
 
+    fn key(&self) -> Result<PathBuf> {
+        Ok(Workspace::discover(&self.root)?.key().to_path_buf())
+    }
+
+    fn threads_path(&self) -> Result<PathBuf> {
+        Ok(self.dirs.threads_file(&self.key()?))
+    }
+
     fn store(&self) -> Result<Store> {
-        Ok(Store::open(self.dirs.threads_file(&self.root))?)
+        Ok(Store::open(self.threads_path()?)?)
     }
 
     fn user_thread(&self, body: &str) -> Result<ThreadId> {
-        Ok(Store::open(self.dirs.threads_file(&self.root))?.annotate(
+        Ok(Store::open(self.threads_path()?)?.annotate(
             Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), body),
             "one\ntwo\n",
             now(),
@@ -171,7 +179,7 @@ fn partial_reply_viewer(
         Some(socket.clone()),
     )
     .write(&fixture.dirs)?;
-    let store_path = fixture.dirs.threads_file(&fixture.root);
+    let store_path = fixture.threads_path()?;
     let handle = std::thread::spawn(move || serve_partial_replies(&listener, &store_path));
     Ok((socket, handle))
 }
@@ -268,7 +276,7 @@ fn reading_returns_every_open_conversation_without_mutating_state() -> Result<()
     )?;
     drop(store);
     let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
-    let path = fixture.dirs.threads_file(&fixture.root);
+    let path = fixture.threads_path()?;
     let before = fs::read(&path)?;
     let result = client.ok("threads", json!({}))?;
     let threads = result["structuredContent"]["threads"]
@@ -336,7 +344,7 @@ fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Resul
     let fixture = Fixture::new("mcp-read-placement")?;
     let original = "one\ntwo\nthree\n";
     fs::write(fixture.root.join("a.md"), original)?;
-    let thread = Store::open(fixture.dirs.threads_file(&fixture.root))?.annotate(
+    let thread = Store::open(fixture.threads_path()?)?.annotate(
         Draft::new(
             Author::User,
             Path::new("a.md"),
@@ -346,13 +354,13 @@ fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Resul
         original,
         1,
     )?;
-    let mut seen = fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.root))?;
+    let mut seen = fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.key()?))?;
     seen.record(Path::new("a.md"), original)?;
     drop(seen);
     fs::write(fixture.root.join("a.md"), "zero\none\nTWO\nthree\n")?;
 
     let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
-    let path = fixture.dirs.threads_file(&fixture.root);
+    let path = fixture.threads_path()?;
     let after_startup = fs::read(&path)?;
     let result = client.ok("threads", json!({"ids": [thread]}))?;
     let shown = &result["structuredContent"]["threads"][0];
@@ -428,7 +436,6 @@ fn writes_require_identity_preserve_harness_authorship_and_user_only_closure() -
     let started = store.threads().last().context("started")?;
     assert_eq!(started.author().name(), "Copilot");
     assert_eq!(started.author().id(), Some("copilot:chat"));
-    assert_eq!(started.author().kind(), None);
     let replied = store.thread(&thread).context("replied")?;
     assert_eq!(replied.replies()[0].author().id(), Some("copilot:chat"));
     assert!(replied.replies()[0].proposes_resolution());
@@ -474,7 +481,7 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
 fn file_wide_range_override_invalidates_the_whole_reply_batch() -> Result<()> {
     let fixture = Fixture::new("mcp-file-wide-batch")?;
     let line_thread = fixture.user_thread("line question")?;
-    let file_thread = Store::open(fixture.dirs.threads_file(&fixture.root))?.annotate(
+    let file_thread = Store::open(fixture.threads_path()?)?.annotate(
         Draft::on_file(Author::User, Path::new("a.md"), "file question"),
         "one\ntwo\n",
         now(),
@@ -556,33 +563,41 @@ fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
 }
 
 #[test]
-fn removed_single_item_and_workspace_arguments_are_rejected() -> Result<()> {
-    let fixture = Fixture::new("mcp-removed-arguments")?;
+fn unknown_arguments_are_rejected_without_writes() -> Result<()> {
+    let fixture = Fixture::new("mcp-unknown-arguments")?;
     let thread = fixture.user_thread("why?")?;
     let mut client = Mcp::copilot(&fixture, "chat")?;
     for (tool, arguments) in [
+        ("threads", json!({"invented": true})),
         (
             "thread_start",
-            json!({"path": "a.md", "body": "old single form"}),
+            json!({"comments": [{"path": "a.md", "body": "x"}], "invented": true}),
         ),
         (
             "thread_reply",
-            json!({"thread": thread, "body": "old single form"}),
+            json!({"replies": [{"thread": thread, "body": "x"}], "invented": true}),
         ),
-        ("threads", json!({"workspace": fixture.root})),
         (
             "thread_start",
-            json!({"workspace": fixture.root, "comments": [{"path": "a.md", "body": "x"}]}),
+            json!({"comments": [{"path": "a.md", "body": "x", "invented": true}]}),
         ),
         (
             "thread_reply",
-            json!({"workspace": fixture.root, "replies": [{"thread": thread, "body": "x"}]}),
+            json!({"replies": [{"thread": thread, "body": "x", "invented": true}]}),
         ),
     ] {
         let result = client.call(tool, arguments)?;
         assert_eq!(result["isError"], true, "{tool}: {result}");
     }
-    assert_eq!(fixture.store()?.threads().len(), 1);
+    let store = fixture.store()?;
+    assert_eq!(store.threads().len(), 1);
+    assert!(
+        store
+            .thread(&thread)
+            .context("thread")?
+            .replies()
+            .is_empty()
+    );
     Ok(())
 }
 
@@ -614,7 +629,6 @@ fn per_call_metadata_keeps_supported_chat_identities_distinct() -> Result<()> {
             store.threads()[1].author().id(),
             Some(format!("{label}:b").as_str())
         );
-        assert_eq!(store.threads()[0].author().kind(), None);
     }
     Ok(())
 }
@@ -671,36 +685,6 @@ fn per_request_client_info_selects_the_identity_adapter() -> Result<()> {
         fixture.store()?.threads()[0].author().id(),
         Some("vscode:request-chat")
     );
-    Ok(())
-}
-
-#[test]
-fn legacy_annotation_history_and_agent_state_are_not_reset() -> Result<()> {
-    let fixture = Fixture::new("mcp-existing-history")?;
-    let thread = fixture.user_thread("historical question")?;
-    let mut store = fixture.store()?;
-    store.reply(
-        &thread,
-        Reply::new(
-            Author::agent("Builder").subscribed("old-session", "reviewer"),
-            now(),
-            "historical answer",
-        ),
-    )?;
-    drop(store);
-    let legacy_register = fixture
-        .dirs
-        .workspace_dir(&fixture.root)
-        .join("agents.jsonl");
-    fs::write(&legacy_register, b"legacy agent state\n")?;
-
-    let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
-    let result = client.ok("threads", json!({"ids": [thread]}))?;
-    let author = &result["structuredContent"]["threads"][0]["replies"][0]["author"];
-    assert_eq!(author["name"], "Builder");
-    assert_eq!(author["id"], "old-session");
-    assert_eq!(author["kind"], "reviewer");
-    assert_eq!(fs::read(legacy_register)?, b"legacy agent state\n");
     Ok(())
 }
 
@@ -806,7 +790,7 @@ fn review_live_rewrites_report_current_placement_without_mutation() -> Result<()
     let fixture = Fixture::new("mcp-live-placement")?;
     let original = "one\ntwo\nthree\n";
     fs::write(fixture.root.join("a.md"), original)?;
-    let path = fixture.dirs.threads_file(&fixture.root);
+    let path = fixture.threads_path()?;
     let id = Store::open(&path)?.annotate(
         Draft::new(
             Author::User,
@@ -817,7 +801,7 @@ fn review_live_rewrites_report_current_placement_without_mutation() -> Result<()
         original,
         now(),
     )?;
-    fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.root))?
+    fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.key()?))?
         .record(Path::new("a.md"), original)?;
     let mut client = Mcp::copilot(&fixture, "chat")?;
     fs::write(fixture.root.join("a.md"), "zero\none\nTWO\nthree\n")?;
@@ -906,23 +890,33 @@ fn review_shared_repository_threads_keep_their_worktree_placement() -> Result<()
 }
 
 #[test]
-fn review_startup_adopts_existing_root_keyed_annotations() -> Result<()> {
-    let fixture = Fixture::new("mcp-root-state")?;
+fn review_startup_uses_fresh_git_common_dir_state() -> Result<()> {
+    let fixture = Fixture::new("mcp-common-dir-state")?;
     fathomable_testing::git::init(&fixture.root)?;
     fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
-    let id = fixture.user_thread("existing review")?;
-    let original = fs::read(fixture.dirs.threads_file(&fixture.root))?;
     let workspace = Workspace::discover(&fixture.root)?;
-    let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
+    ensure!(
+        workspace.key() != fixture.root,
+        "Git workspace key should not be root"
+    );
+    assert!(!fixture.dirs.threads_file(workspace.key()).exists());
+    assert!(!fixture.dirs.threads_file(&fixture.root).exists());
+
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+    let result = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "line": 1, "body": "fresh review"}]}),
+    )?;
+    let id = result["structuredContent"]["threads"][0]["id"]
+        .as_str()
+        .context("started thread id")?;
+    let store = fixture.store()?;
     let result = client.ok("threads", json!({}))?;
     assert_eq!(
-        result["structuredContent"]["threads"][0]["id"],
-        id.to_string(),
-        "startup opened an empty store instead of adopting existing annotations"
+        result["structuredContent"]["threads"][0]["id"], id,
+        "startup did not use the fresh common-dir store"
     );
-    assert_eq!(
-        fs::read(fixture.dirs.threads_file(workspace.key()))?,
-        original
-    );
+    assert_eq!(store.threads().len(), 1);
+    assert!(!fixture.dirs.threads_file(&fixture.root).exists());
     Ok(())
 }

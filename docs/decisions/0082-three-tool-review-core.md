@@ -26,6 +26,16 @@ human-authority and automatic-identity contracts of
 [0058](0058-the-user-has-the-last-word.md) and
 [0080](0080-automatic-chat-identity.md).
 
+Clean-slate boundary amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): the three-tool,
+human-mediated review contract remains, but startup no longer adopts
+root-keyed state or backfills context onto pre-existing records. Current
+snapshot/context recovery and follow-HEAD maintenance remain. The promises
+to preserve historical author profiles and every prior annotation shape are
+retired in favor of the current author object and exact format guards. The
+single-user alpha may use a separate operator reset of Fathomable-owned state;
+ordinary startup and upgrade never delete, import, or rewrite state.
+
 ## Context
 
 Fathomable accumulated two responsibilities around its thread store: review

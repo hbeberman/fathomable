@@ -12,6 +12,15 @@ tags:
 
 Status: accepted (2026-08-28)
 
+Context backfill amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): snapshot-first and
+context-window mapping remains current for records written by the new build,
+but the startup scan that recorded windows on older threads is retired.
+Line annotations and relocations carry context when written; file-wide
+comments remain context-free. The `context` event and
+`Store::record_context` described below are historical implementation
+details, not a migration promise.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

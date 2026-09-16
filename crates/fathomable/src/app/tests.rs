@@ -1126,7 +1126,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     assert!(has(&app, "crates"));
     assert!(!has(&app, "crates/pipe"), "the new listing stays lazy");
 
-    // A path `follow.ignore` hides never triggers a re-read.
+    // A path `watch.ignore` hides never triggers a re-read.
     fs::create_dir_all(dir.0.join("build"))?;
     fs::write(dir.0.join("build/out"), "")?;
     app.on_events(vec![Event::Created(dir.0.join("build/out"))]);
@@ -1364,8 +1364,6 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     assert_eq!(app.queue().len(), 1);
     assert!(app.toasts().is_empty(), "toast 0 disables toasts");
 
-    app.command("auto");
-    assert_eq!(app.message(), Some("not a command: auto"));
     app.command("status");
     assert!(matches!(app.popup(), Some(Popup::Status)));
     app.close_popup();

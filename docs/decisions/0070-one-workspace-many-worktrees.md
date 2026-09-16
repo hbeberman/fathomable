@@ -36,6 +36,15 @@ per-call workspace roots select other worktrees. Shared-server callers
 must name that override rather than rely on a subagent's cwd or chat
 metadata to change the default. Process bonds and `hello` are removed.
 
+State-key adoption amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): common-dir identity and
+shared worktree state remain, but the one-time root-keyed directory move is
+retired. Fresh viewer, register, and MCP startup use the current key
+directly; they do not probe an old root key or rename a directory. A plain
+directory later initialized as Git does not transfer its prior state
+automatically. The old move is historical context, not a compatibility
+exception.
+
 ## Context
 
 An agent that is asked for a change increasingly does not make it where

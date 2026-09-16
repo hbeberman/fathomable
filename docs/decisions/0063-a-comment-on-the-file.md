@@ -21,6 +21,12 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Context backfill amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): file-wide comments remain
+context-free and `Store::relocate` still refuses them. The
+`Store::record_context` reference below describes the retired historical
+backfill API.
+
 ## Context
 
 Every thread has been on lines: [0013](0013-annotation-storage-and-ux.md)

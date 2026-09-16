@@ -464,15 +464,17 @@ outside the repository at
 `<hash>` is of the repository's git common dir, so every worktree
 reads the same file, or of the root outside git
 ([0070](decisions/0070-one-workspace-many-worktrees.md)).
-Each line carries the format version this build writes; a file of
-another version is refused with the line to blame and the path to
-delete, and there is no migration before the first tag
+Each line carries format version **2**, the only annotation version this
+build reads or writes. A file of another version is refused with the line
+to blame, both versions, and actionable path/reset guidance; there is no
+migration or older reader
 ([0062](decisions/0062-one-version-no-compatibility.md)).
 
 Every open thread shows a **stub** under the last of its lines: one row,
 its newest message, with a `▸`, the thread's circle, the author
-(the user by `user.name`, or an agent's stored name), the age, and the first line of
-the message, on the author's stripe with the name in the author's
+(the configured user name, or an agent's stored name; no subscription
+type), the age, and the first line of the message, on the author's stripe
+with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
 `thread.agent`, over `thread.inline`; a theme that sets no background
 gets a `▎` at the left edge instead). Stubs are not lines: they carry
@@ -874,12 +876,21 @@ checkout containing `DIR`, or to its startup directory when omitted. The
 binding never changes, and no tool takes a workspace or viewer selector.
 Reading and writing threads works without a viewer running.
 The server discovers the checkout directly; it requires no workspace-marker
-setup. Starting the MCP server may persist required annotation housekeeping
-once—adopting legacy root-keyed state, offline re-anchoring, and
-stranded-open follow-HEAD rescoping—before it accepts calls. A `threads` call
-itself reads the shared store directly and computes current placement without
-persisting changes. Exact `ids` use the same direct store, bypassing ordinary
-checkout and status visibility as described below.
+setup. Git state uses the repository's common-directory key directly, while
+non-Git state uses its root; startup never adopts or moves an older key.
+Starting the MCP server may persist current annotation housekeeping
+once—offline snapshot/context re-anchoring for current records and
+stranded-open follow-HEAD rescoping—before it accepts calls. It does not
+backfill context onto historical records. A `threads` call itself reads the
+shared store directly and computes current placement without persisting
+changes. Exact `ids` use the same direct store, bypassing ordinary checkout
+and status visibility as described below.
+
+The viewer and MCP child must run matching builds. The internal socket accepts
+protocol version **5** only. An “unsupported protocol version” error means
+one process is stale: stop and restart the affected viewer and MCP child,
+then reconnect the host if needed. Deleting annotation state does not repair
+a process mismatch, and ordinary startup never deletes state.
 
 Register it with your agent host once. Every host runs the same stdio
 command, `fathomable --mcp`; only the host configuration differs. Register
@@ -1017,10 +1028,12 @@ into the prompt when connecting.
 
 A new agent author stores the stable harness label as `name`, the raw MCP
 client as `client`, and the harness-qualified chat id as `id`; no role, type,
-or persona is registered. Historical authors with older profile fields
-remain readable and are not rewritten. On the wire the user author is the
-string `"user"`; an attributed agent is `{name, client?, id?, kind?}`. New
-MCP writes include `client` and `id` and omit `kind`. Replies retain
+or persona is registered. On the wire the user author is the string
+`"user"`; every attributed agent is one object shape,
+`{name, client?, id?}`. There is no bare-agent string and no `kind` field.
+New MCP writes include `client` and `id`. Human labels use the configured
+user name; agent labels use the stored name, or `name (client)` when the
+observed client is shown, never a subscription type. Replies retain
 `author`, `created`, `body`, and optional `proposed_resolved` and `edited`;
 a proposal does not change the thread's open status.
 
@@ -1051,9 +1064,12 @@ These are capability requirements, not blanket version guarantees.
 The reasoning and limits are in
 [0080](decisions/0080-automatic-chat-identity.md).
 
-Existing thread authorship remains readable, including historical display
-profiles. The removed `agents.jsonl` register is unused and need not be
-deleted. Never delete `threads.jsonl` as part of this migration.
+The current format does not preserve or read historical subscription
+profiles. The inert `agents.jsonl` register has no reader and is discarded
+only by the explicitly authorized operator reset, never by ordinary startup.
+Do not delete `threads.jsonl` during ordinary startup or upgrade; the
+operator reset is the separate clean-slate action that discards app-owned
+state.
 
 ### Review workflow and migration
 
@@ -1088,8 +1104,9 @@ its XDG state and configuration under the demo directory.
 files. Remove every old `fathomable pending` and `fathomable hello` entry
 from Claude, Codex, Copilot, or VS Code hook configuration. Remove the
 obsolete `agents` config node and `jump.auto` / `jump.debounce`; keep
-`jump.toast` if customized. Legacy `agents.jsonl` files are unused and may
-remain. Do not delete thread stores.
+`jump.toast` if customized. These hooks and config entries require manual
+cleanup. `agents.jsonl` has no reader and is discarded only by the operator
+reset; ordinary startup does not remove it or any thread store.
 
 `Space a w` is reserved for a possible user-directed integration and now
 always reports `Wake agent is not yet implemented`. A future design may send
@@ -1118,9 +1135,9 @@ and, when there are several, lists its worktrees and says which one
 each viewer shows; `--doctor` counts the worktrees sharing the state and
 the visible directories that consume inotify watches. Ignored trees are
 not part of that watch budget.
-A state directory keyed by a root under the old rule is moved to its
-common-dir key once, by the first viewer or `--mcp` that finds the new key
-absent
+Git state is keyed directly by the repository's common directory and
+non-Git state by its root; no old root-keyed directory is adopted or moved
+on startup
 ([0070](decisions/0070-one-workspace-many-worktrees.md)).
 
 If Fathomable dies, it hands the terminal back and prints one block between

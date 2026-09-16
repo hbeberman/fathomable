@@ -46,8 +46,6 @@ pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>) -> anyhow::Result<()> {
     };
     anyhow::ensure!(directory.is_dir(), "MCP repository must be a directory");
     let target = Target::discover(&directory)?;
-    fathomable_core::worktrees::adopt(dirs, &target.root, &target.key)
-        .context("cannot adopt root-keyed annotation state")?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -155,7 +153,6 @@ impl Server {
             name: caller.harness.name().to_owned(),
             client: Some(caller.client),
             id: Some(caller.id),
-            kind: None,
         })
     }
 

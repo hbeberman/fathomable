@@ -241,7 +241,7 @@ pub(crate) struct Watcher {
     target_dirs: HashSet<PathBuf>,
     /// Directories holding exact state files.
     state_dirs: HashSet<PathBuf>,
-    /// The exact thread and agent register paths.
+    /// The exact thread-state paths.
     state_files: HashSet<PathBuf>,
     /// Git metadata paths and whether each needs recursive coverage.
     extras: HashMap<PathBuf, WatchMode>,
@@ -1019,7 +1019,7 @@ mod tests {
     #[test]
     fn state_watch_failure_marks_coverage_partial() -> anyhow::Result<()> {
         let (mut watcher, _) = Watcher::new()?;
-        let missing = PathBuf::from("/fathomable-test-missing/state/agents.jsonl");
+        let missing = PathBuf::from("/fathomable-test-missing/state/threads.jsonl");
         assert!(!watcher.watch_state([missing.as_path()]));
         assert!(!watcher.coverage_complete());
         Ok(())

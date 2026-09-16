@@ -311,7 +311,6 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
             name: "Copilot".to_owned(),
             client: Some("github-copilot-developer".to_owned()),
             id: None,
-            kind: None,
         },
         long,
         true,
@@ -1409,7 +1408,6 @@ fn socket_requests_reply() -> anyhow::Result<()> {
         name: "reviewer".to_owned(),
         client: Some("claude-code".to_owned()),
         id: None,
-        kind: None,
     };
     let reply = app.handle_request(Request::ThreadReply {
         thread: id.clone(),
@@ -1468,7 +1466,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-socket-start", testing::README)?;
     let mut app = app(&dir)?;
     let before = app.view().cursor_source_line();
-    let author = Author::agent("reviewer").subscribed("s-1", "coder");
+    let author = Author::agent("reviewer");
     let reply = app.handle_request(Request::ThreadStart {
         path: PathBuf::from("README.md"),
         range: Some(LineRange::new(2, 3)),
@@ -1486,7 +1484,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     assert!(started[0].awaits_user() && !started[0].awaits_agent());
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
-        Some("comment on README.md:2 from reviewer (coder)")
+        Some("comment on README.md:2 from reviewer")
     );
     assert_eq!(app.view().cursor_source_line(), before);
     assert_eq!(app.waiting_count(), 1);
@@ -1495,8 +1493,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
         Some(("look here", false))
     );
     // The review list names the agent on the comment's row as the
-    // toast does, and the user's reply by the configured name, the
-    // case the comment's row would use (ADR 0058).
+    // toast does, and the user's reply by the configured name (ADR 0058).
     app.open_review();
     app.thread_reply();
     type_in(&mut app, "noted");
@@ -1511,7 +1508,7 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
             _ => None,
         })
         .collect();
-    assert_eq!(authors, ["reviewer (coder)", "User"], "{:?}", rows.rows);
+    assert_eq!(authors, ["reviewer", "User"], "{:?}", rows.rows);
     app.close_review();
 
     for (path, range, wrong) in [
@@ -1743,7 +1740,6 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
             name: "Copilot".to_owned(),
             client: None,
             id: None,
-            kind: None,
         },
         (1..=12)
             .map(|n| format!("line {n}"))

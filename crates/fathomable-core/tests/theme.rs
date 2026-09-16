@@ -76,11 +76,6 @@ fn list_focus_roles_are_distinct_from_chrome_and_inherit_together() -> TestResul
             assert_eq!(child.style(key), theme.style(key));
         }
     }
-    for retired in ["ui.sidebar.selected", "ui.picker.selected"] {
-        let text = format!("colors {{ \"{retired}\" bg=\"red\" }}");
-        let error = must_fail("old", &[("old", &text)])?;
-        assert!(error.to_string().contains("unknown theme key"));
-    }
     Ok(())
 }
 
@@ -290,29 +285,6 @@ fn key_names_round_trip() -> TestResult {
         let text = format!("colors {{ \"{name}\" fg=\"#010203\" }}");
         let theme = Theme::resolve("k", from_map(&[("k", &text)]))?;
         assert_eq!(theme.style(key).fg(), Some(Color::Rgb(1, 2, 3)), "{name}");
-    }
-    Ok(())
-}
-
-/// The pre-0047 `annotation.*` spelling and the `ui.rail*` spelling 0049
-/// used until 0057 are unknown keys (ADR 0051), named like any other
-/// misspelling.
-#[test]
-fn retired_key_names_are_unknown() -> TestResult {
-    for (written, now) in [
-        ("annotation.open", "thread.open"),
-        ("ui.rail.dir", "ui.sidebar.dir"),
-    ] {
-        let text = format!("colors {{ \"{written}\" fg=\"red\" }}");
-        let error = must_fail("old", &[("old", &text)])?;
-        assert!(
-            error
-                .to_string()
-                .contains(&format!("unknown theme key `{written}`")),
-            "{error}"
-        );
-        let text = format!("colors {{ \"{now}\" fg=\"#010203\" }}");
-        Theme::resolve("new", from_map(&[("new", &text)]))?;
     }
     Ok(())
 }

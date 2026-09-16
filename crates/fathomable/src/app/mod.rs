@@ -1617,7 +1617,7 @@ impl App {
         self.message = None;
     }
 
-    /// Raise a toast for `follow.toast`, dropping the oldest past the cap.
+    /// Raise a toast for `jump.toast`, dropping the oldest past the cap.
     pub(super) fn push_toast(&mut self, text: String) {
         if self.jump.toast == Duration::ZERO {
             return;

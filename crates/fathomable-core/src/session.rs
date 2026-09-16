@@ -10,15 +10,16 @@
 //! [`Request`] per line, answered by one [`Response`] per line. Every
 //! request carries `"v"`; a mismatch is refused, and both ends are one
 //! binary upgraded together, so the number bumps on any wire change
-//! (ADR 0062). The binary owns the socket and the state behind every
-//! operation; this module owns the wire types.
+//! (ADR 0062). A mismatch requires restarting the matching viewer and MCP
+//! processes, not deleting annotation state. The binary owns the socket and
+//! the state behind every operation; this module owns the wire types.
 //!
 //! # Examples
 //!
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":4,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
+//! let request: Request = r#"{"v":5,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
 //! assert!(matches!(request, Request::ThreadStart { .. }));
 //! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -36,7 +37,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 4;
+pub(crate) const PROTOCOL_VERSION: u32 = 5;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -453,7 +454,8 @@ impl FromStr for Request {
             .map_err(|error| ProtocolError(format!("malformed request: {error}")))?;
         if v != PROTOCOL_VERSION {
             return Err(ProtocolError(format!(
-                "unsupported protocol version {v} (this session speaks {PROTOCOL_VERSION})"
+                "unsupported protocol version {v} (this session speaks {PROTOCOL_VERSION}); \
+                 restart the matching viewer and MCP processes"
             )));
         }
         let wire: RequestWire = serde_json::from_str(line)
@@ -601,7 +603,6 @@ mod tests {
                     name: "reviewer".to_owned(),
                     client: Some("claude-code".to_owned()),
                     id: None,
-                    kind: None,
                 },
                 body: "done".to_owned(),
                 resolve: true,
@@ -610,42 +611,49 @@ mod tests {
             Request::ThreadStart {
                 path: PathBuf::from("src/lib.rs"),
                 range: Some(LineRange::new(9, 11)),
-                author: Author::agent("reviewer").subscribed("s-1", "coder"),
+                author: Author::agent("reviewer"),
                 body: "look here".to_owned(),
             },
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":4,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":5,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         Ok(())
     }
 
-    /// Every request needs the version this build speaks; there is no
-    /// floor and no op exempt from the check (ADR 0062).
+    /// Every request needs the exact version this build speaks (ADR 0062).
     #[test]
-    fn every_request_needs_the_current_version() {
-        let too_old = r#"{"v":3,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+    fn every_request_needs_the_current_version() -> Result<(), ProtocolError> {
+        let accepted = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+            .parse::<Request>();
+        accepted?;
+
+        let missing = r#"{"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 3")));
-        let too_new = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        assert!(missing.is_some_and(|e| e.to_string().contains("missing field `v`")));
+
+        let too_old = r#"{"v":4,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 5")));
-        // Viewer navigation, listing, subscriptions, and liveness ops are gone.
-        assert_eq!(
-            r#"{"v":4,"op":"open","path":"README.md"}"#.parse::<Request>().ok(),
-            None
-        );
-        assert_eq!(
-            r#"{"v":4,"op":"threads_list"}"#.parse::<Request>().ok(),
-            None
-        );
-        assert_eq!(r#"{"v":4,"op":"follow"}"#.parse::<Request>().ok(), None);
-        assert_eq!(r#"{"v":4,"op":"ping"}"#.parse::<Request>().ok(), None);
+        assert!(too_old.is_some_and(|e| {
+            e.to_string().contains("unsupported protocol version 4")
+                && e.to_string()
+                    .contains("restart the matching viewer and MCP processes")
+        }));
+        let too_new = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+            .parse::<Request>()
+            .err();
+        assert!(too_new.is_some_and(|e| {
+            e.to_string().contains("unsupported protocol version 6")
+                && e.to_string()
+                    .contains("restart the matching viewer and MCP processes")
+        }));
+        assert_eq!(r#"{"v":5,"op":"invented"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
+        Ok(())
     }
 
     #[test]

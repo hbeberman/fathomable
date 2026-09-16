@@ -47,7 +47,7 @@ impl Launch {
             Harness::Vscode => metadata(context, "vscode.conversationId")?,
             Harness::Codex => {
                 // sessionId is the family shared with descendants; threadId
-                // identifies the concrete resumable chat and its hook session.
+                // identifies the concrete resumable chat and thread identity.
                 let family = metadata(context, "sessionId")?;
                 let thread = metadata(context, "threadId")?;
                 family.and(thread)

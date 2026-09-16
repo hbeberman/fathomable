@@ -411,3 +411,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     MCP viewer control, and auto-jump retire. Live reload, manual change and
     worktree navigation, shared thread storage, and human-only resolution
     remain ([0082](decisions/0082-three-tool-review-core.md)).
+74. **Single-user alpha clean slate.** The alpha advances the annotation
+    store and socket to their exact current formats (2 and 5), retires
+    root-key adoption, historical context backfill, subscription author
+    profiles, and bare-agent wire values, and makes the app-state reset an
+    explicit operator action; ordinary startup never deletes state and
+    unrelated stores gain no format machinery
+    ([0083](decisions/0083-single-user-alpha-clean-slate.md)).

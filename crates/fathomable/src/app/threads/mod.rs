@@ -120,16 +120,10 @@ impl Mark {
 }
 
 /// How a message's author reads on a row: the user by the configured
-/// name (ADR 0058), an agent as `name (type)` when it subscribed with a
-/// type.
+/// name (ADR 0058), or an agent by its name.
 pub(crate) fn author_label(author: &Author, user: &str) -> String {
     match author {
         Author::User => user.to_owned(),
-        Author::Agent {
-            name,
-            kind: Some(kind),
-            ..
-        } => format!("{name} ({kind})"),
         Author::Agent { name, .. } => name.clone(),
     }
 }

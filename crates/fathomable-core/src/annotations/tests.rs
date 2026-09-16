@@ -76,26 +76,67 @@ fn an_event_the_file_refuses_leaves_the_store_as_it_was() -> Result<(), StoreErr
 fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
     let file = TempFile::new("version")?;
     assert!(Store::open(&file.0)?.threads().is_empty());
-    if let Some(parent) = file.0.parent() {
-        fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
-    }
-    let stale = concat!(
-        r#"{"event":"annotate","v":0,"id":"1-1-1","path":"a.md","range":[1,1],"#,
-        r##""snippet":"# Title","anchor":{"lines":["x"]},"created":1,"comment":"old"}"##,
-        "\n"
-    );
+    let mut current_store = Store::open(&file.0)?;
+    current_store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "current",
+        ),
+        TEXT,
+        1,
+    )?;
+    let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":1"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
     let error = Store::open(&file.0).err().map(|e| e.to_string());
     assert_eq!(
         error,
         Some(format!(
-            "threads.jsonl line 1: format version 0, this build writes 1; delete {} to start over",
+            "threads.jsonl line 1: format version 1, this build writes {FORMAT_VERSION}; delete {} to start over",
             file.0.display()
         ))
     );
-    let current = stale.replace(r#""v":0"#, r#""v":1"#);
     fs::write(&file.0, current).map_err(|e| StoreError::io(&file.0, e))?;
     assert_eq!(Store::open(&file.0)?.threads().len(), 1);
+    Ok(())
+}
+
+/// Current line records carry their complete placement shape; omitting any
+/// one of its range, anchor, or context is corruption rather than a fallback.
+#[test]
+fn a_line_annotation_requires_its_complete_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let file = TempFile::new("line-shape")?;
+    Store::open(&file.0)?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 1),
+            "current",
+        ),
+        TEXT,
+        1,
+    )?;
+    let current = fs::read_to_string(&file.0)?;
+
+    for missing in ["range", "anchor", "context"] {
+        let mut event: serde_json::Value = serde_json::from_str(current.trim_end())?;
+        event
+            .as_object_mut()
+            .ok_or("annotation event is not an object")?
+            .remove(missing);
+        fs::write(&file.0, format!("{event}\n"))?;
+        let error = Store::open(&file.0)
+            .err()
+            .ok_or("incomplete line annotation was accepted")?;
+        assert!(
+            error
+                .to_string()
+                .contains("line annotations must carry a range, anchor, and context"),
+            "{missing}: {error}"
+        );
+    }
     Ok(())
 }
 
@@ -252,11 +293,6 @@ fn a_comment_on_the_file_has_no_lines() -> Result<(), StoreError> {
             .is_err_and(|e| e.to_string().contains("on the file as a whole")),
         "{moved:?}"
     );
-    assert!(
-        store
-            .record_context(&id, LineRange::new(2, 2), TEXT, 11)
-            .is_err()
-    );
     // It replies and resolves as any thread does, and reads back.
     store.reply(&id, Reply::new(Author::agent("claude"), 12, "done"))?;
     store.resolve(&id, None, 13)?;
@@ -350,6 +386,7 @@ fn relocate_moves_a_thread_and_the_user_acknowledges_the_edit() -> Result<(), St
     let thread = again
         .thread(&id)
         .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
+    assert!(thread.context().is_some());
     assert_eq!(thread.edited(), Some(110));
     assert_eq!(thread.updated(), 110);
     assert_eq!(
@@ -434,44 +471,45 @@ fn anchor_prefers_matching_context_then_nearest() -> Result<(), String> {
 }
 
 #[test]
-fn authors_serialize_as_strings_unless_they_carry_a_client() -> Result<(), serde_json::Error> {
-    let plain = Author::agent("claude");
-    assert_eq!(serde_json::to_string(&plain)?, r#""claude""#);
+fn authors_use_the_current_wire_shapes_and_labels() -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(serde_json::to_string(&Author::User)?, r#""user""#);
     assert_eq!(serde_json::from_str::<Author>(r#""user""#)?, Author::User);
+    let _ = serde_json::from_str::<Author>(r#""claude""#)
+        .err()
+        .ok_or("bare agent string was accepted")?;
+
+    let plain = Author::agent("claude");
+    let json = serde_json::to_string(&plain)?;
+    assert_eq!(json, r#"{"name":"claude"}"#);
+    assert_eq!(serde_json::from_str::<Author>(&json)?, plain);
+    let _ = serde_json::from_str::<Author>(r#"{"name":"claude","kind":"coder"}"#)
+        .err()
+        .ok_or("retired agent kind was accepted")?;
+
     let full = Author::Agent {
         name: "reviewer".to_owned(),
         client: Some("claude-code".to_owned()),
-        id: None,
-        kind: None,
+        id: Some("chat-1".to_owned()),
     };
     let json = serde_json::to_string(&full)?;
-    assert_eq!(json, r#"{"name":"reviewer","client":"claude-code"}"#);
+    assert_eq!(
+        json,
+        r#"{"name":"reviewer","client":"claude-code","id":"chat-1"}"#
+    );
     assert_eq!(serde_json::from_str::<Author>(&json)?, full);
     assert_eq!(full.to_string(), "reviewer (claude-code)");
     let same = Author::Agent {
         name: "claude-code".to_owned(),
         client: Some("claude-code".to_owned()),
         id: None,
-        kind: None,
     };
     assert_eq!(same.to_string(), "claude-code");
-    let signed = full.subscribed("s-1", "coder");
-    let json = serde_json::to_string(&signed)?;
-    assert_eq!(
-        json,
-        r#"{"name":"reviewer","client":"claude-code","id":"s-1","kind":"coder"}"#
-    );
-    assert_eq!(serde_json::from_str::<Author>(&json)?, signed);
-    assert_eq!(signed.to_string(), "reviewer (coder)");
-    assert_eq!(signed.id(), Some("s-1"));
-    assert_eq!(Author::User.subscribed("s-1", "coder"), Author::User);
+    assert_eq!(full.id(), Some("chat-1"));
     Ok(())
 }
 
-/// A thread is pending for every agent while the user has the last
-/// word, and waiting on the user while an agent has it (ADR 0058):
-/// any agent's reply ends the one, and the user's reply, edit, or
-/// reopen ends the other.
+/// The last act identifies whether the next response is from an agent or
+/// the user, while edits and reopens remain acts in their own right.
 #[test]
 fn the_last_act_decides_whose_turn_it_is() -> Result<(), StoreError> {
     let file = TempFile::new("pending")?;
@@ -498,7 +536,7 @@ fn the_last_act_decides_whose_turn_it_is() -> Result<(), StoreError> {
     assert_eq!(t.newest(), (&Author::User, 10));
 
     // Any agent's reply is the answer; a second session does not owe one.
-    let me = Author::agent("bot").subscribed("s-1", "coder");
+    let me = Author::agent("bot");
     store.reply(&id, Reply::new(me.clone(), 11, "because"))?;
     let t = thread(&store)?;
     assert!(!t.awaits_agent() && t.awaits_user());
@@ -556,7 +594,7 @@ fn the_last_act_decides_whose_turn_it_is() -> Result<(), StoreError> {
 fn an_agents_comment_is_its_own_act() -> Result<(), StoreError> {
     let file = TempFile::new("agent-comment")?;
     let mut store = Store::open(&file.0)?;
-    let bot = Author::agent("bot").subscribed("s-1", "coder");
+    let bot = Author::agent("bot");
     let theirs = store.annotate(
         Draft::new(bot.clone(), Path::new("a.md"), LineRange::new(3, 3), "look"),
         TEXT,
@@ -661,6 +699,7 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
         .thread(&id)
         .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
     assert_eq!(thread.snippet(), "alpha\nbeta");
+    assert!(thread.context().is_some());
     assert_eq!(thread.comment(), "rename");
     assert_eq!(thread.status(), Status::Open);
     assert_eq!(thread.replies().len(), 1);
@@ -677,8 +716,8 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
 
     let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
     assert_eq!(raw.lines().count(), 6);
-    assert!(raw.lines().all(|line| line.contains("\"v\":1")));
-    assert!(raw.contains("\"author\":\"claude\""));
+    assert!(raw.lines().all(|line| line.contains("\"v\":2")));
+    assert!(raw.contains(r#""author":{"name":"claude"}"#));
     Ok(())
 }
 
@@ -688,27 +727,25 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
 #[test]
 fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), StoreError> {
     let file = TempFile::new("scope")?;
-    if let Some(parent) = file.0.parent() {
-        fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
-    }
-    fs::write(
-        &file.0,
-        concat!(
-            r#"{"event":"annotate","v":1,"id":"1-1-1","path":"a.md","range":[1,1],"#,
-            r##""snippet":"# Title","anchor":{"lines":["x"]},"created":1,"comment":"old"}"##,
-            "\n"
-        ),
-    )
-    .map_err(|e| StoreError::io(&file.0, e))?;
     let mut store = Store::open(&file.0)?;
-    let legacy = store.threads()[0].id().clone();
-    assert_eq!(store.thread(&legacy).and_then(Thread::commit), None);
+    let unscoped = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "unscoped",
+        )
+        .at_commit(None),
+        TEXT,
+        1,
+    )?;
     let scoped = store.annotate(
         Draft::new(Author::User, Path::new("a.md"), LineRange::new(2, 2), "new")
             .at_commit(Some("abc123".to_owned())),
         TEXT,
         2,
     )?;
+    assert_eq!(store.thread(&unscoped).and_then(Thread::commit), None);
     assert_eq!(store.commits().collect::<Vec<_>>(), ["abc123"]);
     let again = Store::open(&file.0)?;
     assert_eq!(
@@ -727,9 +764,9 @@ fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), St
             .map(Thread::id)
             .collect()
     };
-    assert_eq!(visible(&everywhere), [&legacy, &scoped]);
-    assert_eq!(visible(&on_branch), [&legacy, &scoped]);
-    assert_eq!(visible(&elsewhere), [&legacy]);
+    assert_eq!(visible(&everywhere), [&unscoped, &scoped]);
+    assert_eq!(visible(&on_branch), [&unscoped, &scoped]);
+    assert_eq!(visible(&elsewhere), [&unscoped]);
     Ok(())
 }
 

@@ -35,6 +35,16 @@ the addressed workspace's live subscription, not connection memory.
 The `hello` text is removed; names still appear in tools and delivery
 blobs. The last-act and pending rules below are unchanged.
 
+Author representation and labels amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): subscription type/persona
+profiles are not part of the current author contract. The user remains the
+compact wire value `"user"`; every attributed agent uses one object form with
+`name` and optional `client` and `id`, never a bare agent string or `kind`.
+Human labels use the configured user name; agent labels use the stored name,
+or the observed client when the current display distinguishes it, never a
+subscription type. The automatic harness identity and last-act authority
+rules remain.
+
 ## Context
 
 [0040](0040-agent-subscriptions-and-hooks.md) made a thread *pending*

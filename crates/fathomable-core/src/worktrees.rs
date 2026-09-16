@@ -6,13 +6,9 @@
 //! worktree reads and writes one thread store, one register, one set of
 //! seen marks and checkpoints. [`Worktree`] is one checkout as the
 //! viewer lists it: the main worktree, whose `.git` is the common dir,
-//! or a linked one made by `git worktree add`. [`adopt`] moves a state
-//! directory keyed by a root under the old rule to its common-dir key,
-//! once. The union reach over worktrees lives on
-//! [`Reach`](crate::reach::Reach).
+//! or a linked one made by `git worktree add`. The union reach over
+//! worktrees lives on [`Reach`](crate::reach::Reach).
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 /// One checkout of a workspace (ADR 0070).
@@ -127,48 +123,13 @@ pub fn registry(common_dir: &Path) -> PathBuf {
     common_dir.join("worktrees")
 }
 
-/// Move the state directory keyed by `root` under the old rule to the
-/// one keyed by `key`, when the old exists and the new does not
-/// (ADR 0070). Returns whether a move happened. A plain workspace, whose
-/// key is its root, has nothing to move.
-///
-/// # Errors
-///
-/// Returns the I/O error when the rename fails.
-pub fn adopt(dirs: &crate::XdgDirs, root: &Path, key: &Path) -> io::Result<bool> {
-    if root == key {
-        return Ok(false);
-    }
-    let old = dirs.workspace_dir(root);
-    let new = dirs.workspace_dir(key);
-    if !old.is_dir() || new.exists() {
-        return Ok(false);
-    }
-    if let Some(parent) = new.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(&old, &new)?;
-    tracing::info!(from = %old.display(), to = %new.display(), "workspace state moved to its common-dir key");
-    Ok(true)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::XdgDirs;
+    use std::fs;
+
     use crate::workspace::Workspace;
     use fathomable_testing::TempDir;
     use fathomable_testing::git;
-
-    fn dirs(dir: &TempDir) -> XdgDirs {
-        let base = dir.0.join("xdg");
-        XdgDirs::resolve(|name| match name {
-            "XDG_STATE_HOME" => Some(base.join("state").into()),
-            "XDG_CONFIG_HOME" => Some(base.join("config").into()),
-            "XDG_RUNTIME_DIR" => Some(base.join("run").into()),
-            _ => None,
-        })
-    }
 
     #[test]
     fn a_plain_directory_is_one_worktree_keyed_by_its_root()
@@ -196,6 +157,7 @@ mod tests {
         let guest = Workspace::discover(&linked)?;
         assert_eq!(host.key(), guest.key(), "one key per repository");
         assert_ne!(host.root(), guest.root());
+        assert_ne!(host.key(), host.root(), "git state uses the common-dir key");
 
         let listed = host.worktrees();
         assert_eq!(listed.len(), 2, "{listed:?}");
@@ -229,32 +191,6 @@ mod tests {
         fs::remove_dir_all(&linked)?;
         let host = Workspace::discover(&main)?;
         assert_eq!(host.worktrees().len(), 1);
-        Ok(())
-    }
-
-    #[test]
-    fn adopt_moves_a_root_keyed_store_once() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = TempDir::new("worktrees-adopt")?;
-        let dirs = dirs(&dir);
-        let root = dir.0.join("main");
-        fs::create_dir_all(&root)?;
-        git::init(&root)?;
-        let workspace = Workspace::discover(&root)?;
-        let old = dirs.workspace_dir(workspace.root());
-        fs::create_dir_all(&old)?;
-        fs::write(old.join("threads.jsonl"), "")?;
-
-        assert!(adopt(&dirs, workspace.root(), workspace.key())?);
-        assert!(!old.exists());
-        assert!(
-            dirs.workspace_dir(workspace.key())
-                .join("threads.jsonl")
-                .is_file()
-        );
-        assert!(
-            !adopt(&dirs, workspace.root(), workspace.key())?,
-            "nothing left to move"
-        );
         Ok(())
     }
 }

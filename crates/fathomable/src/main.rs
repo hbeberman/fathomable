@@ -161,9 +161,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
         tracing::info!(removed, "swept dead session records");
     }
     // The state is keyed by the git common dir, shared by every worktree
-    // (ADR 0070); a directory keyed by the root under the old rule moves.
+    // (ADR 0070).
     let key = workspace.key().to_path_buf();
-    adopt_state(dirs, &workspace);
     // One socket per viewer, grouped under the workspace (ADR 0024).
     let socket = dirs.viewer_socket(&key, std::process::id());
     let record = Record::new(id, key.clone(), workspace.root().to_path_buf(), socket)
@@ -250,16 +249,6 @@ fn worktree_roots(workspace: &Workspace) -> Vec<PathBuf> {
         vec![workspace.root().to_path_buf()]
     } else {
         roots
-    }
-}
-
-/// Move a state directory keyed by the root under the old rule to the
-/// workspace's key, once (ADR 0070).
-fn adopt_state(dirs: &XdgDirs, workspace: &Workspace) {
-    match fathomable_core::worktrees::adopt(dirs, workspace.root(), workspace.key()) {
-        Ok(true) => tracing::info!("workspace state moved to its common-dir key"),
-        Ok(false) => {}
-        Err(error) => tracing::warn!(%error, "cannot move the workspace state to its key"),
     }
 }
 

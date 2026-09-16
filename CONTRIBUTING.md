@@ -106,8 +106,8 @@ the kernel refuses `perf_event_open`.
 - Prefer behavior-level tests at public boundaries. A test that reads a
   tracked repository file locates it with `fathomable_testing::repo_file`,
   never `env!("CARGO_MANIFEST_DIR")`.
-- `scripts/demo-repo.sh` builds a throwaway workspace with seeded threads
-  for smoke-testing the MCP server and the agent hooks.
+- `scripts/demo-repo.sh` builds a throwaway workspace with seeded
+  discussions for smoke-testing the MCP server and its tools.
 
 ## 4. Documentation
 

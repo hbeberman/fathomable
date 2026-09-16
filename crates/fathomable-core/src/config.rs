@@ -1056,7 +1056,6 @@ threads {
     fn jump_and_watch_errors_name_the_line() {
         let bad = [
             ("jump { toast -1 }", "millisecond"),
-            ("jump { auto #true }", "unknown jump setting"),
             ("jump { nope 1 }", "unknown jump setting"),
             ("watch { nope 1 }", "unknown watch setting"),
             ("jump \"x\"", "block"),

@@ -20,6 +20,18 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Current format boundary amended 2026-09-15 by
+[0083](0083-single-user-alpha-clean-slate.md): the single-user alpha
+advances the annotation store from format 1 to **2** and the internal socket
+from protocol 4 to **5**, once each. The store and socket guards remain
+exact-only: each build accepts only its current version. A store mismatch
+reports the path and both versions with reset guidance; a socket mismatch
+reports both versions and requires restarting the matching viewer and MCP
+processes, not deleting annotation data. No older reader or migration is
+added, and seen, checkpoint, marker, and runtime stores receive no format
+machinery solely for this reset. The v1/v4 values below describe the
+historical decision.
+
 ## Context
 
 [0051](0051-retire-one-release-compatibility.md) removed the spellings

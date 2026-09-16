@@ -158,8 +158,8 @@ fn first_line<'a>(
         age
     };
     let lead = 1 + NEST + display_width(entry.words().glyph()) + display_width(&place);
-    // The author takes what is left before the tail: `name (role)` when
-    // it fits, `name` when it does not, cut with `…` beyond that.
+    // The author takes what is left before the tail: its full name when it
+    // fits, cut with `…` beyond that.
     let free = inner.saturating_sub(lead + display_width(&tail) + 1);
     let full = entry.author();
     let short = entry.author_name();
@@ -246,12 +246,6 @@ mod tests {
             ("user", Author::User, "Henry (work)", "Henry (work)"),
             (
                 "agent",
-                Author::agent("Bot (work)").subscribed("s-1", "coder"),
-                "Bot (work)",
-                "Bot (work) (coder)",
-            ),
-            (
-                "agent-no-role",
                 Author::agent("Bot (work)"),
                 "Bot (work)",
                 "Bot (work)",
@@ -321,9 +315,8 @@ mod tests {
             .collect())
     }
 
-    /// A thread's first row names the newest author with the role when
-    /// the column has room and without it when it does not; the second
-    /// row cuts the message with `…`; a proposed thread draws `◐`
+    /// A thread's first row names the newest author; the second row cuts
+    /// the message with `…`; a proposed thread draws `◐`
     /// (ADR 0066).
     #[test]
     fn rows_name_the_author_and_cut_the_message_with_an_ellipsis() -> anyhow::Result<()> {
@@ -338,7 +331,7 @@ mod tests {
         let id = app.file_threads()[0].clone();
         let reply = app.handle_request(Request::ThreadReply {
             thread: id.clone(),
-            author: Author::agent("reviewer").subscribed("s-1", "coder"),
+            author: Author::agent("reviewer"),
             body: "done, I think, though the empty string still wants a test of its own".to_owned(),
             resolve: true,
             lines: None,
@@ -351,7 +344,7 @@ mod tests {
         let top = app.tree_rows();
         let first = column[top + 2].trim_end_matches('│').to_owned();
         assert!(
-            first.starts_with("   ◐ L3 reviewer (coder)"),
+            first.starts_with("   ◐ L3 reviewer "),
             "the circle in the nest, under the path (ADR 0077): {first:?}"
         );
         assert!(first.ends_with("↩1 now"), "{first:?}");
@@ -367,12 +360,11 @@ mod tests {
             column[top + 1]
         );
 
-        // Narrow: the role goes before the tail does.
+        // Narrow: the author still fits before the tail.
         app.resize(72, 30);
         let column = sidebar_column(&app, 72)?;
         let first = column[top + 2].trim_end_matches('│').to_owned();
         assert!(first.contains("◐ L3 reviewer "), "{first:?}");
-        assert!(!first.contains("(coder)"), "{first:?}");
         assert!(first.ends_with("↩1 now"), "{first:?}");
         Ok(())
     }

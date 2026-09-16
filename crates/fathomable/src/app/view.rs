@@ -2149,10 +2149,10 @@ mod tests {
         }
         assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff seen"));
         v.start_command();
-        for ch in "follow".chars() {
+        for ch in "about".chars() {
             v.input_char(ch);
         }
-        assert!(matches!(v.confirm(), Effect::Command(c) if c == "follow"));
+        assert!(matches!(v.confirm(), Effect::Command(c) if c == "about"));
         assert!(v.line_on_screen(1));
         assert!(!v.line_on_screen(usize::MAX));
         v.touch();

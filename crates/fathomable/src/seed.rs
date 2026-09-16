@@ -175,7 +175,6 @@ fn write_thread(
                 name: a.name.clone(),
                 client: a.client.clone(),
                 id: a.id.clone(),
-                kind: None,
             });
         store.reply(&id, Reply::new(author, at, reply.body.as_str()))?;
     }
@@ -251,7 +250,6 @@ mod tests {
         assert_eq!(lib.status(), Status::Open);
         assert_eq!(lib.replies().len(), 1);
         assert_eq!(lib.replies()[0].author().id(), Some("copilot:other"));
-        assert_eq!(lib.replies()[0].author().kind(), None);
         assert_eq!(lib.replies()[0].body(), "proposal");
         assert!(
             !lib.locate(&fs::read_to_string(root.join("src/lib.rs"))?)

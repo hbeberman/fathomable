@@ -159,7 +159,7 @@ mod tests {
     fn an_agent_starts_a_file_thread_by_naming_no_line() -> anyhow::Result<()> {
         let dir = testing::workspace("file-comment-agent", testing::README)?;
         let mut app = testing::app(&dir)?;
-        let author = Author::agent("reviewer").subscribed("s-1", "coder");
+        let author = Author::agent("reviewer");
         let reply = app.handle_request(Request::ThreadStart {
             path: PathBuf::from("README.md"),
             range: None,
@@ -174,7 +174,7 @@ mod tests {
         assert!(started[0].awaits_user());
         assert_eq!(
             app.toasts().last().map(crate::app::Toast::text),
-            Some("comment on README.md from reviewer (coder)")
+            Some("comment on README.md from reviewer")
         );
         assert_eq!(app.waiting_count(), 1);
         Ok(())

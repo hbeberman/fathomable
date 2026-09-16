@@ -7,8 +7,9 @@
 //! lines immediately above and below, and [`Thread::locate`] finds the range
 //! again after the file changes. When the lines are gone the thread is
 //! [`Placement::Detached`] at its last known range rather than lost. Each
-//! thread also carries a [`Context`] window of the text it was last placed
-//! in, so an edit made while nothing runs can be followed (ADR 0038).
+//! line thread also carries a [`Context`] window of the text it was last
+//! placed in, so an edit made while nothing runs can be followed (ADR 0038).
+//! A file-wide thread has no range, anchor, or context.
 //!
 //! Every change is one JSON line appended to `threads.jsonl` under the
 //! workspace's state directory (ADR 0013); [`Store::open`] folds the file
@@ -42,7 +43,7 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// File name of the thread store inside a workspace state directory.
 pub(crate) const THREADS_FILE: &str = "threads.jsonl";
@@ -302,24 +303,22 @@ impl fmt::Display for ThreadId {
 /// Who wrote a reply or resolved a thread.
 ///
 /// An agent carries the name it goes by plus, when the reply arrived over
-/// MCP, the client implementation the host reported (ADR 0014). On the wire
-/// an author is a plain string unless it has a client, in which case it is
-/// `{"name":..,"client":..}`.
+/// MCP, the client implementation the host reported and its qualified
+/// identity (ADR 0014). On the wire the user is the compact string `"user"`;
+/// agents always use an object with a `name` and optional `client` and `id`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(from = "AuthorWire", into = "AuthorWire")]
+#[serde(try_from = "AuthorRepr", into = "AuthorRepr")]
 pub enum Author {
     /// The person at the keyboard.
     User,
     /// An agent.
     Agent {
-        /// The persona it declared, or the client name when it declared none.
+        /// The stable harness label, or a local fixture's chosen name.
         name: String,
         /// The MCP client that carried the reply, when known.
         client: Option<String>,
-        /// The harness-qualified chat identity, independent of subscription.
+        /// The harness-qualified chat identity, when known.
         id: Option<String>,
-        /// The agent type it subscribed with (ADR 0040), when it did.
-        kind: Option<String>,
     },
 }
 
@@ -338,23 +337,6 @@ impl Author {
             name: name.into(),
             client: None,
             id: None,
-            kind: None,
-        }
-    }
-
-    /// The same author signing as subscriber `id` of type `kind`.
-    ///
-    /// The user stays the user.
-    #[must_use]
-    pub fn subscribed(self, id: impl Into<String>, kind: impl Into<String>) -> Self {
-        match self {
-            Self::User => Self::User,
-            Self::Agent { name, client, .. } => Self::Agent {
-                name,
-                client,
-                id: Some(id.into()),
-                kind: Some(kind.into()),
-            },
         }
     }
 
@@ -381,28 +363,13 @@ impl Author {
             Self::Agent { id, .. } => id.as_deref(),
         }
     }
-
-    /// The agent type the message was signed with, if any.
-    #[must_use]
-    pub fn kind(&self) -> Option<&str> {
-        match self {
-            Self::User => None,
-            Self::Agent { kind, .. } => kind.as_deref(),
-        }
-    }
 }
 
 impl fmt::Display for Author {
-    /// `user`, the agent name, `name (type)` for a subscribed agent, or
-    /// `name (client)` when the two differ.
+    /// `user`, the agent name, or `name (client)` when the two differ.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::User => f.write_str("user"),
-            Self::Agent {
-                name,
-                kind: Some(kind),
-                ..
-            } => write!(f, "{name} ({kind})"),
             Self::Agent {
                 name,
                 client: Some(client),
@@ -415,60 +382,42 @@ impl fmt::Display for Author {
 
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
-enum AuthorWire {
-    Name(String),
-    Full {
-        name: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        client: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        id: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        kind: Option<String>,
-    },
+enum AuthorRepr {
+    User(String),
+    Agent(AgentRepr),
 }
 
-impl From<AuthorWire> for Author {
-    fn from(wire: AuthorWire) -> Self {
-        match wire {
-            AuthorWire::Name(name) if name == "user" => Self::User,
-            AuthorWire::Name(name) => Self::agent(name),
-            AuthorWire::Full {
-                name,
-                client,
-                id,
-                kind,
-            } => Self::Agent {
-                name,
-                client,
-                id,
-                kind,
-            },
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AgentRepr {
+    name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    client: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+}
+
+impl TryFrom<AuthorRepr> for Author {
+    type Error = String;
+
+    fn try_from(repr: AuthorRepr) -> Result<Self, Self::Error> {
+        match repr {
+            AuthorRepr::User(name) if name == "user" => Ok(Self::User),
+            AuthorRepr::User(name) => Err(format!(
+                "unknown author {name:?}; expected the compact user value \"user\" or an agent object"
+            )),
+            AuthorRepr::Agent(AgentRepr { name, client, id }) => {
+                Ok(Self::Agent { name, client, id })
+            }
         }
     }
 }
 
-impl From<Author> for AuthorWire {
+impl From<Author> for AuthorRepr {
     fn from(author: Author) -> Self {
         match author {
-            Author::User => Self::Name("user".to_owned()),
-            Author::Agent {
-                name,
-                client: None,
-                id: None,
-                kind: None,
-            } => Self::Name(name),
-            Author::Agent {
-                name,
-                client,
-                id,
-                kind,
-            } => Self::Full {
-                name,
-                client,
-                id,
-                kind,
-            },
+            Author::User => Self::User("user".to_owned()),
+            Author::Agent { name, client, id } => Self::Agent(AgentRepr { name, client, id }),
         }
     }
 }
@@ -660,8 +609,8 @@ impl Thread {
         self.anchor.as_ref()
     }
 
-    /// The window of text the thread was last placed in (ADR 0038);
-    /// `None` for a thread recorded before windows were kept.
+    /// The window of text the line thread was last placed in (ADR 0038);
+    /// `None` for a file-wide thread.
     #[must_use]
     pub fn context(&self) -> Option<&Context> {
         self.context.as_ref()
@@ -730,7 +679,7 @@ impl Thread {
         self.reopened
     }
 
-    /// The last act on the thread (ADR 0058): its author and time.
+    /// The last act on the thread: its author and time.
     ///
     /// The acts are the comment, written or edited; each reply, written
     /// or edited; and the most recent reopen. The comment, an edit, and a
@@ -767,9 +716,8 @@ impl Thread {
         self.status == Status::Open && !self.last_act().0.is_user()
     }
 
-    /// Whether the thread is open and the user has the last word, so it
-    /// is *pending* for every subscribed agent (ADR 0058): any agent's
-    /// reply, or a resolution, ends it.
+    /// Whether the thread is open and the user has the last word, so an
+    /// agent's reply would be the next act.
     #[must_use]
     pub fn awaits_agent(&self) -> bool {
         self.status == Status::Open && self.last_act().0.is_user()
@@ -886,8 +834,8 @@ enum Event {
         /// `None` for a workspace outside git, which reads as unscoped.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
-        /// The window the lines were placed in (ADR 0038); `None` when
-        /// the range ran past the text at capture.
+        /// The window the lines were placed in (ADR 0038); absent only
+        /// for a comment on the file as a whole.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<Context>,
     },
@@ -924,16 +872,7 @@ enum Event {
         range: LineRange,
         anchor: Anchor,
         created: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        context: Option<Context>,
-    },
-    /// The window a thread's lines sit in, recorded for a thread that
-    /// had none (ADR 0038). Neither moves the thread nor updates it.
-    Context {
-        v: u32,
-        thread: ThreadId,
         context: Context,
-        created: u64,
     },
     /// The file was renamed and the thread now lives at `path`, range
     /// and anchor unchanged (ADR 0028).
@@ -972,8 +911,7 @@ impl Event {
             | Self::Relocate { thread, .. }
             | Self::Move { thread, .. }
             | Self::Delete { thread, .. }
-            | Self::Rescope { thread, .. }
-            | Self::Context { thread, .. } => Some(thread),
+            | Self::Rescope { thread, .. } => Some(thread),
         }
     }
 }
@@ -1096,13 +1034,16 @@ impl Store {
                 let anchor = Anchor::capture(text, range).ok_or(StoreError {
                     kind: ErrorKind::BadRange(range),
                 })?;
+                let context = Context::capture(text, range).ok_or(StoreError {
+                    kind: ErrorKind::BadRange(range),
+                })?;
                 let snippet = text
                     .lines()
                     .skip(range.start - 1)
                     .take(range.len())
                     .collect::<Vec<_>>()
                     .join("\n");
-                (Some(anchor), Context::capture(text, range), snippet)
+                (Some(anchor), Some(context), snippet)
             }
             None => (None, None, String::new()),
         };
@@ -1226,41 +1167,16 @@ impl Store {
         let anchor = Anchor::capture(text, range).ok_or(StoreError {
             kind: ErrorKind::BadRange(range),
         })?;
+        let context = Context::capture(text, range).ok_or(StoreError {
+            kind: ErrorKind::BadRange(range),
+        })?;
         self.commit(Event::Relocate {
             v: FORMAT_VERSION,
             thread: id.clone(),
             range,
             anchor,
             created: now,
-            context: Context::capture(text, range),
-        })
-    }
-
-    /// Record the window of `text` around `range` as where the thread `id`
-    /// sits (ADR 0038), for a thread stored before windows were kept. The
-    /// thread's range, anchor, and `updated` are untouched.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the thread is unknown or on the file as
-    /// a whole, the range runs past the end of `text`, or the file cannot
-    /// be appended to.
-    pub fn record_context(
-        &mut self,
-        id: &ThreadId,
-        range: LineRange,
-        text: &str,
-        now: u64,
-    ) -> Result<(), StoreError> {
-        self.on_lines(id)?;
-        let context = Context::capture(text, range).ok_or(StoreError {
-            kind: ErrorKind::BadRange(range),
-        })?;
-        self.commit(Event::Context {
-            v: FORMAT_VERSION,
-            thread: id.clone(),
             context,
-            created: now,
         })
     }
 
@@ -1369,6 +1285,11 @@ impl Store {
                 context,
                 ..
             } => {
+                if range.is_some() != anchor.is_some() || range.is_some() != context.is_some() {
+                    return Err(StoreError {
+                        kind: ErrorKind::AnnotationShape,
+                    });
+                }
                 self.threads.push(Thread {
                     id,
                     path,
@@ -1455,12 +1376,7 @@ impl Store {
                 thread.range = Some(range);
                 thread.anchor = Some(anchor);
                 thread.edited = Some(created);
-                thread.context = context;
-            }
-            Event::Context {
-                thread, context, ..
-            } => {
-                self.thread_mut(&thread)?.context = Some(context);
+                thread.context = Some(context);
             }
             Event::Move {
                 thread,
@@ -1525,6 +1441,7 @@ enum ErrorKind {
     MessageNotEditable(ThreadId, MessageTarget),
     BadRange(LineRange),
     OnFile(ThreadId),
+    AnnotationShape,
 }
 
 /// Why the store could not be read or written.
@@ -1584,6 +1501,10 @@ impl fmt::Display for StoreError {
             ErrorKind::OnFile(id) => {
                 write!(f, "thread {id} is on the file as a whole and has no lines")
             }
+            ErrorKind::AnnotationShape => f.write_str(
+                "line annotations must carry a range, anchor, and context; \
+                     file-wide annotations must carry none",
+            ),
         }
     }
 }

@@ -197,7 +197,7 @@ mod tests {
         let started = app.handle_request(Request::ThreadStart {
             path: std::path::PathBuf::from("README.md"),
             range: Some(LineRange::new(5, 5)),
-            author: Author::agent("reviewer").subscribed("s-1", "coder"),
+            author: Author::agent("reviewer"),
             body: "theirs".to_owned(),
         });
         let Response::Threads(started) = started else {

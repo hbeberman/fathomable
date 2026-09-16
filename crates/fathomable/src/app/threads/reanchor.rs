@@ -7,8 +7,7 @@
 //! last had the thread placed in, and a thread that no longer locates is
 //! followed from there. A thread the snapshot cannot place — the file has
 //! none, or is too large for one — is followed through the window of
-//! text it carries (ADR 0038), and a thread without a window is given
-//! one once it locates.
+//! text it carries (ADR 0038).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,8 +43,7 @@ impl App {
 /// viewer running. Returns how many threads moved.
 ///
 /// Each file's snapshot is tried first; a thread it cannot place is
-/// followed through its own context window (ADR 0038). Threads that
-/// locate without a window are then given one.
+/// followed through its own context window (ADR 0038).
 pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Path) -> usize {
     let mut moved = 0;
     let mut paths: Vec<PathBuf> = store
@@ -104,20 +102,6 @@ pub(crate) fn follow_snapshots(store: &mut Store, seen: &seen::Store, root: &Pat
                 Err(error) => tracing::warn!(%id, %error, "cannot re-anchor thread"),
             }
         }
-        let missing: Vec<(ThreadId, LineRange)> = store
-            .for_path(&path)
-            .filter(|thread| thread.context().is_none())
-            .filter_map(|thread| {
-                let placement = thread.locate_in(&hashes);
-                (!placement.is_detached())
-                    .then(|| Some((thread.id().clone(), placement.range()?)))?
-            })
-            .collect();
-        for (id, range) in missing {
-            if let Err(error) = store.record_context(&id, range, &text, now()) {
-                tracing::warn!(%id, %error, "cannot record the thread's context window");
-            }
-        }
     }
     moved
 }
@@ -127,7 +111,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    use fathomable_core::annotations::{Anchor, Author, Draft, LineRange, Store, Thread};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
     use fathomable_core::context::Context;
     use fathomable_core::seen;
 
@@ -222,43 +206,6 @@ mod tests {
         let dir = testing::bare("reanchor-nosnap-rewrite")?;
         let app = annotate_without_snapshot_then_edit(&dir, "ONE\nTWO\nTHREE\nFOUR\n")?;
         assert!(app.marks()[0].is_detached());
-        Ok(())
-    }
-
-    #[test]
-    fn a_thread_stored_without_a_window_is_given_one_on_start() -> anyhow::Result<()> {
-        let dir = testing::bare("reanchor-backfill")?;
-        fs::write(dir.0.join("ws/a.txt"), ORIGINAL)?;
-        fs::create_dir_all(dir.0.join("state"))?;
-        let anchor = serde_json::to_string(
-            &Anchor::capture(ORIGINAL, LineRange::new(2, 2))
-                .ok_or_else(|| anyhow::anyhow!("in text"))?,
-        )?;
-        fs::write(
-            dir.0.join("state/threads.jsonl"),
-            format!(
-                concat!(
-                    r#"{{"event":"annotate","v":1,"id":"old","path":"a.txt","#,
-                    r#""range":{{"start":2,"end":2}},"snippet":"two","anchor":{anchor},"#,
-                    r#""created":1,"comment":"hm"}}"#,
-                    "\n"
-                ),
-                anchor = anchor
-            ),
-        )?;
-        drop(app(&dir)?);
-        let store = Store::open(dir.0.join("state/threads.jsonl"))?;
-        let thread = &store.threads()[0];
-        assert_eq!(
-            thread.context().map(Context::text),
-            Some(ORIGINAL.to_owned())
-        );
-        assert_eq!(thread.updated(), 1, "the backfill is not an update");
-
-        fs::write(dir.0.join("ws/a.txt"), "one\nTWO\nthree\nfour\n")?;
-        let mut app = app(&dir)?;
-        app.open(Path::new("a.txt"));
-        assert!(app.marks()[0].placement().is_edited());
         Ok(())
     }
 }

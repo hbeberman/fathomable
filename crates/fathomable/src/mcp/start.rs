@@ -333,7 +333,6 @@ mod tests {
             name: "Copilot".to_owned(),
             client: Some("copilot-cli".to_owned()),
             id: Some("copilot:s1".to_owned()),
-            kind: None,
         };
         let thread = headless_start(
             &dirs,

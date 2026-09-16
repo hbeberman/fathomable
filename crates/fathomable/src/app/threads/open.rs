@@ -35,9 +35,10 @@ impl App {
 /// viewer's document: the agent speaks of the text it just wrote, which
 /// the viewer may not have reloaded yet.
 ///
-/// The move is a `relocate` event (ADR 0019), so the thread shows as
-/// *edited* until the user answers, exactly as a rewrite the reload diff
-/// followed would.
+/// A range already occupied by the thread needs no relocation. Otherwise
+/// the move is a `relocate` event (ADR 0019), so the thread shows as *edited*
+/// until the user answers, exactly as a rewrite the reload diff followed
+/// would.
 pub(crate) fn follow_reply_lines(
     store: &mut Store,
     root: &Path,
@@ -51,6 +52,18 @@ pub(crate) fn follow_reply_lines(
         .ok_or_else(|| format!("unknown thread {id}"))?;
     let text = fs::read_to_string(root.join(&path))
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let already_there = store.thread(id).is_some_and(|thread| {
+        thread.range() == Some(lines)
+            && matches!(
+                thread.locate(&text),
+                fathomable_core::annotations::Placement::Anchored(current)
+                    | fathomable_core::annotations::Placement::Edited(current)
+                    if current == lines
+            )
+    });
+    if already_there {
+        return Ok(());
+    }
     store
         .relocate(id, lines, &text, when)
         .map_err(|error| format!("cannot move {id} to {lines}: {error}"))?;
@@ -62,7 +75,7 @@ pub(crate) fn follow_reply_lines(
 mod tests {
     use std::fs;
 
-    use fathomable_core::annotations::{Author, LineRange};
+    use fathomable_core::annotations::{Author, LineRange, Placement};
     use fathomable_core::session::{Request, Response};
 
     use crate::app::testing::{self, source_app};
@@ -153,6 +166,38 @@ mod tests {
         });
         assert!(matches!(reply, Response::Error(message) if message.contains("cannot move")));
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn an_agent_reply_at_the_current_lines_keeps_the_anchor() -> anyhow::Result<()> {
+        let dir = testing::workspace("open-thread-same-reply", testing::README)?;
+        let mut app = source_app(&dir)?;
+        app.view_mut().goto_source_line(3);
+        app.view_mut().select_lines();
+        app.view_mut().move_down(1);
+        app.start_comment();
+        app.compose_insert("keep this anchor");
+        app.compose_submit();
+        let id = app.marks()[0].id().clone();
+
+        let reply = app.handle_request(Request::ThreadReply {
+            thread: id.clone(),
+            author: Author::agent("reviewer"),
+            caller: "test:viewer".to_owned(),
+            body: "still here".to_owned(),
+            resolve: false,
+            lines: Some(LineRange::new(3, 4)),
+            idempotency_key: None,
+        });
+
+        assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
+        let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
+        assert_eq!(
+            thread.locate(testing::README),
+            Placement::Anchored(LineRange::new(3, 4))
+        );
+        assert_eq!(thread.edited(), None);
         Ok(())
     }
 }

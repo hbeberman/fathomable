@@ -977,9 +977,9 @@ file or directory in the repository's worktrees; directories include their
 subtrees.
 
 Listings are ordered by `(updated, id)`, with `limit` defaulting to 50
-(zero means 1). The response is `{threads, more, next_after}`. Continue
-with the returned `next_after` object as `after`, retaining the same filters;
-the pair is exclusive, so equal timestamps do not trap pagination.
+(zero returns no threads). The response is `{threads, more, next_after}`.
+Continue with the returned `next_after` object as `after`, retaining the same
+filters; the pair is exclusive, so equal timestamps do not trap pagination.
 `since` is an inclusive update-time filter, not a page cursor.
 `ids` preserves request order and cannot be combined with other selectors;
 duplicate or missing IDs fail.
@@ -992,13 +992,18 @@ prose summary. Each discussion includes `placement` (`anchored`, `edited`,
 history; a re-anchor changes it. `range` is the projected current range
 unless detached, when it is only last-known. Location and content edits
 are separate: neither decides whether a finding still needs attention.
+Supplying its unchanged stored range while the thread still anchors there
+records the reply without re-anchoring it or marking its placement as edited.
 
 Both write tools reject invalid batches before writing any item: empty
 bodies, unknown fields, invalid 1-based ranges, an `end_line` before `line`,
 or an `end_line` without `line`. Omitted or null `end_line` defaults to
 `line`. Replies also reject duplicate or missing IDs, resolved threads,
 range overrides on file-wide threads, and detached threads without a new
-line. Prevalidation is not an I/O transaction: a later runtime failure can
+line. Prevalidation errors carry `error_code: "INVALID_BATCH"` and identify
+each failing item by its zero-based `item_index`; their text fallback uses
+the corresponding `comments[index]` or `replies[index]` path.
+Prevalidation is not an I/O transaction: a later runtime failure can
 leave earlier items written, and the error names those completed items.
 The former `resolve` argument is rejected; use `propose_resolve`.
 

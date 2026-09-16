@@ -18,7 +18,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::tools::{
-    Shown, Tree, WriteOutput, check_path, failure, require_line_for_end_line, shown_lines,
+    BatchIssue, Shown, Tree, WriteOutput, check_path, failure, invalid_batch,
+    require_line_for_end_line, shown_lines,
 };
 use super::{Server, call};
 
@@ -108,20 +109,23 @@ impl Server {
         } else {
             None
         };
-        for item in &p.comments {
+        for (index, item) in p.comments.iter().enumerate() {
             if let Some(key) = &item.idempotency_key
                 && !keys.insert(key.clone())
             {
-                problems.push(format!(
-                    "{} appears more than once in `comments` by `idempotency_key` {key:?}",
-                    item.path.display()
+                problems.push(BatchIssue::new(
+                    index,
+                    format!(
+                        "{} appears more than once in `comments` by `idempotency_key` {key:?}",
+                        item.path.display()
+                    ),
                 ));
                 continue;
             }
             let (path, range) = match structural_start(item) {
                 Ok(shape) => shape,
                 Err(error) => {
-                    problems.push(error);
+                    problems.push(BatchIssue::new(index, error));
                     continue;
                 }
             };
@@ -135,7 +139,10 @@ impl Server {
                 match store.probe_start_idempotency_for_caller(&draft, &caller, key) {
                     Ok(replay) => replay.is_some(),
                     Err(error) => {
-                        problems.push(format!("{}: {error}", item.path.display()));
+                        problems.push(BatchIssue::new(
+                            index,
+                            format!("{}: {error}", item.path.display()),
+                        ));
                         continue;
                     }
                 }
@@ -143,32 +150,35 @@ impl Server {
                 false
             };
             if replay {
-                placed.push(Placed {
-                    path,
-                    range,
-                    body: item.body.clone(),
-                    idempotency_key: item.idempotency_key.clone(),
-                });
+                placed.push((
+                    index,
+                    Placed {
+                        path,
+                        range,
+                        body: item.body.clone(),
+                        idempotency_key: item.idempotency_key.clone(),
+                    },
+                ));
             } else {
                 match place(&self.target.root, item) {
-                    Ok(item) => placed.push(item),
-                    Err(error) => problems.push(error),
+                    Ok(item) => placed.push((index, item)),
+                    Err(error) => problems.push(BatchIssue::new(index, error)),
                 }
             }
         }
         if !problems.is_empty() {
-            return failure(problems.join("\n"));
+            return invalid_batch("comments", &problems);
         }
 
         let mut tree = Tree::new(&self.target.root);
         let mut lines = Vec::new();
         let mut started = Vec::new();
-        for item in placed {
+        for (index, item) in placed {
             match self.start_one(author.clone(), caller.clone(), item).await {
                 Ok(thread) => started.push(thread),
                 Err(error) => {
                     lines.extend(shown_lines(&started, &mut tree, "started"));
-                    lines.push(error);
+                    lines.push(format!("comments[{index}]: {error}"));
                     return failure(lines.join("\n"));
                 }
             }

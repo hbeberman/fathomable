@@ -35,6 +35,9 @@ non-null filters and pagination arguments. An empty `ids` list behaves as
 omission. The input schema expresses these alternatives, and the server
 still validates them.
 
+`threads.limit` is an upper bound. Zero returns an empty `threads` array,
+with `more` reporting every matching discussion and no continuation cursor.
+
 Both write tools advertise non-empty item arrays and 1-based line numbers.
 `end_line` requires `line`, defaults to it when omitted or null, and cannot
 precede it. Reversed ranges fail at the MCP boundary; the viewer's
@@ -53,6 +56,9 @@ complete JSON value in `structuredContent` and a serialized JSON text
 block, following the MCP text-fallback convention. There is no separate
 abbreviated prose rendering that could hide replies from a text-only host.
 Failures retain the MCP error indication and actionable explanations.
+Batch prevalidation failures also return `error_code: "INVALID_BATCH"` and
+an `issues` array with each failing item's zero-based `item_index`; the text
+fallback names the same item as `comments[index]` or `replies[index]`.
 
 Every MCP author, on the opening comment and on every reply, is an object
 with `kind: "user"` or `kind: "agent"` and a `name`. Agent `client` and
@@ -77,6 +83,10 @@ thread it remains the last-known range, not a valid current location.
 re-anchor updates the reference. The existing `edited` state describes
 changed content; a move alone does not determine whether a finding is
 still relevant. Reads calculate this projection without persisting it.
+When a reply supplies the unchanged stored range and the discussion still
+anchors there, the reply does not persist a redundant re-anchor or change
+`placement` to `edited`. A range that differs from the stored reference still
+updates that reference, even when the old anchor projects onto those lines.
 
 ### Retry identity is explicit
 

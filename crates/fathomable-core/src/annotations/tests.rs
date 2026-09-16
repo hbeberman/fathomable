@@ -1160,6 +1160,34 @@ fn keyed_reply_replays_without_relocation_or_mutable_validation() -> Result<(), 
 }
 
 #[test]
+fn keyed_reply_at_the_current_range_preserves_the_anchor() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-current-range")?;
+    let mut store = Store::open(&file.0)?;
+    let range = LineRange::new(3, 4);
+    let id = store.annotate(
+        Draft::new(Author::User, Path::new("a.md"), range, "why"),
+        TEXT,
+        1,
+    )?;
+
+    store.reply_idempotent(
+        &id,
+        Reply::new(keyed_author("copilot:one"), 2, "answer"),
+        Some(range),
+        "reply-current",
+        |_| Ok(TEXT.to_owned()),
+    )?;
+
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing after reply"))?;
+    assert_eq!(thread.locate(TEXT), Placement::Anchored(range));
+    assert_eq!(thread.edited(), None);
+    assert_eq!(thread.replies().len(), 1);
+    Ok(())
+}
+
+#[test]
 fn keyed_replay_of_deleted_thread_is_explicitly_rejected() -> Result<(), StoreError> {
     let file = TempFile::new("idempotent-deleted")?;
     let author = keyed_author("copilot:one");

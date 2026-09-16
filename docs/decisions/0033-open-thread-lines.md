@@ -76,6 +76,8 @@ choices:
   file *as it is on disk*, not the viewer's document: the agent speaks
   of the text it just wrote, which the viewer may not have reloaded. A
   range the file does not have fails the whole call; no reply is added.
+  Its unchanged stored range records no relocation when the thread still
+  anchors there, preserving its current placement and edit timestamp.
   Both the viewer's `agent_reply` and the headless `--mcp` path call
   it before appending the reply.
 
@@ -85,8 +87,9 @@ choices:
   of re-anchoring, and absent when the lines are gone.
 - An agent that rewrites a block and replies with `line`/`end_line`
   leaves an *edited* thread on the new block instead of a *detached*
-  one on the old range. An agent that does not pass them gets 0019's
-  behaviour unchanged.
+  one on the old range. Repeating the current range leaves an anchored
+  thread anchored. An agent that does not pass them gets 0019's behaviour
+  unchanged.
 - One more theme key; a theme file that lacks it draws no extra tint.
   (Amended by [0036](0036-gutter-rows-and-focus-colour.md), 2026-08-28:
   the bundled value is a blue tint, not a stronger yellow, so the rows

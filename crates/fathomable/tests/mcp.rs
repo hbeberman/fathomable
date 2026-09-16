@@ -906,6 +906,20 @@ fn paging_progresses_across_equal_update_timestamps() -> Result<()> {
 }
 
 #[test]
+fn zero_limit_returns_no_threads() -> Result<()> {
+    let fixture = Fixture::new("mcp-zero-limit")?;
+    fixture.user_thread("not requested")?;
+    let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
+
+    let result = client.ok("threads", json!({"limit": 0}))?;
+
+    assert_eq!(result["structuredContent"]["threads"], json!([]));
+    assert_eq!(result["structuredContent"]["more"], 1);
+    assert!(result["structuredContent"]["next_after"].is_null());
+    Ok(())
+}
+
+#[test]
 fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Result<()> {
     let fixture = Fixture::new("mcp-read-placement")?;
     let original = "one\ntwo\nthree\n";
@@ -1050,6 +1064,14 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
         ]}),
     )?;
     assert_eq!(start["isError"], true);
+    assert_eq!(start["structuredContent"]["error_code"], "INVALID_BATCH");
+    assert_eq!(start["structuredContent"]["issues"][0]["item_index"], 1);
+    assert!(
+        start["content"][0]["text"]
+            .as_str()
+            .context("start batch error")?
+            .contains("comments[1]")
+    );
     assert_eq!(fixture.store()?.threads().len(), 1);
 
     let reply = client.call(
@@ -1060,6 +1082,14 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
         ]}),
     )?;
     assert_eq!(reply["isError"], true);
+    assert_eq!(reply["structuredContent"]["error_code"], "INVALID_BATCH");
+    assert_eq!(reply["structuredContent"]["issues"][0]["item_index"], 1);
+    assert!(
+        reply["content"][0]["text"]
+            .as_str()
+            .context("reply batch error")?
+            .contains("replies[1]")
+    );
     assert!(
         fixture
             .store()?
@@ -1437,6 +1467,39 @@ fn edited_content_can_remain_at_the_anchored_range() -> Result<()> {
     assert_eq!(shown["placement"], "edited");
     assert_eq!(shown["location"], "unchanged");
     assert_eq!(shown["anchor_range"], json!({"start": 2, "end": 2}));
+    Ok(())
+}
+
+#[test]
+fn replying_at_the_current_multiline_range_preserves_the_anchor() -> Result<()> {
+    let fixture = Fixture::new("mcp-current-reply-range")?;
+    let id = Store::open(fixture.threads_path()?)?.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(1, 2),
+            "these lines",
+        ),
+        "one\ntwo\n",
+        now(),
+    )?;
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+
+    let result = client.ok(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": id,
+            "body": "still on these lines",
+            "line": 1,
+            "end_line": 2
+        }]}),
+    )?;
+
+    let shown = &result["structuredContent"]["threads"][0];
+    assert_eq!(shown["placement"], "anchored");
+    assert_eq!(shown["range"], json!({"start": 1, "end": 2}));
+    assert_eq!(shown["anchor_range"], json!({"start": 1, "end": 2}));
+    assert!(shown["edited"].is_null());
     Ok(())
 }
 

@@ -731,27 +731,30 @@ impl Server {
         let mut seen_keys = HashSet::with_capacity(p.replies.len());
         let mut validated = Vec::with_capacity(p.replies.len());
         let mut problems = Vec::new();
-        for item in p.replies {
+        for (index, item) in p.replies.into_iter().enumerate() {
             if !seen.insert(item.thread.clone()) {
-                problems.push(format!(
-                    "{} appears more than once in `replies`",
-                    item.thread
+                problems.push(BatchIssue::new(
+                    index,
+                    format!("{} appears more than once in `replies`", item.thread),
                 ));
                 continue;
             }
             if let Some(key) = &item.idempotency_key
                 && !seen_keys.insert(key.clone())
             {
-                problems.push(format!(
-                    "{} appears more than once in `replies` by `idempotency_key` {key:?}",
-                    item.thread
+                problems.push(BatchIssue::new(
+                    index,
+                    format!(
+                        "{} appears more than once in `replies` by `idempotency_key` {key:?}",
+                        item.thread
+                    ),
                 ));
                 continue;
             }
             let id = match thread_id(&item.thread) {
                 Ok(id) => id,
                 Err(error) => {
-                    problems.push(format!("{}: {error}", item.thread));
+                    problems.push(BatchIssue::new(index, format!("{}: {error}", item.thread)));
                     continue;
                 }
             };
@@ -760,7 +763,7 @@ impl Server {
                 || structural_reply_without_thread(&item),
                 |thread| structural_reply(&item, thread),
             ) {
-                problems.push(error);
+                problems.push(BatchIssue::new(index, error));
                 continue;
             }
             let replay = if let (Some(key), Some(store)) =
@@ -776,7 +779,7 @@ impl Server {
                 ) {
                     Ok(replay) => replay.is_some(),
                     Err(error) => {
-                        problems.push(format!("{}: {error}", item.thread));
+                        problems.push(BatchIssue::new(index, format!("{}: {error}", item.thread)));
                         continue;
                     }
                 }
@@ -788,27 +791,28 @@ impl Server {
                     Some(thread) => trees.locate(&scope, &self.target.root, &roots, thread).root,
                     None => self.target.root.clone(),
                 };
-                validated.push(ValidatedReply { item, root });
+                validated.push(ValidatedReply { index, item, root });
             } else {
                 match validate_reply(&item, &all, &scope, &roots, &mut trees, &self.target.root) {
-                    Ok(root) => validated.push(ValidatedReply { item, root }),
-                    Err(error) => problems.push(error),
+                    Ok(root) => validated.push(ValidatedReply { index, item, root }),
+                    Err(error) => problems.push(BatchIssue::new(index, error)),
                 }
             }
         }
         if !problems.is_empty() {
-            return failure(problems.join("\n"));
+            return invalid_batch("replies", &problems);
         }
 
         let mut answered = Vec::with_capacity(validated.len());
         for item in validated {
+            let index = item.index;
             let root = item.root.clone();
             match self.reply_one(author.clone(), caller.clone(), item).await {
                 Ok(thread) => answered.push(Answered { thread, root }),
                 Err(error) => {
                     let mut lines =
                         answer_lines(&answered, &self.dirs, &self.target.key, &self.target.root);
-                    lines.push(error);
+                    lines.push(format!("replies[{index}]: {error}"));
                     return failure(lines.join("\n"));
                 }
             }
@@ -828,6 +832,7 @@ impl Server {
 }
 
 struct ValidatedReply {
+    index: usize,
     item: ReplyItem,
     root: PathBuf,
 }
@@ -924,7 +929,7 @@ fn select_filtered<'a>(
         })
         .collect();
     threads.sort_by(|left, right| (left.updated(), left.id()).cmp(&(right.updated(), right.id())));
-    let limit = params.limit.unwrap_or(DEFAULT_LIMIT).max(1);
+    let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     let more = threads.len().saturating_sub(limit);
     threads.truncate(limit);
     let next_after = if more > 0 {
@@ -1281,6 +1286,39 @@ pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
     CallToolResult::error(vec![ContentBlock::text(message.into())])
 }
 
+#[derive(Debug, Serialize)]
+/// One invalid item in a write batch, addressed by its zero-based index.
+pub(super) struct BatchIssue {
+    item_index: usize,
+    message: String,
+}
+
+impl BatchIssue {
+    /// Record why the item at `index` failed prevalidation.
+    pub(super) fn new(index: usize, message: impl Into<String>) -> Self {
+        Self {
+            item_index: index,
+            message: message.into(),
+        }
+    }
+}
+
+/// Return an indexed, machine-readable prevalidation failure.
+pub(super) fn invalid_batch(items: &str, issues: &[BatchIssue]) -> CallToolResult {
+    let message = issues
+        .iter()
+        .map(|issue| format!("{items}[{}]: {}", issue.item_index, issue.message))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut result = CallToolResult::structured_error(json!({
+        "error_code": "INVALID_BATCH",
+        "message": message,
+        "issues": issues,
+    }));
+    result.content = vec![ContentBlock::text(message)];
+    result
+}
+
 /// Instructions supplied to every MCP client.
 pub(super) fn instructions() -> String {
     "Fathomable holds review discussions attached to files in this repository. \
@@ -1431,6 +1469,21 @@ mod tests {
         )?;
         assert_eq!(filtered.threads[0].id(), &first);
         assert_eq!(filtered.more, 1);
+        let empty = select_filtered(
+            std::slice::from_ref(&dir.0),
+            all,
+            &ThreadsParams {
+                status: None,
+                path: None,
+                since: None,
+                after: None,
+                limit: Some(0),
+                ids: Vec::new(),
+            },
+        )?;
+        assert!(empty.threads.is_empty());
+        assert_eq!(empty.more, 2);
+        assert!(empty.next_after.is_none());
         Ok(())
     }
 

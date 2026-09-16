@@ -1409,18 +1409,27 @@ impl Store {
                 });
             }
             let text = load_text(thread.path())?;
-            let anchor = Anchor::capture(&text, range).ok_or(StoreError {
-                kind: ErrorKind::BadRange(range),
-            })?;
-            let context = Context::capture(&text, range).ok_or(StoreError {
-                kind: ErrorKind::BadRange(range),
-            })?;
-            Some(ReplyRelocation {
-                range,
-                anchor,
-                created: reply.created(),
-                context,
-            })
+            if thread.range() == Some(range)
+                && matches!(
+                    thread.locate(&text),
+                    Placement::Anchored(current) | Placement::Edited(current) if current == range
+                )
+            {
+                None
+            } else {
+                let anchor = Anchor::capture(&text, range).ok_or(StoreError {
+                    kind: ErrorKind::BadRange(range),
+                })?;
+                let context = Context::capture(&text, range).ok_or(StoreError {
+                    kind: ErrorKind::BadRange(range),
+                })?;
+                Some(ReplyRelocation {
+                    range,
+                    anchor,
+                    created: reply.created(),
+                    context,
+                })
+            }
         } else {
             None
         };

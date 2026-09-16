@@ -491,14 +491,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Links",
         "open linked file/URL",
     ),
-    bind(
-        W::View,
-        &[&[c('c')]],
-        A::Comment,
-        "Threads",
-        "thread here, or comment",
-    ),
-    bind(W::View, &[&[c('C')]], A::NewThread, "Threads", "new thread"),
+    bind(W::View, &[&[c('c')]], A::Comment, "Threads", "comment"),
     bind(
         W::View,
         &[&[c('z')]],

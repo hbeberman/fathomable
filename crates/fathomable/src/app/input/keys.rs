@@ -292,8 +292,7 @@ impl App {
             // `Esc` clears, then leaves the diff (ADR 0060).
             Action::Escape => self.escape_view(),
             Action::GotoFile => return self.goto_file(),
-            // `c` opens the thread on the cursor row, else annotates the
-            // selection or the cursor line; `C` always annotates (ADR 0027).
+            // `c` comments; `z` owns thread expansion and folding (ADR 0065).
             Action::Comment => self.start_comment(),
             // `z` folds or expands the thread here, `Z` the whole file
             // (ADR 0065).

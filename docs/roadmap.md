@@ -76,8 +76,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     shows a file-info pane with its format, sizes, and git state, and
     the sidebar tags it `bin`
     ([0026](decisions/0026-binary-files-and-file-info.md)).
-18. **Revisiting threads.** `c` on a thread opens it and `C` always
-    starts one; the thread pane's `h`/`l` page threads, `j`/`k` select
+18. **Revisiting threads.** `c` starts a thread and `z` opens one; the
+    thread pane's `h`/`l` page threads, `j`/`k` select
     messages, `Tab` switches independently remembered local/global
     selections, and `e` edits a user message; the gutter brackets a
     thread's rows with `╭ │ ╰` and dots a one-row thread; and a
@@ -186,7 +186,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     module they changed through `related_resources`, which need no
     backlink ([0048](decisions/0048-modules-by-concept.md)).
 40. **Inline threads, the rail, checkpoints, and the jumplist.** A
-    thread shows under its lines as a two-row stub that `c` expands in
+    thread shows under its lines as a two-row stub that `z` expands in
     place and the bottom thread pane goes; the left column is the rail,
     a tree pane above a threads pane at a fixed split; `Space A` is the
     review list, newest agent reply first with resolved hidden;
@@ -292,14 +292,14 @@ Milestones are ordered; each is usable on its own. Details live in the
 55. **Hints you can press.** A key hint is drawn only where pressing
     the key now runs the action it names: the thread header's keys on
     the thread cursor's thread while the text has focus, `e edit` on
-    the user's own message, the diff header's keys and `(c expand)` on
+    the user's own message, the diff header's keys and `(z expand)` on
     the text alone; a header row inside a thread block paints its
     gutter cells too ([0064](decisions/0064-hints-you-can-press.md)).
 56. **z folds and unfolds.** In the text `z` folds the expanded thread
     the cursor is on or expands the thread cursor's stub, and does
     nothing else; `Z` expands every thread in the file or folds them
-    all when any is expanded; `c` keeps its cycle and its comment, and
-    the fold hints name `z`
+    all when any is expanded; `c` starts a comment without changing
+    thread expansion, and the fold hints name `z`
     ([0065](decisions/0065-z-folds-and-unfolds.md)).
 57. **One circle language.** Every surface draws one circle in the
     state colour (`●` open or waiting, `◐` proposed, `○` resolved, `?`

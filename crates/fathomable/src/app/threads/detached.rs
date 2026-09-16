@@ -2,7 +2,7 @@
 //! Detached threads on rows of their own (ADR 0039). A thread whose
 //! lines are gone is not drawn on the lines that now sit at its last
 //! known range; the view inserts a blank row where those lines were,
-//! and the thread's mark, `c`, and the thread motions find it there.
+//! and the thread's mark, `z`, and the thread motions find it there.
 
 use crate::app::App;
 use crate::app::threads::{Mark, ThreadState};
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn c_on_the_row_opens_the_thread_and_capital_c_is_refused() -> anyhow::Result<()> {
+    fn comments_are_refused_on_a_detached_row() -> anyhow::Result<()> {
         let dir = testing::workspace("detached-keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
@@ -158,7 +158,8 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.message(), Some("no lines here to annotate"));
         app.start_comment();
-        assert!(app.is_expanded(&id), "`c` on the row expands the thread");
+        assert!(!app.is_expanded(&id), "`c` does not expand the thread");
+        assert_eq!(app.message(), Some("no lines here to annotate"));
         assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
         Ok(())
     }

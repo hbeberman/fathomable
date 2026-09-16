@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use crate::app::Focus;
 use fathomable_testing::TempDir;
 
-use crate::app::testing::{self, app};
+use crate::app::testing::{self, app, press};
 
 use fathomable_core::editor::{Cursor, Edit, Motion};
 
@@ -37,7 +37,7 @@ fn type_in(app: &mut App, text: &str) {
 fn annotate(app: &mut App, comment: &str) -> anyhow::Result<()> {
     app.view_mut().move_down(2);
     app.view_mut().select_lines();
-    app.start_comment();
+    press(app, "c");
     type_in(app, comment);
     app.compose_submit();
     anyhow::ensure!(app.thread_counts().1 == 1, "thread not created");
@@ -893,11 +893,10 @@ fn annotation_jumps_wrap_and_picker_lists_threads() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// ADR 0027: `c` on an annotated row opens the thread, `C` starts a
-/// second one there, and `n`/`p` in the pane walk the file's threads
-/// in line order with the cursor following.
+/// `c` starts another thread on an annotated row without changing the
+/// existing thread's fold, and thread motions walk the file in line order.
 #[test]
-fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
+fn c_starts_another_thread_and_n_walks_the_file() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-walk", testing::README)?;
     let mut app = app(&dir)?;
     app.view_mut().goto_bottom();
@@ -911,19 +910,10 @@ fn c_opens_the_thread_and_n_walks_the_file() -> anyhow::Result<()> {
     app.compose_submit();
     assert!(!app.shows_thread());
 
-    // `c` again on the row expands the thread in place rather than
-    // opening a box (ADR 0049); `c` once more folds it.
-    app.start_comment();
-    assert!(app.popup().is_none());
-    assert_eq!(app.focus(), Focus::View);
+    // `c` again starts another comment and leaves the existing thread folded.
     let top = app.thread_cursor().thread().cloned();
-    assert!(top.as_ref().is_some_and(|id| app.is_expanded(id)));
-    assert_eq!(app.thread_position(), Some((1, 2)));
-    app.start_comment();
+    press(&mut app, "c");
     assert!(top.as_ref().is_some_and(|id| !app.is_expanded(id)));
-
-    // `C` starts a second thread on the same line.
-    app.start_new_comment();
     assert!(
         matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::New(_)))
     );

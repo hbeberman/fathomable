@@ -408,11 +408,7 @@ impl App {
         if self.reference_here() {
             menu.push(Action::GotoFile, Action::GotoFile, "open linked file/URL");
         }
-        if threads.is_empty() {
-            menu.push(Action::Comment, Action::Comment, "comment on line");
-        } else {
-            menu.push(Action::NewThread, Action::NewThread, "new thread on line");
-        }
+        menu.push(Action::Comment, Action::Comment, "comment on line");
         menu.push(Action::ExtendLine, Action::ExtendLine, "select line");
         menu.push(Action::Yank, Action::Yank, "copy line");
         menu

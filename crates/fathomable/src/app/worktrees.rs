@@ -237,7 +237,6 @@ impl App {
         self.recent.clear();
         self.jumplist = crate::app::jumplist::Jumplist::default();
         self.search_origin = None;
-        self.cycle = None;
         self.thread_cursor_anchor = None;
         self.queue = fathomable_core::follow::Queue::default();
         self.tree = None;

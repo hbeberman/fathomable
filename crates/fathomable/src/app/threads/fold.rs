@@ -5,9 +5,8 @@
 //! thread's rows it folds the thread back to its stub, and on a row a
 //! thread covers it expands the thread cursor's thread in place. `Z`
 //! does it to the whole file: every stub expands, or, when any thread
-//! is expanded, every one folds. `c` keeps its ADR 0049 meaning, which
-//! opens a thread too but walks on to the next covering thread and
-//! starts a comment where there is none.
+//! is expanded, every one folds. `c` starts a comment and never changes
+//! thread expansion.
 
 use fathomable_core::annotations::ThreadId;
 

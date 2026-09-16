@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: z folds and unfolds
-description: In the text `z` is the key that only opens and closes a thread, folding the expanded thread the cursor is on or expanding the thread cursor's stub, and `Z` expands every thread in the file or folds them all when any is expanded; `c` keeps its cycle and its comment, and the fold hints name `z`.
+description: In the text `z` opens and closes the thread at the cursor, `Z` expands or folds every thread in the file, and `c` starts a comment without changing thread expansion.
 resource: crates/fathomable/src/app/threads/fold.rs
 related_resources:
   - crates/fathomable/src/app/threads/stubs.rs
@@ -19,7 +19,9 @@ Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0066](0066-one-circle-language.md): in the review list and the threads pane
 `z` folds the cursor's file and `Z` every file. Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the hints `z expand` and `z fold`
-are on the text's key bar, not the stub or the header.
+are on the text's key bar, not the stub or the header. Amended
+2026-09-16: `c` always starts a comment and no longer expands, folds,
+or cycles threads; the standalone `C` alias is unbound.
 
 ## Context
 
@@ -55,9 +57,10 @@ thread here, and every thread in the file.
   [0076](0076-threads-fold-in-the-list.md).)
 - **`Z` opens and closes the file.** It expands every stub in the file,
   or, when any thread is expanded, folds every one.
-- **`c` is unchanged.** It still expands, cycles through the covering
-  threads, and comments where there is none (0049, 0063), so a reader
-  who learned it loses nothing.
+- **`c` only comments.** It starts a new thread on the selection or
+  cursor line whether or not another thread covers it. It never changes
+  thread expansion; the standalone `C` alias is unbound. `Space c c`
+  remains the pane-independent new-thread command.
 - **The hints name `z`.** A stub's last row ends with `(z expand)`, the
   thread header reads `r reply · e edit · o resolve · z fold`, and the
   right-click menu's `expand thread` / `fold thread` entry shows `z`.
@@ -70,6 +73,6 @@ thread here, and every thread in the file.
 - `Action::Fold` is bound on the text as well as the review list, and
   `Action::FoldAll` is new; `App::act` gives each surface its meaning.
 - `toggle_thread_here` and `toggle_expand_all` live in
-  `app/threads/fold.rs`, the latter no longer a test-only helper.
-- `docs/guide.md` gains the `z`, `Z` row and says which key walks on
-  and which only closes.
+  `app/threads/fold.rs`, the latter no longer a test-only helper. The
+  old `c` cycle and its session state are removed.
+- `docs/guide.md` names `c` as comment and `z` as fold or unfold.

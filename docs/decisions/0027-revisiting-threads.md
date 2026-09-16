@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Revisiting threads
-description: c on a thread opens it and C always starts one; the thread pane walks every thread in the file; the gutter brackets a thread's range with rounded corners; and a file-threads pane under the tree lists the file's threads, open and resolved, in step with the cursor.
+description: c starts a thread and z opens or folds one; the threads pane walks the file's threads, and the gutter brackets each thread's range.
 resource: crates/fathomable/src/app/threads/pane.rs
 tags:
   - decision
@@ -23,7 +23,9 @@ split, with a file or workspace scope and a resolved toggle. Amended 2026-09-05 
 [0066](0066-one-circle-language.md): the
 pane lists two rows per thread grouped by file, the one-row gutter
 glyph is the thread's circle (`•` retires), and the pane's header and
-keys are as that record says.
+keys are as that record says. Amended 2026-09-16 by
+[0065](0065-z-folds-and-unfolds.md): `c` always starts a comment, `z`
+owns expansion and folding, and standalone `C` is unbound.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -51,7 +53,7 @@ question round on 2026-08-28; the choices are recorded below.
 
 ## Decision
 
-### `c` opens, `C` starts
+### `c` opens, `C` starts (superseded by 0065)
 
 - `c` with no selection on a row that carries a thread opens the
   thread pane on it, as `Space a` does. `c` with a selection, or on a
@@ -60,6 +62,9 @@ question round on 2026-08-28; the choices are recorded below.
   so a second thread on annotated lines is one deliberate key away.
   Going straight into a reply from `c` was rejected: the thread may be
   off screen, and it should be read before it is answered.
+
+This historical split was replaced on 2026-09-16: `c` always starts a
+comment, `z` expands or folds, and standalone `C` is unbound.
 
 ### The thread pane walks the file
 

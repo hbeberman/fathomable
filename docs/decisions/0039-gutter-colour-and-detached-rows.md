@@ -13,7 +13,9 @@ tags:
 
 Status: accepted (2026-08-28). Amended 2026-09-05 by
 [0066](0066-one-circle-language.md): a detached row draws `?` and a one-row
-thread its circle; `•` retires.
+thread its circle; `•` retires. Amended 2026-09-16 by
+[0065](0065-z-folds-and-unfolds.md): `z` opens a detached thread and
+`c` is refused because its row is not source text.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -60,7 +62,7 @@ Settled in a discussion on 2026-08-28:
   detached needs no colour or glyph of its own; the real lines that
   now sit at the old range are no longer tinted or bracketed for a
   thread that is not about them. The row is not a place to start a
-  thread: `C` on it is refused, `c` opens the detached thread.
+  thread: `c` on it is refused, while `z` opens the detached thread.
 - *Blank rows in a range.* The bracket bridges them: a sourceless row
   between two rows of the same thread draws `│` and the annotation
   tint, and the corners are decided by the nearest sourced rows.

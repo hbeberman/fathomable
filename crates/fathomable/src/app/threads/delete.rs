@@ -76,7 +76,6 @@ impl App {
         // An expanded thread that is gone leaves its rows with it, and a
         // cursor pinned on it rides the text again (ADR 0046).
         self.expanded.remove(id);
-        self.cycle = None;
         if self.thread_cursor.thread() == Some(id) {
             self.thread_cursor = crate::app::threads::cursor::ThreadCursor::default();
             self.thread_cursor_anchor = None;

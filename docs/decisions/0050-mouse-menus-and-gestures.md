@@ -39,6 +39,9 @@ Amended 2026-09-14 by [0079](0079-list-focus-language.md): help and menu
 hover uses `ui.list.hover`, never a keyboard-selection bar; overlays and
 pending prefixes deactivate underlying list highlights. The old
 `ui.picker.selected` drawing rule below is superseded.
+Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` starts a
+comment even when a thread covers the line, and `z` owns expansion and
+folding.
 
 Amended 2026-09-14: [0052](0052-goto-file.md) replaces the separate
 `gy`/`gx` and copy/open-link entries below with one `gf` action,
@@ -92,14 +95,13 @@ same day; the choices are below.
   target of its own.
 - **The entries**, in the text, in this order and only those that apply:
   - over a selection: `comment on selection` (`c`), `new thread on
-    selection` (`C`), `copy selection` (`y`), `clear selection` (`Esc`);
+    selection` (`Space c c`), `copy selection` (`y`), `clear selection` (`Esc`);
   - on a stub or an expanded thread's rows: `expand thread` / `fold
-    thread` (`c`), `reply` (`r`), `resolve` / `reopen` (`o`), `edit
+    thread` (`z`), `reply` (`r`), `resolve` / `reopen` (`o`), `edit
     message` (`e`, when the message under the cursor or the user's
     newest is theirs), `delete thread` (`dd`);
   - on a rendered link: `copy link` (`gy`), `open link` (`gx`);
-  - on any line without a selection: `comment on line` (`c`, or `C`
-    when a thread already covers the line so `c` would expand it),
+  - on any line without a selection: `comment on line` (`c`),
     `select line` (`x`), `copy line` (`y`). `y` with nothing selected
     now copies the cursor line, so the entry has a key; it copied
     nothing before.
@@ -173,7 +175,7 @@ same day; the choices are below.
   event never reaches the viewer; the gesture is there for terminals
   that pass it on.
 - Every gesture ends in `SEL` mode like a drag does
-  ([0013](0013-annotation-storage-and-ux.md)), so `y`, `c`, `C`, and the
+  ([0013](0013-annotation-storage-and-ux.md)), so `y`, `c`, and the
   context menu apply.
 
 ### Chrome takes clicks

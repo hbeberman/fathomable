@@ -22,7 +22,9 @@ or Git layer (`DIFF net`, `DIFF staged`, `DIFF unstaged`, `DIFF seen`,
 Amended 2026-09-15 by [0081](0081-the-menu-bar.md): while the menu bar is
 shown, branch/worktree, path, changed marker, and major view identity move
 to its right edge; hiding the bar returns path and view badges to the
-status line.
+status line. Amended 2026-09-16 by
+[0065](0065-z-folds-and-unfolds.md): `c` always starts a comment and
+`z` owns inline thread expansion and folding.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -203,7 +205,7 @@ viewer, the layout engine, and later themes agree.
   ([0046](0046-one-thread-cursor.md)).
 - Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the thread pane
   and the file-threads pane are gone. A thread shows as a stub under its
-  lines and `c` expands it in place; the left column is the **rail**
+  lines and `z` expands it in place; the left column is the **rail**
   with a tree pane and a threads pane, shown and hidden by
   `Space e`/`E` and `Space t`/`T`. The pills are `TREE`, `THREADS`,
   `REVIEW`, and `CHECK`; Esc in a rail pane returns to the text and

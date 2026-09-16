@@ -18,7 +18,6 @@ use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 
 use crate::app::draw::message::MESSAGE_INDENT;
-use crate::app::threads::Mark;
 use crate::app::{App, Popup};
 
 #[cfg(test)]
@@ -104,54 +103,9 @@ pub(crate) enum DraftRow {
 }
 
 impl App {
-    /// `c`: open the thread on the cursor row when there is one and
-    /// nothing is selected (ADR 0027); otherwise a draft on the
-    /// selection, or the cursor line.
+    /// `c`: start a comment on the selection or cursor line.
     pub(crate) fn start_comment(&mut self) {
-        if self.view().selected_lines().is_some() {
-            self.start_new_comment();
-            return;
-        }
-        let row = self.view().cursor().row;
-        // On an expanded thread's rows, `c` folds it and moves the cycle
-        // on through the threads covering its last line (ADR 0049).
-        if let Some((stub, _, _)) = self.stub_on_row(row)
-            && let Some(id) = stub.thread()
-        {
-            let range = self
-                .marks()
-                .iter()
-                .find(|mark| mark.id() == id)
-                .and_then(Mark::range);
-            // A thread on the file as a whole covers no line to cycle
-            // through: `c` folds it (ADR 0063).
-            let Some(range) = range else {
-                let id = id.clone();
-                self.fold_thread(&id);
-                return;
-            };
-            let covering = self.threads_on_line(range.end());
-            self.cycle_expanded(covering);
-            return;
-        }
-        let covering = self.threads_at_cursor();
-        if covering.is_empty() {
-            self.start_new_comment();
-            return;
-        }
-        self.cycle_expanded(covering);
-    }
-
-    /// The placed threads covering source line `line`, in line order.
-    fn threads_on_line(&self, line: usize) -> Vec<ThreadId> {
-        let lines = LineRange::new(line, line);
-        self.file_threads()
-            .into_iter()
-            .filter(|id| {
-                self.placed_marks()
-                    .any(|mark| mark.id() == id && mark.covers(lines))
-            })
-            .collect()
+        self.start_new_comment();
     }
 
     /// Whether the open file can take a comment: there is one, it is
@@ -180,8 +134,7 @@ impl App {
         true
     }
 
-    /// `C`: a draft on the selection, or the cursor line, whether or not
-    /// a thread is already there.
+    /// Start a draft on the selection or cursor line.
     pub(crate) fn start_new_comment(&mut self) {
         if !self.can_annotate() {
             return;

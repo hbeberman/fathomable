@@ -16,7 +16,7 @@ tags:
 
 Status: accepted (2026-08-26)
 
-Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `C`, and `y` as a menu.
+Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `Space c c`, and `y` as a menu. Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` always starts a thread, `z` expands or folds one, and standalone `C` is unbound.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -90,9 +90,9 @@ were captured in a question round on 2026-08-26.
   selections are therefore indistinguishable once made.
 - `c` on a selection annotates the source lines it touches; a wrapped
   paragraph that renders as one row annotates all of its source lines.
-  With no selection, `c` on a row that already carries a thread opens
-  it instead, and `C` always starts a new thread
-  ([0027](0027-revisiting-threads.md), 2026-08-28).
+  With no selection, `c` starts a new thread on the cursor line even
+  when another thread covers it; `z` expands or folds the thread there
+  ([0065](0065-z-folds-and-unfolds.md), amended 2026-09-16).
 
 ### Comment box
 

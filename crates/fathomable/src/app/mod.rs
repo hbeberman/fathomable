@@ -277,9 +277,6 @@ pub(crate) struct App {
     stubs: threads::stubs::StubState,
     /// The threads expanded in place this session (ADR 0049).
     expanded: HashSet<ThreadId>,
-    /// A `c` cycle in progress: the thread it started on and the threads
-    /// it walks (ADR 0049).
-    cycle: Option<(ThreadId, Vec<ThreadId>)>,
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     tree_scroll: usize,
@@ -411,7 +408,6 @@ impl App {
             sidebar: sidebar::Sidebar::new(sidebar),
             stubs: threads::stubs::StubState::from_config(&threads),
             expanded: HashSet::new(),
-            cycle: None,
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
             sidebar_cols: None,

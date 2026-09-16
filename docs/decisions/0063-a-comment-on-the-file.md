@@ -19,7 +19,9 @@ tags:
 
 # 0063 A comment on the file
 
-Status: accepted (2026-09-05)
+Status: accepted (2026-09-05). Amended 2026-09-16 by
+[0065](0065-z-folds-and-unfolds.md): the standalone `C` key considered
+below is now unbound; `Space c f` is unchanged.
 
 Context backfill amended 2026-09-15 by
 [0083](0083-single-user-alpha-clean-slate.md): file-wide comments remain

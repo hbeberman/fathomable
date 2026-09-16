@@ -131,7 +131,7 @@ and in the text alike.
   stub is the state a click already gave ([0073](0073-the-chevron.md),
   amended 2026-09-09): the terminal cursor hides, the stub's `▎` bar
   marks the place, the thread cursor is the stub's thread at its
-  newest message, and `z` or `c` expands it. A relayout keeps a cursor
+  newest message, and `z` expands it. A relayout keeps a cursor
   on a stub on that stub. The expanded thread's header row stays no
   stop: `j` steps from the line above to the first message.
 

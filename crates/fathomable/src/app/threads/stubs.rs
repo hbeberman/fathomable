@@ -1,8 +1,8 @@
 // @okf-doc: /decisions/0049-inline-threads-and-the-rail.md
 //! Inline stubs (ADR 0049): a thread shows under the last row of its
-//! lines as one row, the first line of its newest message, and `c` or
-//! `z` expands it in place into the whole thread (`z`
-//! folds it again, ADR 0065), so a file reads with its conversation
+//! lines as one row, the first line of its newest message, and `z`
+//! expands it in place into the whole thread and folds it again
+//! (ADR 0065), so a file reads with its conversation
 //! where the lines are.
 //!
 //! Stubs are not lines. The view inserts their rows after the row they
@@ -363,41 +363,7 @@ impl App {
         self.set_thread_cursor_message(id, message);
     }
 
-    /// `c` on a row threads cover: expand the thread cursor's thread; on
-    /// an expanded thread, fold it and expand the next thread covering
-    /// the same lines, in line order and wrapping, until the cycle comes
-    /// back to where it started, when nothing is expanded.
-    pub(crate) fn cycle_expanded(&mut self, covering: Vec<ThreadId>) {
-        let Some(current) = self.thread_cursor().thread().cloned() else {
-            return;
-        };
-        if !self.is_expanded(&current) {
-            self.cycle = Some((current.clone(), covering));
-            self.expand_thread(current);
-            return;
-        }
-        self.fold_thread(&current);
-        // The ring the cycle started with, unless it no longer holds the
-        // thread; then the threads covering its lines now.
-        let (start, ring) = self
-            .cycle
-            .take()
-            .filter(|(_, ring)| ring.contains(&current))
-            .unwrap_or((current.clone(), covering));
-        let next = ring
-            .iter()
-            .position(|id| *id == current)
-            .map(|at| ring[(at + 1) % ring.len()].clone());
-        match next {
-            Some(next) if next != start && next != current => {
-                self.cycle = Some((start, ring));
-                self.expand_thread(next);
-            }
-            _ => self.set_thread_cursor(current),
-        }
-    }
-
-    /// Expand the thread cursor's thread, as `c` does on a fresh row.
+    /// Expand the thread cursor's thread.
     #[cfg(test)]
     pub(crate) fn expand_at_cursor(&mut self) {
         if let Some(id) = self.thread_cursor().thread().cloned() {
@@ -659,10 +625,9 @@ mod tests {
         Ok(())
     }
 
-    /// `c` expands the thread under the cursor in place without moving
+    /// `z` expands the thread under the cursor in place without moving
     /// the view; `j`/`k` walk its messages and `r` replies with the
-    /// cursor landing on the reply; `c` folds; `c` cycles through the
-    /// threads covering a row and ends with none expanded.
+    /// cursor landing on the reply; `z` folds it again.
     /// Opening a thread from its chevron and closing it again leaves the
     /// view where it was: the row the stub hangs under keeps its place on
     /// screen, even though the cursor sat on a message row that went.
@@ -693,8 +658,8 @@ mod tests {
             assert_eq!(app.view().scroll(), scroll, "the view stays still");
             assert_eq!(app.view().cursor_source_line(), Some(40));
         }
-        // `c` then `j` onto a message, and `z` to fold, the same.
-        press(&mut app, "c");
+        // `z` then `j` onto a message, and `z` to fold, the same.
+        press(&mut app, "z");
         press(&mut app, "j");
         press(&mut app, "z");
         assert!(!app.is_expanded(&id));
@@ -703,15 +668,15 @@ mod tests {
     }
 
     #[test]
-    fn c_expands_in_place_walks_messages_and_cycles() -> anyhow::Result<()> {
+    fn z_expands_in_place_and_walks_messages() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-expand", testing::README)?;
         let mut app = source_app(&dir)?;
         let (outer, inner) = stacked_threads(&mut app, "first reply\nwith a second line");
 
-        // On L5 the thread cursor is the inner thread; `c` expands it.
+        // On L5 the thread cursor is the inner thread; `z` expands it.
         app.view_mut().goto_source_line(5);
         let scroll = app.view().scroll();
-        press(&mut app, "c");
+        press(&mut app, "z");
         assert!(app.is_expanded(&inner));
         assert!(!app.is_expanded(&outer));
         assert_eq!(app.view().scroll(), scroll, "the view stays still");
@@ -782,15 +747,10 @@ mod tests {
         ));
         app.compose_cancel();
 
-        // `c` on an expanded row folds it and expands the next covering
-        // thread; the outer thread covers L5 too, so it comes next, and
-        // after it `c` leaves nothing expanded.
-        press(&mut app, "c");
+        // `z` on an expanded row folds it without opening another thread.
+        press(&mut app, "z");
         assert!(!app.is_expanded(&inner));
-        assert!(app.is_expanded(&outer));
-        press(&mut app, "c");
         assert!(!app.is_expanded(&outer));
-        assert!(!app.is_expanded(&inner), "the cycle ends with none");
         assert_eq!(app.view().cursor_source_line(), Some(5));
 
         // Expanding every stub, then folding them all.

@@ -122,7 +122,7 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
     assert_eq!(app.view().mode(), Mode::Select, "the selection stays");
     assert_eq!(app.menu().map(Menu::title), Some("selection"));
     let keys: Vec<String> = entries(&app)?.into_iter().map(|(k, _)| k).collect();
-    assert_eq!(keys, ["c", "C", "y", "Esc"]);
+    assert_eq!(keys, ["c", "Space c c", "y", "Esc"]);
 
     // Hover is read from the pointer; a click on an entry runs it.
     let (x, y) = entry_cell(&app, "copy selection")?;
@@ -218,7 +218,7 @@ fn the_thread_menu_replies_and_deletes_at_once() -> anyhow::Result<()> {
             "resolve thread",
             "edit message",
             "delete thread",
-            "new thread on line",
+            "comment on line",
             "select line",
             "copy line",
         ]
@@ -573,7 +573,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     // The text's key bar (ADR 0067): the expanded thread's `reply` hint.
     let row = row_of(&app, "alpha beta")?;
     app.view_mut().goto_row(row);
-    handle_key(&mut app, key('c'));
+    handle_key(&mut app, key('z'));
     let width = app.column_width();
     let sidebar = app.sidebar_width();
     let bar_row = app.text_bar_row();

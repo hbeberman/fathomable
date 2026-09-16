@@ -59,7 +59,7 @@ mod tests {
     /// `Space c f` writes a comment on the file in a block above the
     /// first line; the thread has no lines, stands above L1 as a stub,
     /// says `file` where another says `detached`, comes first in every
-    /// order, and folds on `c`.
+    /// order, and folds on `z`.
     #[test]
     fn space_c_f_comments_on_the_file_as_a_whole() -> anyhow::Result<()> {
         let dir = testing::workspace("file-comment", testing::README)?;
@@ -121,7 +121,8 @@ mod tests {
         assert_eq!(app.mark_in(LineRange::new(1, 1)), None);
 
         // Expanded with the cursor on its comment, its header says `file`
-        // and the state; `c` on its rows folds it.
+        // and the state; `c` cannot annotate a row above the file, while
+        // `z` folds it.
         app.goto_message(file_thread.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&file_thread));
         let shown = screen(&app)?;
@@ -131,6 +132,9 @@ mod tests {
             &shown[..4]
         );
         press(&mut app, "c");
+        assert!(app.is_expanded(&file_thread));
+        assert_eq!(app.message(), Some("no lines here to annotate"));
+        press(&mut app, "z");
         assert!(!app.is_expanded(&file_thread));
 
         // The lists name it by the path alone and put it first.

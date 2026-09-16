@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Inline threads, the rail, checkpoints, and the jumplist
-description: Threads show under their lines as two-row stubs that c expands in place and the bottom thread pane goes; the left column is the rail, holding the tree pane and the threads pane as peers at a fixed split; Space A is the review list sorted by newest agent reply with resolved hidden; checkpoints of a file or the workspace sit on a per-file timeline beside git diff; Alt-Left and Alt-Right walk a jumplist of positions; and the leader gains c, v, and r submenus with a breadcrumb in the menu.
+description: Threads show under their lines as stubs that z expands in place; the rail holds file and thread panes; the review list sorts by newest agent reply; checkpoints sit beside git diff; and Alt-Left and Alt-Right walk a jumplist.
 resource: crates/fathomable/src/app/threads/stubs.rs
 related_resources:
   - crates/fathomable-core/src/layout/mod.rs
@@ -40,6 +40,9 @@ that record says (`s` is gone from both); amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the expanded thread's header carries
 no keys and the stub no `(c expand)`; the text's keys are on a bar
 along the column's bottom row, and the thread cursor's stub reads bold;
+amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` starts a
+comment without changing thread expansion, `z` alone expands or folds,
+and the standalone `C` alias is unbound;
 amended 2026-09-04 as the work landed:
 
 - `dd` on an expanded thread's rows deletes the **thread**, not the
@@ -153,7 +156,8 @@ result.
   one thread after another in line order (start line, then end line,
   then id): every row of thread A, then every row of thread B. Never
   merged, never interleaved by time.
-- **Expansion.** `c` in the text with no selection, on a row a thread
+- **Expansion (the `c` behavior below was superseded by 0065).** `c`
+  in the text with no selection, on a row a thread
   covers, expands the thread cursor's stub in place: a header row
   (`● waiting  watched by demo (coder)` with `r reply  e edit  o resolve
   c fold` at the right edge), then every message as the pane drew them
@@ -168,13 +172,14 @@ result.
   (until 2026-09-11: a collapsed stub is a stop too,
   [0076](0076-threads-fold-in-the-list.md)). `Esc`
   on an expanded row folds nothing; it clears as today.
-- **`c` cycles from the thread cursor.** When several threads cover the
-  cursor row, the first `c` expands the thread cursor's thread, the one
+- **`c` cycles from the thread cursor (superseded by 0065).** When
+  several threads cover the cursor row, the first `c` expands the
+  thread cursor's thread, the one
   the hint marks; each further `c` folds it and expands the next
   covering thread in line order, wrapping through the ones before it;
-  after the last, `c` folds it and expands nothing. So the hint and the
-  key always agree. `c` on a row with no thread comments on the line as
-  today; `C` always starts a new thread.
+  after the last, `c` folds it and expands nothing. This historical
+  behavior was replaced on 2026-09-16: `c` now always starts a comment,
+  `z` owns expansion and folding, and standalone `C` is unbound.
 - **Toggles**, all under `Space c`, from any pane:
   - `Space c c` toggles stub visibility for the session (toast `stubs
     hidden` / `stubs shown`). Hidden stubs leave the gutter marks, the
@@ -190,7 +195,7 @@ result.
   - Amended 2026-09-04: **`Space c c` and `Space c z` are unbound.**
     Neither was reached for; `threads { stubs }` still sets whether
     stubs are drawn, and `c` and a click expand one at a time.
-  - `Space c n` starts a new thread on the cursor line (as `C`);
+  - `Space c n` starts a new thread on the cursor line;
     `Space c r` / `o` / `e` / `d` reply to, resolve or reopen, edit the
     newest own message of, and delete the thread cursor's thread, so a
     reply never needs an expanded stub.

@@ -72,7 +72,7 @@ or redraws. An ignored file you explicitly open is watched narrowly and
 still reloads, including while another file is in front. If the file you are reading is deleted,
 the text stays put under a `deleted` banner: you can still scroll,
 search, and read its threads, but `c`,
-`C`, and replies are refused until the file comes back, at which point it
+`Space c c`, and replies are refused until the file comes back, at which point it
 reloads and the banner goes. If it is renamed, the view follows with
 your position and threads intact, the threads move to the new path in the
 store, and the status line says `renamed to NEW`.
@@ -173,9 +173,8 @@ Text:
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
 | `gf`, Ctrl-click | open linked file/URL: local files open in the viewer at their line, URLs through `xdg-open`; accepts Markdown links and bare references, including `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns from a file hop |
-| `c` with nothing selected | expand the thread at the cursor in place, or comment on the line when there is none; on an expanded thread, fold it and expand the next thread covering the lines, until none is |
+| `c` with nothing selected | start a new comment on the cursor line, whether or not another thread covers it |
 | `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
-| `C` | always start a new thread, on the selection or the cursor line |
 | `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
@@ -378,7 +377,7 @@ press or drag in the gutter selects whole lines; a double-click selects
 the word and a triple-click the line; Shift-click extends the
 selection to the pointer where the terminal passes Shift through (most
 keep it for their own selection). Every gesture ends in `SEL` mode, so
-`y`, `c`, `C`, and the right-click menu apply. A Ctrl-click places the
+`y`, `c`, and the right-click menu apply. A Ctrl-click places the
 cursor and runs `gf` there. The right button and the Ctrl modifier reach
 the viewer only where the terminal forwards them under mouse capture
 (Ghostty, kitty, foot, WezTerm, and Alacritty do).
@@ -397,7 +396,7 @@ them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
 as *detached* when the lines are gone: a blank row then appears where
 the lines were, carrying the thread's mark, and the lines now at that
-place are left alone. `c` on that row opens the thread; `C` is refused,
+place are left alone. `z` on that row opens the thread; `c` is refused,
 as the row is not text. The colour of a mark is the thread's status
 alone, and it is the colour of whoever has the last word: your blue
 while open (`thread.open`, the hue of `thread.user`), an agent's bold
@@ -494,7 +493,7 @@ only while that commit is `HEAD`: the next commit or checkout takes it
 out of the file and the tools, and checking that commit out again brings
 it back ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
 
-`c` or `z` on a line a thread covers **expands** its stub in place, the
+`z` on a line a thread covers **expands** its stub in place, the
 view staying still: a header row with a `▾`, the state and placement,
 then every message rendered as Markdown. The text's keys sit
 on a **key bar** that replaces the bottom text row while it has
@@ -508,11 +507,9 @@ while another pane has the keys it reads `click or Space w l to
 focus`. A hint on the screen always does what it says. Its message rows are
 cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
-`o` resolves or reopens, `dd` deletes the thread, and `z` or `c` on any
-of its rows folds it. `z` only opens and closes; `c` walks on: when
-several threads cover the line, `c` again folds the expanded one and
-expands the next in line order, wrapping, and after the last leaves none
-expanded. `Z` expands every thread in the file, or folds them all when
+`o` resolves or reopens, `dd` deletes the thread, and `z` on any
+of its rows folds it. `c` starts a new comment on the source line
+whether or not it already has a thread. `Z` expands every thread in the file, or folds them all when
 any is expanded. A click on a stub's `▸` or a double-click on the stub expands
 it; a click on the header's `▾` or a double-click on the header folds
 it. Folding from the thread's rows leaves the cursor on the stub, its
@@ -524,8 +521,8 @@ thread's expanded rows, under a ` User  draft` row (the name from `user.name`); 
 on the text's key bar (`Enter submit · Alt-Enter newline · Alt-k/j
 scroll · Ctrl-e $EDITOR · Esc`, or `Esc again to discard` once you have
 pressed Esc on a changed draft); an edit replaces the message it edits,
-seeded with its text; and a new comment (`c` on a line with no thread,
-`C`, or `Space c c`) gets a block of its own under its lines, headed
+seeded with its text; and a new comment (`c` or `Space c c`) gets a
+block of its own under its lines, headed
 `comment on L3-5`; a comment on the file (`Space c f`) gets one above
 the first line, headed `comment on README.md`. The draft wraps at the text width and grows with
 what you type, the view scrolling just enough to keep its cursor on

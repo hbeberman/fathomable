@@ -1,23 +1,11 @@
 //! Test-only checks for identifiers in agent-facing prose.
 
-use fathomable_core::vocabulary::{
-    ALL, ANSWERED, PENDING, STATUS_ALL, STATUS_OPEN, WHEN_MESSAGE, WHEN_RESOLVED, WORKTREE,
-};
+use fathomable_core::vocabulary::{ALL, STATUS_ALL, STATUS_OPEN, WHEN_RESOLVED};
 
-/// Whether `ident` is a tool name, a parameter name, a `when` or
-/// `status` value, or the `pending`, `answered`, or `worktree` field.
+/// Whether `ident` is a tool name, parameter name, or `status` value.
 #[must_use]
 pub fn is_known(ident: &str) -> bool {
-    [
-        WHEN_MESSAGE,
-        WHEN_RESOLVED,
-        STATUS_OPEN,
-        STATUS_ALL,
-        PENDING,
-        ANSWERED,
-        WORKTREE,
-    ]
-    .contains(&ident)
+    [WHEN_RESOLVED, STATUS_OPEN, STATUS_ALL].contains(&ident)
         || ALL
             .iter()
             .any(|tool| tool.name == ident || tool.params.contains(&ident))
@@ -43,9 +31,10 @@ mod tests {
 
     #[test]
     fn idents_picks_single_words_only() {
-        let text = "call `follow` with `type`, not `fathomable --mcp` or ``; `when` is `message`";
+        let text =
+            "call `thread_reply` with `replies`, not `fathomable --mcp` or ``; `status` is `open`";
         let found: Vec<_> = idents(text).collect();
-        assert_eq!(found, ["follow", "type", "when", "message"]);
+        assert_eq!(found, ["thread_reply", "replies", "status", "open"]);
         assert!(found.iter().all(|ident| is_known(ident)));
         assert!(!is_known("fathomable"));
     }

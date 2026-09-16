@@ -2,7 +2,6 @@
 type: Decision
 title: Lazy follow
 description: Auto-jump is a monitor, not a leash; it switches itself off when the reader navigates away, leaves the visible file alone while its hunk is on screen, and prefers the file the agent says it is editing.
-resource: crates/fathomable/src/app/jump.rs
 tags:
   - decision
   - input
@@ -11,6 +10,11 @@ tags:
 # 0031 Lazy follow
 
 Status: accepted (2026-08-28)
+
+Superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). Auto-jump and agent-followed path
+preference are removed entirely. Live reload preserves reading position and
+the human uses changed-file jumps and the jumplist manually.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

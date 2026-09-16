@@ -393,8 +393,7 @@ fn state_words(words: Words) -> Vec<(String, Tone)> {
 
 /// An expanded thread's header row in the text (ADR 0049): the cursor
 /// cell, the chevron that folds it (ADR 0073), the circle, the
-/// placement and state, and who watches it. Its keys are on the text's
-/// key bar (ADR 0067).
+/// placement and state. Its keys are on the text's key bar (ADR 0067).
 pub(crate) fn expanded_header(
     app: &App,
     thread: &fathomable_core::annotations::Thread,
@@ -408,10 +407,6 @@ pub(crate) fn expanded_header(
         (format!(" {} ", words.glyph()), Tone::Mark(words.state())),
     ];
     left.extend(state_words(words));
-    let watchers = app.watchers_of(thread.id());
-    if !watchers.is_empty() {
-        left.push((format!(" · watched by {}", watchers.join(", ")), Tone::Info));
-    }
     Header::new(left, Vec::new())
 }
 

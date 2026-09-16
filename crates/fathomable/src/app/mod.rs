@@ -5,8 +5,8 @@
 //! [`App`] is plain state so the viewer's behaviour is tested without a
 //! terminal. The modules are grouped by concept (ADR 0048): `threads`
 //! holds the thread cursor, the panes, the list, and the store operations;
-//! `draw` renders; `input` binds and dispatches keys and the mouse; `jump`
-//! is auto-jump; `agents` wakes subscribers; `sidebar` is the column and
+//! `draw` renders; `input` binds and dispatches keys and the mouse; `agents`
+//! holds the human-invoked wake stub; `sidebar` is the column and
 //! `files_pane` its upper pane; `view`, `watch`, `socket`, `commands`, and
 //! `clipboard` are what their names say; and
 //! [`run`] owns the terminal, the file watcher, and the viewer socket.
@@ -24,7 +24,6 @@ mod files_pane;
 mod files_shown;
 mod goto_file;
 pub(crate) mod input;
-mod jump;
 mod jumplist;
 mod last_seen;
 mod menu_bar;
@@ -42,16 +41,15 @@ mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::app::threads::list::ReviewList;
-use fathomable_core::agents::Subscriber;
 use fathomable_core::annotations::{self, Store, ThreadId};
 use fathomable_core::config::{
-    AgentsConfig, DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
-    ViewerConfig, WatchConfig,
+    DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
+    WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -124,8 +122,6 @@ pub(crate) enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
-    /// Subscribed agents to wake with `Space a w` (ADR 0040).
-    Wake,
     /// The base side of the diff (ADR 0060).
     DiffBase,
     /// The target side of the diff (ADR 0060).
@@ -331,19 +327,10 @@ pub(crate) struct App {
     markdown: MarkdownConfig,
     /// How files are read (ADR 0026).
     viewer: ViewerConfig,
-    /// Subscriptions and the wake command (ADR 0040).
-    agents: AgentsConfig,
-    /// Live subscribers, reloaded when the agent register changes.
-    subscribers: Vec<Subscriber>,
-    /// Unix second when the next cached subscriber expires.
-    agents_refresh_at: Option<u64>,
     /// How the person at the viewer is named (ADR 0058).
     user: UserConfig,
-    /// Who watches which thread, refreshed with the store (ADR 0040).
-    watchers: Vec<(ThreadId, String)>,
     /// The config file the over-limit notice names (ADR 0026).
     config_path: PathBuf,
-    auto: bool,
     ignore: Ignore,
     queue: Queue,
     toasts: Vec<Toast>,
@@ -357,8 +344,6 @@ pub(crate) struct App {
     /// How diffs are compared this session: the config's start, then
     /// `Space d w` (ADR 0060).
     compare: fathomable_core::diff::Compare,
-    /// When the queue last changed, for the auto-jump debounce.
-    last_change: Option<Instant>,
     /// Whether the recursive workspace watch is in place.
     watching_root: bool,
     /// Whether the dirty set missed a refresh, so the next one must
@@ -386,10 +371,6 @@ impl App {
     ///
     /// Threads on files edited while Fathomable was closed are followed
     /// through their last-seen snapshots before anything opens (ADR 0020).
-    #[expect(
-        clippy::too_many_lines,
-        reason = "construction spells every independent application subsystem explicitly"
-    )]
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -406,7 +387,6 @@ impl App {
             menu_bar,
             threads,
             diff,
-            agents,
             user,
             config_path,
         } = options;
@@ -456,16 +436,11 @@ impl App {
             reach: Reach::everything(),
             record,
             dirs,
-            auto: jump.auto,
             jump,
             highlighter,
             markdown,
             viewer,
-            agents,
-            subscribers: Vec::new(),
-            agents_refresh_at: None,
             user,
-            watchers: Vec::new(),
             config_path,
             ignore,
             queue: Queue::default(),
@@ -475,7 +450,6 @@ impl App {
             diff_choices: Vec::new(),
             diff_target_next: None,
             compare: diff.compare(),
-            last_change: None,
             watching_root: true,
             status_stale: false,
             walks: status_walk::Walks::new(),
@@ -489,7 +463,6 @@ impl App {
         if app.sidebar.tree && !app.ensure_tree() {
             app.sidebar.tree = false;
         }
-        app.reload_agents();
         app.relayout();
         app.refresh_worktrees();
         app.refresh_status();
@@ -573,7 +546,7 @@ impl App {
         self.store.as_ref().map(Store::path)
     }
 
-    /// `:name`: rename this viewer for agents; empty clears the name.
+    /// `:name`: label this viewer window; empty clears the name.
     pub(crate) fn set_name(&mut self, name: Option<&str>) {
         self.record = self.record.clone().with_name(name.map(str::to_owned));
         match self.record.write(&self.dirs) {
@@ -618,13 +591,6 @@ impl App {
         true
     }
 
-    // ----- follow mode (ADR 0015) -----
-
-    /// Whether auto-jump is on.
-    pub(crate) fn auto_jump(&self) -> bool {
-        self.auto
-    }
-
     /// Changed files, newest first.
     pub(crate) fn queue(&self) -> &Queue {
         &self.queue
@@ -638,22 +604,6 @@ impl App {
     /// Whether a queued change sits at or under the root-relative `path`.
     pub(crate) fn has_change_under(&self, path: &Path) -> bool {
         self.queue.iter().any(|c| c.path.starts_with(path))
-    }
-
-    /// Toggle auto-jump (`Space j a`, `:auto`).
-    pub(crate) fn toggle_auto_jump(&mut self) {
-        self.auto = !self.auto;
-        self.notice(if self.auto {
-            "auto-jump on"
-        } else {
-            "auto-jump off"
-        });
-    }
-
-    /// Set auto-jump (`:auto on` / `:auto off`).
-    pub(crate) fn set_auto_jump(&mut self, on: bool) {
-        self.auto = on;
-        self.notice(if on { "auto-jump on" } else { "auto-jump off" });
     }
 
     /// `Space j j`: open the newest change.
@@ -843,17 +793,10 @@ impl App {
 
     /// Reload append-only state files that another process changed.
     fn reload_state_named_in(&mut self, events: &[watch::Event]) {
-        // Both stores live outside the root and arrive through the state
-        // directory watch (ADR 0024, 0040).
+        // The thread store lives outside the root and arrives through the
+        // state directory watch (ADR 0024).
         if events.iter().any(|event| event.path() == self.store_path()) {
             self.reload_store();
-        }
-        let agents_path = self.agents_path();
-        if events
-            .iter()
-            .any(|event| event.path() == Some(agents_path.as_path()))
-        {
-            self.reload_agents();
         }
     }
 
@@ -1388,7 +1331,6 @@ impl App {
             self.push_toast(text);
         }
         self.queue.push(change);
-        self.last_change = Some(Instant::now());
     }
 
     /// Drop the current file from the queue once its target is on screen.
@@ -1409,19 +1351,16 @@ impl App {
         }
     }
 
-    /// Expire toasts, snapshot the current file once it has been idle long
-    /// enough, and auto-jump when the guardrails allow it.
+    /// Expire toasts and snapshot the current file once it has been idle.
     pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|toast| toast.until > now);
-        self.refresh_agents_if_due();
         if let Some(index) = self.current
             && self.docs[index].seen_dirty
             && self.docs[index].view.idle() >= self.viewer.seen_idle
         {
             self.mark_seen(index);
         }
-        self.auto_jump_tick();
     }
 
     /// How long until [`App::tick`] has something to do, `None` when
@@ -1440,12 +1379,6 @@ impl App {
         {
             let idle = self.docs[index].view.idle();
             consider(self.viewer.seen_idle.saturating_sub(idle));
-        }
-        if let Some(wait) = self.auto_jump_in() {
-            consider(wait);
-        }
-        if let Some(wait) = self.agents_refresh_in() {
-            consider(wait);
         }
         next
     }
@@ -1794,38 +1727,6 @@ impl App {
     /// Answer a socket request that needs app state (ADR 0014).
     pub(crate) fn handle_request(&mut self, request: Request) -> Response {
         match request {
-            Request::Open {
-                path,
-                line,
-                end_line,
-                worktree,
-            } => {
-                // The path is relative to the caller's worktree: page
-                // there first (ADR 0070).
-                if let Some(root) = worktree
-                    && !self.activate_worktree(&root)
-                {
-                    return Response::Error(
-                        self.message
-                            .clone()
-                            .unwrap_or_else(|| format!("cannot open {}", root.display())),
-                    );
-                }
-                self.open_for_agent(&path, line, end_line)
-            }
-            Request::ThreadsList { since, path } => match &self.store {
-                Some(store) => Response::Threads(
-                    store
-                        .threads()
-                        .iter()
-                        .filter(|t| self.reach.here(t))
-                        .filter(|t| since.is_none_or(|s| t.updated() >= s))
-                        .filter(|t| path.as_deref().is_none_or(|p| t.path().starts_with(p)))
-                        .cloned()
-                        .collect(),
-                ),
-                None => Response::Error("threads unavailable; see the log".to_owned()),
-            },
             Request::ThreadReply {
                 thread,
                 author,
@@ -1846,56 +1747,6 @@ impl App {
                 Err(error) => Response::Error(error),
             },
         }
-    }
-
-    /// `open` from an agent: the path must stay inside the workspace.
-    fn open_for_agent(
-        &mut self,
-        path: &Path,
-        line: Option<usize>,
-        end_line: Option<usize>,
-    ) -> Response {
-        let inside = path.is_relative()
-            && path
-                .components()
-                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
-        if !inside {
-            return Response::Error(format!(
-                "{} is not a workspace-relative path",
-                path.display()
-            ));
-        }
-        if !self.workspace.root().join(path).is_file() {
-            return Response::Error(format!("{} is not a file in the workspace", path.display()));
-        }
-        self.close_popup();
-        self.focus = Focus::View;
-        self.record_jump_from_here();
-        self.open(path);
-        if self.current_path() != path {
-            return Response::Error(
-                self.message
-                    .clone()
-                    .unwrap_or_else(|| format!("cannot open {}", path.display())),
-            );
-        }
-        // An agent `open` is a change with an explicit target in every
-        // source mode (ADR 0015); it is on screen at once, so it settles.
-        let target = match (line, end_line) {
-            (Some(start), Some(end)) if end > start => Target::Range(start, end),
-            (Some(start), _) => Target::Line(start),
-            (None, _) => Target::Line(1),
-        };
-        self.queue.push(Change::new(path.to_path_buf(), target));
-        self.last_change = None;
-        // The range is shown, not selected: a selection would sit in the
-        // reader's way (ADR 0014, amended 2026-08-28).
-        if let Some(line) = line {
-            let view = self.view_mut();
-            view.escape();
-            view.reveal_source_range(line, end_line.unwrap_or(line).max(line));
-        }
-        Response::Done
     }
 
     fn show(&mut self, index: usize) {
@@ -1935,8 +1786,7 @@ impl App {
         self.jumplist.record(from);
     }
 
-    /// A far move that does not come through a key — auto-jump, an
-    /// agent's `open` — records where it is leaving from.
+    /// A far move outside key dispatch records where it started.
     fn record_jump_from_here(&mut self) {
         if let Some(from) = self.position() {
             self.record_jump(from);
@@ -2159,7 +2009,6 @@ impl App {
     /// `:status`: the overlay of session facts (ADR 0021).
     pub(crate) fn open_status(&mut self) {
         self.park_draft();
-        self.reload_agents();
         self.popup = Some(Popup::Status);
     }
 
@@ -2176,11 +2025,6 @@ impl App {
                 .recent
                 .iter()
                 .map(|&index| self.docs[index].relative.to_string_lossy().into_owned())
-                .collect(),
-            PickerKind::Wake => self
-                .subscribers()
-                .iter()
-                .map(|s| format!("{}  {}", s.label(), s.id()))
                 .collect(),
             PickerKind::DiffBase | PickerKind::DiffTarget => self.diff_choices(),
             PickerKind::Worktree => self.worktree_choices(),
@@ -2236,11 +2080,6 @@ impl App {
             Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path)) => {
                 self.open(Path::new(&path));
             }
-            Some((PickerKind::Wake, item)) => {
-                if let Some(id) = item.rsplit("  ").next() {
-                    self.wake_subscriber(id);
-                }
-            }
             Some((kind @ (PickerKind::DiffBase | PickerKind::DiffTarget), item)) => {
                 self.choose_diff_side(kind, &item);
             }
@@ -2276,7 +2115,7 @@ pub(crate) struct Options {
     pub(crate) dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub(crate) store: Option<Store>,
-    /// Auto-jump settings (ADR 0015).
+    /// Change notification settings (ADR 0015).
     pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).
     pub(crate) watch: WatchConfig,
@@ -2298,8 +2137,6 @@ pub(crate) struct Options {
     pub(crate) threads: ThreadsConfig,
     /// How diffs are compared and listed (ADR 0060).
     pub(crate) diff: DiffConfig,
-    /// Subscriptions and the wake command (ADR 0040).
-    pub(crate) agents: AgentsConfig,
     /// How the person at the viewer is named (ADR 0058).
     pub(crate) user: UserConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
@@ -2334,7 +2171,6 @@ impl Options {
             menu_bar: false,
             threads: ThreadsConfig::default(),
             diff: DiffConfig::default(),
-            agents: AgentsConfig::default(),
             user: UserConfig::default(),
             config_path: PathBuf::from("config.kdl"),
         }

@@ -22,18 +22,20 @@ the agent does the writing.
 - A **renderer**: pretty Markdown (tables, nested lists, task lists, footnotes,
   links) and syntax-highlighted code, with a source-view toggle for Markdown.
 - A **follower**: watched files re-render on change while preserving the
-  reader's position; **auto-jump** keeps the viewer near what the agent is
-  touching without constantly jumping, preferring the files the agent says
-  it follows.
+  reader's position; changed-file hints and manual jumps help the reader move
+  through new work without an agent controlling the viewer.
 - A **reviewer**: line-range annotations on rendered content, captured with the
   snippet, the source range, a timestamp, and the user's comment. Annotations
   form threads. Agents reply into threads, so a document can carry a
   long-running local review conversation across many agent sessions.
 - A **diff lens**: a Git gutter strip showing changed lines, and diff views for
   both "working tree vs HEAD" and "what changed since I last looked".
-- An **agent endpoint**: `fathomable --mcp` is a stdio MCP server that resolves
-  the workspace on every call and works without a viewer, so an agent can
-  open files, jump to locations, read threads, and reply to them.
+- An **agent endpoint**: `fathomable --mcp [DIR]` is a repository-bound stdio
+  MCP server that works without a viewer, so agents can read discussions,
+  start threads, and reply to them.
+- A **user-mediated discussion space**: reviewers, coders, and the human may
+  use the same thread history. The user's stated decision and task assignment,
+  not an inferred queue state, determine what an agent should do.
 - **Modal and mouse-discoverable**: Vim grammar for navigation, `:` command
   line, `/` search, a persistent workflow menu bar, and first-class mouse
   support so selecting lines to annotate is a drag.
@@ -48,8 +50,12 @@ Permanent non-goals:
   with an agent; it exposes an MCP endpoint and otherwise stays out of the way.
 - **Not an IDE or file manager.** No build, run, rename, move, or delete.
 - **Not bound to one agent product.** Any stdio MCP client can read;
-  writes and subscriptions require a supported harness identity channel
+  writes require a supported harness identity channel
   ([0080](decisions/0080-automatic-chat-identity.md)).
+- **Not an automatic agent scheduler or delivery service.** It does not
+  subscribe, assign, acknowledge, automatically wake, remind, or route chats,
+  and reading a thread does not authorize work. The visible manual wake key
+  is an unimplemented placeholder for a future user-directed integration.
 
 Deferred, not rejected:
 
@@ -59,9 +65,11 @@ Deferred, not rejected:
 - Multiple panes inside Fathomable (v1 is one pane; the layout is designed so
   splitting can be added).
 - HTTP transport for the MCP server.
-- Agents conversing with each other through threads: a thread reaches an
-  agent on the user's word alone
-  ([0058](decisions/0058-the-user-has-the-last-word.md)).
+- A user-triggered wake integration that sends all open threads and an
+  optional instruction to a chosen chat
+  ([0082](decisions/0082-three-tool-review-core.md)).
+- Cross-workspace MCP routing. A server is bound to one repository checkout;
+  shared worktree storage and manual viewer worktree navigation remain.
 - macOS and Windows. Linux is the only supported platform.
 
 ## Principles
@@ -98,20 +106,18 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
 - **Viewer**: one running Fathomable showing a workspace, named or by id.
 - **Agent session**: the concrete harness chat an agent runs in, identified
   automatically by a harness-qualified native id, independently of its
-  workspace or optional display profile
+  repository binding
   ([0080](decisions/0080-automatic-chat-identity.md)).
-- **Subscriber**: an agent session that registered with `follow`, so the
-  hooks hand it every thread the user has the last word on.
 - **Thread**: a comment on a line range of a document plus the replies
   (human or agent) attached to it. The opening message is the **comment**.
 - **Anchor**: the durable identity of a thread's range, derived from line
   content hashes so it survives re-renders.
 - **Placement**: where a thread's lines are now: anchored, edited, or
   detached.
-- **Waiting** / **pending**: an open thread whose last act — comment,
-  reply, edit, or reopen — is an agent's, seen from the user's chair; or
-  the user's, seen from an agent's
-  ([0058](decisions/0058-the-user-has-the-last-word.md)).
+- **Waiting**: an open thread whose last act — comment, reply, edit, or
+  reopen — is an agent's, so the viewer presents it for the human's
+  attention. There is no corresponding agent-obligation or consumption
+  state ([0082](decisions/0082-three-tool-review-core.md)).
 - **Mark**: a thread placed in the text as the viewer draws it (code only).
 - **Reach**: the threads the current `HEAD` shows, those written against a
   commit it can reach.

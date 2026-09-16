@@ -404,3 +404,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     Help gains Getting started, Doctor, and View keymap, and every popup
     uses a rounded titled border
     ([0081](decisions/0081-the-menu-bar.md)).
+73. **Three-tool review core.** The repository-bound MCP surface is
+    `threads`, `thread_start`, and `thread_reply`. Reads have no delivery
+    side effects; writes are batch-only and automatically identified.
+    Subscriptions, hooks, watches, pending delivery state, per-call routing,
+    MCP viewer control, and auto-jump retire. Live reload, manual change and
+    worktree navigation, shared thread storage, and human-only resolution
+    remain ([0082](decisions/0082-three-tool-review-core.md)).

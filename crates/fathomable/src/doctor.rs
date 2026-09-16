@@ -127,13 +127,6 @@ pub(crate) fn collect(
             Config::default()
         }
     };
-    report.check(
-        true,
-        format!(
-            "auto-jump {}",
-            if config.jump().auto { "on" } else { "off" }
-        ),
-    );
     let theme_name = config.theme().to_owned();
     match Theme::load(&theme_name, dirs) {
         Ok(theme) => {

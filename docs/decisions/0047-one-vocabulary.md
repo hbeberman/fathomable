@@ -21,6 +21,12 @@ with the harness namespace, not an MCP tool parameter. A configured
 type and optional persona are a subscription's display profile, not
 identity. The old `id` argument and workspace-switch parameter retire.
 
+Agent-runtime vocabulary retired 2026-09-15 by
+[0082](0082-three-tool-review-core.md): subscriber, delivery, pending as an
+agent obligation, followed paths, and auto-jump no longer describe current
+product behavior. Historical records keep those terms; current docs use
+repository-bound discussion, waiting for the human, and manual change jumps.
+
 The production agent-facing table is `fathomable_core::vocabulary`; the
 test-only identifier parser and membership check used by [0043](0043-agent-vocabulary.md)
 live in `fathomable_testing::vocabulary`.

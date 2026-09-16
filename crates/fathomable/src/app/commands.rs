@@ -12,9 +12,6 @@ impl App {
     pub(crate) fn command(&mut self, command: &str) {
         let mut words = command.split_whitespace();
         match (words.next(), words.next(), words.next()) {
-            (Some("auto"), None, _) => self.toggle_auto_jump(),
-            (Some("auto"), Some("on"), None) => self.set_auto_jump(true),
-            (Some("auto"), Some("off"), None) => self.set_auto_jump(false),
             (Some("status"), None, _) => self.open_status(),
             (Some("help"), None, _) => self.open_getting_started(),
             (Some("doctor"), None, _) => self.open_doctor(),
@@ -26,7 +23,7 @@ impl App {
         }
     }
 
-    /// The viewer as agents see it: its name when set, then the id.
+    /// The human-facing viewer label: its name when set, then the id.
     pub(crate) fn viewer_label(&self) -> String {
         match self.record.name() {
             Some(name) => format!("{name} ({})", self.viewer_id),
@@ -83,18 +80,6 @@ impl App {
         self.popup = Some(super::Popup::About);
     }
 
-    /// The `subscribers` row of `:status` (ADR 0040).
-    fn subscriber_row(&self) -> String {
-        match self.subscribers() {
-            [] => "none".to_owned(),
-            all => all
-                .iter()
-                .map(|s| format!("{} {}", s.label(), s.id()))
-                .collect::<Vec<_>>()
-                .join("; "),
-        }
-    }
-
     /// The rows of the `:status` overlay: label, value.
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
         let unavailable = || "unavailable (see the log)".to_owned();
@@ -118,7 +103,6 @@ impl App {
         } else {
             "none (the welcome screen)".to_owned()
         };
-        let subscribers = self.subscriber_row();
         vec![
             ("document".to_owned(), document),
             (
@@ -158,14 +142,9 @@ impl App {
                     "partial coverage plus the open file".to_owned()
                 },
             ),
-            (
-                "auto-jump".to_owned(),
-                if self.auto { "on" } else { "off" }.to_owned(),
-            ),
             ("changes".to_owned(), self.queue.len().to_string()),
             ("proposed".to_owned(), self.proposed_total().to_string()),
             ("waiting".to_owned(), self.waiting_total().to_string()),
-            ("subscribers".to_owned(), subscribers),
         ]
     }
 }

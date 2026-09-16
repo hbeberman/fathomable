@@ -17,6 +17,10 @@ tags:
 
 Status: accepted (2026-09-15)
 
+The Auto-jump entry described below was removed by
+[0082](0082-three-tool-review-core.md); the rest of this decision remains
+current.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take

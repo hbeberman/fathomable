@@ -16,6 +16,12 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Amended 2026-09-15 by [0082](0082-three-tool-review-core.md):
+automatic harness-qualified identity remains exactly for authorship; reads
+may be anonymous and writes require it. Subscription profiles, delivery,
+watches, per-call workspace routing, and viewer navigation tools are removed.
+The harness channels and lifecycle limitations below remain authoritative.
+
 Supersedes [0041](0041-session-bonds.md). Amends the identity and
 subscription contracts of [0040](0040-agent-subscriptions-and-hooks.md),
 [0055](0055-six-tools.md), [0058](0058-the-user-has-the-last-word.md),

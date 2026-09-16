@@ -1,16 +1,5 @@
 // @okf-doc: /decisions/0061-agents-start-threads.md
-//! `thread_start`: an agent opens a thread on lines of a file (ADR 0061),
-//! or on the file as a whole (ADR 0063).
-//!
-//! One comment, or several in a `comments` batch, each on a line range
-//! of a workspace file, or on the file itself when it names no line. The
-//! batch is checked before anything is written: a path that is not a
-//! file, a range past the end of the file, a file that is not text, or
-//! an empty body refuses the whole call, naming every offending item. A comment is signed as a reply is and stamped
-//! with `HEAD` as the user's comments are, through the viewer when one
-//! shows the workspace and through the store when none does. The result
-//! is `thread_reply`'s: the new threads as an agent sees them, and one
-//! `started` line each.
+//! Start one or more review discussions in the bound checkout.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -19,7 +8,6 @@ use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
 use fathomable_core::clock::now;
 use fathomable_core::session::{Request, Response};
-use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::Workspace;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -29,13 +17,13 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::tools::{Shown, Tree, check_path, failure, shown_lines, with_summary};
-use super::{Server, Target, call};
+use super::{Server, call};
 
 /// One comment in a `thread_start` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartItem {
-    /// Workspace-relative path of the file.
+    /// Repository-relative path of the file.
     path: PathBuf,
     /// First line the comment is on, 1-based. Omit it only for a comment
     /// on the file as a whole.
@@ -52,27 +40,8 @@ pub(crate) struct StartItem {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct StartParams {
-    /// Workspace-relative path of the file, for a single comment.
-    #[serde(default)]
-    path: Option<PathBuf>,
-    /// First line the comment is on, 1-based (single comment). Omit it
-    /// only for a comment on the file as a whole.
-    #[serde(default)]
-    line: Option<usize>,
-    /// Last line of that range; defaults to `line` (single comment).
-    #[serde(default)]
-    end_line: Option<usize>,
-    /// The comment for a single thread; Markdown.
-    #[serde(default)]
-    body: Option<String>,
-    /// Several comments in one call, instead of `path`, `line`, and
-    /// `body`. Tag every place in one turn this way.
-    #[serde(default)]
+    /// One or more new comments. The whole batch is validated before any write.
     comments: Vec<StartItem>,
-    /// Workspace root, viewer name, or viewer id; defaults to the bound
-    /// workspace.
-    #[serde(default)]
-    workspace: Option<String>,
 }
 
 /// A comment the batch check passed: where it goes and what it says.
@@ -88,16 +57,10 @@ struct Placed {
 impl Server {
     #[tool(
         name = "thread_start",
-        description = "Start a thread of your own on lines of a file, for the user to read \
-                       in the viewer: one with `path`, `line`, `end_line`, and `body`, or \
-                       several in `comments`. Omit `line` only for a remark about the file \
-                       as a whole; a comment about particular lines names them. Returns \
-                       each new thread as it stands. The thread waits on the user and \
-                       reaches no agent until they answer; it is not a reply, so pass a \
-                       thread id to `thread_reply` instead when you are answering. The \
-                       batch is checked first: a path that is not a file, a range past \
-                       the end, or an empty body refuses the whole call and nothing is \
-                       written.",
+        description = "Start one or more new review discussions. Pass exactly one non-empty \
+                       `comments` array; each item names a repository-relative file, Markdown \
+                       body, and optional 1-based line range. Omit `line` only for a file-level \
+                       comment. The whole batch is validated before any discussion is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -109,53 +72,31 @@ impl Server {
         Parameters(p): Parameters<StartParams>,
         context: RequestContext<RoleServer>,
     ) -> CallToolResult {
-        let target = match self.resolve(p.workspace.as_deref()) {
-            Ok(target) => target,
-            Err(error) => return failure(error),
-        };
-        let signed = match self.signer(&context, &target.key) {
-            Ok(signed) => signed,
-            Err(error) => return failure(error),
-        };
-        let mut items = p.comments;
-        match (p.path, p.body) {
-            (Some(path), Some(body)) => items.insert(
-                0,
-                StartItem {
-                    path,
-                    line: p.line,
-                    end_line: p.end_line,
-                    body,
-                },
-            ),
-            (None, None) if !items.is_empty() => {}
-            _ => {
-                return failure(format!(
-                    "pass `{}`, `{}`, and `{}`, or a non-empty `{}` list",
-                    vocab::PATH,
-                    vocab::LINE,
-                    vocab::BODY,
-                    vocab::COMMENTS
-                ));
-            }
+        if p.comments.is_empty() {
+            return failure("`comments` must contain at least one comment");
         }
+        let author = match self.signer(&context) {
+            Ok(author) => author,
+            Err(error) => return failure(error),
+        };
 
         // Check the whole batch before writing any of it, so that a retry
         // with the fixed list is a whole retry.
-        let (placed, problems): (Vec<_>, Vec<_>) = items
+        let (placed, problems): (Vec<_>, Vec<_>) = p
+            .comments
             .iter()
-            .map(|item| place(&target.root, item))
+            .map(|item| place(&self.target.root, item))
             .partition(Result::is_ok);
         if !problems.is_empty() {
             let problems: Vec<String> = problems.into_iter().filter_map(Result::err).collect();
             return failure(problems.join("\n"));
         }
 
-        let mut tree = Tree::new(&target.root);
+        let mut tree = Tree::new(&self.target.root);
         let mut lines = Vec::new();
         let mut started = Vec::new();
         for item in placed.into_iter().filter_map(Result::ok) {
-            match self.start_one(&target, signed.author.clone(), item).await {
+            match self.start_one(author.clone(), item).await {
                 Ok(thread) => started.push(thread),
                 Err(error) => {
                     lines.extend(shown_lines(&started, &mut tree, "started"));
@@ -165,15 +106,6 @@ impl Server {
             }
         }
         lines.extend(shown_lines(&started, &mut tree, "started"));
-        if !signed.subscribed {
-            lines.push(format!(
-                "signed as {} with no subscription; call `{}` with `{}` to be told \
-                 about answers when delivery hooks are installed",
-                signed.author,
-                vocab::FOLLOW.name,
-                vocab::TYPE
-            ));
-        }
         let shown: Vec<Shown<'_>> = started
             .iter()
             .map(|t| Shown::new(t, tree.place(t)))
@@ -183,14 +115,8 @@ impl Server {
 }
 
 impl Server {
-    /// One comment of a `thread_start` call, through a viewer or the
-    /// store; answers with the new thread.
-    async fn start_one(
-        &self,
-        target: &Target,
-        author: Author,
-        item: Placed,
-    ) -> Result<Thread, String> {
+    /// Write one validated comment through a viewer or the store.
+    async fn start_one(&self, author: Author, item: Placed) -> Result<Thread, String> {
         let place = match item.range {
             Some(range) => format!("{}:{}", item.path.display(), range.start()),
             None => item.path.display().to_string(),
@@ -201,10 +127,16 @@ impl Server {
             author: author.clone(),
             body: item.body.clone(),
         };
-        let outcome = match target.viewer_here() {
-            Some(viewer) => call(viewer, &request).await,
-            None => headless_start(&self.dirs, &target.key, &target.root, author, item)
-                .map(|thread| Response::Threads(vec![thread])),
+        let outcome = match self.target.viewer(&self.dirs, &self.target.root) {
+            Some(viewer) => call(&viewer, &request).await,
+            None => headless_start(
+                &self.dirs,
+                &self.target.key,
+                &self.target.root,
+                author,
+                item,
+            )
+            .map(|thread| Response::Threads(vec![thread])),
         };
         match outcome {
             Ok(Response::Threads(mut threads)) if threads.len() == 1 => Ok(threads.remove(0)),
@@ -215,13 +147,13 @@ impl Server {
 }
 
 /// Where `item` goes, or why it cannot go there: the path is not a file
-/// in the workspace, the file is not text, the range runs past its end,
+/// in the repository, the file is not text, the range runs past its end,
 /// or the body is empty. An item with no line is a comment on the file
 /// as a whole (ADR 0063).
 fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     let shown = item.path.display();
     let path = check_path(root, Some(&item.path))?
-        .ok_or_else(|| format!("{shown} is the workspace root; pass a file"))?;
+        .ok_or_else(|| format!("{shown} is the repository root; pass a file"))?;
     let full = root.join(&path);
     if full.is_dir() {
         return Err(format!("{shown} is a directory; pass a file"));
@@ -230,6 +162,12 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| format!("{shown} is not a text file"))?;
+    if item.line.is_none() && item.end_line.is_some() {
+        return Err(format!("{shown}: pass `line` with `end_line`"));
+    }
+    if item.line == Some(0) || item.end_line == Some(0) {
+        return Err(format!("{shown}: line numbers are 1-based"));
+    }
     let range = item
         .line
         .map(|line| LineRange::new(line, item.end_line.unwrap_or(line)));
@@ -244,8 +182,8 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     }
     if item.body.trim().is_empty() {
         return Err(match item.line {
-            Some(line) => format!("{shown}:{line}: `{}` is empty", vocab::BODY),
-            None => format!("{shown}: `{}` is empty", vocab::BODY),
+            Some(line) => format!("{shown}:{line}: `body` is empty"),
+            None => format!("{shown}: `body` is empty"),
         });
     }
     Ok(Placed {
@@ -255,7 +193,7 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     })
 }
 
-/// Start the thread in the store, stamped with the workspace's `HEAD`,
+/// Start the thread in the store, stamped with the repository's `HEAD`,
 /// and answer with it.
 fn headless_start(
     dirs: &XdgDirs,
@@ -360,8 +298,16 @@ mod tests {
                 "src/lib.rs:1: `body` is empty",
             ),
             (
+                item("src/lib.rs", None, Some(2), "x"),
+                "src/lib.rs: pass `line` with `end_line`",
+            ),
+            (
+                item("src/lib.rs", Some(0), None, "x"),
+                "src/lib.rs: line numbers are 1-based",
+            ),
+            (
                 item("../lib.rs", Some(1), None, "x"),
-                "../lib.rs is not a workspace-relative path",
+                "../lib.rs is not a repository-relative path",
             ),
         ];
         for (item, expected) in refused {
@@ -370,21 +316,25 @@ mod tests {
         let elsewhere = place(&root, &item("lib.rs", Some(1), None, "x"));
         assert_eq!(
             elsewhere.err().as_deref(),
-            Some("lib.rs is nothing in the workspace; did you mean src/lib.rs?")
+            Some("lib.rs is nothing in the repository; did you mean src/lib.rs?")
         );
         Ok(())
     }
 
-    /// Without a viewer the thread is written to the store as the agent's
-    /// and comes back as it stands: waiting on the user, pending for no
-    /// one (ADR 0058, 0061).
+    /// Without a viewer the thread is written to the store with its
+    /// harness-qualified author identity.
     #[test]
     fn headless_start_writes_the_agents_thread() -> Result<(), Box<dyn std::error::Error>> {
         let dir = testing::bare("mcp-start-headless")?;
         let dirs = dirs(&dir);
         let root = dir.0.join("ws").canonicalize()?;
         fs::write(root.join("a.md"), "one\ntwo\n")?;
-        let author = Author::agent("bot").subscribed("s1", "coder");
+        let author = Author::Agent {
+            name: "Copilot".to_owned(),
+            client: Some("copilot-cli".to_owned()),
+            id: Some("copilot:s1".to_owned()),
+            kind: None,
+        };
         let thread = headless_start(
             &dirs,
             &root,

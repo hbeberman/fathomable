@@ -36,12 +36,6 @@ pub(super) struct ReachEntry {
 }
 
 impl App {
-    /// The workspace's worktrees as last listed (ADR 0070): the main
-    /// one first, then the linked ones; empty outside git.
-    pub(crate) fn worktrees(&self) -> &[Worktree] {
-        &self.worktrees
-    }
-
     /// Whether the workspace has more than one worktree, so the viewer
     /// names the active one and pages.
     pub(crate) fn has_worktrees(&self) -> bool {
@@ -246,7 +240,6 @@ impl App {
         self.cycle = None;
         self.thread_cursor_anchor = None;
         self.queue = fathomable_core::follow::Queue::default();
-        self.last_change = None;
         self.tree = None;
         self.file_index.clear();
         self.all_index.clear();
@@ -404,7 +397,6 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::annotations::{Author, Draft, LineRange, Store};
-    use fathomable_core::session::{Request, Response};
     use fathomable_core::workspace::Workspace;
     use fathomable_testing::TempDir;
     use fathomable_testing::git;
@@ -450,7 +442,7 @@ mod tests {
     fn paging_re_roots_the_viewer_and_keeps_the_file() -> anyhow::Result<()> {
         let (dir, main, feature) = repo("page")?;
         let mut app = app_on(&dir, &main)?;
-        assert_eq!(app.worktrees().len(), 2);
+        assert_eq!(app.worktrees.len(), 2);
         assert_eq!(app.worktree_label().as_deref(), Some("main"));
         app.open(Path::new("a.md"));
         app.show_tree();
@@ -530,32 +522,6 @@ mod tests {
         assert!(app.land_on_thread(id));
         assert_eq!(app.workspace().root(), feature, "the thread is the way in");
         assert_eq!(app.review_entries(false)[0].worktree(), None);
-        Ok(())
-    }
-
-    /// An agent's `open` names its worktree: the viewer pages there
-    /// before opening the path (ADR 0070).
-    #[test]
-    fn an_agent_open_pages_to_its_worktree() -> anyhow::Result<()> {
-        let (dir, main, feature) = repo("open")?;
-        let mut app = app_on(&dir, &main)?;
-        let response = app.handle_request(Request::Open {
-            path: PathBuf::from("a.md"),
-            line: Some(2),
-            end_line: None,
-            worktree: Some(feature.clone()),
-        });
-        assert_eq!(response, Response::Done);
-        assert_eq!(app.workspace().root(), feature);
-        assert_eq!(app.current_path(), Path::new("a.md"));
-
-        let elsewhere = app.handle_request(Request::Open {
-            path: PathBuf::from("a.md"),
-            line: None,
-            end_line: None,
-            worktree: Some(dir.0.join("nowhere")),
-        });
-        assert!(matches!(elsewhere, Response::Error(_)), "{elsewhere:?}");
         Ok(())
     }
 

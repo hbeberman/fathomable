@@ -1398,8 +1398,8 @@ fn stub_line<'a>(
 }
 
 /// The rows of `stub`'s block expanded in place (ADR 0049), at the text
-/// width: a header with the state, placement, and watchers, then every
-/// message as the pane drew them,
+/// width: a header with the state and placement, then every message as
+/// the pane drew them,
 /// the draft in its place among them (ADR 0054); for a draft block, a
 /// header naming the lines and the draft.
 fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
@@ -1552,11 +1552,11 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     };
     let parts = status_parts(app);
     let hint = change_hint(app);
-    let badges: Vec<&String> = parts
-        .badges
-        .iter()
-        .filter(|badge| !app.menu_bar_shown() || badge.as_str() == "AUTO")
-        .collect();
+    let badges: Vec<&String> = if app.menu_bar_shown() {
+        Vec::new()
+    } else {
+        parts.badges.iter().collect()
+    };
     // Keep the right-hand block visible by trimming identity from the left.
     let badges_width: usize = badges.iter().map(|badge| display_width(badge) + 2).sum();
     let identity_width = usize::from(!app.menu_bar_shown());
@@ -1609,7 +1609,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 /// The status line's words (ADR 0010, amended by 0046's session): the
 /// pill says one thing, the mode or the focused pane; the badges after
 /// the path say how the text is shown (`SRC`, or `DIFF` and the base,
-/// ADR 0060) and whether auto-jump is on; the right block is
+/// ADR 0060); the right block is
 /// `line:col`, the percentage, and `N word` counts, in segments so the
 /// waiting count draws its teal circle and the counts take clicks
 /// (ADR 0066).
@@ -1699,9 +1699,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         } else if view.source_view() {
             badges.push("SRC".to_owned());
         }
-    }
-    if app.auto_jump() {
-        badges.push("AUTO".to_owned());
     }
     let mut right = Vec::new();
     if directory.is_none() {
@@ -2102,7 +2099,6 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Files => "files",
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
-        super::PickerKind::Wake => "wake",
         super::PickerKind::DiffBase => "base",
         super::PickerKind::DiffTarget => "target",
         super::PickerKind::Worktree => "worktree",

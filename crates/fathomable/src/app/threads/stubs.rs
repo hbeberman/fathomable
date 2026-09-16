@@ -337,7 +337,6 @@ impl App {
     /// Expand `id` in place, the view staying where it is, and put the
     /// cursor on its newest message.
     pub(crate) fn expand_thread(&mut self, id: ThreadId) {
-        self.refresh_watchers();
         self.expanded.insert(id.clone());
         self.place_stub_rows();
         let newest = self.newest_message(&id);

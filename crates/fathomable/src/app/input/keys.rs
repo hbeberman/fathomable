@@ -21,10 +21,12 @@ use crate::app::{doctor_view, menu_bar};
 /// Rows a scroll key or wheel notch moves.
 pub(crate) const WHEEL_LINES: isize = 3;
 
-/// Apply a key press to `app`. Going elsewhere switches auto-jump off
-/// (ADR 0031).
+/// Apply a key press to `app`.
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
-    app.with_navigation_watch(|app| key_event(app, key))
+    app.sync_text_height();
+    let effect = key_event(app, key);
+    app.sync_text_height();
+    effect
 }
 
 /// The surface a key lands on now, or `None` under a popup that any key
@@ -84,7 +86,7 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         return Effect::None;
     };
     if app.focus() == Focus::View {
-        // Reader activity holds auto-jump back and delays "seen" (ADR 0015).
+        // Reader activity delays the last-seen snapshot (ADR 0015).
         app.view_mut().touch();
     }
     typed(app, place, chord)
@@ -223,7 +225,6 @@ impl App {
             Action::WindowFiles => self.window_files(),
             Action::WindowThreads => self.window_threads(),
             Action::JumpNewest => self.jump_newest(),
-            Action::AutoJumpToggle => self.toggle_auto_jump(),
             Action::Wake => self.wake(),
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),

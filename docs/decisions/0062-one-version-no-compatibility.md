@@ -5,7 +5,6 @@ description: The socket keeps only the requests that have a client, refuses any 
 resource: crates/fathomable-core/src/session.rs
 related_resources:
   - crates/fathomable-core/src/annotations.rs
-  - crates/fathomable-core/src/agents.rs
   - crates/fathomable-core/src/config.rs
   - crates/fathomable/src/app/socket.rs
   - crates/fathomable/src/app/mod.rs

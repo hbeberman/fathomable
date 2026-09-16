@@ -1,11 +1,10 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context as _;
 use crossterm::event::KeyCode;
 use fathomable_core::annotations::{LineRange, MessageTarget, Store};
 use fathomable_core::editor::{Edit, Motion};
-use fathomable_core::session::{Request, Response};
 
 use super::ComposeTarget;
 use crate::app::App;
@@ -88,8 +87,8 @@ fn drafts_stay_in_their_files_when_clicking_away_and_back() -> anyhow::Result<()
 }
 
 #[test]
-fn file_drafts_survive_agent_navigation_and_cancel_only_in_their_file() -> anyhow::Result<()> {
-    let dir = testing::workspace("draft-file-agent", testing::README)?;
+fn file_drafts_survive_navigation_and_cancel_only_in_their_file() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-file-navigation", testing::README)?;
     fs::write(dir.0.join("ws/main.c"), "main\n")?;
     let mut app = testing::source_app(&dir)?;
     app.start_file_comment();
@@ -98,15 +97,8 @@ fn file_drafts_survive_agent_navigation_and_cancel_only_in_their_file() -> anyho
     assert!(app.draft().context("draft")?.confirming_discard());
 
     for path in ["main.c", "README.md"] {
-        assert!(matches!(
-            app.handle_request(Request::Open {
-                path: PathBuf::from(path),
-                line: None,
-                end_line: None,
-                worktree: None,
-            }),
-            Response::Done
-        ));
+        app.open(Path::new(path));
+        assert_eq!(app.current_path(), Path::new(path));
         if path == "main.c" {
             assert!(app.draft().is_none());
             app.compose_submit();

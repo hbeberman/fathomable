@@ -1,10 +1,8 @@
 // @okf-doc: /decisions/0080-automatic-chat-identity.md
-//! Harness-qualified chat identities shared by MCP calls and delivery hooks.
-
-use clap::ValueEnum;
+//! Harness-qualified chat identities for MCP annotation authors.
 
 /// The harness that owns a chat, not the model or agent role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Harness {
     Claude,
     Copilot,
@@ -43,13 +41,5 @@ impl Harness {
             Self::Vscode => "vscode",
         };
         Ok(format!("{prefix}:{session}"))
-    }
-}
-
-/// The native session id a wake command passes back to the harness.
-pub(crate) fn session(key: &str) -> Result<&str, String> {
-    match key.split_once(':') {
-        Some(("claude" | "copilot" | "codex" | "vscode", id)) if !id.trim().is_empty() => Ok(id),
-        _ => Err(format!("invalid harness-qualified chat identity: {key}")),
     }
 }

@@ -410,7 +410,6 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::JumpForward, "Forward")),
             Row::Separator,
             Row::Item(Item::action(app, Action::JumpNewest, "Newest change")),
-            Row::Item(Item::action(app, Action::AutoJumpToggle, "Auto-jump")),
         ],
         Root::Review => vec![
             Row::Item(Item {
@@ -573,7 +572,6 @@ fn action_available(app: &App, action: Action) -> bool {
 
 fn action_checked(app: &App, action: Action) -> bool {
     match action {
-        Action::AutoJumpToggle => app.auto_jump(),
         Action::Review => app.review_list().is_open(),
         Action::SidebarToggle => app.sidebar.shown(),
         Action::TreeToggle => app.sidebar.tree,
@@ -1240,7 +1238,7 @@ mod tests {
         let dir = testing::workspace("menu-bar-model", testing::README)?;
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 6);
-        assert_eq!(rows(&app, Root::Go).len(), 9);
+        assert_eq!(rows(&app, Root::Go).len(), 8);
         assert_eq!(rows(&app, Root::Review).len(), 9);
         assert_eq!(rows(&app, Root::Diff).len(), 12);
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);

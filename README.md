@@ -6,8 +6,8 @@ lines an agent wrote, and the agent answers over MCP. New here? Read the
 [setup guide](docs/guide.md).
 
 Linux only: viewer liveness reads `/proc`. Agent chat identity comes
-automatically from supported harness environment or MCP metadata;
-automatic comment delivery remains opt-in. See the
+automatically from supported harness environment or MCP metadata for writes;
+reads do not require identity or change discussion state. See the
 [agent setup](docs/guide.md#8-connect-an-agent) for supported channels
 and lifecycle limits.
 

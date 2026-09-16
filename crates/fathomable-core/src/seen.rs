@@ -56,6 +56,63 @@ pub struct Store {
     log: File,
 }
 
+/// Read-only access to the latest recorded snapshots.
+///
+/// Unlike [`Store::open`], loading snapshots this way never creates,
+/// compacts, prunes, or otherwise changes the snapshot directory.
+#[derive(Debug)]
+pub struct Snapshots {
+    dir: PathBuf,
+    entries: BTreeMap<PathBuf, Entry>,
+}
+
+impl Snapshots {
+    /// Load the latest record for every path without changing the store.
+    ///
+    /// A missing log is an empty snapshot set. Malformed records are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when an existing log cannot be read.
+    pub fn read(dir: &Path) -> io::Result<Self> {
+        let log_path = dir.join(LOG_FILE);
+        let text = match fs::read_to_string(log_path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error),
+        };
+        let mut entries = BTreeMap::new();
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            match serde_json::from_str::<Entry>(line) {
+                Ok(entry) => {
+                    entries.insert(entry.path.clone(), entry);
+                }
+                Err(error) => tracing::warn!(%error, "skipping malformed seen record"),
+            }
+        }
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            entries,
+        })
+    }
+
+    /// The snapshot of `path`, when both its record and blob exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error when the recorded blob exists but cannot be read.
+    pub fn text(&self, path: &Path) -> io::Result<Option<String>> {
+        let Some(entry) = self.entries.get(path) else {
+            return Ok(None);
+        };
+        match fs::read_to_string(self.dir.join(BLOBS_DIR).join(&entry.sha256)) {
+            Ok(text) => Ok(Some(text)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
 impl Store {
     /// Open or create the store at `dir`, compacting the log and pruning
     /// unreferenced or expired blobs.
@@ -252,6 +309,26 @@ mod tests {
         let log = fs::read_to_string(tmp.0.join(LOG_FILE))?;
         assert_eq!(log.lines().count(), 2, "log compacted to last records");
         assert!(store.blob_bytes() > 0);
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_reader_does_not_compact_or_create_state() -> io::Result<()> {
+        let tmp = TempDir::new("seen-read-only")?;
+        let dir = tmp.0.join("seen");
+        let mut store = Store::open(&dir)?;
+        store.record(Path::new("a.md"), "one\n")?;
+        drop(store);
+        let log = dir.join(LOG_FILE);
+        let before = fs::read(&log)?;
+
+        let snapshots = Snapshots::read(&dir)?;
+        assert_eq!(snapshots.text(Path::new("a.md"))?.as_deref(), Some("one\n"));
+        assert_eq!(fs::read(log)?, before);
+
+        let missing = tmp.0.join("missing");
+        assert!(Snapshots::read(&missing)?.entries.is_empty());
+        assert!(!missing.exists());
         Ok(())
     }
 

@@ -85,3 +85,4 @@ supersede rather than edit history.
 - [0079 List focus language](0079-list-focus-language.md)
 - [0080 Automatic chat identity](0080-automatic-chat-identity.md)
 - [0081 The persistent menu bar](0081-the-menu-bar.md)
+- [0082 Three-tool review core](0082-three-tool-review-core.md)

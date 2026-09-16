@@ -44,6 +44,11 @@ fn unknown_setting_is_an_error_with_a_line() -> TestResult {
         error.to_string().contains("unknown setting `checkpoints`"),
         "{error}"
     );
+    let error = must_fail("agents { types \"coder\" }")?;
+    assert!(
+        error.to_string().contains("unknown setting `agents`"),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -135,7 +140,7 @@ fn text_form_round_trips() -> TestResult {
     let full = Config::parse(
         r#"
 theme "mine \"quoted\" \\ back"
-jump { auto #true; debounce 5; toast 0 }
+jump { toast 0 }
 watch { ignore "target/**" "a b" "c\"d"; debounce 1 }
 markdown { extensions "txt"; names "notes" }
 viewer { max-file-size-mib 1; seen-idle 2 }
@@ -151,7 +156,6 @@ layout {
 }
 threads { stubs #false; stubs-resolved #true }
 diff { context 0; ignore-whitespace #true }
-agents { types "qa"; nag-after 0; expire-after 1; max-lines 1; wake "claude -r {id}\n{prompt}\t\u{7f}" }
 user { name "O'Brien" }
 "#,
     )?;

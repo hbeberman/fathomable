@@ -20,6 +20,12 @@ rendering checks are removed, not replaced by connect-time context.
 Schema, delivery-text, and guide-table vocabulary checks remain;
 caller `id` and `workspaces.switch` are no longer tool parameters.
 
+Amended again 2026-09-15 by
+[0082](0082-three-tool-review-core.md): delivery text and configured types
+are gone. The checked live vocabulary is the three tools `threads`,
+`thread_start`, and `thread_reply`, their batch schemas, the server prompt,
+and the guide table.
+
 ## Context
 
 A Codex session on 2026-08-29 was asked to subscribe to a file and

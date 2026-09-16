@@ -377,6 +377,7 @@ impl App {
         };
         let mut menu = Menu::new(title, place, column, row);
         if let Some(id) = threads.first() {
+            let on_thread_row = self.cursor_on_thread_row(id);
             let on_expanded = self.expanded_row_message(view.cursor().row).is_some();
             menu.push(
                 Action::Fold,
@@ -387,7 +388,11 @@ impl App {
                     "expand thread"
                 },
             );
-            menu.push(Action::Reply, Action::Reply, "reply");
+            if on_thread_row {
+                menu.push(Action::Comment, Action::Comment, "reply");
+            } else {
+                menu.push(Action::Reply, Action::Reply, "reply");
+            }
             let resolved = self
                 .thread(id)
                 .is_some_and(|thread| Words::of(None, thread).is_resolved());

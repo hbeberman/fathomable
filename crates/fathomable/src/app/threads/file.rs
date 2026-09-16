@@ -121,8 +121,7 @@ mod tests {
         assert_eq!(app.mark_in(LineRange::new(1, 1)), None);
 
         // Expanded with the cursor on its comment, its header says `file`
-        // and the state; `c` cannot annotate a row above the file, while
-        // `z` folds it.
+        // and the state; `c` replies, while `z` folds it.
         app.goto_message(file_thread.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&file_thread));
         let shown = screen(&app)?;
@@ -133,7 +132,11 @@ mod tests {
         );
         press(&mut app, "c");
         assert!(app.is_expanded(&file_thread));
-        assert_eq!(app.message(), Some("no lines here to annotate"));
+        assert!(matches!(
+            app.draft().map(Compose::target),
+            Some(ComposeTarget::Reply(id)) if id == &file_thread
+        ));
+        app.compose_cancel();
         press(&mut app, "z");
         assert!(!app.is_expanded(&file_thread));
 

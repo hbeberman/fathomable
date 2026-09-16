@@ -231,6 +231,10 @@ fn the_thread_menu_replies_and_deletes_at_once() -> anyhow::Result<()> {
         Some("dd"),
         "the entry shows dd"
     );
+    let reply = entries(&app)?
+        .into_iter()
+        .find(|(_, label)| label == "reply");
+    assert_eq!(reply.map(|(key, _)| key).as_deref(), Some("Space c r"));
 
     let (x, y) = entry_cell(&app, "reply")?;
     left(&mut app, x, y);
@@ -574,11 +578,12 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     let row = row_of(&app, "alpha beta")?;
     app.view_mut().goto_row(row);
     handle_key(&mut app, key('z'));
+    handle_key(&mut app, key('j'));
     let width = app.column_width();
     let sidebar = app.sidebar_width();
     let bar_row = app.text_bar_row();
     let col = (0..width)
-        .find(|&c| draw::bar::text_bar(&app).action_at(width, c) == Some(Action::Reply))
+        .find(|&c| draw::bar::text_bar(&app).action_at(width, c) == Some(Action::Comment))
         .context("reply is drawn")?;
     left(&mut app, sidebar + col, bar_row);
     assert!(matches!(

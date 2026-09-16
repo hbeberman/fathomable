@@ -58,7 +58,7 @@ mod tests {
 
     use fathomable_core::annotations::LineRange;
 
-    use crate::app::threads::ThreadState;
+    use crate::app::threads::{ComposeTarget, ThreadState};
     use crate::app::{App, Popup};
     use fathomable_testing::TempDir;
 
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn comments_are_refused_on_a_detached_row() -> anyhow::Result<()> {
+    fn c_replies_on_a_detached_thread_row() -> anyhow::Result<()> {
         let dir = testing::workspace("detached-keys", BEFORE)?;
         let mut app = detach(&dir)?;
         let id = app.marks()[0].id().clone();
@@ -158,9 +158,12 @@ mod tests {
         assert!(app.popup().is_none());
         assert_eq!(app.message(), Some("no lines here to annotate"));
         app.start_comment();
-        assert!(!app.is_expanded(&id), "`c` does not expand the thread");
-        assert_eq!(app.message(), Some("no lines here to annotate"));
-        assert!(!matches!(app.popup(), Some(Popup::Compose(_))));
+        assert!(app.is_expanded(&id), "the reply expands the thread");
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Compose(compose))
+                if *compose.target() == ComposeTarget::Reply(id)
+        ));
         Ok(())
     }
 

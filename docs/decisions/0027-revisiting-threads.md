@@ -24,8 +24,9 @@ split, with a file or workspace scope and a resolved toggle. Amended 2026-09-05 
 pane lists two rows per thread grouped by file, the one-row gutter
 glyph is the thread's circle (`•` retires), and the pane's header and
 keys are as that record says. Amended 2026-09-16 by
-[0065](0065-z-folds-and-unfolds.md): `c` always starts a comment, `z`
-owns expansion and folding, and standalone `C` is unbound.
+[0065](0065-z-folds-and-unfolds.md): `c` replies from a thread row and
+otherwise starts a comment, `z` owns expansion and folding, and
+standalone `C` and `r` are unbound.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

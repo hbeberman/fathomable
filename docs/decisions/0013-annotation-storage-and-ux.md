@@ -16,7 +16,7 @@ tags:
 
 Status: accepted (2026-08-26)
 
-Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `Space c c`, and `y` as a menu. Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` always starts a thread, `z` expands or folds one, and standalone `C` is unbound.
+Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `Space c c`, and `y` as a menu. Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` replies from a thread row and otherwise starts a thread, `z` expands or folds one, and standalone `C` and `r` are unbound.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

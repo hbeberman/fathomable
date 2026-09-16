@@ -81,7 +81,7 @@ the request left open; each took the recommended answer.
   This applies to line comments, file comments, replies, and edits,
   including navigation requested by an agent. Drafts remain in memory
   for the lifetime of their open documents; they are not saved to disk.
-- **From the review list**, `r`, `e`, `Space c r`, and `Space c e` do
+- **From the review list**, `c`, `e`, `Space c r`, and `Space c e` do
   what `Enter` does first: the list closes, the file opens with the
   thread expanded and the cursor on the message, and the draft is
   written there. When the draft closes, by submit, cancel, or clearing

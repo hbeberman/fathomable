@@ -39,9 +39,9 @@ Amended 2026-09-14 by [0079](0079-list-focus-language.md): help and menu
 hover uses `ui.list.hover`, never a keyboard-selection bar; overlays and
 pending prefixes deactivate underlying list highlights. The old
 `ui.picker.selected` drawing rule below is superseded.
-Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` starts a
-comment even when a thread covers the line, and `z` owns expansion and
-folding.
+Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` replies
+from a thread row and otherwise starts a comment, `z` owns expansion
+and folding, and standalone `r` is unbound.
 
 Amended 2026-09-14: [0052](0052-goto-file.md) replaces the separate
 `gy`/`gx` and copy/open-link entries below with one `gf` action,
@@ -97,7 +97,7 @@ same day; the choices are below.
   - over a selection: `comment on selection` (`c`), `new thread on
     selection` (`Space c c`), `copy selection` (`y`), `clear selection` (`Esc`);
   - on a stub or an expanded thread's rows: `expand thread` / `fold
-    thread` (`z`), `reply` (`r`), `resolve` / `reopen` (`o`), `edit
+    thread` (`z`), `reply` (`c`), `resolve` / `reopen` (`o`), `edit
     message` (`e`, when the message under the cursor or the user's
     newest is theirs), `delete thread` (`dd`);
   - on a rendered link: `copy link` (`gy`), `open link` (`gx`);
@@ -114,7 +114,7 @@ same day; the choices are below.
   [0068](0068-what-the-files-pane-shows.md), worded as they would act
   now.)
   In the threads pane and the review list: `go to` (`Enter`), `reply`
-  (`r`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
+  (`c`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
   thread` (`dd`).
 - **Delete from the menu deletes at once.** `dd` needs two presses
   because a stray key must not delete ([0034](0034-deleting-threads.md));
@@ -180,7 +180,7 @@ same day; the choices are below.
 
 ### Chrome takes clicks
 
-- The hints a pane header shows right-aligned (`Esc close`, `r reply`,
+- The hints a pane header shows right-aligned (`Esc close`, `c reply`,
   `h/l page`, and the rest) are drawn from the binding table, and now
   carry their action: a left-click on a hint focuses that pane and runs
   it. A hint that names two keys (`h/l`) is split at its slash. The

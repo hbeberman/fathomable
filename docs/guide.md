@@ -173,8 +173,8 @@ Text:
 | `Alt-Left` `Alt-Right` | back / forward through the jumplist: the positions far moves leave behind (another file by any route, `gf`, a search jump, `gg` / `G`, `:N`, `]c`, `]g`); `j` `k`, paging, and the mouse leave nothing |
 | `v` / `V` / `x` or mouse drag, then `y` / `c` | select text / lines (`x` grows a line per press), then copy or comment; `y` with nothing selected copies the cursor line |
 | `gf`, Ctrl-click | open linked file/URL: local files open in the viewer at their line, URLs through `xdg-open`; accepts Markdown links and bare references, including `path:line`, `path:line:col`, or `path#L12`, read against the file's directory and then the root; `Alt-Left` returns from a file hop |
-| `c` with nothing selected | start a new comment on the cursor line, whether or not another thread covers it |
-| `r` `e` `o`, `dd` | reply to the thread here, edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
+| `c` | comment on the selection or cursor line; reply when the cursor rests on a thread's stub or message rows |
+| `e` `o`, `dd` | edit the message here when yours, resolve or reopen, delete (on an expanded thread's rows, or the thread at the cursor) |
 | `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
@@ -225,7 +225,7 @@ the keys, its bottom row is a key bar naming them):
 | `Enter` / `l` / `Right` | open the file with the thread expanded, the keys going to the text |
 | `s`, `x` | list this file or the workspace; show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the review list shares the flag) |
 | `z`, `Z` | in workspace scope: fold the cursor's file to its row, or unfold it; fold every file, or unfold them all; a file row carries `▾` open and `▸` folded, here and in the review list |
-| `r` `o`, `dd` | reply, resolve or reopen, delete |
+| `c` `o`, `dd` | reply, resolve or reopen, delete |
 | `Esc` | back to the text; the pane stays (`Space p t` hides and shows it) |
 
 Review list (`Space r`; its header reads `review threads  ● 2 user ● 1
@@ -247,7 +247,7 @@ row itself is selected):
 | `gg` `ge` `G` | first / last stop |
 | `Ctrl-d` `Ctrl-u` | half a page of rows |
 | `Enter` | open the file with the thread expanded and the cursor on the highlighted message |
-| `r` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
+| `c` `e` `o`, `dd` | reply, edit your highlighted message, resolve or reopen, delete |
 | `x`, `f` | show or hide resolved threads, those resolved at earlier commits of the branch among them with the commit named (the threads pane shares the flag); only this file |
 | `z`, `Z` | fold or expand the thread here (one row, the stub's form, with no blank row after it), or on a file row fold the file to its row or unfold it; fold every thread, or expand them all when every one is folded; the list opens with every thread expanded and remembers its folds while the viewer runs |
 | `Esc` | close the list, back to the document (`Space r` does too) |
@@ -396,8 +396,8 @@ them changes, moves onto the rewritten lines and shows as *edited* when an
 agent changes the lines themselves (until you reply or resolve), and shows
 as *detached* when the lines are gone: a blank row then appears where
 the lines were, carrying the thread's mark, and the lines now at that
-place are left alone. `z` on that row opens the thread; `c` is refused,
-as the row is not text. The colour of a mark is the thread's status
+place are left alone. `z` on that row opens the thread; `c` replies to
+it rather than starting a comment, because the row is not text. The colour of a mark is the thread's status
 alone, and it is the colour of whoever has the last word: your blue
 while open (`thread.open`, the hue of `thread.user`), an agent's bold
 green when it waits on you (`thread.waiting`, the hue of
@@ -500,15 +500,16 @@ on a **key bar** that replaces the bottom text row while it has
 something to say (a thread under the cursor, a thread in the file, or a
 draft); the viewport stays put unless its cursor would be covered, and
 scrolling keeps the last line and its `~` marker above the bar. While the text has the keys it
-names the keys of the thread the cursor is on (`r reply · e edit · o
-resolve · z fold`, or `z expand` on a stub, `e` only on your own
-message) and `Z fold all` or `Z unfold all` while the file has threads;
+names the keys of the thread the cursor is on (`c reply · e edit · o
+resolve · z fold` while resting in its rows; `e edit · o resolve ·
+z expand` from its source line, `e` only on your own message) and `Z
+fold all` or `Z unfold all` while the file has threads;
 while another pane has the keys it reads `click or Space w l to
 focus`. A hint on the screen always does what it says. Its message rows are
-cursor rows: `j`/`k` walk the messages, `r` replies and puts the cursor
+cursor rows: `j`/`k` walk the messages, `c` replies and puts the cursor
 on the reply, `e` edits the message under the cursor when you wrote it,
 `o` resolves or reopens, `dd` deletes the thread, and `z` on any
-of its rows folds it. `c` starts a new comment on the source line
+of its rows folds it. On a source line, `c` starts a new comment
 whether or not it already has a thread. `Z` expands every thread in the file, or folds them all when
 any is expanded. A click on a stub's `▸` or a double-click on the stub expands
 it; a click on the header's `▾` or a double-click on the header folds
@@ -594,7 +595,7 @@ repeat navigation hints; directory navigation remains in the files pane.
 
 The text, the threads pane, and the review list show one **thread
 cursor**: a thread and a message in it. Whichever surface you move it
-from, the others follow, and `r`, `e`, `o`, and `dd` act on it wherever
+from, the others follow, and `c`, `e`, `o`, and `dd` act on it wherever
 the keys came from. While the list is open the cursor is what you last
 stepped to or clicked; once it is closed and you move in the text, the
 cursor rides the text cursor again: the thread starting on the cursor
@@ -615,7 +616,7 @@ are hidden until `x` shows them dimmed (the threads pane shares the
 flag), and with them the threads resolved at earlier commits of the
 branch, which the file no longer shows: each names its commit after the
 state (`○  L3  resolved  ab12cd3  2d ago`) at the lines its record
-holds, `Enter` lands on those lines with nothing to expand, `r` and `e`
+holds, `Enter` lands on those lines with nothing to expand, `c` and `e`
 are refused, and `o` reopens it and brings it back into the file
 ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)). It takes the text column
 the way a document does; the sidebar stays beside it. The newest message
@@ -627,7 +628,7 @@ half a page of rows, `z` folds the cursor's file to its row and `Z`
 every file (the list's folds are its own, apart from the pane's), and
 `e` edits a highlighted
 message you wrote. `Enter` opens the file with the thread expanded and
-the cursor on that message, `o` resolves in place, `r` and `e` open the
+the cursor on that message, `o` resolves in place, `c` and `e` open the
 file the way `Enter` does to write the reply or edit in the thread's
 rows and bring the list back when the draft closes, `f` narrows the
 list to the file you were reading, and `Esc` goes back to it.

@@ -1634,7 +1634,7 @@ fn a_reply_from_the_review_list_shows_its_row_above_the_key_bar() -> anyhow::Res
         .join("\n");
     type_in(&mut app, &long);
     app.compose_submit();
-    // `r` on the list's entry opens the file with the thread expanded
+    // Replying from the list opens the file with the thread expanded
     // and the draft at its end, past the bottom of the screen; the
     // draft's row is scrolled on, above the key bar that covers the
     // bottom text row (ADR 0067).

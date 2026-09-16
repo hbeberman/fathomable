@@ -29,6 +29,11 @@ the bar, rather than underneath it. Showing a bar preserves the viewport
 unless its cursor would be covered; hiding it restores the row. The
 draft no longer reserves a second row when revealing its cursor.
 
+Amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): the reply
+hint is `c reply` only while the text cursor rests on a thread's stub
+or message rows. A source line has no reply hint because `c` starts a
+new comment there; standalone `r` is unbound.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys
@@ -78,9 +83,10 @@ resolve. This record undoes both, the same day, for one rule.
     `Esc`; or `Esc again to discard · any key keeps the draft` after an
     Esc on a changed draft.
   - Else the thread cursor's keys when the cursor line has a thread:
-    `r reply`, `e edit` when the cursor's message is the user's,
-    `o resolve` or `o reopen`, then `z fold` on an expanded thread or
-    `z expand` on a stub.
+    `c reply` when the cursor rests on the thread's stub or message
+    rows, `e edit` when the cursor's message is the user's, `o resolve`
+    or `o reopen`, then `z fold` on an expanded thread or `z expand` on
+    a stub. The reply hint is omitted while the cursor rests on source.
   - Then `Z fold all` while any thread in the file is expanded, or
     `Z unfold all` while the file has stubs and none is; nothing when
     the file has no thread.

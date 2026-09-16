@@ -312,6 +312,15 @@ impl App {
         Some((stub, index, last))
     }
 
+    /// Whether the text cursor rests inside `id` rather than on source text.
+    pub(crate) fn cursor_on_thread_row(&self, id: &ThreadId) -> bool {
+        let row = self.view().cursor().row;
+        self.stub_on_row(row)
+            .is_some_and(|(stub, _, _)| stub.thread() == Some(id))
+            || (self.view().detached_anchor_of_row(row).is_some()
+                && self.thread_cursor().thread() == Some(id))
+    }
+
     /// The thread and message an expanded row shows, `None` off the
     /// expanded rows.
     pub(crate) fn expanded_row_message(&self, row: usize) -> Option<(ThreadId, usize)> {
@@ -626,7 +635,7 @@ mod tests {
     }
 
     /// `z` expands the thread under the cursor in place without moving
-    /// the view; `j`/`k` walk its messages and `r` replies with the
+    /// the view; `j`/`k` walk its messages and `c` replies with the
     /// cursor landing on the reply; `z` folds it again.
     /// Opening a thread from its chevron and closing it again leaves the
     /// view where it was: the row the stub hangs under keeps its place on
@@ -724,9 +733,9 @@ mod tests {
         assert_eq!(app.view().cursor().row, 7);
         assert_eq!(app.expanded_row_message(7), Some((inner.clone(), 0)));
 
-        // `r` on a message row replies to its thread; the cursor lands on
+        // `c` on a message row replies to its thread; the cursor lands on
         // the reply and the keys stay with the text.
-        press(&mut app, "r");
+        press(&mut app, "c");
         assert!(matches!(
             app.popup(),
             Some(Popup::Compose(c)) if *c.target() == ComposeTarget::Reply(inner.clone())

@@ -78,7 +78,7 @@ and in the text alike.
   then on each of its threads when it is unfolded, folded threads
   included. A folded file is its row alone, one stop. The cursor's
   thread while the cursor rests on a file row is the file's first
-  thread, as it was inside a folded file, so `Enter`, `r`, `o`, and the
+  thread, as it was inside a folded file, so `Enter`, `c`, `o`, and the
   hints keep acting on a thread; `l`/`h` do nothing on a file row or a
   folded thread, since there is no visible message to walk, and the
   bar drops the `messages` hint there. `gg` lands on the first stop

@@ -103,8 +103,15 @@ pub(crate) enum DraftRow {
 }
 
 impl App {
-    /// `c`: start a comment on the selection or cursor line.
+    /// `c`: reply from a thread row, else comment on the selection or line.
     pub(crate) fn start_comment(&mut self) {
+        if self.view().selected_lines().is_none()
+            && let Some(id) = self.thread_cursor().thread().cloned()
+            && self.cursor_on_thread_row(&id)
+        {
+            self.open_compose(ComposeTarget::Reply(id));
+            return;
+        }
         self.start_new_comment();
     }
 

@@ -182,7 +182,7 @@ agents' green (amber and teal until 2026-09-09).
   two cells in under the file row, in file scope too, and the file row
   draws the cursor bar while the cursor is on one of its threads.)
 - The cursor's thread draws its header bold on `ui.picker.selected`
-  with the editing hints (`r reply · e edit · o resolve · z fold`) at
+  with the editing hints (`c reply · e edit · o resolve · z fold`) at
   its right edge while the list has the keys, and its message keeps the
   selected band, so `l`/`h` and `e` stay visible.
 - `z` folds or unfolds the cursor's file; `Z` folds or unfolds every
@@ -197,7 +197,7 @@ agents' green (amber and teal until 2026-09-09).
   narrows the list; the order word goes with `s` (since 2026-09-11,
   [0075](0075-the-header-names-its-counts.md): `review threads`, the
   counts with their words). The key bar reads `x
-  resolved · f file · z fold · Z fold all · Enter open · r reply · e
+  resolved · f file · z fold · Z fold all · Enter open · c reply · e
   edit · o resolve · k/j threads · l/h messages · Esc`.
 
 ### Mouse

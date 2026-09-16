@@ -506,7 +506,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Threads",
         "expand or fold all",
     ),
-    bind(W::View, &[&[c('r')]], A::Reply, "Threads", "reply"),
     bind(
         W::View,
         &[&[c('e')]],
@@ -1074,7 +1073,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::ThreadsPane,
-        &[&[c('r')]],
+        &[&[c('c')]],
         A::Reply,
         "Threads pane",
         "reply",
@@ -1164,7 +1163,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Review list",
         "open the file with the thread expanded on this message",
     ),
-    bind(W::Review, &[&[c('r')]], A::Reply, "Review list", "reply"),
+    bind(W::Review, &[&[c('c')]], A::Reply, "Review list", "reply"),
     bind(
         W::Review,
         &[&[c('e')]],
@@ -1833,9 +1832,13 @@ mod tests {
         assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
-        assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("r"));
+        assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("c"));
         assert_eq!(hint(Where::Tree, Action::CopyPath).as_deref(), Some("y"));
-        assert_eq!(hint(Where::View, Action::Reply).as_deref(), Some("r"));
+        assert_eq!(
+            hint(Where::View, Action::Reply).as_deref(),
+            Some("Space c r")
+        );
+        assert_eq!(lookup(Where::View, &[c('r')]), Match::Miss);
         assert_eq!(
             hint(Where::Review, Action::CommandLine).as_deref(),
             Some(":")

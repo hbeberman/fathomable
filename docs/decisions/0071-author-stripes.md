@@ -108,7 +108,7 @@ folded file row marked as an entry header is.
   and read bold. (Amended 2026-09-11 by
   [0077](0077-threads-nest-under-their-file.md): the file row over the
   cursor's thread in the list draws the bar too, without the bold.) In the file the header's bar says this is the thread
-  `r` and the other keys act on, so it shows whenever the thread is the
+  the thread keys act on, so it shows whenever the thread is the
   cursor's, from its lines above included; a message's bar waits for
   the text cursor to rest on the thread's own rows, since from the
   lines above the cursor merely rides the thread

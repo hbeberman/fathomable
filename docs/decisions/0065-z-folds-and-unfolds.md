@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: z folds and unfolds
-description: In the text `z` opens and closes the thread at the cursor, `Z` expands or folds every thread in the file, and `c` starts a comment without changing thread expansion.
+description: In the text `z` opens and closes threads, `Z` folds or expands the file, and `c` replies from a thread row or otherwise starts a comment without changing expansion.
 resource: crates/fathomable/src/app/threads/fold.rs
 related_resources:
   - crates/fathomable/src/app/threads/stubs.rs
@@ -20,8 +20,9 @@ Status: accepted (2026-09-05). Amended 2026-09-05 by
 `z` folds the cursor's file and `Z` every file. Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the hints `z expand` and `z fold`
 are on the text's key bar, not the stub or the header. Amended
-2026-09-16: `c` always starts a comment and no longer expands, folds,
-or cycles threads; the standalone `C` alias is unbound.
+2026-09-16: `c` no longer expands, folds, or cycles threads; it starts
+a comment from source text and replies from a thread row. Standalone
+`C` and the standalone `r` reply binding are unbound.
 
 ## Context
 
@@ -57,12 +58,15 @@ thread here, and every thread in the file.
   [0076](0076-threads-fold-in-the-list.md).)
 - **`Z` opens and closes the file.** It expands every stub in the file,
   or, when any thread is expanded, folds every one.
-- **`c` only comments.** It starts a new thread on the selection or
-  cursor line whether or not another thread covers it. It never changes
-  thread expansion; the standalone `C` alias is unbound. `Space c c`
-  remains the pane-independent new-thread command.
+- **`c` writes.** It replies when the cursor rests on a collapsed stub
+  or an expanded thread's rows. On a selection or source line it starts
+  a new thread, whether or not another thread covers that line. It never
+  changes thread expansion. Standalone `C` and standalone `r` are
+  unbound; `Space c c` and `Space c r` remain the pane-independent
+  explicit commands.
 - **The hints name `z`.** A stub's last row ends with `(z expand)`, the
-  thread header reads `r reply · e edit · o resolve · z fold`, and the
+  thread key bar reads `c reply · e edit · o resolve · z fold` while
+  the cursor rests in the thread's rows, and the
   right-click menu's `expand thread` / `fold thread` entry shows `z`.
   Under [0064](0064-hints-you-can-press.md) the hint is the key that
   does only that.
@@ -75,4 +79,5 @@ thread here, and every thread in the file.
 - `toggle_thread_here` and `toggle_expand_all` live in
   `app/threads/fold.rs`, the latter no longer a test-only helper. The
   old `c` cycle and its session state are removed.
-- `docs/guide.md` names `c` as comment and `z` as fold or unfold.
+- `docs/guide.md` names `c` as comment or reply and `z` as fold or
+  unfold.

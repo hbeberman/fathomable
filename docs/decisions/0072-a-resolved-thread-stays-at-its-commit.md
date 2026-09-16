@@ -92,7 +92,7 @@ when that commit is one of its sides is left for a later milestone.
   word is shown, since nothing in the file is located. `Enter` opens
   the file and puts the cursor on those lines; there is no block to
   expand. `o` reopens it and it returns to the file; `dd` deletes it.
-  `r` and `e` are refused with a notice naming the commit and `o`, so
+  `c` and `e` are refused with a notice naming the commit and `o`, so
   the thread is not written in from the past.
 - Off-branch resolved threads, whose commit `HEAD` does not reach, stay
   hidden everywhere as they were.

@@ -197,7 +197,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
 
 /// `s` lists the workspace grouped by file in the files pane's
 /// order, the place saying the lines alone; `j` opens the other file
-/// and keeps the keys; Enter and `r` act on the cursor's thread
+/// and keeps the keys; Enter and `c` act on the cursor's thread
 /// (ADR 0049, ADR 0066).
 #[test]
 fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
@@ -239,13 +239,13 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     assert_eq!(app.current_path(), Path::new("README.md"), "wrapped");
     assert_eq!(app.focus(), Focus::ThreadsPane);
 
-    // Enter opens the thread expanded with the keys in the text; `r`
+    // Enter opens the thread expanded with the keys in the text; `c`
     // replies in place with the keys staying here.
     keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::View);
     assert!(app.shows_thread());
     app.focus_threads_pane();
-    press(&mut app, "r");
+    press(&mut app, "c");
     assert!(
         matches!(app.popup(), Some(Popup::Compose(c)) if matches!(c.target(), ComposeTarget::Reply(_)))
     );

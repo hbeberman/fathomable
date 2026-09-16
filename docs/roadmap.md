@@ -298,8 +298,9 @@ Milestones are ordered; each is usable on its own. Details live in the
 56. **z folds and unfolds.** In the text `z` folds the expanded thread
     the cursor is on or expands the thread cursor's stub, and does
     nothing else; `Z` expands every thread in the file or folds them
-    all when any is expanded; `c` starts a comment without changing
-    thread expansion, and the fold hints name `z`
+    all when any is expanded; `c` replies from a thread row and
+    otherwise starts a comment without changing thread expansion, and
+    the fold hints name `z`
     ([0065](decisions/0065-z-folds-and-unfolds.md)).
 57. **One circle language.** Every surface draws one circle in the
     state colour (`●` open or waiting, `◐` proposed, `○` resolved, `?`

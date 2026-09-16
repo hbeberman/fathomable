@@ -36,7 +36,8 @@ pub(crate) fn text_bar(app: &App) -> Header {
         let mark = app.mark_of(id);
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
         let expanded = app.is_expanded(id);
-        hints.extend(thread_hints(app, place, words, expanded));
+        let on_thread_row = app.cursor_on_thread_row(id);
+        hints.extend(thread_hints(app, place, words, expanded, on_thread_row));
     }
     let stubs = app.stubs();
     if !stubs.is_empty() {
@@ -54,16 +55,25 @@ pub(crate) fn text_bar(app: &App) -> Header {
     Header::bar(hints)
 }
 
-/// The keys that act on the thread cursor's thread: reply, edit when
-/// the cursor's message is the user's, resolve or reopen, and `z` to
-/// fold an expanded thread or expand a stub.
-fn thread_hints(app: &App, place: Where, words: Words, expanded: bool) -> Vec<HintOf> {
+/// The keys that act on the thread cursor's thread: reply from its rows,
+/// edit when the cursor's message is the user's, resolve or reopen, and
+/// `z` to fold an expanded thread or expand a stub.
+fn thread_hints(
+    app: &App,
+    place: Where,
+    words: Words,
+    expanded: bool,
+    on_thread_row: bool,
+) -> Vec<HintOf> {
     let resolve = if words.is_resolved() {
         "reopen"
     } else {
         "resolve"
     };
-    let mut hints = vec![HintOf::keyed(place, Action::Reply, "reply")];
+    let mut hints = Vec::new();
+    if on_thread_row {
+        hints.push(HintOf::keyed(place, Action::Comment, "reply"));
+    }
     if app.thread_message_editable() {
         hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
     }
@@ -84,8 +94,10 @@ mod tests {
     use fathomable_core::annotations::{Author, LineRange};
     use fathomable_core::session::{Request, Response};
 
+    use super::text_bar;
     use crate::app::Focus;
     use crate::app::draw::header::expanded_header;
+    use crate::app::input::bindings::Action;
     use crate::app::testing::{self, click, press_key, screen};
 
     /// The bar's row on the 100×30 test screen: the bottom text row,
@@ -95,6 +107,15 @@ mod tests {
             .chars()
             .skip(app.sidebar_width())
             .collect())
+    }
+
+    fn click_bar_action(app: &mut crate::app::App, action: Action) -> anyhow::Result<()> {
+        let width = app.column_width();
+        let column = (0..width)
+            .find(|&column| text_bar(app).action_at(width, column) == Some(action))
+            .ok_or_else(|| anyhow::anyhow!("bar action {action:?}"))?;
+        click(app, app.sidebar_width() + column, app.text_bar_row());
+        Ok(())
     }
 
     #[test]
@@ -211,7 +232,7 @@ mod tests {
 
         assert_eq!(
             bar(&app)?.trim(),
-            "r reply · o resolve · z fold · Z fold all",
+            "c reply · o resolve · z fold · Z fold all",
             "the agent's thread: no edit"
         );
         let rows = screen(&app)?;
@@ -235,7 +256,7 @@ mod tests {
         app.goto_message(mine.clone(), 0);
         assert_eq!(
             bar(&app)?.trim(),
-            "r reply · e edit · o resolve · z fold · Z fold all"
+            "c reply · e edit · o resolve · z fold · Z fold all"
         );
 
         // A stub reads `z expand`; with none expanded `Z` unfolds.
@@ -244,7 +265,7 @@ mod tests {
         app.view_mut().goto_source_line(3);
         assert_eq!(
             bar(&app)?.trim(),
-            "r reply · e edit · o resolve · z expand · Z unfold all"
+            "e edit · o resolve · z expand · Z unfold all"
         );
         assert!(
             !screen(&app)?.iter().any(|row| row.contains("(z expand)")),
@@ -263,8 +284,20 @@ mod tests {
         click(&mut app, sidebar + 3, row);
         assert_eq!(app.focus(), Focus::View);
         app.view_mut().goto_source_line(3);
-        click(&mut app, sidebar + 1, row);
-        assert!(app.draft().is_some(), "`r reply` on the bar starts a reply");
+        assert!(
+            !bar(&app)?.contains("reply"),
+            "the source line has no reply hint"
+        );
+        let stub_row = (0..app.view().layout().lines().len())
+            .find(|&candidate| {
+                app.stub_on_row(candidate)
+                    .is_some_and(|(stub, _, _)| stub.thread() == Some(&mine))
+            })
+            .ok_or_else(|| anyhow::anyhow!("stub row"))?;
+        app.view_mut().goto_row(stub_row);
+        assert_eq!(app.thread_cursor().thread(), Some(&mine));
+        click_bar_action(&mut app, Action::Comment)?;
+        assert!(app.draft().is_some(), "`c reply` on the bar starts a reply");
         press_key(&mut app, KeyCode::Esc);
         assert!(app.draft().is_none());
 

@@ -40,9 +40,10 @@ that record says (`s` is gone from both); amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the expanded thread's header carries
 no keys and the stub no `(c expand)`; the text's keys are on a bar
 along the column's bottom row, and the thread cursor's stub reads bold;
-amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` starts a
-comment without changing thread expansion, `z` alone expands or folds,
-and the standalone `C` alias is unbound;
+amended 2026-09-16 by [0065](0065-z-folds-and-unfolds.md): `c` replies
+from a thread row and otherwise starts a comment without changing
+thread expansion, `z` alone expands or folds, and standalone `C` and
+`r` are unbound;
 amended 2026-09-04 as the work landed:
 
 - `dd` on an expanded thread's rows deletes the **thread**, not the
@@ -241,7 +242,7 @@ result.
   message truncated, `↩n` when replied, age. Order follows the review
   list's sort; in file scope the default is line order. `j`/`k` move the
   thread cursor (the text follows; in workspace scope the file opens),
-  `Enter` opens the file and expands the thread, `r`/`o`/`dd` act on the
+  `Enter` opens the file and expands the thread, `c`/`o`/`dd` act on the
   highlight, `Esc` returns to the text. The pill reads `THREADS`. The
   highlighted row is the thread cursor's, so reading the file walks the
   pane as today.
@@ -256,7 +257,7 @@ result.
   grouping. Resolved threads are **hidden** by default and `x` toggles
   them; `Z` goes, `z` still folds the entry. Every entry header carries
   `path  Lstart-end  state  age` in both orders. `f` narrows to the
-  current file. `Enter` opens the file with the thread expanded. `r`,
+  current file. `Enter` opens the file with the thread expanded. `c`,
   `e`, `o`, `dd` as today. Amended 2026-09-04: **`j`/`k` step between
   threads** and land on the newest message, as an inbox's rows do, and
   `l`/`h` step between the selected thread's messages; the two pairs

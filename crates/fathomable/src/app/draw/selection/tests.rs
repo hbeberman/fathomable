@@ -335,7 +335,6 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
             PickerKind::Files,
             PickerKind::AllFiles,
             PickerKind::Recent,
-            PickerKind::Wake,
             PickerKind::DiffBase,
             PickerKind::DiffTarget,
             PickerKind::Worktree,

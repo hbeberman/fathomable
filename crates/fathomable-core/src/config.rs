@@ -6,8 +6,8 @@
 //! rather than being ignored, so typos surface immediately. `theme`, the
 //! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
-//! `agents` block (ADR 0040), and the `sidebar` (ADR 0057; `rail` in 0049)
-//! and `threads` blocks (ADR 0049) are understood.
+//! `sidebar` (ADR 0057; `rail` in 0049) and `threads` blocks (ADR 0049)
+//! are understood.
 //!
 //! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
 //! with every setting spelled out, which is what `--config-show` prints,
@@ -44,7 +44,6 @@ pub struct Config {
     sidebar: SidebarConfig,
     threads: ThreadsConfig,
     diff: DiffConfig,
-    agents: AgentsConfig,
     user: UserConfig,
 }
 
@@ -59,7 +58,6 @@ impl Default for Config {
             sidebar: SidebarConfig::default(),
             threads: ThreadsConfig::default(),
             diff: DiffConfig::default(),
-            agents: AgentsConfig::default(),
             user: UserConfig::default(),
         }
     }
@@ -152,43 +150,6 @@ impl Default for SidebarConfig {
     }
 }
 
-/// The `agents { ... }` block (ADR 0040): subscriptions and delivery.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentsConfig {
-    /// The agent types `follow` may declare.
-    pub types: Vec<String>,
-    /// Stop-hook checks between reminders about delivered, unanswered
-    /// threads; zero never reminds.
-    pub nag_after: u32,
-    /// How long a subscription that is not heard from lives.
-    pub expire_after: Duration,
-    /// The longest hook prompt, in lines, before the rest is listed.
-    pub max_lines: usize,
-    /// The command `Space a w` runs to wake a subscriber, with `{id}` and
-    /// `{prompt}` placeholders; `None` disables the key.
-    pub wake: Option<String>,
-}
-
-impl Default for AgentsConfig {
-    fn default() -> Self {
-        Self {
-            types: ["coder", "reviewer", "planner"].map(str::to_owned).to_vec(),
-            nag_after: 5,
-            expire_after: Duration::from_hours(24),
-            max_lines: 40,
-            wake: None,
-        }
-    }
-}
-
-impl AgentsConfig {
-    /// Whether `kind` is a declared agent type.
-    #[must_use]
-    pub fn allows(&self, kind: &str) -> bool {
-        self.types.iter().any(|t| t == kind)
-    }
-}
-
 /// The `viewer { ... }` block (ADR 0026): how files are read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewerConfig {
@@ -264,13 +225,9 @@ impl MarkdownConfig {
     }
 }
 
-/// The `jump { ... }` block (ADR 0015): auto-jump and its toasts.
+/// The `jump { ... }` block (ADR 0015): how long transient toasts remain.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JumpConfig {
-    /// Whether auto-jump starts enabled.
-    pub auto: bool,
-    /// Quiet period before auto-jump moves.
-    pub debounce: Duration,
     /// How long a toast stays; zero disables toasts.
     pub toast: Duration,
 }
@@ -278,8 +235,6 @@ pub struct JumpConfig {
 impl Default for JumpConfig {
     fn default() -> Self {
         Self {
-            auto: false,
-            debounce: Duration::from_secs(1),
             toast: Duration::from_secs(4),
         }
     }
@@ -372,8 +327,6 @@ impl Config {
                         let line = Some(line_of(child.span().offset()));
                         let jump = &mut config.jump;
                         match child.name().value() {
-                            "auto" => jump.auto = one_bool(child, line)?,
-                            "debounce" => jump.debounce = millis(child, line)?,
                             "toast" => jump.toast = millis(child, line)?,
                             other => {
                                 return Err(ConfigError {
@@ -438,47 +391,6 @@ impl Config {
                                     path: None,
                                     line,
                                     message: format!("unknown markdown setting `{other}`"),
-                                });
-                            }
-                        }
-                    }
-                }
-                "agents" => {
-                    let Some(children) = node.children() else {
-                        return Err(ConfigError {
-                            path: None,
-                            line,
-                            message: "`agents` takes a block of settings".to_owned(),
-                        });
-                    };
-                    for child in children.nodes() {
-                        let line = Some(line_of(child.span().offset()));
-                        let agents = &mut config.agents;
-                        match child.name().value() {
-                            "types" => agents.types = strings(child, line, "types")?,
-                            "nag-after" => {
-                                agents.nag_after =
-                                    u32::try_from(count(child, line, "count")?).unwrap_or(u32::MAX);
-                            }
-                            "expire-after" => {
-                                agents.expire_after = Duration::from_secs(
-                                    count(child, line, "hour count")?.saturating_mul(3600),
-                                );
-                            }
-                            "max-lines" => {
-                                agents.max_lines =
-                                    usize::try_from(count(child, line, "line count")?)
-                                        .unwrap_or(usize::MAX);
-                            }
-                            "wake" => {
-                                let command = one_string(child, line)?;
-                                agents.wake = (!command.is_empty()).then(|| command.to_owned());
-                            }
-                            other => {
-                                return Err(ConfigError {
-                                    path: None,
-                                    line,
-                                    message: format!("unknown agents setting `{other}`"),
                                 });
                             }
                         }
@@ -681,12 +593,6 @@ impl Config {
         &self.markdown
     }
 
-    /// Subscriptions and delivery (ADR 0040).
-    #[must_use]
-    pub fn agents(&self) -> &AgentsConfig {
-        &self.agents
-    }
-
     /// The `user` block: how the person at the viewer is named (ADR 0058).
     #[must_use]
     pub fn user(&self) -> &UserConfig {
@@ -702,8 +608,6 @@ impl fmt::Display for Config {
         writeln!(f, "theme {}", quoted(&self.theme))?;
         let jump = &self.jump;
         writeln!(f, "\njump {{")?;
-        writeln!(f, "    auto #{}", jump.auto)?;
-        writeln!(f, "    debounce {}", jump.debounce.as_millis())?;
         writeln!(f, "    toast {}", jump.toast.as_millis())?;
         writeln!(f, "}}")?;
         let watch = &self.watch;
@@ -735,22 +639,6 @@ impl fmt::Display for Config {
         writeln!(f, "\ndiff {{")?;
         writeln!(f, "    context {}", diff.context)?;
         writeln!(f, "    ignore-whitespace #{}", diff.ignore_whitespace)?;
-        writeln!(f, "}}")?;
-        let agents = &self.agents;
-        writeln!(f, "\nagents {{")?;
-        writeln!(f, "    types{}", words(&agents.types))?;
-        writeln!(f, "    nag-after {}", agents.nag_after)?;
-        writeln!(
-            f,
-            "    expire-after {}",
-            agents.expire_after.as_secs() / 3600
-        )?;
-        writeln!(f, "    max-lines {}", agents.max_lines)?;
-        writeln!(
-            f,
-            "    wake {}",
-            quoted(agents.wake.as_deref().unwrap_or_default())
-        )?;
         writeln!(f, "}}")?;
         writeln!(f, "\nuser {{")?;
         writeln!(f, "    name {}", quoted(&self.user.name))?;
@@ -923,8 +811,6 @@ mod tests {
         let config = Config::parse(
             r#"
 jump {
-    auto #true
-    debounce 2000
     toast 0
 }
 watch {
@@ -944,8 +830,6 @@ threads {
 }
 "#,
         )?;
-        assert!(config.jump().auto);
-        assert_eq!(config.jump().debounce, Duration::from_secs(2));
         assert_eq!(config.jump().toast, Duration::ZERO);
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
@@ -1008,37 +892,6 @@ threads {
         }
     }
 
-    #[test]
-    fn agents_block_parses_every_key() -> Result<(), ConfigError> {
-        let config = Config::parse(
-            "agents {\n types \"coder\" \"qa\"\n nag-after 0\n expire-after 2\n max-lines 10\n wake \"claude -r {id} {prompt}\"\n}",
-        )?;
-        let agents = config.agents();
-        assert_eq!(agents.types, ["coder", "qa"]);
-        assert!(agents.allows("qa") && !agents.allows("planner"));
-        assert_eq!(agents.nag_after, 0);
-        assert_eq!(agents.expire_after, Duration::from_hours(2));
-        assert_eq!(agents.max_lines, 10);
-        assert_eq!(agents.wake.as_deref(), Some("claude -r {id} {prompt}"));
-        let defaults = Config::parse("agents { wake \"\" }")?;
-        assert_eq!(defaults.agents().wake, None);
-        assert!(defaults.agents().allows("planner"));
-        assert_eq!(defaults.agents().nag_after, 5);
-        for (text, needle) in [
-            ("agents { nope 1 }", "unknown agents setting"),
-            ("agents { types 1 }", "takes strings"),
-            ("agents { nag-after -1 }", "non-negative"),
-            ("agents \"x\"", "block"),
-        ] {
-            let error = Config::parse(text)
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_default();
-            assert!(error.contains(needle), "{text}: {error}");
-        }
-        Ok(())
-    }
-
     /// The `user` block names the person at the viewer (ADR 0058): `User`
     /// unless set, never blank.
     #[test]
@@ -1093,18 +946,10 @@ threads {
     }
 
     #[test]
-    fn jump_defaults_apply_per_key() -> Result<(), ConfigError> {
-        let config = Config::parse("jump { auto #true }")?;
-        assert!(config.jump().auto);
-        assert_eq!(config.jump().toast, Duration::from_secs(4));
-        Ok(())
-    }
-
-    #[test]
     fn jump_and_watch_errors_name_the_line() {
         let bad = [
             ("jump { toast -1 }", "millisecond"),
-            ("jump { auto \"yes\" }", "boolean"),
+            ("jump { auto #true }", "unknown jump setting"),
             ("jump { nope 1 }", "unknown jump setting"),
             ("watch { nope 1 }", "unknown watch setting"),
             ("jump \"x\"", "block"),

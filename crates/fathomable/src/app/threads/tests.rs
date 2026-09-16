@@ -1394,7 +1394,7 @@ fn the_review_folds_threads_and_shift_z_every_thread() -> anyhow::Result<()> {
 }
 
 #[test]
-fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
+fn socket_requests_reply() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-socket", testing::README)?;
     fs::write(dir.0.join("ws/other.md"), "# Other\n\nline\n")?;
     let mut app = app(&dir)?;
@@ -1404,48 +1404,6 @@ fn socket_requests_open_follow_list_and_reply() -> anyhow::Result<()> {
     type_in(&mut app, "please check");
     app.compose_submit();
     let id = app.marks()[0].id().clone();
-
-    // Paths must stay inside the workspace.
-    for bad in ["../ws/README.md", "/etc/passwd", "missing.md"] {
-        let reply = app.handle_request(Request::Open {
-            path: PathBuf::from(bad),
-            line: None,
-            end_line: None,
-            worktree: None,
-        });
-        assert!(matches!(reply, Response::Error(_)), "{bad}: {reply:?}");
-    }
-    let reply = app.handle_request(Request::Open {
-        path: PathBuf::from("other.md"),
-        line: Some(3),
-        end_line: Some(3),
-        worktree: None,
-    });
-    assert_eq!(reply, Response::Done);
-    assert_eq!(app.current_path(), Path::new("other.md"));
-    assert_eq!(app.view().cursor_source_line(), Some(3));
-
-    let Response::Threads(all) = app.handle_request(Request::ThreadsList {
-        since: None,
-        path: None,
-    }) else {
-        anyhow::bail!("no review list");
-    };
-    assert_eq!(all.len(), 1);
-    let Response::Threads(none) = app.handle_request(Request::ThreadsList {
-        since: Some(all[0].updated() + 1),
-        path: None,
-    }) else {
-        anyhow::bail!("no review list");
-    };
-    assert!(none.is_empty());
-    let Response::Threads(elsewhere) = app.handle_request(Request::ThreadsList {
-        since: None,
-        path: Some(PathBuf::from("other.md")),
-    }) else {
-        anyhow::bail!("no review list");
-    };
-    assert!(elsewhere.is_empty());
 
     let author = Author::Agent {
         name: "reviewer".to_owned(),

@@ -458,15 +458,14 @@ fn enqueue_raws(
 }
 
 /// The watches a viewer starts with: visible workspace directories, the
-/// thread and agent stores, and worktree Git paths.
+/// thread store, and worktree Git paths.
 fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) {
     let watching = app.sync_workspace_watches(doc_watcher);
-    let mut state: Vec<std::path::PathBuf> = app
+    let state: Vec<std::path::PathBuf> = app
         .store_path()
         .map(Path::to_path_buf)
         .into_iter()
         .collect();
-    state.push(app.agents_path());
     doc_watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
     app.take_rewatch();
     doc_watcher.watch_worktrees(app.worktree_watch_paths());

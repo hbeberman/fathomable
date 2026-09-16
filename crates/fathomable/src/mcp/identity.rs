@@ -15,7 +15,7 @@ pub(super) struct Launch {
     claude: Option<String>,
 }
 
-/// A chat whose identity came from its harness, not a subscription.
+/// A chat whose identity came from its harness.
 #[derive(Debug, Clone)]
 pub(super) struct Caller {
     pub(super) id: String,
@@ -77,7 +77,7 @@ impl Launch {
             };
             format!(
                 "chat identity unavailable: expected {expected}. Reading is available, but \
-                 posting and subscriptions require automatic identity. Do not ask the user \
+                 posting requires automatic identity. Do not ask the user \
                  for an internal session id"
             )
         })

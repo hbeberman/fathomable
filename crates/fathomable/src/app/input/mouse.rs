@@ -44,7 +44,10 @@ pub(crate) struct Press {
 /// the pane under the pointer, a click focuses it, and a press on the
 /// sidebar's divider or the threads pane's rule drags that border.
 pub(crate) fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
-    app.with_navigation_watch(|app| mouse_event(app, event))
+    app.sync_text_height();
+    let effect = mouse_event(app, event);
+    app.sync_text_height();
+    effect
 }
 
 /// The mouse over the sidebar: the threads pane along its bottom (ADR 0027,

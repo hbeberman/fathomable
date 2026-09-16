@@ -397,3 +397,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     lists, each call may override the immutable startup workspace,
     and delivery hooks need no `hello` bootstrap
     ([0080](decisions/0080-automatic-chat-identity.md)).
+72. **Three-tool review core.** The repository-bound MCP surface is
+    `threads`, `thread_start`, and `thread_reply`. Reads have no delivery
+    side effects; writes are batch-only and automatically identified.
+    Subscriptions, hooks, watches, pending delivery state, per-call routing,
+    MCP viewer control, and auto-jump retire. Live reload, manual change and
+    worktree navigation, shared thread storage, and human-only resolution
+    remain ([0082](decisions/0082-three-tool-review-core.md)).

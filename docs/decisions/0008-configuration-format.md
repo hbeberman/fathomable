@@ -16,6 +16,11 @@ debounce toast }` and `watch { ignore debounce }`, and `seen-idle` is
 under `viewer`; a `follow` block is an error naming each setting's new
 home.
 
+Amended 2026-09-15 by [0082](0082-three-tool-review-core.md): remove the
+`agents` block and `jump.auto` / `jump.debounce`. `jump.toast` and filesystem
+`watch.debounce` remain. Removed settings are unknown-key errors; the
+upgrade never rewrites installed configuration.
+
 ## Context
 
 Fathomable needs user configuration (theme, follow behavior, later keymaps)

@@ -10,8 +10,6 @@ related_resources:
   - crates/fathomable/src/app/worktrees.rs
   - crates/fathomable/src/app/watch.rs
   - crates/fathomable/src/mcp/mod.rs
-  - crates/fathomable/src/mcp/tools.rs
-  - crates/fathomable/src/hooks.rs
 tags:
   - decision
   - git
@@ -24,6 +22,12 @@ tags:
 
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
+
+MCP routing amended again 2026-09-15 by
+[0082](0082-three-tool-review-core.md): a server binds one repository
+checkout at startup and tools have no per-call workspace or viewer selector.
+The common-dir thread store and manual viewer worktree navigation remain.
+Cross-workspace MCP routing is parked rather than retained as dead code.
 
 MCP routing amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): `workspaces` only lists and

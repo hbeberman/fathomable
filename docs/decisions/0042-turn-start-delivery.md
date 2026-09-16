@@ -2,7 +2,6 @@
 type: Decision
 title: Delivery at both ends of a turn
 description: The pending hook also runs from the harness's prompt-submit event and, optionally, after every tool call, where it adds the subscriber's undelivered threads to context and exits 0 instead of blocking; a comment that lands while an agent waits reaches it on the wake itself, one that lands mid-task reaches it after the next tool result, and no agent needs to poll for comments on any harness.
-resource: crates/fathomable/src/hooks.rs
 tags:
   - decision
   - sessions
@@ -12,6 +11,12 @@ tags:
 # 0042 Delivery at both ends of a turn
 
 Status: accepted (2026-08-29)
+
+Superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). `fathomable pending` and every
+Fathomable delivery-hook integration are removed. Users remove old installed
+hook entries manually; reading `threads` is explicit and has no delivery or
+consumption side effect.
 
 Bootstrap amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): `hello` and its session-start

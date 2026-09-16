@@ -17,6 +17,12 @@ tags:
 Status: accepted (2026-08-26); amended 2026-09-06: `--doctor` reports
 the watch budget; amended 2026-09-13: ignored trees spend no watches.
 
+Agent following and auto-jump superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). Live reload, last-seen snapshots,
+change hints and toasts, the changed-file queue, and manual jump keys remain.
+MCP `open`/`follow`, automatic movement, the `AUTO` badge, and the
+auto/debounce config keys are removed; `jump.toast` remains.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

@@ -2,9 +2,6 @@
 type: Decision
 title: Agent subscriptions, pending threads, and harness hooks
 description: An agent subscribes to a workspace once with its harness session id and a configured agent type; a thread is pending for it when the newest message is someone else's; a harness stop hook delivers each pending thread once as a self-contained prompt; watches wake an agent when another thread moves; and no unsubscribed session ever hears from Fathomable.
-resource: crates/fathomable-core/src/agents.rs
-related_resources:
-  - crates/fathomable/src/app/agents.rs
 tags:
   - decision
   - sessions
@@ -15,6 +12,13 @@ tags:
 # 0040 Agent subscriptions, pending threads, and harness hooks
 
 Status: accepted (2026-08-29)
+
+Superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). Subscriptions, delivery ledgers,
+watches, reminders, nagging, hook integration, configured agent profiles,
+and automatic or manual wake execution are removed. Legacy `agents.jsonl`
+state is left unused, installed hook files are not edited, and thread stores
+are preserved. The design below remains as historical rationale.
 
 Identity and bootstrap superseded 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): native harness channels supply

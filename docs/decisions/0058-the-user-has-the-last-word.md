@@ -5,11 +5,8 @@ description: A thread is pending for an agent only while the user's act — a co
 resource: crates/fathomable-core/src/identity.rs
 related_resources:
   - crates/fathomable-core/src/annotations.rs
-  - crates/fathomable-core/src/agents.rs
   - crates/fathomable-core/src/config.rs
   - crates/fathomable-core/src/vocabulary.rs
-  - crates/fathomable/src/mcp/tools.rs
-  - crates/fathomable/src/hooks.rs
   - crates/fathomable/src/app/draw/mod.rs
 tags:
   - decision
@@ -21,6 +18,14 @@ tags:
 # 0058 The user has the last word
 
 Status: accepted (2026-09-05)
+
+Agent obligation and delivery state superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). `threads` defaults to every open
+discussion regardless of last author and reading changes nothing; there is
+no pending filter. Last-act reasoning remains useful for the viewer's
+human-facing waiting state and resolution proposals. Multi-agent discussion
+is now explicitly user-mediated: the user's words and assigned task, not an
+inferred queue, determine what another agent should do.
 
 Identity amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): every write carries an automatic

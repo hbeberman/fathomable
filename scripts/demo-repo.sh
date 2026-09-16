@@ -1,27 +1,33 @@
 #!/usr/bin/env bash
-# Create a throwaway git workspace, register it with Fathomable, and seed
-# threads and a subscriber so `--mcp`, the hooks, and an agent can be
-# smoke-tested against it (ADR 0040). Needs bash, git, and an installed
-# `fathomable` (or FATHOMABLE=path/to/binary).
+# Create an isolated throwaway git workspace and seed review discussions so
+# the three MCP tools can be tried safely (ADR 0082). Needs bash, git, and
+# an installed `fathomable` (or FATHOMABLE=path/to/binary).
 #
 #   scripts/demo-repo.sh [--isolated] [DIR]
 #
-# DIR defaults to a fresh mktemp directory. With --isolated, Fathomable's
-# state and config live under DIR/.xdg instead of the caller's real
-# $XDG_STATE_HOME / $XDG_CONFIG_HOME; the exports to reuse are printed.
+# DIR defaults under this checkout's ignored .tmp directory. State and config
+# always live under DIR/.xdg instead of the caller's real XDG directories.
 set -euo pipefail
 
 FATHOMABLE=${FATHOMABLE:-fathomable}
-ISOLATED=0
-if [ "${1:-}" = "--isolated" ]; then ISOLATED=1; shift; fi
-DIR=${1:-$(mktemp -d -t fathomable-demo.XXXXXX)}
+if [ "${1:-}" = "--isolated" ]; then shift; fi
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+DIR=${1:-"$REPO_ROOT/.tmp/demo-repos/$(date +%Y%m%d-%H%M%S)-$$"}
 mkdir -p "$DIR"
 DIR=$(cd "$DIR" && pwd -P)
 
-if [ "$ISOLATED" = 1 ]; then
-    export XDG_STATE_HOME="$DIR/.xdg/state" XDG_CONFIG_HOME="$DIR/.xdg/config"
-    mkdir -p "$XDG_STATE_HOME" "$XDG_CONFIG_HOME"
+case "$DIR" in
+    /|"$HOME"|"$REPO_ROOT")
+        echo "refusing unsafe demo directory: $DIR" >&2
+        exit 2
+        ;;
+esac
+if [ -n "$(find "$DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+    echo "refusing non-empty demo directory: $DIR" >&2
+    exit 2
 fi
+export XDG_STATE_HOME="$DIR/.xdg/state" XDG_CONFIG_HOME="$DIR/.xdg/config"
+mkdir -p "$XDG_STATE_HOME" "$XDG_CONFIG_HOME"
 
 # 1. A small repository with real line content: threads anchor by line hash.
 cd "$DIR"
@@ -30,7 +36,7 @@ mkdir -p src docs
 cat > README.md <<'EOF'
 # Demo workspace
 
-A throwaway repository for exercising Fathomable's agent loop.
+A throwaway repository for exercising Fathomable review discussions.
 
 ## What is here
 
@@ -87,7 +93,7 @@ cat > docs/plan.md <<'EOF'
 
 ## Out of scope
 
-- Anything beyond `src/` and this file.
+- Anything beyond `src/lib.rs` and the README status table.
 EOF
 cat > Cargo.toml <<'EOF'
 [package]
@@ -95,32 +101,14 @@ name = "demo"
 version = "0.1.0"
 edition = "2024"
 EOF
-printf '.claude/\n.xdg/\ntarget/\n' > .gitignore
+printf '.xdg/\ntarget/\n' > .gitignore
 git -c user.name=demo -c user.email=demo@example.invalid add -A
 git -c user.name=demo -c user.email=demo@example.invalid commit -q -m "chore: demo workspace"
 HEAD=$(git rev-parse HEAD)
 
-# Hooks for a Claude session started inside this repo (guide §8).
-mkdir -p .claude
-cat > .claude/settings.local.json <<'EOF'
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
-  }
-}
-EOF
-
-# 2. Make the workspace known without a viewer.
-STATE_DIR=$("$FATHOMABLE" --register "$DIR" | sed -n 2p)
-
-# 3–4. Seed threads and a subscriber through the binary, so the store
-# formats have one writer (`fathomable seed`, hidden; its file shape is
-# documented in crates/fathomable/src/seed.rs).
-AGENT_ID=claude:${DEMO_AGENT_ID:-demo-1}
-SEED=$(mktemp -t fathomable-seed.XXXXXX.json)
-trap 'rm -f "$SEED"' EXIT
+# 2. Seed discussions through the binary, so the store has one writer.
+# Neither seed nor a repository-bound MCP server needs a workspace marker.
+SEED="$DIR/.xdg/seed.json"
 cat > "$SEED" <<EOF
 {
   "threads": [
@@ -128,7 +116,8 @@ cat > "$SEED" <<EOF
      "comment": "This splits on a single space; two spaces in a row give a phantom word. Use split_whitespace."},
     {"key": "readme-replied", "path": "README.md", "line": 14, "end_line": 16,
      "comment": "Please update this table once the fix lands.",
-     "replies": [{"author": {"name": "rev", "id": "claude:other", "type": "reviewer"},
+     "replies": [{"author": {"name": "Copilot", "client": "copilot-cli",
+                              "id": "copilot:demo-review"},
                   "body": "Agreed; the coder should do this after fixing word_count."}]},
     {"key": "plan-open", "path": "docs/plan.md", "line": 3, "end_line": 5,
      "comment": "Step 2 first: a failing test for the empty string proves the fix."},
@@ -137,27 +126,21 @@ cat > "$SEED" <<EOF
     {"key": "readme-detached", "path": "README.md", "line": 3,
      "comment": "This paragraph was rewritten; the thread no longer matches any line.",
      "detached": true}
-  ],
-  "subscribers": [{"id": "$AGENT_ID", "type": "coder", "name": "demo"}],
-  "watches": [{"subscriber": "$AGENT_ID", "on": "plan-open", "when": "resolved",
-               "remind": ["lib-open"]}]
+  ]
 }
 EOF
 "$FATHOMABLE" seed --workspace "$DIR" "$SEED"
+rm -f "$SEED"
 
-# 5. Where everything is and what to run.
+# 3. Where everything is and what to run.
 cat <<EOF
 root:      $DIR
-state:     $STATE_DIR
 commit:    $HEAD
-subscriber: $AGENT_ID (coder), watching plan-open for resolved, reminding lib-open
+export XDG_STATE_HOME=$XDG_STATE_HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME
 EOF
-if [ "$ISOLATED" = 1 ]; then
-    echo "export XDG_STATE_HOME=$XDG_STATE_HOME XDG_CONFIG_HOME=$XDG_CONFIG_HOME"
-fi
 cat <<EOF
 try:
   cd $DIR
-  $FATHOMABLE pending --id $AGENT_ID --prompt
-  claude -p --allowedTools "mcp__fathomable__*" "You are working in this repo. Follow the Fathomable instructions you were given."
+  $FATHOMABLE
+  claude -p --allowedTools "mcp__fathomable__*" "Read the Fathomable threads for this repository and their history. The user approved fixing word_count with split_whitespace, adding an empty-string test, and updating the README status. Implement only that scope, explain any disagreement in thread_reply, and do not close threads; only the user closes them."
 EOF

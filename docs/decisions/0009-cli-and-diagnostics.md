@@ -17,6 +17,14 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Agent-delivery CLI removed 2026-09-15 by
+[0082](0082-three-tool-review-core.md): `pending` and hook diagnostics no
+longer exist. The obsolete `--register` command is also removed because
+`--mcp [DIR]` discovers its checkout directly and viewers maintain the
+markers used by viewer diagnostics and worktree state. Existing installed
+hook entries are removed manually; the program does not edit user
+configuration or erase legacy state.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

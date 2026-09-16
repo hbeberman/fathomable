@@ -149,7 +149,7 @@ const fn k(key: Key) -> Chord {
 pub(crate) type Keys = &'static [Chord];
 
 /// How a sequence is written: bare characters run together (`gg`, `]c`),
-/// anything else is space-separated (`Space j a`, `Ctrl-d`).
+/// anything else is space-separated (`Space j j`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
     let separator = if keys.iter().all(|chord| chord.is_plain_char()) {
@@ -179,7 +179,7 @@ pub(crate) enum Where {
     Review,
     /// The draft being written in the text (ADR 0054).
     Draft,
-    /// The file, recent, or wake picker.
+    /// A file, diff, or worktree picker.
     Picker,
     /// The `:` and `/` input line.
     Input,
@@ -273,7 +273,6 @@ actions! {
     ChangeNext,
     ChangePrev,
     JumpNewest,
-    AutoJumpToggle,
     JumpBack,
     JumpForward,
     CommandLine,
@@ -938,13 +937,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::JumpNewest,
         "Space menu",
         "jump: newest change",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('j'), c('a')]],
-        A::AutoJumpToggle,
-        "Space menu",
-        "jump: auto-jump",
     ),
     bind(
         W::Any,
@@ -1699,7 +1691,7 @@ mod tests {
                 .map(|(key, _)| key)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j", "a"]);
+        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
             ["c", "r", "o", "e", "d", "f"]
@@ -1826,7 +1818,8 @@ mod tests {
     fn sequences_are_spelled_the_way_the_guide_writes_them() {
         assert_eq!(spell(&[c('g'), c('g')]), "gg");
         assert_eq!(spell(&[c(']'), c('c')]), "]c");
-        assert_eq!(spell(&[c(' '), c('j'), c('a')]), "Space j a");
+        assert_eq!(spell(&[c(' '), c('j'), c('j')]), "Space j j");
+        assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("r"));

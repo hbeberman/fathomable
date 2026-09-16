@@ -16,6 +16,16 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Tool surface and routing superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md): `fathomable --mcp [DIR]` binds one
+repository checkout and exposes only `threads`, `thread_start`, and
+`thread_reply`. There is no MCP viewer control, workspace listing or
+override, subscription, or watch. Startup discovers the checkout without a
+workspace marker. Socket protocol v4 retains only `ThreadStart` and
+`ThreadReply` requests and `Threads`/`Error` responses; `ThreadsList`, `Open`,
+and `Follow` are removed, with MCP reads going directly to the store. The
+transport history below remains.
+
 Identity and routing amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): harness-qualified identity is
 automatic, every annotation write requires it, and no connection-wide

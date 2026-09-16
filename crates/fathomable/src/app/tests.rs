@@ -602,13 +602,12 @@ fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
 }
 
 /// A thread written against a commit HEAD does not contain is hidden
-/// from the marks and from `threads_list`; one written against
-/// HEAD, or with no commit, shows. An append by another writer reaches
-/// the viewer through the store watch (ADR 0024).
+/// from the marks; one written against HEAD, or with no commit, shows.
+/// An append by another writer reaches the viewer through the store
+/// watch (ADR 0024).
 #[test]
 fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store};
-    use fathomable_core::session::{Request, Response};
 
     let dir = fixture("scope")?;
     git::init(&dir.0)?;
@@ -666,13 +665,6 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     app.open(Path::new("README.md"));
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
     assert_eq!(ids, [here.clone(), unscoped.clone()]);
-    let Response::Threads(listed) = app.handle_request(Request::ThreadsList {
-        since: None,
-        path: None,
-    }) else {
-        anyhow::bail!("expected threads");
-    };
-    assert_eq!(listed.len(), 2);
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
@@ -770,7 +762,6 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
 #[test]
 fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
-    use fathomable_core::session::{Request, Response};
 
     let dir = fixture("past")?;
     git::init(&dir.0)?;
@@ -832,13 +823,6 @@ fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
     )?;
     app.on_changes(vec![dir.0.join(".git/HEAD")]);
     assert!(app.marks().is_empty(), "gone from the file");
-    let Response::Threads(listed) = app.handle_request(Request::ThreadsList {
-        since: None,
-        path: None,
-    }) else {
-        anyhow::bail!("expected threads");
-    };
-    assert!(listed.is_empty(), "gone from the tools");
     assert!(app.review_entries(false).is_empty(), "hidden until x");
     app.review_toggle_resolved();
     let entries = app.review_entries(false);
@@ -1333,7 +1317,6 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     };
     let jump = JumpConfig {
         toast: std::time::Duration::ZERO,
-        ..JumpConfig::default()
     };
     let mut app = app_with(
         &dir,
@@ -1350,9 +1333,7 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     assert!(app.toasts().is_empty(), "toast 0 disables toasts");
 
     app.command("auto");
-    assert!(app.auto_jump());
-    app.command("auto off");
-    assert!(!app.auto_jump());
+    assert_eq!(app.message(), Some("not a command: auto"));
     app.command("status");
     assert!(matches!(app.popup(), Some(Popup::Status)));
     app.close_popup();
@@ -1452,20 +1433,9 @@ fn seen_snapshots_feed_the_seen_diff_view() -> anyhow::Result<()> {
 }
 
 #[test]
-fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
-    let dir = fixture("auto")?;
-    let jump = JumpConfig {
-        auto: true,
-        debounce: std::time::Duration::ZERO,
-        ..JumpConfig::default()
-    };
-    let mut app = app_with(
-        &dir,
-        Options {
-            jump,
-            ..Options::for_test(dir.0.clone())
-        },
-    )?;
+fn changes_wait_for_manual_navigation() -> anyhow::Result<()> {
+    let dir = fixture("manual-change-jump")?;
+    let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
     changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
     assert!(app.tick_in().is_some());
@@ -1473,98 +1443,12 @@ fn auto_jump_waits_for_quiet_and_guardrails() -> anyhow::Result<()> {
     assert_eq!(
         app.current_path(),
         Path::new("README.md"),
-        "the reader just opened a file: recent activity holds the jump"
+        "background changes never move the reader"
     );
-
-    // No activity in the welcome view: nothing open, so the jump goes.
-    let jump = JumpConfig {
-        auto: true,
-        debounce: std::time::Duration::ZERO,
-        ..JumpConfig::default()
-    };
-    let mut app = app_with(
-        &dir,
-        Options {
-            jump,
-            ..Options::for_test(dir.0.clone())
-        },
-    )?;
-    changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnewer\n")?;
-    app.tick();
+    assert_eq!(app.queue().len(), 1, "the change remains available");
+    app.jump_newest();
     assert_eq!(app.current_path(), Path::new("docs/notes.md"));
     assert!(app.queue().is_empty());
-
-    let key = |c| {
-        crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::Char(c),
-            crossterm::event::KeyModifiers::NONE,
-        )
-    };
-    super::input::keys::handle_key(&mut app, key(' '));
-    super::input::keys::handle_key(&mut app, key('j'));
-    assert_eq!(super::input::bindings::spell(app.prefix()), "Space j");
-    super::input::keys::handle_key(&mut app, key('a'));
-    assert!(!app.auto_jump());
-    assert!(app.prefix().is_empty());
-    Ok(())
-}
-
-#[test]
-fn agent_open_queues_a_settled_range() -> anyhow::Result<()> {
-    use fathomable_core::session::{Request, Response};
-
-    let dir = fixture("agent")?;
-    let mut app = app(&dir)?;
-    let response = app.handle_request(Request::Open {
-        path: PathBuf::from("README.md"),
-        line: Some(1),
-        end_line: Some(3),
-        worktree: None,
-    });
-    assert_eq!(response, Response::Done);
-    assert_eq!(app.queue().len(), 1);
-    app.settle();
-    assert!(app.queue().is_empty(), "the opened range is on screen");
-    Ok(())
-}
-
-/// An agent's range is brought on screen, not selected: the reader
-/// is left in normal mode at its first line (ADR 0014, amended).
-#[test]
-fn agent_open_range_shows_without_selecting() -> anyhow::Result<()> {
-    use fathomable_core::session::{Request, Response};
-
-    let dir = fixture("agent-range")?;
-    let body = "line\n".repeat(60);
-    fs::write(dir.0.join("long.txt"), body)?;
-    let mut app = app(&dir)?;
-    app.resize(80, 12);
-    let response = app.handle_request(Request::Open {
-        path: PathBuf::from("long.txt"),
-        line: Some(30),
-        end_line: Some(36),
-        worktree: None,
-    });
-    assert_eq!(response, Response::Done);
-    assert_eq!(app.view().mode(), super::view::Mode::Normal);
-    assert!(app.view().selection().is_none(), "nothing is selected");
-    assert_eq!(app.view().cursor_source_line(), Some(30));
-    assert!(app.view().line_on_screen(30));
-    assert!(
-        app.view().line_on_screen(36),
-        "the end of the range is on screen"
-    );
-
-    // A range longer than the screen keeps its start visible.
-    app.handle_request(Request::Open {
-        path: PathBuf::from("long.txt"),
-        line: Some(10),
-        end_line: Some(60),
-        worktree: None,
-    });
-    assert_eq!(app.view().cursor_source_line(), Some(10));
-    assert!(app.view().line_on_screen(10));
-    assert!(app.view().selection().is_none());
     Ok(())
 }
 

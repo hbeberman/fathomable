@@ -177,7 +177,6 @@ mod tests {
             .options(|o| crate::app::Options {
                 jump: fathomable_core::config::JumpConfig {
                     toast: std::time::Duration::ZERO,
-                    ..o.jump
                 },
                 ..o
             })

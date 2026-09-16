@@ -70,10 +70,6 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
         }
     };
     let theme_name = config.theme().to_owned();
-    println!(
-        "  ok    auto-jump {}",
-        if config.jump().auto { "on" } else { "off" }
-    );
     match Theme::load(&theme_name, dirs) {
         Ok(theme) => {
             println!("  ok    theme `{}` loaded", theme.name());

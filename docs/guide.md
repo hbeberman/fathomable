@@ -8,8 +8,8 @@ tags:
 
 # Setup guide
 
-The human-facing walkthrough: from a fresh checkout to a session that an
-agent can drive. Keep it current whenever a flag, key, file path, or tool
+The human-facing walkthrough: from a fresh checkout to a viewer and
+repository-bound review discussion. Keep it current whenever a flag, key, file path, or tool
 name changes; the [decisions](decisions/index.md) hold the reasoning, this
 page holds what to type. Linux only for now (see the
 [charter](charter.md)).
@@ -39,12 +39,13 @@ Contributors also want the build tooling and the commit gate; see
 fathomable README.md     # single file
 fathomable               # workspace rooted at the enclosing git root, or cwd
 fathomable path/to/dir   # workspace rooted there
-fathomable --name review # a second window on the same workspace, named for agents
+fathomable --name review # a second window on the same workspace, named for you
 ```
 
 A file argument opens the workspace *and* shows that file. Several
-Fathomables may show one workspace; they share its threads, and an agent
-can drive all of them or one by name (`--name`, or `:name` later). The viewer
+Fathomables may show one workspace; they share its threads. `--name` (or
+`:name` later) gives a window a human-readable label; MCP does not route to
+or control viewers. The viewer
 re-reads a file when it changes on disk and keeps your position, so leave
 it open next to an editor or an agent.
 
@@ -138,7 +139,7 @@ Text:
 | `z`, `Z` | expand or fold the thread at the cursor; expand every thread in the file, or fold them all when any is expanded |
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
-| `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
+| `:status`, `:name NAME` | viewer and path popup; name this viewer window (`:name` alone clears it) |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight, else leave the diff; quit |
 
 The `Space` menu, from any pane:
@@ -163,8 +164,8 @@ The `Space` menu, from any pane:
 | `Space d c`, `Space d C` | diff: checkpoint this file; checkpoint the workspace, every non-ignored text file whose content moved since its last checkpoint (a toast counts them) |
 | `Space d w` | diff: ignore whitespace (as `w` in a diff) |
 | `Space d s` | diff: mark every file seen, so `Space d D` from then on shows only what came after (a toast counts them) |
-| `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
-| `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
+| `Space j j` | jump to the newest change |
+| `Space a w` | show `Wake agent is not yet implemented` |
 | `Space ?` | all keys |
 | `:` | the command line, from any pane |
 
@@ -425,7 +426,7 @@ delete, and there is no migration before the first tag
 
 Every open thread shows a **stub** under the last of its lines: one row,
 its newest message, with a `▸`, the thread's circle, the author
-(the user by `user.name`, or an agent as `name (type)`), the age, and the first line of
+(the user by `user.name`, or an agent's stored name), the age, and the first line of
 the message, on the author's stripe with the name in the author's
 colour, as the message reads once expanded (`thread.user`,
 `thread.agent`, over `thread.inline`; a theme that sets no background
@@ -447,8 +448,8 @@ out of the file and the tools, and checking that commit out again brings
 it back ([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)).
 
 `c` or `z` on a line a thread covers **expands** its stub in place, the
-view staying still: a header row with a `▾`, the state, placement, and
-watchers, then every message rendered as Markdown. The text's keys sit
+view staying still: a header row with a `▾`, the state and placement,
+then every message rendered as Markdown. The text's keys sit
 on a **key bar** that replaces the bottom text row while it has
 something to say (a thread under the cursor, a thread in the file, or a
 draft); the viewport stays put unless its cursor would be covered, and
@@ -512,7 +513,7 @@ threads in line order or, after `s`, the whole workspace's grouped by
 file, resolved ones hidden until `x` shows them, the ones resolved at
 earlier commits of the branch among them. Each thread takes two
 rows: its circle, `L3-5` (or `file`), and who wrote its newest message
-(`name (role)`, or the name alone when the column is narrow), then the
+(`name`), then the
 branch of the worktree that shows it when the active one does not
 ([0070](decisions/0070-one-workspace-many-worktrees.md)), with
 `↩n` when replied and the age at the edge; then that message's first
@@ -585,7 +586,7 @@ list to the file you were reading, and `Esc` goes back to it.
 
 A thread is **waiting** on you when it is open and an agent has the
 last word on it; your reply, edit, resolve, or reopen ends the wait,
-and until then no agent is woken for it
+and until then the viewer keeps it in the human-facing waiting set
 ([0058](decisions/0058-the-user-has-the-last-word.md)). Waiting
 threads have their own colour (`thread.waiting`) in the gutter
 bracket, the threads pane, and the review list, the status line
@@ -702,7 +703,7 @@ it ([0049](decisions/0049-inline-threads-and-the-rail.md),
 [0060](decisions/0060-one-diff-two-sides.md),
 [0069](decisions/0069-the-diffs-keys-on-the-bar.md)).
 
-## 6. Following an agent
+## 6. Following changes
 
 Any file written under the workspace (ignoring what git ignores) becomes a
 *change*: a `●` next to it in the tree (and on collapsed folders above it),
@@ -710,24 +711,13 @@ a toast in the bottom-right corner for a few seconds, and a hint in the
 status line, `→ src/foo.rs +12 -3 (3)`, naming the newest change and how
 many are pending. `]f` and `[f` step through the changed files, newest
 first; `Space j j` jumps straight to the newest. A jump lands on the first
-hunk against `HEAD` (or the range an agent passed to `open`; outside git,
-the first hunk against the last-seen snapshot), and a change is forgotten
-once its target is on screen. A file the agent says it is editing
-(`follow`) is revealed in the tree, its folders expanded, without moving
-your highlight unless the tree has focus.
-
-`Space j a` (or `:auto`) turns on **auto-jump**: an `AUTO` badge follows the path in the status line
-and the viewer opens the newest change by itself once writes have been
-quiet for a second, preferring a file the agent said it is editing
-(`follow`). It is a monitor, not a leash: it waits while you are
-selecting, writing a comment, reading a thread or diff, have a popup
-open, or have touched the keyboard or mouse in the last three seconds,
-and it switches itself off — toast `auto-jump off`, badge gone — the
-moment you go somewhere else: another file, a thread, the review list,
-the diff view, a selection. Scrolling and searching in the file it
-landed on keep it on. When the change is in the file you are reading it
-only scrolls if the hunk is off screen. `Alt-Left` takes you back;
-`Space j a` turns it on again.
+hunk against `HEAD` (outside git, the first hunk against the last-seen
+snapshot), and a change is forgotten once its target is on screen.
+`Alt-Left` returns after a jump. Fathomable never automatically switches the
+displayed file or scrolls to an agent edit: live reload preserves the current
+reading position, and moving among changed files is always a human action.
+File-renaming and thread-re-anchoring behavior described above still
+preserves the document and discussion the reader already has open.
 
 ## 7. Configuration and themes
 
@@ -738,8 +728,6 @@ Configuration is optional KDL at `$XDG_CONFIG_HOME/fathomable/config.kdl`
 theme "default-light"
 
 jump {
-    auto #false             // start with auto-jump off; `Space j a` toggles it
-    debounce 1000           // ms of quiet before auto-jump moves
     toast 4000              // ms a toast stays; 0 disables toasts
 }
 
@@ -774,14 +762,6 @@ diff {
     ignore-whitespace #false // start with whitespace ignored (Space d w)
 }
 
-agents {
-    types "coder" "reviewer" "planner"   // what an agent may subscribe as
-    nag-after 5             // stop-hook checks between reminders; 0 never
-    expire-after 24         // hours a silent subscription lives
-    max-lines 40            // longest hook prompt before the rest is listed
-    wake ""                 // command for Space a w, e.g. "claude -p --resume {id} {prompt}"
-}
-
 user {
     name "User"             // how your messages are signed, to you and to agents
 }
@@ -789,6 +769,10 @@ user {
 
 Every key is optional; the values above are the defaults and
 `--config-show` prints the effective ones.
+
+Old automatic-jump and agent-runtime settings are unknown keys, not
+compatibility aliases. `jump.toast` remains the change-toast duration; the
+exact manual cleanup is listed in [Review workflow and migration](#review-workflow-and-migration).
 
 Built-in themes are `default-dark` and `default-light`. Drop your own at
 `~/.config/fathomable/themes/<name>.kdl`; it can `inherits` a built-in and
@@ -825,34 +809,27 @@ a subtle `ui.list.hover` background. Keep `ui.picker.match`,
 
 ## 8. Connect an agent
 
-A workspace's threads are the workspace's; every running Fathomable is
-a *viewer* of one. A viewer writes a record under
-`$XDG_STATE_HOME/fathomable/viewers/`, naming the worktree it shows,
-marks its workspace in
-`$XDG_STATE_HOME/fathomable/workspaces/<hash>/workspace.json`, which
-names the key and every worktree root, and listens on
-`$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`. `fathomable --mcp [DIR]`
-is a stdio MCP server whose default workspace is anchored at `DIR`, or
-its startup cwd when omitted. That anchor never changes during the
-connection. Each call can instead name a worktree root or viewer through
-`workspace`; it changes that call alone, not later calls. `workspaces`
-only lists the known roots, viewers, and default. Missing or ambiguous
-routes fail explicitly rather than choosing a workspace for you.
-
-Reading and answering threads also works with no viewer running,
-straight from the store. Worktrees of one repository share that store
-([0070](decisions/0070-one-workspace-many-worktrees.md)). A subagent
-using a shared MCP server must pass its worktree root when it differs
-from the server's startup default; changing the subagent's cwd or chat
-identity does not change the server's route. `open` pages a viewer to
-the addressed worktree before showing the file.
+A repository's threads are shared by its worktrees
+([0070](decisions/0070-one-workspace-many-worktrees.md)).
+`fathomable --mcp [DIR]` is a stdio MCP server bound to the repository
+checkout containing `DIR`, or to its startup directory when omitted. The
+binding never changes, and no tool takes a workspace or viewer selector.
+Reading and writing threads works without a viewer running.
+The server discovers the checkout directly; it requires no workspace-marker
+setup. Starting the MCP server may persist required annotation housekeeping
+once—adopting legacy root-keyed state, offline re-anchoring, and
+stranded-open follow-HEAD rescoping—before it accepts calls. A `threads` call
+itself reads the shared store directly and computes current placement without
+persisting changes. Exact `ids` use the same direct store, bypassing ordinary
+checkout and status visibility as described below.
 
 Register it with your agent host once. Every host runs the same stdio
-command, `fathomable --mcp`; only the file it is written to differs.
-Register it per user, not in the repository, so a clone does not opt
-anyone in. To anchor a server explicitly, append the intended directory:
-`fathomable --mcp /path/to/repository` (JSON/TOML arguments:
-`["--mcp", "/path/to/repository"]`).
+command, `fathomable --mcp`; only the host configuration differs. Register
+it per user, not in the repository. To bind it explicitly, append the
+checkout: `fathomable --mcp /path/to/repository` (JSON/TOML arguments:
+`["--mcp", "/path/to/repository"]`). A host that starts one shared server
+outside the intended checkout must configure an explicit directory; there
+is no cross-workspace routing fallback.
 
 Claude Code:
 
@@ -890,8 +867,8 @@ fills in the same file, and `COPILOT_HOME` moves the directory:
 }
 ```
 
-`"stdio"` is accepted there as a synonym for `"local"`; `tools` takes
-`"*"` or the names to expose.
+`"stdio"` is accepted there as a synonym for `"local"`; `tools` may be
+`["threads", "thread_start", "thread_reply"]` instead of `"*"`.
 
 VS Code, in the user `mcp.json` that the **MCP: Open User Configuration**
 command opens, or in `.vscode/mcp.json` for a single workspace
@@ -914,44 +891,50 @@ Any other host takes the same stdio command. Each host spawns
 Code started from a desktop launcher may not have `~/.cargo/bin` on it,
 and wants the absolute path instead.
 
-Then start Fathomable in the repository, start the agent in the same
-repository, and the tools are:
+The viewer and MCP server are independent: start the viewer when the human
+wants the terminal interface, and connect MCP when a chat needs the
+discussion. The tools are:
 
 | Tool | Use |
 | --- | --- |
-| `workspaces` | no arguments; list known workspaces, each with its worktrees and viewers, and the default determined by the server's startup directory; does not change where later calls go |
-| `open` | show a file, relative to the caller's worktree, in every viewer, or in the one named by `viewer`, optionally at a line or line range; a viewer on another worktree pages to the caller's first; the range is scrolled into view with the cursor on its first line, not selected |
-| `follow` | subscribe the automatically identified chat to the whole workspace with a configured `type`; the schema lists the allowed types; optional `persona` fixes its display name, otherwise it uses the harness name; bare calls report status without subscribing; `end` ends the subscription, forgetting deliveries and watches; the reply names the workspace; installed hooks deliver comments automatically, otherwise use `threads`; works without a viewer |
-| `threads` | read the threads the checkout shows, oldest change first: `status` is `open` (the default), `pending` (open, and the user has the last word), `resolved`, or `all`; `path` a file, or a directory for the whole subtree (fails, naming same-named paths, when it is neither); `since` a Unix time and `limit` (50) page, with a note on how; each thread comes with its placement — *anchored*, *edited*, *detached*, or *file* for a comment on the file as a whole — and its current range (none for a *file* thread), and no anchor hashes; a resolved thread is only its head; an open thread says whose word is last: `pending` when it is the user's, `answered by name (type)` or `proposed by name (type)` when an agent's ([0058](decisions/0058-the-user-has-the-last-word.md)), and a message the user edited says so; when the session is subscribed, the pending threads count as shown to it, so the hooks do not repeat them; a fired watch is reported first with the `remind` threads in full; a thread only another worktree's branch reaches is placed in that worktree's file and names it in `worktree` ([0070](decisions/0070-one-workspace-many-worktrees.md)); works without a viewer; not for polling — the hooks deliver |
-| `thread_reply` | answer one thread (`thread`, `body`) or several (`replies`), and get each back as it now stands, with its placement; `resolve` on a reply proposes closing its thread and nothing more — the reply is badged *proposes resolving*, the thread stays open and waiting, and only the user resolves it ([0053](decisions/0053-resolution-is-the-users.md)); `line`/`end_line` say where the thread's lines are now after a rewrite, so it moves there and shows as *edited*, and a detached thread needs them; the batch is checked first, so an unknown thread, a resolved thread, or a detached thread without a line refuses the whole call and nothing is written; requires automatic caller identity even before `follow`, using the addressed workspace's live subscription profile when present, otherwise the harness name; works without a viewer |
-| `thread_start` | start a thread of the agent's own on lines of a file, or on the file as a whole when `line` is omitted: one with `path`, `line`, `end_line`, and `body`, or several in `comments`, and get each back as it now stands; the comment is signed as a reply is and stamped with the checkout's commit as yours are, so the thread waits on you from birth, shows the agent's name on its comment, and reaches no agent until you reply, edit, or reopen it; the batch is checked first, so a path that is not a file, a range past the end of the file, a file that is not text, or an empty body refuses the whole call and nothing is written ([0061](decisions/0061-agents-start-threads.md)); works without a viewer |
-| `thread_watch` | be woken when thread `on` gets a `message` or is `resolved`, reminded of the `remind` threads in full; one-shot; `cancel` removes the watch instead; requires automatic identity and a live subscription in the addressed workspace; fails when a named thread does not exist |
+| `threads` | Read open discussions regardless of who spoke last, with their actual history, authors, and current placement. Filter by `status` (`open`, `resolved`, or `all`), `path`, or `since`; use `ids` alone for exact discussions, including older resolved history. |
+| `thread_start` | Start discussions with a non-empty `comments` array of `{path, line?, end_line?, body}`. Paths are relative to the bound checkout; omit `line` for a file-wide comment. |
+| `thread_reply` | Continue discussions with a non-empty `replies` array of `{thread, body, resolve?, line?, end_line?}`. A range re-anchors rewritten lines; `resolve` proposes closure, and only the human closes or reopens a thread. |
 
-Every tool but `workspaces` accepts an optional `workspace`: a worktree
-root, or a viewer name or id. A subscription covers the whole workspace
-([0055](decisions/0055-six-tools.md)); agent types are labels the viewer
-shows next to a message (`name (type)`), and the only rule they carry is
-that an agent is woken by the user's word alone: a thread reaches an
-agent while the user's comment, reply, edit, or reopen is the newest
-thing on it, and any agent's answer leaves it waiting on the user until
-they speak again ([0058](decisions/0058-the-user-has-the-last-word.md)).
-The user's own name on every surface comes from `user.name` in the
-config. Routing errors name how to select a workspace; identity errors
-name the harness channel that must be supplied. A thread belongs to the
-commit it was written against and is shown (here and in the viewer)
-only while that commit is `HEAD` or one of its
-ancestors, so switching to unrelated work hides it and merging brings it
-along ([0024](decisions/0024-workspace-sessions.md)). An amend, squash,
-or rebase that drops that commit does not lose an open thread: while its
-lines are still in the working tree it moves to the new `HEAD`
-([0035](decisions/0035-threads-follow-head.md)). Resolving fixes a
-thread to the commit that is `HEAD`, and a resolved thread is shown only
-while that commit is `HEAD`, so `resolved` and `all` list this commit's
-resolved threads and no earlier ones
-([0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md)). Details and the wire
-protocol are in [0014](decisions/0014-mcp-server-and-socket-v1.md);
-[0062](decisions/0062-one-version-no-compatibility.md) trims it to
-the requests that have a client and one protocol version.
+Reads include discussions reached by any current worktree of this repository.
+When the relevant checkout differs from the bound one, the result names it in
+`worktree`; exact-ID reads retain the same placement. Replies use that
+discussion's checkout without moving a viewer. A `path` filter must name a
+file or directory in the repository's worktrees; directories include their
+subtrees.
+
+Listings are ordered by `(updated, id)`, with `limit` defaulting to 50
+(zero means 1). The response is `{threads, more, next_after}`. Continue
+with the returned `next_after` object as `after`, retaining the same filters;
+the pair is exclusive, so equal timestamps do not trap pagination.
+`since` is an inclusive update-time filter, not a page cursor.
+`ids` preserves request order and cannot be combined with other selectors;
+duplicate or missing IDs fail.
+
+Both write tools reject invalid batches before writing any item: empty
+bodies, unknown fields, invalid 1-based ranges, or an `end_line` without
+`line`. Replies also reject duplicate or missing IDs, resolved threads,
+range overrides on file-wide threads, and detached threads without a new
+line. Prevalidation is not an I/O transaction: a later runtime failure can
+leave earlier items written, and the error names those completed items.
+See [0082](decisions/0082-three-tool-review-core.md) for the full contract.
+
+There are no top-level single-comment or single-reply arguments and no
+compatibility aliases. There is no `open`, `workspaces`, `follow`, or
+`thread_watch` tool, and no per-call workspace or viewer routing.
+
+Threads remain commit-aware: unrelated work may hide a discussion and merging
+brings it into reach ([0024](decisions/0024-workspace-sessions.md)); an open
+thread survives a rewrite while its lines remain
+([0035](decisions/0035-threads-follow-head.md)); resolved history follows
+[0072](decisions/0072-a-resolved-thread-stays-at-its-commit.md). Worktrees
+of one repository share the thread store, while this MCP server stays bound
+to its configured checkout.
 
 ### Automatic chat identity
 
@@ -974,19 +957,21 @@ An inherited environment variable from a different harness is ignored.
 These channels need no native extension and no identity text injected
 into the prompt when connecting.
 
-Identity does **not** select a workspace or establish delivery. Every
-write records the caller identity before or after `follow`; a live
-subscription supplies only its optional display profile. To receive
-comments automatically, call `follow` with a configured `type` and
-install the delivery hooks below. Without `type`, `follow` reports
-status without mutations, unless ending the subscription. The name and
-type stay fixed for that live workspace subscription.
-Subscribing in one workspace does not subscribe in another. Without an
-identity, reading and viewer navigation remain available, but
-writes, `follow`, and watches fail with an error naming the expected
-channel, not asking you to find a UUID. Only a live subscriber's
-`threads` read records deliveries. Malformed identity metadata supplied
-on a request is rejected rather than treated as missing.
+A new agent author stores the stable harness label as `name`, the raw MCP
+client as `client`, and the harness-qualified chat id as `id`; no role, type,
+or persona is registered. Historical authors with older profile fields
+remain readable and are not rewritten. On the wire the user author is the
+string `"user"`; an attributed agent is `{name, client?, id?, kind?}`. New
+MCP writes include `client` and `id` and omit `kind`. Replies retain
+`author`, `created`, `body`, and optional `proposed_resolved` and `edited`;
+a proposal does not change the thread's open status.
+
+Identity records authorship only. It does not select a repository, register a
+role, create a subscription, or establish delivery. Unknown clients and calls
+missing the required channel may use `threads`; `thread_start` and
+`thread_reply` fail with an error naming the expected harness channel.
+Malformed identity metadata on a write is rejected rather than treated as missing.
+Tools accept no manual id, type, role, or persona.
 
 **Harness lifecycle matters.** Copilot CLI 1.0.84-8 was tested with
 distinct MCP children for separate top-level chats and a shared process
@@ -1008,136 +993,51 @@ These are capability requirements, not blanket version guarantees.
 The reasoning and limits are in
 [0080](decisions/0080-automatic-chat-identity.md).
 
-**Breaking alpha reset.** Old bond-bearing `agents.jsonl` files are
-incompatible, and unqualified subscription keys are not migrated to
-the new identities. Reset affected agent state deliberately and
-subscribe anew; the upgrade does not wipe state automatically.
-This is not a reason to delete annotation stores or user configuration.
-Remove Fathomable's old `hello` session-start hook entry and retain
-the delivery hooks shown below. Removed MCP caller arguments and the
-workspace-switch argument are rejected, not supported as aliases.
+Existing thread authorship remains readable, including historical display
+profiles. The removed `agents.jsonl` register is unused and need not be
+deleted. Never delete `threads.jsonl` as part of this migration.
 
-### Hooks: comments reach the agent
+### Review workflow and migration
 
-Without a hook the agent only sees comments when it calls `threads`. With the
-hooks, the harness runs `fathomable pending` at the supported points,
-and each thread reaches the agent once, at whichever comes first
-([0042](decisions/0042-turn-start-delivery.md)):
+Fathomable does not push, assign, or consume discussions. Tell an agent when
+to read them and what job it has. A useful handoff is:
 
-| Hook event (Claude / Codex · Copilot) | When it delivers | What the agent sees | Cost |
-|---|---|---|---|
-| `Stop` · `agentStop` | the agent tries to end its turn | the turn continues with the threads as the prompt; the only forced channel, and the one that counts toward `nag-after` | one spawn per turn; **install this one** |
-| `UserPromptSubmit` · `userPromptSubmitted` | a prompt is submitted — typed, or the synthetic one Claude Code wakes the model with when a background task finishes | the threads as context at the start of the turn; a comment posted while the agent waited is there on the wake | one spawn per prompt (Copilot: per stop-block continuation too); silent unless something is new |
-| `PostToolUse` · `postToolUse` | every tool result | the threads as context before the agent's next step, so a comment posted mid-task lands within the turn | one spawn and two small file reads per tool call; silent unless something is new; optional, for long turns |
-| — · `notification` | a detached (`async`) shell the agent started finishes (`shell_detached_completed`; every other notification type, permission prompts included, gets silence) | the threads queued as a message that starts a turn, even if the agent was idle | one spawn per notification; silent unless something is new |
+> Read the relevant Fathomable threads and their history. The user decided
+> [decision in the user's words]. Implement or defend only that scope, and
+> reply where useful. Treat proposals as proposals. Reading a thread does not
+> authorize other changes, and only the user closes threads.
 
-A session that never subscribed with `follow`, a hook payload identified
-as a subagent, or a directory Fathomable has not seen all get silence and
-exit 0 at every
-point ([0040](decisions/0040-agent-subscriptions-and-hooks.md)). The
-agent is told not to poll when hooks are installed: after a wait it
-ends its turn, and the hooks do the rest. Without hooks, `threads`
-provides manual access. There is no session-start bootstrap or initial
-resume delivery; pending work reaches a resumed chat at its next
-supported prompt or stop hook.
+A reviewer may start findings, the human may discuss them, and a coder may
+later read the same actual conversation. An answer by one agent does not hide
+the thread from another or mark it handled. There is no structured approval
+state: the user's prompt and thread replies carry the decision.
 
-A directory is *seen* once a viewer has opened it or
-`fathomable --register [DIR]` has marked it; `scripts/demo-repo.sh`
-(`just demo`) builds a throwaway repository, registers it, and seeds
-threads and a subscriber to try the loop against (through the hidden
-`fathomable seed FILE` subcommand, so the script never writes the store
-files itself).
+The server itself gives agents this short instruction:
 
-The hook subcommand reads harness JSON on stdin and normalizes its raw
-native id to the same qualified subscription key as MCP:
+> Fathomable holds review discussions attached to files in this repository.
+> When asked, read the relevant threads and their history. Use thread_start
+> for new findings or questions and thread_reply to continue existing
+> discussions. Treat proposals as proposals; follow the user's stated
+> decisions and your assigned task. Reading a thread does not authorize
+> changes. Only the user closes threads.
 
-- `fathomable pending --hook <harness>` (stop, prompt-submit, and
-  post-tool-use) blocks the stop with the pending threads, or says
-  nothing. Run from the prompt-submit or post-tool-use event — told
-  apart by `hook_event_name`, or by the `prompt` and `toolName` fields
-  no stop payload carries — it prints them as context and exits 0, and
-  never counts toward `nag-after`, so a harness that runs it on every
-  stop-block continuation (Copilot) or every tool call spends nothing.
-  `--prompt` prints them to stdout instead. For diagnostics or a manual
-  wake, `--id ID` takes a raw native id when `--hook` is present, and an
-  already-qualified subscription key without `--hook`. For example,
-  `claude -p --resume ID "$(fathomable pending --id claude:ID --prompt)"`
-  wakes that subscribed chat with a fresh invocation. The CLI option is
-  not an identity argument for MCP tools.
-- `--verbose` on `pending` explains a silent hook: every
-  lookup and what it found (stdin, workspace, live viewers, config,
-  subscribers, watches, thread counts) and the reason for
-  silence, one `fathomable:` line each on stderr — stdout when stderr
-  is the block reason. Add it to a hook command and read the harness's
-  hook log (`claude --debug`, `Ctrl-O`) to see why an agent is not
-  hearing you.
+`scripts/demo-repo.sh` (`just demo`) builds an isolated throwaway
+repository and seeds discussion threads through the hidden `fathomable seed`
+subcommand. It never adds hooks, subscriptions, or watches, and always puts
+its XDG state and configuration under the demo directory.
 
-`agents.max-lines` bounds the newly pending threads only. Past it they
-are named by id and place under `N more; call threads`, and are
-deliberately *not* recorded as delivered, so that call returns them in
-full. A fired watch and the threads it reminds of are always shown
-whole: the watch is spent when it fires and a reminded thread need not
-be pending, so neither could be fetched a second time.
+**Remove old integration manually.** The upgrade does not edit installed
+files. Remove every old `fathomable pending` and `fathomable hello` entry
+from Claude, Codex, Copilot, or VS Code hook configuration. Remove the
+obsolete `agents` config node and `jump.auto` / `jump.debounce`; keep
+`jump.toast` if customized. Legacy `agents.jsonl` files are unused and may
+remain. Do not delete thread stores.
 
-In the viewer, an agent's messages are labelled `name (type)`, a thread
-an agent is watching says `watched by name (type)` in its pane header,
-and `:status` lists who is subscribed. `Space a w` wakes a subscriber by
-hand with the same prompt the stop hook would give it, through the
-`agents.wake` command — which runs detached, so it must be
-non-interactive: `codex queue --thread {id} --message {prompt}` or
-`claude -p --resume {id} {prompt}`. Although the stored subscription key
-is qualified, `{id}` receives the raw native identifier the harness's
-resume command expects.
-
-Install the hooks per user, not in the repository, so a clone does not
-opt anyone in. `<harness>` is `claude`, `codex`, `copilot`, or `vscode`.
-
-Claude Code, in `~/.claude/settings.json` or the project's
-`.claude/settings.local.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook claude", "timeout": 5 }] }]
-  }
-}
-```
-
-Codex CLI, in `~/.codex/hooks.json` (then trust it with `/hooks`):
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }],
-    "PostToolUse":      [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "fathomable pending --hook codex", "timeout": 5 }] }]
-  }
-}
-```
-
-These snippets install delivery only. No harness needs a session-start
-hook to identify its MCP calls. Hook support and output handling are
-separate from the identity capability: Copilot hook payloads were
-captured on 1.0.82; VS Code delivery remains experimental and has not
-been live-validated.
-Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
-(or `.github/hooks/fathomable.json` once the folder is trusted); use
-`--hook copilot` in the CLI and `--hook vscode` under VS Code, whose
-`Stop` has no loop cap of its own:
-
-```json
-{
-  "version": 1,
-  "hooks": {
-    "userPromptSubmitted": [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
-    "postToolUse":         [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
-    "notification":        [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }],
-    "agentStop":           [{ "type": "command", "bash": "fathomable pending --hook copilot", "timeoutSec": 5 }]
-  }
-}
-```
+`Space a w` is reserved for a possible user-directed integration and now
+always reports `Wake agent is not yet implemented`. A future design may send
+all open threads plus an optional user instruction to a chosen chat, but the
+selection and transport mechanism are not decided and hooks alone are not
+treated as a reliable idle-agent wake.
 
 ## 9. When something is off
 
@@ -1145,14 +1045,10 @@ Copilot CLI and VS Code read the same file, `~/.copilot/hooks/fathomable.json`
 fathomable --doctor        # terminal, directories, config, log locations
 fathomable --viewers       # known workspaces and their viewer records
 fathomable --config-show   # effective configuration
-fathomable --register [DIR] # mark a workspace known without starting a viewer
-echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --verbose
-                           # why a hook is silent for session ID
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-`:status` inside the app shows the subscribed agents (`name (type) id`),
-the open document, the terminal size, the
+`:status` inside the app shows the open document, the terminal size, the
 viewer name and id, the worktrees with the active one marked, the
 socket, and every state path. Set
 `FATHOMABLE_LOG=debug` for more. A viewer killed without a clean quit is
@@ -1162,8 +1058,8 @@ each viewer shows; `--doctor` counts the worktrees sharing the state and
 the visible directories that consume inotify watches. Ignored trees are
 not part of that watch budget.
 A state directory keyed by a root under the old rule is moved to its
-common-dir key once, by the first viewer, `--register`, or `--mcp`
-that finds the new key absent
+common-dir key once, by the first viewer or `--mcp` that finds the new key
+absent
 ([0070](decisions/0070-one-workspace-many-worktrees.md)).
 
 If Fathomable dies, it hands the terminal back and prints one block between

@@ -67,15 +67,16 @@ rejected for good (record rejections in the [charter](charter.md)).
   ([0005](decisions/0005-annotations.md)) and a binary file has none, so
   a comment on a whole image or archive has nowhere to go. Origin: the
   same to-do list.
-- **`fathomable --unregister [DIR]`.** `--register` writes a workspace
-  marker ([0009](decisions/0009-cli-and-diagnostics.md)); undoing one
-  means deleting a hashed directory under
-  `$XDG_STATE_HOME/fathomable/workspaces/` by hand. A marker on a parent
-  directory such as the home directory catches every session below it
-  by prefix. Select the intended root explicitly with
-  `fathomable --mcp DIR` or the per-call workspace argument
-  ([0080](decisions/0080-automatic-chat-identity.md)); nothing removes
-  the marker. Origin: the 2026-08-29 vocabulary handoff, after it happened.
+- **User-triggered agent wake.** `Space a w` currently reports that wake is
+  not implemented. A future integration may choose a chat and send every
+  open thread plus an optional user instruction. The chat-selection and
+  transport mechanism are undecided; harness hooks by themselves cannot be
+  assumed to wake an idle agent. Origin:
+  [0082](decisions/0082-three-tool-review-core.md).
+- **Cross-workspace MCP routing.** A server now binds one repository checkout
+  at startup. A future explicit routing design may address several, but no
+  per-call workspace or viewer selector is retained. Origin:
+  [0082](decisions/0082-three-tool-review-core.md).
 
 - **Editing a thread in `$EDITOR`.** Render a thread to a writable file,
   open the user's editor, read the result back as replies. Origin: comment

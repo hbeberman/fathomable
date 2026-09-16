@@ -7,9 +7,6 @@ related_resources:
   - crates/fathomable-core/src/annotations.rs
   - crates/fathomable-core/src/session.rs
   - crates/fathomable-core/src/vocabulary.rs
-  - crates/fathomable-core/src/agents.rs
-  - crates/fathomable/src/mcp/tools.rs
-  - crates/fathomable/src/hooks.rs
   - crates/fathomable/src/app/threads/mod.rs
   - crates/fathomable/src/app/draw/mod.rs
 tags:
@@ -21,6 +18,12 @@ tags:
 # 0061 Agents start threads
 
 Status: accepted (2026-09-05)
+
+Tool shape amended 2026-09-15 by
+[0082](0082-three-tool-review-core.md): `thread_start` requires one non-empty
+`comments` array of `{path, line?, end_line?, body}`. The former top-level
+single-comment arguments are removed. Batch prevalidation, file-wide
+comments, automatic authorship, and thread behavior remain.
 
 Identity amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): `thread_start` no longer accepts

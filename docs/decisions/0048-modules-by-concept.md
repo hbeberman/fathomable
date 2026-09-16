@@ -8,8 +8,6 @@ related_resources:
   - crates/fathomable/src/app/threads/mod.rs
   - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable/src/app/input/mod.rs
-  - crates/fathomable/src/app/jump.rs
-  - crates/fathomable/src/app/agents.rs
   - scripts/okf-lint.py
   - crates/fathomable-testing/src/lib.rs
   - crates/fathomable-testing/src/vocabulary.rs
@@ -22,6 +20,11 @@ tags:
 # 0048 Modules by concept
 
 Status: accepted (2026-09-03)
+
+Module inventory amended 2026-09-15 by
+[0082](0082-three-tool-review-core.md): the auto-jump module is removed.
+The small `app/agents.rs` boundary remains only for the visible,
+not-yet-implemented human wake action.
 
 ## Context
 

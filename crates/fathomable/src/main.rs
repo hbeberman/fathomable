@@ -6,7 +6,6 @@ mod app;
 mod caller;
 mod crash;
 mod doctor;
-mod hooks;
 mod logging;
 mod mcp;
 mod seed;
@@ -44,7 +43,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Run the stdio MCP server; an optional directory anchors its workspace.
+    /// Run the stdio MCP server bound to an optional repository directory.
     #[arg(long)]
     mcp: bool,
 
@@ -64,41 +63,19 @@ struct Cli {
     #[arg(long)]
     viewers: bool,
 
-    /// Name this viewer so an agent can target it (also `:name`).
+    /// Give this viewer window a human-facing label (also `:name`).
     #[arg(long, value_name = "NAME")]
     name: Option<String>,
 
     /// Print the effective configuration after defaults and overrides.
     #[arg(long)]
     config_show: bool,
-
-    /// Mark the workspace around PATH (default: current directory) as
-    /// known, so headless `--mcp` and hooks find it without a viewer.
-    #[arg(long)]
-    register: bool,
 }
 
-/// Harness-hook subcommands (ADR 0040). Silent unless there is something
-/// to say, so they cost nothing where Fathomable is not in use.
+/// Hidden maintenance commands used by repository tooling.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// The stop hook: hand a subscribed agent the threads it has not seen.
-    Pending {
-        /// Which harness's hook JSON is on stdin and what shape to answer in.
-        #[arg(long, value_enum)]
-        hook: Option<caller::Harness>,
-        /// Native chat id with --hook, or a harness-qualified id without it.
-        #[arg(long)]
-        id: Option<String>,
-        /// Print the prompt to stdout and exit 0 (for waking an idle session).
-        #[arg(long)]
-        prompt: bool,
-        /// Explain every lookup on stderr, even when there is nothing to say.
-        #[arg(long)]
-        verbose: bool,
-    },
-    /// Write the threads, subscribers, and watches FILE declares into a
-    /// workspace's store and register (for `scripts/demo-repo.sh`).
+    /// Write the threads FILE declares into a workspace's annotation store.
     #[command(hide = true)]
     Seed {
         /// The JSON seed file; its shape is documented in `seed.rs`.
@@ -114,14 +91,6 @@ fn main() -> ExitCode {
     let dirs = XdgDirs::from_env();
 
     match cli.command {
-        Some(Command::Pending {
-            hook,
-            id,
-            prompt,
-            verbose,
-        }) => {
-            return hooks::pending(&dirs, hook, id, prompt, verbose);
-        }
         Some(Command::Seed { file, workspace }) => {
             let workspace = workspace.unwrap_or_else(|| PathBuf::from("."));
             return seed::run(&dirs, &workspace, &file);
@@ -137,10 +106,6 @@ fn main() -> ExitCode {
     if cli.config_show {
         return config_show(&cli, &dirs);
     }
-    if cli.register {
-        return register(&cli, &dirs);
-    }
-
     let id = Id::mint();
     let _guard = match logging::init(&dirs, &id) {
         Ok(guard) => guard,
@@ -152,15 +117,7 @@ fn main() -> ExitCode {
     tracing::info!(session = %id, "starting");
 
     if cli.mcp {
-        let agents = match Config::load(&dirs, cli.config.as_deref()) {
-            Ok(config) => config.agents().clone(),
-            Err(error) => {
-                tracing::error!(%error, "config failed");
-                eprintln!("fathomable: {error}");
-                return ExitCode::FAILURE;
-            }
-        };
-        return match mcp::run(&dirs, agents, cli.path.as_deref()) {
+        return match mcp::run(&dirs, cli.path.as_deref()) {
             Ok(()) => ExitCode::SUCCESS,
             Err(error) => {
                 tracing::error!(error = format!("{error:#}"), "mcp failed");
@@ -215,7 +172,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     tracing::info!(id = %record.id(), name = ?record.name(), root = %record.root().display(), "viewer recorded");
     let marker = Marker::new(key.clone(), worktree_roots(&workspace));
     if let Err(error) = marker.write(dirs) {
-        tracing::warn!(%error, "cannot write the workspace marker; headless agents will not find this workspace");
+        tracing::warn!(%error, "cannot write the workspace marker");
     }
 
     let config = Config::load(dirs, cli.config.as_deref())?;
@@ -268,7 +225,6 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             sidebar: config.sidebar().clone(),
             threads: config.threads().clone(),
             diff: config.diff().clone(),
-            agents: config.agents().clone(),
             user: config.user().clone(),
             config_path: config_path(cli, dirs),
         },
@@ -304,28 +260,6 @@ fn adopt_state(dirs: &XdgDirs, workspace: &Workspace) {
         Ok(false) => {}
         Err(error) => tracing::warn!(%error, "cannot move the workspace state to its key"),
     }
-}
-
-/// `--register`: write the workspace marker for the root around `PATH`
-/// and print it (ADR 0009).
-fn register(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
-    let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
-    let workspace = match Workspace::discover(&path) {
-        Ok(workspace) => workspace,
-        Err(error) => {
-            eprintln!("fathomable: {error:#}");
-            return ExitCode::FAILURE;
-        }
-    };
-    adopt_state(dirs, &workspace);
-    let marker = Marker::new(workspace.key().to_path_buf(), worktree_roots(&workspace));
-    if let Err(error) = marker.write(dirs) {
-        eprintln!("fathomable: cannot write the workspace marker: {error}");
-        return ExitCode::FAILURE;
-    }
-    println!("{}", workspace.root().display());
-    println!("{}", dirs.workspace_dir(workspace.key()).display());
-    ExitCode::SUCCESS
 }
 
 /// `--viewers`: one block per known workspace, its worktrees under it

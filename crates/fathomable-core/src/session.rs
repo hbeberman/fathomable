@@ -5,8 +5,8 @@
 //! *viewer* of it (ADR 0024, words per ADR 0047). Each viewer writes a
 //! [`Record`] under `$XDG_STATE_HOME/fathomable/viewers/<id>/` and listens on
 //! `$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`; the workspace
-//! itself is marked by a [`Marker`] beside its thread store so an agent can
-//! find it when no viewer runs. The socket speaks line-delimited JSON: one
+//! itself is marked by a [`Marker`] beside its thread store for viewer and
+//! worktree diagnostics. The socket speaks line-delimited JSON: one
 //! [`Request`] per line, answered by one [`Response`] per line. Every
 //! request carries `"v"`; a mismatch is refused, and both ends are one
 //! binary upgraded together, so the number bumps on any wire change
@@ -18,9 +18,9 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":3,"op":"threads_list"}"#.parse()?;
-//! assert_eq!(request, Request::ThreadsList { since: None, path: None });
-//! assert_eq!(Response::Done.to_line(), r#"{"ok":true}"#);
+//! let request: Request = r#"{"v":4,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
+//! assert!(matches!(request, Request::ThreadStart { .. }));
+//! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
 //! ```
 
@@ -36,7 +36,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 3;
+pub(crate) const PROTOCOL_VERSION: u32 = 4;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -383,35 +383,10 @@ impl Marker {
 
 /// A request over the session socket.
 ///
-/// Paths are workspace-relative. `since` is in Unix seconds and matches
-/// threads whose [`Thread::updated`] is at or after it.
+/// Paths are relative to the viewer's repository checkout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Request {
-    /// Show a file, optionally scrolled to a source line range.
-    Open {
-        /// Workspace-relative path.
-        path: PathBuf,
-        /// First source line to show, 1-based.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        line: Option<usize>,
-        /// Last line of the range, when a range should be selected.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        end_line: Option<usize>,
-        /// The worktree the path is relative to (ADR 0070); the viewer
-        /// pages to it first. Absent means the viewer's own.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        worktree: Option<PathBuf>,
-    },
-    /// Threads, optionally changed since a time or limited to one file.
-    ThreadsList {
-        /// Only threads changed at or after this Unix time.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        since: Option<u64>,
-        /// Only threads on this workspace-relative path.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        path: Option<PathBuf>,
-    },
     /// Append a reply to a thread, optionally proposing to resolve it;
     /// answered with the thread as it then stands (ADR 0055). `lines`,
     /// when given, says where the thread's lines are now (ADR 0033): the
@@ -434,7 +409,7 @@ pub enum Request {
     /// the file as a whole when there is no range (ADR 0063); answered
     /// with the new thread.
     ThreadStart {
-        /// Workspace-relative path of the file.
+        /// Repository-relative path of the file.
         path: PathBuf,
         /// The lines the comment is on; none for the file as a whole.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -490,10 +465,7 @@ impl FromStr for Request {
 /// A response over the session socket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Response {
-    /// Answer to [`Request::Open`]: the operation took effect.
-    Done,
-    /// Answer to [`Request::ThreadsList`], and to [`Request::ThreadReply`]
-    /// and [`Request::ThreadStart`] with the one thread written.
+    /// Answer to a write with the thread as it stands afterward.
     Threads(Vec<Thread>),
     /// The request was refused; the text says why.
     Error(String),
@@ -518,7 +490,6 @@ impl Response {
             error: None,
         };
         match self {
-            Self::Done => {}
             Self::Threads(threads) => wire.threads = Some(threads.clone()),
             Self::Error(message) => {
                 wire.ok = false;
@@ -535,16 +506,20 @@ impl FromStr for Response {
     fn from_str(line: &str) -> Result<Self, Self::Err> {
         let wire: ResponseWire = serde_json::from_str(line)
             .map_err(|error| ProtocolError(format!("malformed response: {error}")))?;
-        Ok(match wire {
+        match wire {
             ResponseWire {
                 ok: false, error, ..
-            } => Self::Error(error.unwrap_or_else(|| "unspecified error".to_owned())),
+            } => Ok(Self::Error(
+                error.unwrap_or_else(|| "unspecified error".to_owned()),
+            )),
             ResponseWire {
                 threads: Some(threads),
                 ..
-            } => Self::Threads(threads),
-            _ => Self::Done,
-        })
+            } => Ok(Self::Threads(threads)),
+            _ => Err(ProtocolError(
+                "malformed response: successful reply has no threads".to_owned(),
+            )),
+        }
     }
 }
 
@@ -619,16 +594,6 @@ mod tests {
     #[test]
     fn requests_round_trip() -> Result<(), ProtocolError> {
         let requests = [
-            Request::Open {
-                path: PathBuf::from("README.md"),
-                line: Some(3),
-                end_line: None,
-                worktree: Some(PathBuf::from("/work/feature")),
-            },
-            Request::ThreadsList {
-                since: Some(7),
-                path: None,
-            },
             Request::ThreadReply {
                 thread: serde_json::from_str(r#""1-2-3""#)
                     .map_err(|e| ProtocolError(e.to_string()))?,
@@ -651,17 +616,9 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":3,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":4,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
-        assert_eq!(
-            Request::ThreadsList {
-                since: None,
-                path: None
-            }
-            .to_line(),
-            r#"{"v":3,"op":"threads_list"}"#
-        );
         Ok(())
     }
 
@@ -669,17 +626,25 @@ mod tests {
     /// floor and no op exempt from the check (ADR 0062).
     #[test]
     fn every_request_needs_the_current_version() {
-        let too_old = r#"{"v":1,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 1")));
-        let too_new = r#"{"v":4,"op":"threads_list"}"#.parse::<Request>().err();
-        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 4")));
-        // `follow` (ADR 0055) and the liveness ops (ADR 0062) are gone.
+        let too_old = r#"{"v":3,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+            .parse::<Request>()
+            .err();
+        assert!(too_old.is_some_and(|e| e.to_string().contains("unsupported protocol version 3")));
+        let too_new = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+            .parse::<Request>()
+            .err();
+        assert!(too_new.is_some_and(|e| e.to_string().contains("unsupported protocol version 5")));
+        // Viewer navigation, listing, subscriptions, and liveness ops are gone.
         assert_eq!(
-            r#"{"v":3,"op":"follow","paths":[]}"#.parse::<Request>().ok(),
+            r#"{"v":4,"op":"open","path":"README.md"}"#.parse::<Request>().ok(),
             None
         );
-        assert_eq!(r#"{"v":3,"op":"ping"}"#.parse::<Request>().ok(), None);
-        assert_eq!(r#"{"v":3,"op":"dance"}"#.parse::<Request>().ok(), None);
+        assert_eq!(
+            r#"{"v":4,"op":"threads_list"}"#.parse::<Request>().ok(),
+            None
+        );
+        assert_eq!(r#"{"v":4,"op":"follow"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":4,"op":"ping"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
     }
 
@@ -701,7 +666,6 @@ mod tests {
     #[test]
     fn responses_round_trip() -> Result<(), ProtocolError> {
         let responses = [
-            Response::Done,
             Response::Threads(Vec::new()),
             Response::Error("nope".to_owned()),
         ];
@@ -713,7 +677,7 @@ mod tests {
                 .to_line()
                 .starts_with(r#"{"ok":false"#)
         );
-        assert_eq!(Response::Done.to_line(), r#"{"ok":true}"#);
+        assert_eq!(r#"{"ok":true}"#.parse::<Response>().ok(), None);
         assert_eq!(
             record().socket(),
             Some(std::path::Path::new("/run/fathomable/1700000000-42.sock"))

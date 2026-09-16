@@ -113,7 +113,7 @@ pub(crate) enum Effect {
     Copy(String),
     /// Open a URL with the desktop's opener (`gf`, ADR 0052).
     Open(String),
-    /// A `:` command the app handles (`:auto ...`, ADR 0015).
+    /// A `:` command the app handles.
     Command(String),
     /// Hand the comment draft to `$EDITOR` (ADR 0018).
     EditDraft,
@@ -611,8 +611,7 @@ impl View {
         self.seen.is_some()
     }
 
-    /// Note that the reader did something here (ADR 0015 guardrails and
-    /// seen-idle).
+    /// Note that the reader did something here for seen-idle tracking.
     pub(crate) fn touch(&mut self) {
         self.activity = Instant::now();
     }
@@ -620,14 +619,6 @@ impl View {
     /// Time since the reader last did something here.
     pub(crate) fn idle(&self) -> Duration {
         self.activity.elapsed()
-    }
-
-    /// Pretend the reader has been still for `duration`.
-    #[cfg(test)]
-    pub(crate) fn rest(&mut self, duration: Duration) {
-        if let Some(then) = Instant::now().checked_sub(duration) {
-            self.activity = then;
-        }
     }
 
     /// Whether 1-based source `line` is within the rows on screen.
@@ -1570,9 +1561,10 @@ impl View {
         }
     }
 
-    /// An agent's `open` range: the cursor lands on `start`, and the
-    /// view scrolls so that `end` is on screen too when the range fits,
-    /// without selecting anything (ADR 0014, amended 2026-08-28).
+    /// Reveal a source range without selecting it.
+    ///
+    /// The cursor lands on `start`, and the view scrolls so `end` is also
+    /// visible when the range fits.
     pub(crate) fn reveal_source_range(&mut self, start: usize, end: usize) {
         self.goto_source_line(start);
         let Some(last) = self

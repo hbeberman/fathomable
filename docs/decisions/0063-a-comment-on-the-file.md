@@ -10,7 +10,6 @@ related_resources:
   - crates/fathomable/src/app/threads/words.rs
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/mcp/start.rs
-  - crates/fathomable/src/mcp/tools.rs
 tags:
   - decision
   - annotations

@@ -2,13 +2,9 @@
 type: Decision
 title: Six tools
 description: The agent-facing surface shrinks from ten tools to six, each pair with a natural undo becoming one tool with a flag; a subscription always covers the whole workspace and follow takes no paths; one threads tool lists open threads by default, flags and delivers the ones waiting on the caller, and widens to resolved threads on request; every thread an agent sees carries its placement in the working tree and no anchor hashes; thread_reply answers with the updated thread and refuses to reply into a detached thread without a line; and every failure names the call that fixes it.
-resource: crates/fathomable/src/mcp/tools.rs
 related_resources:
   - crates/fathomable/src/mcp/mod.rs
   - crates/fathomable-core/src/vocabulary.rs
-  - crates/fathomable-core/src/agents.rs
-  - crates/fathomable/src/hooks.rs
-  - crates/fathomable/src/app/jump.rs
 tags:
   - decision
   - sessions
@@ -18,6 +14,13 @@ tags:
 # 0055 Six tools
 
 Status: accepted (2026-09-04)
+
+Superseded 2026-09-15 by
+[0082](0082-three-tool-review-core.md). The complete MCP surface is now
+`threads`, `thread_start`, and `thread_reply`. Reads have no pending,
+delivery, acknowledgement, or consumption side effect; writes require
+non-empty batch arrays. Workspace/viewer routing, `open`, `follow`, and
+`thread_watch` are removed without aliases.
 
 Tool identity and routing amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): remove every caller `id`

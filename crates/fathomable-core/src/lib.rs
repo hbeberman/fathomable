@@ -6,7 +6,6 @@
 //! document model, Markdown layout, annotations, sessions, and configuration.
 //! This crate never depends on `ratatui`, `crossterm`, or `rmcp`.
 
-pub mod agents;
 pub mod annotations;
 pub mod checkpoints;
 pub mod clock;

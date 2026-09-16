@@ -171,7 +171,9 @@ mod tests {
             path: PathBuf::from("README.md"),
             range: None,
             author: author.clone(),
+            caller: "test:viewer".to_owned(),
             body: "rename this".to_owned(),
+            idempotency_key: None,
         });
         let Response::Threads(started) = reply else {
             anyhow::bail!("start answered {reply:?}");

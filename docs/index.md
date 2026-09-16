@@ -17,6 +17,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Automatic chat identity](decisions/0080-automatic-chat-identity.md)
 - [Persistent menu bar](decisions/0081-the-menu-bar.md)
 - [Three-tool review core](decisions/0082-three-tool-review-core.md)
+- [Explicit MCP contracts](decisions/0084-explicit-mcp-contracts.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

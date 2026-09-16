@@ -148,8 +148,11 @@ mod tests {
     use super::Reach;
     use crate::annotations::{Author, Draft, LineRange, Store, Thread};
 
-    fn threads(commit: Option<&str>) -> Result<(Thread, Thread), Box<dyn std::error::Error>> {
-        let dir = fathomable_testing::TempDir::new("reach")?;
+    fn threads(
+        name: &str,
+        commit: Option<&str>,
+    ) -> Result<(Thread, Thread), Box<dyn std::error::Error>> {
+        let dir = fathomable_testing::TempDir::new(&format!("reach-{name}"))?;
         let mut store = Store::open(dir.0.join("threads.jsonl"))?;
         let draft = || {
             Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), "x")
@@ -168,10 +171,10 @@ mod tests {
     #[test]
     fn a_resolved_thread_shows_at_its_commit_alone() -> Result<(), Box<dyn std::error::Error>> {
         let reach = Reach::at("head", ["head".to_owned(), "older".to_owned()].into());
-        let (open_here, done_here) = threads(Some("head"))?;
-        let (open_older, done_older) = threads(Some("older"))?;
-        let (open_off, done_off) = threads(Some("elsewhere"))?;
-        let (open_none, done_none) = threads(None)?;
+        let (open_here, done_here) = threads("resolved-here", Some("head"))?;
+        let (open_older, done_older) = threads("resolved-older", Some("older"))?;
+        let (open_off, done_off) = threads("resolved-off", Some("elsewhere"))?;
+        let (open_none, done_none) = threads("resolved-none", None)?;
 
         assert!(reach.here(&open_here) && reach.here(&done_here));
         assert!(reach.here(&open_older) && !reach.here(&done_older));
@@ -193,10 +196,10 @@ mod tests {
         let here: HashSet<String> = ["aaa".to_owned()].into();
         let there: HashSet<String> = ["bbb".to_owned(), "aaa".to_owned()].into();
         let reach = Reach::at("aaa", here).with_worktree(PathBuf::from("/feature"), "bbb", there);
-        let (mine, mine_done) = threads(Some("aaa"))?;
-        let (theirs, theirs_done) = threads(Some("bbb"))?;
-        let (nobody, _) = threads(Some("ccc"))?;
-        let (unscoped, _) = threads(None)?;
+        let (mine, mine_done) = threads("worktree-mine", Some("aaa"))?;
+        let (theirs, theirs_done) = threads("worktree-theirs", Some("bbb"))?;
+        let (nobody, _) = threads("worktree-nobody", Some("ccc"))?;
+        let (unscoped, _) = threads("worktree-unscoped", None)?;
 
         assert!(reach.here(&mine) && reach.includes(&mine));
         assert_eq!(reach.elsewhere(&mine), None);

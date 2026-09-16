@@ -20,6 +20,12 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Current formats amended 2026-09-16 by
+[0084](0084-explicit-mcp-contracts.md): durable keyed writes advance the
+annotation event format to **3** and internal socket protocol to **6**.
+Exact-only guards and the prohibition on automatic migrations or resets
+remain. Older numbers below describe prior boundaries.
+
 Current format boundary amended 2026-09-15 by
 [0083](0083-single-user-alpha-clean-slate.md): the single-user alpha
 advances the annotation store from format 1 to **2** and the internal socket

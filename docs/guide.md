@@ -464,7 +464,7 @@ outside the repository at
 `<hash>` is of the repository's git common dir, so every worktree
 reads the same file, or of the root outside git
 ([0070](decisions/0070-one-workspace-many-worktrees.md)).
-Each line carries format version **2**, the only annotation version this
+Each line carries format version **3**, the only annotation version this
 build reads or writes. A file of another version is refused with the line
 to blame, both versions, and actionable path/reset guidance; there is no
 migration or older reader
@@ -886,7 +886,7 @@ changes. Exact `ids` use the same direct store, bypassing ordinary checkout
 and status visibility as described below.
 
 The viewer and MCP child must run matching builds. The internal socket accepts
-protocol version **5** only. An “unsupported protocol version” error means
+protocol version **6** only. An “unsupported protocol version” error means
 one process is stale: stop and restart the affected viewer and MCP child,
 then reconnect the host if needed. Deleting annotation state does not repair
 a process mismatch, and ordinary startup never deletes state.
@@ -966,8 +966,8 @@ discussion. The tools are:
 | Tool | Use |
 | --- | --- |
 | `threads` | Read open discussions regardless of who spoke last, with their actual history, authors, and current placement. Filter by `status` (`open`, `resolved`, or `all`), `path`, or `since`; use `ids` alone for exact discussions, including older resolved history. |
-| `thread_start` | Start discussions with a non-empty `comments` array of `{path, line?, end_line?, body}`. Paths are relative to the bound checkout; omit `line` for a file-wide comment. |
-| `thread_reply` | Continue discussions with a non-empty `replies` array of `{thread, body, resolve?, line?, end_line?}`. A range re-anchors rewritten lines; `resolve` proposes closure, and only the human closes or reopens a thread. |
+| `thread_start` | Start discussions with a non-empty `comments` array of `{path, line?, end_line?, body, idempotency_key?}`. Paths are relative to the bound checkout; omit `line` for a file-wide comment. |
+| `thread_reply` | Continue discussions with a non-empty `replies` array of `{thread, body, propose_resolve?, line?, end_line?, idempotency_key?}`. A range re-anchors rewritten lines; `propose_resolve` proposes closure, and only the human closes or reopens a thread. |
 
 Reads include discussions reached by any current worktree of this repository.
 When the relevant checkout differs from the bound one, the result names it in
@@ -984,13 +984,36 @@ the pair is exclusive, so equal timestamps do not trap pagination.
 `ids` preserves request order and cannot be combined with other selectors;
 duplicate or missing IDs fail.
 
+All three tools publish output schemas. Success results contain complete
+JSON in both `structuredContent` and the text fallback, not an abbreviated
+prose summary. Each discussion includes `placement` (`anchored`, `edited`,
+`detached`, or `file`) and `location` (`unchanged`, `moved`, `detached`, or
+`file`). `anchor_range` is the last stored anchor, not immutable creation
+history; a re-anchor changes it. `range` is the projected current range
+unless detached, when it is only last-known. Location and content edits
+are separate: neither decides whether a finding still needs attention.
+
 Both write tools reject invalid batches before writing any item: empty
-bodies, unknown fields, invalid 1-based ranges, or an `end_line` without
+bodies, unknown fields, invalid 1-based ranges, an `end_line` before `line`,
+or an `end_line` without `line`. Omitted or null `end_line` defaults to
 `line`. Replies also reject duplicate or missing IDs, resolved threads,
 range overrides on file-wide threads, and detached threads without a new
 line. Prevalidation is not an I/O transaction: a later runtime failure can
 leave earlier items written, and the error names those completed items.
-See [0082](decisions/0082-three-tool-review-core.md) for the full contract.
+The former `resolve` argument is rejected; use `propose_resolve`.
+
+Use an optional per-item `idempotency_key` when a call might be retried.
+Keys must contain non-whitespace text and occupy at most 256 UTF-8 bytes.
+For the same repository, caller identity, and operation kind, the same key
+and effective arguments return the existing discussion without writing
+again; different arguments fail with a conflict. Receipts survive server
+restarts and protect concurrent calls. Replay returns current discussion
+state, even if the file changed or the discussion was resolved after the
+write; a deleted discussion is not recreated. Duplicate keys within a batch
+are rejected. Without keys, repeated starts and replies remain independent
+writes. This is retry protection, not similarity-based finding deduplication.
+See [0084](decisions/0084-explicit-mcp-contracts.md) for these contracts and
+[0082](decisions/0082-three-tool-review-core.md) for the review model.
 
 There are no top-level single-comment or single-reply arguments and no
 compatibility aliases. There is no `open`, `workspaces`, `follow`, or
@@ -1027,10 +1050,12 @@ into the prompt when connecting.
 
 A new agent author stores the stable harness label as `name`, the raw MCP
 client as `client`, and the harness-qualified chat id as `id`; no role, type,
-or persona is registered. On the wire the user author is the string
-`"user"`; every attributed agent is one object shape,
-`{name, client?, id?}`. There is no bare-agent string and no `kind` field.
-New MCP writes include `client` and `id`. Human labels use the configured
+or persona is registered. MCP results always return author objects:
+`{kind: "user", name: "user"}` or
+`{kind: "agent", name, client?, id?}`, including authors on every reply.
+Stored events and the internal socket retain the compact `"user"` value
+and agent `{name, client?, id?}` representation. New MCP writes include
+`client` and `id`. Human labels in the viewer use the configured
 user name; agent labels use the stored name, or `name (client)` when the
 observed client is shown, never a subscription type. Replies retain
 `author`, `created`, `body`, and optional `proposed_resolved` and `edited`;

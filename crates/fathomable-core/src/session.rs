@@ -19,7 +19,7 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":5,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
+//! let request: Request = r#"{"v":6,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
 //! assert!(matches!(request, Request::ThreadStart { .. }));
 //! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -37,7 +37,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 5;
+pub(crate) const PROTOCOL_VERSION: u32 = 6;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -397,6 +397,9 @@ pub enum Request {
         thread: ThreadId,
         /// Who is replying.
         author: Author,
+        /// Authenticated harness-qualified caller scope for keyed writes.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        caller: String,
         /// The reply text.
         body: String,
         /// Propose resolving the thread with this reply (ADR 0053).
@@ -405,6 +408,9 @@ pub enum Request {
         /// Where the thread's lines are now, if they moved.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lines: Option<LineRange>,
+        /// Optional durable key for retrying this item without a second reply.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
     /// Start a thread on `range` of `path` as `author` (ADR 0061), or on
     /// the file as a whole when there is no range (ADR 0063); answered
@@ -417,8 +423,14 @@ pub enum Request {
         range: Option<LineRange>,
         /// Who is commenting.
         author: Author,
+        /// Authenticated harness-qualified caller scope for keyed writes.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        caller: String,
         /// The comment text.
         body: String,
+        /// Optional durable key for retrying this item without a second thread.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        idempotency_key: Option<String>,
     },
 }
 
@@ -604,20 +616,24 @@ mod tests {
                     client: Some("claude-code".to_owned()),
                     id: None,
                 },
+                caller: "claude:chat".to_owned(),
                 body: "done".to_owned(),
                 resolve: true,
                 lines: Some(LineRange::new(4, 6)),
+                idempotency_key: Some("reply-1".to_owned()),
             },
             Request::ThreadStart {
                 path: PathBuf::from("src/lib.rs"),
                 range: Some(LineRange::new(9, 11)),
                 author: Author::agent("reviewer"),
+                caller: "copilot:chat".to_owned(),
                 body: "look here".to_owned(),
+                idempotency_key: Some("start-1".to_owned()),
             },
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":5,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":6,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         Ok(())
@@ -626,7 +642,7 @@ mod tests {
     /// Every request needs the exact version this build speaks (ADR 0062).
     #[test]
     fn every_request_needs_the_current_version() -> Result<(), ProtocolError> {
-        let accepted = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let accepted = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>();
         accepted?;
 
@@ -635,23 +651,23 @@ mod tests {
             .err();
         assert!(missing.is_some_and(|e| e.to_string().contains("missing field `v`")));
 
-        let too_old = r#"{"v":4,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_old = r#"{"v":5,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_old.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 4")
+            e.to_string().contains("unsupported protocol version 5")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        let too_new = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_new = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_new.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 6")
+            e.to_string().contains("unsupported protocol version 7")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        assert_eq!(r#"{"v":5,"op":"invented"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":6,"op":"invented"}"#.parse::<Request>().ok(), None);
         assert_eq!("not json".parse::<Request>().ok(), None);
         Ok(())
     }

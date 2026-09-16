@@ -128,9 +128,11 @@ mod tests {
         let reply = app.handle_request(Request::ThreadReply {
             thread: id.clone(),
             author: author.clone(),
+            caller: "test:viewer".to_owned(),
             body: "expanded".to_owned(),
             resolve: false,
             lines: Some(LineRange::new(3, 6)),
+            idempotency_key: None,
         });
         assert!(matches!(reply, Response::Threads(_)), "{reply:?}");
         assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 6)));
@@ -143,9 +145,11 @@ mod tests {
         let reply = app.handle_request(Request::ThreadReply {
             thread: id.clone(),
             author,
+            caller: "test:viewer".to_owned(),
             body: "?".to_owned(),
             resolve: false,
             lines: Some(LineRange::new(40, 41)),
+            idempotency_key: None,
         });
         assert!(matches!(reply, Response::Error(message) if message.contains("cannot move")));
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));

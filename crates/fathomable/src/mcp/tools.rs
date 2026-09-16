@@ -33,10 +33,11 @@ use crate::app::threads::open::follow_reply_lines;
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = exclusive_ids_lookup)]
 pub(crate) struct ThreadsParams {
     /// Which discussions to list: `open` (default), `resolved`, or `all`.
     #[serde(default)]
-    status: Option<String>,
+    status: Option<StatusFilter>,
     /// Only discussions on this repository-relative file or below this directory.
     #[serde(default)]
     path: Option<PathBuf>,
@@ -65,9 +66,45 @@ pub(crate) struct After {
     id: String,
 }
 
+/// The status selector accepted by `threads`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum StatusFilter {
+    /// Discussions that are still open.
+    #[default]
+    Open,
+    /// Discussions resolved by the user.
+    Resolved,
+    /// Discussions in either state.
+    All,
+}
+
+impl<'de> Deserialize<'de> for StatusFilter {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        let value = String::deserialize(deserializer)?;
+        match value.as_str() {
+            "open" => Ok(Self::Open),
+            "resolved" => Ok(Self::Resolved),
+            "all" => Ok(Self::All),
+            other => Err(D::Error::custom(format!(
+                "`status` is `{}`, `{}`, or `{}`, not {other:?}",
+                vocab::STATUS_OPEN,
+                vocab::WHEN_RESOLVED,
+                vocab::STATUS_ALL
+            ))),
+        }
+    }
+}
+
 /// One reply in a `thread_reply` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = require_line_for_end_line)]
 pub(crate) struct ReplyItem {
     /// Discussion id from `threads`.
     thread: String,
@@ -75,11 +112,17 @@ pub(crate) struct ReplyItem {
     body: String,
     /// Propose resolving the discussion. Only the user can close it.
     #[serde(default)]
-    resolve: bool,
+    propose_resolve: bool,
+    /// Optional retry key: non-whitespace text, at most 256 UTF-8 bytes.
+    #[schemars(length(min = 1, max = 256))]
+    #[serde(default)]
+    idempotency_key: Option<String>,
     /// First line the discussion's lines occupy now, when they moved.
+    #[schemars(range(min = 1))]
     #[serde(default)]
     line: Option<usize>,
     /// Last line of that range; defaults to `line`.
+    #[schemars(range(min = 1))]
     #[serde(default)]
     end_line: Option<usize>,
 }
@@ -89,10 +132,61 @@ pub(crate) struct ReplyItem {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ReplyParams {
     /// One or more replies. The whole batch is validated before any write.
+    #[schemars(length(min = 1))]
     replies: Vec<ReplyItem>,
 }
 
 const DEFAULT_LIMIT: usize = 50;
+
+/// Add the cross-field range constraint shared by start and reply items.
+pub(super) fn require_line_for_end_line(schema: &mut schemars::Schema) {
+    schema.insert(
+        "allOf".to_owned(),
+        json!([{
+            "if": {
+                "required": ["end_line"],
+                "properties": {
+                    "end_line": { "type": "integer" }
+                }
+            },
+            "then": {
+                "required": ["line"],
+                "properties": {
+                    "line": { "type": "integer" }
+                }
+            }
+        }]),
+    );
+}
+
+/// Add the exclusive non-empty `ids` lookup constraint to the input schema.
+fn exclusive_ids_lookup(schema: &mut schemars::Schema) {
+    if let Some(Value::Object(properties)) = schema.get_mut("properties")
+        && let Some(Value::Object(ids)) = properties.get_mut("ids")
+    {
+        ids.insert("uniqueItems".to_owned(), true.into());
+    }
+    schema.insert(
+        "allOf".to_owned(),
+        json!([{
+            "if": {
+                "required": ["ids"],
+                "properties": {
+                    "ids": { "minItems": 1 }
+                }
+            },
+            "then": {
+                "properties": {
+                    "status": { "type": "null" },
+                    "path": { "type": "null" },
+                    "since": { "type": "null" },
+                    "after": { "type": "null" },
+                    "limit": { "type": "null" }
+                }
+            }
+        }]),
+    );
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Which {
@@ -102,18 +196,11 @@ enum Which {
 }
 
 impl Which {
-    fn parse(text: Option<&str>) -> Result<Self, String> {
-        match text {
-            None | Some(vocab::STATUS_OPEN) => Ok(Self::Open),
-            Some(vocab::WHEN_RESOLVED) => Ok(Self::Resolved),
-            Some(vocab::STATUS_ALL) => Ok(Self::All),
-            Some(other) => Err(format!(
-                "`{}` is `{}`, `{}`, or `{}`, not `{other}`",
-                vocab::STATUS,
-                vocab::STATUS_OPEN,
-                vocab::WHEN_RESOLVED,
-                vocab::STATUS_ALL
-            )),
+    fn from_status(status: Option<StatusFilter>) -> Self {
+        match status.unwrap_or_default() {
+            StatusFilter::Open => Self::Open,
+            StatusFilter::Resolved => Self::Resolved,
+            StatusFilter::All => Self::All,
         }
     }
 
@@ -131,44 +218,209 @@ impl Which {
 /// Both open and resolved discussions include the original author's identity
 /// and every reply, so a proposal cannot be mistaken for an agreement merely
 /// because the discussion is closed or appears in history.
-#[derive(Debug, Serialize)]
-pub(super) struct Shown<'a> {
-    id: &'a ThreadId,
-    path: &'a Path,
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct Shown {
+    /// Stable discussion identifier.
+    id: String,
+    /// Repository-relative annotated file.
+    path: PathBuf,
+    /// The currently projected range, or the last-known range when detached.
     #[serde(skip_serializing_if = "Option::is_none")]
-    range: Option<LineRange>,
-    placement: &'static str,
-    status: Status,
+    range: Option<RangeOutput>,
+    /// Whether the current content is anchored, edited, detached, or file-wide.
+    placement: PlacementOutput,
+    /// The stored range used as the comparison reference for `location`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anchor_range: Option<RangeOutput>,
+    /// Whether the projected range is unchanged, moved, detached, or file-wide.
+    location: LocationOutput,
+    /// Current discussion status.
+    status: StatusOutput,
     created: u64,
     updated: u64,
-    author: &'a Author,
-    comment: &'a str,
+    author: AuthorOutput,
+    comment: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    snippet: Option<&'a str>,
-    replies: &'a [Reply],
+    snippet: Option<String>,
+    replies: Vec<ReplyOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    commit: Option<&'a str>,
+    commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     edited: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree: Option<PathBuf>,
 }
 
-impl<'a> Shown<'a> {
-    pub(super) fn new(thread: &'a Thread, placement: Placement) -> Self {
+/// A 1-based inclusive source range in an MCP result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+pub(super) struct RangeOutput {
+    /// First line, inclusive and 1-based.
+    #[schemars(range(min = 1))]
+    start: usize,
+    /// Last line, inclusive and 1-based.
+    #[schemars(range(min = 1))]
+    end: usize,
+}
+
+impl From<LineRange> for RangeOutput {
+    fn from(range: LineRange) -> Self {
         Self {
-            id: thread.id(),
-            path: thread.path(),
-            range: placement.range(),
-            placement: placement_word(placement),
-            status: thread.status(),
+            start: range.start(),
+            end: range.end(),
+        }
+    }
+}
+
+/// The normalized author kind in an MCP result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum AuthorKind {
+    /// The human user at the keyboard.
+    User,
+    /// An attributed agent.
+    Agent,
+}
+
+/// An MCP author object with a uniform tagged shape.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub(super) struct AuthorOutput {
+    /// Whether the author is the human user or an agent.
+    kind: AuthorKind,
+    /// Stable display name; human authors use `user`.
+    name: String,
+    /// MCP client implementation, when recorded for an agent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client: Option<String>,
+    /// Harness-qualified agent identity, when recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+}
+
+impl From<&Author> for AuthorOutput {
+    fn from(author: &Author) -> Self {
+        match author {
+            Author::User => Self {
+                kind: AuthorKind::User,
+                name: "user".to_owned(),
+                client: None,
+                id: None,
+            },
+            Author::Agent { name, client, id } => Self {
+                kind: AuthorKind::Agent,
+                name: name.clone(),
+                client: client.clone(),
+                id: id.clone(),
+            },
+        }
+    }
+}
+
+/// A reply projected into the MCP result shape.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub(super) struct ReplyOutput {
+    author: AuthorOutput,
+    created: u64,
+    body: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    proposed_resolved: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    edited: Option<u64>,
+}
+
+impl From<&Reply> for ReplyOutput {
+    fn from(reply: &Reply) -> Self {
+        Self {
+            author: AuthorOutput::from(reply.author()),
+            created: reply.created(),
+            body: reply.body().to_owned(),
+            proposed_resolved: reply.proposes_resolution(),
+            edited: reply.edited(),
+        }
+    }
+}
+
+/// Current content placement state in an MCP result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum PlacementOutput {
+    /// The stored anchor still matches the current content.
+    Anchored,
+    /// The current lines are an edited replacement of the stored content.
+    Edited,
+    /// The stored lines are no longer present.
+    Detached,
+    /// The discussion covers the file as a whole.
+    File,
+}
+
+impl PlacementOutput {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Anchored => "anchored",
+            Self::Edited => "edited",
+            Self::Detached => "detached",
+            Self::File => "file",
+        }
+    }
+}
+
+/// Location of the projected range relative to the stored anchor.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum LocationOutput {
+    /// The projected range equals the stored reference.
+    Unchanged,
+    /// The projected range differs from the stored reference.
+    Moved,
+    /// No valid current placement exists; `range` is last-known only.
+    Detached,
+    /// The discussion is attached to the file as a whole.
+    File,
+}
+
+/// The open or resolved status in an MCP result.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum StatusOutput {
+    /// Awaiting action.
+    Open,
+    /// Resolved by the user.
+    Resolved,
+}
+
+/// The complete result returned by a read.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct ThreadsOutput {
+    threads: Vec<Shown>,
+    more: usize,
+    #[schemars(required)]
+    next_after: Option<After>,
+}
+
+/// The complete result returned by a write.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(super) struct WriteOutput {
+    pub(super) threads: Vec<Shown>,
+}
+
+impl Shown {
+    pub(super) fn new(thread: &Thread, placement: Placement) -> Self {
+        Self {
+            id: thread.id().to_string(),
+            path: thread.path().to_path_buf(),
+            range: placement.range().map(RangeOutput::from),
+            placement: placement_output(placement),
+            anchor_range: thread.range().map(RangeOutput::from),
+            location: location_output(thread.range(), placement),
+            status: status_output(thread.status()),
             created: thread.created(),
             updated: thread.updated(),
-            author: thread.author(),
-            comment: thread.comment(),
-            snippet: (!thread.is_on_file()).then(|| thread.snippet()),
-            replies: thread.replies(),
-            commit: thread.commit(),
+            author: AuthorOutput::from(thread.author()),
+            comment: thread.comment().to_owned(),
+            snippet: (!thread.is_on_file()).then(|| thread.snippet().to_owned()),
+            replies: thread.replies().iter().map(ReplyOutput::from).collect(),
+            commit: thread.commit().map(str::to_owned),
             edited: thread.edited(),
             worktree: None,
         }
@@ -178,40 +430,35 @@ impl<'a> Shown<'a> {
         self.worktree = worktree.map(Path::to_path_buf);
         self
     }
-
-    fn line(&self) -> String {
-        let at = match self.range {
-            Some(range) => format!("{}:{range}", self.path.display()),
-            None => self.path.display().to_string(),
-        };
-        let mut line = format!(
-            "{}  {at}  {} {}  {}",
-            self.id,
-            status_word(self.status),
-            self.placement,
-            self.comment.lines().next().unwrap_or_default()
-        );
-        if let Some(worktree) = &self.worktree {
-            line.push_str("  in ");
-            line.push_str(&worktree.display().to_string());
-        }
-        line
-    }
 }
 
-const fn placement_word(placement: Placement) -> &'static str {
+const fn placement_output(placement: Placement) -> PlacementOutput {
     match placement {
-        Placement::Anchored(_) => "anchored",
-        Placement::Edited(_) => "edited",
-        Placement::Detached(_) => "detached",
-        Placement::File => "file",
+        Placement::Anchored(_) => PlacementOutput::Anchored,
+        Placement::Edited(_) => PlacementOutput::Edited,
+        Placement::Detached(_) => PlacementOutput::Detached,
+        Placement::File => PlacementOutput::File,
     }
 }
 
-const fn status_word(status: Status) -> &'static str {
+fn location_output(anchor: Option<LineRange>, placement: Placement) -> LocationOutput {
+    match placement {
+        Placement::File => LocationOutput::File,
+        Placement::Detached(_) => LocationOutput::Detached,
+        Placement::Anchored(range) | Placement::Edited(range) => {
+            if anchor == Some(range) {
+                LocationOutput::Unchanged
+            } else {
+                LocationOutput::Moved
+            }
+        }
+    }
+}
+
+const fn status_output(status: Status) -> StatusOutput {
     match status {
-        Status::Open => vocab::STATUS_OPEN,
-        Status::Resolved => vocab::WHEN_RESOLVED,
+        Status::Open => StatusOutput::Open,
+        Status::Resolved => StatusOutput::Resolved,
     }
 }
 
@@ -381,6 +628,7 @@ impl<'a> Trees<'a> {
 #[tool_router(vis = "pub(super)")]
 impl Server {
     #[tool(
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ThreadsOutput>(),
         description = "Read review discussions in this repository checkout. By default returns \
                        all open discussions with their complete conversation, author identities, \
                        file placement, and ranges. Filter with `status`, `path`, and `since`; page \
@@ -424,7 +672,7 @@ impl Server {
         };
 
         let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
-        let shown: Vec<Shown<'_>> = selected
+        let shown: Vec<Shown> = selected
             .threads
             .iter()
             .map(|thread| {
@@ -433,37 +681,20 @@ impl Server {
                     .in_worktree(location.worktree(&self.target.root))
             })
             .collect();
-        let mut lines: Vec<String> = shown.iter().map(Shown::line).collect();
-        if lines.is_empty() {
-            lines.push("no discussions".to_owned());
-        }
-        if selected.more > 0 {
-            let next = selected
-                .next_after
-                .as_ref()
-                .map(|after| json!(after).to_string())
-                .unwrap_or_default();
-            lines.push(format!(
-                "{} more; pass {}={next}",
-                selected.more,
-                vocab::AFTER,
-            ));
-        }
-        with_summary(
-            json!({
-                "threads": shown,
-                "more": selected.more,
-                "next_after": selected.next_after,
-            }),
-            lines.join("\n"),
-        )
+        CallToolResult::structured(json!(ThreadsOutput {
+            threads: shown,
+            more: selected.more,
+            next_after: selected.next_after,
+        }))
     }
 
     #[tool(
+        output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOutput>(),
         description = "Continue one or more existing review discussions. Pass exactly one \
                        non-empty `replies` array; each item names a thread and body, with optional \
-                       current line placement and a proposal to resolve. Only the user closes \
-                       discussions. The whole batch is validated before any reply is written.",
+                       current line placement, proposal to resolve, and retry `idempotency_key`. \
+                       Only the user closes discussions. The whole batch is validated before any \
+                       reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -478,17 +709,26 @@ impl Server {
         if p.replies.is_empty() {
             return failure("`replies` must contain at least one reply");
         }
-        let author = match self.signer(&context) {
-            Ok(author) => author,
+        let (author, caller) = match self.signer(&context) {
+            Ok(identity) => identity,
             Err(error) => return failure(error),
         };
         let (all, scope) = match self.fetch() {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
+        let probe_store = if p.replies.iter().any(|item| item.idempotency_key.is_some()) {
+            match Store::open(self.dirs.threads_file(&self.target.key)) {
+                Ok(store) => Some(store),
+                Err(error) => return failure(error.to_string()),
+            }
+        } else {
+            None
+        };
         let roots = self.target.roots();
         let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
         let mut seen = HashSet::with_capacity(p.replies.len());
+        let mut seen_keys = HashSet::with_capacity(p.replies.len());
         let mut validated = Vec::with_capacity(p.replies.len());
         let mut problems = Vec::new();
         for item in p.replies {
@@ -499,9 +739,61 @@ impl Server {
                 ));
                 continue;
             }
-            match validate_reply(&item, &all, &scope, &roots, &mut trees, &self.target.root) {
-                Ok(root) => validated.push(ValidatedReply { item, root }),
-                Err(error) => problems.push(error),
+            if let Some(key) = &item.idempotency_key
+                && !seen_keys.insert(key.clone())
+            {
+                problems.push(format!(
+                    "{} appears more than once in `replies` by `idempotency_key` {key:?}",
+                    item.thread
+                ));
+                continue;
+            }
+            let id = match thread_id(&item.thread) {
+                Ok(id) => id,
+                Err(error) => {
+                    problems.push(format!("{}: {error}", item.thread));
+                    continue;
+                }
+            };
+            let exact_thread = probe_store.as_ref().and_then(|store| store.thread(&id));
+            if let Err(error) = exact_thread.map_or_else(
+                || structural_reply_without_thread(&item),
+                |thread| structural_reply(&item, thread),
+            ) {
+                problems.push(error);
+                continue;
+            }
+            let replay = if let (Some(key), Some(store)) =
+                (item.idempotency_key.as_deref(), probe_store.as_ref())
+            {
+                let reply = reply_for(author.clone(), &item);
+                match store.probe_reply_idempotency_for_caller(
+                    &id,
+                    &reply,
+                    item_lines(&item),
+                    &caller,
+                    key,
+                ) {
+                    Ok(replay) => replay.is_some(),
+                    Err(error) => {
+                        problems.push(format!("{}: {error}", item.thread));
+                        continue;
+                    }
+                }
+            } else {
+                false
+            };
+            if replay {
+                let root = match exact_thread {
+                    Some(thread) => trees.locate(&scope, &self.target.root, &roots, thread).root,
+                    None => self.target.root.clone(),
+                };
+                validated.push(ValidatedReply { item, root });
+            } else {
+                match validate_reply(&item, &all, &scope, &roots, &mut trees, &self.target.root) {
+                    Ok(root) => validated.push(ValidatedReply { item, root }),
+                    Err(error) => problems.push(error),
+                }
             }
         }
         if !problems.is_empty() {
@@ -511,7 +803,7 @@ impl Server {
         let mut answered = Vec::with_capacity(validated.len());
         for item in validated {
             let root = item.root.clone();
-            match self.reply_one(author.clone(), item).await {
+            match self.reply_one(author.clone(), caller.clone(), item).await {
                 Ok(thread) => answered.push(Answered { thread, root }),
                 Err(error) => {
                     let mut lines =
@@ -521,9 +813,8 @@ impl Server {
                 }
             }
         }
-        let lines = answer_lines(&answered, &self.dirs, &self.target.key, &self.target.root);
         let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
-        let shown: Vec<Shown<'_>> = answered
+        let shown: Vec<Shown> = answered
             .iter()
             .map(|answered| {
                 let placement = trees.place(&self.target.root, &answered.root, &answered.thread);
@@ -532,7 +823,7 @@ impl Server {
                 )
             })
             .collect();
-        with_summary(json!({ "threads": shown }), lines.join("\n"))
+        CallToolResult::structured(json!(WriteOutput { threads: shown }))
     }
 }
 
@@ -547,18 +838,23 @@ struct Answered {
 }
 
 impl Server {
-    async fn reply_one(&self, author: Author, validated: ValidatedReply) -> Result<Thread, String> {
+    async fn reply_one(
+        &self,
+        author: Author,
+        caller: String,
+        validated: ValidatedReply,
+    ) -> Result<Thread, String> {
         let item = validated.item;
         let thread = thread_id(&item.thread)?;
-        let lines = item
-            .line
-            .map(|line| LineRange::new(line, item.end_line.unwrap_or(line)));
+        let lines = item_lines(&item);
         let request = Request::ThreadReply {
             thread: thread.clone(),
             author: author.clone(),
+            caller: caller.clone(),
             body: item.body.clone(),
-            resolve: item.resolve,
+            resolve: item.propose_resolve,
             lines,
+            idempotency_key: item.idempotency_key.clone(),
         };
         let outcome = match self.target.viewer(&self.dirs, &validated.root) {
             Some(viewer) => call(&viewer, &request).await,
@@ -568,6 +864,7 @@ impl Server {
                 &validated.root,
                 &thread,
                 author,
+                &caller,
                 &item,
                 lines,
             )
@@ -610,7 +907,7 @@ fn select_filtered<'a>(
     all: &'a [Thread],
     params: &ThreadsParams,
 ) -> Result<Selected<'a>, String> {
-    let which = Which::parse(params.status.as_deref())?;
+    let which = Which::from_status(params.status);
     let path = check_path_in_roots(roots, params.path.as_deref())?;
     let mut threads: Vec<&Thread> = all
         .iter()
@@ -710,6 +1007,58 @@ fn validate_reply(
     Ok(location.root)
 }
 
+fn reply_for(author: Author, item: &ReplyItem) -> Reply {
+    let reply = Reply::new(author, now(), item.body.clone());
+    if item.propose_resolve {
+        reply.proposing_resolution()
+    } else {
+        reply
+    }
+}
+
+fn item_lines(item: &ReplyItem) -> Option<LineRange> {
+    item.line
+        .map(|line| LineRange::new(line, item.end_line.unwrap_or(line)))
+}
+
+fn structural_reply_without_thread(item: &ReplyItem) -> Result<Option<LineRange>, String> {
+    reply_lines(item)
+}
+
+fn structural_reply(item: &ReplyItem, thread: &Thread) -> Result<Option<LineRange>, String> {
+    let lines = reply_lines(item)?;
+    if thread.is_on_file() && lines.is_some() {
+        return Err(format!(
+            "{} is a file-wide discussion; omit `line` and `end_line`",
+            item.thread
+        ));
+    }
+    Ok(lines)
+}
+
+fn reply_lines(item: &ReplyItem) -> Result<Option<LineRange>, String> {
+    if item.body.trim().is_empty() {
+        return Err(format!("{}: `body` is empty", item.thread));
+    }
+    if item.line.is_none() && item.end_line.is_some() {
+        return Err(format!("{}: pass `line` with `end_line`", item.thread));
+    }
+    if let Some(line) = item.line {
+        if line == 0 || item.end_line == Some(0) {
+            return Err(format!("{}: line numbers are 1-based", item.thread));
+        }
+        if let Some(end_line) = item.end_line
+            && end_line < line
+        {
+            return Err(format!(
+                "{}: `end_line` ({end_line}) must be at least `line` ({line})",
+                item.thread
+            ));
+        }
+    }
+    Ok(item_lines(item))
+}
+
 /// Why an item cannot be replied to, if it cannot.
 fn refusal(
     item: &ReplyItem,
@@ -723,23 +1072,8 @@ fn refusal(
             item.thread
         ));
     }
-    if item.body.trim().is_empty() {
-        return Err(format!("{}: `body` is empty", item.thread));
-    }
-    if item.line.is_none() && item.end_line.is_some() {
-        return Err(format!("{}: pass `line` with `end_line`", item.thread));
-    }
-    if thread.is_on_file() && (item.line.is_some() || item.end_line.is_some()) {
-        return Err(format!(
-            "{} is a file-wide discussion; omit `line` and `end_line`",
-            item.thread
-        ));
-    }
-    if let Some(line) = item.line {
-        if line == 0 || item.end_line == Some(0) {
-            return Err(format!("{}: line numbers are 1-based", item.thread));
-        }
-        let range = LineRange::new(line, item.end_line.unwrap_or(line));
+    let lines = structural_reply(item, thread)?;
+    if let Some(range) = lines {
         let path = root.join(thread.path());
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
@@ -799,7 +1133,7 @@ fn shown_line(thread: &Thread, placement: Placement, verb: &str) -> String {
     format!(
         "{verb} {} at {at} ({}){}",
         thread.id(),
-        placement_word(placement),
+        placement_output(placement).as_str(),
         if thread.proposes_resolution() {
             ", proposing to resolve it"
         } else {
@@ -891,44 +1225,56 @@ fn repository_paths(root: &Path) -> Vec<PathBuf> {
     paths
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep headless and viewer reply inputs aligned at the MCP boundary."
+)]
 fn headless_reply(
     dirs: &XdgDirs,
     target: &Target,
     root: &Path,
     thread: &ThreadId,
     author: Author,
+    caller: &str,
     item: &ReplyItem,
     lines: Option<LineRange>,
 ) -> Result<Thread, String> {
     let mut store =
         Store::open(dirs.threads_file(&target.key)).map_err(|error| error.to_string())?;
-    if store.thread(thread).is_none() {
-        return Err(format!("thread {thread} disappeared before the reply"));
-    }
     let when = now();
-    if let Some(lines) = lines {
-        follow_reply_lines(&mut store, root, thread, lines, when)?;
-    }
     let reply = Reply::new(author, when, item.body.clone());
-    let reply = if item.resolve {
+    let reply = if item.propose_resolve {
         reply.proposing_resolution()
     } else {
         reply
     };
-    store
-        .reply(thread, reply)
-        .map_err(|error| error.to_string())?;
-    tracing::info!(%thread, proposes = item.resolve, "agent reply added headlessly");
+    if let Some(key) = item.idempotency_key.as_deref() {
+        store
+            .reply_idempotent_for_caller(thread, reply, lines, caller, key, |path| {
+                fs::read_to_string(root.join(path)).map_err(|error| {
+                    fathomable_core::annotations::StoreError::message(format!(
+                        "cannot read {}: {error}",
+                        path.display()
+                    ))
+                })
+            })
+            .map_err(|error| error.to_string())?;
+    } else {
+        if store.thread(thread).is_none() {
+            return Err(format!("thread {thread} disappeared before the reply"));
+        }
+        if let Some(lines) = lines {
+            follow_reply_lines(&mut store, root, thread, lines, when)?;
+        }
+        store
+            .reply(thread, reply)
+            .map_err(|error| error.to_string())?;
+    }
+    tracing::info!(%thread, proposes = item.propose_resolve, "agent reply added headlessly");
     store
         .thread(thread)
         .cloned()
         .ok_or_else(|| format!("thread {thread} vanished after the reply"))
-}
-
-pub(super) fn with_summary(value: Value, summary: String) -> CallToolResult {
-    let mut result = CallToolResult::structured(value);
-    result.content = vec![ContentBlock::text(summary)];
-    result
 }
 
 pub(super) fn failure(message: impl Into<String>) -> CallToolResult {
@@ -956,6 +1302,7 @@ mod tests {
     use fathomable_core::clock::now;
     use fathomable_core::vocabulary::ALL;
     use fathomable_testing::TempDir;
+    use serde_json::json;
 
     use crate::mcp::Server;
 
@@ -1031,9 +1378,13 @@ mod tests {
         let shown = Shown::new(thread, tree.place(thread));
         let value = serde_json::to_value(shown)?;
         assert_eq!(value["status"], "resolved");
-        assert_eq!(value["author"], "user");
+        assert_eq!(value["author"], json!({"kind": "user", "name": "user"}));
         assert_eq!(value["comment"], "Should we rename this?");
         assert_eq!(value["replies"][0]["body"], "I propose `other`.");
+        assert_eq!(
+            value["replies"][0]["author"],
+            json!({"kind": "agent", "name": "Copilot"})
+        );
         Ok(())
     }
 
@@ -1159,7 +1510,8 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: " ".to_owned(),
-                    resolve: false,
+                    propose_resolve: false,
+                    idempotency_key: None,
                     line: None,
                     end_line: None,
                 },
@@ -1169,7 +1521,8 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: "x".to_owned(),
-                    resolve: false,
+                    propose_resolve: false,
+                    idempotency_key: None,
                     line: None,
                     end_line: Some(2),
                 },
@@ -1179,11 +1532,23 @@ mod tests {
                 ReplyItem {
                     thread: id.to_string(),
                     body: "x".to_owned(),
-                    resolve: false,
+                    propose_resolve: false,
+                    idempotency_key: None,
                     line: Some(2),
                     end_line: None,
                 },
                 "past the end",
+            ),
+            (
+                ReplyItem {
+                    thread: id.to_string(),
+                    body: "x".to_owned(),
+                    propose_resolve: false,
+                    idempotency_key: None,
+                    line: Some(2),
+                    end_line: Some(1),
+                },
+                "must be at least",
             ),
         ] {
             let placement = tree.place(&all[0]);

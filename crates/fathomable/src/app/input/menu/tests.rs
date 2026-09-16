@@ -637,7 +637,9 @@ fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
         &id,
         Author::agent("reviewer"),
         "done".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;

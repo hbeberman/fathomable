@@ -13,6 +13,14 @@ tags:
 
 Status: accepted (2026-09-15)
 
+MCP presentation amended 2026-09-16 by
+[0084](0084-explicit-mcp-contracts.md): MCP results project both human and
+agent authors as tagged objects. The compact human string described below
+is the stored and internal socket representation, not the MCP result
+shape. The same decision advances the annotation and socket formats to
+**3** and **6** for durable keyed writes; the values below record this
+earlier clean-slate boundary.
+
 ## Context
 
 Fathomable is a single-user alpha that has not reached a release boundary.

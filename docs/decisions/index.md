@@ -87,3 +87,4 @@ supersede rather than edit history.
 - [0081 The persistent menu bar](0081-the-menu-bar.md)
 - [0082 Three-tool review core](0082-three-tool-review-core.md)
 - [0083 Single-user alpha clean slate](0083-single-user-alpha-clean-slate.md)
+- [0084 Explicit MCP contracts](0084-explicit-mcp-contracts.md)

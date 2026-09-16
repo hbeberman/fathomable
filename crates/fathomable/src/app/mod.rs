@@ -1729,8 +1729,18 @@ impl App {
                 body,
                 resolve,
                 lines,
-            } => match self.agent_reply(&thread, author, body, resolve, lines) {
-                Ok(thread) => Response::Threads(vec![thread]),
+                idempotency_key,
+                caller,
+            } => match self.agent_reply(
+                &thread,
+                author,
+                body,
+                caller,
+                resolve,
+                lines,
+                idempotency_key,
+            ) {
+                Ok((thread, _)) => Response::Threads(vec![thread]),
                 Err(error) => Response::Error(error),
             },
             Request::ThreadStart {
@@ -1738,8 +1748,10 @@ impl App {
                 range,
                 author,
                 body,
-            } => match self.agent_start(&path, range, author, body) {
-                Ok(thread) => Response::Threads(vec![thread]),
+                idempotency_key,
+                caller,
+            } => match self.agent_start(&path, range, author, body, caller, idempotency_key) {
+                Ok((thread, _)) => Response::Threads(vec![thread]),
                 Err(error) => Response::Error(error),
             },
         }

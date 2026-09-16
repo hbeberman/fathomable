@@ -146,14 +146,19 @@ impl Server {
         Self::tool_router() + Self::tool_router_start()
     }
 
-    /// Resolve the automatic caller identity into a stored annotation author.
-    fn signer(&self, context: &RequestContext<RoleServer>) -> Result<Author, String> {
+    /// Resolve the automatic caller identity into a stored annotation author
+    /// and its stable harness-qualified scope.
+    fn signer(&self, context: &RequestContext<RoleServer>) -> Result<(Author, String), String> {
         let caller = self.launch.require(context)?;
-        Ok(Author::Agent {
-            name: caller.harness.name().to_owned(),
-            client: Some(caller.client),
-            id: Some(caller.id),
-        })
+        let scope = caller.id.clone();
+        Ok((
+            Author::Agent {
+                name: caller.harness.name().to_owned(),
+                client: Some(caller.client),
+                id: Some(caller.id),
+            },
+            scope,
+        ))
     }
 
     /// Every thread visible from the bound checkout.

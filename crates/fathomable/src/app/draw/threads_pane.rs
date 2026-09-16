@@ -262,9 +262,11 @@ mod tests {
             let reply = app.handle_request(Request::ThreadReply {
                 thread: id,
                 author,
+                caller: "test:viewer".to_owned(),
                 body: "answer".to_owned(),
                 resolve: false,
                 lines: None,
+                idempotency_key: None,
             });
             assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
             let entries = app.threads_pane_entries();
@@ -332,9 +334,11 @@ mod tests {
         let reply = app.handle_request(Request::ThreadReply {
             thread: id.clone(),
             author: Author::agent("reviewer"),
+            caller: "test:viewer".to_owned(),
             body: "done, I think, though the empty string still wants a test of its own".to_owned(),
             resolve: true,
             lines: None,
+            idempotency_key: None,
         });
         assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
         app.open(Path::new("README.md"));

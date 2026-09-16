@@ -7,8 +7,8 @@ use fathomable_testing::TempDir;
 use crate::reach::Reach;
 
 use super::{
-    Anchor, Author, Draft, Event, FORMAT_VERSION, LineHashes, LineRange, MessageTarget, Placement,
-    Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
+    Anchor, Author, Draft, Event, FORMAT_VERSION, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES,
+    MessageTarget, Placement, Reply, Status, Store, StoreError, Thread, ThreadId, line_hash,
 };
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -340,6 +340,8 @@ fn a_deleted_thread_is_gone_and_later_events_on_it_are_ignored() -> Result<(), S
         v: FORMAT_VERSION,
         thread: gone.clone(),
         reply: Reply::new(Author::agent("claude"), 14, "late"),
+        relocation: None,
+        receipt: None,
     })
     .map_err(|error| StoreError::parse(0, error.to_string()))?;
     let mut text = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
@@ -716,7 +718,10 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
 
     let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
     assert_eq!(raw.lines().count(), 6);
-    assert!(raw.lines().all(|line| line.contains("\"v\":2")));
+    assert!(
+        raw.lines()
+            .all(|line| line.contains(&format!("\"v\":{FORMAT_VERSION}")))
+    );
     assert!(raw.contains(r#""author":{"name":"claude"}"#));
     Ok(())
 }
@@ -868,6 +873,401 @@ fn store_rejects_bad_ranges_unknown_threads_and_bad_lines() -> Result<(), StoreE
         "{error}"
     );
     assert!(!error.is_io());
+    Ok(())
+}
+
+fn keyed_author(id: &str) -> Author {
+    Author::Agent {
+        name: "reviewer".to_owned(),
+        client: Some("copilot-cli".to_owned()),
+        id: Some(id.to_owned()),
+    }
+}
+
+#[test]
+fn keyed_writes_require_a_valid_key_and_authenticated_caller() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-validation")?;
+    let draft = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "comment");
+    let mut store = Store::open(&file.0)?;
+    for key in ["", " \t"] {
+        let result = store.annotate_idempotent(draft.clone(), 1, key, |_| {
+            Err(StoreError::message("invalid key was loaded"))
+        });
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|error| error.to_string().contains("idempotency key")),
+            "{result:?}"
+        );
+    }
+    let too_long = "x".repeat(MAX_IDEMPOTENCY_KEY_BYTES + 1);
+    let result = store.annotate_idempotent(draft, 1, &too_long, |_| {
+        Err(StoreError::message("oversized key was loaded"))
+    });
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("at most")),
+        "{result:?}"
+    );
+
+    let unauthenticated = Draft::on_file(Author::agent("reviewer"), Path::new("a.md"), "comment");
+    let result = store.annotate_idempotent(unauthenticated, 1, "valid", |_| {
+        Err(StoreError::message("unauthenticated caller was loaded"))
+    });
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("caller identity")),
+        "{result:?}"
+    );
+    assert!(!file.0.exists(), "validation must not create the store");
+    Ok(())
+}
+
+#[test]
+fn keyed_start_replays_after_restart_without_loading_the_source() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-start")?;
+    let author = keyed_author("copilot:one");
+    let draft = Draft::new(
+        author.clone(),
+        Path::new("./nested/../a.md"),
+        LineRange::new(4, 3),
+        "same body",
+    );
+    let mut store = Store::open(&file.0)?;
+    let first = store.annotate_idempotent(draft.clone(), 20, "start-1", |path| {
+        assert_eq!(path, Path::new("a.md"));
+        Ok(TEXT.to_owned())
+    })?;
+    assert!(!first.replayed());
+    let id = first.into_value();
+    drop(store);
+
+    let mut restarted = Store::open(&file.0)?;
+    let replay = restarted.annotate_idempotent(draft, 99, "start-1", |_| {
+        Err(StoreError::message("source must not be loaded on replay"))
+    })?;
+    assert!(replay.replayed());
+    assert_eq!(replay.value(), &id);
+    assert_eq!(restarted.threads().len(), 1);
+    assert_eq!(restarted.thread(&id).map(Thread::created), Some(20));
+    Ok(())
+}
+
+#[test]
+fn idempotency_probes_replay_before_source_or_lifecycle_checks() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-probe")?;
+    let author = keyed_author("copilot:one");
+    let draft = Draft::on_file(author.clone(), Path::new("missing.md"), "comment");
+    let mut store = Store::open(&file.0)?;
+    let start_id = store
+        .annotate_idempotent(draft.clone(), 1, "start-1", |_| Ok(String::new()))?
+        .into_value();
+    assert_eq!(
+        store.probe_start_idempotency(&draft, "start-1")?,
+        Some(start_id.clone())
+    );
+    let conflict = store.probe_start_idempotency(
+        &Draft::on_file(author.clone(), Path::new("missing.md"), "different"),
+        "start-1",
+    );
+    assert!(
+        conflict
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{conflict:?}"
+    );
+
+    let reply = Reply::new(author, 2, "answer").proposing_resolution();
+    store.reply_idempotent(&start_id, reply.clone(), None, "reply-1", |_| {
+        Ok(String::new())
+    })?;
+    assert_eq!(
+        store.probe_reply_idempotency(&start_id, &reply, None, "reply-1")?,
+        Some(start_id.clone())
+    );
+    store.delete(&start_id, 3)?;
+    let deleted = store.probe_reply_idempotency(&start_id, &reply, None, "reply-1");
+    assert!(
+        deleted
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("was deleted")),
+        "{deleted:?}"
+    );
+
+    let explicit_draft = Draft::on_file(
+        Author::agent("display-only"),
+        Path::new("other.md"),
+        "explicit",
+    );
+    let explicit_id = store
+        .annotate_idempotent_for_caller(
+            explicit_draft.clone(),
+            4,
+            "copilot:explicit",
+            "explicit-1",
+            |_| Ok(String::new()),
+        )?
+        .into_value();
+    assert_eq!(
+        store.probe_start_idempotency_for_caller(
+            &explicit_draft,
+            "copilot:explicit",
+            "explicit-1"
+        )?,
+        Some(explicit_id.clone())
+    );
+    assert_eq!(
+        store
+            .thread(&explicit_id)
+            .and_then(|thread| thread.author().id()),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_start_conflicts_on_different_effective_arguments() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-conflict")?;
+    let author = keyed_author("copilot:one");
+    let mut store = Store::open(&file.0)?;
+    let draft = Draft::on_file(author.clone(), Path::new("a.md"), "first");
+    store.annotate_idempotent(draft, 1, "same", |_| Ok(TEXT.to_owned()))?;
+    let conflict = store.annotate_idempotent(
+        Draft::on_file(author, Path::new("a.md"), "second"),
+        2,
+        "same",
+        |_| Ok(TEXT.to_owned()),
+    );
+    assert!(
+        conflict
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("conflicts")),
+        "{conflict:?}"
+    );
+    assert_eq!(store.threads().len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(&file.0)
+            .map_err(|error| StoreError::io(&file.0, error))?
+            .lines()
+            .count(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_start_is_concurrent_and_scoped_by_caller_and_operation() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-scope")?;
+    let path = file.0.clone();
+    let first_path = path.clone();
+    let second_path = path.clone();
+    let first = std::thread::spawn(move || -> Result<ThreadId, StoreError> {
+        let mut store = Store::open(first_path)?;
+        Ok(store
+            .annotate_idempotent(
+                Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "one"),
+                30,
+                "same",
+                |_| Ok(TEXT.to_owned()),
+            )?
+            .into_value())
+    });
+    let second = std::thread::spawn(move || -> Result<ThreadId, StoreError> {
+        let mut store = Store::open(second_path)?;
+        Ok(store
+            .annotate_idempotent(
+                Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "one"),
+                31,
+                "same",
+                |_| Ok(TEXT.to_owned()),
+            )?
+            .into_value())
+    });
+    let first = first
+        .join()
+        .map_err(|_panic| StoreError::message("thread panicked"))??;
+    let second = second
+        .join()
+        .map_err(|_panic| StoreError::message("thread panicked"))??;
+    assert_eq!(first, second);
+
+    let mut store = Store::open(&path)?;
+    let other_caller = store.annotate_idempotent(
+        Draft::on_file(keyed_author("copilot:two"), Path::new("a.md"), "one"),
+        32,
+        "same",
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert!(!other_caller.replayed());
+    let other_operation = store.reply_idempotent(
+        &first,
+        Reply::new(keyed_author("copilot:one"), 33, "answer"),
+        None,
+        "same",
+        |_| Ok(TEXT.to_owned()),
+    )?;
+    assert!(!other_operation.replayed());
+    assert_eq!(store.threads().len(), 2);
+    assert_eq!(
+        store.thread(&first).map(|thread| thread.replies().len()),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_reply_replays_without_relocation_or_mutable_validation() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-reply")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::new(Author::User, Path::new("a.md"), LineRange::new(3, 3), "why"),
+        TEXT,
+        1,
+    )?;
+    let reply = Reply::new(keyed_author("copilot:one"), 2, "answer").proposing_resolution();
+    let first = store.reply_idempotent(
+        &id,
+        reply.clone(),
+        Some(LineRange::new(3, 4)),
+        "reply-1",
+        |path| {
+            assert_eq!(path, Path::new("a.md"));
+            Ok(TEXT.to_owned())
+        },
+    )?;
+    assert!(!first.replayed());
+    let before = store
+        .thread(&id)
+        .cloned()
+        .ok_or_else(|| StoreError::message("thread missing after idempotent reply"))?;
+    drop(store);
+
+    let mut restarted = Store::open(&file.0)?;
+    let replayed =
+        restarted.reply_idempotent(&id, reply, Some(LineRange::new(4, 3)), "reply-1", |_| {
+            Err(StoreError::message("source must not be loaded on replay"))
+        })?;
+    assert!(replayed.replayed());
+    let after = restarted
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread missing after replay"))?;
+    assert_eq!(after.replies().len(), 1);
+    assert_eq!(after.updated(), before.updated());
+    assert_eq!(after.range(), Some(LineRange::new(3, 4)));
+    Ok(())
+}
+
+#[test]
+fn keyed_replay_of_deleted_thread_is_explicitly_rejected() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-deleted")?;
+    let author = keyed_author("copilot:one");
+    let mut store = Store::open(&file.0)?;
+    let id = store
+        .annotate_idempotent(
+            Draft::on_file(author.clone(), Path::new("a.md"), "comment"),
+            1,
+            "start-1",
+            |_| Ok(TEXT.to_owned()),
+        )?
+        .into_value();
+    store.delete(&id, 2)?;
+    let replay = store.annotate_idempotent(
+        Draft::on_file(author, Path::new("a.md"), "comment"),
+        3,
+        "start-1",
+        |_| Err(StoreError::message("source must not be loaded")),
+    );
+    assert!(
+        replay
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("was deleted")),
+        "{replay:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_reply_rechecks_resolution_under_the_write_lock() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-resolved-race")?;
+    let mut writer = Store::open(&file.0)?;
+    let id = writer.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let mut stale = Store::open(&file.0)?;
+    let answer = Reply::new(keyed_author("copilot:one"), 3, "answer");
+    assert!(
+        stale
+            .probe_reply_idempotency(&id, &answer, None, "reply-1")?
+            .is_none()
+    );
+    writer.resolve(&id, None, 2)?;
+    let outcome = stale.reply_idempotent(&id, answer.clone(), None, "reply-1", |_| {
+        Err(StoreError::message("file-wide reply must not load source"))
+    });
+    assert!(
+        outcome
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("is resolved"))
+    );
+    assert_eq!(
+        Store::open(&file.0)?
+            .thread(&id)
+            .map(|thread| thread.replies().len()),
+        Some(0)
+    );
+    writer.reopen(&id, 4)?;
+    let outcome = stale.reply_idempotent(&id, answer, None, "reply-1", |_| {
+        Err(StoreError::message("file-wide reply must not load source"))
+    })?;
+    assert!(!outcome.replayed(), "rejected writes must not reserve keys");
+    Ok(())
+}
+
+#[test]
+fn failed_reload_preserves_the_last_complete_in_memory_store() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-bad-reload")?;
+    let mut store = Store::open(&file.0)?;
+    let draft = Draft::on_file(keyed_author("copilot:one"), Path::new("a.md"), "question");
+    store.annotate_idempotent(draft.clone(), 1, "start-1", |_| Ok(TEXT.to_owned()))?;
+    let before = store.threads().to_vec();
+    fs::write(&file.0, "invalid event\n").map_err(|error| StoreError::io(&file.0, error))?;
+    let result = store.annotate_idempotent(draft, 2, "start-1", |_| {
+        Err(StoreError::message("corrupt store must not load source"))
+    });
+    assert!(
+        result
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("line 1"))
+    );
+    assert_eq!(store.threads(), before);
+    Ok(())
+}
+
+#[test]
+fn deleting_a_keyed_thread_does_not_reuse_its_id() -> Result<(), StoreError> {
+    let file = TempFile::new("idempotent-deleted-id")?;
+    let author = keyed_author("copilot:one");
+    let mut store = Store::open(&file.0)?;
+    let draft = Draft::on_file(author.clone(), Path::new("a.md"), "comment");
+    let original = store
+        .annotate_idempotent(draft, 1, "start-1", |_| Ok(TEXT.to_owned()))?
+        .into_value();
+    store.delete(&original, 2)?;
+
+    let replacement = store.annotate(
+        Draft::on_file(author, Path::new("a.md"), "replacement"),
+        TEXT,
+        1,
+    )?;
+    assert_ne!(replacement, original);
+    assert!(
+        store.thread(&replacement).is_some(),
+        "replacement thread should remain writable"
+    );
     Ok(())
 }
 

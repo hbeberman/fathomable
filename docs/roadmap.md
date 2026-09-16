@@ -419,3 +419,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     explicit operator action; ordinary startup never deletes state and
     unrelated stores gain no format machinery
     ([0083](decisions/0083-single-user-alpha-clean-slate.md)).
+75. **Explicit MCP contracts.** Review tools advertise constrained inputs
+    and typed results, use author objects and `propose_resolve`, return
+    complete JSON in both MCP result channels, expose location relative to
+    the stored anchor independently of content edits, and offer durable
+    per-item idempotency keys for starts and replies
+    ([0084](decisions/0084-explicit-mcp-contracts.md)).

@@ -16,6 +16,14 @@ tags:
 
 Status: accepted (2026-09-15)
 
+MCP contract amended 2026-09-16 by
+[0084](0084-explicit-mcp-contracts.md): schemas expose constrained inputs
+and complete typed results, authors are projected as objects, the reply
+argument is `propose_resolve`, location is reported relative to the stored
+anchor, and optional per-item keys protect writes against retries. The
+three tools and human-mediated discussion remain unchanged; the spellings
+and response details below describe this decision's original boundary.
+
 Supersedes the agent subscription, delivery, watch, viewer-routing, and
 auto-jump contracts of [0014](0014-mcp-server-and-socket-v1.md),
 [0015](0015-follow-mode.md), [0031](0031-lazy-follow.md),

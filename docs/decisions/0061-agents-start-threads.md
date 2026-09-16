@@ -19,6 +19,12 @@ tags:
 
 Status: accepted (2026-09-05)
 
+MCP contract amended 2026-09-16 by
+[0084](0084-explicit-mcp-contracts.md): starts expose a precise input
+schema, complete typed JSON results, and optional per-comment
+`idempotency_key` retry protection. Without a key, two comments on the
+same lines still create two discussions.
+
 Tool shape amended 2026-09-15 by
 [0082](0082-three-tool-review-core.md): `thread_start` requires one non-empty
 `comments` array of `{path, line?, end_line?, body}`. The former top-level

@@ -59,7 +59,9 @@ fn app_with_review_messages(
         &id,
         Author::agent("reviewer"),
         "agent answer".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -313,7 +315,9 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
             id: None,
         },
         long,
+        "test:viewer".to_owned(),
         true,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -475,7 +479,9 @@ fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
         &id,
         Author::agent("reviewer"),
         "agent answer".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -992,7 +998,9 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
         &id,
         Author::agent("reviewer"),
         "agent answer".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -1214,7 +1222,9 @@ fn review_by_file(
         &bottom,
         Author::agent("reviewer"),
         "answered".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -1402,9 +1412,11 @@ fn socket_requests_reply() -> anyhow::Result<()> {
     let reply = app.handle_request(Request::ThreadReply {
         thread: id.clone(),
         author: author.clone(),
+        caller: "test:viewer".to_owned(),
         body: "fixed".to_owned(),
         resolve: true,
         lines: None,
+        idempotency_key: None,
     });
     // Answered with the thread as it now stands (ADR 0055).
     let Response::Threads(answered) = reply else {
@@ -1438,9 +1450,11 @@ fn socket_requests_reply() -> anyhow::Result<()> {
     let reply = app.handle_request(Request::ThreadReply {
         thread: serde_json::from_str(r#""9-9-9""#)?,
         author,
+        caller: "test:viewer".to_owned(),
         body: "?".to_owned(),
         resolve: false,
         lines: None,
+        idempotency_key: None,
     });
     assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
     Ok(())
@@ -1461,7 +1475,9 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
         path: PathBuf::from("README.md"),
         range: Some(LineRange::new(2, 3)),
         author: author.clone(),
+        caller: "test:viewer".to_owned(),
         body: "look here".to_owned(),
+        idempotency_key: None,
     });
     let Response::Threads(started) = reply else {
         anyhow::bail!("start answered {reply:?}");
@@ -1509,13 +1525,91 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
             path: PathBuf::from(path),
             range: Some(range),
             author: author.clone(),
+            caller: "test:viewer".to_owned(),
             body: "?".to_owned(),
+            idempotency_key: None,
         });
         assert!(
             matches!(&reply, Response::Error(message) if message.contains(wrong)),
             "{path}: {reply:?}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn socket_idempotent_start_replays_without_reading_or_toasting() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-socket-idempotent-start", testing::README)?;
+    let mut app = app(&dir)?;
+    let author = Author::Agent {
+        name: "reviewer".to_owned(),
+        client: Some("copilot-cli".to_owned()),
+        id: Some("copilot:viewer-start".to_owned()),
+    };
+    let request = Request::ThreadStart {
+        path: PathBuf::from("./README.md"),
+        range: Some(LineRange::new(3, 2)),
+        author,
+        caller: "test:viewer".to_owned(),
+        body: "same request".to_owned(),
+        idempotency_key: Some("start-once".to_owned()),
+    };
+    let Response::Threads(first) = app.handle_request(request.clone()) else {
+        anyhow::bail!("first start did not write");
+    };
+    let id = first[0].id().clone();
+    let toast_count = app.toasts().len();
+    std::fs::remove_file(dir.0.join("ws/README.md"))?;
+
+    let replay = app.handle_request(request);
+    let Response::Threads(second) = replay else {
+        anyhow::bail!("retry did not return the thread: {replay:?}");
+    };
+    assert_eq!(second[0].id(), &id);
+    assert_eq!(
+        app.thread(&id)
+            .map(fathomable_core::annotations::Thread::comment),
+        Some("same request")
+    );
+    assert_eq!(app.toasts().len(), toast_count);
+    Ok(())
+}
+
+#[test]
+fn socket_idempotent_reply_replays_without_relocating_or_toasting() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-socket-idempotent-reply", testing::README)?;
+    let mut app = app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    app.compose_insert("question");
+    app.compose_submit();
+    let id = app.file_threads()[0].clone();
+    let author = Author::Agent {
+        name: "reviewer".to_owned(),
+        client: Some("copilot-cli".to_owned()),
+        id: Some("copilot:viewer-reply".to_owned()),
+    };
+    let request = Request::ThreadReply {
+        thread: id.clone(),
+        author,
+        caller: "test:viewer".to_owned(),
+        body: "answer".to_owned(),
+        resolve: false,
+        lines: Some(LineRange::new(3, 3)),
+        idempotency_key: Some("reply-once".to_owned()),
+    };
+    let first = app.handle_request(request.clone());
+    assert!(matches!(first, Response::Threads(_)), "{first:?}");
+    let toast_count = app.toasts().len();
+    std::fs::remove_file(dir.0.join("ws/README.md"))?;
+
+    let replay = app.handle_request(request);
+    assert!(matches!(replay, Response::Threads(_)), "{replay:?}");
+    assert_eq!(
+        app.thread(&id).map(|thread| thread.replies().len()),
+        Some(1)
+    );
+    assert_eq!(app.toasts().len(), toast_count);
     Ok(())
 }
 
@@ -1735,7 +1829,9 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
             .map(|n| format!("line {n}"))
             .collect::<Vec<_>>()
             .join("\n"),
+        "test:viewer".to_owned(),
         true,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -1813,8 +1909,16 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
             .join("\n"))
     };
 
-    app.agent_reply(&id, Author::agent("bot"), "done".to_owned(), true, None)
-        .map_err(anyhow::Error::msg)?;
+    app.agent_reply(
+        &id,
+        Author::agent("bot"),
+        "done".to_owned(),
+        "test:viewer".to_owned(),
+        true,
+        None,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
     let thread = app.thread(&id).context("thread lost")?;
     assert_eq!(thread.status(), Status::Open, "an agent cannot resolve");
     assert!(thread.proposes_resolution());
@@ -1849,14 +1953,24 @@ fn a_proposal_waits_until_the_user_accepts_it() -> anyhow::Result<()> {
         &id,
         Author::agent("bot"),
         "one more thing".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
     assert_eq!(app.proposed_count(), 0);
     assert_eq!(app.waiting_count(), 1);
-    app.agent_reply(&id, Author::agent("bot"), "done now".to_owned(), true, None)
-        .map_err(anyhow::Error::msg)?;
+    app.agent_reply(
+        &id,
+        Author::agent("bot"),
+        "done now".to_owned(),
+        "test:viewer".to_owned(),
+        true,
+        None,
+        None,
+    )
+    .map_err(anyhow::Error::msg)?;
     assert_eq!(app.proposed_count(), 1);
 
     // The user's `o` accepts it.
@@ -1890,7 +2004,9 @@ fn a_stub_takes_its_authors_stripe_and_name_colour() -> anyhow::Result<()> {
         &id,
         Author::agent("reviewer"),
         "agent answer".to_owned(),
+        "test:viewer".to_owned(),
         false,
+        None,
         None,
     )
     .map_err(anyhow::Error::msg)?;
@@ -1942,7 +2058,9 @@ fn a_stub_shows_the_newest_message_and_its_circle() -> anyhow::Result<()> {
             &id,
             Author::agent("reviewer"),
             body.to_owned(),
+            "test:viewer".to_owned(),
             proposed,
+            None,
             None,
         )
         .map_err(anyhow::Error::msg)?;

@@ -30,10 +30,10 @@
 //! # Ok::<(), fathomable_core::annotations::StoreError>(())
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,10 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 2;
+pub(crate) const FORMAT_VERSION: u32 = 3;
+
+/// Maximum size of a persisted idempotency key, in bytes.
+pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
 
 /// File name of the thread store inside a workspace state directory.
 pub(crate) const THREADS_FILE: &str = "threads.jsonl";
@@ -806,6 +809,95 @@ impl Draft {
     }
 }
 
+/// The result of a write that optionally used an idempotency key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WriteOutcome<T> {
+    value: T,
+    replayed: bool,
+}
+
+impl<T> WriteOutcome<T> {
+    fn applied(value: T) -> Self {
+        Self {
+            value,
+            replayed: false,
+        }
+    }
+
+    fn from_replay(value: T) -> Self {
+        Self {
+            value,
+            replayed: true,
+        }
+    }
+
+    /// The value produced by the write or recovered from the original write.
+    #[must_use]
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Consume the outcome and return its value.
+    #[must_use]
+    pub fn into_value(self) -> T {
+        self.value
+    }
+
+    /// Whether the operation was already completed by an earlier request.
+    #[must_use]
+    pub fn replayed(&self) -> bool {
+        self.replayed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum IdempotentOperation {
+    Start,
+    Reply,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct IdempotencyReceipt {
+    key: String,
+    caller: String,
+    operation: IdempotentOperation,
+    intent: String,
+    target: ThreadId,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ReceiptKey {
+    key: String,
+    caller: String,
+    operation: IdempotentOperation,
+}
+
+#[derive(Serialize)]
+struct StartIntent<'a> {
+    operation: IdempotentOperation,
+    path: PathBuf,
+    range: Option<LineRange>,
+    body: &'a str,
+}
+
+#[derive(Serialize)]
+struct ReplyIntent<'a> {
+    operation: IdempotentOperation,
+    thread: &'a ThreadId,
+    body: &'a str,
+    resolve: bool,
+    lines: Option<LineRange>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ReplyRelocation {
+    range: LineRange,
+    anchor: Anchor,
+    created: u64,
+    context: Context,
+}
+
 /// The `v` of one event line, read before the event itself.
 #[derive(Deserialize)]
 struct Stamp {
@@ -838,12 +930,18 @@ enum Event {
         /// for a comment on the file as a whole.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         context: Option<Context>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<IdempotencyReceipt>,
     },
     Reply {
         v: u32,
         thread: ThreadId,
         #[serde(flatten)]
         reply: Reply,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        relocation: Option<ReplyRelocation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<IdempotencyReceipt>,
     },
     /// The user replaced one of their messages (ADR 0013).
     Edit {
@@ -914,6 +1012,19 @@ impl Event {
             | Self::Rescope { thread, .. } => Some(thread),
         }
     }
+
+    fn receipt(&self) -> Option<&IdempotencyReceipt> {
+        match self {
+            Self::Annotate { receipt, .. } | Self::Reply { receipt, .. } => receipt.as_ref(),
+            Self::Edit { .. }
+            | Self::Resolve { .. }
+            | Self::Reopen { .. }
+            | Self::Relocate { .. }
+            | Self::Move { .. }
+            | Self::Delete { .. }
+            | Self::Rescope { .. } => None,
+        }
+    }
 }
 
 /// The threads of one workspace, backed by an append-only JSONL file.
@@ -924,6 +1035,7 @@ pub struct Store {
     /// Threads a tombstone removed, so an event that raced the deletion
     /// (a headless reply) is skipped rather than rejected as unknown.
     deleted: HashSet<ThreadId>,
+    receipts: HashMap<ReceiptKey, IdempotencyReceipt>,
 }
 
 impl Store {
@@ -940,11 +1052,33 @@ impl Store {
             path,
             threads: Vec::new(),
             deleted: HashSet::new(),
+            receipts: HashMap::new(),
         };
-        let text = match fs::read_to_string(&store.path) {
-            Ok(text) => text,
+        let mut file = match OpenOptions::new().read(true).open(&store.path) {
+            Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(store),
             Err(error) => return Err(StoreError::io(&store.path, error)),
+        };
+        file.lock_shared()
+            .map_err(|error| StoreError::io(&store.path, error))?;
+        let result = store.load_locked(&mut file);
+        let _ = file.unlock();
+        result?;
+        tracing::debug!(path = %store.path.display(), threads = store.threads.len(), "loaded threads");
+        Ok(store)
+    }
+
+    fn load_locked(&mut self, file: &mut File) -> Result<(), StoreError> {
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| StoreError::io(&self.path, error))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text)
+            .map_err(|error| StoreError::io(&self.path, error))?;
+        let mut loaded = Self {
+            path: self.path.clone(),
+            threads: Vec::new(),
+            deleted: HashSet::new(),
+            receipts: HashMap::new(),
         };
         for (index, line) in text.lines().enumerate() {
             if line.trim().is_empty() {
@@ -953,16 +1087,37 @@ impl Store {
             let Stamp { v } = serde_json::from_str(line)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
             if v != FORMAT_VERSION {
-                return Err(StoreError::version(&store.path, index + 1, v));
+                return Err(StoreError::version(&self.path, index + 1, v));
             }
             let event: Event = serde_json::from_str(line)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
-            store
+            loaded
                 .apply(event)
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
         }
-        tracing::debug!(path = %store.path.display(), threads = store.threads.len(), "loaded threads");
-        Ok(store)
+        self.threads = loaded.threads;
+        self.deleted = loaded.deleted;
+        self.receipts = loaded.receipts;
+        Ok(())
+    }
+
+    fn lock_for_write(&mut self) -> Result<File, StoreError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
+        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|error| StoreError::io(&self.path, error))?;
+        file.lock()
+            .map_err(|error| StoreError::io(&self.path, error))?;
+        if let Err(error) = self.load_locked(&mut file) {
+            let _ = file.unlock();
+            return Err(error);
+        }
+        Ok(file)
     }
 
     /// Where the JSONL file lives.
@@ -1029,30 +1184,14 @@ impl Store {
     /// Returns [`StoreError`] when the range runs past the end of `text` or
     /// the file cannot be appended to.
     pub fn annotate(&mut self, draft: Draft, text: &str, now: u64) -> Result<ThreadId, StoreError> {
-        let (anchor, context, snippet) = match draft.range {
-            Some(range) => {
-                let anchor = Anchor::capture(text, range).ok_or(StoreError {
-                    kind: ErrorKind::BadRange(range),
-                })?;
-                let context = Context::capture(text, range).ok_or(StoreError {
-                    kind: ErrorKind::BadRange(range),
-                })?;
-                let snippet = text
-                    .lines()
-                    .skip(range.start - 1)
-                    .take(range.len())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                (Some(anchor), Some(context), snippet)
-            }
-            None => (None, None, String::new()),
-        };
+        let (anchor, context, snippet) = capture_annotation(&draft, text)?;
+        let mut file = self.lock_for_write()?;
         let id = ThreadId(format!(
             "{now}-{}-{}",
             std::process::id(),
-            self.threads.len() + 1
+            self.threads.len() + self.deleted.len() + 1
         ));
-        self.commit(Event::Annotate {
+        let event = Event::Annotate {
             v: FORMAT_VERSION,
             id: id.clone(),
             path: draft.path,
@@ -1064,8 +1203,112 @@ impl Store {
             comment: draft.comment,
             commit: draft.commit,
             context,
-        })?;
+            receipt: None,
+        };
+        let result = self.append_locked(&mut file, event);
+        let _ = file.unlock();
+        result?;
         Ok(id)
+    }
+
+    /// Start a thread with a durable per-caller idempotency key.
+    ///
+    /// The loader is called only when no matching receipt exists. This keeps
+    /// retries safe after the source file has changed or disappeared.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key or caller identity is invalid, a
+    /// matching key carries different arguments, the source cannot be loaded,
+    /// or the event cannot be persisted.
+    pub fn annotate_idempotent<F>(
+        &mut self,
+        draft: Draft,
+        now: u64,
+        key: &str,
+        load_text: F,
+    ) -> Result<WriteOutcome<ThreadId>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        let caller = caller_for(&draft.author, key)?.to_owned();
+        self.annotate_idempotent_for_caller(draft, now, &caller, key, load_text)
+    }
+
+    /// Start a thread with a durable key scoped to an explicit caller.
+    ///
+    /// The caller is the authenticated, harness-qualified identity supplied
+    /// by the request boundary. It is persisted in the receipt scope, but is
+    /// not required to be duplicated in the annotation author.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key or caller identity is invalid, a
+    /// matching key carries different arguments, the source cannot be loaded,
+    /// or the event cannot be persisted.
+    pub fn annotate_idempotent_for_caller<F>(
+        &mut self,
+        mut draft: Draft,
+        now: u64,
+        caller: &str,
+        key: &str,
+        load_text: F,
+    ) -> Result<WriteOutcome<ThreadId>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        validate_caller(caller, key)?;
+        draft.path = normalize_repo_path(&draft.path)?;
+        let intent = start_intent(&draft)?;
+        let receipt_key = ReceiptKey {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Start,
+        };
+        let mut file = self.lock_for_write()?;
+        if let Some(receipt) = self.receipts.get(&receipt_key) {
+            ensure_intent(receipt, &intent)?;
+            if self.thread(&receipt.target).is_none() {
+                return Err(StoreError {
+                    kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+                });
+            }
+            let id = receipt.target.clone();
+            let _ = file.unlock();
+            return Ok(WriteOutcome::from_replay(id));
+        }
+
+        let text = load_text(&draft.path)?;
+        let (anchor, context, snippet) = capture_annotation(&draft, &text)?;
+        let id = ThreadId(format!(
+            "{now}-{}-{}",
+            std::process::id(),
+            self.threads.len() + self.deleted.len() + 1
+        ));
+        let receipt = IdempotencyReceipt {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Start,
+            intent,
+            target: id.clone(),
+        };
+        let event = Event::Annotate {
+            v: FORMAT_VERSION,
+            id: id.clone(),
+            path: draft.path,
+            range: draft.range,
+            snippet,
+            anchor,
+            created: now,
+            author: draft.author,
+            comment: draft.comment,
+            commit: draft.commit,
+            context,
+            receipt: Some(receipt),
+        };
+        self.append_locked(&mut file, event)?;
+        let _ = file.unlock();
+        Ok(WriteOutcome::applied(id))
     }
 
     /// Append `reply` to the thread `id`.
@@ -1079,7 +1322,218 @@ impl Store {
             v: FORMAT_VERSION,
             thread: id.clone(),
             reply,
+            relocation: None,
+            receipt: None,
         })
+    }
+
+    /// Append a reply and optional relocation under one durable receipt.
+    ///
+    /// The loader is called only for a new reply that supplies a relocation
+    /// range. A replay therefore does not read, validate, or move the file's
+    /// current contents again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key or caller identity is invalid, the
+    /// target was deleted or resolved before a new reply, a matching key
+    /// carries different arguments, a relocation cannot be captured, or the
+    /// event cannot be persisted.
+    pub fn reply_idempotent<F>(
+        &mut self,
+        id: &ThreadId,
+        reply: Reply,
+        lines: Option<LineRange>,
+        key: &str,
+        load_text: F,
+    ) -> Result<WriteOutcome<()>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        let caller = caller_for(reply.author(), key)?.to_owned();
+        self.reply_idempotent_for_caller(id, reply, lines, &caller, key, load_text)
+    }
+
+    /// Append a reply and optional relocation under an explicit caller scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key or caller identity is invalid, the
+    /// target was deleted or resolved before a new reply, a matching key
+    /// carries different arguments, a relocation cannot be captured, or the
+    /// event cannot be persisted.
+    pub fn reply_idempotent_for_caller<F>(
+        &mut self,
+        id: &ThreadId,
+        reply: Reply,
+        lines: Option<LineRange>,
+        caller: &str,
+        key: &str,
+        load_text: F,
+    ) -> Result<WriteOutcome<()>, StoreError>
+    where
+        F: FnOnce(&Path) -> Result<String, StoreError>,
+    {
+        validate_caller(caller, key)?;
+        let lines = lines.map(normalize_range);
+        let intent = reply_intent(id, &reply, lines)?;
+        let receipt_key = ReceiptKey {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Reply,
+        };
+        let mut file = self.lock_for_write()?;
+        if let Some(receipt) = self.receipts.get(&receipt_key) {
+            ensure_intent(receipt, &intent)?;
+            if self.thread(&receipt.target).is_none() {
+                return Err(StoreError {
+                    kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+                });
+            }
+            let _ = file.unlock();
+            return Ok(WriteOutcome::from_replay(()));
+        }
+
+        let thread = self.thread(id).ok_or_else(|| StoreError {
+            kind: ErrorKind::UnknownThread(id.clone()),
+        })?;
+        if thread.status() != Status::Open {
+            return Err(StoreError::message(format!(
+                "{id} is resolved; only the user can reopen it"
+            )));
+        }
+        let relocation = if let Some(range) = lines {
+            if thread.is_on_file() {
+                return Err(StoreError {
+                    kind: ErrorKind::OnFile(id.clone()),
+                });
+            }
+            let text = load_text(thread.path())?;
+            let anchor = Anchor::capture(&text, range).ok_or(StoreError {
+                kind: ErrorKind::BadRange(range),
+            })?;
+            let context = Context::capture(&text, range).ok_or(StoreError {
+                kind: ErrorKind::BadRange(range),
+            })?;
+            Some(ReplyRelocation {
+                range,
+                anchor,
+                created: reply.created(),
+                context,
+            })
+        } else {
+            None
+        };
+        let receipt = IdempotencyReceipt {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Reply,
+            intent,
+            target: id.clone(),
+        };
+        self.append_locked(
+            &mut file,
+            Event::Reply {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                reply,
+                relocation,
+                receipt: Some(receipt),
+            },
+        )?;
+        let _ = file.unlock();
+        Ok(WriteOutcome::applied(()))
+    }
+
+    /// Check whether a keyed thread start was already completed.
+    ///
+    /// This reloads the shared store under a shared file lock, so callers can
+    /// make the replay decision before reading mutable source state. It never
+    /// loads the source file and returns `None` when the key is new.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key, caller, path, or request intent is
+    /// invalid, the stored request conflicts, the original thread was
+    /// deleted, or the store cannot be read.
+    pub fn probe_start_idempotency(
+        &self,
+        draft: &Draft,
+        key: &str,
+    ) -> Result<Option<ThreadId>, StoreError> {
+        let caller = caller_for(&draft.author, key)?;
+        self.probe_start_idempotency_for_caller(draft, caller, key)
+    }
+
+    /// Check whether a keyed thread start was already completed for an
+    /// explicit caller scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key, caller, path, or stored intent is
+    /// invalid, the request conflicts, the original thread was deleted, or
+    /// the store cannot be read.
+    pub fn probe_start_idempotency_for_caller(
+        &self,
+        draft: &Draft,
+        caller: &str,
+        key: &str,
+    ) -> Result<Option<ThreadId>, StoreError> {
+        validate_caller(caller, key)?;
+        let receipt_key = ReceiptKey {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Start,
+        };
+        self.probe_idempotency(&receipt_key, &start_intent(draft)?)
+    }
+
+    /// Check whether a keyed reply was already completed.
+    ///
+    /// This has the same shared-lock and source-free behavior as
+    /// [`Store::probe_start_idempotency`], allowing callers to skip mutable
+    /// placement or lifecycle validation for a replay.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key, caller, thread, or request intent
+    /// is invalid, the stored request conflicts, the original thread was
+    /// deleted, or the store cannot be read.
+    pub fn probe_reply_idempotency(
+        &self,
+        id: &ThreadId,
+        reply: &Reply,
+        lines: Option<LineRange>,
+        key: &str,
+    ) -> Result<Option<ThreadId>, StoreError> {
+        let caller = caller_for(reply.author(), key)?;
+        self.probe_reply_idempotency_for_caller(id, reply, lines, caller, key)
+    }
+
+    /// Check whether a keyed reply was already completed for an explicit
+    /// caller scope.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the key, caller, thread, or stored intent
+    /// is invalid, the request conflicts, the original thread was deleted,
+    /// or the store cannot be read.
+    pub fn probe_reply_idempotency_for_caller(
+        &self,
+        id: &ThreadId,
+        reply: &Reply,
+        lines: Option<LineRange>,
+        caller: &str,
+        key: &str,
+    ) -> Result<Option<ThreadId>, StoreError> {
+        validate_caller(caller, key)?;
+        let lines = lines.map(normalize_range);
+        let receipt_key = ReceiptKey {
+            key: key.to_owned(),
+            caller: caller.to_owned(),
+            operation: IdempotentOperation::Reply,
+        };
+        self.probe_idempotency(&receipt_key, &reply_intent(id, reply, lines)?)
     }
 
     /// Replace a user-authored message in thread `id`.
@@ -1140,6 +1594,7 @@ impl Store {
     /// Returns [`StoreError`] when the thread is unknown or the file cannot
     /// be appended to.
     pub fn reopen(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
+        self.thread_mut(id)?;
         self.commit(Event::Reopen {
             v: FORMAT_VERSION,
             thread: id.clone(),
@@ -1234,38 +1689,70 @@ impl Store {
     /// when the event is valid, and the memory only kept when the file
     /// took it, so what the viewer shows is what the next reload reads.
     fn commit(&mut self, event: Event) -> Result<(), StoreError> {
+        let mut file = self.lock_for_write()?;
+        let result = self.append_locked(&mut file, event);
+        let _ = file.unlock();
+        result
+    }
+
+    fn probe_idempotency(
+        &self,
+        receipt_key: &ReceiptKey,
+        intent: &str,
+    ) -> Result<Option<ThreadId>, StoreError> {
+        let store = Self::open(&self.path)?;
+        let Some(receipt) = store.receipts.get(receipt_key) else {
+            return Ok(None);
+        };
+        ensure_intent(receipt, intent)?;
+        if store.thread(&receipt.target).is_none() {
+            return Err(StoreError {
+                kind: ErrorKind::IdempotencyDeleted(receipt.target.clone()),
+            });
+        }
+        Ok(Some(receipt.target.clone()))
+    }
+
+    fn append_locked(&mut self, file: &mut File, event: Event) -> Result<(), StoreError> {
         let mut line = serde_json::to_string(&event).map_err(|error| StoreError {
             kind: ErrorKind::Parse(0, error.to_string()),
         })?;
-        let before = (self.threads.clone(), self.deleted.clone());
-        self.apply(event)?;
-        line.push('\n');
-        if let Err(error) = self.append(&line) {
-            (self.threads, self.deleted) = before;
+        let before = (
+            self.threads.clone(),
+            self.deleted.clone(),
+            self.receipts.clone(),
+        );
+        if let Err(error) = self.apply(event) {
+            (self.threads, self.deleted, self.receipts) = before;
             return Err(error);
+        }
+        line.push('\n');
+        // One write for line and newline together: the lock prevents
+        // cooperating writers from interleaving events, while syncing makes a
+        // successful receipt survive a response-loss retry.
+        if let Err(error) = file
+            .write_all(line.as_bytes())
+            .and_then(|()| file.sync_all())
+        {
+            (self.threads, self.deleted, self.receipts) = before;
+            return Err(StoreError::io(&self.path, error));
         }
         Ok(())
     }
 
-    /// Append `line`, newline included, to the file.
-    fn append(&self, line: &str) -> Result<(), StoreError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
-        }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.path)
-            .map_err(|error| StoreError::io(&self.path, error))?;
-        // One `write` for line and newline together: with `O_APPEND` each
-        // call lands whole, so two writers (a second viewer, a headless
-        // `--mcp` reply) cannot interleave `{a}{b}\n\n` (ADR 0032).
-        file.write_all(line.as_bytes())
-            .map_err(|error| StoreError::io(&self.path, error))
-    }
-
     #[expect(clippy::too_many_lines, reason = "one arm per event kind")]
     fn apply(&mut self, event: Event) -> Result<(), StoreError> {
+        if let Some(receipt) = event.receipt() {
+            let key = receipt_key(receipt);
+            if let Some(existing) = self.receipts.get(&key) {
+                if existing == receipt {
+                    return Ok(());
+                }
+                return Err(StoreError {
+                    kind: ErrorKind::IdempotencyConflict(receipt.key.clone()),
+                });
+            }
+        }
         if let Some(id) = event.thread_id()
             && self.deleted.contains(id)
         {
@@ -1283,6 +1770,7 @@ impl Store {
                 comment,
                 commit,
                 context,
+                receipt,
                 ..
             } => {
                 if range.is_some() != anchor.is_some() || range.is_some() != context.is_some() {
@@ -1308,14 +1796,34 @@ impl Store {
                     reopened: None,
                     context,
                 });
-            }
-            Event::Reply { thread, reply, .. } => {
-                let thread = self.thread_mut(&thread)?;
-                thread.updated = thread.updated.max(reply.created);
-                if reply.author.is_user() {
-                    thread.edited = None;
+                if let Some(receipt) = receipt {
+                    self.receipts.insert(receipt_key(&receipt), receipt);
                 }
-                thread.replies.push(reply);
+            }
+            Event::Reply {
+                thread,
+                reply,
+                relocation,
+                receipt,
+                ..
+            } => {
+                {
+                    let thread = self.thread_mut(&thread)?;
+                    if let Some(relocation) = relocation {
+                        thread.range = Some(relocation.range);
+                        thread.anchor = Some(relocation.anchor);
+                        thread.edited = Some(relocation.created);
+                        thread.context = Some(relocation.context);
+                    }
+                    thread.updated = thread.updated.max(reply.created);
+                    if reply.author.is_user() {
+                        thread.edited = None;
+                    }
+                    thread.replies.push(reply);
+                };
+                if let Some(receipt) = receipt {
+                    self.receipts.insert(receipt_key(&receipt), receipt);
+                }
             }
             Event::Edit {
                 thread,
@@ -1431,6 +1939,136 @@ impl Store {
     }
 }
 
+fn caller_for<'a>(author: &'a Author, key: &str) -> Result<&'a str, StoreError> {
+    let caller = author.id().ok_or(StoreError {
+        kind: ErrorKind::IdempotencyCaller,
+    })?;
+    validate_caller(caller, key)?;
+    Ok(caller)
+}
+
+fn validate_caller(caller: &str, key: &str) -> Result<(), StoreError> {
+    validate_key(key)?;
+    if caller.trim().is_empty() {
+        return Err(StoreError {
+            kind: ErrorKind::IdempotencyCaller,
+        });
+    }
+    Ok(())
+}
+
+fn validate_key(key: &str) -> Result<(), StoreError> {
+    if key.trim().is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_BYTES {
+        return Err(StoreError {
+            kind: ErrorKind::InvalidIdempotencyKey,
+        });
+    }
+    Ok(())
+}
+
+fn receipt_key(receipt: &IdempotencyReceipt) -> ReceiptKey {
+    ReceiptKey {
+        key: receipt.key.clone(),
+        caller: receipt.caller.clone(),
+        operation: receipt.operation,
+    }
+}
+
+fn ensure_intent(receipt: &IdempotencyReceipt, intent: &str) -> Result<(), StoreError> {
+    if receipt.intent == intent {
+        Ok(())
+    } else {
+        Err(StoreError {
+            kind: ErrorKind::IdempotencyConflict(receipt.key.clone()),
+        })
+    }
+}
+
+fn normalize_range(range: LineRange) -> LineRange {
+    LineRange::new(range.start(), range.end())
+}
+
+fn normalize_repo_path(path: &Path) -> Result<PathBuf, StoreError> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return Err(StoreError {
+                        kind: ErrorKind::InvalidPath(path.to_path_buf()),
+                    });
+                }
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Err(StoreError {
+                    kind: ErrorKind::InvalidPath(path.to_path_buf()),
+                });
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        return Err(StoreError {
+            kind: ErrorKind::InvalidPath(path.to_path_buf()),
+        });
+    }
+    Ok(normalized)
+}
+
+fn start_intent(draft: &Draft) -> Result<String, StoreError> {
+    let intent = StartIntent {
+        operation: IdempotentOperation::Start,
+        path: normalize_repo_path(&draft.path)?,
+        range: draft.range.map(normalize_range),
+        body: &draft.comment,
+    };
+    serde_json::to_string(&intent).map_err(|error| StoreError {
+        kind: ErrorKind::Parse(0, error.to_string()),
+    })
+}
+
+fn reply_intent(
+    id: &ThreadId,
+    reply: &Reply,
+    lines: Option<LineRange>,
+) -> Result<String, StoreError> {
+    let intent = ReplyIntent {
+        operation: IdempotentOperation::Reply,
+        thread: id,
+        body: reply.body(),
+        resolve: reply.proposes_resolution(),
+        lines,
+    };
+    serde_json::to_string(&intent).map_err(|error| StoreError {
+        kind: ErrorKind::Parse(0, error.to_string()),
+    })
+}
+
+fn capture_annotation(
+    draft: &Draft,
+    text: &str,
+) -> Result<(Option<Anchor>, Option<Context>, String), StoreError> {
+    match draft.range {
+        Some(range) => {
+            let anchor = Anchor::capture(text, range).ok_or(StoreError {
+                kind: ErrorKind::BadRange(range),
+            })?;
+            let context = Context::capture(text, range).ok_or(StoreError {
+                kind: ErrorKind::BadRange(range),
+            })?;
+            let snippet = text
+                .lines()
+                .skip(range.start - 1)
+                .take(range.len())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok((Some(anchor), Some(context), snippet))
+        }
+        None => Ok((None, None, String::new())),
+    }
+}
+
 #[derive(Debug)]
 enum ErrorKind {
     Io(PathBuf, io::Error),
@@ -1442,6 +2080,12 @@ enum ErrorKind {
     BadRange(LineRange),
     OnFile(ThreadId),
     AnnotationShape,
+    InvalidIdempotencyKey,
+    IdempotencyCaller,
+    IdempotencyConflict(String),
+    IdempotencyDeleted(ThreadId),
+    InvalidPath(PathBuf),
+    Message(String),
 }
 
 /// Why the store could not be read or written.
@@ -1466,6 +2110,14 @@ impl StoreError {
     fn version(path: &Path, line: usize, found: u32) -> Self {
         Self {
             kind: ErrorKind::Version(path.to_path_buf(), line, found),
+        }
+    }
+
+    /// Create an error for a source or validation failure discovered by a
+    /// caller-supplied idempotent write loader.
+    pub fn message(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Message(message.into()),
         }
     }
 
@@ -1505,6 +2157,32 @@ impl fmt::Display for StoreError {
                 "line annotations must carry a range, anchor, and context; \
                      file-wide annotations must carry none",
             ),
+            ErrorKind::InvalidIdempotencyKey => write!(
+                f,
+                "idempotency key must contain non-whitespace text and be at most \
+                 {MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+            ),
+            ErrorKind::IdempotencyCaller => {
+                f.write_str("idempotency keys require a nonempty authenticated caller identity")
+            }
+            ErrorKind::IdempotencyConflict(key) => {
+                write!(
+                    f,
+                    "idempotency key {key:?} conflicts with a different request"
+                )
+            }
+            ErrorKind::IdempotencyDeleted(id) => write!(
+                f,
+                "idempotency key cannot replay: original thread {id} was deleted"
+            ),
+            ErrorKind::InvalidPath(path) => {
+                write!(
+                    f,
+                    "path {} is not a repository-relative path",
+                    path.display()
+                )
+            }
+            ErrorKind::Message(message) => f.write_str(message),
         }
     }
 }

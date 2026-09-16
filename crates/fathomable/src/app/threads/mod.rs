@@ -398,37 +398,62 @@ impl App {
     /// A reply arriving over the socket (ADR 0014), optionally proposing
     /// that the thread be resolved (ADR 0053); the thread stays open either
     /// way, and the open panel is refreshed when it shows that thread.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Keep the socket request fields explicit at the viewer boundary."
+    )]
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The caller scope follows the owned socket request into this handler."
+    )]
     pub(super) fn agent_reply(
         &mut self,
         id: &ThreadId,
         author: Author,
         body: String,
+        caller: String,
         resolve: bool,
         lines: Option<LineRange>,
-    ) -> Result<Thread, String> {
+        idempotency_key: Option<String>,
+    ) -> Result<(Thread, bool), String> {
         let root = self.workspace.root().to_path_buf();
         let store = self
             .store
             .as_mut()
             .ok_or("threads unavailable; see the log")?;
-        if store.thread(id).is_none() {
-            return Err(format!("unknown thread {id}"));
-        }
         let when = now();
-        if let Some(lines) = lines {
-            crate::app::threads::open::follow_reply_lines(store, &root, id, lines, when)?;
-        }
         let reply = Reply::new(author, when, body);
         let reply = if resolve {
             reply.proposing_resolution()
         } else {
             reply
         };
-        store.reply(id, reply).map_err(|e| e.to_string())?;
+        let replayed = if let Some(key) = idempotency_key {
+            let outcome = store
+                .reply_idempotent_for_caller(id, reply, lines, &caller, &key, |path| {
+                    std::fs::read_to_string(root.join(path)).map_err(|error| {
+                        fathomable_core::annotations::StoreError::message(format!(
+                            "cannot read {}: {error}",
+                            path.display()
+                        ))
+                    })
+                })
+                .map_err(|error| error.to_string())?;
+            outcome.replayed()
+        } else {
+            if store.thread(id).is_none() {
+                return Err(format!("unknown thread {id}"));
+            }
+            if let Some(lines) = lines {
+                crate::app::threads::open::follow_reply_lines(store, &root, id, lines, when)?;
+            }
+            store.reply(id, reply).map_err(|e| e.to_string())?;
+            false
+        };
         tracing::info!(%id, proposes = resolve, "agent reply added");
         // The toast a store reload would raise (ADR 0030), for the viewer
         // the reply came through; a proposing reply says so (ADR 0053).
-        if let Some(thread) = store.thread(id) {
+        if !replayed && let Some(thread) = store.thread(id) {
             let place = file::toast_place(thread);
             self.push_toast(if resolve {
                 format!("reply on {place}, proposes resolving")
@@ -444,6 +469,7 @@ impl App {
             .as_ref()
             .and_then(|store| store.thread(id))
             .cloned()
+            .map(|thread| (thread, replayed))
             .ok_or_else(|| format!("thread {id} vanished after the reply"))
     }
 
@@ -452,15 +478,19 @@ impl App {
     /// stamped with `HEAD` as the user's is, the viewer toasts it and
     /// refreshes its marks, and nothing moves or is marked seen. Answers
     /// with the thread as it stands.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The caller scope follows the owned socket request into this handler."
+    )]
     pub(super) fn agent_start(
         &mut self,
         path: &Path,
         range: Option<LineRange>,
         author: Author,
         body: String,
-    ) -> Result<Thread, String> {
-        let text = std::fs::read_to_string(self.workspace.root().join(path))
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        caller: String,
+        idempotency_key: Option<String>,
+    ) -> Result<(Thread, bool), String> {
         let label = author.to_string();
         let place = match range {
             Some(range) => format!("{}:{}", path.display(), range.start()),
@@ -475,17 +505,41 @@ impl App {
             .store
             .as_mut()
             .ok_or("threads unavailable; see the log")?;
-        let id = store
-            .annotate(draft, &text, now())
-            .map_err(|e| e.to_string())?;
+        let (id, replayed) = if let Some(key) = idempotency_key {
+            let root = self.workspace.root().to_path_buf();
+            let outcome = store
+                .annotate_idempotent_for_caller(draft, now(), &caller, &key, |path| {
+                    std::fs::read_to_string(root.join(path)).map_err(|error| {
+                        fathomable_core::annotations::StoreError::message(format!(
+                            "cannot read {}: {error}",
+                            path.display()
+                        ))
+                    })
+                })
+                .map_err(|error| error.to_string())?;
+            let replayed = outcome.replayed();
+            (outcome.into_value(), replayed)
+        } else {
+            let text = std::fs::read_to_string(self.workspace.root().join(path))
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+            (
+                store
+                    .annotate(draft, &text, now())
+                    .map_err(|error| error.to_string())?,
+                false,
+            )
+        };
         tracing::info!(%id, %place, %label, "agent thread started");
         self.refresh_reach();
         self.refresh_all_marks();
-        self.push_toast(format!("comment on {place} from {label}"));
+        if !replayed {
+            self.push_toast(format!("comment on {place} from {label}"));
+        }
         self.store
             .as_ref()
             .and_then(|store| store.thread(&id))
             .cloned()
+            .map(|thread| (thread, replayed))
             .ok_or_else(|| format!("thread {id} vanished after the comment"))
     }
 

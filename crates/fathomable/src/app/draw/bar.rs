@@ -190,6 +190,10 @@ mod tests {
     /// thread header is its words alone; another pane's focus leaves the
     /// focus tip.
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the bar test covers every cursor-surface key state"
+    )]
     fn the_bar_reads_the_cursor_threads_keys() -> anyhow::Result<()> {
         let dir = testing::workspace("text-bar", testing::README)?;
         // No toasts: the agent's comment would raise one over the bar.
@@ -219,7 +223,9 @@ mod tests {
             path: std::path::PathBuf::from("README.md"),
             range: Some(LineRange::new(5, 5)),
             author: Author::agent("reviewer"),
+            caller: "test:viewer".to_owned(),
             body: "theirs".to_owned(),
+            idempotency_key: None,
         });
         let Response::Threads(started) = started else {
             anyhow::bail!("{started:?}");

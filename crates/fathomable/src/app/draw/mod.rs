@@ -22,7 +22,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 
 use fathomable_core::diff::LineStatus;
 use fathomable_core::status::Summary;
@@ -50,6 +50,7 @@ use crate::app::input::bindings;
 use crate::app::input::help;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, Menu};
+use crate::app::menu_bar::{self, Focused, MenuLayout, Row as MenuRow};
 use crate::app::{App, Focus, MAX_TOASTS, PickerState, Popup};
 
 /// Ratatui styles for the chrome and Markdown faces.
@@ -225,14 +226,20 @@ fn u16_of(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the top-level draw order keeps every overlapping surface explicit"
+)]
 pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = frame.area();
     let rows = app.pane_rows();
+    let pane_top = u16_of(app.pane_top());
     let sidebar = app.sidebar_width();
     let view = app.view();
     let gutter = gutter_width(view);
     let pane_height = u16_of(rows).min(area.height);
     let sidebar_area = Rect {
+        y: area.y + pane_top,
         width: u16_of(sidebar),
         height: pane_height,
         ..area
@@ -240,16 +247,19 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     // The text column: the view, the draft written in its rows.
     let text_area = Rect {
         x: area.x + sidebar_area.width,
+        y: area.y + pane_top,
         width: area.width.saturating_sub(sidebar_area.width),
         height: pane_height,
-        ..area
     };
     let status_area = Rect {
-        y: area.y + pane_height,
-        height: area.height.saturating_sub(pane_height),
+        y: area.y + pane_top + pane_height,
+        height: area
+            .height
+            .saturating_sub(pane_top.saturating_add(pane_height)),
         ..area
     };
 
+    draw_menu_bar(frame, app, theme, area);
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     let text_area = draw_diff_chrome(frame, app, theme, text_area);
@@ -267,14 +277,32 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         }
         Some(Popup::Status) => {
             let rows = app.status_lines();
-            let grid = Grid::centred(&rows, STATUS_TITLE, 0, 0, app.size().0, app.pane_rows());
+            let grid = Grid::centred(
+                &rows,
+                STATUS_TITLE,
+                0,
+                app.pane_top(),
+                app.size().0,
+                app.pane_rows(),
+            );
             draw_table(frame, theme, grid, STATUS_TITLE, &rows, None);
         }
+        Some(Popup::Doctor(doctor)) => draw_doctor(frame, app, theme, doctor),
+        Some(Popup::About) => draw_about(frame, app, theme),
         Some(Popup::Menu(menu)) => {
             draw_context_menu(frame, app, theme, menu);
         }
         Some(Popup::Picker(picker)) => {
-            draw_picker(frame, theme, area, picker);
+            draw_picker(
+                frame,
+                theme,
+                Rect {
+                    y: u16_of(app.pane_top()),
+                    height: u16_of(app.pane_rows()),
+                    ..area
+                },
+                picker,
+            );
         }
         Some(Popup::Compose(_)) => {
             // The terminal cursor sits on the draft's cell in the text
@@ -313,6 +341,282 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
     }
+    draw_title_menus(frame, app, theme);
+}
+
+fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if !app.menu_bar_shown() || area.height == 0 {
+        return;
+    }
+    let labels = menu_bar::labels(usize::from(area.width));
+    let compact = labels.len() == 1;
+    let hovered = app
+        .pointer()
+        .filter(|(_, row)| *row == 0)
+        .and_then(|(column, _)| menu_bar::label_at(usize::from(area.width), column));
+    let open = app.menu_bar.open();
+    let focused = open.and_then(|open| matches!(open.focused, Focused::Label).then_some(open.root));
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for label in labels {
+        let active = hovered == Some(label.root)
+            || open.is_some_and(|open| open.root == label.root)
+            || focused == Some(label.root);
+        let style = if active {
+            theme.menu.patch(theme.list_hover)
+        } else {
+            theme.menu
+        };
+        let text = format!(" {} ", label.root.label());
+        used += display_width(&text);
+        spans.push(Span::styled(text, style));
+    }
+    let context = if compact {
+        String::new()
+    } else {
+        menu_bar::truncate_left(
+            &menu_bar::context(app),
+            usize::from(area.width).saturating_sub(used + 1),
+        )
+    };
+    let padding = usize::from(area.width).saturating_sub(used + display_width(&context));
+    spans.push(Span::raw(" ".repeat(padding)));
+    spans.push(Span::styled(context, theme.menu.patch(theme.info)));
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).style(theme.menu),
+        Rect { height: 1, ..area },
+    );
+}
+
+fn draw_title_menus(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+    let Some(open) = app.menu_bar.open() else {
+        return;
+    };
+    let root_rows = menu_bar::rows(app, open.root);
+    let Some(root) = menu_bar::root_layout(app, &root_rows) else {
+        return;
+    };
+    draw_framed_menu(
+        frame,
+        theme,
+        root,
+        open.root.title(),
+        match open.focused {
+            Focused::Root(index) => Some(index),
+            Focused::Label | Focused::Child(_) => None,
+        },
+        &root_rows,
+    );
+    let Some((submenu, _)) = open.submenu else {
+        return;
+    };
+    let child_rows = menu_bar::submenu_rows(app, submenu);
+    let Some(child) = menu_bar::child_layout(app, root, &root_rows, &child_rows) else {
+        return;
+    };
+    draw_framed_menu(
+        frame,
+        theme,
+        child,
+        submenu.title(),
+        match open.focused {
+            Focused::Child(index) => Some(index),
+            Focused::Label | Focused::Root(_) => None,
+        },
+        &child_rows,
+    );
+}
+
+fn draw_doctor(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    doctor: &crate::app::doctor_view::Doctor,
+) {
+    let area = doctor_area(app);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let block = rounded_block(
+        theme,
+        format!(
+            " Doctor · {} · r rerun · j/k scroll · Esc close ",
+            if doctor.report().passed() {
+                "ok"
+            } else {
+                "failures"
+            }
+        ),
+        theme.popup,
+    );
+    let inner = block.inner(area);
+    let lines = doctor.visual_lines(usize::from(inner.width));
+    let shown = lines
+        .into_iter()
+        .skip(doctor.scroll())
+        .take(usize::from(inner.height))
+        .map(|(kind, text)| {
+            let style = match kind {
+                crate::doctor::Kind::Section => theme.popup_key.add_modifier(Modifier::BOLD),
+                crate::doctor::Kind::Info => theme.popup,
+                crate::doctor::Kind::Ok => theme.diff_plus,
+                crate::doctor::Kind::Fail => theme.diff_minus.add_modifier(Modifier::BOLD),
+            };
+            Line::from(Span::styled(text, on_surface(theme.popup, style)))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(shown).style(theme.popup), inner);
+}
+
+fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
+    let area = about_area(app);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let block = rounded_block(theme, " About ", theme.popup);
+    let inner = block.inner(area);
+    let lines = vec![
+        Line::from(Span::styled(
+            format!("Fathomable {}", env!("CARGO_PKG_VERSION")),
+            theme.popup_key.add_modifier(Modifier::BOLD),
+        )),
+        Line::raw(""),
+        Line::raw("Read-only terminal workspace viewer and annotation side-car"),
+        Line::raw("for agent-driven work."),
+        Line::raw(""),
+        Line::from(vec![
+            Span::styled("License  ", theme.info),
+            Span::raw("MIT"),
+        ]),
+        Line::from(vec![
+            Span::styled("Source   ", theme.info),
+            Span::styled("https://github.com/hbeberman/fathomable", theme.link),
+        ]),
+        Line::raw(""),
+        Line::from(Span::styled("Esc close", theme.info)),
+    ];
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+}
+
+pub(crate) fn doctor_area(app: &App) -> Rect {
+    Rect {
+        x: 1,
+        y: u16_of(app.pane_top()),
+        width: u16_of(app.size().0.saturating_sub(2)),
+        height: u16_of(app.pane_rows()),
+    }
+}
+
+pub(crate) fn about_area(app: &App) -> Rect {
+    let (width, _) = app.size();
+    let popup_width = width.saturating_sub(4).clamp(2, 64);
+    let popup_height = app.pane_rows().clamp(2, 11);
+    Rect {
+        x: u16_of((width.saturating_sub(popup_width)) / 2),
+        y: u16_of(app.pane_top() + app.pane_rows().saturating_sub(popup_height) / 3),
+        width: u16_of(popup_width),
+        height: u16_of(popup_height),
+    }
+}
+
+fn rounded_block<'a>(theme: &Theme, title: impl Into<Line<'a>>, surface: Style) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(on_surface(surface, theme.info))
+        .title(title)
+        .style(surface)
+}
+
+fn draw_framed_menu(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    layout: MenuLayout,
+    title: &str,
+    selected: Option<usize>,
+    rows: &[MenuRow],
+) {
+    if layout.width < 2 || layout.height < 2 {
+        return;
+    }
+    let more_above = layout.scroll > 0;
+    let more_below = layout.scroll + layout.visible_rows < rows.len();
+    let title = format!(
+        " {}{}{} ",
+        if more_above { "▲ " } else { "" },
+        title,
+        if more_below { " ▼" } else { "" }
+    );
+    let area = Rect {
+        x: u16_of(layout.x),
+        y: u16_of(layout.y),
+        width: u16_of(layout.width),
+        height: u16_of(layout.height),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.info)
+        .title(Span::styled(title, theme.info))
+        .style(theme.menu);
+    let inner = block.inner(area);
+    let inner_width = usize::from(inner.width);
+    let lines: Vec<Line<'static>> = rows
+        .iter()
+        .enumerate()
+        .skip(layout.scroll)
+        .take(layout.visible_rows)
+        .map(|(index, row)| match row {
+            MenuRow::Separator => Line::from(Span::styled(
+                "─".repeat(inner_width),
+                theme.menu.patch(theme.info),
+            )),
+            MenuRow::Item(item) => {
+                let hovered = selected == Some(index);
+                let surface = if hovered {
+                    theme.menu.patch(theme.list_hover)
+                } else {
+                    theme.menu
+                };
+                let label_style = if item.enabled {
+                    surface
+                } else {
+                    surface.patch(theme.info).add_modifier(Modifier::DIM)
+                };
+                let hint_style = surface.patch(theme.info).add_modifier(if item.enabled {
+                    Modifier::empty()
+                } else {
+                    Modifier::DIM
+                });
+                let check = if item.checked { "✓ " } else { "  " };
+                let arrow = if matches!(item.target, menu_bar::Target::Submenu(_)) {
+                    " ›"
+                } else {
+                    ""
+                };
+                let fixed = display_width(check)
+                    + display_width(&item.label)
+                    + display_width(&item.hint)
+                    + display_width(arrow);
+                let gap = inner_width.saturating_sub(fixed).max(1);
+                Line::from(vec![
+                    Span::styled(check.to_owned(), label_style),
+                    Span::styled(item.label.clone(), label_style),
+                    Span::styled(" ".repeat(gap), surface),
+                    Span::styled(item.hint.clone(), hint_style),
+                    Span::styled(arrow.to_owned(), hint_style),
+                ])
+                .style(surface)
+            }
+        })
+        .collect();
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.menu), inner);
 }
 
 /// A deleted file keeps its content under a banner row in the warning
@@ -412,7 +716,12 @@ fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
 /// welcome block.
 fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
     let text_rows = usize::from(text_area.height);
-    if app.review_list().is_open() {
+    if app.getting_started() {
+        frame.render_widget(
+            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
+            text_area,
+        );
+    } else if app.review_list().is_open() {
         draw_review(frame, app, theme, text_area);
     } else if let Some(directory) = app.directory_info() {
         draw_directory_info(frame, theme, text_area, &directory);
@@ -439,7 +748,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
         ("Space f", "open a file".to_owned()),
         ("Space w h", "browse the files".to_owned()),
         ("Space r", "review the threads".to_owned()),
-        ("Space ?", "list every key".to_owned()),
+        ("Space ?", "view the keymap".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
     ];
@@ -504,6 +813,8 @@ fn place_cursor(
         let col = 1 + display_width(view.input());
         frame.set_cursor_position((status_area.x + u16_of(col), status_area.y));
     } else if app.focus() != Focus::View
+        || app.title_menu_open()
+        || app.getting_started()
         || !app.has_document()
         || app.directory_path().is_some()
         || app.review_list().is_open()
@@ -1241,23 +1552,30 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     };
     let parts = status_parts(app);
     let hint = change_hint(app);
-    // Keep the right-hand block visible by trimming the path from the left.
-    let badges: usize = parts.badges.iter().map(|b| display_width(b) + 2).sum();
-    let fixed = display_width(parts.pill) + 3 + badges + parts.right_width() + 8;
+    let badges: Vec<&String> = parts
+        .badges
+        .iter()
+        .filter(|badge| !app.menu_bar_shown() || badge.as_str() == "AUTO")
+        .collect();
+    // Keep the right-hand block visible by trimming identity from the left.
+    let badges_width: usize = badges.iter().map(|badge| display_width(badge) + 2).sum();
+    let identity_width = usize::from(!app.menu_bar_shown());
+    let fixed =
+        display_width(parts.pill) + 3 + badges_width + parts.right_width() + 8 * identity_width;
     let directory = app.directory_path();
     let path = directory.map_or_else(
         || app.current_path().to_string_lossy().into_owned(),
         |directory| format!("{}/", directory.display()),
     );
-    let path = truncate_left(&path, width.saturating_sub(fixed));
-    let mut left = vec![
-        Span::styled(format!(" {} ", parts.pill), pill_style),
-        Span::raw(format!(" {path}")),
-    ];
-    if directory.is_none() && view.changed() {
-        left.push(Span::styled(" [+]", theme.info));
+    let mut left = vec![Span::styled(format!(" {} ", parts.pill), pill_style)];
+    if !app.menu_bar_shown() {
+        let path = truncate_left(&path, width.saturating_sub(fixed));
+        left.push(Span::raw(format!(" {path}")));
+        if directory.is_none() && view.changed() {
+            left.push(Span::styled(" [+]", theme.info));
+        }
     }
-    for badge in &parts.badges {
+    for badge in badges {
         left.push(Span::styled(format!("  {badge}"), theme.info));
     }
     if !app.prefix().is_empty() {
@@ -1475,16 +1793,16 @@ pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
         entries,
         &bindings::menu_title(app.prefix()),
         0,
-        0,
+        app.pane_top(),
         app.size().0,
-        app.size().1.saturating_sub(1),
+        app.pane_rows(),
     )
 }
 
-const STATUS_TITLE: &str = " Status (any key closes)";
+const STATUS_TITLE: &str = " Status · any key closes ";
 
-/// A Helix-style key menu in `grid` under a breadcrumb row naming the
-/// prefix (ADR 0049); `hover` is the entry under the pointer.
+/// A key menu in a rounded border titled by its prefix or context;
+/// `hover` is the entry under the pointer.
 fn draw_menu(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -1498,13 +1816,9 @@ fn draw_menu(
     }
     let key_width = grid.key_width;
     let label_width = grid.label_width;
-    let mut lines = Vec::with_capacity(grid.rows + 1);
-    lines.push(Line::from(Span::styled(
-        format!(" {title} "),
-        theme.menu.add_modifier(Modifier::BOLD),
-    )));
+    let mut lines = Vec::with_capacity(grid.rows);
     for r in 0..grid.rows {
-        let mut spans = vec![Span::raw(" ")];
+        let mut spans = Vec::new();
         for c in 0..grid.columns {
             let index = c * grid.rows + r;
             let Some((key, label)) = entries.get(index) else {
@@ -1517,7 +1831,7 @@ fn draw_menu(
             };
             spans.push(Span::styled(
                 format!("{key:>key_width$}"),
-                theme.menu.patch(theme.popup_key).patch(row_style),
+                theme.menu.patch(theme.info).patch(row_style),
             ));
             spans.push(Span::styled(
                 format!("  {label:<label_width$}   "),
@@ -1527,8 +1841,15 @@ fn draw_menu(
         lines.push(Line::from(spans));
     }
     let area = grid_rect(grid);
+    let block = rounded_block(
+        theme,
+        Span::styled(format!(" {title} "), theme.info),
+        theme.menu,
+    );
+    let inner = block.inner(area);
     frame.render_widget(Clear, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.menu), area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.menu), inner);
 }
 
 fn grid_rect(grid: Grid) -> Rect {
@@ -1544,8 +1865,8 @@ fn grid_rect(grid: Grid) -> Rect {
 /// colour naming what it acts on, then `key  label` rows, the one under
 /// the pointer highlighted.
 fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Menu) {
-    let (width, height) = app.size();
-    let grid = menu.grid(width, height);
+    let (width, _) = app.size();
+    let grid = menu.grid_in(width, app.pane_top(), app.pane_rows());
     let entries: Vec<(String, String)> = menu
         .entries()
         .iter()
@@ -1557,7 +1878,7 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
     draw_menu(frame, theme, grid, menu.title(), &entries, hover);
 }
 
-/// The compact all-keys help: grouped binding rows flow through one or
+/// The compact keymap: grouped binding rows flow through one or
 /// two columns, with the footer and hit geometry owned by `input::help`.
 fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let Some(help) = help::state(app) else {
@@ -1571,12 +1892,10 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         width: u16_of(layout.width),
         height: u16_of(layout.height),
     };
+    let block = rounded_block(theme, help_title(help, &layout, theme), theme.popup);
+    let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
-    frame.render_widget(Paragraph::new("").style(theme.popup), popup);
-    frame.render_widget(
-        Paragraph::new(help_title(help, &layout, theme)).style(theme.popup),
-        Rect { height: 1, ..popup },
-    );
+    frame.render_widget(block, popup);
 
     let hovered = app
         .pointer()
@@ -1586,9 +1905,9 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             Paragraph::new(help_body_line(row, &layout, help.query(), hovered, theme))
                 .style(theme.popup),
             Rect {
-                x: popup.x,
+                x: inner.x,
                 y: u16_of(layout.body_y + row_index),
-                width: popup.width,
+                width: inner.width,
                 height: 1,
             },
         );
@@ -1597,14 +1916,14 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     for (index, footer) in layout.footer.iter().enumerate() {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!(" {footer}"),
+                footer.clone(),
                 on_surface(theme.popup, theme.info),
             )))
             .style(theme.popup),
             Rect {
-                x: popup.x,
+                x: inner.x,
                 y: u16_of(layout.footer_y() + index),
-                width: popup.width,
+                width: inner.width,
                 height: 1,
             },
         );
@@ -1613,8 +1932,8 @@ fn draw_help(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 
 fn help_title<'a>(help: &help::Help, layout: &help::Layout, theme: &Theme) -> Line<'a> {
     let mut spans = vec![Span::styled(
-        " All keys",
-        theme.popup.add_modifier(Modifier::BOLD),
+        " View keymap",
+        theme.popup_key.add_modifier(Modifier::BOLD),
     )];
     if !help.query().is_empty() {
         spans.push(Span::styled("  /", on_surface(theme.popup, theme.info)));
@@ -1626,20 +1945,12 @@ fn help_title<'a>(help: &help::Help, layout: &help::Layout, theme: &Theme) -> Li
         spans.push(Span::styled("  /", theme.popup.patch(theme.picker_match)));
     }
     let position = format!(
-        "{}{}  {}/{} actions ",
+        "  {}{}  {}/{} ",
         if layout.more_above { "↑ " } else { "" },
         if layout.more_below { "↓ more" } else { "" },
         layout.shown_bindings,
         layout.total_bindings
     );
-    let left_width: usize = spans
-        .iter()
-        .map(|span| display_width(span.content.as_ref()))
-        .sum();
-    let right_width = display_width(&position);
-    spans.push(Span::raw(
-        " ".repeat(layout.width.saturating_sub(left_width + right_width)),
-    ));
     spans.push(Span::styled(position, on_surface(theme.popup, theme.info)));
     Line::from(spans)
 }
@@ -1651,7 +1962,7 @@ fn help_body_line<'a>(
     hovered: Option<usize>,
     theme: &Theme,
 ) -> Line<'a> {
-    let mut spans = vec![Span::raw(" ")];
+    let mut spans = Vec::new();
     for (column, cell) in row.cells.iter().enumerate() {
         if column > 0 {
             spans.push(Span::raw(" ".repeat(layout.column_gap)));
@@ -1734,7 +2045,7 @@ fn on_surface(surface: Style, accent: Style) -> Style {
     style
 }
 
-/// A centred popup with a title row: the status overlay.
+/// A centred popup with a rounded titled border.
 fn draw_table(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -1745,8 +2056,8 @@ fn draw_table(
 ) {
     let key_width = grid.key_width;
     let label_width = grid.label_width;
-    // Rows that do not fit under the title flow into further columns.
-    let mut lines: Vec<Line<'_>> = vec![Line::from(Span::styled(title, theme.popup_key))];
+    // Rows that do not fit flow into further columns.
+    let mut lines: Vec<Line<'_>> = Vec::new();
     for r in 0..grid.rows.min(rows.len()) {
         let mut spans = Vec::new();
         for col in 0..grid.columns {
@@ -1769,15 +2080,22 @@ fn draw_table(
         lines.push(Line::from(spans));
     }
     let popup = grid_rect(grid);
+    let block = rounded_block(
+        theme,
+        Span::styled(title.to_owned(), theme.info),
+        theme.popup,
+    );
+    let inner = block.inner(popup);
     frame.render_widget(Clear, popup);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
 fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &PickerState) {
     let width = area.width.saturating_sub(4).clamp(20, 90);
     let height = area.height.saturating_sub(2).clamp(3, 20);
     let popup = centred(area, width, height);
-    let list_rows = usize::from(height) - 1;
+    let list_rows = usize::from(height).saturating_sub(2);
     let selected = picker.selected();
     let first = selected.saturating_sub(list_rows.saturating_sub(1));
     let title = match picker.kind() {
@@ -1789,15 +2107,18 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::DiffTarget => "target",
         super::PickerKind::Worktree => "worktree",
     };
-    let mut lines = vec![Line::from(vec![
+    let title_line = Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
         Span::raw(picker.input().to_owned()),
         Span::styled(
-            format!("   {}/{}", picker.matches().len(), picker.total()),
+            format!("   {}/{} ", picker.matches().len(), picker.total()),
             theme.info,
         ),
-    ])];
-    let inner = usize::from(width);
+    ]);
+    let block = rounded_block(theme, title_line, theme.popup);
+    let body = block.inner(popup);
+    let mut lines = Vec::new();
+    let inner = usize::from(body.width);
     for (index, m) in picker
         .matches()
         .iter()
@@ -1834,7 +2155,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         lines.push(Line::from(spans).style(row_style));
     }
     frame.render_widget(Clear, popup);
-    frame.render_widget(Paragraph::new(lines).style(theme.popup), popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), body);
     let col = 1 + display_width(title) + 3 + display_width(picker.input());
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }

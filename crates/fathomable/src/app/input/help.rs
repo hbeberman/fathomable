@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0078-all-keys-stays-reachable.md
-//! The compact, searchable, scrollable `Space ?` help.
+//! The compact, searchable, scrollable `Space ?` keymap.
 //!
 //! The binding table remains the source of every action and spelling.
 //! This module only groups, filters, wraps, and places those rows for the
@@ -16,7 +16,7 @@ const TWO_COLUMN_MIN_WIDTH: usize = 72;
 const MAX_KEY_WIDTH: usize = 14;
 const COLUMN_GAP: usize = 2;
 
-/// The transient state of the all-keys help.
+/// The transient state of the keymap.
 #[derive(Debug, Default)]
 pub(crate) struct Help {
     query: String,
@@ -137,7 +137,7 @@ impl Layout {
         let mut footer = footer_lines(help, inner_width);
         footer.truncate(height.saturating_sub(2));
         let body_y = y + 1;
-        let body_rows = height.saturating_sub(1 + footer.len());
+        let body_rows = height.saturating_sub(2 + footer.len());
         let (lanes, shown_bindings) = content(help, column_width.max(1), columns);
         let max_scroll = lanes
             .iter()
@@ -203,7 +203,7 @@ impl Layout {
 
     #[must_use]
     pub(crate) fn footer_y(&self) -> usize {
-        self.y + self.height - self.footer.len()
+        self.y + self.height - 1 - self.footer.len()
     }
 }
 

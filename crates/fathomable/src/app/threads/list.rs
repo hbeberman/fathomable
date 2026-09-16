@@ -405,6 +405,7 @@ impl App {
     /// filter and folds are whatever they were last time, and the cursor
     /// is where the reader was (ADR 0046).
     pub(crate) fn open_review(&mut self) {
+        self.getting_started = None;
         if self.store.is_none() {
             self.store_mut();
             return;

@@ -114,21 +114,31 @@ impl Menu {
 
     /// Where the menu sits on a `width` by `height` screen: its top-left
     /// corner at the pointer, shifted left or up to stay inside.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn grid(&self, width: usize, height: usize) -> Grid {
+        self.grid_in(width, 0, height)
+    }
+
+    /// Place the menu inside a vertical area beginning at `top`.
+    #[must_use]
+    pub(crate) fn grid_in(&self, width: usize, top: usize, height: usize) -> Grid {
         let (key_width, label_width) = measure(
             self.entries
                 .iter()
                 .map(|entry| (entry.key.as_str(), entry.label.as_str())),
         );
         let column_width = Grid::column_width(key_width, label_width);
-        let box_width = (column_width + 1)
-            .max(display_width(&self.title) + 2)
+        let box_width = (column_width + 2)
+            .max(display_width(&self.title) + 4)
             .min(width);
-        let box_height = (self.entries.len() + 1).min(height);
+        let box_height = (self.entries.len() + 2).min(height);
         Grid {
             x: self.column.min(width.saturating_sub(box_width)),
-            y: self.row.min(height.saturating_sub(box_height)),
+            y: self
+                .row
+                .max(top)
+                .min(top + height.saturating_sub(box_height)),
             width: box_width,
             height: box_height,
             rows: self.entries.len(),
@@ -147,10 +157,8 @@ fn measure<'a>(entries: impl Iterator<Item = (&'a str, &'a str)>) -> (usize, usi
     })
 }
 
-/// Where a key menu's rows sit on screen: a title row, then `count`
-/// entries down `rows` rows and across `columns` columns, each column
-/// `key_width + 2 + label_width + 3` cells wide after one leading cell.
-/// The drawing lays the entries out by it and the mouse reads it back.
+/// Where a key menu's rows sit inside a rounded titled border. The drawing
+/// lays the entries out by it and the mouse reads it back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Grid {
     pub(crate) x: usize,
@@ -188,10 +196,10 @@ impl Grid {
         let max_rows = pane_height.saturating_sub(2).clamp(1, 8);
         let columns = entries.len().div_ceil(max_rows).max(1);
         let rows = entries.len().div_ceil(columns).max(1);
-        let width = (columns * Self::column_width(key_width, label_width) + 1)
-            .max(display_width(title) + 2)
+        let width = (columns * Self::column_width(key_width, label_width) + 2)
+            .max(display_width(title) + 4)
             .min(pane_width);
-        let height = (rows + 1).min(pane_height);
+        let height = (rows + 2).min(pane_height);
         Self {
             x: x + pane_width.saturating_sub(width),
             y: (y + pane_height).saturating_sub(height),
@@ -205,10 +213,8 @@ impl Grid {
         }
     }
 
-    /// A centred table (`Space ?`, `:status`) in the area at `(x, y)`
-    /// of `area_width` by `area_height`: rows that do not fit under the
-    /// title flow into further columns; the box sits a third of the way
-    /// down.
+    /// A centred table in a rounded titled border. Rows that do not fit
+    /// flow into further columns; the box sits a third of the way down.
     #[must_use]
     pub(crate) fn centred(
         rows: &[(String, String)],
@@ -219,12 +225,12 @@ impl Grid {
         area_height: usize,
     ) -> Self {
         let (key_width, label_width) = measure(rows.iter().map(|(k, l)| (k.as_str(), l.as_str())));
-        let per_column = area_height.saturating_sub(2).max(1);
+        let per_column = area_height.saturating_sub(3).max(1);
         let columns = rows.len().div_ceil(per_column).max(1);
         let per_column = rows.len().div_ceil(columns).max(1);
-        let body = columns * Self::column_width(key_width, label_width) - 2;
-        let width = (body.max(display_width(title)) + 2).min(area_width);
-        let height = (per_column.min(rows.len()) + 1).min(area_height.saturating_sub(1));
+        let body = columns * Self::column_width(key_width, label_width);
+        let width = (body.max(display_width(title) + 2) + 2).min(area_width);
+        let height = (per_column.min(rows.len()) + 2).min(area_height);
         Self {
             x: x + (area_width - width) / 2,
             y: y + (area_height - height) / 3,
@@ -238,7 +244,7 @@ impl Grid {
         }
     }
 
-    /// Whether the cell is inside the box, title row included.
+    /// Whether the cell is inside the box, border included.
     #[must_use]
     pub(crate) fn contains(&self, column: usize, row: usize) -> bool {
         column >= self.x
@@ -250,7 +256,12 @@ impl Grid {
     /// The entry drawn at the cell, if any.
     #[must_use]
     pub(crate) fn entry_at(&self, column: usize, row: usize) -> Option<usize> {
-        if !self.contains(column, row) || row == self.y {
+        if !self.contains(column, row)
+            || row == self.y
+            || row + 1 == self.y + self.height
+            || column == self.x
+            || column + 1 == self.x + self.width
+        {
             return None;
         }
         let r = row - self.y - 1;

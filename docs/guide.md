@@ -93,12 +93,52 @@ file over `viewer.max-file-size-mib` (64 MiB by default) gets the same
 pane with a notice saying which config line raises the limit. Neither can
 be annotated: `c` says so.
 
+### Menu bar
+
+The first row is a persistent, borderless menu bar on `ui.menu`:
+
+```text
+ ☰  Go  Review  Diff                         main · docs/guide.md
+```
+
+The right side passively names the active branch or worktree, the current
+path, and a major view such as `SOURCE`, `review threads`, or the current
+diff pair. Those facts leave the bottom status line while the bar is shown
+and return there when it is hidden. On a narrow terminal the context drops
+first; when all four labels no longer fit, Go, Review, and Diff move under
+`☰`. The row never wraps.
+
+Hover highlights a label. Click to open it; while a menu is open, moving
+across the labels switches menus. Drop-downs have rounded titled borders,
+stable rows, dim shortcut hints, checks for active state, and dim rows for
+actions that cannot run now. `j`/`k` or Down/Up move through enabled rows
+without wrapping. Up from the first row focuses the menu-bar label, where
+`h`/`l` or Left/Right switch menus and Down re-enters the first row. Right
+or `l` enters a submenu, Left or `h` returns, Enter runs, and Esc closes.
+A short terminal scrolls a long menu in place with the wheel or movement
+keys rather than moving it away from its label.
+
+`☰` contains **Layout** (sidebar, Files, Threads) and **Help** (Getting
+started, Doctor, View keymap), then Status, About, and Quit. **Go** contains
+the file pickers, Back/Forward, Newest change, and Auto-jump. **Review**
+contains the review view and filters plus new thread, file comment, reply,
+edit, and resolve/reopen. **Diff** contains comparisons, base and target
+pickers, whitespace, checkpoints, and mark-seen state. Cursor movement,
+selection, deletion, and bracket-pair navigation stay in the keymap and
+contextual surfaces rather than filling these application menus.
+
+`Space p m` hides or shows the menu bar; the visible `☰` menu deliberately
+cannot hide itself. `Space p s` hides the whole sidebar and later shows its
+remembered Files/Threads composition. The individual pane toggles still work
+and establish a new restore composition when the sidebar is hidden.
+
 ## 3. Keys
 
 Vim-style movement in the text; `Space` opens a Helix-style menu, and any
 prefix (`g`, `[`, `]`, `Space`, `d`) shows the keys that continue it under
 a row naming the prefix (`Space c · threads`).
-`Space ?` lists every binding inside the app. Every key below is checked
+`Space ?` opens **View keymap**, which lists every binding inside the app.
+Every key below is checked
 against the binding table by a test, so what is written here exists.
 At an ordinary 80-column terminal the help is a compact two-column
 grouped action list; it collapses to one column when narrow. Long keys
@@ -139,6 +179,7 @@ Text:
 | `]c` `[c`, `]C` `[C` | next / previous thread in the file; across the workspace, opening its file |
 | `]r` `[r`, `Tab` `Shift-Tab` | next / previous thread waiting on you, crossing into the next file, expanded where it lands |
 | `:auto [on\|off]`, `:status`, `:name NAME` | toggle or set auto-jump; viewer and path popup; name this viewer so an agent can target it (`:name` alone clears it) |
+| `:help`, `:doctor`, `:about` | reopen the first-workspace Getting started page; run the in-app diagnostics view; show project identity and repository link |
 | `Esc`, `:q` | clear the input, prefix, selection, or highlight, else leave the diff; quit |
 
 The `Space` menu, from any pane:
@@ -154,6 +195,7 @@ The `Space` menu, from any pane:
 | `Space w w` | the next pane: text, files pane, threads pane, text, skipping a hidden pane |
 | `Space w f`, `Space w t` | window: the files pane, the threads pane, from any pane; a hidden one is shown first |
 | `Space p f`, `Space p t` | panes: hide the files pane or the threads pane, or show it again without taking the keys (the other pane keeps the sidebar) |
+| `Space p s`, `Space p m` | panes: hide/show the whole sidebar with its remembered composition; hide/show the persistent menu bar |
 | `Space c c`, `Space c r`, `Space c o`, `Space c e`, `Space c d` | threads, on the thread at the cursor from any pane: new thread, reply, resolve or reopen, edit your newest message, delete |
 | `Space c f` | threads: a comment on the open file as a whole, written in a block above its first line |
 | `Space v s`, `Space v t`, `Space v x` | view: toggle source view, thread stubs, stubs for resolved threads (hidden by default) |
@@ -165,7 +207,7 @@ The `Space` menu, from any pane:
 | `Space d s` | diff: mark every file seen, so `Space d D` from then on shows only what came after (a toast counts them) |
 | `Space j j`, `Space j a` | jump to the newest change, toggle auto-jump |
 | `Space a w` | agent: wake a subscribed agent with its pending threads through `agents.wake` (a picker when several are subscribed) |
-| `Space ?` | all keys |
+| `Space ?` | view keymap |
 | `:` | the command line, from any pane |
 
 Threads pane (the sidebar's lower pane; its header reads `threads ·
@@ -339,7 +381,10 @@ keep it for their own selection). Every gesture ends in `SEL` mode, so
 cursor and runs `gf` there. The right button and the Ctrl modifier reach
 the viewer only where the terminal forwards them under mouse capture
 (Ghostty, kitty, foot, WezTerm, and Alacritty do).
-Starting on a directory opens the tree; starting on a file opens the file.
+By default every launch shows both sidebar panes. Starting on a directory
+gives the Files pane the keys; starting on a file opens it with the text
+holding the keys. The `layout` configuration can choose another consistent
+startup arrangement.
 
 ## 4. Threads
 
@@ -493,7 +538,11 @@ session, including replies, edits, and comments on the whole file.
 
 The left column is the **sidebar**: the **files pane** above the **threads
 pane**, each shown or hidden on its own (`Space p f`, `Space p t`),
-the sidebar drawn while either is. The files pane's header row names
+the sidebar drawn while either is. `Space p s` hides them as one unit and
+shows the exact composition it hid; when both are already hidden, a
+pane-specific toggle establishes the next composition. If the configured
+composition contains neither pane, the whole-sidebar toggle reports that
+there is no pane to show. The files pane's header row names
 the repo's directory with its summed `+n -m`; three session toggles
 under `Space F` narrow what it lists, and the header names each active
 one after the counts by what is on screen: `Space F c` lists **only
@@ -759,9 +808,15 @@ viewer {
     seen-idle 5000          // ms alone with a file before it counts as seen
 }
 
-sidebar {
-    width 32                // columns for the files and threads panes
-    split 8                 // rows the threads pane keeps under the files pane
+layout {
+    menu-bar #true          // reserve the top application-menu row
+    sidebar {
+        visible #true       // show the configured panes at startup
+        files #true         // include the Files pane when shown
+        threads #true       // include the Threads pane when shown
+        width 32            // columns for the sidebar
+        split 8             // rows the Threads pane keeps under Files
+    }
 }
 
 threads {
@@ -799,13 +854,16 @@ and the key vocabulary are in
 of syntect's bundled themes for code colours (`--doctor` lists them); only
 their foreground colours are used, so a transparent background stays
 transparent ([0016](decisions/0016-syntax-highlighting.md)).
-The all-keys help uses `ui.popup`; `Space` prefix menus and right-click
-menus use `ui.menu`. The built-ins give the two surfaces the same
+View keymap, pickers, Status, Doctor, and About use `ui.popup`; the menu
+bar, its drop-downs, `Space` prefix menus, and right-click menus use
+`ui.menu`. Every visual popup has a rounded titled border. Menu shortcut
+columns and borders use the subdued `ui.statusline.info` face. The built-ins
+give the two surfaces the same
 overlay treatment, while custom and inherited themes may separate them
-or leave either transparent. All use the regular `ui.popup.key` key
-face; help and menus use `ui.list.hover` background for hover, without a
-cursor bar. Titles and help groups use their active overlay foreground
-in bold; help uses `ui.picker.match` for
+or leave either transparent. View keymap uses the regular `ui.popup.key`
+key face; help and menus use `ui.list.hover` background for hover, without
+a cursor bar. Help groups use their active overlay foreground in bold;
+View keymap uses `ui.picker.match` for
 its filter and the subdued info face for its footer.
 
 List selection uses four shared theme roles: `ui.list.active` background,
@@ -1151,7 +1209,10 @@ echo '{"session_id":"ID","cwd":"'$PWD'"}' | fathomable pending --hook claude --v
 ```
 
 Each run logs JSON lines to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`;
-`:status` inside the app shows the subscribed agents (`name (type) id`),
+`:doctor` opens a fresh, scrollable rendering of the same checks as
+`fathomable --doctor`; use `j`/`k`, PgUp/PgDn, Home/End, or the wheel,
+`r` to rerun, and Esc to close. `:status` inside the app shows the
+subscribed agents (`name (type) id`),
 the open document, the terminal size, the
 viewer name and id, the worktrees with the active one marked, the
 socket, and every state path. Set

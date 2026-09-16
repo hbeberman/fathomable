@@ -95,7 +95,11 @@ impl App {
     }
 
     fn auto_jump_allowed(&self) -> bool {
-        if self.popup.is_some() || self.review_list.is_open() {
+        if self.popup.is_some()
+            || self.title_menu_open()
+            || self.getting_started()
+            || self.review_list.is_open()
+        {
             return false;
         }
         let Some(index) = self.current else {
@@ -114,7 +118,11 @@ impl App {
         if !self.auto || self.queue.is_empty() {
             return None;
         }
-        if self.popup.is_some() || self.review_list.is_open() {
+        if self.popup.is_some()
+            || self.title_menu_open()
+            || self.getting_started()
+            || self.review_list.is_open()
+        {
             return None;
         }
         if let Some(index) = self.current {
@@ -259,6 +267,31 @@ mod tests {
         assert!(app.auto_jump_in().is_some());
         app.open_status();
         assert_eq!(app.auto_jump_in(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn an_open_title_menu_suspends_auto_jump() -> anyhow::Result<()> {
+        let dir = fixture("menu-blocked-timer")?;
+        let mut app = app(&dir)?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        app.open_title_menu(crate::app::menu_bar::Root::Review);
+        assert_eq!(app.auto_jump_in(), None);
+        app.tick();
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        Ok(())
+    }
+
+    #[test]
+    fn getting_started_suspends_auto_jump() -> anyhow::Result<()> {
+        let dir = fixture("getting-started-blocked-timer")?;
+        let mut app = app(&dir)?;
+        changed(&dir, &mut app, "notes.md", "notes\n\nfirst\nmore\n")?;
+        app.open_getting_started();
+        assert_eq!(app.auto_jump_in(), None);
+        app.tick();
+        assert!(app.getting_started());
+        assert_eq!(app.current_path(), Path::new("README.md"));
         Ok(())
     }
 

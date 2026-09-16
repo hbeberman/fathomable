@@ -17,6 +17,7 @@ mod clipboard;
 mod commands;
 mod diff;
 mod diff_keys;
+mod doctor_view;
 mod draw;
 mod file_index;
 mod files_pane;
@@ -26,6 +27,7 @@ pub(crate) mod input;
 mod jump;
 mod jumplist;
 mod last_seen;
+mod menu_bar;
 pub(crate) mod run;
 mod sidebar;
 mod socket;
@@ -198,6 +200,10 @@ pub(crate) enum Popup {
     Compose(Compose),
     /// The `:status` overlay (ADR 0021).
     Status,
+    /// Shared CLI diagnostics in a scrollable in-app view.
+    Doctor(doctor_view::Doctor),
+    /// Project identity and repository link.
+    About,
     /// The context menu a right-click opened (ADR 0050).
     Menu(input::menu::Menu),
 }
@@ -263,6 +269,9 @@ pub(crate) struct App {
     /// somewhere else (ADR 0049).
     search_origin: Option<jumplist::Position>,
     welcome: View,
+    /// The reusable first-workspace page is open over the current content;
+    /// the saved focus is restored when it closes.
+    getting_started: Option<Focus>,
     tree: Option<Tree>,
     /// Directory card shown while the files-pane cursor names a directory.
     directory: Option<files_pane::DirectorySelection>,
@@ -297,6 +306,7 @@ pub(crate) struct App {
     press: Option<input::mouse::Press>,
     focus: Focus,
     popup: Option<Popup>,
+    menu_bar: menu_bar::MenuBar,
     /// The `Space f` files (ADR 0028), patched as paths come and go.
     file_index: file_index::FileIndex,
     /// The same with ignored files, for `I`.
@@ -376,6 +386,10 @@ impl App {
     ///
     /// Threads on files edited while Fathomable was closed are followed
     /// through their last-seen snapshots before anything opens (ADR 0020).
+    #[expect(
+        clippy::too_many_lines,
+        reason = "construction spells every independent application subsystem explicitly"
+    )]
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -389,6 +403,7 @@ impl App {
             markdown,
             viewer,
             sidebar,
+            menu_bar,
             threads,
             diff,
             agents,
@@ -410,6 +425,7 @@ impl App {
             jumplist: jumplist::Jumplist::default(),
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
+            getting_started: None,
             tree: None,
             directory: None,
             sidebar: sidebar::Sidebar::new(sidebar),
@@ -427,6 +443,7 @@ impl App {
             press: None,
             focus: Focus::View,
             popup: None,
+            menu_bar: menu_bar::MenuBar::new(menu_bar),
             file_index: file_index::FileIndex::new(Filter::Visible),
             all_index: file_index::FileIndex::new(Filter::All),
             message: None,
@@ -469,6 +486,9 @@ impl App {
             elsewhere: HashMap::new(),
             rewatch: None,
         };
+        if app.sidebar.tree && !app.ensure_tree() {
+            app.sidebar.tree = false;
+        }
         app.reload_agents();
         app.relayout();
         app.refresh_worktrees();
@@ -1557,7 +1577,7 @@ impl App {
 
     /// The banner over retained source while the worktree file is gone.
     pub(crate) fn banner(&self) -> Option<&'static str> {
-        if self.directory_path().is_some() {
+        if self.getting_started() || self.directory_path().is_some() {
             return None;
         }
         self.current
@@ -1568,7 +1588,14 @@ impl App {
 
     /// Rows available to panes once the status line is taken.
     pub(crate) fn pane_rows(&self) -> usize {
-        self.height.saturating_sub(1).max(1)
+        self.height
+            .saturating_sub(1 + usize::from(self.menu_bar.shown()))
+            .max(1)
+    }
+
+    /// First screen row occupied by the panes.
+    pub(crate) fn pane_top(&self) -> usize {
+        usize::from(self.menu_bar.shown())
     }
 
     /// Bracketed paste: into the draft, else nothing to paste into.
@@ -1595,6 +1622,7 @@ impl App {
     /// no bar of this kind.
     pub(crate) fn text_bar_shown(&self) -> bool {
         self.has_document()
+            && !self.getting_started()
             && self.directory_path().is_none()
             && !self.review_list().is_open()
             && self.info().is_none()
@@ -1614,7 +1642,9 @@ impl App {
 
     /// Rows over the text: the banner and the diff's header.
     pub(crate) fn text_top(&self) -> usize {
-        usize::from(self.banner().is_some()) + usize::from(self.diff_chrome_rows() > 0)
+        self.pane_top()
+            + usize::from(self.banner().is_some())
+            + usize::from(self.diff_chrome_rows() > 0)
     }
 
     pub(crate) fn resize(&mut self, width: usize, height: usize) {
@@ -1624,6 +1654,8 @@ impl App {
         // Message and draft rows wrap at the new width (ADR 0049, 0054).
         self.place_stub_rows();
         input::help::resize(self);
+        doctor_view::resize(self);
+        menu_bar::resize(self);
     }
 
     fn relayout(&mut self) {
@@ -1674,6 +1706,7 @@ impl App {
 
     /// Open the root-relative `path`, loading it or switching to it.
     pub(crate) fn open(&mut self, path: &Path) {
+        self.getting_started = None;
         let had_directory = self.directory.take().is_some();
         let relative = self.workspace.relative(&self.workspace.root().join(path));
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
@@ -2045,18 +2078,20 @@ impl App {
         }
     }
 
-    /// What a start shows: the file named, else the sidebar with both panes
-    /// and the tree focused (ADR 0012, ADR 0049).
+    /// What a start shows: the configured layout around the named file or
+    /// welcome page, with an explicitly named file retaining text focus.
     pub(crate) fn start_on(&mut self, open: Option<&Path>) {
         if let Some(path) = open {
             self.open(path);
-        } else {
-            self.show_tree();
-            self.show_threads_pane();
+        } else if self.sidebar.tree {
+            self.focus = Focus::Tree;
+        } else if self.sidebar.threads {
+            self.focus = Focus::ThreadsPane;
         }
     }
 
-    /// Show and focus the tree, as a workspace start does (ADR 0012).
+    /// Show and focus the files pane.
+    #[cfg(test)]
     pub(crate) fn show_tree(&mut self) {
         if !self.sidebar.tree {
             self.toggle_tree_focus();
@@ -2070,7 +2105,7 @@ impl App {
             if !self.ensure_tree() {
                 return;
             }
-            self.sidebar.tree = true;
+            self.sidebar.show_tree();
             self.reveal_current();
             self.focus = Focus::Tree;
             self.show_highlight();
@@ -2088,7 +2123,7 @@ impl App {
     /// the keys; the threads pane keeps the sidebar either way.
     pub(crate) fn toggle_tree_shown(&mut self) {
         if self.sidebar.tree {
-            self.sidebar.tree = false;
+            self.sidebar.hide_tree();
             if self.focus == Focus::Tree {
                 self.focus = Focus::View;
             }
@@ -2096,7 +2131,7 @@ impl App {
             if !self.ensure_tree() {
                 return;
             }
-            self.sidebar.tree = true;
+            self.sidebar.show_tree();
             self.reveal_current();
         }
         self.relayout();
@@ -2257,6 +2292,8 @@ pub(crate) struct Options {
     pub(crate) viewer: ViewerConfig,
     /// The sidebar's width and split (ADR 0049).
     pub(crate) sidebar: SidebarConfig,
+    /// Whether the persistent menu bar starts visible.
+    pub(crate) menu_bar: bool,
     /// How threads show in the text (ADR 0049).
     pub(crate) threads: ThreadsConfig,
     /// How diffs are compared and listed (ADR 0060).
@@ -2290,7 +2327,11 @@ impl Options {
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
-            sidebar: SidebarConfig::default(),
+            sidebar: SidebarConfig {
+                visible: false,
+                ..SidebarConfig::default()
+            },
+            menu_bar: false,
             threads: ThreadsConfig::default(),
             diff: DiffConfig::default(),
             agents: AgentsConfig::default(),

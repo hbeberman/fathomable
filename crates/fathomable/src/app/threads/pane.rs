@@ -381,7 +381,7 @@ impl App {
             self.show_threads_pane();
             return;
         }
-        self.sidebar.threads = false;
+        self.sidebar.hide_threads();
         if self.focus == Focus::ThreadsPane {
             self.focus = Focus::View;
         }
@@ -391,7 +391,7 @@ impl App {
     /// Show the pane without taking the keys, as a workspace start does.
     pub(crate) fn show_threads_pane(&mut self) {
         if !self.sidebar.threads {
-            self.sidebar.threads = true;
+            self.sidebar.show_threads();
             self.relayout();
         }
     }

@@ -15,6 +15,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Design decisions](decisions/index.md)
 - [Automatic chat identity](decisions/0080-automatic-chat-identity.md)
 - [List focus language](decisions/0079-list-focus-language.md)
+- [Persistent menu bar](decisions/0081-the-menu-bar.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

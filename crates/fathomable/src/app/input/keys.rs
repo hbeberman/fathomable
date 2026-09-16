@@ -16,6 +16,7 @@ use super::super::{App, Focus, PickerKind, Popup};
 use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use super::help;
 use crate::app::view::{Effect, Mode};
+use crate::app::{doctor_view, menu_bar};
 
 /// Rows a scroll key or wheel notch moves.
 pub(crate) const WHEEL_LINES: isize = 3;
@@ -30,8 +31,13 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Effect {
 /// closes.
 #[must_use]
 pub(crate) fn place(app: &App) -> Option<Where> {
+    if app.title_menu_open() {
+        return None;
+    }
     match app.popup() {
-        Some(Popup::Help(_) | Popup::Status | Popup::Menu(_)) => None,
+        Some(Popup::Help(_) | Popup::Status | Popup::Doctor(_) | Popup::About | Popup::Menu(_)) => {
+            None
+        }
         Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
         None => Some(match app.focus() {
@@ -47,6 +53,18 @@ pub(crate) fn place(app: &App) -> Option<Where> {
 }
 
 fn key_event(app: &mut App, key: KeyEvent) -> Effect {
+    if app.title_menu_open() {
+        return menu_bar::key(app, key);
+    }
+    if matches!(app.popup(), Some(Popup::Doctor(_))) {
+        return doctor_view::key(app, key);
+    }
+    if matches!(app.popup(), Some(Popup::About)) {
+        if key.code == crossterm::event::KeyCode::Esc {
+            app.close_popup();
+        }
+        return Effect::None;
+    }
     if matches!(app.popup(), Some(Popup::Help(_))) {
         return help::key(app, key);
     }
@@ -156,6 +174,9 @@ impl App {
     /// position a far move leaves. A search moves the cursor as it is
     /// typed, so its origin is kept from `/` to Enter.
     pub(crate) fn act(&mut self, action: Action) -> Effect {
+        if self.getting_started() && action != Action::Escape {
+            self.close_getting_started();
+        }
         let input = place(self) == Some(Where::Input);
         let from = match action {
             Action::SearchForward | Action::SearchBackward => {
@@ -191,6 +212,8 @@ impl App {
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
             Action::Review => self.toggle_review(),
+            Action::SidebarToggle => self.toggle_sidebar(),
+            Action::MenuBarToggle => self.toggle_menu_bar(),
             Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
             Action::WindowLeft => self.window_left(),
             Action::WindowDown => self.window_down(),
@@ -255,6 +278,12 @@ impl App {
     }
 
     fn act_view(&mut self, action: Action) -> Effect {
+        if self.getting_started() {
+            if action == Action::Escape {
+                self.close_getting_started();
+            }
+            return Effect::None;
+        }
         match action {
             // In a diff `h`/`l` page the checkpoint timeline (ADR 0060).
             Action::MoveLeft if self.view().diff_view() => self.diff_page(-1),

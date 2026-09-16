@@ -16,6 +16,10 @@ debounce toast }` and `watch { ignore debounce }`, and `seen-idle` is
 under `viewer`; a `follow` block is an error naming each setting's new
 home.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): startup chrome and
+sidebar state live under `layout`; the former top-level `sidebar` block is
+retired without a compatibility alias.
+
 ## Context
 
 Fathomable needs user configuration (theme, follow behavior, later keymaps)

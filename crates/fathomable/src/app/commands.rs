@@ -16,6 +16,9 @@ impl App {
             (Some("auto"), Some("on"), None) => self.set_auto_jump(true),
             (Some("auto"), Some("off"), None) => self.set_auto_jump(false),
             (Some("status"), None, _) => self.open_status(),
+            (Some("help"), None, _) => self.open_getting_started(),
+            (Some("doctor"), None, _) => self.open_doctor(),
+            (Some("about"), None, _) => self.open_about(),
             (Some("diff"), None, _) => self.toggle_head_diff(),
             (Some("diff"), Some("seen"), None) => self.toggle_seen_diff(),
             (Some("name"), name, None) => self.set_name(name),
@@ -29,6 +32,55 @@ impl App {
             Some(name) => format!("{name} ({})", self.viewer_id),
             None => format!("unnamed ({}); set one with :name", self.viewer_id),
         }
+    }
+
+    pub(crate) fn getting_started(&self) -> bool {
+        self.getting_started.is_some()
+    }
+
+    pub(crate) fn open_getting_started(&mut self) {
+        if self.getting_started.is_some() {
+            self.close_getting_started();
+            return;
+        }
+        self.park_draft();
+        self.popup = None;
+        self.getting_started = Some(self.focus);
+        self.focus = super::Focus::View;
+        self.relayout();
+    }
+
+    pub(crate) fn close_getting_started(&mut self) {
+        let Some(focus) = self.getting_started.take() else {
+            return;
+        };
+        self.focus = match focus {
+            super::Focus::Tree if !self.sidebar.tree => super::Focus::View,
+            super::Focus::ThreadsPane if !self.sidebar.threads => super::Focus::View,
+            super::Focus::Review if !self.review_list.is_open() => super::Focus::View,
+            other => other,
+        };
+        self.relayout();
+    }
+
+    pub(crate) fn open_doctor(&mut self) {
+        self.park_draft();
+        self.getting_started = None;
+        let report = crate::doctor::collect(
+            &self.dirs,
+            Some(&self.config_path),
+            Some(self.workspace.root()),
+            Some(self.size()),
+        );
+        self.popup = Some(super::Popup::Doctor(super::doctor_view::Doctor::new(
+            report,
+        )));
+    }
+
+    pub(crate) fn open_about(&mut self) {
+        self.park_draft();
+        self.getting_started = None;
+        self.popup = Some(super::Popup::About);
     }
 
     /// The `subscribers` row of `:status` (ADR 0040).

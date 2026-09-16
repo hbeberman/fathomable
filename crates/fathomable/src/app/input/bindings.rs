@@ -284,6 +284,10 @@ actions! {
     PickAnyFile,
     PickRecent,
     Review,
+    /// `Space p s`: hide or show the sidebar as one remembered layout.
+    SidebarToggle,
+    /// `Space p m`: hide or show the persistent menu bar.
+    MenuBarToggle,
     ThreadsPaneToggle,
     WindowLeft,
     WindowDown,
@@ -780,6 +784,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
+        &[&[c(' '), c('p'), c('s')]],
+        A::SidebarToggle,
+        "Space menu",
+        "panes: toggle sidebar",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('p'), c('m')]],
+        A::MenuBarToggle,
+        "Space menu",
+        "panes: toggle menu bar",
+    ),
+    bind(
+        W::Any,
         &[&[c(' '), c('p'), c('t')]],
         A::ThreadsPaneToggle,
         "Space menu",
@@ -958,7 +976,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('?')]],
         A::Help,
         "Space menu",
-        "all keys",
+        "view keymap",
     ),
     // ----- the tree -----
     bind(
@@ -1674,7 +1692,7 @@ mod tests {
         assert!(
             space
                 .iter()
-                .any(|(key, label)| key == "?" && label == "all keys")
+                .any(|(key, label)| key == "?" && label == "view keymap")
         );
         for (key, word) in [
             ("F", "files…"),
@@ -1717,7 +1735,7 @@ mod tests {
             keys(Where::View, &[c(' '), c('w')]),
             ["h", "j", "k", "l", "w", "f", "t"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "t"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "s", "m", "t"]);
         assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);
         assert_eq!(lookup(Where::ThreadsPane, &[c(' '), c(' ')]), Match::Miss);
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());

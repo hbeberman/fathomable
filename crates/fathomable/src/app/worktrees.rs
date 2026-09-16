@@ -57,6 +57,12 @@ impl App {
         self.active_worktree().map(Worktree::label)
     }
 
+    /// The active worktree's branch or short commit, including when it is
+    /// the workspace's only worktree.
+    pub(crate) fn active_worktree_label(&self) -> Option<String> {
+        self.active_worktree().map(Worktree::label)
+    }
+
     /// The worktree the viewer shows, when git lists it.
     fn active_worktree(&self) -> Option<&Worktree> {
         let root = self.workspace.root();

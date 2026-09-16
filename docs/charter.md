@@ -34,8 +34,9 @@ the agent does the writing.
 - An **agent endpoint**: `fathomable --mcp` is a stdio MCP server that resolves
   the workspace on every call and works without a viewer, so an agent can
   open files, jump to locations, read threads, and reply to them.
-- **Modal**: Vim grammar for navigation, `:` command line, `/` search, and
-  first-class mouse support so selecting lines to annotate is a drag.
+- **Modal and mouse-discoverable**: Vim grammar for navigation, `:` command
+  line, `/` search, a persistent workflow menu bar, and first-class mouse
+  support so selecting lines to annotate is a drag.
 
 ## What Fathomable is not
 

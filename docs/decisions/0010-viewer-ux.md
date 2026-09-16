@@ -19,6 +19,11 @@ Status: accepted (2026-08-26); amended 2026-09-05 by
 or Git layer (`DIFF net`, `DIFF staged`, `DIFF unstaged`, `DIFF seen`,
 `DIFF cp 2/3`, `DIFF a1b2c3d`), and `CHECK` is gone.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): while the menu bar is
+shown, branch/worktree, path, changed marker, and major view identity move
+to its right edge; hiding the bar returns path and view badges to the
+status line.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

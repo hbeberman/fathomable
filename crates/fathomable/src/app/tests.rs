@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 
-use fathomable_core::config::{JumpConfig, MarkdownConfig, ViewerConfig, WatchConfig};
+use fathomable_core::config::{
+    JumpConfig, MarkdownConfig, SidebarConfig, ViewerConfig, WatchConfig,
+};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
@@ -25,6 +27,36 @@ fn fixture(name: &str) -> std::io::Result<TempDir> {
 
 fn app(dir: &TempDir) -> anyhow::Result<App> {
     app_with(dir, Options::for_test(dir.0.clone()))
+}
+
+#[test]
+fn configured_layout_is_consistent_for_file_and_workspace_starts() -> anyhow::Result<()> {
+    let dir = fixture("layout-start")?;
+    let make = || -> anyhow::Result<App> {
+        let workspace = Workspace::discover(&dir.0)?;
+        Ok(App::new(
+            workspace,
+            100,
+            30,
+            Options {
+                menu_bar: true,
+                sidebar: SidebarConfig::default(),
+                ..Options::for_test(dir.0.clone())
+            },
+        ))
+    };
+    let mut file = make()?;
+    file.start_on(Some(Path::new("README.md")));
+    assert!(file.menu_bar_shown());
+    assert!(file.sidebar.tree && file.sidebar.threads);
+    assert_eq!(file.focus(), Focus::View);
+
+    let mut workspace = make()?;
+    workspace.start_on(None);
+    assert!(workspace.menu_bar_shown());
+    assert!(workspace.sidebar.tree && workspace.sidebar.threads);
+    assert_eq!(workspace.focus(), Focus::Tree);
+    Ok(())
 }
 
 /// An `App` on the fixture's root with nothing open, under `options`.
@@ -1355,6 +1387,13 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
     assert!(!app.auto_jump());
     app.command("status");
     assert!(matches!(app.popup(), Some(Popup::Status)));
+    app.close_popup();
+    app.command("help");
+    assert!(app.getting_started());
+    app.command("help");
+    assert!(!app.getting_started());
+    app.command("about");
+    assert!(matches!(app.popup(), Some(Popup::About)));
     app.close_popup();
     app.command("nonsense");
     assert!(

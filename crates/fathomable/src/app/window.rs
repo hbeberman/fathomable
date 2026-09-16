@@ -87,7 +87,7 @@ impl App {
             if !self.ensure_tree() {
                 return;
             }
-            self.sidebar.tree = true;
+            self.sidebar.show_tree();
         }
         self.reveal_current();
         self.focus = Focus::Tree;

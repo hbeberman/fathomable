@@ -525,15 +525,42 @@ fn chord_helpers_anchor_to_the_viewer_bottom_right_from_every_pane() -> anyhow::
                 for ch in prefix.chars() {
                     handle_key(&mut app, key(ch));
                 }
+
                 let place = super::super::keys::place(&app).context("pane receives keys")?;
                 let shown = bindings::menu(place, app.prefix());
                 let grid = draw::which_key_grid(&app, &shown);
                 assert_eq!(grid.x + grid.width, width);
-                assert_eq!(grid.y + grid.height, height.saturating_sub(1));
-                assert!(grid.height <= height.saturating_sub(1));
+                assert_eq!(grid.y + grid.height, app.pane_top() + app.pane_rows());
+                assert!(grid.height <= app.pane_rows());
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn space_helper_uses_a_rounded_breadcrumb_border() -> anyhow::Result<()> {
+    let dir = fixture("space-border")?;
+    let mut app = app(&dir)?;
+    handle_key(&mut app, key(' '));
+    let place = super::super::keys::place(&app).context("view receives keys")?;
+    let shown = bindings::menu(place, app.prefix());
+    let grid = draw::which_key_grid(&app, &shown);
+    let buffer = testing::buffer(&app)?;
+    assert_eq!(
+        buffer[(u16::try_from(grid.x)?, u16::try_from(grid.y)?)].symbol(),
+        "╭"
+    );
+    let title = (grid.x..grid.x + grid.width)
+        .map(|x| {
+            buffer[(
+                u16::try_from(x).unwrap_or(u16::MAX),
+                u16::try_from(grid.y).unwrap_or(u16::MAX),
+            )]
+                .symbol()
+        })
+        .collect::<String>();
+    assert!(title.contains("Space"), "{title:?}");
     Ok(())
 }
 
@@ -822,18 +849,74 @@ fn the_context_menu_draws() -> anyhow::Result<()> {
     assert!(text.contains("line 5"), "the title names the line");
     assert!(text.contains("comment on line"));
     assert!(text.contains("select line"));
+    assert_eq!(
+        buffer[(u16::try_from(grid.x)?, u16::try_from(grid.y)?)].symbol(),
+        "╭"
+    );
+    assert_eq!(
+        buffer[(
+            u16::try_from(grid.x + grid.width - 1)?,
+            u16::try_from(grid.y + grid.height - 1)?,
+        )]
+            .symbol(),
+        "╯"
+    );
     let title = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y)?)];
-    assert_eq!(title.fg, Color::Gray);
+    assert_eq!(title.fg, theme.info.fg.unwrap_or(Color::Reset));
     assert_eq!(title.bg, overlay);
-    assert!(title.modifier.contains(Modifier::BOLD));
+    assert!(!title.modifier.contains(Modifier::BOLD));
     assert_ne!(
         title.bg,
         Color::LightYellow,
         "the menu title does not borrow the saturated status pill"
     );
     let key = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y + 1)?)];
-    assert_eq!(key.fg, Color::LightBlue);
+    assert_eq!(key.fg, theme.info.fg.unwrap_or(Color::Reset));
     assert_eq!(key.bg, overlay);
     assert!(!key.modifier.contains(Modifier::BOLD));
+    Ok(())
+}
+
+#[test]
+fn context_menu_never_overwrites_the_menu_bar() -> anyhow::Result<()> {
+    let dir = fixture("context-below-menu-bar")?;
+    let mut app = testing::AppBuilder::new(&dir)
+        .options(|mut options| {
+            options.menu_bar = true;
+            options.sidebar.visible = true;
+            options
+        })
+        .build()?;
+    app.resize(100, 7);
+    app.open_tree_menu(0, 0, app.pane_top() + 1);
+    let menu = app.menu().context("a context menu is open")?;
+    let grid = menu.grid_in(app.size().0, app.pane_top(), app.pane_rows());
+    assert!(grid.y >= app.pane_top());
+    let screen = testing::screen(&app)?;
+    assert!(screen[0].contains("Go  Review  Diff"), "{:?}", screen[0]);
+    Ok(())
+}
+
+#[test]
+fn releasing_a_divider_drag_over_the_menu_bar_ends_the_drag() -> anyhow::Result<()> {
+    let dir = fixture("drag-over-menu-bar")?;
+    let mut app = testing::AppBuilder::new(&dir)
+        .options(|mut options| {
+            options.menu_bar = true;
+            options.sidebar.visible = true;
+            options
+        })
+        .build()?;
+    let divider = app.sidebar_width() - 1;
+    let pane_row = app.pane_top() + 2;
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        divider,
+        pane_row,
+    );
+    assert!(app.dragging().is_some());
+    mouse(&mut app, MouseEventKind::Up(MouseButton::Left), divider, 0);
+    assert!(app.dragging().is_none());
     Ok(())
 }

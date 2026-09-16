@@ -5,9 +5,9 @@
 //! file may contain is known; an unknown node is an error with a location
 //! rather than being ignored, so typos surface immediately. `theme`, the
 //! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
-//! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), and the
-//! `agents` block (ADR 0040), and the `sidebar` (ADR 0057; `rail` in 0049)
-//! and `threads` blocks (ADR 0049) are understood.
+//! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), the
+//! `agents` block (ADR 0040), the `layout` block, and the `threads`
+//! block (ADR 0049) are understood.
 //!
 //! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
 //! with every setting spelled out, which is what `--config-show` prints,
@@ -41,7 +41,7 @@ pub struct Config {
     watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
-    sidebar: SidebarConfig,
+    layout: LayoutConfig,
     threads: ThreadsConfig,
     diff: DiffConfig,
     agents: AgentsConfig,
@@ -56,7 +56,7 @@ impl Default for Config {
             watch: WatchConfig::default(),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
-            sidebar: SidebarConfig::default(),
+            layout: LayoutConfig::default(),
             threads: ThreadsConfig::default(),
             diff: DiffConfig::default(),
             agents: AgentsConfig::default(),
@@ -133,10 +133,34 @@ impl Default for ThreadsConfig {
     }
 }
 
-/// The `sidebar { ... }` block (ADR 0049, named by ADR 0057): the left
-/// column that holds the files pane and the threads pane.
+/// The `layout { ... }` block: startup chrome and sidebar layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutConfig {
+    /// Draw the persistent menu bar at startup.
+    pub menu_bar: bool,
+    /// The sidebar's startup state and geometry.
+    pub sidebar: SidebarConfig,
+}
+
+impl Default for LayoutConfig {
+    fn default() -> Self {
+        Self {
+            menu_bar: true,
+            sidebar: SidebarConfig::default(),
+        }
+    }
+}
+
+/// The `layout.sidebar { ... }` block: the left column that holds the
+/// files pane and the threads pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarConfig {
+    /// Whether the configured pane composition is visible at startup.
+    pub visible: bool,
+    /// Whether the restore composition contains the files pane.
+    pub files: bool,
+    /// Whether the restore composition contains the threads pane.
+    pub threads: bool,
     /// Columns the sidebar takes, clamped to a third of the terminal.
     pub width: usize,
     /// Rows the threads pane takes under the files pane.
@@ -146,6 +170,9 @@ pub struct SidebarConfig {
 impl Default for SidebarConfig {
     fn default() -> Self {
         Self {
+            visible: true,
+            files: true,
+            threads: true,
             width: 32,
             split: 8,
         }
@@ -568,24 +595,59 @@ impl Config {
                         }
                     }
                 }
-                "sidebar" => {
+                "layout" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
                             path: None,
                             line,
-                            message: "`sidebar` takes a block of settings".to_owned(),
+                            message: "`layout` takes a block of settings".to_owned(),
                         });
                     };
                     for child in children.nodes() {
                         let line = Some(line_of(child.span().offset()));
                         match child.name().value() {
-                            "width" => config.sidebar.width = cells(child, line, "column count")?,
-                            "split" => config.sidebar.split = cells(child, line, "row count")?,
+                            "menu-bar" => config.layout.menu_bar = one_bool(child, line)?,
+                            "sidebar" => {
+                                let Some(settings) = child.children() else {
+                                    return Err(ConfigError {
+                                        path: None,
+                                        line,
+                                        message: "`layout.sidebar` takes a block of settings"
+                                            .to_owned(),
+                                    });
+                                };
+                                for setting in settings.nodes() {
+                                    let line = Some(line_of(setting.span().offset()));
+                                    let sidebar = &mut config.layout.sidebar;
+                                    match setting.name().value() {
+                                        "visible" => {
+                                            sidebar.visible = one_bool(setting, line)?;
+                                        }
+                                        "files" => sidebar.files = one_bool(setting, line)?,
+                                        "threads" => sidebar.threads = one_bool(setting, line)?,
+                                        "width" => {
+                                            sidebar.width = cells(setting, line, "column count")?;
+                                        }
+                                        "split" => {
+                                            sidebar.split = cells(setting, line, "row count")?;
+                                        }
+                                        other => {
+                                            return Err(ConfigError {
+                                                path: None,
+                                                line,
+                                                message: format!(
+                                                    "unknown layout.sidebar setting `{other}`"
+                                                ),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
                             other => {
                                 return Err(ConfigError {
                                     path: None,
                                     line,
-                                    message: format!("unknown sidebar setting `{other}`"),
+                                    message: format!("unknown layout setting `{other}`"),
                                 });
                             }
                         }
@@ -657,10 +719,10 @@ impl Config {
         &self.viewer
     }
 
-    /// The sidebar's width and split (ADR 0049, ADR 0057).
+    /// Startup chrome and sidebar layout.
     #[must_use]
-    pub fn sidebar(&self) -> &SidebarConfig {
-        &self.sidebar
+    pub fn layout(&self) -> &LayoutConfig {
+        &self.layout
     }
 
     /// How threads show in the text (ADR 0049).
@@ -721,10 +783,17 @@ impl fmt::Display for Config {
         writeln!(f, "    max-file-size-mib {}", viewer.max_file_size_mib)?;
         writeln!(f, "    seen-idle {}", viewer.seen_idle.as_millis())?;
         writeln!(f, "}}")?;
-        let sidebar = &self.sidebar;
-        writeln!(f, "\nsidebar {{")?;
-        writeln!(f, "    width {}", sidebar.width)?;
-        writeln!(f, "    split {}", sidebar.split)?;
+        let layout = &self.layout;
+        let sidebar = &layout.sidebar;
+        writeln!(f, "\nlayout {{")?;
+        writeln!(f, "    menu-bar #{}", layout.menu_bar)?;
+        writeln!(f, "    sidebar {{")?;
+        writeln!(f, "        visible #{}", sidebar.visible)?;
+        writeln!(f, "        files #{}", sidebar.files)?;
+        writeln!(f, "        threads #{}", sidebar.threads)?;
+        writeln!(f, "        width {}", sidebar.width)?;
+        writeln!(f, "        split {}", sidebar.split)?;
+        writeln!(f, "    }}")?;
         writeln!(f, "}}")?;
         let threads = &self.threads;
         writeln!(f, "\nthreads {{")?;
@@ -934,9 +1003,15 @@ watch {
 viewer {
     seen-idle 10
 }
-sidebar {
-    width 40
-    split 12
+layout {
+    menu-bar #false
+    sidebar {
+        visible #false
+        files #true
+        threads #false
+        width 40
+        split 12
+    }
 }
 threads {
     stubs #false
@@ -950,12 +1025,44 @@ threads {
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
         assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
-        assert_eq!(config.sidebar().width, 40);
-        assert_eq!(config.sidebar().split, 12);
+        assert!(!config.layout().menu_bar);
+        assert!(!config.layout().sidebar.visible);
+        assert!(config.layout().sidebar.files);
+        assert!(!config.layout().sidebar.threads);
+        assert_eq!(config.layout().sidebar.width, 40);
+        assert_eq!(config.layout().sidebar.split, 12);
         assert!(!config.threads().stubs);
         assert!(config.threads().stubs_resolved);
         assert_eq!(Config::default().threads(), &ThreadsConfig::default());
-        assert_eq!(Config::default().sidebar(), &SidebarConfig::default());
+        assert_eq!(Config::default().layout(), &LayoutConfig::default());
+        Ok(())
+    }
+
+    #[test]
+    fn layout_allows_an_empty_sidebar_composition() -> Result<(), ConfigError> {
+        let config = Config::parse(
+            "layout { menu-bar #true; sidebar { visible #true; files #false; threads #false } }",
+        )?;
+        assert!(config.layout().menu_bar);
+        assert!(config.layout().sidebar.visible);
+        assert!(!config.layout().sidebar.files);
+        assert!(!config.layout().sidebar.threads);
+        for (text, needle) in [
+            ("sidebar { width 40 }", "unknown setting `sidebar`"),
+            ("layout { nope #true }", "unknown layout setting"),
+            (
+                "layout { sidebar { nope #true } }",
+                "unknown layout.sidebar setting",
+            ),
+            ("layout #true", "block"),
+            ("layout { sidebar #true }", "block"),
+        ] {
+            let error = Config::parse(text)
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
+            assert!(error.contains(needle), "{text}: {error}");
+        }
         Ok(())
     }
 

@@ -46,6 +46,11 @@ Amended 2026-09-14: [0052](0052-goto-file.md) replaces the separate
 whole viewer's bottom-right corner above the status line; drawing and
 hit testing share that grid.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): every menu has a
+rounded titled border, so the context or prefix name moves out of a body
+row; shortcut columns use the subdued info face. The persistent menu bar
+and its one-level drop-downs join mouse navigation.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):
@@ -124,11 +129,11 @@ same day; the choices are below.
   the new position. The menu is one more `Popup`, so the wheel and
   drags do nothing under it, as under the pickers.
 - **Drawing.** The menu's top-left corner is the pointer cell, shifted
-  left or up when it would leave the screen. A first row in the pill
-  colour names what the menu acts on (`selection`, `line 42`, `thread`,
-  `README.md`), as the which-key breadcrumb does. Entries are `key
-  label` rows in the popup faces (`ui.popup`, `ui.popup.key`); the
-  highlighted row uses `ui.picker.selected`. No new theme key.
+  left or up when it would leave the screen. Its rounded border names what
+  the menu acts on (`selection`, `line 42`, `thread`, `README.md`), as the
+  which-key border names its breadcrumb. Entries are `key label` rows on
+  `ui.menu`; keys and borders use the subdued info face and hover uses
+  `ui.list.hover`. No new theme key.
 - The comment box keeps the keys and the mouse works around it
   ([0018](0018-comment-editor.md)); a right-click in the box does
   nothing. Under the help, status, and picker popups the mouse is

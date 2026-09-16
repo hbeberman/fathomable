@@ -346,7 +346,7 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
             let buffer = terminal.backend().buffer();
             // The ordinary 100-column terminal's picker is 90 cells wide.
             let y = row_containing(buffer, 5, 95, "candidate")?;
-            assert_selection(buffer, 5, y, 90, &theme, true);
+            assert_selection(buffer, 6, y, 88, &theme, true);
             assert_ne!(theme.list_active.bg, theme.list_hover.bg);
         }
     }

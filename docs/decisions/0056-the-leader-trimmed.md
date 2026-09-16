@@ -33,6 +33,11 @@ menu entry. Like any unmatched continuation it clears the pending
 chord without changing focus, selection, or the open view. Only
 `Space w w` cycles panes.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): `Space p s` toggles
+the remembered sidebar as one unit and `Space p m` toggles the persistent
+menu bar. Prefix helpers use rounded borders with their breadcrumb in the
+border rather than in a body row.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) laid out the `Space` menu

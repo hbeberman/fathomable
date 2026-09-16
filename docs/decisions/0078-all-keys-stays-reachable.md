@@ -19,6 +19,10 @@ Amended 2026-09-14 by [0079](0079-list-focus-language.md): hover uses
 bar, and opening them makes underlying list highlights inactive without
 changing the remembered navigation state.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): the user-facing name
+is **View keymap**. It and every other visual popup use a rounded titled
+border; `Space ?` and all filtering, scrolling, and click behavior remain.
+
 ## Context
 
 [0045](0045-bindings-are-data.md) made `Space ?` a rendering of the

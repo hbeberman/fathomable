@@ -26,6 +26,12 @@ Amended 2026-09-14 by [0079](0079-list-focus-language.md):
 `ui.sidebar.selected` is retired in favour of shared `ui.list.*` roles,
 with no compatibility alias; `ui.sidebar` and `ui.sidebar.dir` remain.
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): the top-level
+`sidebar { width; split }` block is replaced without an alias by
+`layout { menu-bar; sidebar { visible; files; threads; width; split } }`.
+Every launch uses that same startup composition. `Space p s` hides and
+shows the sidebar as one remembered unit.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) named the left column the

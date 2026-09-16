@@ -18,12 +18,20 @@ const SIDEBAR_MIN_WIDTH: usize = 8;
 /// The sidebar's state (ADR 0049, ADR 0057): which of its panes are shown,
 /// what the threads pane lists and which files it has folded (ADR 0066),
 /// the split a drag set, and the configured sizes.
+#[derive(Debug, Clone, Copy)]
+struct PaneSet {
+    tree: bool,
+    threads: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct Sidebar {
     /// The files pane is shown.
     pub(crate) tree: bool,
     /// The threads pane is shown.
     pub(crate) threads: bool,
+    /// The files pane restored by the whole-sidebar toggle.
+    restore: PaneSet,
     pub(crate) scope: PaneScope,
     /// Files the threads pane has folded to their row (ADR 0066).
     pub(crate) folded: HashSet<PathBuf>,
@@ -34,13 +42,97 @@ pub(crate) struct Sidebar {
 
 impl Sidebar {
     pub(crate) fn new(config: SidebarConfig) -> Self {
+        let tree = config.visible && config.files;
+        let threads = config.visible && config.threads;
         Self {
-            tree: false,
-            threads: false,
+            tree,
+            threads,
+            restore: PaneSet {
+                tree: config.files,
+                threads: config.threads,
+            },
             scope: PaneScope::default(),
             folded: HashSet::new(),
             split: None,
             config,
+        }
+    }
+
+    pub(crate) fn shown(&self) -> bool {
+        self.tree || self.threads
+    }
+
+    pub(crate) fn hide(&mut self) {
+        if self.shown() {
+            self.restore = PaneSet {
+                tree: self.tree,
+                threads: self.threads,
+            };
+            self.tree = false;
+            self.threads = false;
+        }
+    }
+
+    pub(crate) fn restore(&mut self) -> bool {
+        if !self.restore.tree && !self.restore.threads {
+            return false;
+        }
+        self.tree = self.restore.tree;
+        self.threads = self.restore.threads;
+        true
+    }
+
+    pub(crate) fn restores_tree(&self) -> bool {
+        self.restore.tree
+    }
+
+    pub(crate) fn has_restore(&self) -> bool {
+        self.restore.tree || self.restore.threads
+    }
+
+    pub(crate) fn show_tree(&mut self) {
+        if !self.shown() {
+            self.restore.threads = false;
+        }
+        self.tree = true;
+        self.restore.tree = true;
+    }
+
+    pub(crate) fn show_threads(&mut self) {
+        if !self.shown() {
+            self.restore.tree = false;
+        }
+        self.threads = true;
+        self.restore.threads = true;
+    }
+
+    pub(crate) fn hide_tree(&mut self) {
+        self.tree = false;
+        if self.threads {
+            self.restore = PaneSet {
+                tree: false,
+                threads: true,
+            };
+        } else {
+            self.restore = PaneSet {
+                tree: true,
+                threads: false,
+            };
+        }
+    }
+
+    pub(crate) fn hide_threads(&mut self) {
+        self.threads = false;
+        if self.tree {
+            self.restore = PaneSet {
+                tree: true,
+                threads: false,
+            };
+        } else {
+            self.restore = PaneSet {
+                tree: false,
+                threads: true,
+            };
         }
     }
 }
@@ -49,7 +141,7 @@ impl App {
     /// The sidebar's width in columns, 0 when neither of its panes is shown
     /// (ADR 0049).
     pub(crate) fn sidebar_width(&self) -> usize {
-        if !self.sidebar.tree && !self.sidebar.threads {
+        if !self.sidebar.shown() {
             return 0;
         }
         let widest = self.width.saturating_sub(TEXT_MIN_WIDTH);
@@ -59,5 +151,27 @@ impl App {
                 |cols| cols.min(widest),
             )
             .max(SIDEBAR_MIN_WIDTH)
+    }
+
+    /// `Space p s`: hide the whole sidebar, remembering its pane
+    /// composition, or show that composition again.
+    pub(crate) fn toggle_sidebar(&mut self) {
+        if self.sidebar.shown() {
+            self.sidebar.hide();
+            if matches!(self.focus, super::Focus::Tree | super::Focus::ThreadsPane) {
+                self.focus = super::Focus::View;
+            }
+            self.relayout();
+            return;
+        }
+        if self.sidebar.restores_tree() && !self.ensure_tree() {
+            return;
+        }
+        if !self.sidebar.restore() {
+            self.notice("sidebar has no panes; show Files or Threads first");
+            return;
+        }
+        self.reveal_current();
+        self.relayout();
     }
 }

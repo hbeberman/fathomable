@@ -12,6 +12,10 @@ tags:
 
 Status: accepted (2026-08-27)
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): the structured
+`--doctor` report is also available as a scrollable in-app Doctor view
+through Help or `:doctor`; `:status` keeps its narrower live-viewer role.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

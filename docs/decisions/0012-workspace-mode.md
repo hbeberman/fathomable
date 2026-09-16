@@ -19,6 +19,11 @@ tags:
 Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
 amended 2026-09-14 (`l` / Right is directory navigation only).
 
+Amended 2026-09-15 by [0081](0081-the-menu-bar.md): one `layout` config
+sets the menu bar and sidebar startup state consistently for file and
+directory launches. The default shows both sidebar panes; an explicitly
+named file keeps text focus.
+
 Selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
 files and all picker results use shared active and remembered list
 styles; `ui.sidebar.selected` and `ui.picker.selected` below are retired.

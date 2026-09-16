@@ -24,6 +24,7 @@ use crate::app::draw::header;
 use crate::app::draw::nest::NEST;
 use crate::app::threads::draft::DraftRow;
 use crate::app::view::Effect;
+use crate::app::{doctor_view, menu_bar};
 
 /// Presses on one cell closer together than this are one gesture.
 const MULTI_CLICK: Duration = Duration::from_millis(400);
@@ -49,10 +50,16 @@ pub(crate) fn handle_mouse(app: &mut App, event: MouseEvent) -> Effect {
 
 /// The mouse over the sidebar: the threads pane along its bottom (ADR 0027,
 /// ADR 0049) takes what lands on it; the tree above pages the viewer.
-fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
+fn sidebar_mouse(
+    app: &mut App,
+    kind: MouseEventKind,
+    column: usize,
+    row: usize,
+    screen_row: usize,
+) -> Effect {
     let tree_rows = app.tree_rows();
     if row >= tree_rows && row < app.pane_rows() && app.threads_pane_height() > 0 {
-        return threads_pane_mouse(app, kind, column, row, row - tree_rows);
+        return threads_pane_mouse(app, kind, column, screen_row, row - tree_rows);
     }
     match kind {
         // One row per tick, not `WHEEL_LINES`: each tick pages the main
@@ -78,7 +85,7 @@ fn sidebar_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize)
         MouseEventKind::Down(MouseButton::Left) if app.has_worktrees() => app.pick_worktree(),
         MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
         MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
-            app.open_tree_menu(row - 1, column, row);
+            app.open_tree_menu(row - 1, column, screen_row);
         }
         _ => {}
     }
@@ -138,7 +145,13 @@ fn threads_pane_mouse(
 /// right-click on a row opens its menu. Row 0 is the list header and
 /// the column's last row is the key bar; unfocused, a click on either
 /// focuses the list.
-fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Effect {
+fn review_mouse(
+    app: &mut App,
+    kind: MouseEventKind,
+    column: usize,
+    row: usize,
+    screen_row: usize,
+) -> Effect {
     let bar = app.pane_rows().saturating_sub(1);
     match kind {
         MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
@@ -168,7 +181,7 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             let list_row = row - 1;
             if let Some(id) = app.review_thread_row(list_row) {
                 let chevron = column.saturating_sub(app.sidebar_width()) == 1 + NEST;
-                if chevron || press(app, column, row, false) == 2 {
+                if chevron || press(app, column, screen_row, false) == 2 {
                     app.review_click(list_row);
                     app.review_toggle_thread(&id);
                     app.press = None;
@@ -178,7 +191,7 @@ fn review_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) 
             app.review_click(list_row);
         }
         MouseEventKind::Down(MouseButton::Right) if row >= 1 && row < bar => {
-            app.open_review_menu(row - 1, column, row);
+            app.open_review_menu(row - 1, column, screen_row);
         }
         _ => {}
     }
@@ -265,8 +278,8 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
     // right-click elsewhere closes it and opens the menu for there.
     if let Some(menu) = app.menu() {
         if left {
-            let (width, height) = app.size();
-            let grid = menu.grid(width, height);
+            let (width, _) = app.size();
+            let grid = menu.grid_in(width, app.pane_top(), app.pane_rows());
             if let Some(index) = grid.entry_at(column, row) {
                 return Some(app.menu_click(index));
             }
@@ -290,9 +303,44 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             app.close_popup();
             Some(Effect::None)
         }
-        Some(Popup::Status | Popup::Picker(_)) => Some(Effect::None),
+        Some(Popup::Doctor(_)) => match kind {
+            MouseEventKind::ScrollDown => Some(doctor_view::wheel(app, WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(doctor_view::wheel(app, -WHEEL_LINES)),
+            _ if left => {
+                if !inside(draw::doctor_area(app), column, row) {
+                    app.close_popup();
+                }
+                Some(Effect::None)
+            }
+            _ => Some(Effect::None),
+        },
+        Some(Popup::About) if left => {
+            let area = draw::about_area(app);
+            let source_row = usize::from(area.y) + 7;
+            let source_start = usize::from(area.x) + 10;
+            let source_end = source_start + "https://github.com/hbeberman/fathomable".len();
+            if row == source_row && column >= source_start && column < source_end {
+                app.close_popup();
+                Some(Effect::Open(
+                    "https://github.com/hbeberman/fathomable".to_owned(),
+                ))
+            } else {
+                if !inside(area, column, row) {
+                    app.close_popup();
+                }
+                Some(Effect::None)
+            }
+        }
+        Some(Popup::Status | Popup::About | Popup::Picker(_)) => Some(Effect::None),
         _ => None,
     }
+}
+
+fn inside(area: ratatui::layout::Rect, column: usize, row: usize) -> bool {
+    column >= usize::from(area.x)
+        && column < usize::from(area.x + area.width)
+        && row >= usize::from(area.y)
+        && row < usize::from(area.y + area.height)
 }
 
 /// A click on a which-key entry is that key typed (ADR 0050).
@@ -312,6 +360,19 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let row = usize::from(event.row);
     let column = usize::from(event.column);
     app.pointer = Some((column, row));
+    if app.dragging().is_some() {
+        match event.kind {
+            MouseEventKind::Drag(MouseButton::Left) => {
+                app.drag_to(column, row.saturating_sub(app.pane_top()));
+            }
+            MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
+            _ => {}
+        }
+        return Effect::None;
+    }
+    if let Some(effect) = menu_bar::mouse(app, event) {
+        return effect;
+    }
     if let Some(effect) = popup_mouse(app, event.kind, column, row) {
         return effect;
     }
@@ -326,16 +387,12 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         app.cancel_delete();
     }
     let rows = app.pane_rows();
-    let sidebar = app.sidebar_width();
-    if app.dragging().is_some() {
-        match event.kind {
-            MouseEventKind::Drag(MouseButton::Left) => app.drag_to(column, row),
-            MouseEventKind::Up(MouseButton::Left) => app.end_drag(),
-            _ => {}
-        }
+    let pane_top = app.pane_top();
+    let Some(pane_row) = row.checked_sub(pane_top) else {
         return Effect::None;
-    }
-    if left && row < rows && sidebar > 0 && column + 1 == sidebar {
+    };
+    let sidebar = app.sidebar_width();
+    if left && pane_row < rows && sidebar > 0 && column + 1 == sidebar {
         app.begin_drag(Border::Sidebar);
         return Effect::None;
     }
@@ -346,7 +403,7 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     }
     // The status line's waiting and thread counts take a click (ADR
     // 0066).
-    if left && row == rows {
+    if left && pane_row == rows {
         let parts = draw::status_parts(app);
         let start = app.size().0.saturating_sub(parts.right_width());
         if let Some(action) = column
@@ -358,10 +415,13 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
         return Effect::None;
     }
     if column < sidebar {
-        return sidebar_mouse(app, event.kind, column, row);
+        return sidebar_mouse(app, event.kind, column, pane_row, row);
+    }
+    if app.getting_started() {
+        return Effect::None;
     }
     if app.review_list().is_open() {
-        return review_mouse(app, event.kind, column, row);
+        return review_mouse(app, event.kind, column, pane_row, row);
     }
     // The text's key bar over the bottom text row (ADR 0067): a click
     // focuses the text and runs the hint under the pointer.

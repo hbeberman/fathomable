@@ -139,7 +139,16 @@ jump { auto #true; debounce 5; toast 0 }
 watch { ignore "target/**" "a b" "c\"d"; debounce 1 }
 markdown { extensions "txt"; names "notes" }
 viewer { max-file-size-mib 1; seen-idle 2 }
-sidebar { width 1; split 2 }
+layout {
+    menu-bar #false
+    sidebar {
+        visible #false
+        files #true
+        threads #false
+        width 1
+        split 2
+    }
+}
 threads { stubs #false; stubs-resolved #true }
 diff { context 0; ignore-whitespace #true }
 agents { types "qa"; nag-after 0; expire-after 1; max-lines 1; wake "claude -r {id}\n{prompt}\t\u{7f}" }

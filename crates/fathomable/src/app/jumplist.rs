@@ -31,6 +31,16 @@ pub(crate) struct Jumplist {
 }
 
 impl Jumplist {
+    pub(crate) fn can_back(&self) -> bool {
+        self.index
+            .map_or(!self.entries.is_empty(), |index| index > 0)
+    }
+
+    pub(crate) fn can_forward(&self) -> bool {
+        self.index
+            .is_some_and(|index| index + 1 < self.entries.len())
+    }
+
     /// A far move left `position`: keep it, dropping any forward part.
     pub(crate) fn record(&mut self, position: Position) {
         if let Some(index) = self.index.take() {

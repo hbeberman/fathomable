@@ -1,10 +1,14 @@
 use std::fs;
 use std::path::Path;
 
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fathomable_testing::{TempDir, git};
 
+use crate::app::draw;
+use crate::app::input::mouse::handle_mouse;
 use crate::app::testing::{AppBuilder, buffer, screen};
 use crate::app::{ComparisonSide, PickerKind, Popup};
+use fathomable_core::theme::Theme as CoreTheme;
 use fathomable_core::workspace::{ComparisonEndpoint, Workspace};
 
 fn repository(name: &str) -> anyhow::Result<TempDir> {
@@ -50,6 +54,18 @@ fn text_cell(
     Some(buffer[(u16::try_from(column).ok()?, u16::try_from(row).ok()?)].clone())
 }
 
+fn mouse(app: &mut crate::app::App, kind: MouseEventKind, column: usize, row: usize) {
+    handle_mouse(
+        app,
+        MouseEvent {
+            kind,
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+}
+
 #[test]
 fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()> {
     let dir = repository("comparison-picker-current-endpoints")?;
@@ -91,11 +107,110 @@ fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()
         .ok_or_else(|| anyhow::anyhow!("base badge cell"))?;
     let target = text_cell(&rendered, &cells, "Working tree", "[current target]")
         .ok_or_else(|| anyhow::anyhow!("target badge cell"))?;
-    assert_ne!(base.fg, target.fg, "base and target use distinct colors");
+    let theme = draw::Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    assert_eq!(base.fg, target.fg, "both endpoint badges share one accent");
+    assert_eq!(Some(base.fg), theme.popup_key.fg);
     assert!(
         rendered.iter().all(|line| !line.contains(&head)),
         "the picker displays short commit IDs"
     );
+    Ok(())
+}
+
+#[test]
+fn menu_bar_endpoint_buttons_hover_and_open_their_pickers() -> anyhow::Result<()> {
+    let dir = repository("comparison-menu-buttons")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let mut app = menu_app(&root, &dir.0.join("points"))?;
+    let tail = crate::app::menu_bar::bar_tail(&app, app.size().0);
+    let base = tail
+        .base
+        .ok_or_else(|| anyhow::anyhow!("visible base button"))?;
+    let target = tail
+        .target
+        .ok_or_else(|| anyhow::anyhow!("visible target button"))?;
+
+    mouse(&mut app, MouseEventKind::Moved, base.x, 0);
+    let cells = buffer(&app)?;
+    let theme = draw::Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    let hovered = &cells[(u16::try_from(base.x)?, 0)];
+    assert_eq!(Some(hovered.bg), theme.list_hover.bg);
+    assert_eq!(Some(hovered.fg), theme.popup_key.fg);
+
+    mouse(&mut app, MouseEventKind::Down(MouseButton::Left), base.x, 0);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ComparisonBase
+    ));
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        target.x,
+        0,
+    );
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ComparisonTarget
+    ));
+    Ok(())
+}
+
+#[test]
+fn branch_picker_mouse_hovers_clicks_and_wheels() -> anyhow::Result<()> {
+    let dir = repository("comparison-branch-picker-mouse")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    let refs = root.join(".git/refs/heads");
+    for index in 0..25 {
+        fs::write(refs.join(format!("branch-{index:02}")), format!("{head}\n"))?;
+    }
+    let mut app = menu_app(&root, &dir.0.join("points"))?;
+    app.open_picker(PickerKind::ComparisonBranches(ComparisonSide::Base));
+
+    let rendered = screen(&app)?;
+    let (row, line) = rendered
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.contains("branch branch-05"))
+        .ok_or_else(|| anyhow::anyhow!("visible branch row"))?;
+    let column = line
+        .find("branch branch-05")
+        .ok_or_else(|| anyhow::anyhow!("branch column"))?;
+    mouse(&mut app, MouseEventKind::Moved, column, row);
+    let cells = buffer(&app)?;
+    let theme = draw::Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    assert_eq!(
+        Some(cells[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+        theme.list_hover.bg
+    );
+
+    mouse(&mut app, MouseEventKind::ScrollDown, column, row);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.selected() == 3
+    ));
+    mouse(&mut app, MouseEventKind::ScrollUp, column, row);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.selected() == 0
+    ));
+
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+    );
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker))
+            if picker.kind() == PickerKind::ComparisonBranchCommits(ComparisonSide::Base)
+                && picker.scope() == Some("branch-05")
+    ));
     Ok(())
 }
 

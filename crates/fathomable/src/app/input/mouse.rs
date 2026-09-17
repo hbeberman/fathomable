@@ -337,6 +337,26 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             app.close_popup();
             Some(Effect::None)
         }
+        Some(Popup::Picker(picker)) => {
+            let layout = draw::picker_layout(app, picker);
+            let entry = layout.entry_at(column, row, picker.matched());
+            match kind {
+                MouseEventKind::ScrollDown if layout.contains(column, row) => {
+                    app.picker_move(WHEEL_LINES);
+                }
+                MouseEventKind::ScrollUp if layout.contains(column, row) => {
+                    app.picker_move(-WHEEL_LINES);
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(index) = entry {
+                        app.picker_select(index);
+                        app.picker_confirm();
+                    }
+                }
+                _ => {}
+            }
+            Some(Effect::None)
+        }
         Some(Popup::Doctor(_)) => match kind {
             MouseEventKind::ScrollDown => Some(doctor_view::wheel(app, WHEEL_LINES)),
             MouseEventKind::ScrollUp => Some(doctor_view::wheel(app, -WHEEL_LINES)),
@@ -365,9 +385,7 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                 Some(Effect::None)
             }
         }
-        Some(Popup::Status | Popup::About | Popup::Picker(_) | Popup::ConfirmBoard { .. }) => {
-            Some(Effect::None)
-        }
+        Some(Popup::Status | Popup::About | Popup::ConfirmBoard { .. }) => Some(Effect::None),
         _ => None,
     }
 }

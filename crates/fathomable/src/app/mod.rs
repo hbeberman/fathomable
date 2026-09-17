@@ -2441,6 +2441,17 @@ impl App {
         }
     }
 
+    pub(crate) fn picker_select(&mut self, index: usize) {
+        let rows = picker_list_rows(self.pane_rows());
+        if let Some(picker) = self.picker_mut()
+            && index < picker.matches.len()
+        {
+            picker.scroll = picker.first_visible(rows);
+            picker.selected = index;
+            picker.scroll = picker.first_visible(rows);
+        }
+    }
+
     pub(crate) fn picker_escape(&mut self) {
         let parent = self.picker_mut().map(|picker| match picker.kind {
             PickerKind::ComparisonBranchCommits(side) => Some(PickerKind::ComparisonBranches(side)),

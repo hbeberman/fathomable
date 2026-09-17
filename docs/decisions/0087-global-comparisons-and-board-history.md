@@ -96,10 +96,10 @@ commits reachable from `HEAD` follow those choices, newest first.
 
 Commit rows render as short ID, subject, and right-aligned UTC `YYYY-MM-DD`;
 the subject is ellipsized before the date is displaced. Endpoint-bearing rows
-show colored **[current base]** and **[current target]** hints at the right;
-commit-row hints sit immediately before the date. Equivalent working-tree,
-index, `HEAD`, tag, and commit rows therefore expose the active pair without
-changing what selection means.
+show muted-blue **[current base]** and **[current target]** hints using the
+shared popup-key accent; commit-row hints sit immediately before the date.
+Equivalent working-tree, index, `HEAD`, tag, and commit rows therefore expose
+the active pair without changing what selection means.
 
 **Tags...** is a searchable list whose selection pins the tagged commit.
 **Branches...** searches local and remote-tracking branches, then opens up to
@@ -117,7 +117,8 @@ its parent before closing the endpoint picker.
 Picker motion lets the cursor move freely between three-row top and bottom
 margins. Crossing a margin scrolls the list while keeping the cursor at that
 margin. Once the list reaches its beginning or end, the cursor can move closer
-to that edge.
+to that edge. Pointing at a row gives it the shared hover treatment, a left
+click chooses it, and the wheel moves through the visible choices.
 
 The comparison owns:
 
@@ -151,7 +152,8 @@ Working tree, index, empty tree, and `HEAD` use those names; an explicitly
 selected tag uses `Tag name`. `HEAD` and tag names are presentation aliases
 beside the pinned commit ID, not mutable endpoints. They persist only while
 the name still resolves to that same ID, otherwise the menu falls back to the
-short commit ID.
+short commit ID. Both labels use the shared popup-key accent and menu hover
+background; clicking either one opens its endpoint picker.
 
 Mutable endpoints refresh after relevant Git and filesystem events.
 Immutable commit pairs retain their content. A failed refresh keeps the last

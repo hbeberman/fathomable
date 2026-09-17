@@ -358,18 +358,17 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let labels = menu_bar::labels(usize::from(area.width));
-    let compact = labels.len() == 1;
     let hovered = app
         .pointer()
         .filter(|(_, row)| *row == 0)
-        .and_then(|(column, _)| menu_bar::label_at(usize::from(area.width), column));
+        .map(|(column, _)| column);
     let open = app.menu_bar.open();
     let focused = open.and_then(|open| matches!(open.focused, Focused::Label).then_some(open.root));
     let mut spans = Vec::new();
-    let mut used = 0;
     for label in labels {
-        let active = hovered == Some(label.root)
-            || open.is_some_and(|open| open.root == label.root)
+        let active = hovered.is_some_and(|column| {
+            menu_bar::label_at(usize::from(area.width), column) == Some(label.root)
+        }) || open.is_some_and(|open| open.root == label.root)
             || focused == Some(label.root);
         let style = if active {
             theme.menu.patch(theme.list_hover)
@@ -377,40 +376,27 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             theme.menu
         };
         let text = format!(" {} ", label.root.label());
-        used += display_width(&text);
         spans.push(Span::styled(text, style));
     }
-    let full_context = if compact {
-        String::new()
-    } else {
-        menu_bar::context(app)
-    };
-    let available = usize::from(area.width).saturating_sub(used);
-    let (base, target) = app.comparison_menu_pair();
-    let pair_width = display_width(&base) + 4 + display_width(&target);
-    let context_gap = usize::from(!full_context.is_empty()) * 3;
-    let show_pair = pair_width + context_gap + usize::from(!compact) * 12 <= available;
-    let pair_used = usize::from(show_pair) * (pair_width + context_gap);
-    let context = menu_bar::truncate_left(&full_context, available.saturating_sub(pair_used));
-    let context_width = display_width(&context);
-    let padding = available.saturating_sub(
-        usize::from(show_pair) * pair_width
-            + usize::from(show_pair && !context.is_empty()) * 3
-            + context_width,
-    );
-    spans.push(Span::raw(" ".repeat(padding)));
-    if show_pair {
-        spans.push(Span::styled(base, on_surface(theme.menu, theme.diff_minus)));
+    let tail = menu_bar::bar_tail(app, usize::from(area.width));
+    spans.push(Span::raw(" ".repeat(tail.padding)));
+    if let (Some(base), Some(target)) = (&tail.base, &tail.target) {
+        let button = |label: &menu_bar::BarLabel| {
+            let surface = if hovered.is_some_and(|column| label.contains(column)) {
+                theme.menu.patch(theme.list_hover)
+            } else {
+                theme.menu
+            };
+            on_surface(surface, theme.popup_key)
+        };
+        spans.push(Span::styled(base.text.clone(), button(base)));
         spans.push(Span::styled(" to ", theme.menu.patch(theme.info)));
-        spans.push(Span::styled(
-            target,
-            on_surface(theme.menu, theme.diff_plus),
-        ));
-        if !context.is_empty() {
+        spans.push(Span::styled(target.text.clone(), button(target)));
+        if !tail.context.is_empty() {
             spans.push(Span::styled(" · ", theme.menu.patch(theme.info)));
         }
     }
-    spans.push(Span::styled(context, theme.menu.patch(theme.info)));
+    spans.push(Span::styled(tail.context, theme.menu.patch(theme.info)));
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(theme.menu),
         Rect { height: 1, ..area },
@@ -2238,10 +2224,16 @@ fn picker_line(
     item: &fathomable_core::picker::Match,
     width: usize,
     app: Option<&App>,
+    hovered: bool,
 ) -> Line<'static> {
     let text = picker.item(item);
     let selection = Navigation::Active.selection(index == picker.selected());
-    let row_style = theme.popup.patch(selection.style(theme));
+    let surface = if hovered {
+        theme.popup.patch(theme.list_hover)
+    } else {
+        theme.popup
+    };
+    let row_style = surface.patch(selection.style(theme));
     let mut spans = vec![selection.marker(theme)];
     let mut used = 1;
     let roles = picker_roles(picker, text, app);
@@ -2254,8 +2246,8 @@ fn picker_line(
     let mut badges = Vec::new();
     let mut reserved = 0;
     for (shown, label, style) in [
-        (roles.base, "[current base]", theme.diff_minus),
-        (roles.target, "[current target]", theme.diff_plus),
+        (roles.base, "[current base]", theme.popup_key),
+        (roles.target, "[current target]", theme.popup_key),
     ] {
         let badge_width = 1 + display_width(label);
         if shown && content_width.saturating_sub(reserved + badge_width) >= min_content {
@@ -2298,6 +2290,76 @@ fn picker_line(
     Line::from(spans).style(row_style)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PickerLayout {
+    popup: Rect,
+    body: Rect,
+    first: usize,
+    rows: usize,
+}
+
+impl PickerLayout {
+    pub(crate) fn contains(self, column: usize, row: usize) -> bool {
+        let Ok(column) = u16::try_from(column) else {
+            return false;
+        };
+        let Ok(row) = u16::try_from(row) else {
+            return false;
+        };
+        column >= self.popup.x
+            && column < self.popup.x.saturating_add(self.popup.width)
+            && row >= self.popup.y
+            && row < self.popup.y.saturating_add(self.popup.height)
+    }
+
+    pub(crate) fn entry_at(self, column: usize, row: usize, matched: usize) -> Option<usize> {
+        let column = u16::try_from(column).ok()?;
+        let row = u16::try_from(row).ok()?;
+        if column < self.body.x
+            || column >= self.body.x.saturating_add(self.body.width)
+            || row < self.body.y
+            || row >= self.body.y.saturating_add(self.body.height)
+        {
+            return None;
+        }
+        let offset = usize::from(row - self.body.y);
+        (offset < self.rows)
+            .then(|| self.first + offset)
+            .filter(|index| *index < matched)
+    }
+}
+
+fn picker_layout_in(area: Rect, picker: &PickerState) -> PickerLayout {
+    let width = area.width.saturating_sub(4).clamp(22, 90);
+    let height = area.height.saturating_sub(2).clamp(3, 20);
+    let popup = centred(area, width, height);
+    let body = Rect {
+        x: popup.x.saturating_add(1),
+        y: popup.y.saturating_add(1),
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+    let rows = super::picker_list_rows(usize::from(area.height));
+    PickerLayout {
+        popup,
+        body,
+        first: picker.first_visible(rows),
+        rows,
+    }
+}
+
+pub(crate) fn picker_layout(app: &App, picker: &PickerState) -> PickerLayout {
+    picker_layout_in(
+        Rect {
+            x: 0,
+            y: u16_of(app.pane_top()),
+            width: u16_of(app.size().0),
+            height: u16_of(app.pane_rows()),
+        },
+        picker,
+    )
+}
+
 fn draw_picker(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -2305,11 +2367,10 @@ fn draw_picker(
     picker: &PickerState,
     app: Option<&App>,
 ) {
-    let width = area.width.saturating_sub(4).clamp(22, 90);
-    let height = area.height.saturating_sub(2).clamp(3, 20);
-    let popup = centred(area, width, height);
-    let list_rows = super::picker_list_rows(usize::from(area.height));
-    let first = picker.first_visible(list_rows);
+    let layout = picker_layout_in(area, picker);
+    let popup = layout.popup;
+    let list_rows = layout.rows;
+    let first = layout.first;
     let title = match picker.kind() {
         super::PickerKind::Files => "files".to_owned(),
         super::PickerKind::AllFiles => "files (incl. ignored)".to_owned(),
@@ -2341,6 +2402,9 @@ fn draw_picker(
     ]);
     let block = rounded_block(theme, title_line, theme.popup);
     let body = block.inner(popup);
+    let hovered = app
+        .and_then(App::pointer)
+        .and_then(|(column, row)| layout.entry_at(column, row, picker.matched()));
     let mut lines = Vec::new();
     let inner = usize::from(body.width);
     for (index, m) in picker
@@ -2350,7 +2414,15 @@ fn draw_picker(
         .skip(first)
         .take(list_rows)
     {
-        lines.push(picker_line(theme, picker, index, m, inner, app));
+        lines.push(picker_line(
+            theme,
+            picker,
+            index,
+            m,
+            inner,
+            app,
+            hovered == Some(index),
+        ));
     }
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);

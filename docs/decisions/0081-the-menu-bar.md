@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, diff, help, diagnostics, and project information to the mouse without displacing contextual key bars; it is optional, keyboard-navigable once open, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information to the mouse without displacing contextual key bars; it is optional, keyboard-navigable once open, and shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
@@ -47,10 +47,13 @@ left beside the content they affect.
   reserves one row; it never paints over pane headers or content.
 - Its left side is `☰  Go  Review  Diff`, with no down-arrow glyphs. A label
   takes `ui.list.hover` while hovered or open.
-- Its right side passively names the active branch or worktree, current path,
-  and major view (`SOURCE`, `review threads`, or the current diff pair). It
-  has no hidden click behavior. The path and view identity leave the status
-  line while the bar is shown and return there when it is hidden.
+- Its right side names the active comparison before the passive branch or
+  worktree, current path, and major view (`SOURCE` or `review threads`).
+  The base and target labels are muted-blue `ui.popup.key` buttons: hovering
+  patches `ui.list.hover`, and clicking opens that endpoint's picker. The
+  remaining context has no hidden click behavior. The path and view identity
+  leave the status line while the bar is shown and return there when it is
+  hidden.
 - On narrow terminals the right-side context disappears first. When the four
   labels no longer fit, only `☰` remains and Go, Review, and Diff become
   one-level children of that menu. The row never wraps or scrolls.
@@ -89,6 +92,9 @@ left beside the content they affect.
 - Hover only changes colour. A click opens a menu; while one is open, moving
   over another title switches menus. Clicking the active title, clicking
   elsewhere, or `Esc` closes the stack.
+- The compact comparison labels behave like the menu titles: each receives
+  the shared accent and hover background, and a click opens its base or target
+  picker without opening a title menu.
 - A submenu opens on hover, click, `l`/Right, or Enter. Its top border aligns
   with its parent row and touches the parent box. `h`/Left returns to the
   parent. Nesting stops at one level.
@@ -109,6 +115,8 @@ left beside the content they affect.
   `Space`/prefix helper, and right-click menu draw their title or breadcrumb
   in that border rather than spending a body row. Help, pickers, Status,
   Doctor, and About use the same rounded frame on `ui.popup`.
+- Picker rows take `ui.list.hover` under the pointer. A left click chooses the
+  pointed row, and the wheel moves the picker selection and viewport.
 - Menu shortcut columns and borders use the subdued
   `ui.statusline.info` face. Surfaces remain `ui.menu` or `ui.popup`;
   `ui.list.hover` remains the hover treatment. No theme key is added.

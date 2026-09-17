@@ -186,6 +186,8 @@ continuations. These tables contain the main bindings.
 Picker motion lets the cursor move freely between three-entry top and bottom
 margins. Crossing a margin scrolls the list while keeping the cursor there.
 At the beginning or end of the list, the cursor can move closer to that edge.
+Hovering over a picker row highlights it, clicking chooses it, and the mouse
+wheel moves the selection and list.
 
 Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
 `:name NAME`, `:help`, `:doctor`, and `:about`.
@@ -228,7 +230,7 @@ its commit. **Branches...** searches both local and remote-tracking branches;
 selecting one opens its commits from newest to oldest. These menus use only
 local Git data and never fetch.
 
-Rows that denote the selected endpoints show colored **[current base]** and
+Rows that denote the selected endpoints show muted-blue **[current base]** and
 **[current target]** hints at the right. On commit rows the hints appear just
 before the date. Working tree, Index, HEAD, tag, and commit rows all use the
 same endpoint identity, so a selected endpoint remains recognizable in nested
@@ -359,6 +361,8 @@ workspace/file status. Immutable commits use short IDs; the other labels are
 Selecting HEAD or a tag still pins its resolved commit ID. If HEAD advances
 or the tag no longer resolves to that ID, the label falls back to the short
 commit ID rather than pretending the endpoint moved.
+Both labels use the menu's muted-blue accent and hover background. Clicking
+the base or target label opens that endpoint's picker.
 
 **Review** contains the board, Recently resolved, Archived threads, Archive
 resolved threads, Clear board, and contextual thread actions. **Diff**

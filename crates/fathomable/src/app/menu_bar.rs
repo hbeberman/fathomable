@@ -8,7 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use crate::app::input::bindings::{self, Action, Chord, Key, Where};
 use crate::app::view::Effect;
-use crate::app::{App, Focus};
+use crate::app::{App, Focus, PickerKind};
 
 const FULL_LABEL_WIDTH: usize = 21;
 const MENU_TOP: usize = 1;
@@ -251,6 +251,80 @@ pub(crate) fn label_at(width: usize, column: usize) -> Option<Root> {
         .into_iter()
         .find(|label| column >= label.x && column < label.x + label.width)
         .map(|label| label.root)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BarLabel {
+    pub(crate) text: String,
+    pub(crate) x: usize,
+    pub(crate) width: usize,
+    pub(crate) picker: PickerKind,
+}
+
+impl BarLabel {
+    pub(crate) fn contains(&self, column: usize) -> bool {
+        column >= self.x && column < self.x + self.width
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BarTail {
+    pub(crate) padding: usize,
+    pub(crate) base: Option<BarLabel>,
+    pub(crate) target: Option<BarLabel>,
+    pub(crate) context: String,
+}
+
+impl BarTail {
+    pub(crate) fn picker_at(&self, column: usize) -> Option<PickerKind> {
+        [&self.base, &self.target]
+            .into_iter()
+            .flatten()
+            .find(|label| label.contains(column))
+            .map(|label| label.picker)
+    }
+}
+
+/// Lay out the comparison buttons and passive context after the root labels.
+pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
+    let labels = labels(width);
+    let compact = labels.len() == 1;
+    let used = labels
+        .last()
+        .map_or(0, |label| label.x.saturating_add(label.width));
+    let full_context = if compact { String::new() } else { context(app) };
+    let available = width.saturating_sub(used);
+    let (base, target) = app.comparison_menu_pair();
+    let base_width = display_width(&base);
+    let target_width = display_width(&target);
+    let pair_width = base_width + 4 + target_width;
+    let context_gap = usize::from(!full_context.is_empty()) * 3;
+    let show_pair = pair_width + context_gap + usize::from(!compact) * 12 <= available;
+    let pair_used = usize::from(show_pair) * (pair_width + context_gap);
+    let context = truncate_left(&full_context, available.saturating_sub(pair_used));
+    let context_width = display_width(&context);
+    let padding = available.saturating_sub(
+        usize::from(show_pair) * pair_width
+            + usize::from(show_pair && !context.is_empty()) * 3
+            + context_width,
+    );
+    let pair_x = used + padding;
+    BarTail {
+        padding,
+        base: show_pair.then_some(BarLabel {
+            text: base,
+            x: pair_x,
+            width: base_width,
+            picker: PickerKind::ComparisonBase,
+        }),
+        target: show_pair.then_some(BarLabel {
+            text: target,
+            x: pair_x + base_width + 4,
+            width: target_width,
+            picker: PickerKind::ComparisonTarget,
+        }),
+        context,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1153,6 +1227,11 @@ pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> Option<Effect> {
                     }
                 }
                 _ => {}
+            }
+        } else if let Some(picker) = bar_tail(app, app.width).picker_at(column) {
+            if left {
+                app.close_title_menu();
+                app.open_picker(picker);
             }
         } else if left {
             app.close_title_menu();

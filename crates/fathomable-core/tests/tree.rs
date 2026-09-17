@@ -346,6 +346,31 @@ fn virtual_comparison_paths_are_retained_even_when_absent_on_disk()
 }
 
 #[test]
+fn snapshot_paths_exclude_the_live_workspace_and_keep_historical_files()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("snapshot")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+
+    tree.set_snapshot_paths(
+        &Status::default(),
+        vec![
+            PathBuf::from("README.md"),
+            PathBuf::from("historical.md"),
+            PathBuf::from("src/main.rs"),
+        ],
+    );
+    assert_eq!(names(&tree), ["src", "historical.md", "README.md"]);
+    tree.expand(&mut workspace)?;
+    assert_eq!(
+        names(&tree),
+        ["src", "  main.rs", "historical.md", "README.md"]
+    );
+    assert!(!tree.contains(Path::new("A.txt")));
+    Ok(())
+}
+
+#[test]
 fn only_changed_lists_the_dirty_files_and_their_directories()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("changed")?;

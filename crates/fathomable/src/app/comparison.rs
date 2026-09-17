@@ -1087,6 +1087,25 @@ impl App {
             .collect()
     }
 
+    /// The selected non-working target's complete file boundary.
+    pub(crate) fn comparison_snapshot_paths(&self) -> Option<Vec<PathBuf>> {
+        let comparison = self.comparison.current()?;
+        if comparison.target() == &ComparisonEndpoint::WorkingTree {
+            return None;
+        }
+        let mut paths = comparison.target_paths().to_vec();
+        paths.extend(
+            comparison
+                .changes()
+                .iter()
+                .filter(|change| matches!(change.target(), PathState::Absent))
+                .map(|change| change.path().to_path_buf()),
+        );
+        paths.sort();
+        paths.dedup();
+        Some(paths)
+    }
+
     /// The selected comparison classification for a path.
     pub(crate) fn comparison_kind(&self, path: &Path) -> Option<PathChangeKind> {
         self.comparison.current().and_then(|comparison| {
@@ -1234,7 +1253,7 @@ mod tests {
     use std::path::Path;
 
     use fathomable_core::XdgDirs;
-    use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
+    use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
     use fathomable_testing::{TempDir, git};
 
     use super::Focus;
@@ -1522,6 +1541,80 @@ mod tests {
                 .get(Path::new("a.md"))
                 .map(fathomable_core::status::Entry::state),
             Some(fathomable_core::status::State::Modified)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn historical_target_confines_the_tree_picker_and_file_view() -> anyhow::Result<()> {
+        let dir = repository("comparison-historical-tree")?;
+        let root = dir.0.join("ws");
+        fs::write(root.join("base-only.md"), "base\n")?;
+        fs::write(root.join("shared.md"), "first\n")?;
+        fs::write(root.join("unchanged.md"), "same\n")?;
+        git::commit_and_stage(
+            &root,
+            &[
+                ("base-only.md", "base\n"),
+                ("shared.md", "first\n"),
+                ("unchanged.md", "same\n"),
+            ],
+        )?;
+        let first = Workspace::discover(&root)?
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("first"))?;
+        fs::remove_file(root.join("base-only.md"))?;
+        fs::write(root.join("shared.md"), "second\n")?;
+        fs::write(root.join("target-only.md"), "target\n")?;
+        git::commit_and_stage(
+            &root,
+            &[
+                ("shared.md", "second\n"),
+                ("target-only.md", "target\n"),
+                ("unchanged.md", "same\n"),
+            ],
+        )?;
+        let second = Workspace::discover(&root)?
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("second"))?;
+        fs::write(root.join("current-only.md"), "current\n")?;
+        fs::write(root.join("shared.md"), "third\n")?;
+        git::commit_and_stage(
+            &root,
+            &[
+                ("current-only.md", "current\n"),
+                ("shared.md", "third\n"),
+                ("target-only.md", "target\n"),
+                ("unchanged.md", "same\n"),
+            ],
+        )?;
+
+        let mut app = AppBuilder::at(&root).unopened().build()?;
+        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(first)?));
+        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(second)?));
+        app.show_tree();
+
+        let tree_paths: Vec<_> = app
+            .tree()
+            .into_iter()
+            .flat_map(fathomable_core::tree::Tree::rows)
+            .map(|row| row.path().to_string_lossy().into_owned())
+            .collect();
+        let expected = [
+            "base-only.md",
+            "shared.md",
+            "target-only.md",
+            "unchanged.md",
+        ];
+        assert_eq!(tree_paths, expected);
+        assert_eq!(app.index(Filter::Visible), expected);
+        app.open(Path::new("shared.md"));
+        assert_eq!(app.view().text(), "second\n");
+
+        app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+        assert!(
+            app.tree()
+                .is_some_and(|tree| tree.contains(Path::new("current-only.md")))
         );
         Ok(())
     }

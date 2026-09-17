@@ -22,6 +22,7 @@ impl App {
         }
         let status = self.comparison_status().clone();
         let virtual_paths = self.comparison_virtual_paths();
+        let snapshot_paths = self.comparison_snapshot_paths();
         let Some(tree) = self.tree.as_mut() else {
             return;
         };
@@ -30,7 +31,11 @@ impl App {
             self.notice(error.to_string());
             return;
         }
-        tree.set_virtual_paths(&status, virtual_paths);
+        if let Some(paths) = snapshot_paths {
+            tree.set_snapshot_paths(&status, paths);
+        } else {
+            tree.set_virtual_paths(&status, virtual_paths);
+        }
         self.scroll_tree();
         self.refresh_directory_selection();
         if !self.sidebar.tree {
@@ -49,8 +54,13 @@ impl App {
     pub(super) fn sift_tree(&mut self) {
         let status = self.comparison_status().clone();
         let virtual_paths = self.comparison_virtual_paths();
+        let snapshot_paths = self.comparison_snapshot_paths();
         if let Some(tree) = self.tree.as_mut() {
-            tree.set_virtual_paths(&status, virtual_paths);
+            if let Some(paths) = snapshot_paths {
+                tree.set_snapshot_paths(&status, paths);
+            } else {
+                tree.set_virtual_paths(&status, virtual_paths);
+            }
             self.scroll_tree();
             self.refresh_directory_selection();
         }

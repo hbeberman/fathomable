@@ -597,6 +597,11 @@ impl ReviewPointStore {
             }
         }
         let working_files = workspace.endpoint_files(&ComparisonEndpoint::WorkingTree)?;
+        let target_paths = working_files
+            .iter()
+            .filter(|(_, file)| !file.info.mode().is_directory())
+            .map(|(path, _)| path.clone())
+            .collect();
         let mut paths = BTreeSet::new();
         paths.extend(point_files.keys().cloned());
         paths.extend(working_files.keys().cloned());
@@ -653,6 +658,7 @@ impl ReviewPointStore {
         Ok(Comparison::from_parts(
             ComparisonEndpoint::ReviewPoint(point.id.clone()),
             ComparisonEndpoint::WorkingTree,
+            target_paths,
             changes,
         ))
     }

@@ -924,6 +924,11 @@ impl Workspace {
     ) -> Result<Comparison, WorkspaceError> {
         let base_files = self.endpoint_files(&base)?;
         let target_files = self.endpoint_files(&target)?;
+        let target_paths = target_files
+            .iter()
+            .filter(|(_, file)| !file.info.mode().is_directory())
+            .map(|(path, _)| path.clone())
+            .collect();
         let mut paths = BTreeSet::new();
         paths.extend(base_files.keys().cloned());
         paths.extend(target_files.keys().cloned());
@@ -983,7 +988,7 @@ impl Workspace {
                 changes.push(change);
             }
         }
-        Ok(Comparison::from_parts(base, target, changes))
+        Ok(Comparison::from_parts(base, target, target_paths, changes))
     }
 
     /// Load endpoint bytes for one repository-relative path.

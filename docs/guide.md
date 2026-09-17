@@ -203,7 +203,10 @@ Compare: a1b2c3d -> working tree · All changes
 The selected comparison stays active while opening different files. Its
 changed paths drive the files pane, counts, gutters, `]g`/`[g`, and
 `]G`/`[G`. A deleted or historical-only path opens from its selected
-endpoint even when no matching file exists on disk.
+endpoint even when no matching file exists on disk. With a commit, index, or
+empty-tree target, the Files pane and visible file picker are confined to
+that target snapshot plus base-only deletions; files from newer checkout
+history are not listed. A working-tree target lists the live checkout.
 
 The base and target pickers begin with:
 

@@ -349,6 +349,7 @@ impl PathChange {
 pub struct Comparison {
     base: ComparisonEndpoint,
     target: ComparisonEndpoint,
+    target_paths: Vec<PathBuf>,
     changes: Vec<PathChange>,
 }
 
@@ -363,6 +364,12 @@ impl Comparison {
     #[must_use]
     pub const fn target(&self) -> &ComparisonEndpoint {
         &self.target
+    }
+
+    /// Every non-directory path present on the target, in path order.
+    #[must_use]
+    pub fn target_paths(&self) -> &[PathBuf] {
+        &self.target_paths
     }
 
     /// Every changed repository-relative path, in path order.
@@ -386,11 +393,13 @@ impl Comparison {
     pub(crate) fn from_parts(
         base: ComparisonEndpoint,
         target: ComparisonEndpoint,
+        target_paths: Vec<PathBuf>,
         changes: Vec<PathChange>,
     ) -> Self {
         Self {
             base,
             target,
+            target_paths,
             changes,
         }
     }

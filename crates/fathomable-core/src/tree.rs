@@ -114,10 +114,11 @@ pub enum Rule {
 struct Admitted {
     keep: Option<HashSet<PathBuf>>,
     hide: HashSet<PathBuf>,
+    scope: Option<HashSet<PathBuf>>,
 }
 
 impl Admitted {
-    fn new(shown: Shown, status: &Status) -> Self {
+    fn new(shown: Shown, status: &Status, snapshot_paths: Option<&[PathBuf]>) -> Self {
         let counted = status
             .entries()
             .iter()
@@ -144,11 +145,21 @@ impl Admitted {
                 .map(|entry| entry.path().to_path_buf())
                 .collect()
         };
-        Self { keep, hide }
+        let scope = snapshot_paths.map(|paths| {
+            paths
+                .iter()
+                .flat_map(|path| path.ancestors())
+                .filter(|path| !path.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+                .collect()
+        });
+        Self { keep, hide, scope }
     }
 
     fn admits(&self, path: &Path) -> bool {
-        self.keep.as_ref().is_none_or(|keep| keep.contains(path)) && !self.hide.contains(path)
+        self.keep.as_ref().is_none_or(|keep| keep.contains(path))
+            && !self.hide.contains(path)
+            && self.scope.as_ref().is_none_or(|scope| scope.contains(path))
     }
 }
 
@@ -289,9 +300,16 @@ impl Deleted {
             .retain(|child| !child.deleted || deleted.iter().any(|entry| entry.name == child.name));
         let mut added = false;
         for entry in deleted {
-            if !children.iter().any(|child| child.name == entry.name) {
-                children.push(entry.clone());
-                added = true;
+            match children.iter().position(|child| child.name == entry.name) {
+                Some(index) if children[index].is_dir != entry.is_dir => {
+                    children[index] = entry.clone();
+                    added = true;
+                }
+                Some(_) => {}
+                None => {
+                    children.push(entry.clone());
+                    added = true;
+                }
             }
         }
         if added {
@@ -328,6 +346,7 @@ pub struct Tree {
     admitted: Admitted,
     deleted: Deleted,
     virtual_paths: Vec<PathBuf>,
+    snapshot_paths: Option<Vec<PathBuf>>,
 }
 
 impl Tree {
@@ -351,6 +370,7 @@ impl Tree {
             admitted: Admitted::default(),
             deleted: Deleted::default(),
             virtual_paths: Vec::new(),
+            snapshot_paths: None,
         };
         tree.refresh(workspace)?;
         Ok(tree)
@@ -388,7 +408,7 @@ impl Tree {
     /// leaves an only-changed listing, one that changed appears. Deleted
     /// files remain listed, together with any missing parent directories.
     pub fn sift(&mut self, status: &Status) {
-        self.admitted = Admitted::new(self.shown, status);
+        self.admitted = Admitted::new(self.shown, status, self.snapshot_paths.as_deref());
         self.deleted = Deleted::new(status, &self.virtual_paths);
         let cursor_path = self.current().map(|row| row.path.clone());
         self.rebuild();
@@ -403,9 +423,22 @@ impl Tree {
     /// navigation, while the viewer supplies their comparison-specific
     /// addition/deletion presentation.
     pub fn set_virtual_paths(&mut self, status: &Status, paths: Vec<PathBuf>) {
+        self.snapshot_paths = None;
         self.virtual_paths = paths;
         self.virtual_paths.sort();
         self.virtual_paths.dedup();
+        self.sift(status);
+    }
+
+    /// List only one endpoint snapshot and comparison deletions.
+    ///
+    /// Every supplied path is treated as a file-like entry. Its ancestors
+    /// become directories, including when neither exists in the checkout.
+    pub fn set_snapshot_paths(&mut self, status: &Status, paths: Vec<PathBuf>) {
+        self.virtual_paths = paths;
+        self.virtual_paths.sort();
+        self.virtual_paths.dedup();
+        self.snapshot_paths = Some(self.virtual_paths.clone());
         self.sift(status);
     }
 

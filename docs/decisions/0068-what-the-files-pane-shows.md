@@ -126,6 +126,10 @@ Space F r    recent files                            (unchanged)
   files pane takes no clicks.
 - 0017's tree bullet: the pane may list a subset; the letters, the
   counts, and the root totals are unchanged.
+- 0087's comparison model (amended 2026-09-17): with a non-working target,
+  "all files" means the target snapshot plus base-only comparison deletions,
+  not the current checkout. The visible file picker follows the same boundary.
+  The three rules remain filters over that source.
 
 ## Consequences
 

@@ -123,6 +123,7 @@ click chooses it, and the wheel moves through the visible choices.
 The comparison owns:
 
 - changed-path enumeration, including historical-only paths;
+- the complete target path set used by the files pane and file picker;
 - added, deleted, content, mode, type, binary, unsupported, and unavailable
   facts;
 - file and hunk navigation;
@@ -130,6 +131,14 @@ The comparison owns:
 - gutter changes;
 - unified diff content;
 - historical source loading and labels.
+
+The files pane and visible file picker follow the selected target. A working
+tree target lists the live checkout. A commit, index, or empty-tree target
+lists only that target snapshot, plus base-only paths deleted by the
+comparison so their removal remains navigable. Files added to the checkout
+after an immutable target do not leak into that historical view. Opening a
+listed path displays the selected target's content, or the base content for
+a comparison deletion.
 
 Current Git index/worktree status remains a separately labelled fact. It
 does not replace the selected comparison's changed set.

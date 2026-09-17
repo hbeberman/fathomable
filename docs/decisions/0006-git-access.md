@@ -15,7 +15,9 @@ Status: accepted (2026-08-26)
 Comparison model superseded 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): Git still uses `gix`
 and the owned line diff, but one checkout-wide direct endpoint pair now
-drives paths, content, gutters, counts, and navigation. Last-seen is removed.
+drives paths, content, gutters, counts, and navigation. The comparison retains
+the target's complete path set so historical file navigation cannot read past
+that endpoint. Last-seen is removed.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

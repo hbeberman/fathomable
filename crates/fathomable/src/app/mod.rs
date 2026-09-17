@@ -2249,7 +2249,11 @@ impl App {
             Ok(mut tree) => {
                 let status = self.comparison_status().clone();
                 tree.sift(&status);
-                tree.set_virtual_paths(&status, self.comparison_virtual_paths());
+                if let Some(paths) = self.comparison_snapshot_paths() {
+                    tree.set_snapshot_paths(&status, paths);
+                } else {
+                    tree.set_virtual_paths(&status, self.comparison_virtual_paths());
+                }
                 self.tree = Some(tree);
                 true
             }
@@ -2385,6 +2389,12 @@ impl App {
     }
 
     fn index(&mut self, filter: Filter) -> Vec<String> {
+        if let Some(paths) = self.comparison_snapshot_paths() {
+            return paths
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+        }
         let mut files = match filter {
             Filter::All => self.all_index.files(&mut self.workspace),
             Filter::Visible => self.file_index.files(&mut self.workspace),

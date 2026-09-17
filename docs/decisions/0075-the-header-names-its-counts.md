@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The header names its counts
-description: The review list's header reads `review threads`, and each count on it and on the threads pane's header carries a word saying whose the circle is (`● 2 user  ● 3 agent  ◐ 1 resolve?  ○ 1 resolved`); a proposed thread counts under its own `◐` rather than under waiting; and when the row cannot hold the words they all drop together, leaving the bare counts as before.
+description: Review and Threads headers name each lifecycle count (`● 2 active  ◐ 1 resolution proposed  ○ 1 resolved`); zero counts are omitted, and when the row cannot hold all words they drop together before the bare counts do.
 resource: crates/fathomable/src/app/draw/counts.rs
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
@@ -19,8 +19,11 @@ Status: superseded in part (2026-09-16) by
 [0086](0086-one-thread-summary-and-its-actions.md). Header and directory
 counts now partition lifecycle as `● n active`, `◐ n resolution proposed`,
 and `○ n resolved`; user/agent last-act counts and waiting retire. Zero
-counts are omitted, all words still drop together before counts, and the
-resolved count remains the `x` hit target. Historical wording follows.
+counts are omitted and all words still drop together before counts.
+
+Amended 2026-09-17: header counts are passive. The normal review title is
+`Reviews`; its checked title menu and bottom key bar own `x`, while lifecycle
+counts remain display state at the right. Historical wording follows.
 
 ## Context
 

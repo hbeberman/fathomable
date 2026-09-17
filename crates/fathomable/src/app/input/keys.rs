@@ -220,7 +220,7 @@ impl App {
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
-            Action::Review => self.toggle_review(),
+            Action::Review => self.open_review(),
             Action::ReviewRecentlyResolved => self.open_review_view(ReviewView::RecentlyResolved),
             Action::ReviewArchived => self.open_review_view(ReviewView::Archived),
             Action::ArchiveResolved => self.archive_resolved_threads(),
@@ -670,8 +670,8 @@ mod tests {
     }
 
     #[test]
-    fn bare_t_toggles_review_from_every_normal_pane() -> anyhow::Result<()> {
-        let dir = fixture("review-toggle")?;
+    fn bare_t_opens_reviews_from_every_normal_pane() -> anyhow::Result<()> {
+        let dir = fixture("reviews-open")?;
         let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "three");
 
@@ -679,13 +679,15 @@ mod tests {
         assert!(app.review_list().is_open());
         app.focus_threads_pane();
         press(&mut app, "t");
-        assert!(!app.review_list().is_open());
+        assert!(app.review_list().is_open());
+        assert_eq!(app.focus(), Focus::Review);
 
-        app.show_tree();
+        app.window_files();
         press(&mut app, "t");
         assert!(app.review_list().is_open());
         press(&mut app, "t");
-        assert!(!app.review_list().is_open());
+        assert!(app.review_list().is_open());
+        assert_eq!(app.focus(), Focus::Review);
 
         app.start_new_comment();
         press(&mut app, "tRr");

@@ -4,14 +4,12 @@
 //!
 //! The review list's and the threads pane's headers count the threads
 //! in scope by lifecycle: `● 2 active`, `◐ 1 resolution proposed`, and
-//! `○ 1 resolved`. A zero count is left out. The review header's resolved
-//! count is a click on `x`; the threads pane's counts are passive. A hidden
-//! resolved count reads dim. The words are one set:
+//! `○ 1 resolved`. A zero count is left out. Header counts are passive; a
+//! hidden resolved count reads dim. The words are one set:
 //! [`super::header::Header`] draws them all or none, dropping them together
 //! when its row is too narrow.
 
 use crate::app::draw::header::HintOf;
-use crate::app::input::bindings::Action;
 use crate::app::threads::ThreadState;
 use crate::app::threads::list::Counts;
 
@@ -22,23 +20,8 @@ const PROPOSED: &str = "resolution proposed";
 /// The word after `○`.
 const RESOLVED: &str = "resolved";
 
-/// The hints for `counts`: active, proposed, and resolved in
-/// that order, a zero left out, the resolved count dim while
-/// `resolved_shown` is false.
-pub(crate) fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
-    count_hints_with_resolved_action(counts, resolved_shown, &[Action::ReviewResolved])
-}
-
-/// Passive lifecycle counts for a pane whose title menu owns its settings.
+/// Passive lifecycle counts for pane headers.
 pub(crate) fn passive_count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
-    count_hints_with_resolved_action(counts, resolved_shown, &[])
-}
-
-fn count_hints_with_resolved_action(
-    counts: Counts,
-    resolved_shown: bool,
-    resolved_actions: &[Action],
-) -> Vec<HintOf> {
     let mut hints = Vec::with_capacity(3);
     if counts.active > 0 {
         hints.push(HintOf::count(
@@ -67,7 +50,7 @@ fn count_hints_with_resolved_action(
             ThreadState::Resolved,
             counts.resolved,
             !resolved_shown,
-            resolved_actions,
+            &[],
         ));
     }
     hints
@@ -85,8 +68,8 @@ mod tests {
 
     fn header(counts: Counts) -> Header {
         Header::counted(
-            vec![(" review threads ".to_owned(), Tone::Key)],
-            count_hints(counts, false),
+            vec![(" Reviews".to_owned(), Tone::Key)],
+            passive_count_hints(counts, false),
             Align::Left,
         )
     }
@@ -113,13 +96,13 @@ mod tests {
         };
         assert_eq!(
             text(&header(counts), 80)?,
-            " review threads  ● 2 active ◐ 1 resolution proposed ○ 1 resolved"
+            " Reviews ● 2 active ◐ 1 resolution proposed ○ 1 resolved"
         );
         let quiet = Counts {
             resolved: 1,
             ..Counts::default()
         };
-        assert_eq!(text(&header(quiet), 80)?, " review threads  ○ 1 resolved");
+        assert_eq!(text(&header(quiet), 80)?, " Reviews ○ 1 resolved");
         Ok(())
     }
 
@@ -166,37 +149,20 @@ mod tests {
             resolved: 1,
         };
         let header = header(counts);
-        assert_eq!(text(&header, 56)?, " review threads  ● 2 ◐ 1 ○ 1");
-        assert_eq!(text(&header, 26)?, " review threads  ● 2 ◐ 1");
+        assert_eq!(text(&header, 56)?, " Reviews ● 2 ◐ 1 ○ 1");
+        assert_eq!(text(&header, 20)?, " Reviews ● 2 ◐ 1");
         Ok(())
     }
 
-    /// A click on the resolved count runs `x` in both forms.
+    /// Lifecycle counts are state, not click targets.
     #[test]
-    fn the_resolved_count_takes_a_click_with_or_without_its_word() {
+    fn lifecycle_counts_are_passive() {
         let counts = Counts {
             active: 2,
             proposed: 0,
             resolved: 1,
         };
         let header = header(counts);
-        let worded = " review threads  ● 2 active ○ 1 resolved";
-        let at = |s: &str| fathomable_core::layout::display_width(s);
-        assert_eq!(
-            header.action_at(80, at(worded) - 1),
-            Some(Action::ReviewResolved),
-            "the word is part of the hint"
-        );
-        assert_eq!(
-            header.action_at(80, at(" review threads  ● 2 active")),
-            None,
-            "the space between the hints runs nothing"
-        );
-        let bare = " review threads  ● 2 ○ 1";
-        assert_eq!(
-            header.action_at(at(bare) + 2, at(bare) - 1),
-            Some(Action::ReviewResolved),
-            "the bare count still takes the click"
-        );
+        assert!((0..80).all(|column| header.action_at(80, column).is_none()));
     }
 }

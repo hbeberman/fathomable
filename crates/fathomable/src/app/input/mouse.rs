@@ -145,10 +145,9 @@ fn threads_pane_mouse(
 /// 0076): the wheel scrolls, a click selects the entry under the
 /// pointer or folds the file row it lands on, a click on a thread's
 /// chevron or a double-click on its row folds or expands it, a click on
-/// the header's resolved count or a key-bar hint runs it, and a
-/// right-click on a row opens its menu. Row 0 is the list header and
-/// the column's last row is the key bar; unfocused, a click on either
-/// focuses the list.
+/// the `Reviews` title opens its settings, a key-bar hint runs it, and a
+/// right-click on a row opens its menu. Row 0 is the list header and the
+/// column's last row is the key bar.
 fn review_mouse(
     app: &mut App,
     kind: MouseEventKind,
@@ -160,19 +159,25 @@ fn review_mouse(
     match kind {
         MouseEventKind::ScrollDown => app.review_scroll(WHEEL_LINES),
         MouseEventKind::ScrollUp => app.review_scroll(-WHEEL_LINES),
-        MouseEventKind::Down(MouseButton::Left) if row == 0 || row == bar => {
+        MouseEventKind::Down(MouseButton::Left) if row == 0 => {
+            app.focus_pane(Focus::Review);
+            let local = column.saturating_sub(app.sidebar_width());
+            let header = header::review_header(app);
+            if app.review().view == crate::app::threads::list::ReviewView::Board
+                && local < header.left_width()
+            {
+                app.open_reviews_settings_menu(screen_row);
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) if row == bar => {
             if app.focus() != Focus::Review {
                 app.focus_pane(Focus::Review);
                 return Effect::None;
             }
-            let width = app.column_width();
-            let rows = app.review_rows(width);
-            let header = if row == 0 {
-                header::review_header(app)
-            } else {
-                header::review_footer(app, &rows.entries)
-            };
-            if let Some(action) = header.action_at(width, column - app.sidebar_width()) {
+            let rows = app.review_rows(app.column_width());
+            let footer = header::review_footer(app, &rows.entries);
+            if let Some(action) = footer.action_at(app.column_width(), column - app.sidebar_width())
+            {
                 return app.act(action);
             }
         }

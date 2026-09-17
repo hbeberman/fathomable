@@ -708,13 +708,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "files: show ignored",
     ),
-    bind(
-        W::Any,
-        &[&[c('t')]],
-        A::Review,
-        "Threads",
-        "toggle review threads",
-    ),
+    bind(W::Any, &[&[c('t')]], A::Review, "Reviews", "open reviews"),
     bind(
         W::Any,
         &[&[c(' '), c('c'), c('R')]],

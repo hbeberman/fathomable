@@ -40,6 +40,12 @@ without keys. Only the hovered action composes
 while their cursor header is visible and restores them when it is off-screen.
 The older metadata-only entry-header and count wording remains below.
 
+Amended 2026-09-17: the normal review header is `Reviews` at the left, with
+subdued `workspace`/`file` scope and lifecycle counts at the right. Scope
+shortens to `w`/`f` before it is omitted. The title opens its two checked
+view settings below the header; scope and counts are passive. The bottom key
+bar remains unchanged.
+
 ## Context
 
 The review list of [0049](0049-inline-threads-and-the-rail.md) drew its

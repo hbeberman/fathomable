@@ -131,7 +131,7 @@ continuations. These tables contain the main bindings.
 | `Space c r` | reply to the cursor thread |
 | `Space c e` | edit your newest message |
 | `Space c d` | delete the cursor thread |
-| `t` | open or close the repository board |
+| `t` | open or focus Reviews |
 | `r` | resolve or reopen the cursor thread |
 | `R` | toggle one-shot auto-resolve |
 | `e` | edit your selected message |
@@ -209,6 +209,13 @@ Right-clicking a file group offers **Fold/Unfold**, **Fold/Unfold all**, and
 Right-clicking a thread offers **Go to**, **Reply**, auto-resolve,
 **Resolve/Reopen**, conditional **Archive**, edit, and **Delete** actions,
 plus **Fold file** in workspace scope.
+
+The normal full-column review view reads `Reviews` at the left. Clicking
+that title opens checked **Only current file** and **Show resolved** settings
+below the header, aligned with the text column. Subdued `workspace` or
+`file` scope and lifecycle counts are passive and right-aligned; scope
+shortens to `w` or `f` before disappearing. Bare `t` always opens and focuses
+Reviews rather than toggling it closed; `Esc` returns to the document.
 
 Context and menu-bar popups put action labels at the left and their subdued
 shortcuts at the right, with at least one cell between them. Those menus use
@@ -400,8 +407,10 @@ commit ID rather than pretending the endpoint moved.
 Both labels use the menu's muted-blue accent and hover background. Clicking
 the base or target label opens that endpoint's picker.
 
-**Review** contains the board, Recently resolved, Archived threads, Archive
-resolved threads, Clear board, and contextual thread actions. **Diff**
+**Review** contains the unchecked **Reviews** command, Recently resolved,
+Archived threads, Archive resolved threads, Clear board, filters, and
+contextual thread actions. **Reviews** opens and focuses the normal view; it
+is not a shown/hidden toggle. **Diff**
 contains Comparison controls, base/target pickers, Save review point, and
 whitespace. **Start comparison at current HEAD** remains inside Comparison
 controls. Under **☰ → Layout**, stable **Sidebar**, **Files pane**, and

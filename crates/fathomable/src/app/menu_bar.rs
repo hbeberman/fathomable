@@ -70,7 +70,6 @@ impl Submenu {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Target {
     Action(Action),
-    ReviewToggle,
     ReviewResolved,
     ReviewFile,
     GettingStarted,
@@ -571,15 +570,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::JumpNewest, "Newest change")),
         ],
         Root::Review => vec![
-            Row::Item(Item {
-                label: "Review threads".to_owned(),
-                hint: bindings::first_keys(Where::View, Action::Review)
-                    .map(bindings::menu_spell)
-                    .unwrap_or_default(),
-                enabled: true,
-                checked: app.review_list().is_open(),
-                target: Target::ReviewToggle,
-            }),
+            Row::Item(Item::action(app, Action::Review, "Reviews")),
             Row::Item(Item::action(
                 app,
                 Action::ReviewRecentlyResolved,
@@ -721,7 +712,6 @@ fn action_available(app: &App, action: Action) -> bool {
 
 fn action_checked(app: &App, action: Action) -> bool {
     match action {
-        Action::Review => app.review_list().is_open(),
         Action::SidebarToggle => app.sidebar.shown(),
         Action::TreeToggle => app.sidebar.tree,
         Action::ThreadsPaneToggle => app.sidebar.threads,
@@ -770,14 +760,6 @@ impl App {
         self.close_title_menu();
         match target {
             Target::Action(action) => self.act(action),
-            Target::ReviewToggle => {
-                if self.review_list().is_open() {
-                    self.close_review();
-                } else {
-                    self.open_review();
-                }
-                Effect::None
-            }
             Target::ReviewResolved => {
                 self.review_toggle_resolved();
                 Effect::None
@@ -846,7 +828,6 @@ const fn colon<const N: usize>(word: &str) -> [Chord; N] {
 fn target_keys(target: Target) -> Option<&'static [Chord]> {
     match target {
         Target::Action(action) => bindings::first_keys(Where::View, action),
-        Target::ReviewToggle => bindings::first_keys(Where::View, Action::Review),
         Target::ReviewResolved => Some(&REVIEW_RESOLVED_KEY),
         Target::ReviewFile => Some(&REVIEW_FILE_KEY),
         Target::GettingStarted => Some(&HELP_KEYS),
@@ -1363,7 +1344,7 @@ mod tests {
         let review = rows(&app, Root::Review);
         assert_eq!(
             review[0].item().map(|item| (&*item.label, item.checked)),
-            Some(("Review threads", false))
+            Some(("Reviews", false))
         );
         assert_eq!(
             review[5].item().map(|item| (&*item.label, item.checked)),
@@ -1810,13 +1791,19 @@ mod tests {
     }
 
     #[test]
-    fn review_menu_closes_an_open_unfocused_review() -> anyhow::Result<()> {
-        let mut app = shown_app("review-close")?;
+    fn review_menu_focuses_an_open_review() -> anyhow::Result<()> {
+        let mut app = shown_app("review-focus")?;
         app.open_review();
         app.window_files();
         assert!(app.review_list().is_open());
-        app.run_title_target(super::Target::ReviewToggle);
-        assert!(!app.review_list().is_open());
+        assert_eq!(
+            rows(&app, Root::Review)[0].item().map(|item| item.checked),
+            Some(false),
+            "Reviews is a command, not a checked toggle"
+        );
+        app.run_title_target(super::Target::Action(super::Action::Review));
+        assert!(app.review_list().is_open());
+        assert_eq!(app.focus(), crate::app::Focus::Review);
         Ok(())
     }
 

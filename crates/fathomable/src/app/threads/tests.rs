@@ -929,7 +929,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
 
 /// Esc leaves a pane where it is; `Space w h` focuses it and
 /// `Space w l` hands the keys back, `Space p t` hides it, and `t` opens
-/// and closes the review list (ADR 0010, ADR 0049, ADR 0056).
+/// and focuses Reviews (ADR 0010, ADR 0049, ADR 0056).
 #[test]
 fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -970,12 +970,12 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
     press(&mut app, KeyCode::Char('t'));
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Review);
+    app.window_files();
+    assert!(app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::Tree);
     press(&mut app, KeyCode::Char('t'));
-    assert!(
-        !app.review_list().is_open(),
-        "t on the focused list closes it"
-    );
-    press(&mut app, KeyCode::Char('t'));
+    assert!(app.review_list().is_open(), "t never closes Reviews");
+    assert_eq!(app.focus(), Focus::Review, "t focuses an open Reviews view");
     press(&mut app, KeyCode::Esc);
     assert!(
         !app.review_list().is_open(),
@@ -2395,7 +2395,7 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
     ));
     let screen = render(&app)?;
     assert!(
-        screen.contains("review threads  ◐ 1 resolution proposed"),
+        screen.contains("Reviews") && screen.contains("◐ 1 resolution proposed"),
         "a proposal counts under its own circle (ADR 0075): {screen}"
     );
     assert!(

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The thread list
-description: Space A opens every thread on the current work, open then resolved, grouped by file, in place of the document; Enter jumps to one, and the file picker it replaces is gone.
+description: Reviews opens in place of the document, groups repository threads by file, exposes filters through its title and key bar, and opens a selected thread back in its file.
 resource: crates/fathomable/src/app/threads/list.rs
 tags:
   - decision
@@ -26,6 +26,12 @@ to file and line order, hides resolved threads until `x` shows them
 (`Z` is gone), carries the path in every entry header, `f` narrows to
 the current file, and `Enter` opens the file with the thread expanded
 in place since the thread pane is gone.
+
+Amended 2026-09-17: the normal view's header is `Reviews` at the left, with
+passive responsive scope and lifecycle counts at the right. Clicking the
+title opens checked **Only current file** and **Show resolved** settings
+below the header. Bare `t` opens and focuses Reviews; it no longer closes an
+open view, while `Esc` still returns to the document.
 
 Selection superseded 2026-09-14 by [0079](0079-list-focus-language.md):
 review entry rows use shared active/remembered styles; message author

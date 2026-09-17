@@ -827,7 +827,7 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
 
     // The review list's key bar: the `resolved` hint toggles the flag
     // (ADR 0059).
-    app.toggle_review();
+    app.open_review();
     assert_eq!(app.focus(), Focus::Review);
     let list_rows = app.review_rows(app.column_width());
     let bar = header::review_footer(&app, &list_rows.entries);
@@ -839,15 +839,13 @@ fn header_hints_take_clicks() -> anyhow::Result<()> {
     left(&mut app, sidebar + col, bar_row);
     assert_ne!(app.review().resolved, before, "the resolved hint ran");
 
-    // The header's resolved count, once there is one, toggles it back
-    // (ADR 0066).
+    // Lifecycle counts are passive; the title menu owns these settings.
     app.thread_toggle_resolved();
     let header = header::review_header(&app);
-    let col = (0..width)
-        .find(|&c| header.action_at(width, c) == Some(Action::ReviewResolved))
-        .context("the resolved count is drawn")?;
-    left(&mut app, sidebar + col, 0);
-    assert_eq!(app.review().resolved, before, "the count ran x");
+    assert!(
+        (0..width).all(|column| header.action_at(width, column).is_none()),
+        "review scope and counts are passive"
+    );
     Ok(())
 }
 
@@ -1101,6 +1099,67 @@ fn the_threads_title_opens_checked_settings_below_the_header() -> anyhow::Result
         (0..app.sidebar_width().saturating_sub(1))
             .all(|column| header.action_at(app.sidebar_width() - 1, column).is_none()),
         "scope and counts are passive"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result<()> {
+    let dir = fixture("reviews-title")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    app.open_review();
+    let header_row = app.pane_top();
+    let sidebar = app.sidebar_width();
+    let screen = testing::screen(&app)?;
+    let header_text = &screen[header_row];
+    assert!(header_text.contains("Reviews"), "{header_text:?}");
+    assert!(header_text.contains("workspace"), "{header_text:?}");
+
+    left(&mut app, sidebar + 1, header_row);
+    assert_eq!(app.focus(), Focus::Review);
+    assert_eq!(app.menu().map(Menu::title), Some("Reviews"));
+    let settings = app
+        .menu()
+        .context("the Reviews menu")?
+        .entries()
+        .iter()
+        .map(|entry| (entry.label().to_owned(), entry.checked()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        settings,
+        [
+            ("only current file".to_owned(), Some(false)),
+            ("show resolved".to_owned(), Some(false)),
+        ]
+    );
+    let grid = app.menu().context("the Reviews menu")?.grid_in(
+        app.size().0,
+        app.pane_top(),
+        app.pane_rows(),
+    );
+    assert_eq!(grid.x, sidebar);
+    assert_eq!(grid.y, header_row + 1);
+
+    let cell = entry_cell(&app, "only current file")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.review().file_only);
+
+    left(&mut app, sidebar + 1, header_row);
+    let cell = entry_cell(&app, "show resolved")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.review().resolved);
+
+    let header = header::review_header(&app);
+    assert!(
+        (0..app.column_width())
+            .all(|column| { header.action_at(app.column_width(), column).is_none() }),
+        "scope and counts are passive"
+    );
+    left(&mut app, sidebar + header.left_width() + 1, header_row);
+    assert!(
+        app.menu().is_none(),
+        "passive header cells do not open a menu"
     );
     Ok(())
 }

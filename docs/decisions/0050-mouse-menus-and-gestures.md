@@ -81,10 +81,10 @@ relative `copy path` (`y`) for both files and directories, and the file
 action is labelled `file comment`.
 
 Amended later 2026-09-17: pane-title settings menus are chrome, not context
-menus. They open at the sidebar's left edge with their top border on the row
+menus. They open at their pane's left edge with their top border on the row
 immediately below the clicked header, while right-click menus remain anchored
-at the pointer. The Threads title now opens its scope and resolved settings;
-its state at the right of the header is passive.
+at the pointer. The Threads and Reviews titles open scope and resolved
+settings; state at the right of those headers is passive.
 
 ## Context
 
@@ -170,7 +170,7 @@ same day; the choices are below.
   between the two. Shortcut labels abbreviate `Space` as `Sp`. Borders use
   the subdued info face and hover uses `ui.list.hover`. No new theme key.
 - **Pane-title menus are the exception to pointer anchoring.** A left-click
-  on a pane title opens its settings menu at the sidebar's left edge, with the
+  on a pane title opens its settings menu at that pane's left edge, with the
   top border one row below that pane's header. The popup still shifts to stay
   on screen when the terminal cannot hold it there. A right-click context menu
   continues to start at the pointer.
@@ -234,6 +234,9 @@ same day; the choices are below.
 - A click on the `Threads` title opens checked **Only current file** and
   **Show resolved** settings. Scope, lifecycle counts, and the rest of the
   header are passive; clicking them only focuses the pane.
+- A click on the normal review view's `Reviews` title opens the same two
+  checked settings at the text column's left edge. Its scope and lifecycle
+  counts are passive; clicking them only focuses Reviews.
 - A click on the `Files` title opens that pane's checked **Only changed**,
   **Show untracked**, and **Show ignored** settings. The filter-state words
   and diff totals are passive, and right-click anywhere on the Files header

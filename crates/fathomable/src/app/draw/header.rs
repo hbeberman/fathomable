@@ -25,7 +25,7 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::counts::{count_hints, passive_count_hints};
+use crate::app::draw::counts::passive_count_hints;
 use crate::app::draw::nest::NEST;
 use crate::app::draw::{Theme, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
@@ -593,24 +593,35 @@ pub(crate) fn summary_rehover(
     }
 }
 
-/// The review list's header (ADR 0025, ADR 0049, ADR 0066, ADR 0075):
-/// `review threads`, the path while the list is one file's, then the
-/// counts by colour with their words.
+/// The review list's header (ADR 0025, ADR 0066, ADR 0075).
+///
+/// The normal board draws a clickable `Reviews` title, then passive scope
+/// and lifecycle counts against the right edge. History views keep their
+/// specific title and passive counts.
 pub(crate) fn review_header(app: &App) -> Header {
     let review = app.review();
-    let mut left = vec![(format!(" {}", review.view.title()), Tone::Key)];
-    if review.view == ReviewView::Board && review.file_only {
-        left.push((format!(" · {}", app.current_path().display()), Tone::Info));
+    let counts = passive_count_hints(
+        app.review_counts(review.file_only),
+        review.view != ReviewView::Board || review.resolved,
+    );
+    if review.view == ReviewView::Board {
+        let (scope, compact) = if review.file_only {
+            ("file", "f")
+        } else {
+            ("workspace", "w")
+        };
+        Header::counted_with_tail(
+            vec![(" Reviews".to_owned(), Tone::Dir)],
+            vec![HintOf::responsive_word(scope, compact, Tone::Info)],
+            counts,
+        )
+    } else {
+        Header::counted(
+            vec![(format!(" {}", review.view.title()), Tone::Key)],
+            counts,
+            Align::Right,
+        )
     }
-    left.push((" ".to_owned(), Tone::Info));
-    Header::counted(
-        left,
-        count_hints(
-            app.review_counts(review.file_only),
-            review.view != ReviewView::Board || review.resolved,
-        ),
-        Align::Left,
-    )
 }
 
 /// The review list's key bar on its bottom row (ADR 0059, ADR 0066):

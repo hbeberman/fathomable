@@ -22,7 +22,7 @@ Lifecycle, keys, and format amended 2026-09-16 by
 store is exact format **4** with explicit active, resolution-proposed, and
 resolved lifecycle, one-shot auto-resolve, and atomic compound replies.
 Bare `r` resolves/reopens, bare `R` toggles auto-resolve, and bare `t`
-toggles review outside input modes. The format-1 event list and older key
+opens and focuses Reviews outside input modes. The format-1 event list and older key
 notes below are historical.
 
 Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): a press in the gutter, a double- or triple-click, and Shift-click select as a drag does, ending in `SEL` mode; a right-click on the selection offers `c`, `Space c c`, and `y` as a menu. Earlier on 2026-09-16, [0065](0065-z-folds-and-unfolds.md) made `c` reply from a thread row and otherwise start a thread, `z` expand or fold one, and standalone `C` and `r` unbound; 0086 later restores `r` as resolve/reopen.

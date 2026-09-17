@@ -39,9 +39,13 @@ Amended later 2026-09-17: **Layout** uses stable **Sidebar**, **Files pane**,
 and **Threads pane** labels. A checkmark means that surface is shown; toggling
 it changes the mark rather than rewriting the label.
 
-The same state-label rule applies to the other checked menu items: **Review
-threads**, **Show resolved**, **Only current file**, and **Ignore
-whitespace** retain their text while their checkmark changes.
+The same state-label rule applies to the other checked menu items: **Show
+resolved**, **Only current file**, and **Ignore whitespace** retain their
+text while their checkmark changes.
+
+Amended later 2026-09-17: **Reviews** replaces **Review threads** as an
+unchecked command. It opens and focuses the normal review view; invoking it
+again does not close that view.
 
 ## Context
 

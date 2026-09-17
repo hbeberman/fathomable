@@ -77,7 +77,7 @@ fn origin_evidence(thread: &Thread) -> String {
 impl ReviewView {
     pub(crate) const fn title(self) -> &'static str {
         match self {
-            Self::Board => "review threads",
+            Self::Board => "Reviews",
             Self::RecentlyResolved => "Recently resolved",
             Self::Archived => "Archived threads",
         }
@@ -443,18 +443,10 @@ impl App {
         &self.review_list
     }
 
-    /// `t`: toggle the review list from any normal pane.
-    pub(crate) fn toggle_review(&mut self) {
-        if self.review_list.is_open() {
-            self.close_review();
-        } else {
-            self.open_review();
-        }
-    }
-
-    /// Show the list in place of the document. The pane closes; the
-    /// filter and folds are whatever they were last time, and the cursor
-    /// is where the reader was (ADR 0046).
+    /// Show Reviews in place of the document and give it focus.
+    ///
+    /// The pane closes; the filter and folds are whatever they were last
+    /// time, and the cursor is where the reader was (ADR 0046).
     pub(crate) fn open_review(&mut self) {
         self.open_review_view(ReviewView::Board);
     }

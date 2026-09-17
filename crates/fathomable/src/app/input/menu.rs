@@ -78,8 +78,8 @@ impl Menu {
     }
 
     /// A pane-title menu whose top border sits immediately below its header.
-    fn below_header(title: impl Into<String>, place: Where, row: usize) -> Self {
-        Self::new(title, place, 0, row.saturating_add(1))
+    fn below_header(title: impl Into<String>, place: Where, column: usize, row: usize) -> Self {
+        Self::new(title, place, column, row.saturating_add(1))
     }
 
     /// Add an entry showing `shown`'s key and running `run`; an action
@@ -474,7 +474,7 @@ impl App {
 
     /// A left-click on the Files title opens display settings below the header.
     pub(super) fn open_files_menu(&mut self, row: usize) {
-        let mut menu = Menu::below_header("Files", Where::Tree, row);
+        let mut menu = Menu::below_header("Files", Where::Tree, 0, row);
         for action in [
             Action::FilesChanged,
             Action::FilesUntracked,
@@ -492,12 +492,30 @@ impl App {
 
     /// A left-click on the Threads title opens view settings below the header.
     pub(super) fn open_threads_menu(&mut self, row: usize) {
-        let mut menu = Menu::below_header("Threads", Where::ThreadsPane, row);
+        let mut menu = Menu::below_header("Threads", Where::ThreadsPane, 0, row);
         menu.push_toggle(
             Action::PaneScope,
             Action::PaneScope,
             "only current file",
             self.sidebar_scope() == PaneScope::File,
+        );
+        menu.push_toggle(
+            Action::ReviewResolved,
+            Action::ReviewResolved,
+            "show resolved",
+            self.review().resolved,
+        );
+        self.open_menu(menu);
+    }
+
+    /// A left-click on the Reviews title opens view settings below the header.
+    pub(super) fn open_reviews_settings_menu(&mut self, row: usize) {
+        let mut menu = Menu::below_header("Reviews", Where::Review, self.sidebar_width(), row);
+        menu.push_toggle(
+            Action::FileOnly,
+            Action::FileOnly,
+            "only current file",
+            self.review().file_only,
         );
         menu.push_toggle(
             Action::ReviewResolved,

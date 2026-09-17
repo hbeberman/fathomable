@@ -51,6 +51,11 @@ counts are passive and right-aligned; `file`/`workspace` shorten to `f`/`w`
 before scope is omitted. A pane file-group menu no longer carries the
 pane-wide resolved setting.
 
+Amended later 2026-09-17: the normal full-column review view adopts the same
+model. `Reviews` is the clickable left title; passive `workspace`/`file`
+scope and lifecycle counts sit at the right, with `w`/`f` as the compact
+scope. Its title menu carries **Only current file** and **Show resolved**.
+
 ## Context
 
 A thread's state was said four ways. The gutter drew `╭ │ ╰` and a
@@ -211,10 +216,11 @@ agents' green (amber and teal until 2026-09-09).
   rows are stops, `Z` folds or expands every thread and the list has
   no fold-all for files, and a file row always draws `▾` or `▸`; the
   pane keeps its file folds and gains the arrows.)
-- The header reads `review  ●2 ●2 ○1`, then ` · path` while `f`
-  narrows the list; the order word goes with `s` (since 2026-09-11,
-  [0075](0075-the-header-names-its-counts.md): `review threads`, the
-  counts with their words). The key bar reads `x
+- The normal header reads `Reviews` at the left, then passive
+  `workspace`/`file` scope and lifecycle counts at the right. Count words
+  drop together, scope shortens to `w`/`f`, and scope is omitted before the
+  counts. The `Reviews` title opens checked **Only current file** and **Show
+  resolved** settings below the header. The key bar reads `x
   resolved · f file · z fold · Z fold all · Enter open · c reply · e
   edit · o resolve · k/j threads · l/h messages · Esc`.
 
@@ -235,6 +241,9 @@ Everything the keys do here the mouse does too, extending
 - The pane's header: a click on `Threads` opens the checked scope and
   resolved settings below the header. A click on its passive scope or counts
   only focuses the pane.
+- The normal review header works the same way: `Reviews` opens the checked
+  scope and resolved settings below the text-column header; its passive state
+  only focuses the view.
 - The key bar: a click on a hint runs it; a pane without the keys
   focuses on the first click and shows the bar, as the list does.
 - The files pane: a right-click on a file with listed threads gains

@@ -40,7 +40,7 @@ use crate::app::draw::nest::{NEST, nest_span};
 use crate::app::draw::note::note_cell;
 use crate::app::draw::selection::{Navigation, context_marker};
 use crate::app::input::bindings::Action;
-use crate::app::threads::list::{BODY_INDENT, Row, Rows};
+use crate::app::threads::list::{BODY_INDENT, ReviewView, Row, Rows};
 use crate::app::threads::stubs::{Stub, Subject};
 use crate::app::threads::words::Words;
 use crate::app::threads::{Compose, ThreadState};
@@ -762,7 +762,7 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
         ("Space w h", "browse the files".to_owned()),
-        ("t", "toggle review threads".to_owned()),
+        ("t", "open reviews".to_owned()),
         ("Space ?", "view the keymap".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -2653,7 +2653,14 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let now = fathomable_core::clock::now();
     // The header, the entries between, and the key bar on the last row
     // (ADR 0059); one row shows the header alone.
-    let mut lines = vec![review_header(app).line(theme, width)];
+    let header = review_header(app);
+    let title_hovered = app.review().view == ReviewView::Board
+        && app.pointer().is_some_and(|(column, row)| {
+            row == app.pane_top()
+                && column >= app.sidebar_width()
+                && column - app.sidebar_width() < header.left_width()
+        });
+    let mut lines = vec![header.line_with_left_hover(theme, width, title_hovered)];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for (offset, row) in all.iter().skip(scroll).take(body).enumerate() {

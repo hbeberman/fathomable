@@ -20,6 +20,10 @@ engine now serves Recently resolved and Archived threads, with archive and
 restore actions. `Space c a`, `Space c A`, `Space c R`, and `Space c h`
 provide deliberate repository-board cleanup and history.
 
+Review navigation amended 2026-09-17: bare `t` opens and focuses the normal
+Reviews view instead of toggling it closed. `Esc` remains the explicit return
+to the document.
+
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
 [0066](0066-one-circle-language.md), and
@@ -136,7 +140,8 @@ total thread count.
 
 ### Key grammar
 
-- Bare `t` toggles the full review view from normal non-input panes.
+- Bare `t` opens and focuses the full Reviews view from normal non-input
+  panes; repeated presses leave it open.
 - Bare `t` no longer picks a diff target or opens file-scoped sidebar
   threads; `Space d t` remains the diff-target picker.
 - The old `Space r` review route retires.

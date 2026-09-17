@@ -1129,6 +1129,8 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     assert_eq!(
         settings,
         [
+            ("open file".to_owned(), None),
+            (String::new(), None),
             ("only current file".to_owned(), Some(false)),
             ("show resolved".to_owned(), Some(false)),
         ]
@@ -1161,6 +1163,66 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
         app.menu().is_none(),
         "passive header cells do not open a menu"
     );
+
+    left(&mut app, sidebar + 1, header_row);
+    let cell = entry_cell(&app, "open file")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(!app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::View);
+    Ok(())
+}
+
+#[test]
+fn the_file_title_opens_navigation_and_display_settings() -> anyhow::Result<()> {
+    let dir = fixture("file-title")?;
+    let mut app = app(&dir)?;
+    annotate(&mut app)?;
+    let header_row = app.text_top() - 1;
+    let sidebar = app.sidebar_width();
+    let header = header::file_header(&app);
+    assert!(header.title_width() < header.left_width());
+    let shown = testing::screen(&app)?;
+    assert!(shown[header_row].contains("File  README.md"));
+    assert!(shown[header_row].contains("● 1 active"));
+
+    left(&mut app, sidebar + header.title_width() + 1, header_row);
+    assert!(app.menu().is_none(), "the filename is passive");
+
+    left(&mut app, sidebar + 1, header_row);
+    assert_eq!(app.menu().map(Menu::title), Some("File"));
+    let settings = app
+        .menu()
+        .context("the File menu")?
+        .entries()
+        .iter()
+        .map(|entry| (entry.label().to_owned(), entry.checked()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        settings,
+        [
+            ("open reviews".to_owned(), None),
+            (String::new(), None),
+            ("rendered view".to_owned(), Some(true)),
+            ("show inline threads".to_owned(), Some(true)),
+            ("show resolved threads".to_owned(), Some(false)),
+        ]
+    );
+    let grid =
+        app.menu()
+            .context("the File menu")?
+            .grid_in(app.size().0, app.pane_top(), app.pane_rows());
+    assert_eq!(grid.x, sidebar);
+    assert_eq!(grid.y, header_row + 1);
+
+    let cell = entry_cell(&app, "rendered view")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.view().source_view());
+
+    left(&mut app, sidebar + 1, header_row);
+    let cell = entry_cell(&app, "open reviews")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::Review);
     Ok(())
 }
 

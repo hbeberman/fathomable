@@ -85,7 +85,7 @@ mod tests {
         ));
         let shown = screen(&app)?;
         assert!(
-            shown[0].contains("comment on README.md"),
+            shown[1].contains("comment on README.md"),
             "the draft block heads the file: {:?}",
             &shown[..3]
         );
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(app.thread_cursor().thread(), Some(&file_thread));
         let shown = screen(&app)?;
         assert!(
-            shown[0].contains("file") && shown[0].contains("Resolve"),
+            shown[1].contains("file") && shown[1].contains("Resolve"),
             "{:?}",
             &shown[..4]
         );

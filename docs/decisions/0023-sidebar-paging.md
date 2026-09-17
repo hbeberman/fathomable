@@ -20,6 +20,10 @@ navigates directories; `Enter` is the file-row key that gives the text
 focus. Amended 2026-09-14: a highlighted directory replaces the prior
 file with a brief directory summary.
 
+Amended 2026-09-17: sidebar paging updates the current file behind an open
+Reviews view without closing it. File-scoped Reviews therefore follows the
+highlight. Explicit `Enter` or a row-menu **Open** still commits to File view.
+
 ## Context
 
 Opening a file from the tree took an `Enter` per file
@@ -50,6 +54,10 @@ highlight drives the pane.
   click activates the row it hits — expanding a directory or showing a
   file — but leaves focus in the tree, so clicking is paging too
   (amended 2026-08-27; a click first committed like `Enter`).
+- When Reviews owns the main column, ordinary file highlighting and clicks
+  still update the current file but preserve that view and its focus. An
+  explicit `Enter` or **Open** retains the committing behavior above and
+  switches to File view.
 - `l` / Right on a file does nothing, so directory navigation cannot
   unexpectedly leave the files pane; `h` / Left still goes to its parent.
   Descending into a directory can preview its first file, but keeps focus

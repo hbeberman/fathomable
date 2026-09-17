@@ -170,13 +170,11 @@ fn new_comment_block(target: &ComposeTarget, draft_rows: usize) -> Option<Stub> 
 
 impl App {
     /// Whether stubs are drawn (`threads { stubs }`).
-    #[cfg(test)]
     pub(crate) fn stubs_shown(&self) -> bool {
         self.stubs.shown
     }
 
     /// Whether resolved threads get a stub (`Space v x`).
-    #[cfg(test)]
     pub(crate) fn stubs_resolved(&self) -> bool {
         self.stubs.resolved
     }
@@ -522,23 +520,23 @@ mod tests {
         // number; the text of the thread under the cursor and the hint.
         app.view_mut().goto_source_line(5);
         let shown = screen(&app)?;
-        assert!(shown[4].contains("gamma"), "{:?}", shown[4]);
+        assert!(shown[5].contains("gamma"), "{:?}", shown[5]);
         assert!(
-            shown[5].contains("User") && shown[5].contains("outer thread"),
+            shown[6].contains("User") && shown[6].contains("outer thread"),
             "{:?}",
-            shown[5]
+            shown[6]
         );
         assert!(
-            !shown[5].contains(" 5 ") && !shown[5].contains(" 6 "),
+            !shown[6].contains(" 5 ") && !shown[6].contains(" 6 "),
             "no line number: {:?}",
-            shown[5]
+            shown[6]
         );
-        assert!(shown[6].contains("agent-free reply"), "{:?}", shown[6]);
-        assert!(!shown[6].contains("inner point"), "{:?}", shown[6]);
-        assert_eq!(shown[7].trim(), "6", "L6 follows: {:?}", shown[7]);
+        assert!(shown[7].contains("agent-free reply"), "{:?}", shown[7]);
+        assert!(!shown[7].contains("inner point"), "{:?}", shown[7]);
+        assert_eq!(shown[8].trim(), "6", "L6 follows: {:?}", shown[8]);
         // The cursor is on L5, which starts the inner thread: its stub
         // row carries the cursor bar, the outer's does not.
-        assert_eq!(barred_rows(&app, &[5, 6])?, [6], "the inner thread's row");
+        assert_eq!(barred_rows(&app, &[6, 7])?, [7], "the inner thread's row");
         assert!(
             shown[app.text_bar_row()].contains("z expand"),
             "{:?}",
@@ -547,7 +545,7 @@ mod tests {
         assert!(!shown[6].contains("(z expand)"), "{:?}", shown[6]);
         // On L4 only the outer thread covers the cursor.
         app.view_mut().goto_source_line(4);
-        assert_eq!(barred_rows(&app, &[5, 6])?, [5], "the outer thread's row");
+        assert_eq!(barred_rows(&app, &[6, 7])?, [6], "the outer thread's row");
 
         // `j` from L5 stops on the outer stub, then the inner, then L6
         // (ADR 0076), each stub's thread the cursor's; `k` comes back
@@ -698,11 +696,11 @@ mod tests {
         assert_eq!(app.thread_cursor().message(), 1, "the newest message");
         let shown = screen(&app)?;
         // Outer's collapsed stub, then inner's header, comment, reply.
-        assert!(shown[5].contains("outer thread"), "{:?}", shown[5]);
+        assert!(shown[6].contains("outer thread"), "{:?}", shown[6]);
         assert!(
-            shown[6].contains("● ▾") && shown[6].contains("Resolve"),
+            shown[7].contains("● ▾") && shown[7].contains("Resolve"),
             "the header carries direct actions: {:?}",
-            shown[6]
+            shown[7]
         );
         assert!(
             shown[app.text_bar_row()].contains("z fold"),
@@ -710,16 +708,16 @@ mod tests {
             shown[app.text_bar_row()]
         );
         assert!(
-            shown[7].contains("User") && shown[8].contains("inner point"),
+            shown[8].contains("User") && shown[9].contains("inner point"),
             "{:?}",
-            &shown[7..9]
+            &shown[8..10]
         );
         assert!(
-            shown[10].contains("first reply") && shown[11].contains("second line"),
+            shown[11].contains("first reply") && shown[12].contains("second line"),
             "{:?}",
-            &shown[10..12]
+            &shown[11..13]
         );
-        assert_eq!(shown[12].trim(), "6", "L6 follows: {:?}", shown[12]);
+        assert_eq!(shown[13].trim(), "6", "L6 follows: {:?}", shown[13]);
 
         // `j` from L5 stops on the outer stub (ADR 0076), the comment,
         // then the reply, then L6.

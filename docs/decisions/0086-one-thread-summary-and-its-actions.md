@@ -24,6 +24,10 @@ Review navigation amended 2026-09-17: bare `t` opens and focuses the normal
 Reviews view instead of toggling it closed. `Esc` remains the explicit return
 to the document.
 
+Amended later 2026-09-17: bare `f` opens File view, and `s` owns
+file/workspace scope in Reviews. The two surface title menus expose the same
+mouse navigation as **Open Reviews** and **Open File**.
+
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
 [0066](0066-one-circle-language.md), and

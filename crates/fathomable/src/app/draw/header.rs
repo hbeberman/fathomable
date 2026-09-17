@@ -281,6 +281,11 @@ impl Header {
         self.left.iter().map(|(text, _)| display_width(text)).sum()
     }
 
+    /// The cells occupied by the clickable title at the start of the row.
+    pub(crate) fn title_width(&self) -> usize {
+        self.left.first().map_or(0, |(text, _)| display_width(text))
+    }
+
     /// The hints that fit after the left part on `width` cells, the
     /// column the first starts at, and their form (ADR 0075): every
     /// hint with its word when that fits, then without count words, then
@@ -395,8 +400,9 @@ impl Header {
         let mut spans: Vec<Span<'static>> = self
             .left
             .iter()
-            .map(|(text, tone)| {
-                let style = if left_hovered {
+            .enumerate()
+            .map(|(index, (text, tone))| {
+                let style = if left_hovered && index == 0 {
                     tone_style(*tone).patch(theme.list_hover)
                 } else {
                     tone_style(*tone)
@@ -456,12 +462,6 @@ fn hints_width(hints: &[HintOf], tail: &[HintOf], sep: usize, form: Form) -> usi
         .map(|hint| hint.width(form))
         .sum::<usize>()
         + sep * count.saturating_sub(1)
-}
-
-/// A diff's header (ADR 0049, ADR 0060): the pair's names and nothing
-/// more; its keys are on the text's bar (ADR 0069).
-pub(crate) fn diff_header(text: &str) -> Header {
-    Header::new(vec![(format!(" {text}"), Tone::Key)], Vec::new())
 }
 
 /// An inline thread header laid out by the shared summary engine.
@@ -622,6 +622,24 @@ pub(crate) fn review_header(app: &App) -> Header {
             Align::Right,
         )
     }
+}
+
+/// The file surface's header: a clickable title, the current path, and
+/// passive lifecycle counts for that file.
+pub(crate) fn file_header(app: &App) -> Header {
+    let path = app.current_path();
+    let filename = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    Header::counted(
+        vec![
+            (" File".to_owned(), Tone::Dir),
+            (format!("  {filename}"), Tone::Info),
+        ],
+        passive_count_hints(app.review_counts(true), app.stubs_resolved()),
+        Align::Right,
+    )
 }
 
 /// The review list's key bar on its bottom row (ADR 0059, ADR 0066):
@@ -828,7 +846,7 @@ mod tests {
 
     fn bar() -> Header {
         Header::bar(vec![
-            HintOf::new("f", "file", &[Action::FileOnly]),
+            HintOf::new("s", "file", &[Action::FileOnly]),
             HintOf::new("x", "resolved", &[Action::ReviewResolved]),
             HintOf::new("k/j", "threads", &[Action::ThreadPrev, Action::ThreadNext]),
         ])
@@ -839,7 +857,7 @@ mod tests {
         let line = bar().line(&theme()?, 40);
         let text = text(&line);
         assert_eq!(display_width(&text), 40);
-        assert_eq!(text.trim_end(), " f file · x resolved · k/j threads");
+        assert_eq!(text.trim_end(), " s file · x resolved · k/j threads");
         Ok(())
     }
 
@@ -847,7 +865,7 @@ mod tests {
     fn a_bar_drops_hints_from_the_end_when_narrow() -> anyhow::Result<()> {
         let theme = theme()?;
         let line = bar().line(&theme, 24);
-        assert_eq!(text(&line).trim_end(), " f file · x resolved");
+        assert_eq!(text(&line).trim_end(), " s file · x resolved");
         let line = bar().line(&theme, 4);
         assert_eq!(text(&line), "    ", "no hint fits");
         Ok(())
@@ -858,7 +876,7 @@ mod tests {
         let bar = bar();
         assert_eq!(bar.action_at(40, 1), Some(Action::FileOnly));
         assert_eq!(bar.action_at(40, 10), Some(Action::ReviewResolved));
-        let threads = display_width(" f file · x resolved · ");
+        let threads = display_width(" s file · x resolved · ");
         assert_eq!(bar.action_at(40, threads), Some(Action::ThreadPrev));
         assert_eq!(bar.action_at(40, threads + 2), Some(Action::ThreadNext));
         assert_eq!(bar.action_at(40, 0), None, "the margin runs nothing");

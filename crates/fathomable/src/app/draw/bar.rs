@@ -212,7 +212,7 @@ mod tests {
             })
             .build()?;
         assert!(!app.text_bar_shown(), "no thread, no draft: no bar");
-        assert_eq!(app.text_rows(), 30 - 1, "the bar takes no row");
+        assert_eq!(app.text_rows(), 30 - 2, "only the file header takes a row");
 
         // The user's thread on L3, an agent's on L5.
         app.view_mut().goto_source_line(3);
@@ -313,7 +313,7 @@ mod tests {
         // The bar replaces the bottom text row; the text has as many rows
         // as it had with no bar (ADR 0067).
         assert!(app.text_bar_shown());
-        assert_eq!(app.text_rows(), 30 - 1, "the text did not move");
+        assert_eq!(app.text_rows(), 30 - 2, "the text did not move");
         Ok(())
     }
 }

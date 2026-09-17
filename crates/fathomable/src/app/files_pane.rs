@@ -81,6 +81,9 @@ impl App {
                 return Ok(None);
             }
             tree.set_cursor(index);
+            if tree.current().is_some_and(|entry| !entry.is_dir()) {
+                return Ok(None);
+            }
             tree.activate(workspace)
         });
         self.focus = Focus::Tree;
@@ -189,7 +192,7 @@ impl App {
             return;
         }
         let focus = self.focus;
-        self.open(&path);
+        self.select_file_preserving_review(&path);
         self.focus = focus;
     }
 

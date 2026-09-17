@@ -2236,7 +2236,6 @@ mod tests {
         let diff = DiffView {
             base: Side::ComparisonBase,
             target: Side::ComparisonTarget,
-            header: String::new(),
             badge: String::new(),
             body: DiffBody::Diff {
                 base: Text::Owned(head.clone()),
@@ -2272,7 +2271,6 @@ mod tests {
         v.show_diff(DiffView {
             base: Side::ComparisonBase,
             target: Side::ComparisonTarget,
-            header: String::new(),
             badge: String::new(),
             body: DiffBody::Diff {
                 base: Text::Owned(head),

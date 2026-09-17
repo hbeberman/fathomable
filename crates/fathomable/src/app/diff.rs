@@ -33,12 +33,11 @@ pub(crate) enum DiffBody {
     Notice(String),
 }
 
-/// The displayed pair and its labels.
+/// The displayed pair, status badge, and body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DiffView {
     pub(crate) base: Side,
     pub(crate) target: Side,
-    pub(crate) header: String,
     pub(crate) badge: String,
     pub(crate) body: DiffBody,
 }
@@ -93,22 +92,6 @@ impl App {
             Whitespace::Ignore => "whitespace ignored".to_owned(),
             Whitespace::Exact => "whitespace compared".to_owned(),
         });
-    }
-
-    /// The pair label shown above a unified diff.
-    pub(crate) fn diff_header(&self) -> Option<String> {
-        self.view().diff().map(|diff| {
-            if self.comparison.compare().whitespace == Whitespace::Ignore {
-                format!("{} · whitespace ignored", diff.header)
-            } else {
-                diff.header.clone()
-            }
-        })
-    }
-
-    /// Rows reserved for the comparison header.
-    pub(crate) fn diff_chrome_rows(&self) -> usize {
-        usize::from(self.has_document() && self.view().diff_view())
     }
 
     /// Apply the selected endpoint from a picker.
@@ -216,21 +199,9 @@ impl App {
                 self.notice("comparison is stale; no retained diff is available for this path");
                 return;
             };
-            let relative = self.docs[index].relative.clone();
-            let change = self
-                .comparison()
-                .and_then(|comparison| {
-                    comparison
-                        .changes()
-                        .iter()
-                        .find(|change| change.path() == relative)
-                })
-                .cloned();
-            let label = self.comparison_path_label(change.as_ref());
             self.view_mut().show_diff(DiffView {
                 base: Side::ComparisonBase,
                 target: Side::ComparisonTarget,
-                header: format!("{} · {}", label.0, label.1),
                 badge: "DIFF stale".to_owned(),
                 body,
             });
@@ -248,10 +219,6 @@ impl App {
             self.notice(error);
             return;
         };
-        let change = comparison
-            .changes()
-            .iter()
-            .find(|change| change.path() == relative);
         let body = self.view().retained_comparison_body().unwrap_or_else(|| {
             let base_text = self.comparison_endpoint_text(comparison.base(), &relative);
             let target_text = self.comparison_endpoint_text(comparison.target(), &relative);
@@ -263,8 +230,6 @@ impl App {
                 (Err(error), _) | (_, Err(error)) => DiffBody::Notice(error),
             }
         });
-        let label = self.comparison_path_label(change);
-        let header = format!("{} · {}", label.0, label.1);
         let badge = if self.comparison.stale() {
             "DIFF stale".to_owned()
         } else {
@@ -273,7 +238,6 @@ impl App {
         self.view_mut().show_diff(DiffView {
             base: Side::ComparisonBase,
             target: Side::ComparisonTarget,
-            header,
             badge,
             body,
         });
@@ -312,29 +276,6 @@ impl App {
         if self.comparison_diff {
             self.show_comparison_diff();
         }
-    }
-
-    fn comparison_path_label(
-        &self,
-        change: Option<&fathomable_core::diff::PathChange>,
-    ) -> (String, String) {
-        let base = self.comparison.base().to_string();
-        let target = self.comparison.target().to_string();
-        if let Some(change) = change {
-            if matches!(change.target(), fathomable_core::diff::PathState::Absent) {
-                return (base, format!("{target} (deleted)"));
-            }
-            if matches!(change.base(), fathomable_core::diff::PathState::Absent) {
-                return (format!("{base} (empty)"), target);
-            }
-            if matches!(
-                change.target(),
-                fathomable_core::diff::PathState::Missing(_)
-            ) {
-                return (base, format!("{target} (unavailable)"));
-            }
-        }
-        (base, target)
     }
 
     /// One selected endpoint's text, with explicit review-point reconstruction.

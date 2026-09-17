@@ -28,7 +28,7 @@ pub(crate) struct Entry {
     label: String,
     /// What the entry runs. The key shown may belong to a sibling
     /// action: `dd` arms a delete, the entry deletes at once.
-    action: Action,
+    action: Option<Action>,
     /// `Some` for a persistent toggle row, active or inactive.
     checked: Option<bool>,
 }
@@ -45,8 +45,13 @@ impl Entry {
     }
 
     #[must_use]
-    pub(crate) fn action(&self) -> Action {
+    pub(crate) fn action(&self) -> Option<Action> {
         self.action
+    }
+
+    #[must_use]
+    pub(crate) fn is_separator(&self) -> bool {
+        self.action.is_none()
     }
 
     #[must_use]
@@ -106,10 +111,21 @@ impl Menu {
                 key: bindings::menu_spell(keys),
                 keys,
                 label: label.into(),
-                action: run,
+                action: Some(run),
                 checked,
             });
         }
+    }
+
+    /// Add a visual grouping rule that cannot be selected or invoked.
+    fn separator(&mut self) {
+        self.entries.push(Entry {
+            key: String::new(),
+            keys: &[],
+            label: String::new(),
+            action: None,
+            checked: None,
+        });
     }
 
     /// The row in the pill colour naming what the menu acts on.
@@ -127,8 +143,13 @@ impl Menu {
     /// of one waits, anything else is a miss that closes the menu.
     #[must_use]
     pub(crate) fn typed(&self, typed: &[Chord]) -> Match {
-        if let Some(entry) = self.entries.iter().find(|entry| entry.keys == typed) {
-            return Match::Exact(entry.action);
+        if let Some(action) = self
+            .entries
+            .iter()
+            .find(|entry| entry.keys == typed)
+            .and_then(Entry::action)
+        {
+            return Match::Exact(action);
         }
         if self
             .entries
@@ -353,7 +374,7 @@ impl App {
         let Some(action) = self
             .menu()
             .and_then(|menu| menu.entries.get(index))
-            .map(Entry::action)
+            .and_then(Entry::action)
         else {
             return Effect::None;
         };
@@ -511,6 +532,8 @@ impl App {
     /// A left-click on the Reviews title opens view settings below the header.
     pub(super) fn open_reviews_settings_menu(&mut self, row: usize) {
         let mut menu = Menu::below_header("Reviews", Where::Review, self.sidebar_width(), row);
+        menu.push(Action::FileView, Action::FileView, "open file");
+        menu.separator();
         menu.push_toggle(
             Action::FileOnly,
             Action::FileOnly,
@@ -522,6 +545,32 @@ impl App {
             Action::ReviewResolved,
             "show resolved",
             self.review().resolved,
+        );
+        self.open_menu(menu);
+    }
+
+    /// A left-click on the File title opens navigation and display settings.
+    pub(super) fn open_file_menu(&mut self, row: usize) {
+        let mut menu = Menu::below_header("File", Where::View, self.sidebar_width(), row);
+        menu.push(Action::Review, Action::Review, "open reviews");
+        menu.separator();
+        menu.push_toggle(
+            Action::SourceView,
+            Action::SourceView,
+            "rendered view",
+            !self.view().source_view() && !self.view().diff_view(),
+        );
+        menu.push_toggle(
+            Action::StubsToggle,
+            Action::StubsToggle,
+            "show inline threads",
+            self.stubs_shown(),
+        );
+        menu.push_toggle(
+            Action::StubResolvedToggle,
+            Action::StubResolvedToggle,
+            "show resolved threads",
+            self.stubs_resolved(),
         );
         self.open_menu(menu);
     }

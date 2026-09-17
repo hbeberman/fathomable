@@ -86,6 +86,13 @@ immediately below the clicked header, while right-click menus remain anchored
 at the pointer. The Threads and Reviews titles open scope and resolved
 settings; state at the right of those headers is passive.
 
+Amended later 2026-09-17: the File surface joins the title-menu model. Its
+menu and the Reviews menu begin with **Open Reviews** and **Open File**
+respectively, then a non-action separator before checked settings. Separators
+cannot be hovered or invoked. Only the title word takes hover; the File
+header's path and counts and the Reviews header's scope and counts are
+passive.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):

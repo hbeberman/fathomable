@@ -398,12 +398,14 @@ Milestones are ordered; each is usable on its own. Details live in the
     lists, each call may override the immutable startup workspace,
     and delivery hooks need no `hello` bootstrap
     ([0080](decisions/0080-automatic-chat-identity.md)).
-72. **The persistent menu bar.** A compact `☰  Go  Review  Diff` row
+72. **The persistent menu bar.** A compact
+    `☰  Layout  Go  Review  Diff` row
     makes layout and whole-viewer workflows mouse-discoverable without
-    moving contextual actions out of their panes; the current filename is
-    subdued and centered, the right side carries the active comparison
-    controls, the sidebar restores as one unit, Help gains Getting started,
-    Doctor, and View keymap, and every popup uses a rounded titled border
+    moving contextual actions out of their panes; repository/worktree
+    identity is subdued and centered, the right side carries the active
+    comparison controls, Layout switches File and Reviews views before its
+    independent sidebar toggles, Help gains Getting started, Doctor, and
+    View keymap, and every popup uses a rounded titled border
     ([0081](decisions/0081-the-menu-bar.md)).
 73. **Three-tool review core.** The repository-bound MCP surface is
     `threads`, `thread_start`, and `thread_reply`. Reads have no delivery

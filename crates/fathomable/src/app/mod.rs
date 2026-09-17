@@ -1843,13 +1843,23 @@ impl App {
         }
     }
 
-    /// Rows left to the text once the banner and the diff's header and
-    /// strip are taken. The text's key bar takes none: it replaces the
+    /// Rows reserved for the document surface header.
+    pub(crate) fn file_chrome_rows(&self) -> usize {
+        usize::from(
+            self.has_document()
+                && !self.review_list().is_open()
+                && !self.getting_started()
+                && self.directory_path().is_none(),
+        )
+    }
+
+    /// Rows left to the text once the banner and the file header are
+    /// taken. The text's key bar takes none: it replaces the
     /// bottom text row while it has something to say (ADR 0067).
     pub(crate) fn text_rows(&self) -> usize {
         self.pane_rows()
             .saturating_sub(usize::from(self.banner().is_some()))
-            .saturating_sub(self.diff_chrome_rows())
+            .saturating_sub(self.file_chrome_rows())
             .max(1)
     }
 
@@ -1878,11 +1888,9 @@ impl App {
         self.text_top() + self.text_rows() - 1
     }
 
-    /// Rows over the text: the banner and the diff's header.
+    /// Rows over the text: the banner and the file header.
     pub(crate) fn text_top(&self) -> usize {
-        self.pane_top()
-            + usize::from(self.banner().is_some())
-            + usize::from(self.diff_chrome_rows() > 0)
+        self.pane_top() + usize::from(self.banner().is_some()) + self.file_chrome_rows()
     }
 
     pub(crate) fn resize(&mut self, width: usize, height: usize) {

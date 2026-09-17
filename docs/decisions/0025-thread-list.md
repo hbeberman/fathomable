@@ -33,6 +33,12 @@ title opens checked **Only current file** and **Show resolved** settings
 below the header. Bare `t` opens and focuses Reviews; it no longer closes an
 open view, while `Esc` still returns to the document.
 
+Amended later 2026-09-17: bare `f` opens File view, so the normal board's
+file/workspace scope moves to `s`. The Reviews title menu begins with
+**Open File**, followed by a separator and its checked settings. Paging the
+Files pane changes the current file without closing Reviews; explicit Open,
+Go to, `f`, or `Esc` returns to File view.
+
 Selection superseded 2026-09-14 by [0079](0079-list-focus-language.md):
 review entry rows use shared active/remembered styles; message author
 and body rows retain author stripes with a focus-aware selection bar.
@@ -71,13 +77,15 @@ round on 2026-08-27; the choices are recorded below.
   for dozens of threads; a full-screen overlay was rejected because the
   tree should remain usable beside it.
 - Opening the list closes the thread pane. `Esc` closes the list and
-  returns to the document that was showing. Opening a file by any route
-  — the tree, the picker, `[o`/`]o`, an agent `open` — closes it too.
+  returns to the document that was showing. Explicit file navigation — the
+  picker, `[o`/`]o`, an agent `open`, a row-menu **Open**, or `Enter` —
+  closes it too. Passive highlight paging in the Files pane instead changes
+  the current file behind the open list.
 
 ### Contents
 
 - The list holds every thread the current `HEAD` shows (0024's scope), or
-  only the current file's when the file filter is on. `f` toggles the
+  only the current file's when the file filter is on. `s` toggles the
   filter; the header reads `threads: workspace` or `threads: <path>`.
   The workspace is the default because the list exists to show the whole
   work.

@@ -10,7 +10,7 @@ use crate::app::input::bindings::{self, Action, Chord, Key, Where};
 use crate::app::view::Effect;
 use crate::app::{App, Focus, PickerKind};
 
-const FULL_LABEL_WIDTH: usize = 21;
+const FULL_LABEL_WIDTH: usize = 29;
 const TAIL_GAP: usize = 2;
 const MENU_TOP: usize = 1;
 const STATUS_ROWS: usize = 1;
@@ -19,17 +19,19 @@ const BORDER_ROWS: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Root {
     App,
+    Layout,
     Go,
     Review,
     Diff,
 }
 
 impl Root {
-    pub(crate) const ALL: [Self; 4] = [Self::App, Self::Go, Self::Review, Self::Diff];
+    pub(crate) const ALL: [Self; 5] = [Self::App, Self::Layout, Self::Go, Self::Review, Self::Diff];
 
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::App => "☰",
+            Self::Layout => "Layout",
             Self::Go => "Go",
             Self::Review => "Review",
             Self::Diff => "Diff",
@@ -39,6 +41,7 @@ impl Root {
     pub(crate) const fn title(self) -> &'static str {
         match self {
             Self::App => "Fathomable",
+            Self::Layout => "Layout",
             Self::Go => "Go",
             Self::Review => "Review",
             Self::Diff => "Diff",
@@ -86,6 +89,8 @@ pub(crate) struct Item {
     pub(crate) hint: String,
     pub(crate) enabled: bool,
     pub(crate) checked: bool,
+    /// This row is the selected member of a mutually exclusive choice.
+    pub(crate) active: bool,
     pub(crate) target: Target,
 }
 
@@ -99,6 +104,7 @@ impl Item {
                 .unwrap_or_default(),
             enabled: action_available(app, action),
             checked: action_checked(app, action),
+            active: false,
             target,
         }
     }
@@ -111,12 +117,21 @@ impl Item {
                 .unwrap_or_default(),
             enabled: true,
             checked: false,
+            active: false,
             target,
         }
     }
 
     fn submenu(label: &'static str, submenu: Submenu) -> Self {
         Self::command(label, Target::Submenu(submenu))
+    }
+
+    fn choice(app: &App, action: Action, label: &'static str, active: bool) -> Self {
+        Self {
+            active,
+            checked: false,
+            ..Self::action(app, action, label)
+        }
     }
 }
 
@@ -282,7 +297,6 @@ pub(crate) struct BarTail {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BarIdentity {
     pub(crate) repo: String,
-    pub(crate) suffix: String,
     pub(crate) x: usize,
     pub(crate) width: usize,
     pub(crate) picker: Option<PickerKind>,
@@ -339,7 +353,7 @@ pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
     }
 }
 
-/// Lay out the centered repository, active worktree, and current file.
+/// Lay out the centered repository and active worktree.
 pub(crate) fn bar_identity(app: &App, width: usize) -> Option<BarIdentity> {
     let left_end = labels(width)
         .last()
@@ -380,31 +394,9 @@ fn identity_within(
     if fitted_repo.is_empty() || fitted_repo == "…" {
         return None;
     }
-    let repo_width = display_width(&fitted_repo);
-    let suffix = if repo_width == display_width(&repo)
-        && !app.getting_started()
-        && !app.review_list().is_open()
-        && app.has_document()
-    {
-        app.current_path()
-            .file_name()
-            .map(std::ffi::OsStr::to_string_lossy)
-            .and_then(|filename| {
-                let separator = " · ";
-                let available = max_width.saturating_sub(repo_width + display_width(separator));
-                let filename = super::draw::fit_ellipsis(&filename, available)
-                    .trim_end()
-                    .to_owned();
-                (!filename.is_empty() && filename != "…").then(|| format!("{separator}{filename}"))
-            })
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let identity_width = repo_width + display_width(&suffix);
+    let identity_width = display_width(&fitted_repo);
     Some(BarIdentity {
         repo: fitted_repo,
-        suffix,
         x: width.saturating_sub(identity_width) / 2,
         width: identity_width,
         picker: worktree.map(|_| PickerKind::Worktree),
@@ -536,17 +528,16 @@ fn menu_width(rows: &[Row], title: &str) -> usize {
 pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
     match root {
         Root::App => {
-            let mut rows = vec![
-                Row::Item(Item::submenu("Layout", Submenu::Layout)),
-                Row::Item(Item::submenu("Help", Submenu::Help)),
-            ];
+            let mut rows = Vec::new();
             if labels(app.width).len() == 1 {
                 rows.extend([
+                    Row::Item(Item::submenu("Layout", Submenu::Layout)),
                     Row::Item(Item::submenu("Go", Submenu::Go)),
                     Row::Item(Item::submenu("Review", Submenu::Review)),
                     Row::Item(Item::submenu("Diff", Submenu::Diff)),
                 ]);
             }
+            rows.push(Row::Item(Item::submenu("Help", Submenu::Help)));
             rows.extend([
                 Row::Separator,
                 Row::Item(Item::command("Status", Target::Status)),
@@ -555,6 +546,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             ]);
             rows
         }
+        Root::Layout => submenu_rows(app, Submenu::Layout),
         Root::Go => vec![
             Row::Item(Item::action(app, Action::PickFile, "Open file…")),
             Row::Item(Item::action(
@@ -592,13 +584,15 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 hint: "x".to_owned(),
                 enabled: app.review_list().is_open() || app.focus() == Focus::ThreadsPane,
                 checked: app.review().resolved,
+                active: false,
                 target: Target::ReviewResolved,
             }),
             Row::Item(Item {
                 label: "Only current file".to_owned(),
-                hint: "f".to_owned(),
+                hint: "s".to_owned(),
                 enabled: app.review_list().is_open(),
                 checked: app.review().file_only,
+                active: false,
                 target: Target::ReviewFile,
             }),
             Row::Separator,
@@ -649,8 +643,20 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
 pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
     match submenu {
         Submenu::Layout => vec![
-            Row::Item(Item::action(app, Action::SidebarToggle, "Sidebar")),
+            Row::Item(Item::choice(
+                app,
+                Action::FileView,
+                "File view",
+                !app.review_list().is_open(),
+            )),
+            Row::Item(Item::choice(
+                app,
+                Action::Review,
+                "Reviews view",
+                app.review_list().is_open(),
+            )),
             Row::Separator,
+            Row::Item(Item::action(app, Action::SidebarToggle, "Sidebar")),
             Row::Item(Item::action(app, Action::TreeToggle, "Files pane")),
             Row::Item(Item::action(app, Action::ThreadsPaneToggle, "Threads pane")),
         ],
@@ -796,7 +802,7 @@ const REVIEW_RESOLVED_KEY: [Chord; 1] = [Chord {
     alt: false,
 }];
 const REVIEW_FILE_KEY: [Chord; 1] = [Chord {
-    key: Key::Char('f'),
+    key: Key::Char('s'),
     ctrl: false,
     alt: false,
 }];
@@ -1313,7 +1319,7 @@ mod tests {
 
     #[test]
     fn labels_collapse_to_the_application_menu_when_narrow() {
-        assert_eq!(labels(80).len(), 4);
+        assert_eq!(labels(80).len(), 5);
         assert_eq!(labels(20).len(), 1);
     }
 
@@ -1321,7 +1327,8 @@ mod tests {
     fn menus_are_stable() -> anyhow::Result<()> {
         let dir = testing::workspace("menu-bar-model", testing::README)?;
         let app = testing::app(&dir)?;
-        assert_eq!(rows(&app, Root::App).len(), 6);
+        assert_eq!(rows(&app, Root::App).len(), 5);
+        assert_eq!(rows(&app, Root::Layout).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 8);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
@@ -1385,29 +1392,22 @@ mod tests {
         assert_eq!(app.pane_top(), 1);
         assert_eq!(app.pane_rows(), 28);
         let screen = testing::screen(&app)?;
-        assert!(screen[0].contains("☰") && screen[0].contains("Go  Review  Diff"));
+        assert!(screen[0].contains("☰") && screen[0].contains("Layout  Go  Review  Diff"));
         assert!(
             screen[0].trim_end().ends_with("EmptyTree to WorkingTree"),
             "{:?}",
             screen[0]
         );
-        assert!(screen[0].contains("ws · README.md"), "{:?}", screen[0]);
+        assert!(screen[0].contains("ws"), "{:?}", screen[0]);
+        assert!(!screen[0].contains("README.md"), "{:?}", screen[0]);
         let identity = bar_identity(&app, app.size().0).context("bar identity")?;
         assert_eq!(identity.repo, "ws");
-        assert_eq!(identity.suffix, " · README.md");
-        assert_eq!(
-            identity.x,
-            (app.size().0 - display_width("ws · README.md")) / 2
-        );
+        assert_eq!(identity.x, (app.size().0 - display_width("ws")) / 2);
         let buffer = testing::buffer(&app)?;
         assert_eq!(buffer[(u16::try_from(identity.x)?, 0)].symbol(), "w");
         assert_eq!(
-            buffer[(
-                u16::try_from(identity.x + display_width("ws · README.md") - 1)?,
-                0
-            )]
-                .symbol(),
-            "d"
+            buffer[(u16::try_from(identity.x + display_width("ws") - 1)?, 0)].symbol(),
+            "s"
         );
         assert!(
             buffer[(u16::try_from(identity.x)?, 0)]
@@ -1420,12 +1420,12 @@ mod tests {
     }
 
     #[test]
-    fn repository_identity_stays_centred_and_shortens_the_filename() -> anyhow::Result<()> {
+    fn repository_identity_stays_centred_without_the_filename() -> anyhow::Result<()> {
         let app = shown_app("menu-bar-identity")?;
         let identity = identity_within(&app, 40, 12, 24).context("visible identity")?;
         assert_eq!(identity.x, (40 - identity.width) / 2);
         assert!(identity.x >= 12 && identity.x + identity.width <= 24);
-        assert!(identity.suffix.ends_with('…'), "{identity:?}");
+        assert_eq!(identity.repo, "ws");
         assert!(identity_within(&app, 20, 10, 11).is_none());
         Ok(())
     }
@@ -1433,7 +1433,7 @@ mod tests {
     #[test]
     fn mouse_and_keys_walk_root_labels_and_an_aligned_submenu() -> anyhow::Result<()> {
         let mut app = shown_app("menu-bar-navigation")?;
-        testing::click(&mut app, 4, 0);
+        testing::click(&mut app, 12, 0);
         assert!(
             app.menu_bar
                 .open()
@@ -1468,9 +1468,9 @@ mod tests {
                 modifiers: KeyModifiers::NONE,
             },
         );
-        let child_rows = submenu_rows(&app, Submenu::Layout);
-        let child = child_layout(&app, root, &root_rows, &child_rows).context("layout submenu")?;
-        assert_eq!(child.y, root.y + 1, "submenu aligns with Layout row");
+        let child_rows = submenu_rows(&app, Submenu::Help);
+        let child = child_layout(&app, root, &root_rows, &child_rows).context("help submenu")?;
+        assert_eq!(child.y, root.y + 1, "submenu aligns with Help row");
         Ok(())
     }
 
@@ -1506,33 +1506,51 @@ mod tests {
             submenu_rows(app, Submenu::Layout)
                 .into_iter()
                 .filter_map(|row| row.item().cloned())
-                .map(|item| (item.label, item.checked))
+                .map(|item| (item.label, item.checked, item.active))
                 .collect::<Vec<_>>()
         };
         assert_eq!(
             items(&app),
             [
-                ("Sidebar".to_owned(), true),
-                ("Files pane".to_owned(), true),
-                ("Threads pane".to_owned(), true),
+                ("File view".to_owned(), false, true),
+                ("Reviews view".to_owned(), false, false),
+                ("Sidebar".to_owned(), true, false),
+                ("Files pane".to_owned(), true, false),
+                ("Threads pane".to_owned(), true, false),
             ]
         );
+        testing::click(&mut app, 4, 0);
+        assert!(
+            testing::screen(&app)?
+                .iter()
+                .any(|row| row.contains("▌ File view"))
+        );
+        app.close_title_menu();
+        app.open_review();
+        let review_items = items(&app);
+        assert!(!review_items[0].2);
+        assert!(review_items[1].2);
+        app.open_file_view();
         testing::press(&mut app, " pf");
         assert_eq!(
             items(&app),
             [
-                ("Sidebar".to_owned(), true),
-                ("Files pane".to_owned(), false),
-                ("Threads pane".to_owned(), true),
+                ("File view".to_owned(), false, true),
+                ("Reviews view".to_owned(), false, false),
+                ("Sidebar".to_owned(), true, false),
+                ("Files pane".to_owned(), false, false),
+                ("Threads pane".to_owned(), true, false),
             ]
         );
         testing::press(&mut app, " ps");
         assert_eq!(
             items(&app),
             [
-                ("Sidebar".to_owned(), false),
-                ("Files pane".to_owned(), false),
-                ("Threads pane".to_owned(), false),
+                ("File view".to_owned(), false, true),
+                ("Reviews view".to_owned(), false, false),
+                ("Sidebar".to_owned(), false, false),
+                ("Files pane".to_owned(), false, false),
+                ("Threads pane".to_owned(), false, false),
             ]
         );
         Ok(())
@@ -1553,7 +1571,7 @@ mod tests {
     #[test]
     fn displayed_multi_chord_runs_from_an_open_title_menu() -> anyhow::Result<()> {
         let mut app = shown_app("menu-bar-shortcut")?;
-        testing::click(&mut app, 4, 0);
+        testing::click(&mut app, 12, 0);
         testing::press(&mut app, " f");
         assert!(matches!(
             app.popup(),
@@ -1623,7 +1641,6 @@ mod tests {
 
         app.close_title_menu();
         testing::click(&mut app, 1, 0);
-        keys::handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
         let root_rows = rows(&app, Root::App);
@@ -1704,7 +1721,7 @@ mod tests {
     #[test]
     fn scrolling_a_child_moves_focus_to_a_visible_item() -> anyhow::Result<()> {
         let mut app = shown_app("child-scroll")?;
-        app.resize(100, 8);
+        app.resize(20, 8);
         testing::click(&mut app, 1, 0);
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
@@ -1727,7 +1744,7 @@ mod tests {
         );
         assert!(matches!(
             app.menu_bar.open().map(|open| open.focused),
-            Some(Focused::Child(index)) if index >= 2
+            Some(Focused::Child(index)) if index >= 1
         ));
         Ok(())
     }
@@ -1735,7 +1752,7 @@ mod tests {
     #[test]
     fn menu_width_preserves_full_shortcuts_and_colon_commands_run() -> anyhow::Result<()> {
         let mut app = shown_app("menu-width")?;
-        testing::click(&mut app, 4, 0);
+        testing::click(&mut app, 12, 0);
         let go_rows = rows(&app, Root::Go);
         let layout = root_layout(&app, &go_rows).context("Go menu layout")?;
         let item = go_rows[1].item().context("ignored-files item")?;

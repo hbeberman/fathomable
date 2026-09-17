@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The diff's keys on the bar
-description: The diff header gives up its keys to the text's key bar; `D` steps through unstaged and staged Git layers, last seen, and the newest checkpoint; `Space d s` marks every file seen.
+description: Comparison actions live on the text key bar while the local pair-name header has retired in favor of the File surface header and global endpoint controls.
 resource: crates/fathomable/src/app/diff_keys.rs
 related_resources:
   - crates/fathomable/src/app/diff.rs
@@ -25,6 +25,11 @@ Superseded 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md). The diff key bar remains,
 but `D`, last-seen, checkpoint paging, and mark-all-seen retire. `Space d`
 now controls the single global pair, review points, and whitespace.
+
+Presentation amended 2026-09-17: the pair-name header also retires. A diff
+uses the File surface header, while the global menu-bar endpoint buttons
+open the base and target pickers. The diff's applicable actions remain on
+the text key bar.
 
 ## Context
 

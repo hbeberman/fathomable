@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Hints you can press
-description: A key hint is drawn only where pressing that key now, with the current focus and cursor, runs the action it names; the thread header's keys show on the thread cursor's thread while the text has focus, the diff header's and the stub's on the text alone, and a header row inside a thread block paints the gutter too.
+description: A key hint is drawn only where pressing it now runs the named action; thread and comparison hints follow current focus, and header surfaces reach through the gutter.
 resource: crates/fathomable/src/app/draw/header.rs
 related_resources:
   - crates/fathomable/src/app/draw/mod.rs
@@ -18,6 +18,10 @@ Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the rule stands; the thread header's
 keys and the stub's `(z expand)` moved to the text's key bar, which
 shows the thread cursor's keys while the text has focus.
+
+Amended 2026-09-17: the local diff header retires in favor of the File
+surface header. Comparison hints remain governed by this rule on the text
+key bar.
 
 ## Context
 
@@ -70,8 +74,8 @@ column with a strip of the other colour before it.
   whether the text has focus; `expanded_block_lines` passes them. A
   click on a hint that is not drawn runs nothing, and the header's
   `action_at` follows from what is drawn, so the mouse agrees.
-- `diff_header` is built without hints when another pane has focus;
-  the stub's `hinted` flag requires the text's focus.
+- Comparison hints are omitted from the text key bar when another pane has
+  focus; the stub's `hinted` flag requires the text's focus.
 - `with_gutter` paints the gutter cells with the row's own style when
   the row carries one, so any header row's surface spans the row.
 - This record takes the backlink of `header.rs` from 0059, which keeps

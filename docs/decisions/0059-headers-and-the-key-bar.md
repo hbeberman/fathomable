@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Headers and the key bar
-description: Every pane header and the review list's entry headers draw on a new `ui.header` theme surface; the review list's key hints leave its header for a key bar on its bottom row so they survive a half-width terminal; the header's counts are joined by dots with the sort word at the right edge, where a click switches the sort; and a stub's age reads in the info colour, not the author's.
+description: Pane and surface headers share `ui.header`; title words own their menus, passive scope, filename, and lifecycle state stay beside them, and actionable key hints live on each pane's bottom key bar.
 related_resources:
   - crates/fathomable/src/app/draw/header.rs
   - crates/fathomable-core/src/theme.rs
@@ -42,9 +42,16 @@ The older metadata-only entry-header and count wording remains below.
 
 Amended 2026-09-17: the normal review header is `Reviews` at the left, with
 subdued `workspace`/`file` scope and lifecycle counts at the right. Scope
-shortens to `w`/`f` before it is omitted. The title opens its two checked
-view settings below the header; scope and counts are passive. The bottom key
-bar remains unchanged.
+shortens to `w`/`f` before it is omitted. Its title menu begins with
+**Open File** and separates that command from its two checked view settings;
+scope and counts are passive. The bottom key bar remains unchanged.
+
+Amended later 2026-09-17: the document surface gains a stable File header.
+Only `File` is a hovered title button; the current root-relative path follows
+passively, and current-file lifecycle counts sit at the right. Its menu owns
+cross-navigation to Reviews plus rendered, inline-thread, and resolved-thread
+settings. Comparison labels remain in the global menu bar, so unified diffs
+use this same File row rather than stacking a second local header.
 
 ## Context
 

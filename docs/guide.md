@@ -103,6 +103,7 @@ continuations. These tables contain the main bindings.
 | `Space F u` | hide or show untracked files |
 | `Space F g` | show or hide ignored files |
 | `Space j j` | newest queued live change |
+| `f` | open or focus the File view |
 | `Space v s` | source or rendered presentation |
 | `Space v t` | show or hide inline thread summaries |
 | `Space v x` | show or hide resolved inline summaries |
@@ -147,7 +148,7 @@ continuations. These tables contain the main bindings.
 | `Space c A` | **Clear board...** |
 | `a` | archive the selected resolved review entry |
 | `u` | restore the selected archived entry |
-| `f` | current-file or repository scope in the normal board |
+| `s` | current-file or workspace scope in the normal board |
 
 ### Panes, drafts, and pickers
 
@@ -210,12 +211,25 @@ Right-clicking a thread offers **Go to**, **Reply**, auto-resolve,
 **Resolve/Reopen**, conditional **Archive**, edit, and **Delete** actions,
 plus **Fold file** in workspace scope.
 
+The File view has its own header above the document. `File` is the only
+hovered and clickable title region; the current filename follows passively,
+and lifecycle counts for that file sit at the right.
+Clicking `File` opens **Open Reviews** (`t`), then checked **Rendered view**,
+**Show inline threads**, and **Show resolved threads** settings below a
+separator. The presentation state stays in this menu rather than becoming
+another header label. Bare `f` always opens and focuses File view.
+
 The normal full-column review view reads `Reviews` at the left. Clicking
-that title opens checked **Only current file** and **Show resolved** settings
-below the header, aligned with the text column. Subdued `workspace` or
-`file` scope and lifecycle counts are passive and right-aligned; scope
-shortens to `w` or `f` before disappearing. Bare `t` always opens and focuses
-Reviews rather than toggling it closed; `Esc` returns to the document.
+that title opens **Open File** (`f`), then checked **Only current file** (`s`)
+and **Show resolved** settings below a separator, aligned with the text
+column. Subdued `workspace` or `file` scope and lifecycle counts are passive
+and right-aligned; scope shortens to `w` or `f` before disappearing. Bare
+`t` always opens and focuses Reviews rather than toggling it closed; bare
+`f` or `Esc` returns to the File view.
+
+Paging or clicking file rows in the Files pane updates the current file
+without closing Reviews. This lets file-scoped Reviews follow the sidebar.
+An explicit **Open**, **Go to**, or `Enter` still enters File view.
 
 Context and menu-bar popups put action labels at the left and their subdued
 shortcuts at the right, with at least one cell between them. Those menus use
@@ -389,18 +403,18 @@ commit, branch change, idle, or quit.
 The persistent first row is:
 
 ```text
-☰  Go  Review  Diff          fathomable · README.md    HEAD to WorkingTree
+☰  Layout  Go  Review  Diff          fathomable    HEAD to WorkingTree
 ```
 
-The repository directory and current file's basename are centered in
-subdued, dim text. With multiple worktrees, the active branch or short
-detached commit appears between them; hovering and clicking that
-repository/worktree segment opens the worktree picker. The filename shortens
-first, then the repository identity shortens or disappears on narrow
-terminals rather than colliding with the menus or comparison. The compact
-comparison pair remains at the right; full paths and source/view labels stay
-out of the bar. Immutable commits use short IDs; the other labels are `HEAD`,
-`WorkingTree`, `Index`, `EmptyTree`, `Point name`, or `Tag name`.
+The repository directory is centered in subdued, dim text. With multiple
+worktrees, the active branch or short detached commit follows it; hovering
+and clicking that repository/worktree segment opens the worktree picker.
+The repository identity shortens or disappears on narrow terminals rather
+than colliding with the menus or comparison. The current filename lives in
+the File header instead. The compact comparison pair remains at the right;
+full paths and source/view labels stay out of the bar. Immutable commits use
+short IDs; the other labels are `HEAD`, `WorkingTree`, `Index`, `EmptyTree`,
+`Point name`, or `Tag name`.
 Selecting HEAD or a tag still pins its resolved commit ID. If HEAD advances
 or the tag no longer resolves to that ID, the label falls back to the short
 commit ID rather than pretending the endpoint moved.
@@ -413,8 +427,14 @@ contextual thread actions. **Reviews** opens and focuses the normal view; it
 is not a shown/hidden toggle. **Diff**
 contains Comparison controls, base/target pickers, Save review point, and
 whitespace. **Start comparison at current HEAD** remains inside Comparison
-controls. Under **☰ → Layout**, stable **Sidebar**, **Files pane**, and
-**Threads pane** labels carry a checkmark while each surface is shown.
+controls.
+
+**Layout** is a persistent top-level menu immediately before **Go**. Its
+first section switches between the mutually exclusive **File view** and
+**Reviews view**; the active row carries a bold `▌` marker, and one is always
+active. A separator precedes the independent checked **Sidebar**, **Files
+pane**, and **Threads pane** toggles. On a narrow terminal, Layout, Go,
+Review, Diff, and Help collapse under `☰`.
 
 Configuration is KDL at
 `$XDG_CONFIG_HOME/fathomable/config.kdl` (normally

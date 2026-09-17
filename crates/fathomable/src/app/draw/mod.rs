@@ -31,7 +31,7 @@ use crate::app::draw::author::{
     CHEVRON_DOWN, CHEVRON_RIGHT, CURSOR_BAR, THREAD_GUTTER, name_style, row_style,
 };
 use crate::app::draw::header::{
-    Header, Tone, diff_header, entry_header, expanded_header, files_pane_header, review_footer,
+    Header, Tone, entry_header, expanded_header, file_header, files_pane_header, review_footer,
     review_header, summary_line, summary_rehover,
 };
 use crate::app::draw::info::Info;
@@ -270,7 +270,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     draw_menu_bar(frame, app, theme, area);
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
-    let text_area = draw_diff_chrome(frame, app, theme, text_area);
+    let text_area = draw_file_chrome(frame, app, theme, text_area);
     draw_column(frame, app, theme, text_area, gutter);
     draw_text_bar(frame, app, theme, text_area);
     frame.render_widget(
@@ -417,14 +417,7 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             repo_surface.patch(theme.info).add_modifier(Modifier::DIM)
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(identity.repo, repo_style),
-                Span::styled(
-                    identity.suffix,
-                    theme.menu.patch(theme.info).add_modifier(Modifier::DIM),
-                ),
-            ]))
-            .style(theme.menu),
+            Paragraph::new(Line::from(Span::styled(identity.repo, repo_style))).style(theme.menu),
             Rect {
                 x: area.x.saturating_add(u16_of(identity.x)),
                 width: u16_of(identity.width),
@@ -639,19 +632,30 @@ fn draw_framed_menu(
                 } else {
                     Modifier::DIM
                 });
-                let check = if item.checked { "✓ " } else { "  " };
+                let marker = if item.checked {
+                    "✓ "
+                } else if item.active {
+                    "▌ "
+                } else {
+                    "  "
+                };
+                let marker_style = if item.active {
+                    on_surface(surface, theme.popup_key).add_modifier(Modifier::BOLD)
+                } else {
+                    label_style
+                };
                 let arrow = if matches!(item.target, menu_bar::Target::Submenu(_)) {
                     " ›"
                 } else {
                     ""
                 };
-                let fixed = display_width(check)
+                let fixed = display_width(marker)
                     + display_width(&item.label)
                     + display_width(&item.hint)
                     + display_width(arrow);
                 let gap = inner_width.saturating_sub(fixed).max(1);
                 Line::from(vec![
-                    Span::styled(check.to_owned(), label_style),
+                    Span::styled(marker.to_owned(), marker_style),
                     Span::styled(item.label.clone(), label_style),
                     Span::styled(" ".repeat(gap), surface),
                     Span::styled(item.hint.clone(), hint_style),
@@ -704,18 +708,21 @@ fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-/// A comparison header over the text; the rows below it are returned.
-fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
-    let rows = app.diff_chrome_rows();
-    let Some(header) = app
-        .diff_header()
-        .filter(|_| rows > 0 && usize::from(area.height) > rows)
-    else {
+/// The file surface's clickable title, current path, and lifecycle counts.
+fn draw_file_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
+    let rows = app.file_chrome_rows();
+    if rows == 0 || usize::from(area.height) <= rows {
         return area;
-    };
+    }
+    let header = file_header(app);
     let width = usize::from(area.width);
+    let hovered = app.pointer().is_some_and(|(column, row)| {
+        row == usize::from(area.y)
+            && column >= usize::from(area.x)
+            && column - usize::from(area.x) < header.title_width()
+    });
     frame.render_widget(
-        Paragraph::new(diff_header(&header).line(theme, width)).style(theme.info),
+        Paragraph::new(header.line_with_left_hover(theme, width, hovered)).style(theme.info),
         Rect { height: 1, ..area },
     );
     Rect {
@@ -1890,6 +1897,13 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
         .iter()
         .enumerate()
         .map(|(index, entry)| {
+            if entry.is_separator() {
+                return Line::from(Span::styled(
+                    "─".repeat(inner_width),
+                    theme.info.add_modifier(Modifier::DIM),
+                ))
+                .style(theme.menu);
+            }
             let surface = if hover == Some(index) {
                 theme.menu.patch(theme.list_hover)
             } else {

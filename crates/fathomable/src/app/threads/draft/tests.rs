@@ -302,7 +302,6 @@ fn removed_diff_rows_keep_exact_original_line_identity() -> anyhow::Result<()> {
     view.show_diff(DiffView {
         base: Side::ComparisonBase,
         target: Side::ComparisonTarget,
-        header: "base · target".to_owned(),
         badge: "DIFF comparison".to_owned(),
         body: DiffBody::Diff {
             base: Text::Owned(old.to_owned()),
@@ -334,7 +333,6 @@ fn a_diff_selection_must_stay_on_one_side() -> anyhow::Result<()> {
     view.show_diff(DiffView {
         base: Side::ComparisonBase,
         target: Side::ComparisonTarget,
-        header: "base · target".to_owned(),
         badge: "DIFF comparison".to_owned(),
         body: DiffBody::Diff {
             base: Text::Owned(old.to_owned()),

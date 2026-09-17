@@ -439,13 +439,17 @@ mod tests {
         app.toggle_menu_bar();
         app.open(Path::new("a.md"));
         app.show_tree();
-        assert!(screen(&app)?[0].contains("main · main · a.md"));
+        let shown = screen(&app)?;
+        assert!(shown[0].contains("main · main"));
+        assert!(shown[1].contains("File  a.md"));
 
         app.act(Action::WorktreeNext);
         assert_eq!(app.workspace().root(), feature);
         assert_eq!(app.worktree_label().as_deref(), Some("feature"));
         assert_eq!(app.current_path(), Path::new("a.md"), "the file follows");
-        assert!(screen(&app)?[0].contains("feature · feature · a.md"));
+        let shown = screen(&app)?;
+        assert!(shown[0].contains("feature · feature"));
+        assert!(shown[1].contains("File  a.md"));
         let identity = menu_bar::bar_identity(&app, app.width)
             .ok_or_else(|| anyhow::anyhow!("worktree identity"))?;
         testing::click(&mut app, identity.x, 0);

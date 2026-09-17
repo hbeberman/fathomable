@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information; it centers repository, worktree, and current-file identity, keeps compact comparison controls on the right, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information; it centers repository and worktree identity, keeps compact comparison controls on the right, and shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
@@ -47,6 +47,13 @@ Amended later 2026-09-17: **Reviews** replaces **Review threads** as an
 unchecked command. It opens and focuses the normal review view; invoking it
 again does not close that view.
 
+Amended later 2026-09-17: **Layout** is a top-level menu before **Go**. Its
+first section uses a bold `▌` to select exactly one of **File view** and
+**Reviews view**; independent checked Sidebar, Files pane, and Threads pane
+rows follow a separator. Bare `f` selects File view and bare `t` selects
+Reviews view. The centered identity no longer carries the filename, which
+moves into the File surface header. Compact mode keeps Layout under `☰`.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -62,7 +69,7 @@ File/Edit/View menu taxonomy would also spend much of a narrow terminal on
 categories that do not fit a read-only reviewer.
 
 The user chose a compact hybrid application shell: stable workflow menus on
-the left, the current filename quietly centered, compact comparison controls
+the left, repository identity quietly centered, compact comparison controls
 on the right, and all cursor-specific actions left beside the content they
 affect.
 
@@ -72,31 +79,35 @@ affect.
 
 - The first terminal row is a borderless **menu bar** on `ui.menu`. It
   reserves one row; it never paints over pane headers or content.
-- Its left side is `☰  Go  Review  Diff`, with no down-arrow glyphs. A label
-  takes `ui.list.hover` while hovered or open.
-- The repository directory name is centered against the whole terminal,
-  followed by ` · <filename>` when a document is open outside the review
-  list and getting-started view. With several worktrees, ` · <branch>` or
-  the short detached commit follows the repository before the filename.
-  The filename truncates first; if space remains too narrow, the repository
-  identity truncates and then disappears before overlapping controls.
+- Its left side is `☰  Layout  Go  Review  Diff`, with no down-arrow glyphs.
+  A label takes `ui.list.hover` while hovered or open.
+- The repository directory name is centered against the whole terminal.
+  With several worktrees, ` · <branch>` or the short detached commit follows
+  it. The current filename belongs to the File surface header. If space is
+  too narrow, repository identity truncates and then disappears before
+  overlapping controls.
 - Its right side names only the active comparison. The base and target labels
   are muted-blue `ui.popup.key` buttons: hovering patches `ui.list.hover`, and
   clicking opens that endpoint's picker. Passive branch or worktree, full
   path, and major-view identity are deliberately absent from this right-side
   comparison pair.
 - On narrow terminals the right-side comparison disappears first. When the
-  four labels no longer fit, only `☰` remains and Go, Review, and Diff become
-  one-level children of that menu. The row never wraps or scrolls.
+  five labels no longer fit, only `☰` remains and Layout, Go, Review, Diff,
+  and Help become one-level children of that menu. The row never wraps or
+  scrolls.
 - `Space p m` shows or hides the row. The application menu cannot hide
   itself, so the visible UI never removes the only visible route back.
 
 ### Menus
 
-- `☰` is titled **Fathomable**. It contains one-level **Layout** and
-  **Help** submenus, then Status, About, and Quit.
-- **Layout** contains Sidebar, Files pane, and Threads pane with a checkmark
-  beside each visible surface. Labels remain stable when toggled.
+- `☰` is titled **Fathomable**. At full width it contains the one-level
+  **Help** submenu, then Status, About, and Quit; compact mode also carries
+  the hidden workflow menus.
+- **Layout** is a top-level menu. **File view** and **Reviews view** are
+  command rows in its first section; exactly one is active and carries a
+  bold `▌`, a radio-like choice rather than an independent toggle. After a
+  separator, Sidebar, Files pane, and Threads pane use checkmarks beside
+  each visible surface. Labels remain stable when toggled.
   `Space p s` hides the sidebar as one unit and restores the exact pane
   composition it hid. Showing a child while the sidebar is hidden opens that
   child alone. Hiding the last child remembers it as the next whole-sidebar

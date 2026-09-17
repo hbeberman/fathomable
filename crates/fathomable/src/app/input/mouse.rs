@@ -12,7 +12,6 @@
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use fathomable_core::layout::display_width;
 
 use super::super::{App, Border, Focus, Popup};
 use super::bindings::{self, Where};
@@ -235,29 +234,6 @@ fn review_mouse(
             app.open_review_menu(row - 1, column, screen_row);
         }
         _ => {}
-    }
-    Effect::None
-}
-
-/// A click on a diff's header (ADR 0050, ADR 0060): the base name,
-/// before the ` · `, opens the base picker and the target name the
-/// target picker; the keys are on the bar (ADR 0069).
-fn diff_header_click(app: &mut App, column: usize) -> Effect {
-    let Some(text) = app.diff_header() else {
-        return Effect::None;
-    };
-    app.focus_pane(Focus::View);
-    let header = header::diff_header(&text);
-    if column < header.left_width() {
-        // The left part is ` ` then the header text.
-        let split = text
-            .find(" · ")
-            .map(|byte| 1 + display_width(&text[..byte]));
-        let action = match split {
-            Some(split) if column > split + 1 => bindings::Action::ComparisonTarget,
-            _ => bindings::Action::ComparisonBase,
-        };
-        return app.act(action);
     }
     Effect::None
 }
@@ -515,11 +491,18 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
     let col = column.saturating_sub(gutter);
     let text_rows = app.text_rows();
     let left = event.kind == MouseEventKind::Down(MouseButton::Left);
-    // The banner and the diff header take rows over the text.
+    // The banner and file header take rows over the text.
     let top = app.text_top();
     let Some(text_row) = row.checked_sub(top) else {
-        if left && app.diff_chrome_rows() > 0 && row + 1 == top {
-            return diff_header_click(app, column - sidebar);
+        if app.file_chrome_rows() > 0 && row + 1 == top {
+            if left {
+                app.focus_pane(Focus::View);
+                let header = header::file_header(app);
+                if column.saturating_sub(sidebar) < header.title_width() {
+                    app.open_file_menu(row);
+                }
+            }
+            return Effect::None;
         }
         return Effect::None;
     };

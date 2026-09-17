@@ -220,6 +220,7 @@ impl App {
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
+            Action::FileView => self.open_file_view(),
             Action::Review => self.open_review(),
             Action::ReviewRecentlyResolved => self.open_review_view(ReviewView::RecentlyResolved),
             Action::ReviewArchived => self.open_review_view(ReviewView::Archived),
@@ -670,13 +671,20 @@ mod tests {
     }
 
     #[test]
-    fn bare_t_opens_reviews_from_every_normal_pane() -> anyhow::Result<()> {
+    fn bare_f_and_t_switch_main_views_and_s_changes_review_scope() -> anyhow::Result<()> {
         let dir = fixture("reviews-open")?;
         let mut app = source_app(&dir)?;
         annotate(&mut app, 3, "three");
 
         press(&mut app, "t");
         assert!(app.review_list().is_open());
+        press(&mut app, "s");
+        assert!(app.review().file_only);
+        press(&mut app, "f");
+        assert!(!app.review_list().is_open());
+        assert_eq!(app.focus(), Focus::View);
+
+        press(&mut app, "t");
         app.focus_threads_pane();
         press(&mut app, "t");
         assert!(app.review_list().is_open());
@@ -692,6 +700,36 @@ mod tests {
         app.start_new_comment();
         press(&mut app, "tRr");
         assert_eq!(app.compose_draft(), Some("tRr"));
+        Ok(())
+    }
+
+    #[test]
+    fn sidebar_selection_pages_files_without_closing_reviews() -> anyhow::Result<()> {
+        let dir = fixture("review-file-paging")?;
+        let mut app = source_app(&dir)?;
+        app.open(Path::new("docs/guide.md"));
+        app.toggle_tree_focus();
+        app.open_review();
+
+        let readme = app
+            .tree()
+            .and_then(|tree| {
+                tree.rows()
+                    .iter()
+                    .position(|row| row.path() == Path::new("README.md"))
+            })
+            .ok_or_else(|| anyhow::anyhow!("README.md tree row"))?;
+        app.tree_click(readme.saturating_sub(app.tree_scroll()));
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert!(app.review_list().is_open());
+        assert_eq!(app.focus(), Focus::Tree);
+
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(
+            !app.review_list().is_open(),
+            "explicit Open enters File view"
+        );
+        assert_eq!(app.focus(), Focus::View);
         Ok(())
     }
 

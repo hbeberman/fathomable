@@ -36,6 +36,11 @@ Amended later 2026-09-17: the title menu unfolds from the pane chrome rather
 than from the pointer. Its left edge aligns with the sidebar and its top
 border occupies the row immediately below the Files header.
 
+Amended later 2026-09-17: current-file identity moves from the centered
+global menu bar into a separate File surface header. The Files pane continues
+to own repository filters and change totals; the File header owns the current
+path, current-file lifecycle counts, and document display settings.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a
@@ -137,8 +142,9 @@ Space F r    recent files                            (unchanged)
   spaces.
 - `Files                         changed tracked +12 -3`. Filter words drop
   from their end as the column narrows, before either diff total is dropped.
-  Repository, active worktree, and current-file identity live in the global
-  menu bar under [0081](0081-the-menu-bar.md).
+  Repository and active-worktree identity live in the global menu bar under
+  [0081](0081-the-menu-bar.md). Current-file identity lives in the File
+  surface header.
 
 ### Amendments
 

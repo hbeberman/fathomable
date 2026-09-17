@@ -54,7 +54,8 @@ pane-wide resolved setting.
 Amended later 2026-09-17: the normal full-column review view adopts the same
 model. `Reviews` is the clickable left title; passive `workspace`/`file`
 scope and lifecycle counts sit at the right, with `w`/`f` as the compact
-scope. Its title menu carries **Only current file** and **Show resolved**.
+scope. Its title menu begins with **Open File**, then carries **Only current
+file** and **Show resolved** below a separator.
 
 ## Context
 

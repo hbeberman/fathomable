@@ -29,6 +29,11 @@ presentation remains, but endpoint selection is checkout-wide rather than
 stored per file; last-seen and checkpoint sides and their parallel modes are
 removed.
 
+Presentation amended 2026-09-17: the local comparison header retires. A
+unified diff uses the same File surface header as any document; global
+menu-bar base and target buttons remain the authoritative mouse controls,
+and comparison actions stay on the text key bar and Diff menu.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) put seven entries under
@@ -170,9 +175,9 @@ diff {
   loses `x`; `SUBMENUS` gains `d` diff.
 - 0017's `gd` bullet: the badge reads `DIFF net`, and `DIFF seen` is
   the same family; 0010's badge list reads `SRC`, `DIFF <base>`, `AUTO`.
-- 0050's checkpoint header click is the diff header click: a hint runs
-  its key, the base name opens the base picker, the target name the
-  target picker, in any diff.
+- 0050's former checkpoint-header click was generalized to every diff, then
+  retired by the presentation amendment above. The global base and target
+  buttons now open those pickers from every file presentation.
 
 ## Consequences
 

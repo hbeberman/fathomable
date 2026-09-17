@@ -296,6 +296,8 @@ actions! {
     PickFile,
     PickAnyFile,
     PickRecent,
+    /// `f`: open and focus the file view.
+    FileView,
     Review,
     ReviewRecentlyResolved,
     ReviewArchived,
@@ -708,6 +710,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "files: show ignored",
     ),
+    bind(W::Any, &[&[c('f')]], A::FileView, "Views", "open file view"),
     bind(W::Any, &[&[c('t')]], A::Review, "Reviews", "open reviews"),
     bind(
         W::Any,
@@ -1214,7 +1217,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Review,
-        &[&[c('f')]],
+        &[&[c('s')]],
         A::FileOnly,
         "Review list",
         "only this file",
@@ -1867,8 +1870,17 @@ mod tests {
             Match::Exact(Action::ToggleAutoResolve)
         );
         assert_eq!(lookup(Where::View, &[c('t')]), Match::Exact(Action::Review));
+        assert_eq!(
+            lookup(Where::View, &[c('f')]),
+            Match::Exact(Action::FileView)
+        );
+        assert_eq!(
+            lookup(Where::Review, &[c('s')]),
+            Match::Exact(Action::FileOnly)
+        );
         for place in [Where::Draft, Where::Picker, Where::Input] {
             assert_eq!(lookup(place, &[c('t')]), Match::Miss);
+            assert_eq!(lookup(place, &[c('f')]), Match::Miss);
             assert_eq!(lookup(place, &[c('r')]), Match::Miss);
             assert_eq!(lookup(place, &[c('R')]), Match::Miss);
         }

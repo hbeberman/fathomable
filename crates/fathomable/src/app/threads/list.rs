@@ -666,6 +666,28 @@ impl App {
         self.relayout();
     }
 
+    /// Show the current file surface and give it focus.
+    pub(crate) fn open_file_view(&mut self) {
+        self.close_review();
+        self.focus = Focus::View;
+        self.relayout();
+    }
+
+    /// Select `path` as the current file without leaving an open review.
+    pub(crate) fn select_file_preserving_review(&mut self, path: &Path) {
+        if !self.review_list.open {
+            self.open(path);
+            return;
+        }
+        let review = self.review;
+        let focus = self.focus;
+        self.open(path);
+        self.review = review;
+        self.review_list.open = true;
+        self.focus = focus;
+        self.relayout();
+    }
+
     /// Columns the list has: the text column without the tree.
     pub(crate) fn column_width(&self) -> usize {
         self.width.saturating_sub(self.sidebar_width()).max(1)

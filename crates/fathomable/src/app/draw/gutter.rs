@@ -300,7 +300,6 @@ mod tests {
         app.view_mut().show_diff(DiffView {
             base: Side::ComparisonBase,
             target: Side::ComparisonTarget,
-            header: "empty tree · working tree".to_owned(),
             badge: "DIFF comparison".to_owned(),
             body: DiffBody::Diff {
                 base: Text::Owned("old first\n\nold second\n".to_owned()),

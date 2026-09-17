@@ -457,7 +457,12 @@ impl App {
                 self.refresh_all_marks();
                 self.notice("thread was resolved while editing; Enter reopens and submits");
             }
-            Err(error) => self.error(error),
+            Err(error) => {
+                // A failed write can still import events appended by another
+                // writer while acquiring the store lock.
+                self.refresh_all_marks();
+                self.error(error);
+            }
         }
     }
 

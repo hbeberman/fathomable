@@ -1466,10 +1466,14 @@ fn expanded_block_lines<'a>(
                 Span::styled(" ", theme.header)
             }];
             let mut lines = vec![summary_line(theme, &layout, leading, hover)];
+            let Some(body_layout) = app.expanded_layout(id) else {
+                tracing::error!(%id, "expanded thread has no prepared message layout");
+                return lines;
+            };
             lines.extend(expanded_lines(
                 theme,
-                app.highlighter(),
                 thread,
+                body_layout,
                 app.user_name(),
                 fathomable_core::clock::now(),
                 width,

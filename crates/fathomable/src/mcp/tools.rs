@@ -12,9 +12,9 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
     AgentReplyCommand, ArchiveRecord, Author, AutoResolve, ComparisonFacts, ContentIdentity,
-    IndexFacts, Lifecycle, LineHashes, LineRange, Message, OriginSide, OriginVersion, Placement,
-    PlacementContext, Reply, ResolutionOutcome, ResolutionRecord, RestoreRecord, ReviewPointFacts,
-    Status, Store, Thread, ThreadId, WorkingTreeFacts,
+    IndexFacts, Lifecycle, LineHashes, LineRange, MAX_MESSAGE_BYTES, Message, OriginSide,
+    OriginVersion, Placement, PlacementContext, Reply, ResolutionOutcome, ResolutionRecord,
+    RestoreRecord, ReviewPointFacts, Status, Store, Thread, ThreadId, WorkingTreeFacts,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -107,7 +107,7 @@ impl<'de> Deserialize<'de> for StatusFilter {
 pub(crate) struct ReplyItem {
     /// Discussion id from `threads`.
     thread: String,
-    /// Reply text in Markdown.
+    /// Reply text in Markdown; a fresh reply is at most 1024 UTF-8 bytes.
     body: String,
     /// This reply completes the work and should resolve when authorized.
     #[serde(default)]
@@ -141,20 +141,37 @@ const DEFAULT_LIMIT: usize = 50;
 pub(super) fn require_line_for_end_line(schema: &mut schemars::Schema) {
     schema.insert(
         "allOf".to_owned(),
-        json!([{
-            "if": {
-                "required": ["end_line"],
-                "properties": {
-                    "end_line": { "type": "integer" }
+        json!([
+            {
+                "if": {
+                    "required": ["end_line"],
+                    "properties": {
+                        "end_line": { "type": "integer" }
+                    }
+                },
+                "then": {
+                    "required": ["line"],
+                    "properties": {
+                        "line": { "type": "integer" }
+                    }
                 }
             },
-            "then": {
-                "required": ["line"],
-                "properties": {
-                    "line": { "type": "integer" }
+            {
+                "if": {
+                    "not": {
+                        "required": ["idempotency_key"],
+                        "properties": {
+                            "idempotency_key": { "type": "string" }
+                        }
+                    }
+                },
+                "then": {
+                    "properties": {
+                        "body": { "maxLength": MAX_MESSAGE_BYTES }
+                    }
                 }
             }
-        }]),
+        ]),
     );
 }
 
@@ -1077,12 +1094,13 @@ impl Server {
     #[tool(
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReplyWriteOutput>(),
         description = "Continue one or more existing, non-archived review discussions. Pass exactly one \
-                       non-empty `replies` array; each item names a thread and body, with optional \
-                       current line placement, `resolve` completion intent, and retry \
-                       `idempotency_key`. Resolution succeeds only with one-shot permission; \
-                       otherwise the successful result directs review to Fathomable. Fresh replies \
-                       to archived discussions fail; matching keyed retries replay their original \
-                       outcome. The whole batch is validated before any reply is written.",
+                       non-empty `replies` array; each item names a thread and fresh body of at most \
+                       1024 UTF-8 bytes, with optional current line placement, `resolve` completion \
+                       intent, and retry `idempotency_key`. Resolution succeeds only with one-shot \
+                       permission; otherwise the successful result directs review to Fathomable. \
+                       Fresh replies to archived discussions fail; matching keyed retries, including \
+                       historical larger bodies, replay their original outcome. The whole batch is \
+                       validated before any reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -1502,6 +1520,13 @@ fn refusal(
     placement: Placement,
     root: &Path,
 ) -> Result<(), String> {
+    if item.body.len() > MAX_MESSAGE_BYTES {
+        return Err(format!(
+            "{}: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+            item.thread,
+            item.body.len()
+        ));
+    }
     if thread.status() != Status::Open {
         return Err(format!(
             "{} is resolved; only the user can reopen it",
@@ -1849,7 +1874,9 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Status, Store, ThreadId};
+    use fathomable_core::annotations::{
+        Author, Draft, LineRange, MAX_MESSAGE_BYTES, Reply, Status, Store, ThreadId,
+    };
     use fathomable_core::clock::now;
     use fathomable_core::vocabulary::ALL;
     use fathomable_testing::TempDir;
@@ -2119,6 +2146,17 @@ mod tests {
                     end_line: Some(1),
                 },
                 "must be at least",
+            ),
+            (
+                ReplyItem {
+                    thread: id.to_string(),
+                    body: "é".repeat(MAX_MESSAGE_BYTES / 2 + 1),
+                    resolve: false,
+                    idempotency_key: None,
+                    line: None,
+                    end_line: None,
+                },
+                "maximum is 1024",
             ),
         ] {
             let placement = tree.place(&all[0]);

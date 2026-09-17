@@ -503,6 +503,10 @@ pub(crate) struct App {
     sidebar: sidebar::Sidebar,
     /// Whether stubs are drawn, and for resolved threads (ADR 0049).
     stubs: threads::stubs::StubState,
+    /// Current document's already placed inline stubs.
+    inline_stubs: Vec<threads::stubs::Stub>,
+    /// Expanded message layouts retained across draws and file switches.
+    expanded_layout_cache: Vec<(ThreadId, draw::message::ExpandedLayout)>,
     /// The threads expanded in place this session (ADR 0049).
     expanded: HashSet<ThreadId>,
     /// What the review shows, shared by the list and the threads pane.
@@ -650,6 +654,8 @@ impl App {
             directory: None,
             sidebar: sidebar::Sidebar::new(sidebar),
             stubs: threads::stubs::StubState::from_config(&threads),
+            inline_stubs: Vec::new(),
+            expanded_layout_cache: Vec::new(),
             expanded: HashSet::new(),
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
@@ -1897,14 +1903,13 @@ impl App {
         self.width = width;
         self.height = height;
         self.relayout();
-        // Message and draft rows wrap at the new width (ADR 0049, 0054).
-        self.place_stub_rows();
         input::help::resize(self);
         doctor_view::resize(self);
         menu_bar::resize(self);
     }
 
     fn relayout(&mut self) {
+        let previous_width = self.view().layout().width();
         let rows = self
             .text_rows()
             .saturating_sub(usize::from(self.text_bar_shown()));
@@ -1915,6 +1920,10 @@ impl App {
             .saturating_sub(crate::app::draw::gutter_width(self.view()))
             .max(1);
         self.view_mut().resize(text_width, rows);
+        if self.view().layout().width() != previous_width {
+            // Message and draft rows wrap at the effective text width.
+            self.place_stub_rows();
+        }
         self.scroll_tree();
     }
 
@@ -2099,7 +2108,7 @@ impl App {
 
     /// Answer a socket request that needs app state (ADR 0014).
     pub(crate) fn handle_request(&mut self, request: Request) -> Response {
-        match request {
+        let response = match request {
             Request::ThreadReply {
                 thread,
                 author,
@@ -2137,7 +2146,11 @@ impl App {
                 Ok((thread, _)) => Response::Threads(vec![thread]),
                 Err(error) => Response::Error(error),
             },
+        };
+        if matches!(response, Response::Error(_)) {
+            self.refresh_all_marks();
         }
+        response
     }
 
     fn show(&mut self, index: usize) {

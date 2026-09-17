@@ -57,6 +57,12 @@ Settled in a question round on 2026-08-28:
   headings, code, links, quotes, and emphasis take the same theme keys
   they do in a file. The row count the pane scrolls by comes from the
   same layout, so the debug assertion of 0034 still holds.
+- For an inline expanded thread, `ExpandedLayout` retains every rendered
+  message body together with the thread revision and pane width. Stub
+  placement computes a missing or invalidated layout once; row counts and
+  drawing share it, and the app retains it across draws, draft keystrokes,
+  and file switches. A new thread revision or width invalidates it. Fenced
+  code highlighting therefore never runs from per-row lookup or drawing.
 - `fathomable_core::layout::Breaks` says what a single newline means:
   `Soft` (CommonMark, the default for files) or `Hard`.
   `Layout::render_message` is `render_with` with `Hard`; the block

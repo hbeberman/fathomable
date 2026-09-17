@@ -16,7 +16,9 @@
 //! workspace's state directory (ADR 0013); [`Store::open`] folds the file
 //! back into threads. Normal iteration excludes archived history, while
 //! [`Store::thread`] can inspect an archived ID. Timestamps are supplied by
-//! the caller so the module stays pure and testable.
+//! the caller so the module stays pure and testable. New comment, reply, and
+//! edit bodies are limited to [`MAX_MESSAGE_BYTES`]; older larger events
+//! remain readable.
 //!
 //! # Examples
 //!
@@ -49,6 +51,9 @@ pub(crate) const FORMAT_VERSION: u32 = 5;
 
 /// Maximum size of a persisted idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+
+/// Maximum size of a persisted thread comment or reply, in UTF-8 bytes.
+pub const MAX_MESSAGE_BYTES: usize = 1024;
 
 /// Maximum number of bytes retained for immutable origin snippets.
 pub const MAX_ORIGIN_EVIDENCE_BYTES: usize = 16 * 1024;
@@ -2705,6 +2710,22 @@ impl Event {
             | Self::Restore { .. } => None,
         }
     }
+
+    /// The message body this event would persist, if it has one.
+    fn message_body(&self) -> Option<&str> {
+        match self {
+            Self::Annotate { comment, .. } => Some(comment),
+            Self::Reply { reply, .. } | Self::AgentReply { reply, .. } => Some(reply.body()),
+            Self::Edit { body, .. } => Some(body),
+            Self::Resolve { .. }
+            | Self::Reopen { .. }
+            | Self::Relocate { .. }
+            | Self::Delete { .. }
+            | Self::SetAutoResolve { .. }
+            | Self::ArchiveMany { .. }
+            | Self::Restore { .. } => None,
+        }
+    }
 }
 
 /// The threads of one workspace, backed by an append-only JSONL file.
@@ -4127,6 +4148,14 @@ impl Store {
     }
 
     fn append_locked(&mut self, file: &mut File, event: Event) -> Result<(), StoreError> {
+        if let Some(body) = event.message_body()
+            && body.len() > MAX_MESSAGE_BYTES
+        {
+            return Err(StoreError::message(format!(
+                "thread message has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+                body.len()
+            )));
+        }
         let mut line = serde_json::to_string(&event).map_err(|error| StoreError {
             kind: ErrorKind::Parse(0, error.to_string()),
         })?;

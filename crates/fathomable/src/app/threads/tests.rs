@@ -705,11 +705,7 @@ fn review_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
     // for the comment's 31 rows and the replies keep theirs (ADR 0054).
     assert!(!app.review_list().is_open(), "the list closed to write");
     assert!(app.shows_thread(), "the thread is expanded in the text");
-    let stub = app
-        .stubs()
-        .into_iter()
-        .next()
-        .context("the thread's block")?;
+    let stub = app.stubs().iter().next().context("the thread's block")?;
     assert_eq!(stub.draft_slot(), Some((1, 31)));
     assert_eq!(app.draft_rows(), 31, "the author row and thirty lines");
     assert_eq!(

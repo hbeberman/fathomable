@@ -535,8 +535,8 @@ The complete MCP surface is:
 | Tool | Use |
 | --- | --- |
 | `threads` | read non-archived board discussions; filter with `status`, `path`, `since`, `after`, and `limit`, or use `ids` alone for exact archived/history reads |
-| `thread_start` | start one or more discussions with `comments: [{path, line?, end_line?, body, idempotency_key?}]` |
-| `thread_reply` | continue discussions with `replies: [{thread, body, resolve?, line?, end_line?, idempotency_key?}]` |
+| `thread_start` | start one or more discussions with `comments: [{path, line?, end_line?, body, idempotency_key?}]`; each fresh body is at most 1024 UTF-8 bytes |
+| `thread_reply` | continue discussions with `replies: [{thread, body, resolve?, line?, end_line?, idempotency_key?}]`; each fresh body is at most 1024 UTF-8 bytes |
 
 Normal `status: "open"`, `"resolved"`, and `"all"` reads are not gated by
 the bound checkout's ancestry. They exclude archived history. Exact `ids`
@@ -548,11 +548,13 @@ Results separate immutable `origin` from `placement_evidence`, current
 facts; callers do not send viewer, comparison, review-point, task, or
 membership IDs.
 
-Write batches are prevalidated. Per-item `idempotency_key` values provide
-durable caller-scoped retry safety. A fresh reply to an archived thread
-fails explicitly. A matching successful keyed reply replay returns its
-original resolution outcome and current archived thread without duplicating
-or restoring it.
+Write batches are prevalidated, including the 1024-byte fresh-body limit.
+Per-item `idempotency_key` values provide durable caller-scoped retry safety.
+A matching historical keyed write may replay a larger body; a fresh write
+with that body still fails. A fresh reply to an archived thread fails
+explicitly. A matching successful keyed reply replay returns its original
+resolution outcome and current archived thread without duplicating or
+restoring it.
 
 Supported write identity comes from the host's native channel:
 

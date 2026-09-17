@@ -8,10 +8,10 @@ use crate::reach::Reach;
 
 use super::{
     AgentReplyCommand, Anchor, ArchiveContext, Author, AutoResolve, ComparisonFacts, Draft, Event,
-    FORMAT_VERSION, Lifecycle, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MessageTarget,
-    OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence, Provenance, Reply,
-    ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit, UserWriteOutcome,
-    WorkingTreeFacts, WorkingTreeState, line_hash,
+    FORMAT_VERSION, Lifecycle, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MESSAGE_BYTES,
+    MessageTarget, OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence,
+    Provenance, Reply, ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit,
+    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState, line_hash,
 };
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -29,6 +29,65 @@ impl TempFile {
             .map_err(|e| StoreError::io(Path::new(name), e))?;
         Ok(Self(dir.0.join("nested").join("threads.jsonl"), dir))
     }
+}
+
+#[test]
+fn new_thread_messages_are_limited_by_utf8_bytes() -> Result<(), StoreError> {
+    let file = TempFile::new("message-size")?;
+    let mut store = Store::open(&file.0)?;
+    let exact = "é".repeat(MAX_MESSAGE_BYTES / 2);
+    let too_large = format!("{exact}é");
+    let draft = |comment: String| {
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            comment,
+        )
+    };
+
+    let id = store.annotate(draft(exact.clone()), TEXT, 1)?;
+    let start = store.annotate(draft(too_large.clone()), TEXT, 2);
+    assert_eq!(
+        start.err().map(|error| error.to_string()),
+        Some(format!(
+            "thread message has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+            too_large.len()
+        ))
+    );
+    assert_eq!(store.threads().len(), 1);
+
+    let reply = store.reply(
+        &id,
+        Reply::new(Author::agent("reviewer"), 3, too_large.clone()),
+    );
+    assert!(reply.is_err());
+    assert!(
+        store
+            .thread(&id)
+            .is_some_and(|thread| thread.replies().is_empty())
+    );
+
+    let edit = store.edit_user(
+        &id,
+        MessageTarget::Comment,
+        too_large.clone(),
+        4,
+        UserSubmit::Normal,
+    );
+    assert!(edit.is_err());
+    assert_eq!(store.thread(&id).map(Thread::comment), Some(exact.as_str()));
+
+    drop(store);
+    let persisted = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
+    fs::write(&file.0, persisted.replace(&exact, &too_large))
+        .map_err(|e| StoreError::io(&file.0, e))?;
+    assert_eq!(
+        Store::open(&file.0)?.threads().first().map(Thread::comment),
+        Some(too_large.as_str()),
+        "messages written by an older build remain readable"
+    );
+    Ok(())
 }
 
 /// An event the file refuses is not kept in memory either: the store

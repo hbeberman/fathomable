@@ -67,6 +67,15 @@ direction-independent selection range is unchanged. Comparisons between
 the two numeric fields and checks against current file contents remain
 runtime validation.
 
+Each fresh `body` advertises a maximum length of 1024 and runtime validation
+applies that limit to UTF-8 bytes. An oversized fresh item is an indexed
+whole-batch prevalidation error, while the core store independently enforces
+the same limit for viewer and direct writes. The schema permits a larger body
+when a non-null `idempotency_key` is present so a successful write from an
+older build can still be retried; the server accepts it only when its key and
+request intent match a durable receipt, and otherwise applies the fresh-write
+limit.
+
 The reply argument is `propose_resolve`, not `resolve`. There is no alias.
 It records a proposal on the reply and never closes the thread. The
 returned reply field remains `proposed_resolved`.
@@ -167,3 +176,5 @@ processes, not deletion of annotation data.
   not whether an agent should act on it or whether the user accepts it.
 - Idempotency is opt-in retry protection, not cross-agent finding
   deduplication, task ownership, or discussion resolution.
+- A review message is bounded discussion text, not a vehicle for posting an
+  entire replacement document; larger artifacts belong in the worktree.

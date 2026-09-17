@@ -5,7 +5,8 @@
 //! A comment or reply body goes through the same renderer as a Markdown
 //! file, wrapped to the text width less the message indent, with fenced
 //! code coloured by its language. The row count the view lays out is
-//! taken from the same rendering, so the two cannot disagree.
+//! taken from the same retained rendering, so the two cannot disagree
+//! and drawing does not parse or highlight the body again.
 
 use fathomable_core::annotations::{Author, Thread};
 use fathomable_core::highlight::Highlighter;
@@ -26,8 +27,73 @@ struct Message<'a> {
     author: &'a Author,
     name: &'a str,
     created: u64,
-    body: &'a str,
     badge: Option<&'a str>,
+}
+
+/// The immutable body layouts for one expanded thread revision and width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExpandedLayout {
+    revision: u64,
+    width: usize,
+    bodies: Vec<Layout>,
+    rows: usize,
+    stops: Vec<usize>,
+}
+
+impl ExpandedLayout {
+    /// Lay out every message body once for row placement and drawing.
+    pub(crate) fn new(thread: &Thread, width: usize, highlighter: &Highlighter) -> Self {
+        let count = thread.replies().len() + 1;
+        let mut bodies = Vec::with_capacity(count);
+        let mut stops = Vec::with_capacity(count);
+        let mut rows = 0;
+        for body in std::iter::once(thread.comment()).chain(
+            thread
+                .replies()
+                .iter()
+                .map(fathomable_core::annotations::Reply::body),
+        ) {
+            stops.push(rows);
+            let layout = body_layout(body, width, highlighter);
+            rows += 1 + layout.lines().len();
+            bodies.push(layout);
+        }
+        Self {
+            revision: thread.revision(),
+            width,
+            bodies,
+            rows,
+            stops,
+        }
+    }
+
+    /// Whether this layout still describes `thread` at `width`.
+    pub(crate) fn matches(&self, thread: &Thread, width: usize) -> bool {
+        self.revision == thread.revision() && self.width == width
+    }
+
+    /// Width this layout was built for.
+    pub(crate) fn width(&self) -> usize {
+        self.width
+    }
+
+    /// Total rows for every message header and body.
+    pub(crate) fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// The row each message starts on.
+    pub(crate) fn stops(&self) -> &[usize] {
+        &self.stops
+    }
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "construction stores exactly one body for every message index"
+    )]
+    fn body(&self, message: usize) -> &Layout {
+        &self.bodies[message]
+    }
 }
 
 /// A message: the cursor cell, the author's name in its kind's colour,
@@ -37,8 +103,8 @@ struct Message<'a> {
 /// a bold name.
 fn message_lines<'a>(
     theme: &Theme,
-    highlighter: &Highlighter,
     message: &Message<'_>,
+    body: &Layout,
     now: u64,
     width: usize,
     selected: bool,
@@ -66,7 +132,7 @@ fn message_lines<'a>(
     }
     let mut out = vec![message_line(header, width, row)];
     let indent = " ".repeat(MESSAGE_INDENT - 1);
-    for line in body_layout(message.body, width, highlighter).lines() {
+    for line in body.lines() {
         let mut spans = vec![cursor_cell(theme, selected), Span::raw(indent.clone())];
         spans.extend(
             line.spans()
@@ -95,8 +161,8 @@ pub(crate) fn message_line(mut spans: Vec<Span<'_>>, width: usize, row: Style) -
 /// names the user (ADR 0058).
 pub(crate) fn expanded_lines<'a>(
     theme: &Theme,
-    highlighter: &Highlighter,
     thread: &Thread,
+    layout: &ExpandedLayout,
     user: &str,
     now: u64,
     width: usize,
@@ -110,13 +176,12 @@ pub(crate) fn expanded_lines<'a>(
         author: thread.author(),
         name: &comment_name,
         created: thread.created(),
-        body: thread.comment(),
         badge: None,
     };
     out.extend(message_lines(
         theme,
-        highlighter,
         &comment,
+        layout.body(0),
         now,
         width,
         selected == Some(0),
@@ -127,36 +192,18 @@ pub(crate) fn expanded_lines<'a>(
             author: reply.author(),
             name: &name,
             created: reply.created(),
-            body: reply.body(),
             badge: reply.proposes_resolution().then_some("proposes resolving"),
         };
         out.extend(message_lines(
             theme,
-            highlighter,
             &message,
+            layout.body(index + 1),
             now,
             width,
             selected == Some(index + 1),
         ));
     }
     out
-}
-
-/// How many rows [`expanded_lines`] takes for `thread` at `width`, and
-/// the row each message starts on.
-pub(crate) fn expanded_rows(
-    thread: &Thread,
-    width: usize,
-    highlighter: &Highlighter,
-) -> (usize, Vec<usize>) {
-    let rows = |body: &str| 1 + body_layout(body, width, highlighter).lines().len();
-    let mut stops = vec![0];
-    let mut total = rows(thread.comment());
-    for reply in thread.replies() {
-        stops.push(total);
-        total += rows(reply.body());
-    }
-    (total, stops)
 }
 
 /// The body laid out as Markdown in the cells left of `width` after the
@@ -207,17 +254,10 @@ mod tests {
             author: &author,
             name: "Copilot",
             created: 0,
-            body,
             badge,
         };
-        Ok(message_lines(
-            &theme()?,
-            &Highlighter::plain(),
-            &message,
-            0,
-            width,
-            false,
-        ))
+        let body = body_layout(body, width, &Highlighter::plain());
+        Ok(message_lines(&theme()?, &message, &body, 0, width, false))
     }
 
     #[test]
@@ -275,10 +315,10 @@ mod tests {
             author: &Author::User,
             name: "User",
             created: 0,
-            body: "selected\nrows",
             badge: None,
         };
-        let lines = message_lines(&theme, &Highlighter::plain(), &message, 0, 24, true);
+        let body = body_layout("selected\nrows", 24, &Highlighter::plain());
+        let lines = message_lines(&theme, &message, &body, 0, 24, true);
         assert!(
             lines
                 .iter()
@@ -301,10 +341,10 @@ mod tests {
             author: &agent,
             name: "coder",
             created: 0,
-            body: "theirs",
             badge: None,
         };
-        let lines = message_lines(&theme, &Highlighter::plain(), &other, 0, 24, false);
+        let body = body_layout("theirs", 24, &Highlighter::plain());
+        let lines = message_lines(&theme, &other, &body, 0, 24, false);
         assert!(
             lines
                 .iter()

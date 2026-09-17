@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
-use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
+use fathomable_core::annotations::{Author, Draft, LineRange, MAX_MESSAGE_BYTES, Store, Thread};
 use fathomable_core::clock::now;
 use fathomable_core::session::{Request, Response};
 use fathomable_core::workspace::Workspace;
@@ -41,7 +41,7 @@ pub(crate) struct StartItem {
     #[schemars(range(min = 1))]
     #[serde(default)]
     end_line: Option<usize>,
-    /// The comment; Markdown.
+    /// The comment; a fresh body is at most 1024 UTF-8 bytes.
     body: String,
     /// Optional retry key: non-whitespace text, at most 256 UTF-8 bytes.
     #[schemars(length(min = 1, max = 256))]
@@ -74,10 +74,11 @@ impl Server {
         name = "thread_start",
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOutput>(),
         description = "Start one or more new review discussions. Pass exactly one non-empty \
-                       `comments` array; each item names a repository-relative file, Markdown \
-                       body, and optional 1-based line range. Omit `line` only for a file-level \
-                       comment. An optional per-item `idempotency_key` makes a retry replay the \
-                       same discussion instead of creating another one. The whole batch is \
+                       `comments` array; each item names a repository-relative file, fresh Markdown \
+                       body of at most 1024 UTF-8 bytes, and optional 1-based line range. Omit \
+                       `line` only for a file-level comment. An optional per-item \
+                       `idempotency_key` makes a retry, including a historical larger body, replay \
+                       the same discussion instead of creating another one. The whole batch is \
                        validated before any discussion is written.",
         annotations(
             destructive_hint = false,
@@ -242,8 +243,8 @@ impl Server {
 
 /// Where `item` goes, or why it cannot go there: the path is not a file
 /// in the repository, the file is not text, the range runs past its end,
-/// or the body is empty. An item with no line is a comment on the file
-/// as a whole (ADR 0063).
+/// or the body is empty or over the message limit. An item with no line
+/// is a comment on the file as a whole (ADR 0063).
 fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     let shown = item.path.display();
     let path = check_path(root, Some(&item.path))?
@@ -257,6 +258,18 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
         .ok_or_else(|| format!("{shown} is not a text file"))?;
     let (_, range) = structural_start(item)?;
+    if item.body.len() > MAX_MESSAGE_BYTES {
+        return Err(match item.line {
+            Some(line) => format!(
+                "{shown}:{line}: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+                item.body.len()
+            ),
+            None => format!(
+                "{shown}: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+                item.body.len()
+            ),
+        });
+    }
     let count = text.lines().count();
     if let Some(range) = range
         && range.end() > count
@@ -374,7 +387,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::XdgDirs;
-    use fathomable_core::annotations::{Author, LineRange, Store};
+    use fathomable_core::annotations::{Author, LineRange, MAX_MESSAGE_BYTES, Store};
     use fathomable_testing::TempDir;
 
     use super::{Placed, StartItem, headless_start, place};
@@ -461,6 +474,14 @@ mod tests {
         for (item, expected) in refused {
             assert_eq!(place(&root, &item).err().as_deref(), Some(expected));
         }
+        let oversized = "é".repeat(MAX_MESSAGE_BYTES / 2 + 1);
+        assert_eq!(
+            place(&root, &item("src/lib.rs", Some(1), None, &oversized)).err(),
+            Some(format!(
+                "src/lib.rs:1: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
+                oversized.len()
+            ))
+        );
         let elsewhere = place(&root, &item("lib.rs", Some(1), None, "x"));
         assert_eq!(
             elsewhere.err().as_deref(),

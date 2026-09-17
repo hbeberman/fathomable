@@ -510,6 +510,7 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
         &json!(1)
     ));
     assert!(start_item["allOf"].is_array());
+    assert!(schema_contains(start_item, "maxLength", &json!(1024)));
 
     let reply = schema("thread_reply")?;
     assert_eq!(reply["properties"]["replies"]["minItems"], 1);
@@ -525,6 +526,7 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
         &json!(1)
     ));
     assert!(reply_item["allOf"].is_array());
+    assert!(schema_contains(reply_item, "maxLength", &json!(1024)));
     assert!(schema_contains(
         &reply_item["properties"]["resolve"],
         "type",
@@ -726,6 +728,83 @@ fn keyed_mcp_writes_replay_without_duplicate_effects() -> Result<()> {
             .store()?
             .thread(&thread)
             .context("thread after replay")?
+            .replies()
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn keyed_legacy_oversized_messages_still_replay() -> Result<()> {
+    let fixture = Fixture::new("mcp-legacy-large-replay")?;
+    let mut client = Mcp::copilot(&fixture, "chat")?;
+
+    let start_exact = "é".repeat(512);
+    let start_large = format!("{start_exact}é");
+    let start_key = "legacy-large-start";
+    let first = client.ok(
+        "thread_start",
+        json!({"comments": [{
+            "path": "a.md",
+            "line": 1,
+            "body": start_exact,
+            "idempotency_key": start_key
+        }]}),
+    )?;
+    let first_id = first["structuredContent"]["threads"][0]["id"].clone();
+    let path = fixture.threads_path()?;
+    let persisted = fs::read_to_string(&path)?;
+    fs::write(&path, persisted.replace(&start_exact, &start_large))?;
+
+    let replay = client.ok(
+        "thread_start",
+        json!({"comments": [{
+            "path": "a.md",
+            "line": 1,
+            "body": start_large,
+            "idempotency_key": start_key
+        }]}),
+    )?;
+    assert_eq!(replay["structuredContent"]["threads"][0]["id"], first_id);
+    assert_eq!(
+        replay["structuredContent"]["threads"][0]["messages"][0]["body"],
+        start_large
+    );
+
+    let reply_thread = fixture.user_thread("reply target")?;
+    let reply_exact = "ü".repeat(512);
+    let reply_large = format!("{reply_exact}ü");
+    let reply_key = "legacy-large-reply";
+    client.ok(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": reply_thread,
+            "body": reply_exact,
+            "idempotency_key": reply_key
+        }]}),
+    )?;
+    let persisted = fs::read_to_string(&path)?;
+    fs::write(&path, persisted.replace(&reply_exact, &reply_large))?;
+
+    let replay = client.ok(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": reply_thread,
+            "body": reply_large,
+            "idempotency_key": reply_key
+        }]}),
+    )?;
+    assert_eq!(replay["structuredContent"]["results"][0]["replayed"], true);
+    assert_eq!(
+        replay["structuredContent"]["results"][0]["thread"]["messages"][1]["body"],
+        reply_large
+    );
+    assert_eq!(
+        fixture
+            .store()?
+            .thread(&reply_thread)
+            .context("reply thread")?
             .replies()
             .len(),
         1
@@ -1580,17 +1659,26 @@ fn live_and_headless_replies_return_the_same_contract() -> Result<()> {
 fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
     let fixture = Fixture::new("mcp-batch")?;
     let thread = fixture.user_thread("answer me")?;
+    let oversized_thread = fixture.user_thread("answer briefly")?;
     let mut client = Mcp::copilot(&fixture, "chat")?;
     let start = client.call(
         "thread_start",
         json!({"comments": [
             {"path": "a.md", "body": "valid"},
-            {"path": "missing.md", "body": "invalid"}
+            {"path": "missing.md", "body": "invalid"},
+            {"path": "a.md", "body": "x".repeat(1025)}
         ]}),
     )?;
     assert_eq!(start["isError"], true);
     assert_eq!(start["structuredContent"]["error_code"], "INVALID_BATCH");
     assert_eq!(start["structuredContent"]["issues"][0]["item_index"], 1);
+    assert_eq!(start["structuredContent"]["issues"][1]["item_index"], 2);
+    assert!(
+        start["structuredContent"]["issues"][1]["message"]
+            .as_str()
+            .context("oversized start error")?
+            .contains("maximum is 1024")
+    );
     assert!(
         start["content"][0]["text"]
             .as_str()
@@ -1605,18 +1693,27 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
         )?,
         start["structuredContent"]
     );
-    assert_eq!(fixture.store()?.threads().len(), 1);
+    assert_eq!(fixture.store()?.threads().len(), 2);
 
     let reply = client.call(
         "thread_reply",
         json!({"replies": [
             {"thread": thread, "body": "valid"},
-            {"thread": "not-a-thread", "body": "invalid"}
+            {"thread": "not-a-thread", "body": "invalid"},
+            {"thread": oversized_thread, "body": "x".repeat(1025)}
         ]}),
     )?;
     assert_eq!(reply["isError"], true);
     assert_eq!(reply["structuredContent"]["error_code"], "INVALID_BATCH");
     assert_eq!(reply["structuredContent"]["issues"][0]["item_index"], 1);
+    assert_eq!(reply["structuredContent"]["issues"][1]["item_index"], 2);
+    let oversized_reply = reply["structuredContent"]["issues"][1]["message"]
+        .as_str()
+        .context("oversized reply error")?;
+    assert!(
+        oversized_reply.contains("maximum is 1024"),
+        "{oversized_reply}"
+    );
     assert!(
         reply["content"][0]["text"]
             .as_str()
@@ -1636,6 +1733,14 @@ fn batch_validation_writes_nothing_when_any_item_is_invalid() -> Result<()> {
             .store()?
             .thread(&thread)
             .context("thread")?
+            .replies()
+            .is_empty()
+    );
+    assert!(
+        fixture
+            .store()?
+            .thread(&oversized_thread)
+            .context("oversized thread")?
             .replies()
             .is_empty()
     );

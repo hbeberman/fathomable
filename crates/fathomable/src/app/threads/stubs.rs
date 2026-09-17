@@ -13,17 +13,19 @@
 //! message under the cursor is the thread cursor's. Which
 //! threads produce rows, under which row, in what order, with which
 //! messages, and which rows are stops is decided here from the marks;
-//! the view keeps only the anchors, counts, and stops, and the drawing
-//! asks back for the words. The draft (ADR 0054) is rows too: a reply's
+//! the app retains those stubs and each expanded message layout while
+//! the view keeps the anchors, counts, and stops. Drawing and row lookup
+//! reuse the retained data. The draft (ADR 0054) is rows too: a reply's
 //! at the bottom of its thread's block, an edit's in place of the
 //! message it edits, and a new comment's in a draft block of its own.
 
-use fathomable_core::annotations::{LineRange, Placement, ThreadId};
+use fathomable_core::annotations::{LineRange, Placement, Thread, ThreadId};
 use fathomable_core::config::ThreadsConfig;
+use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::RowAnchor;
 
 use crate::app::App;
-use crate::app::draw::message::expanded_rows;
+use crate::app::draw::message::ExpandedLayout;
 use crate::app::threads::{ComposeTarget, Mark, ThreadState};
 use crate::app::view::StubBlock;
 
@@ -168,6 +170,49 @@ fn new_comment_block(target: &ComposeTarget, draft_rows: usize) -> Option<Stub> 
     })
 }
 
+/// Reuse `id`'s layout when its thread revision and pane width still match.
+fn take_layout(
+    cached: &mut Vec<(ThreadId, ExpandedLayout)>,
+    id: &ThreadId,
+    thread: &Thread,
+    width: usize,
+    highlighter: &Highlighter,
+) -> ExpandedLayout {
+    cached
+        .iter()
+        .position(|(cached_id, _)| cached_id == id)
+        .map(|index| cached.swap_remove(index))
+        .map(|(_, layout)| layout)
+        .filter(|layout| layout.matches(thread, width))
+        .unwrap_or_else(|| ExpandedLayout::new(thread, width, highlighter))
+}
+
+/// Fit the active reply or edit draft into an expanded thread's rows.
+fn fit_draft(
+    draft: Option<&(ComposeTarget, usize)>,
+    id: &ThreadId,
+    rows: &mut usize,
+    stops: &mut [usize],
+) -> Option<(usize, usize)> {
+    let (target, draft_rows) = draft?;
+    if target.thread() != Some(id) {
+        return None;
+    }
+    let Some(message) = target.edited_message() else {
+        let at = *rows;
+        *rows += *draft_rows;
+        return Some((at, 0));
+    };
+    let at = stops.get(message).copied()?;
+    let end = stops.get(message + 1).copied().unwrap_or(*rows);
+    let taken = end - at;
+    for stop in stops.iter_mut().skip(message + 1) {
+        *stop = *stop + *draft_rows - taken;
+    }
+    *rows = *rows + *draft_rows - taken;
+    Some((at, taken))
+}
+
 impl App {
     /// Whether stubs are drawn (`threads { stubs }`).
     pub(crate) fn stubs_shown(&self) -> bool {
@@ -184,10 +229,12 @@ impl App {
         self.expanded.contains(id)
     }
 
-    /// The current document's stubs in row order: threads by start line,
-    /// then end line, then id, so stacked stubs come one thread after
-    /// another and never interleave.
-    pub(crate) fn stubs(&self) -> Vec<Stub> {
+    /// Build the current document's stubs in row order and reuse any
+    /// unchanged expanded-message layouts.
+    fn build_stubs(
+        &self,
+        mut cached_layouts: Vec<(ThreadId, ExpandedLayout)>,
+    ) -> (Vec<Stub>, Vec<(ThreadId, ExpandedLayout)>) {
         let width = self.view().layout().width();
         let draft = self
             .draft()
@@ -221,6 +268,7 @@ impl App {
                 mark.id().clone(),
             )
         });
+        let mut expanded_layouts = Vec::with_capacity(marks.len());
         let mut stubs: Vec<Stub> = marks
             .into_iter()
             .filter_map(|mark| {
@@ -235,35 +283,22 @@ impl App {
                 let count = thread.replies().len() + 1;
                 let expanded = self.expanded.contains(mark.id());
                 let (messages, rows, stops, slot) = if expanded {
-                    let (rows, stops) = expanded_rows(thread, width, self.highlighter());
+                    let layout = take_layout(
+                        &mut cached_layouts,
+                        mark.id(),
+                        thread,
+                        width,
+                        self.highlighter(),
+                    );
+                    let mut rows = layout.rows();
+                    let mut stops = layout.stops().to_vec();
+                    expanded_layouts.push((mark.id().clone(), layout));
                     // The header row comes first; the stops follow it.
-                    let mut rows = rows + 1;
-                    let mut stops: Vec<usize> = stops.into_iter().map(|stop| stop + 1).collect();
-                    let slot = match &draft {
-                        Some((target, draft_rows)) if target.thread() == Some(mark.id()) => {
-                            match target.edited_message() {
-                                // A reply is written after the last message.
-                                None => {
-                                    let at = rows;
-                                    rows += draft_rows;
-                                    Some((at, 0))
-                                }
-                                // An edit stands in for its message; the
-                                // stops after it move by the difference.
-                                Some(message) => {
-                                    let at = stops[message];
-                                    let end = stops.get(message + 1).copied().unwrap_or(rows);
-                                    let taken = end - at;
-                                    for stop in stops.iter_mut().skip(message + 1) {
-                                        *stop = *stop + draft_rows - taken;
-                                    }
-                                    rows = rows + draft_rows - taken;
-                                    Some((at, taken))
-                                }
-                            }
-                        }
-                        _ => None,
-                    };
+                    rows += 1;
+                    for stop in &mut stops {
+                        *stop += 1;
+                    }
+                    let slot = fit_draft(draft.as_ref(), mark.id(), &mut rows, &mut stops);
                     ((0..count).collect(), rows, stops, slot)
                 } else {
                     let messages: Vec<usize> =
@@ -290,13 +325,27 @@ impl App {
         if let Some((target, draft_rows)) = draft {
             stubs.extend(new_comment_block(&target, draft_rows));
         }
-        stubs
+        expanded_layouts.extend(
+            cached_layouts
+                .into_iter()
+                .filter(|(id, layout)| self.expanded.contains(id) && layout.width() == width),
+        );
+        (stubs, expanded_layouts)
+    }
+
+    /// The already placed stubs for the current document.
+    pub(crate) fn stubs(&self) -> &[Stub] {
+        &self.inline_stubs
     }
 
     /// Lay the current document out again with its stub rows in place;
     /// called whenever the marks, the messages, or the toggles change.
     pub(crate) fn place_stub_rows(&mut self) {
-        let blocks: Vec<StubBlock> = self.stubs().iter().map(Stub::block).collect();
+        let cached_layouts = std::mem::take(&mut self.expanded_layout_cache);
+        let (stubs, layouts) = self.build_stubs(cached_layouts);
+        let blocks: Vec<StubBlock> = stubs.iter().map(Stub::block).collect();
+        self.inline_stubs = stubs;
+        self.expanded_layout_cache = layouts;
         self.sync_text_height();
         self.view_mut().set_stub_blocks(blocks);
     }
@@ -305,9 +354,17 @@ impl App {
     /// and whether it is the block's last row.
     pub(crate) fn stub_on_row(&self, row: usize) -> Option<(Stub, usize, bool)> {
         let (block, index) = self.view().stub_slot_of_row(row)?;
-        let stub = self.stubs().into_iter().nth(block)?;
+        let stub = self.inline_stubs.get(block)?.clone();
         let last = index + 1 == stub.rows;
         Some((stub, index, last))
+    }
+
+    /// The prepared message bodies for one expanded thread.
+    pub(crate) fn expanded_layout(&self, id: &ThreadId) -> Option<&ExpandedLayout> {
+        self.expanded_layout_cache
+            .iter()
+            .find(|(thread, _)| thread == id)
+            .map(|(_, layout)| layout)
     }
 
     /// Whether the text cursor rests inside `id` rather than on source text.
@@ -351,7 +408,7 @@ impl App {
     fn row_of_message(&self, id: &ThreadId, message: usize) -> Option<usize> {
         let (block, stub) = self
             .stubs()
-            .into_iter()
+            .iter()
             .enumerate()
             .find(|(_, stub)| stub.thread() == Some(id))?;
         let index = stub.row_of_message(message)?;
@@ -431,11 +488,18 @@ impl App {
 mod tests {
     use crossterm::event::KeyCode;
     use std::fs;
+    use std::hint::black_box;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     use crate::app::testing::{self, click, press, press_key, screen, source_app};
 
     use crate::app::threads::ComposeTarget;
     use crate::app::{App, Focus, Popup};
+    use fathomable_core::annotations::{Author, MAX_MESSAGE_BYTES, Reply, Store};
+    use fathomable_core::highlight::Highlighter;
+
+    use super::ExpandedLayout;
 
     fn annotate(app: &mut App, from: usize, to: usize, text: &str) {
         app.view_mut().goto_source_line(from);
@@ -456,6 +520,87 @@ mod tests {
             .copied()
             .filter(|row| shown[*row].chars().nth(gutter) == Some('▎'))
             .collect())
+    }
+
+    #[test]
+    fn repeated_expanded_row_lookups_reuse_markdown_layouts() -> anyhow::Result<()> {
+        let dir = testing::workspace("stubs-layout-cache", testing::README)?;
+        let mut app = source_app(&dir)?;
+        app.highlighter = Arc::new(Highlighter::new("base16-ocean.dark")?);
+        let markdown = format!(
+            "```markdown\n{}\n```",
+            "[reference](https://example.com/path) **strong** `inline-code` ".repeat(7)
+        );
+        annotate(&mut app, 3, 3, &markdown);
+        let id = app.file_threads()[0].clone();
+        app.expand_thread(id.clone());
+
+        let rows = app.view().layout().lines().len();
+        let started = Instant::now();
+        for _ in 0..20 {
+            app.place_stub_rows();
+            for row in 0..rows {
+                black_box(app.stub_on_row(row));
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "cached placement and lookup took {:?}",
+            started.elapsed()
+        );
+        let previous_width = app
+            .expanded_layout(&id)
+            .ok_or_else(|| anyhow::anyhow!("expanded layout"))?
+            .width();
+        app.toggle_tree_shown();
+        let current_width = app.view().layout().width();
+        assert_ne!(current_width, previous_width);
+        assert_eq!(
+            app.expanded_layout(&id).map(ExpandedLayout::width),
+            Some(current_width),
+            "showing the sidebar reflows expanded messages"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_draft_write_refreshes_externally_imported_messages() -> anyhow::Result<()> {
+        let dir = testing::workspace("stubs-failed-write-refresh", testing::README)?;
+        let mut app = source_app(&dir)?;
+        annotate(&mut app, 3, 3, "question");
+        let id = app.file_threads()[0].clone();
+        app.expand_thread(id.clone());
+        app.thread_reply();
+        app.compose_insert(&"x".repeat(MAX_MESSAGE_BYTES + 1));
+
+        let path = app
+            .store
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("thread store"))?
+            .path()
+            .to_path_buf();
+        let mut writer = Store::open(path)?;
+        writer.reply(
+            &id,
+            Reply::new(Author::agent("reviewer"), 1, "external answer"),
+        )?;
+
+        app.compose_submit();
+        assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+        assert_eq!(
+            app.thread(&id).map(|thread| thread.replies().len()),
+            Some(1)
+        );
+        let width = app.view().layout().width();
+        let thread = app
+            .thread(&id)
+            .ok_or_else(|| anyhow::anyhow!("imported thread"))?;
+        assert!(
+            app.expanded_layout(&id)
+                .is_some_and(|layout| layout.matches(thread, width))
+        );
+        let _ = screen(&app)?;
+        Ok(())
     }
 
     /// Stub rows sit under the last row of their thread, carry no line

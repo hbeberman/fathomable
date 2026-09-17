@@ -76,6 +76,11 @@ were captured in a question round on 2026-08-26.
   the edit time. Only the opening comment and replies authored by the
   user are editable; an agent message or an unknown reply is rejected
   before anything is appended.
+- Every new opening comment, reply, or edited body occupies at most 1024
+  UTF-8 bytes. The store checks the event immediately before append, so
+  viewer, socket, MCP, seed, and direct core callers share the same limit.
+  Loading remains permissive so larger messages persisted by an older build
+  are not made unreadable.
 
 ### Anchor
 
@@ -108,7 +113,9 @@ were captured in a question round on 2026-08-26.
 - `c` opens a box anchored to the bottom of the text pane, above the status
   line, titled with the range (`comment on L3-5`) or `reply`. Enter submits;
   Ctrl-Enter or Alt-Enter adds a line; Esc cancels. The box grows to
-  eight rows, then scrolls. An empty comment is discarded with a notice.
+  eight rows, then scrolls. An empty comment is discarded with a notice; a
+  body over the store's 1024-byte limit stays in the editor with the
+  validation error.
 - Ctrl-Enter is only distinguishable from Enter when the terminal supports
   the kitty keyboard protocol, so the TUI pushes
   `DISAMBIGUATE_ESCAPE_CODES` when `supports_keyboard_enhancement` says it

@@ -377,47 +377,18 @@ pub enum OriginSide {
     Unspecified,
 }
 
-/// The temporal focus a human was inspecting when a thread was created.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum ComparisonFocus {
-    /// The complete selected endpoint comparison.
-    #[default]
-    AllChanges,
-    /// The actual delta from a saved review point to the target.
-    SinceReviewPoint {
-        /// Stable review-point identifier.
-        id: String,
-    },
-}
-
-/// The endpoint pair and temporal focus a person was viewing.
+/// The endpoint pair a person was viewing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ComparisonFacts {
     base: OriginVersion,
     target: OriginVersion,
-    #[serde(default)]
-    focus: ComparisonFocus,
 }
 
 impl ComparisonFacts {
     /// Construct a comparison of `base` to `target`.
     #[must_use]
     pub fn new(base: OriginVersion, target: OriginVersion) -> Self {
-        Self {
-            base,
-            target,
-            focus: ComparisonFocus::AllChanges,
-        }
-    }
-
-    /// Mark the comparison as focused since `review_point`.
-    #[must_use]
-    pub fn since_review_point(mut self, review_point: impl Into<String>) -> Self {
-        self.focus = ComparisonFocus::SinceReviewPoint {
-            id: review_point.into(),
-        };
-        self
+        Self { base, target }
     }
 
     /// The selected base endpoint.
@@ -430,12 +401,6 @@ impl ComparisonFacts {
     #[must_use]
     pub fn target(&self) -> &OriginVersion {
         &self.target
-    }
-
-    /// The selected temporal focus.
-    #[must_use]
-    pub fn focus(&self) -> &ComparisonFocus {
-        &self.focus
     }
 }
 

@@ -24,8 +24,7 @@ Status: accepted (2026-09-06); amended 2026-09-14 (layer-aware cycle)
 Superseded 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md). The diff key bar remains,
 but `D`, last-seen, checkpoint paging, and mark-all-seen retire. `Space d`
-now controls the single global pair, review points, temporal focus, and
-whitespace.
+now controls the single global pair, review points, and whitespace.
 
 ## Context
 

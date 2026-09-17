@@ -1281,12 +1281,16 @@ mod tests {
             .filter_map(super::Row::item)
             .map(|item| item.label.as_str())
             .collect::<Vec<_>>();
-        for duplicate in [
-            "Start comparison at current HEAD",
-            "Show All changes / Since…",
-        ] {
-            assert!(!diff_labels.contains(&duplicate));
-        }
+        assert_eq!(
+            diff_labels,
+            [
+                "Comparison controls…",
+                "Pick base…",
+                "Pick target…",
+                "Save review point",
+                "Ignore/compare whitespace",
+            ]
+        );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         assert!(
             !rows(&app, Root::App)

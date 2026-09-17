@@ -157,8 +157,6 @@ pub(crate) enum PickerKind {
     ComparisonReviewPoints,
     /// Uncommon endpoint choices for one comparison side.
     ComparisonAdvanced(ComparisonSide),
-    /// The All changes or Since review point focus.
-    ComparisonFocus,
     /// Optional name for a new workspace review point.
     ReviewPointName,
     /// The worktrees of the workspace, the active one marked (ADR 0070).
@@ -2005,11 +2003,7 @@ impl App {
                     .flatten()
             };
             let historical = (!selected_target_is_working || comparison_target_missing)
-                .then(|| self.comparison_display_text(&relative))
-                .or_else(|| {
-                    matches!(self.comparison.focus(), comparison::Focus::Since(_))
-                        .then(|| self.comparison_display_text(&relative))
-                });
+                .then(|| self.comparison_display_text(&relative));
             let document = match historical {
                 Some(Ok(Some(text))) => {
                     Document::from_snapshot(&absolute, text.into_bytes(), policy)
@@ -2395,7 +2389,6 @@ impl App {
             PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
             PickerKind::ComparisonAdvanced(_) => vec!["Empty tree".to_owned()],
             PickerKind::ComparisonControl => self.comparison_control_choices(),
-            PickerKind::ComparisonFocus => self.comparison_focus_choices(),
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
             PickerKind::Worktree => self.worktree_choices(),
         };
@@ -2553,9 +2546,6 @@ impl App {
             }
             Some((PickerKind::ComparisonControl, item, _)) => {
                 self.choose_comparison_control(&item);
-            }
-            Some((PickerKind::ComparisonFocus, item, _)) => {
-                self.choose_comparison_focus(&item);
             }
             Some((PickerKind::ReviewPointName, item, input)) => {
                 let name = if input.trim().is_empty() {

@@ -21,6 +21,10 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Amended 2026-09-17: temporal focus is removed because choosing a review
+point as the base already expresses the same point-to-working-tree delta.
+Review points remain explicit comparison endpoints.
+
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),
@@ -65,8 +69,8 @@ The desired model has three independent concepts:
 ### One comparison per checkout
 
 A running viewer owns one comparison for its active checkout. The selected
-base, target, whitespace rule, and optional temporal focus apply to every
-file. Opening another file does not choose another pair.
+base, target, and whitespace rule apply to every file. Opening another file
+does not choose another pair.
 
 The primary endpoints are:
 
@@ -202,12 +206,10 @@ Git objects are not mirrored or retained. If history rewriting or garbage
 collection removes a required commit, the point reports unavailable content
 and never substitutes the current `HEAD` or working file.
 
-The focus row in **Comparison controls...** selects **All changes** or
-**Since review point**. Since focus is the actual point-to-working-tree
-delta, not a filter over the overall pair, so it includes a reversal that
-disappears from the overall net diff. It is available only with a
-working-tree target and changes paths, counts, gutters, and navigation
-together. Saving another point does not select it.
+A review point selected as the base compares directly to the working tree,
+including a reversal that disappears from a commit-to-working-tree net
+diff. Review points are not valid targets, and saving another point does not
+select it.
 
 ### Immutable origin and qualified placement
 
@@ -216,7 +218,7 @@ Every thread stores immutable origin evidence:
 - original path and optional range;
 - exact bounded snippet and surrounding context;
 - the version and side that supplied those lines;
-- the human's overall comparison and temporal focus when present;
+- the human's selected comparison when present;
 - working-tree, index, or review-point facts when applicable;
 - a content identity, which identifies bytes but is not called a snapshot.
 

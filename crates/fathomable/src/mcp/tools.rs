@@ -11,10 +11,10 @@ use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    AgentReplyCommand, ArchiveRecord, Author, AutoResolve, ComparisonFacts, ComparisonFocus,
-    ContentIdentity, IndexFacts, Lifecycle, LineHashes, LineRange, Message, OriginSide,
-    OriginVersion, Placement, PlacementContext, Reply, ResolutionOutcome, ResolutionRecord,
-    RestoreRecord, ReviewPointFacts, Status, Store, Thread, ThreadId, WorkingTreeFacts,
+    AgentReplyCommand, ArchiveRecord, Author, AutoResolve, ComparisonFacts, ContentIdentity,
+    IndexFacts, Lifecycle, LineHashes, LineRange, Message, OriginSide, OriginVersion, Placement,
+    PlacementContext, Reply, ResolutionOutcome, ResolutionRecord, RestoreRecord, ReviewPointFacts,
+    Status, Store, Thread, ThreadId, WorkingTreeFacts,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -342,15 +342,6 @@ pub(super) enum SideOutput {
 pub(super) struct ComparisonOutput {
     base: VersionOutput,
     target: VersionOutput,
-    focus: FocusOutput,
-}
-
-/// The temporal focus active when the origin was captured.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub(super) enum FocusOutput {
-    AllChanges,
-    SinceReviewPoint { id: String },
 }
 
 /// Working-tree provenance facts.
@@ -529,21 +520,11 @@ impl From<OriginSide> for SideOutput {
     }
 }
 
-impl From<&ComparisonFocus> for FocusOutput {
-    fn from(focus: &ComparisonFocus) -> Self {
-        match focus {
-            ComparisonFocus::AllChanges => Self::AllChanges,
-            ComparisonFocus::SinceReviewPoint { id } => Self::SinceReviewPoint { id: id.clone() },
-        }
-    }
-}
-
 impl From<&ComparisonFacts> for ComparisonOutput {
     fn from(comparison: &ComparisonFacts) -> Self {
         Self {
             base: VersionOutput::from(comparison.base()),
             target: VersionOutput::from(comparison.target()),
-            focus: FocusOutput::from(comparison.focus()),
         }
     }
 }

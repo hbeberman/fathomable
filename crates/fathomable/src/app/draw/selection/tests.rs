@@ -343,7 +343,6 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
             PickerKind::ComparisonReviewPoints,
             PickerKind::ComparisonAdvanced(crate::app::ComparisonSide::Base),
             PickerKind::ComparisonControl,
-            PickerKind::ComparisonFocus,
             PickerKind::ReviewPointName,
             PickerKind::Worktree,
         ] {

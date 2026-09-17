@@ -16,6 +16,24 @@ use super::{
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
 
+#[test]
+fn comparison_facts_ignore_retired_temporal_focus() -> serde_json::Result<()> {
+    let expected = ComparisonFacts::new(
+        OriginVersion::commit("base"),
+        OriginVersion::working_tree(Some("base".to_owned())),
+    );
+    let mut old = serde_json::to_value(&expected)?;
+    old["focus"] = serde_json::json!({
+        "kind": "since_review_point",
+        "id": "retired-review-point"
+    });
+
+    let restored: ComparisonFacts = serde_json::from_value(old)?;
+    assert_eq!(restored, expected);
+    assert!(serde_json::to_value(restored)?.get("focus").is_none());
+    Ok(())
+}
+
 /// A store path two directories deep inside a fresh temp dir, so a
 /// test sees the store create its parents.
 struct TempFile(

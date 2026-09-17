@@ -4,7 +4,7 @@
 //! The old per-file checkpoint timeline is intentionally gone.  These
 //! actions save a workspace-wide
 //! [`ReviewPointStore`](fathomable_core::review_points::ReviewPointStore)
-//! capture and never change the current comparison focus.
+//! capture and never change the selected comparison.
 
 use super::App;
 
@@ -18,7 +18,7 @@ impl App {
         self.open_picker(super::PickerKind::ReviewPointName);
     }
 
-    /// Save a workspace review point without changing the selected focus.
+    /// Save a workspace review point without changing the selected comparison.
     pub(crate) fn save_review_point(&mut self, name: Option<&str>) {
         let Some(store) = self.review_points.as_mut() else {
             self.notice("review points unavailable; see the log");

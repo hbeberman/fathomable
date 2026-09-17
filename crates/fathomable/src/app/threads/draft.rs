@@ -799,14 +799,10 @@ impl App {
 }
 
 fn comparison_facts(app: &App) -> ComparisonFacts {
-    let facts = ComparisonFacts::new(
+    ComparisonFacts::new(
         endpoint_version(app, app.comparison.base()),
         endpoint_version(app, app.comparison.target()),
-    );
-    match app.comparison.focus() {
-        crate::app::comparison::Focus::AllChanges => facts,
-        crate::app::comparison::Focus::Since(id) => facts.since_review_point(id.clone()),
-    }
+    )
 }
 
 fn endpoint_version(

@@ -1,11 +1,10 @@
 // @okf-doc: /decisions/0087-global-comparisons-and-board-history.md
-//! Viewer-wide comparison selection and explicit review-point focus.
+//! Viewer-wide comparison selection and explicit review-point endpoints.
 //!
 //! The app owns one comparison for the active checkout.  File views only
 //! render the projection of that selection; they do not select their own
 //! pair of endpoints.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -23,15 +22,6 @@ use super::diff::{DiffBody, Text};
 
 const PREFERENCE_FILE: &str = "comparison.json";
 const COMMIT_PICKER_LIMIT: usize = 500;
-
-/// Which delta the viewer lists and renders.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Focus {
-    /// The selected comparison pair.
-    AllChanges,
-    /// The saved review-point-to-working-tree delta.
-    Since(String),
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "name")]
@@ -53,7 +43,6 @@ pub(crate) struct State {
     target: ComparisonEndpoint,
     base_alias: Option<EndpointAlias>,
     target_alias: Option<EndpointAlias>,
-    focus: Focus,
     compare: Compare,
     preference: PathBuf,
     persisted: bool,
@@ -71,7 +60,6 @@ struct Preference {
     base_alias: Option<EndpointAlias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target_alias: Option<EndpointAlias>,
-    focus: Option<String>,
     whitespace: bool,
 }
 
@@ -95,7 +83,6 @@ impl State {
             target: ComparisonEndpoint::WorkingTree,
             base_alias: default_alias,
             target_alias: None,
-            focus: Focus::AllChanges,
             compare,
             preference,
             persisted: false,
@@ -116,7 +103,6 @@ impl State {
             }
             state.base_alias = saved.base_alias;
             state.target_alias = saved.target_alias;
-            state.focus = saved.focus.map_or(Focus::AllChanges, Focus::Since);
             state.compare.whitespace = if saved.whitespace {
                 fathomable_core::diff::Whitespace::Ignore
             } else {
@@ -149,11 +135,6 @@ impl State {
 
     pub(crate) fn observed_head(&self) -> Option<&str> {
         self.observed_head.as_deref()
-    }
-
-    /// The selected temporal focus.
-    pub(crate) fn focus(&self) -> &Focus {
-        &self.focus
     }
 
     /// The current line-diff settings.
@@ -196,42 +177,25 @@ impl State {
     ) {
         let aliases_changed = self.validate_aliases(workspace);
         self.generation = self.generation.wrapping_add(1);
-        let result = match &self.focus {
-            Focus::AllChanges => match (&self.base, &self.target) {
-                (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => {
-                    review_points
+        let result = match (&self.base, &self.target) {
+            (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => review_points
+                .ok_or_else(|| format!("review point {id} is unavailable"))
+                .and_then(|store| {
+                    store
+                        .get(id)
                         .ok_or_else(|| format!("review point {id} is unavailable"))
-                        .and_then(|store| {
+                        .and_then(|point| {
                             store
-                                .get(id)
-                                .ok_or_else(|| format!("review point {id} is unavailable"))
-                                .and_then(|point| {
-                                    store
-                                        .compare_to_working(point, workspace)
-                                        .map_err(|error| error.to_string())
-                                })
+                                .compare_to_working(point, workspace)
+                                .map_err(|error| error.to_string())
                         })
-                }
-                (ComparisonEndpoint::ReviewPoint(_), _)
-                | (_, ComparisonEndpoint::ReviewPoint(_)) => {
-                    Err("review points compare only against the working tree".to_owned())
-                }
-                _ => workspace
-                    .compare(self.base.clone(), self.target.clone())
-                    .map_err(|error| error.to_string()),
-            },
-            Focus::Since(id) => match review_points {
-                None => Err(format!("review point {id} is unavailable")),
-                Some(store) => match store.get(id) {
-                    None => Err(format!("review point {id} is unavailable")),
-                    Some(_point) if self.target != ComparisonEndpoint::WorkingTree => {
-                        Err("Since review point focus requires a working-tree target".to_owned())
-                    }
-                    Some(point) => store
-                        .compare_to_working(point, workspace)
-                        .map_err(|error| error.to_string()),
-                },
-            },
+                }),
+            (ComparisonEndpoint::ReviewPoint(_), _) | (_, ComparisonEndpoint::ReviewPoint(_)) => {
+                Err("review points compare only against the working tree".to_owned())
+            }
+            _ => workspace
+                .compare(self.base.clone(), self.target.clone())
+                .map_err(|error| error.to_string()),
         };
         let result = result.and_then(|comparison| {
             let unavailable = comparison
@@ -266,7 +230,7 @@ impl State {
         self.observed_head = workspace.head_commit();
     }
 
-    /// Change the base and clear an incompatible temporal focus.
+    /// Change the base endpoint.
     pub(crate) fn set_base(
         &mut self,
         base: ComparisonEndpoint,
@@ -288,7 +252,6 @@ impl State {
             self.target.clone(),
             self.base_alias.clone(),
             self.target_alias.clone(),
-            self.focus.clone(),
         );
         let had_good = self.current.is_some();
         self.base = base;
@@ -296,20 +259,14 @@ impl State {
         self.refresh(workspace, review_points);
         if self.error.is_some() {
             if had_good {
-                (
-                    self.base,
-                    self.target,
-                    self.base_alias,
-                    self.target_alias,
-                    self.focus,
-                ) = previous;
+                (self.base, self.target, self.base_alias, self.target_alias) = previous;
             }
             return;
         }
         self.persist();
     }
 
-    /// Change the target and clear an incompatible temporal focus.
+    /// Change the target endpoint.
     pub(crate) fn set_target(
         &mut self,
         target: ComparisonEndpoint,
@@ -331,49 +288,14 @@ impl State {
             self.target.clone(),
             self.base_alias.clone(),
             self.target_alias.clone(),
-            self.focus.clone(),
         );
         let had_good = self.current.is_some();
         self.target = target;
         self.target_alias = alias;
-        if self.target != ComparisonEndpoint::WorkingTree {
-            self.focus = Focus::AllChanges;
-        }
         self.refresh(workspace, review_points);
         if self.error.is_some() {
             if had_good {
-                (
-                    self.base,
-                    self.target,
-                    self.base_alias,
-                    self.target_alias,
-                    self.focus,
-                ) = previous;
-            }
-            return;
-        }
-        self.persist();
-    }
-
-    /// Select All changes or a saved review point.
-    pub(crate) fn set_focus(
-        &mut self,
-        focus: Focus,
-        workspace: &mut Workspace,
-        review_points: Option<&ReviewPointStore>,
-    ) {
-        let previous = (self.base.clone(), self.target.clone(), self.focus.clone());
-        let had_good = self.current.is_some();
-        if matches!(focus, Focus::Since(_)) && self.target != ComparisonEndpoint::WorkingTree {
-            self.focus = Focus::AllChanges;
-            self.error = Some("Since review point focus requires a working-tree target".to_owned());
-        } else {
-            self.focus = focus;
-            self.refresh(workspace, review_points);
-        }
-        if self.error.is_some() {
-            if had_good {
-                (self.base, self.target, self.focus) = previous;
+                (self.base, self.target, self.base_alias, self.target_alias) = previous;
             }
             return;
         }
@@ -397,10 +319,6 @@ impl State {
             target: endpoint_string(&self.target),
             base_alias: self.base_alias.clone(),
             target_alias: self.target_alias.clone(),
-            focus: match &self.focus {
-                Focus::AllChanges => None,
-                Focus::Since(id) => Some(id.clone()),
-            },
             whitespace: matches!(
                 self.compare.whitespace,
                 fathomable_core::diff::Whitespace::Ignore
@@ -548,33 +466,10 @@ impl App {
         self.comparison.current()
     }
 
-    /// The currently selected temporal focus.
-    #[cfg(test)]
-    pub(crate) fn comparison_state_focus(&self) -> Focus {
-        self.comparison.focus().clone()
-    }
-
-    /// The comparison selection error retained alongside its last good view.
-    #[cfg(test)]
-    pub(crate) fn comparison_state_error(&self) -> Option<&str> {
-        self.comparison.error()
-    }
-
-    /// The current comparison preference and focus label.
+    /// The current comparison preference label.
     pub(crate) fn comparison_label(&self) -> String {
         let state = &self.comparison;
         let mut label = format!("Compare: {} → {}", state.base(), state.target());
-        if let Focus::Since(id) = state.focus() {
-            let name = self
-                .review_points
-                .as_ref()
-                .and_then(|store| store.get(id))
-                .and_then(ReviewPoint::name)
-                .map_or_else(|| id.clone(), str::to_owned);
-            let _ = write!(label, " · Since {name:?}");
-        } else {
-            label.push_str(" · All changes");
-        }
         if state.stale() {
             label.push_str(" · stale");
         }
@@ -640,12 +535,8 @@ impl App {
 
     /// Compact comparison provenance for the status line.
     pub(crate) fn comparison_badge(&self) -> String {
-        let focus = match self.comparison.focus() {
-            Focus::AllChanges => "all".to_owned(),
-            Focus::Since(id) => format!("since {}", &id[..id.len().min(8)]),
-        };
         format!(
-            "CMP {} → {} · {focus}",
+            "CMP {} → {}",
             self.comparison.base(),
             self.comparison.target()
         )
@@ -654,11 +545,6 @@ impl App {
     /// Open the unified comparison control.
     pub(crate) fn open_comparison_control(&mut self) {
         self.open_picker(super::PickerKind::ComparisonControl);
-    }
-
-    /// Pick the temporal focus of the current comparison.
-    pub(crate) fn pick_comparison_focus(&mut self) {
-        self.open_picker(super::PickerKind::ComparisonFocus);
     }
 
     /// Save the selected comparison preference after a state change.
@@ -812,10 +698,6 @@ impl App {
             "open unified diff".to_owned(),
             format!("base: {}", self.comparison.base()),
             format!("target: {}", self.comparison.target()),
-            match self.comparison.focus() {
-                Focus::AllChanges => "focus: All changes".to_owned(),
-                Focus::Since(id) => format!("focus: Since {id}"),
-            },
             "save review point".to_owned(),
             "start comparison at current HEAD".to_owned(),
             "select contiguous commit batch (type first..last)".to_owned(),
@@ -825,21 +707,6 @@ impl App {
                 "whitespace: exact".to_owned()
             },
         ]
-    }
-
-    /// The focus picker list.
-    pub(crate) fn comparison_focus_choices(&self) -> Vec<String> {
-        let mut choices = vec!["All changes".to_owned()];
-        if let Some(store) = &self.review_points {
-            choices.extend(store.list().into_iter().map(|point| {
-                format!(
-                    "Since {} [{}]",
-                    point.name().unwrap_or(point.id()),
-                    point.id()
-                )
-            }));
-        }
-        choices
     }
 
     /// Resolve a picker entry or typed local Git revision.
@@ -941,35 +808,6 @@ impl App {
         }
     }
 
-    /// Set the current focus from the focus picker.
-    pub(crate) fn choose_comparison_focus(&mut self, item: &str) {
-        if item == "All changes" {
-            self.comparison.set_focus(
-                Focus::AllChanges,
-                &mut self.workspace,
-                self.review_points.as_ref(),
-            );
-        } else if let Some(id) = item
-            .split('[')
-            .nth(1)
-            .and_then(|value| value.strip_suffix(']'))
-        {
-            self.comparison.set_focus(
-                Focus::Since(id.to_owned()),
-                &mut self.workspace,
-                self.review_points.as_ref(),
-            );
-        } else {
-            self.notice("choose All changes or a saved review point");
-            return;
-        }
-        if let Some(error) = self.comparison.error().map(str::to_owned) {
-            self.notice(error);
-        } else {
-            self.apply_refreshed_comparison(false);
-        }
-    }
-
     /// Apply a control-list action.
     pub(crate) fn choose_comparison_control(&mut self, item: &str) {
         if item == "open unified diff" {
@@ -978,8 +816,6 @@ impl App {
             self.pick_diff_side(false);
         } else if item.starts_with("target:") {
             self.pick_diff_side(true);
-        } else if item.starts_with("focus:") {
-            self.pick_comparison_focus();
         } else if item == "save review point" {
             self.request_review_point();
         } else if item == "start comparison at current HEAD" {
@@ -1006,11 +842,6 @@ impl App {
         );
         self.comparison.set_target(
             ComparisonEndpoint::WorkingTree,
-            &mut self.workspace,
-            self.review_points.as_ref(),
-        );
-        self.comparison.set_focus(
-            Focus::AllChanges,
             &mut self.workspace,
             self.review_points.as_ref(),
         );
@@ -1246,7 +1077,6 @@ impl App {
         !self.workspace.is_git()
             && self.comparison.base() == &ComparisonEndpoint::EmptyTree
             && self.comparison.target() == &ComparisonEndpoint::WorkingTree
-            && matches!(self.comparison.focus(), Focus::AllChanges)
     }
 }
 
@@ -1256,10 +1086,11 @@ mod tests {
     use std::path::Path;
 
     use fathomable_core::XdgDirs;
+    use fathomable_core::diff::Compare;
     use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
     use fathomable_testing::{TempDir, git};
 
-    use super::Focus;
+    use super::State;
     use crate::app::testing::{AppBuilder, press, press_key};
     use crate::app::{PickerKind, Popup};
     use crossterm::event::KeyCode;
@@ -1269,6 +1100,37 @@ mod tests {
         fs::create_dir_all(dir.0.join("ws"))?;
         git::init(&dir.0.join("ws"))?;
         Ok(dir)
+    }
+
+    #[test]
+    fn retired_temporal_focus_is_removed_from_saved_preferences() -> anyhow::Result<()> {
+        let dir = repository("comparison-retired-focus")?;
+        let root = dir.0.join("ws");
+        fs::write(root.join("a.md"), "one\n")?;
+        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+        let workspace = Workspace::discover(&root)?;
+        let base = workspace
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("HEAD"))?;
+        let preferences = dir.0.join("preferences");
+        fs::create_dir_all(&preferences)?;
+        fs::write(
+            preferences.join("comparison.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "base": base,
+                "target": "working-tree",
+                "focus": "retired-review-point",
+                "whitespace": false
+            }))?,
+        )?;
+
+        let mut state = State::load(&preferences, &workspace, Compare::default());
+        assert_eq!(state.target(), &ComparisonEndpoint::WorkingTree);
+        state.persist();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(preferences.join("comparison.json"))?)?;
+        assert!(saved.get("focus").is_none());
+        Ok(())
     }
 
     #[test]
@@ -1341,58 +1203,6 @@ mod tests {
         app.open(Path::new("gone.md"));
         assert_eq!(app.view().text(), "from A\n");
         assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
-        Ok(())
-    }
-
-    #[test]
-    fn review_point_focus_shows_reversions_without_changing_on_save() -> anyhow::Result<()> {
-        let dir = repository("comparison-review-point")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        fs::write(root.join("a.md"), "two\n")?;
-        let mut app = AppBuilder::at(&root)
-            .unopened()
-            .review_points(dir.0.join("points"))
-            .build()?;
-
-        app.save_review_point(None);
-        let point = app
-            .review_points
-            .as_ref()
-            .and_then(|store| store.list().last().cloned())
-            .ok_or_else(|| anyhow::anyhow!("review point was not saved"))?;
-        assert!(matches!(
-            app.comparison()
-                .map(fathomable_core::diff::Comparison::base),
-            Some(ComparisonEndpoint::Commit(_))
-        ));
-
-        fs::write(root.join("a.md"), "one\n")?;
-        app.choose_comparison_focus(&format!("Since {} [{}]", point.id(), point.id()));
-        app.refresh_comparison();
-        assert!(matches!(
-            app.comparison()
-                .map(fathomable_core::diff::Comparison::base),
-            Some(ComparisonEndpoint::ReviewPoint(_))
-        ));
-        assert_eq!(app.comparison().map(|c| c.changes().len()), Some(1));
-        assert!(matches!(app.comparison_state_focus(), Focus::Since(_)));
-
-        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(
-            "0000000000000000000000000000000000000000",
-        )?));
-        assert_eq!(app.comparison().map(|c| c.changes().len()), Some(1));
-        assert_eq!(
-            app.comparison()
-                .map(fathomable_core::diff::Comparison::target),
-            Some(&ComparisonEndpoint::WorkingTree)
-        );
-        assert!(matches!(app.comparison_state_focus(), Focus::Since(_)));
-        assert!(app.comparison_state_error().is_some());
-
-        app.save_review_point(Some("after revert"));
-        assert!(matches!(app.comparison_state_focus(), Focus::Since(_)));
         Ok(())
     }
 

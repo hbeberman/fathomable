@@ -37,8 +37,9 @@ the broader `Esc` action.
 
 Amended 2026-09-17: picking the comparison base uses `Space d b`; the
 text-focused `b` alias is removed. `Space d s` no longer starts a comparison
-at current `HEAD`, and `Space d r` no longer picks temporal focus; both
-actions remain in **Comparison controls...**.
+at current `HEAD`; that action remains in **Comparison controls...**.
+`Space d r` and the redundant temporal-focus model are removed; a review
+point can instead be selected directly as the comparison base.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

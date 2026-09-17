@@ -2447,7 +2447,6 @@ fn draw_picker(
         super::PickerKind::ComparisonAdvanced(side) => {
             format!("{} advanced endpoints", side.label())
         }
-        super::PickerKind::ComparisonFocus => "comparison focus".to_owned(),
         super::PickerKind::ReviewPointName => "review point name (optional)".to_owned(),
         super::PickerKind::Worktree => "worktree".to_owned(),
     };

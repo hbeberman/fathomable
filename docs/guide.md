@@ -194,7 +194,7 @@ Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
 The status/header label is the source of truth:
 
 ```text
-Compare: a1b2c3d -> working tree · All changes
+Compare: a1b2c3d -> working tree
 ```
 
 The selected comparison stays active while opening different files. Its
@@ -271,12 +271,10 @@ for deletions. It does not write Git or the checkout. Binary, oversized,
 unreadable, raced, and ignored paths are reported honestly; an incomplete
 point is not selectable.
 
-In **Comparison controls...**, the focus row can then select
-**Since _point_**. Since focus is a real point-to-working-tree delta, so it
-shows a reversal even when that reversal disappears from the overall
-comparison. It changes paths, counts, gutters, and navigation together.
-Switching to an immutable target leaves Since focus explicitly. Saving
-another point never selects it automatically.
+To compare from a saved point, use `Space d b`, open **Review points...**,
+and choose it as the base. The resulting point-to-working-tree delta shows a
+reversal even when that reversal disappears from a commit-to-working-tree
+comparison. Saving another point never selects it automatically.
 
 Review points depend on their recorded Git objects for unchanged committed
 files. If rewriting and garbage collection remove those objects, Fathomable
@@ -288,7 +286,7 @@ A line or file comment stores immutable origin evidence:
 
 - original path, range, snippet, and bounded surrounding context;
 - exact source version and comparison side;
-- the displayed comparison and optional Since focus;
+- the displayed comparison;
 - working-tree, index, or review-point facts and content identity.
 
 Removed diff lines originate on the base; added/context lines originate on
@@ -372,8 +370,8 @@ the base or target label opens that endpoint's picker.
 **Review** contains the board, Recently resolved, Archived threads, Archive
 resolved threads, Clear board, and contextual thread actions. **Diff**
 contains Comparison controls, base/target pickers, Save review point, and
-whitespace. **Start comparison at current HEAD** and the **All changes /
-Since...** focus remain inside Comparison controls.
+whitespace. **Start comparison at current HEAD** remains inside Comparison
+controls.
 
 Configuration is KDL at
 `$XDG_CONFIG_HOME/fathomable/config.kdl` (normally

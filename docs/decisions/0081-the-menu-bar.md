@@ -21,9 +21,10 @@ The Auto-jump entry described below was removed by
 [0082](0082-three-tool-review-core.md); the rest of this decision remains
 current.
 
-Amended 2026-09-17: **Start comparison at current HEAD** and the **All changes
-/ Since...** focus remain available inside **Comparison controls...** but are
-no longer duplicated in the **Diff** menu.
+Amended 2026-09-17: **Start comparison at current HEAD** remains available
+inside **Comparison controls...** but is no longer duplicated in the
+**Diff** menu. The redundant **All changes / Since...** temporal focus is
+removed entirely.
 
 ## Context
 

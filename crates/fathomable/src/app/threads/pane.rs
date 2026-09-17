@@ -48,6 +48,15 @@ impl PaneScope {
             Self::Workspace => "workspace",
         }
     }
+
+    /// The header's narrow fallback.
+    #[must_use]
+    pub(crate) fn short_word(self) -> &'static str {
+        match self {
+            Self::File => "f",
+            Self::Workspace => "w",
+        }
+    }
 }
 
 /// One thread of the pane, ready to draw as two rows (ADR 0066).

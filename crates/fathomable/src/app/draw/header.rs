@@ -25,7 +25,7 @@ use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 
-use crate::app::draw::counts::count_hints;
+use crate::app::draw::counts::{count_hints, passive_count_hints};
 use crate::app::draw::nest::NEST;
 use crate::app::draw::{Theme, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
@@ -68,6 +68,8 @@ pub(crate) enum Tone {
 #[derive(Debug, Clone)]
 pub(crate) struct HintOf {
     key: String,
+    /// A shorter form of `key` used only after count words have dropped.
+    compact: Option<String>,
     what: String,
     /// The word after `what`, a space between; empty for most hints.
     word: String,
@@ -87,6 +89,7 @@ impl HintOf {
     pub(super) fn new(key: impl Into<String>, what: impl Into<String>, actions: &[Action]) -> Self {
         Self {
             key: key.into(),
+            compact: None,
             what: what.into(),
             word: String::new(),
             actions: actions.to_vec(),
@@ -119,6 +122,7 @@ impl HintOf {
     ) -> Self {
         Self {
             key: glyph.to_owned(),
+            compact: None,
             what: n.to_string(),
             word: word.to_owned(),
             actions: actions.to_vec(),
@@ -134,11 +138,27 @@ impl HintOf {
     fn word(text: String, tone: Tone) -> Self {
         Self {
             key: text,
+            compact: None,
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
             tone: Some(tone),
             faint: false,
+            gap: false,
+            number: false,
+        }
+    }
+
+    /// A passive word that shortens only when its full form no longer fits.
+    fn responsive_word(text: &'static str, compact: &'static str, tone: Tone) -> Self {
+        Self {
+            key: text.to_owned(),
+            compact: Some(compact.to_owned()),
+            what: String::new(),
+            word: String::new(),
+            actions: Vec::new(),
+            tone: Some(tone),
+            faint: true,
             gap: false,
             number: false,
         }
@@ -157,13 +177,18 @@ impl HintOf {
     /// The columns the hint takes in `form`: key, action, the space
     /// between when both are present, and the word when worded.
     fn width(&self, form: Form) -> usize {
-        display_width(&self.key)
+        display_width(self.key_in(form))
             + display_width(&self.what)
             + usize::from(self.gap && !self.key.is_empty() && !self.what.is_empty())
-            + match form {
-                Form::Worded => self.word_width(),
-                Form::Bare => 0,
-            }
+            + usize::from(form == Form::Worded) * self.word_width()
+    }
+
+    fn key_in(&self, form: Form) -> &str {
+        if form == Form::Compact {
+            self.compact.as_deref().unwrap_or(&self.key)
+        } else {
+            &self.key
+        }
     }
 }
 
@@ -173,6 +198,7 @@ impl HintOf {
 enum Form {
     Worded,
     Bare,
+    Compact,
 }
 
 /// Where a header's hints sit: against the right edge after the words,
@@ -257,8 +283,9 @@ impl Header {
 
     /// The hints that fit after the left part on `width` cells, the
     /// column the first starts at, and their form (ADR 0075): every
-    /// hint with its word when that fits, else bare, dropping optional
-    /// hints from the end before the retained tail.
+    /// hint with its word when that fits, then without count words, then
+    /// with responsive words shortened, dropping optional hints before the
+    /// retained tail.
     fn shown(&self, width: usize) -> Option<(usize, &[HintOf], &[HintOf], Form)> {
         let used = self.left_width();
         let free = width.saturating_sub(used);
@@ -271,30 +298,43 @@ impl Header {
         let fits = |hints: &[HintOf], tail: &[HintOf], form: Form| {
             free >= hints_width(hints, tail, sep, form) + margin
         };
-        let worded = self
+        let has_word = self
             .hints
             .iter()
             .chain(&self.tail)
-            .any(|hint| !hint.word.is_empty())
-            && fits(&self.hints, &self.tail, Form::Worded);
-        let (hints, tail, form) = if worded {
+            .any(|hint| !hint.word.is_empty());
+        let has_compact = self
+            .hints
+            .iter()
+            .chain(&self.tail)
+            .any(|hint| hint.compact.is_some());
+        let has_any = !self.hints.is_empty() || !self.tail.is_empty();
+        let (hints, tail, form) = if has_word && fits(&self.hints, &self.tail, Form::Worded) {
             (self.hints.as_slice(), self.tail.as_slice(), Form::Worded)
+        } else if has_any && fits(&self.hints, &self.tail, Form::Bare) {
+            (self.hints.as_slice(), self.tail.as_slice(), Form::Bare)
+        } else if has_compact && fits(&self.hints, &self.tail, Form::Compact) {
+            (self.hints.as_slice(), self.tail.as_slice(), Form::Compact)
         } else {
+            let form = if has_compact {
+                Form::Compact
+            } else {
+                Form::Bare
+            };
             let hints = (0..=self.hints.len())
                 .rev()
                 .map(|n| &self.hints[..n])
                 .find(|hints| {
-                    (!hints.is_empty() || !self.tail.is_empty())
-                        && fits(hints, &self.tail, Form::Bare)
+                    (!hints.is_empty() || !self.tail.is_empty()) && fits(hints, &self.tail, form)
                 });
             if let Some(hints) = hints {
-                (hints, self.tail.as_slice(), Form::Bare)
+                (hints, self.tail.as_slice(), form)
             } else {
                 let tail = (1..=self.tail.len())
                     .rev()
                     .map(|n| &self.tail[..n])
-                    .find(|tail| fits(&[], tail, Form::Bare))?;
-                (&[][..], tail, Form::Bare)
+                    .find(|tail| fits(&[], tail, form))?;
+                (&[][..], tail, form)
             }
         };
         let start = match self.align {
@@ -316,10 +356,8 @@ impl Header {
             let end = at + hint.width(form);
             if column >= at && column < end {
                 let offset = column - at;
-                let slash = hint
-                    .key
-                    .find('/')
-                    .map(|byte| display_width(&hint.key[..byte]));
+                let key = hint.key_in(form);
+                let slash = key.find('/').map(|byte| display_width(&key[..byte]));
                 return match (hint.actions.as_slice(), slash) {
                     ([first, second], Some(slash)) => {
                         Some(if offset <= slash { *first } else { *second })
@@ -377,14 +415,15 @@ impl Header {
                     spans.push(Span::styled(self.sep, faint));
                     at += sep;
                 }
-                if !hint.key.is_empty() {
+                let key = hint.key_in(form);
+                if !key.is_empty() {
                     let mut style = hint.tone.map_or(theme.info, tone_style);
                     if hint.faint {
                         style = style.add_modifier(Modifier::DIM);
                     }
-                    spans.push(Span::styled(hint.key.clone(), style));
+                    spans.push(Span::styled(key.to_owned(), style));
                 }
-                if hint.gap && !hint.key.is_empty() && !hint.what.is_empty() {
+                if hint.gap && !key.is_empty() && !hint.what.is_empty() {
                     spans.push(Span::styled(" ", faint));
                 }
                 if !hint.what.is_empty() {
@@ -651,25 +690,23 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     Header::bar(hints)
 }
 
-/// The threads pane's header (ADR 0066, ADR 0075): `threads ·
-/// workspace`, then the counts by colour, with their words when the
-/// row has room, against the right edge; a click on the words
-/// switches the scope and one on the resolved count toggles `x`.
+/// The threads pane's header (ADR 0066, ADR 0075): `Threads` at the left,
+/// then passive scope and lifecycle counts against the right edge. Scope
+/// shortens to `f` or `w` after count words drop and before it disappears.
 pub(crate) fn threads_pane_header(app: &App) -> Header {
     let scope = app.sidebar_scope();
-    let left = vec![
-        (" threads".to_owned(), Tone::Dir),
-        (" · ".to_owned(), Tone::Info),
-        (scope.word().to_owned(), Tone::Dir),
-    ];
     let file_only = scope == crate::app::threads::pane::PaneScope::File;
-    Header::counted(
-        left,
-        count_hints(
+    Header::counted_with_tail(
+        vec![(" Threads".to_owned(), Tone::Dir)],
+        vec![HintOf::responsive_word(
+            scope.word(),
+            scope.short_word(),
+            Tone::Info,
+        )],
+        passive_count_hints(
             app.review_counts(file_only),
             app.review().view != ReviewView::Board || app.review().resolved,
         ),
-        Align::Right,
     )
 }
 

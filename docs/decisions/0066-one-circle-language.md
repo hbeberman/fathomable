@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One circle language and the grouped threads pane
-description: Every surface that names a thread draws one circle in the state colour (`●` open or waiting, `◐` proposed, `○` resolved, `?` lines gone); the threads pane lists two rows per thread grouped by file with `z` folding a file, its header counts by colour and its keys sit on a bar while it has focus; the review list is the same view full screen, always by file then line; and every act on these surfaces takes the mouse.
+description: Every surface that names a thread draws one lifecycle circle; the Threads pane groups two-row summaries by file, presents passive responsive scope and counts beside a title settings menu, and keeps row menus item-local; the review list is the same view full screen, and every act on these surfaces takes the mouse.
 resource: crates/fathomable/src/app/draw/threads_pane.rs
 related_resources:
   - crates/fathomable/src/app/threads/pane.rs
@@ -43,6 +43,13 @@ proposed, `○` resolved. Detached placement is the `?` suffix on `Lx-y?`,
 not a glyph; last-author colours, waiting, and overlapping counts retire.
 The sidebar's grouped two-row cards and file folding remain, backed by the
 shared summary facts.
+
+Amended 2026-09-17: the pane header is a settings-button model. Only
+`Threads` takes title hover and opens the checked **Only current file** and
+**Show resolved** settings below the header. Its subdued scope and lifecycle
+counts are passive and right-aligned; `file`/`workspace` shorten to `f`/`w`
+before scope is omitted. A pane file-group menu no longer carries the
+pane-wide resolved setting.
 
 ## Context
 
@@ -157,15 +164,17 @@ agents' green (amber and teal until 2026-09-09).
 
 ### Header and key bar
 
-- The header reads `threads · workspace` (or `· file`) then, flush
-  right, the counts by colour: `●2 ●2 ○1`, open, waiting, and
-  resolved each in its colour. A `◐` thread counts as waiting; a `?` thread counts
-  under its colour. (Amended 2026-09-11 by
-  [0075](0075-the-header-names-its-counts.md): each count carries a
-  word when the row has room, and a `◐` thread has its own count.) A
-  zero count is not drawn. With resolved hidden
-  the `○n` count still shows what `x` would reveal, dimmed. The bare
-  total goes.
+- The header reads `Threads` at the left. Flush right, subdued
+  `workspace` or `file` names the pane's scope before lifecycle counts:
+  `● 2 active`, `◐ 1 resolution proposed`, and `○ 1 resolved`, each in its
+  lifecycle colour. Zero counts are omitted; with resolved hidden, the
+  resolved count still says what the setting would reveal and is dimmed.
+  The count words drop together on narrower rows, then scope shortens to `w`
+  or `f`, then scope is omitted before the lifecycle counts.
+- Only the `Threads` title has the shared title-hover background. A
+  left-click opens a menu directly below the pane header with checked
+  **Only current file** and **Show resolved** settings. Scope and counts are
+  display state, not click targets.
 - The keys leave the header. While the pane has the keys its bottom
   row is a key bar on `ui.header`: `s scope · x resolved · z fold · Z
   fold all`, dropping from the end when narrow; `z` and `Z` show only
@@ -220,13 +229,12 @@ Everything the keys do here the mouse does too, extending
   cursor on the row, and the list's file menu has no fold-all,
   [0076](0076-threads-fold-in-the-list.md)): a left-click folds or unfolds it, as a click on a
   directory in the files pane; a right-click puts the cursor on the
-  file's first thread and opens the file's menu: `z fold` / `z unfold`,
-  `Z fold all` / `Z unfold all`, `Enter open file`, `x hide resolved` /
-  `x show resolved`. The same in the pane and in the review list.
-- The pane's header: a click on its words toggles the scope (`s`); a
-  click on the `○n` count toggles resolved (`x`). The header is a
-  `Header` whose counts are its hints, so the mouse reads the layout
-  the drawing made.
+  file's first thread and opens the file's menu. In the pane it offers
+  fold/unfold, fold/unfold all, and open file; in the review list it offers
+  fold/unfold, open file, and show/hide resolved.
+- The pane's header: a click on `Threads` opens the checked scope and
+  resolved settings below the header. A click on its passive scope or counts
+  only focuses the pane.
 - The key bar: a click on a hint runs it; a pane without the keys
   focuses on the first click and shows the bar, as the list does.
 - The files pane: a right-click on a file with listed threads gains

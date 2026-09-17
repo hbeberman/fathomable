@@ -87,7 +87,7 @@ fn sidebar_mouse(
             if column < header::files_pane_header(app).left_width() =>
         {
             app.focus_pane(Focus::Tree);
-            app.open_files_menu(column, screen_row);
+            app.open_files_menu(screen_row);
         }
         MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
         MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
@@ -101,10 +101,9 @@ fn sidebar_mouse(
 /// The mouse over the threads pane (ADR 0027, ADR 0066): the wheel
 /// steps between threads, a click on either row of a thread goes to it
 /// and one on a file row folds it, a click on the header toggles the
-/// scope (or, on its resolved count, resolved threads), a click on the
-/// key bar runs its hint, a right-click on a row opens its menu, and
-/// the rule drags. Row 0 is the rule, row 1 the header, and the last
-/// row the key bar while the pane has the keys.
+/// title menu, a click on the key bar runs its hint, a right-click on a
+/// row opens its menu, and the rule drags. Row 0 is the rule, row 1 the
+/// header, and the last row the key bar while the pane has the keys.
 fn threads_pane_mouse(
     app: &mut App,
     kind: MouseEventKind,
@@ -123,9 +122,8 @@ fn threads_pane_mouse(
         MouseEventKind::Down(MouseButton::Left) if pane_row == 1 => {
             app.threads_pane_focus();
             let header = header::threads_pane_header(app);
-            match header.action_at(inner, column) {
-                Some(action) => return app.act(action),
-                None => app.threads_pane_toggle_scope(),
+            if column < header.left_width() {
+                app.open_threads_menu(row);
             }
         }
         MouseEventKind::Down(MouseButton::Left) if bar => {

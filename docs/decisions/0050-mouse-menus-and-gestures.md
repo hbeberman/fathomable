@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Mouse menus and gestures
-description: A right-click opens a context menu of the actions that apply where the pointer is, in the text, the rail, and the review list, each entry showing its key from the binding table; the Space menu and Space ? take clicks; the gutter, double- and triple-click, and Shift-click select; pane-header hints take clicks; and links copy or open from the menu.
+description: A right-click opens a pointer-anchored context menu of the actions that apply where the pointer is, while a pane-title click opens settings directly below its header; menus show keys from the binding table, chrome takes clicks, selection gestures work, and links copy or open from the menu.
 resource: crates/fathomable/src/app/input/menu.rs
 related_resources:
   - crates/fathomable/src/app/input/bindings.rs
@@ -79,6 +79,12 @@ between them. Menu shortcuts abbreviate `Space` as `Sp`.
 Amended later 2026-09-17: Files rows add `copy full path` (`Y`) after the
 relative `copy path` (`y`) for both files and directories, and the file
 action is labelled `file comment`.
+
+Amended later 2026-09-17: pane-title settings menus are chrome, not context
+menus. They open at the sidebar's left edge with their top border on the row
+immediately below the clicked header, while right-click menus remain anchored
+at the pointer. The Threads title now opens its scope and resolved settings;
+its state at the right of the header is passive.
 
 ## Context
 
@@ -163,6 +169,11 @@ same day; the choices are below.
   subdued info face; the widest pair sizes the menu with at least one cell
   between the two. Shortcut labels abbreviate `Space` as `Sp`. Borders use
   the subdued info face and hover uses `ui.list.hover`. No new theme key.
+- **Pane-title menus are the exception to pointer anchoring.** A left-click
+  on a pane title opens its settings menu at the sidebar's left edge, with the
+  top border one row below that pane's header. The popup still shifts to stay
+  on screen when the terminal cannot hold it there. A right-click context menu
+  continues to start at the pointer.
 - The comment box keeps the keys and the mouse works around it
   ([0018](0018-comment-editor.md)); a right-click in the box does
   nothing. Under the help, status, and picker popups the mouse is
@@ -220,11 +231,13 @@ same day; the choices are below.
   [0059](0059-headers-and-the-key-bar.md): the review list's keys are
   on a bar along its bottom row, which takes clicks as the header did,
   and a click on the header's sort word switches the sort.
-- A click on the threads pane's header text toggles its reach between
-  the file and the workspace, as `s` does.
-- A click on the `Files` title opens that pane's changed, untracked, and
-  ignored settings with live labels. The filter-state words and diff totals
-  are passive, and right-click anywhere on the Files header does nothing.
+- A click on the `Threads` title opens checked **Only current file** and
+  **Show resolved** settings. Scope, lifecycle counts, and the rest of the
+  header are passive; clicking them only focuses the pane.
+- A click on the `Files` title opens that pane's checked **Only changed**,
+  **Show untracked**, and **Show ignored** settings. The filter-state words
+  and diff totals are passive, and right-click anywhere on the Files header
+  does nothing.
 - In the checkpoint header a click on the base name opens the base
   picker and a click on the target name the target picker, as `b` and
   `t` do. (Amended 2026-09-06 by

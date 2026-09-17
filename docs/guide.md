@@ -190,11 +190,26 @@ wheel moves the selection and list.
 The Files header reads `Files` at the left. That word takes the shared hover
 background under the pointer; clicking it opens **Only changed**, **Show
 untracked**, and **Show ignored**. A checkmark means the setting is on.
-Right-clicking the header does nothing.
+The popup aligns with the sidebar and unfolds on the row below the pane
+header, rather than opening at the pointer. Right-clicking the header does
+nothing.
 Active filter words appear passively before the `+n -m` comparison totals.
 Right-clicking a file offers **Open**, **File comment**, **Copy path** (`y`),
 and **Copy full path** (`Y`). Right-clicking a directory offers
 **Expand/Collapse** and both path-copy actions.
+
+The Threads header follows the same title-menu model. `Threads` is the only
+hovered and clickable title region; its menu unfolds below the header with
+checked **Only current file** and **Show resolved** settings. Subdued
+`file` or `workspace` scope and lifecycle counts are passive and
+right-aligned. On narrow panes scope shortens to `f` or `w`, then disappears
+before the counts do. Clicking passive header cells only focuses the pane.
+Right-clicking a file group offers **Fold/Unfold**, **Fold/Unfold all**, and
+**Open file**; the pane-wide resolved setting stays in the title menu.
+Right-clicking a thread offers **Go to**, **Reply**, auto-resolve,
+**Resolve/Reopen**, conditional **Archive**, edit, and **Delete** actions,
+plus **Fold file** in workspace scope.
+
 Context and menu-bar popups put action labels at the left and their subdued
 shortcuts at the right, with at least one cell between them. Those menus use
 `Sp` as the compact spelling of `Space`.

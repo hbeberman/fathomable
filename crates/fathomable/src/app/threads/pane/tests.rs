@@ -120,7 +120,9 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
         column[top]
     );
     assert!(
-        column[top + 1].contains("threads · file") && column[top + 1].contains("● 2"),
+        column[top + 1].contains("Threads")
+            && column[top + 1].contains("file")
+            && column[top + 1].contains("● 2"),
         "{:?}",
         column[top + 1]
     );
@@ -216,7 +218,8 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     );
     let column = sidebar_column(&app)?;
     assert!(
-        column[app.tree_rows() + 1].contains("threads · workspace"),
+        column[app.tree_rows() + 1].contains("Threads")
+            && column[app.tree_rows() + 1].contains("workspace"),
         "{:?}",
         column[app.tree_rows() + 1]
     );
@@ -259,6 +262,57 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     app.compose_insert("ok");
     app.compose_submit();
     assert_eq!(app.focus(), Focus::ThreadsPane);
+    Ok(())
+}
+
+#[test]
+fn the_header_shortens_scope_and_hovers_only_the_title() -> anyhow::Result<()> {
+    let (_dir, mut app) = three_threads("header")?;
+    app.threads_pane_toggle_scope();
+    app.begin_drag(Border::Sidebar);
+    app.drag_to(17, 0);
+    app.end_drag();
+    assert_eq!(app.sidebar_width(), 18);
+
+    let top = app.tree_rows();
+    let column = sidebar_column(&app)?;
+    let header = &column[top + 1];
+    assert!(header.starts_with(" Threads"), "{header:?}");
+    assert!(header.contains(" w ● 3"), "{header:?}");
+    assert!(!header.contains("workspace"), "{header:?}");
+    let scope_column = header
+        .find('w')
+        .ok_or_else(|| anyhow::anyhow!("no scope"))?;
+
+    let row = app.pane_top() + top + 1;
+    crate::app::input::mouse::handle_mouse(
+        &mut app,
+        MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 2,
+            row: u16::try_from(row)?,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    let (theme, buffer) = sidebar_buffer(&app)?;
+    for column in 0..8 {
+        assert_eq!(
+            Some(buffer[(column, u16::try_from(row)?)].bg),
+            theme.list_hover.bg,
+            "Threads title cell {column}"
+        );
+    }
+    assert_eq!(
+        Some(buffer[(8, u16::try_from(row)?)].bg),
+        theme.header.bg,
+        "hover stops at the title hit region"
+    );
+    assert!(
+        buffer[(u16::try_from(scope_column)?, u16::try_from(row)?)]
+            .modifier
+            .contains(ratatui::style::Modifier::DIM),
+        "scope is subdued"
+    );
     Ok(())
 }
 
@@ -342,7 +396,11 @@ fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> 
     assert_eq!(app.threads_pane_height(), app.pane_rows());
     assert_eq!(app.tree_rows(), 0);
     let column = sidebar_column(&app)?;
-    assert!(column[1].contains("threads · file"), "{:?}", column[1]);
+    assert!(
+        column[1].contains("Threads") && column[1].contains("file"),
+        "{:?}",
+        column[1]
+    );
     assert!(
         column[2].contains("no threads in this file"),
         "{:?}",
@@ -537,9 +595,10 @@ fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 5));
     assert_eq!(app.view().cursor_source_line(), Some(6));
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    // A click on the header focuses the pane.
+    // A click on the passive header state focuses the pane without opening
+    // its title menu.
     app.focus_pane(Focus::View);
-    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 1));
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 10, top + 1));
     assert_eq!(app.focus(), Focus::ThreadsPane);
     // The wheel steps between threads.
     crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 2, top + 1));

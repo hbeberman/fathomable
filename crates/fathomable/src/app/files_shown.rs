@@ -359,6 +359,12 @@ mod tests {
             )
         };
         click_title(&mut app);
+        let grid = app
+            .menu()
+            .ok_or_else(|| anyhow::anyhow!("Files menu did not open"))?
+            .grid_in(app.size().0, app.pane_top(), app.pane_rows());
+        assert_eq!(grid.x, 0);
+        assert_eq!(grid.y, app.pane_top() + 1);
         let settings = |app: &App| -> Vec<(String, Option<bool>)> {
             app.menu()
                 .map(|menu| {

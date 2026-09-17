@@ -4,10 +4,11 @@
 //!
 //! The review list's and the threads pane's headers count the threads
 //! in scope by lifecycle: `● 2 active`, `◐ 1 resolution proposed`, and
-//! `○ 1 resolved`. A zero count is left out. The resolved
-//! count is a click on `x` and reads dim while resolved threads are
-//! hidden. The words are one set: [`super::header::Header`] draws them
-//! all or none, dropping them together when its row is too narrow.
+//! `○ 1 resolved`. A zero count is left out. The review header's resolved
+//! count is a click on `x`; the threads pane's counts are passive. A hidden
+//! resolved count reads dim. The words are one set:
+//! [`super::header::Header`] draws them all or none, dropping them together
+//! when its row is too narrow.
 
 use crate::app::draw::header::HintOf;
 use crate::app::input::bindings::Action;
@@ -25,6 +26,19 @@ const RESOLVED: &str = "resolved";
 /// that order, a zero left out, the resolved count dim while
 /// `resolved_shown` is false.
 pub(crate) fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
+    count_hints_with_resolved_action(counts, resolved_shown, &[Action::ReviewResolved])
+}
+
+/// Passive lifecycle counts for a pane whose title menu owns its settings.
+pub(crate) fn passive_count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
+    count_hints_with_resolved_action(counts, resolved_shown, &[])
+}
+
+fn count_hints_with_resolved_action(
+    counts: Counts,
+    resolved_shown: bool,
+    resolved_actions: &[Action],
+) -> Vec<HintOf> {
     let mut hints = Vec::with_capacity(3);
     if counts.active > 0 {
         hints.push(HintOf::count(
@@ -53,7 +67,7 @@ pub(crate) fn count_hints(counts: Counts, resolved_shown: bool) -> Vec<HintOf> {
             ThreadState::Resolved,
             counts.resolved,
             !resolved_shown,
-            &[Action::ReviewResolved],
+            resolved_actions,
         ));
     }
     hints

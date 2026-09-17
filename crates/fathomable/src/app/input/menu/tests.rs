@@ -989,7 +989,7 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     // The first body row is README's file row.
     right(&mut app, 2, top + 2);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels, ["fold", "fold all", "open file", "show resolved"]);
+    assert_eq!(labels, ["fold", "fold all", "open file"]);
     let cell = entry_cell(&app, "fold")?;
     left(&mut app, cell.0, cell.1);
     assert!(app.threads_pane_is_folded(std::path::Path::new("README.md")));
@@ -1045,7 +1045,7 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
 }
 
 #[test]
-fn the_threads_pane_header_toggles_the_reach() -> anyhow::Result<()> {
+fn the_threads_title_opens_checked_settings_below_the_header() -> anyhow::Result<()> {
     let dir = fixture("pane")?;
     let mut app = app(&dir)?;
     app.show_tree();
@@ -1053,10 +1053,55 @@ fn the_threads_pane_header_toggles_the_reach() -> anyhow::Result<()> {
         app.toggle_threads_pane_shown();
     }
     let before = app.sidebar_scope();
-    let header_row = app.tree_rows() + 1;
+    let header_row = app.pane_top() + app.tree_rows() + 1;
     left(&mut app, 1, header_row);
-    assert_ne!(app.sidebar_scope(), before);
+    assert_eq!(
+        app.sidebar_scope(),
+        before,
+        "the title itself is not a toggle"
+    );
     assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.menu().map(Menu::title), Some("Threads"));
+    let settings = app
+        .menu()
+        .context("the Threads menu")?
+        .entries()
+        .iter()
+        .map(|entry| (entry.label().to_owned(), entry.checked()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        settings,
+        [
+            ("only current file".to_owned(), Some(true)),
+            ("show resolved".to_owned(), Some(false)),
+        ]
+    );
+    let grid = app.menu().context("the Threads menu")?.grid_in(
+        app.size().0,
+        app.pane_top(),
+        app.pane_rows(),
+    );
+    assert_eq!(grid.x, 0);
+    assert_eq!(grid.y, header_row + 1);
+
+    let cell = entry_cell(&app, "only current file")?;
+    left(&mut app, cell.0, cell.1);
+    assert_eq!(
+        app.sidebar_scope(),
+        crate::app::threads::pane::PaneScope::Workspace
+    );
+
+    left(&mut app, 1, header_row);
+    let cell = entry_cell(&app, "show resolved")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(app.review().resolved);
+
+    let header = header::threads_pane_header(&app);
+    assert!(
+        (0..app.sidebar_width().saturating_sub(1))
+            .all(|column| header.action_at(app.sidebar_width() - 1, column).is_none()),
+        "scope and counts are passive"
+    );
     Ok(())
 }
 

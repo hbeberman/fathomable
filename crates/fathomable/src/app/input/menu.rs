@@ -77,6 +77,11 @@ impl Menu {
         }
     }
 
+    /// A pane-title menu whose top border sits immediately below its header.
+    fn below_header(title: impl Into<String>, place: Where, row: usize) -> Self {
+        Self::new(title, place, 0, row.saturating_add(1))
+    }
+
     /// Add an entry showing `shown`'s key and running `run`; an action
     /// the table does not bind on this place adds nothing, so no entry
     /// is ever keyless.
@@ -467,9 +472,9 @@ impl App {
         menu
     }
 
-    /// A left-click on the Files title opens the pane's display settings.
-    pub(super) fn open_files_menu(&mut self, column: usize, row: usize) {
-        let mut menu = Menu::new("Files", Where::Tree, column, row);
+    /// A left-click on the Files title opens display settings below the header.
+    pub(super) fn open_files_menu(&mut self, row: usize) {
+        let mut menu = Menu::below_header("Files", Where::Tree, row);
         for action in [
             Action::FilesChanged,
             Action::FilesUntracked,
@@ -482,6 +487,24 @@ impl App {
                 self.files_setting_checked(action),
             );
         }
+        self.open_menu(menu);
+    }
+
+    /// A left-click on the Threads title opens view settings below the header.
+    pub(super) fn open_threads_menu(&mut self, row: usize) {
+        let mut menu = Menu::below_header("Threads", Where::ThreadsPane, row);
+        menu.push_toggle(
+            Action::PaneScope,
+            Action::PaneScope,
+            "only current file",
+            self.sidebar_scope() == PaneScope::File,
+        );
+        menu.push_toggle(
+            Action::ReviewResolved,
+            Action::ReviewResolved,
+            "show resolved",
+            self.review().resolved,
+        );
         self.open_menu(menu);
     }
 
@@ -561,7 +584,8 @@ impl App {
 
     /// The menu for a file row (ADR 0066): fold or unfold it, in the
     /// pane fold or unfold every file (the list's `Z` folds threads, ADR
-    /// 0076), open the file, and the resolved toggle.
+    /// 0076), then open the file. The review list also carries its resolved
+    /// toggle; the pane keeps that setting in its title menu.
     fn file_menu(
         &self,
         place: Where,
@@ -592,15 +616,17 @@ impl App {
             );
         }
         menu.push(Action::Confirm, Action::Confirm, "open file");
-        menu.push(
-            Action::ReviewResolved,
-            Action::ReviewResolved,
-            if self.review().resolved {
-                "hide resolved"
-            } else {
-                "show resolved"
-            },
-        );
+        if place == Where::Review {
+            menu.push(
+                Action::ReviewResolved,
+                Action::ReviewResolved,
+                if self.review().resolved {
+                    "hide resolved"
+                } else {
+                    "show resolved"
+                },
+            );
+        }
         menu
     }
 

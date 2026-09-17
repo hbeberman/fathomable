@@ -48,7 +48,16 @@ pub(super) fn threads_pane_lines<'a>(
         Span::styled("─".repeat(inner), theme.info),
         Span::styled("┤", divider_style),
     ]));
-    out.push(with_divider(threads_pane_header(app).line(theme, inner)));
+    let header = threads_pane_header(app);
+    let header_row = app.pane_top() + app.tree_rows() + 1;
+    let title_hovered = app
+        .pointer()
+        .is_some_and(|(column, row)| row == header_row && column < header.left_width());
+    out.push(with_divider(header.line_with_left_hover(
+        theme,
+        inner,
+        title_hovered,
+    )));
     let entries = app.threads_pane_rows();
     if entries.is_empty() {
         let empty = match app.sidebar_scope() {

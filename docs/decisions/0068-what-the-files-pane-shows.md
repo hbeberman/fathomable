@@ -32,6 +32,10 @@ settings instead of changing its action wording. Files and directories also
 offer relative and full-path copy actions; the file action is **File
 comment**.
 
+Amended later 2026-09-17: the title menu unfolds from the pane chrome rather
+than from the pointer. Its left edge aligns with the sidebar and its top
+border occupies the row immediately below the Files header.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a
@@ -112,9 +116,10 @@ Space F r    recent files                            (unchanged)
 - A left-click on the header's **`Files` title** opens a pane settings menu
   with stable `only changed`, `show untracked`, and `show ignored` labels.
   Each active setting carries a checkmark; inactive settings reserve the
-  same space without one. The title is the only clickable part of the Files
-  header and takes `ui.list.hover` under the pointer; right-click on the
-  header does nothing.
+  same space without one. The menu aligns to the sidebar's left edge and
+  begins on the row below the header instead of at the pointer. The title is
+  the only clickable part of the Files header and takes `ui.list.hover` under
+  the pointer; right-click on the header does nothing.
 - A file row's **right-click menu** is item-local: `open`, `file comment`,
   `copy path` (`y`), and `copy full path` (`Y`). A directory row offers
   `expand` or `collapse`, then both path-copy actions. Save review point

@@ -397,11 +397,7 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         spans.push(Span::styled(base.text.clone(), button(base)));
         spans.push(Span::styled(" to ", theme.menu.patch(theme.info)));
         spans.push(Span::styled(target.text.clone(), button(target)));
-        if !tail.context.is_empty() {
-            spans.push(Span::styled(" · ", theme.menu.patch(theme.info)));
-        }
     }
-    spans.push(Span::styled(tail.context, theme.menu.patch(theme.info)));
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(theme.menu),
         Rect { height: 1, ..area },

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information to the mouse without displacing contextual key bars; it is optional, keyboard-navigable once open, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information to the mouse without displacing contextual key bars; its compact comparison is the only right-side status, it is optional and keyboard-navigable once open, and it shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
@@ -36,8 +36,8 @@ File/Edit/View menu taxonomy would also spend much of a narrow terminal on
 categories that do not fit a read-only reviewer.
 
 The user chose a compact hybrid application shell: stable workflow menus on
-the left, passive view identity on the right, and all cursor-specific actions
-left beside the content they affect.
+the left, compact comparison controls on the right, and all cursor-specific
+actions left beside the content they affect.
 
 ## Decision
 
@@ -47,15 +47,12 @@ left beside the content they affect.
   reserves one row; it never paints over pane headers or content.
 - Its left side is `☰  Go  Review  Diff`, with no down-arrow glyphs. A label
   takes `ui.list.hover` while hovered or open.
-- Its right side names the active comparison before the passive branch or
-  worktree, current path, and major view (`SOURCE` or `review threads`).
-  The base and target labels are muted-blue `ui.popup.key` buttons: hovering
-  patches `ui.list.hover`, and clicking opens that endpoint's picker. The
-  remaining context has no hidden click behavior. The path and view identity
-  leave the status line while the bar is shown and return there when it is
-  hidden.
-- On narrow terminals the right-side context disappears first. When the four
-  labels no longer fit, only `☰` remains and Go, Review, and Diff become
+- Its right side names only the active comparison. The base and target labels
+  are muted-blue `ui.popup.key` buttons: hovering patches `ui.list.hover`, and
+  clicking opens that endpoint's picker. Passive branch or worktree, current
+  path, and major-view identity are deliberately absent.
+- On narrow terminals the right-side comparison disappears first. When the
+  four labels no longer fit, only `☰` remains and Go, Review, and Diff become
   one-level children of that menu. The row never wraps or scrolls.
 - `Space p m` shows or hides the row. The application menu cannot hide
   itself, so the visible UI never removes the only visible route back.

@@ -273,10 +273,9 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     assert_eq!(app.comparison.base().to_string(), head_hex[..7]);
     let tagged_screen = screen(&app)?;
     let bar = &tagged_screen[0];
-    assert!(bar.contains("Tag v1 to WorkingTree"), "{bar:?}");
     assert!(
-        bar.find("Tag v1 to WorkingTree") < bar.find("getting started"),
-        "the comparison pair precedes the right-justified status"
+        bar.trim_end().ends_with("Tag v1 to WorkingTree"),
+        "the comparison pair ends the menu bar: {bar:?}"
     );
     drop(app);
     let mut app = menu_app(&root, &points)?;

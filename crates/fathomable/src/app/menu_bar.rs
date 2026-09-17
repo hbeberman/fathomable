@@ -1,5 +1,5 @@
 // @okf-doc: /decisions/0081-the-menu-bar.md
-//! The persistent menu bar: its stable workflow menus, passive context,
+//! The persistent menu bar: its stable workflow menus, comparison controls,
 //! one-level fly-outs, geometry, and mouse/keyboard navigation.
 
 use fathomable_core::layout::display_width;
@@ -11,6 +11,7 @@ use crate::app::view::Effect;
 use crate::app::{App, Focus, PickerKind};
 
 const FULL_LABEL_WIDTH: usize = 21;
+const TAIL_GAP: usize = 2;
 const MENU_TOP: usize = 1;
 const STATUS_ROWS: usize = 1;
 const BORDER_ROWS: usize = 2;
@@ -272,7 +273,6 @@ pub(crate) struct BarTail {
     pub(crate) padding: usize,
     pub(crate) base: Option<BarLabel>,
     pub(crate) target: Option<BarLabel>,
-    pub(crate) context: String,
 }
 
 impl BarTail {
@@ -285,29 +285,19 @@ impl BarTail {
     }
 }
 
-/// Lay out the comparison buttons and passive context after the root labels.
+/// Lay out the right-aligned comparison buttons after the root labels.
 pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
     let labels = labels(width);
-    let compact = labels.len() == 1;
     let used = labels
         .last()
         .map_or(0, |label| label.x.saturating_add(label.width));
-    let full_context = if compact { String::new() } else { context(app) };
     let available = width.saturating_sub(used);
     let (base, target) = app.comparison_menu_pair();
     let base_width = display_width(&base);
     let target_width = display_width(&target);
     let pair_width = base_width + 4 + target_width;
-    let context_gap = usize::from(!full_context.is_empty()) * 3;
-    let show_pair = pair_width + context_gap + usize::from(!compact) * 12 <= available;
-    let pair_used = usize::from(show_pair) * (pair_width + context_gap);
-    let context = truncate_left(&full_context, available.saturating_sub(pair_used));
-    let context_width = display_width(&context);
-    let padding = available.saturating_sub(
-        usize::from(show_pair) * pair_width
-            + usize::from(show_pair && !context.is_empty()) * 3
-            + context_width,
-    );
+    let show_pair = pair_width + TAIL_GAP <= available;
+    let padding = available.saturating_sub(usize::from(show_pair) * pair_width);
     let pair_x = used + padding;
     BarTail {
         padding,
@@ -323,7 +313,6 @@ pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
             width: target_width,
             picker: PickerKind::ComparisonTarget,
         }),
-        context,
     }
 }
 
@@ -697,52 +686,6 @@ fn action_checked(app: &App, action: Action) -> bool {
         }
         _ => false,
     }
-}
-
-pub(crate) fn context(app: &App) -> String {
-    let branch = app.active_worktree_label().unwrap_or_else(|| {
-        app.workspace().root().file_name().map_or_else(
-            || app.workspace().root().display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        )
-    });
-    let subject = if app.getting_started() || !app.has_document() {
-        "getting started".to_owned()
-    } else if app.review_list().is_open() {
-        "review threads".to_owned()
-    } else if let Some(directory) = app.directory_path() {
-        format!("{}/", directory.display())
-    } else {
-        let mut path = app.current_path().display().to_string();
-        if app.view().changed() {
-            path.push_str(" [+]");
-        }
-        path
-    };
-    let mut parts = vec![branch, subject];
-    if app.review_list().is_open() || app.getting_started() || !app.has_document() {
-        return parts.join(" · ");
-    }
-    if let Some(diff) = app.view().diff() {
-        parts.push(diff.header.clone());
-    } else if app.view().source_view() {
-        parts.push("SOURCE".to_owned());
-    }
-    parts.join(" · ")
-}
-
-pub(crate) fn truncate_left(text: &str, max: usize) -> String {
-    if display_width(text) <= max {
-        return text.to_owned();
-    }
-    if max == 0 {
-        return String::new();
-    }
-    let mut chars: Vec<char> = text.chars().collect();
-    while !chars.is_empty() && display_width(&chars.iter().collect::<String>()) + 1 > max {
-        chars.remove(0);
-    }
-    format!("…{}", chars.into_iter().collect::<String>())
 }
 
 impl App {
@@ -1322,9 +1265,7 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
     use fathomable_core::config::SidebarConfig;
 
-    use super::{
-        Focused, Root, Submenu, child_layout, context, labels, root_layout, rows, submenu_rows,
-    };
+    use super::{Focused, Root, Submenu, child_layout, labels, root_layout, rows, submenu_rows};
     use crate::app::input::{keys, mouse};
     use crate::app::testing;
 
@@ -1335,7 +1276,7 @@ mod tests {
     }
 
     #[test]
-    fn menus_are_stable_and_context_names_the_document() -> anyhow::Result<()> {
+    fn menus_are_stable() -> anyhow::Result<()> {
         let dir = testing::workspace("menu-bar-model", testing::README)?;
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 6);
@@ -1350,7 +1291,6 @@ mod tests {
                 .any(|item| item.target == super::Target::Action(super::Action::MenuBarToggle)),
             "the menu bar can only be hidden through Space p m"
         );
-        assert!(context(&app).contains("README.md"));
         Ok(())
     }
 
@@ -1366,22 +1306,19 @@ mod tests {
     }
 
     #[test]
-    fn menu_bar_reserves_a_row_and_draws_passive_identity() -> anyhow::Result<()> {
+    fn menu_bar_reserves_a_row_and_ends_with_the_comparison() -> anyhow::Result<()> {
         let app = shown_app("menu-bar-draw")?;
         assert_eq!(app.pane_top(), 1);
         assert_eq!(app.pane_rows(), 28);
         let screen = testing::screen(&app)?;
         assert!(screen[0].contains("☰") && screen[0].contains("Go  Review  Diff"));
         assert!(
-            screen[0].contains("EmptyTree to WorkingTree"),
+            screen[0].trim_end().ends_with("EmptyTree to WorkingTree"),
             "{:?}",
             screen[0]
         );
-        assert!(screen[0].contains("ws · README.md"), "{:?}", screen[0]);
-        assert!(
-            screen[0].find("EmptyTree to WorkingTree") < screen[0].find("ws · README.md"),
-            "the comparison pair precedes the right-justified status"
-        );
+        assert!(!screen[0].contains("README.md"), "{:?}", screen[0]);
+        assert!(!screen[0].contains("SOURCE"), "{:?}", screen[0]);
         Ok(())
     }
 

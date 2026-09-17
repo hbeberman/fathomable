@@ -155,14 +155,14 @@ first successful comparison, before a later commit or restart can redefine it.
 Two viewers on the same checkout do not live-control one another; their
 last-used preference has explicit last-successful-writer behavior.
 
-The menu bar places a compact `base to target` label immediately before its
-right-justified checkout/document status. Commit endpoints use short IDs.
-Working tree, index, empty tree, and `HEAD` use those names; an explicitly
-selected tag uses `Tag name`. `HEAD` and tag names are presentation aliases
-beside the pinned commit ID, not mutable endpoints. They persist only while
-the name still resolves to that same ID, otherwise the menu falls back to the
-short commit ID. Both labels use the shared popup-key accent and menu hover
-background; clicking either one opens its endpoint picker.
+The menu bar right-aligns a compact `base to target` label as its only
+right-side status. Commit endpoints use short IDs. Working tree, index, empty
+tree, and `HEAD` use those names; an explicitly selected tag uses `Tag name`.
+`HEAD` and tag names are presentation aliases beside the pinned commit ID,
+not mutable endpoints. They persist only while the name still resolves to
+that same ID, otherwise the menu falls back to the short commit ID. Both
+labels use the shared popup-key accent and menu hover background; clicking
+either one opens its endpoint picker.
 
 Mutable endpoints refresh after relevant Git and filesystem events.
 Immutable commit pairs retain their content. A failed refresh keeps the last

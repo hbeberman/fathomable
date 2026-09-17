@@ -22,7 +22,10 @@ or Git layer (`DIFF net`, `DIFF staged`, `DIFF unstaged`, `DIFF seen`,
 Amended 2026-09-15 by [0081](0081-the-menu-bar.md): while the menu bar is
 shown, branch/worktree, path, changed marker, and major view identity move
 to its right edge; hiding the bar returns path and view badges to the
-status line. Amended 2026-09-16 by
+status line. Amended 2026-09-17 by [0081](0081-the-menu-bar.md): the passive
+identity was removed from the menu bar, leaving only its comparison controls;
+hiding the bar still returns path and view badges to the status line.
+Amended 2026-09-16 by
 [0065](0065-z-folds-and-unfolds.md): `c` always starts a comment and
 `z` owns inline thread expansion and folding.
 

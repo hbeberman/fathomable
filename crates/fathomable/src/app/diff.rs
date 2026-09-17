@@ -285,6 +285,10 @@ impl App {
         let branch_changed = self.comparison.head_changed(&self.workspace);
         self.comparison
             .refresh(&mut self.workspace, self.review_points.as_ref());
+        self.apply_refreshed_comparison(branch_changed);
+    }
+
+    pub(super) fn apply_refreshed_comparison(&mut self, branch_changed: bool) {
         self.compare = self.comparison.compare();
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             for doc in &mut self.docs {

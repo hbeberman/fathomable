@@ -1351,11 +1351,47 @@ impl Workspace {
     }
 
     fn working_tree_files(&mut self) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
-        let mut files = BTreeMap::new();
-        for relative in self.walk_files_checked(Filter::All)? {
-            if self.is_ignored(&relative, EntryKind::File) && !self.is_tracked_path(&relative) {
-                continue;
+        let mut paths: BTreeSet<PathBuf> = self
+            .walk_files_checked(Filter::Visible)?
+            .into_iter()
+            .collect();
+        if let Some(git) = self.ignore.as_ref() {
+            // Tracked ignored paths stay eligible without descending ignored output.
+            match git.repo.index_or_empty() {
+                Ok(index) => paths.extend(
+                    index
+                        .entries()
+                        .iter()
+                        .map(|entry| gix::path::from_bstr(entry.path(&index)).into_owned()),
+                ),
+                Err(error) => tracing::debug!(
+                    %error,
+                    "cannot add index paths to working-tree comparison"
+                ),
             }
+            match head_tree_of(&git.repo) {
+                Ok(Some(tree)) => {
+                    let mut head = BTreeMap::new();
+                    match collect_blobs(&tree, &mut BString::default(), &mut head) {
+                        Ok(()) => paths.extend(
+                            head.keys()
+                                .map(|path| gix::path::from_bstr(path.as_bstr()).into_owned()),
+                        ),
+                        Err(error) => tracing::debug!(
+                            %error,
+                            "cannot add HEAD paths to working-tree comparison"
+                        ),
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => tracing::debug!(
+                    %error,
+                    "cannot read HEAD paths for working-tree comparison"
+                ),
+            }
+        }
+        let mut files = BTreeMap::new();
+        for relative in paths {
             let absolute = self.root.join(&relative);
             let metadata = match fs::symlink_metadata(&absolute) {
                 Ok(metadata) => metadata,
@@ -1392,22 +1428,6 @@ impl Workspace {
             );
         }
         Ok(files)
-    }
-
-    fn is_tracked_path(&self, relative: &Path) -> bool {
-        let Some(git) = self.ignore.as_ref() else {
-            return false;
-        };
-        if let Ok(index) = git.repo.index_or_empty()
-            && index.entry_by_path(unix_path(relative).as_ref()).is_some()
-        {
-            return true;
-        }
-        git.repo
-            .head_tree()
-            .ok()
-            .and_then(|tree| tree.lookup_entry_by_path(relative).ok().flatten())
-            .is_some()
     }
 
     fn is_binary(&mut self, relative: &Path, bytes: &[u8]) -> bool {

@@ -2,7 +2,11 @@
 //! built with `gix`, so the tests need no host `git`.
 
 use std::error::Error;
+#[cfg(unix)]
+use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 
 use fathomable_core::workspace::{Workspace, open_options};
@@ -81,6 +85,50 @@ fn unborn_head_and_untracked_files_have_an_empty_base() -> TestResult {
         Some(String::new()),
         "not in HEAD"
     );
+    Ok(())
+}
+
+#[test]
+fn working_tree_comparison_prunes_ignored_output_but_keeps_tracked_files() -> TestResult {
+    use fathomable_core::workspace::{CommitId, ComparisonEndpoint};
+
+    let dir = TempDir::new("git-comparison-ignored-output")?;
+    init(&dir.0)?;
+    let committed = [
+        (".gitignore", "build/\n"),
+        ("build/tracked.md", "tracked\n"),
+    ];
+    commit(&dir.0, &committed)?;
+    stage(&dir.0, &committed)?;
+    fs::create_dir_all(dir.0.join("build/deep"))?;
+    for (path, content) in committed {
+        fs::write(dir.0.join(path), content)?;
+    }
+    fs::write(dir.0.join("build/deep/untracked.md"), "ignored\n")?;
+    #[cfg(unix)]
+    fs::write(
+        dir.0
+            .join("build/deep")
+            .join(OsString::from_vec(vec![0xff])),
+        "ignored\n",
+    )?;
+    fs::write(dir.0.join("build/tracked.md"), "changed\n")?;
+
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let head = workspace
+        .head_commit()
+        .ok_or("comparison fixture has no HEAD")?;
+    let comparison = workspace.compare(
+        ComparisonEndpoint::Commit(CommitId::parse(&head)?),
+        ComparisonEndpoint::WorkingTree,
+    )?;
+    let paths: Vec<_> = comparison
+        .changes()
+        .iter()
+        .map(fathomable_core::diff::PathChange::path)
+        .collect();
+
+    assert_eq!(paths, [Path::new("build/tracked.md")]);
     Ok(())
 }
 

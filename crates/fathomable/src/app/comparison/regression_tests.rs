@@ -9,7 +9,7 @@ use crate::app::input::mouse::handle_mouse;
 use crate::app::testing::{AppBuilder, buffer, screen};
 use crate::app::{ComparisonSide, PickerKind, Popup};
 use fathomable_core::theme::Theme as CoreTheme;
-use fathomable_core::workspace::{ComparisonEndpoint, Workspace};
+use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 
 fn repository(name: &str) -> anyhow::Result<TempDir> {
     let dir = TempDir::new(name)?;
@@ -114,6 +114,24 @@ fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()
         rendered.iter().all(|line| !line.contains(&head)),
         "the picker displays short commit IDs"
     );
+    Ok(())
+}
+
+#[test]
+fn selecting_an_endpoint_refreshes_the_comparison_once() -> anyhow::Result<()> {
+    let dir = repository("comparison-picker-single-refresh")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    fs::write(root.join("a.txt"), "two\n")?;
+    let mut app = menu_app(&root, &dir.0.join("points"))?;
+    let generation = app.comparison.generation();
+
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+
+    assert_eq!(app.comparison.generation(), generation.wrapping_add(1));
     Ok(())
 }
 

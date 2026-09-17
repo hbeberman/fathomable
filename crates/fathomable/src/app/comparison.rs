@@ -177,9 +177,12 @@ impl State {
     }
 
     /// A monotonically increasing refresh generation.
-    #[expect(
-        dead_code,
-        reason = "the generation guards future asynchronous refresh delivery"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the generation guards future asynchronous refresh delivery"
+        )
     )]
     pub(crate) const fn generation(&self) -> u64 {
         self.generation
@@ -910,7 +913,7 @@ impl App {
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else {
-            self.refresh_comparison();
+            self.apply_refreshed_comparison(false);
         }
     }
 
@@ -934,7 +937,7 @@ impl App {
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else {
-            self.refresh_comparison();
+            self.apply_refreshed_comparison(false);
         }
     }
 
@@ -963,7 +966,7 @@ impl App {
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else {
-            self.refresh_comparison();
+            self.apply_refreshed_comparison(false);
         }
     }
 

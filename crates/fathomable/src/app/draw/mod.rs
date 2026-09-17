@@ -358,11 +358,18 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     draw_title_menus(frame, app, theme);
 }
 
+/// Empty cells separating the centered filename from interactive controls.
+const MENU_FILENAME_GAP: usize = 2;
+
 fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     if !app.menu_bar_shown() || area.height == 0 {
         return;
     }
-    let labels = menu_bar::labels(usize::from(area.width));
+    let width = usize::from(area.width);
+    let labels = menu_bar::labels(width);
+    let left_end = labels
+        .last()
+        .map_or(0, |label| label.x.saturating_add(label.width));
     let hovered = app
         .pointer()
         .filter(|(_, row)| *row == 0)
@@ -383,7 +390,7 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         let text = format!(" {} ", label.root.label());
         spans.push(Span::styled(text, style));
     }
-    let tail = menu_bar::bar_tail(app, usize::from(area.width));
+    let tail = menu_bar::bar_tail(app, width);
     spans.push(Span::raw(" ".repeat(tail.padding)));
     if let (Some(base), Some(target)) = (&tail.base, &tail.target) {
         let button = |label: &menu_bar::BarLabel| {
@@ -402,6 +409,57 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         Paragraph::new(Line::from(spans)).style(theme.menu),
         Rect { height: 1, ..area },
     );
+    let right_start = tail.base.as_ref().map_or(width, |base| base.x);
+    let filename = if app.getting_started() || app.review_list().is_open() || !app.has_document() {
+        None
+    } else {
+        app.current_path()
+            .file_name()
+            .map(std::ffi::OsStr::to_string_lossy)
+    };
+    if let Some((text, x)) = filename.as_deref().and_then(|filename| {
+        centred_bar_text(
+            filename,
+            width,
+            left_end.saturating_add(MENU_FILENAME_GAP),
+            right_start.saturating_sub(MENU_FILENAME_GAP),
+        )
+    }) {
+        let text_width = display_width(&text);
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                text,
+                theme.menu.patch(theme.info).add_modifier(Modifier::DIM),
+            ))
+            .style(theme.menu),
+            Rect {
+                x: area.x.saturating_add(u16_of(x)),
+                width: u16_of(text_width),
+                height: 1,
+                ..area
+            },
+        );
+    }
+}
+
+fn centred_bar_text(
+    text: &str,
+    width: usize,
+    left_bound: usize,
+    right_bound: usize,
+) -> Option<(String, usize)> {
+    let left_room = width.saturating_sub(left_bound.saturating_mul(2));
+    let right_room = right_bound
+        .saturating_mul(2)
+        .saturating_add(1)
+        .saturating_sub(width);
+    let max_width = left_room.min(right_room);
+    let text = fit_ellipsis(text, max_width).trim_end().to_owned();
+    if text.is_empty() || text == "…" {
+        return None;
+    }
+    let x = width.saturating_sub(display_width(&text)) / 2;
+    Some((text, x))
 }
 
 fn draw_title_menus(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
@@ -2889,6 +2947,7 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::Context;
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::layout::{Layout, display_width};
     use ratatui::style::{Color, Style};
@@ -2897,8 +2956,8 @@ mod tests {
     use crate::app::threads::list::Row;
 
     use super::{
-        ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
-        picker_row_cells, status_message_style,
+        ListRender, Theme, centred_bar_text, fit, fit_ellipsis, format_age, format_age_short,
+        format_time, list_row, picker_row_cells, status_message_style,
     };
 
     #[test]
@@ -2932,6 +2991,21 @@ mod tests {
     fn fitting_a_long_label_only_copies_its_visible_prefix() {
         let text = "label".repeat(20_000);
         assert_eq!(fit_ellipsis(&text, 6), "label…");
+    }
+
+    #[test]
+    fn menu_filename_stays_centred_inside_its_clear_span() -> anyhow::Result<()> {
+        assert_eq!(
+            centred_bar_text("clipboard.rs", 100, 23, 74),
+            Some(("clipboard.rs".to_owned(), 44))
+        );
+        let (shortened, x) =
+            centred_bar_text("a-very-long-filename.md", 40, 12, 30).context("visible filename")?;
+        assert!(shortened.ends_with('…'));
+        assert_eq!(x, (40 - display_width(&shortened)) / 2);
+        assert!(x >= 12 && x + display_width(&shortened) <= 30);
+        assert_eq!(centred_bar_text("hidden.md", 20, 10, 11), None);
+        Ok(())
     }
 
     #[test]

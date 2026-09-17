@@ -1264,6 +1264,8 @@ mod tests {
     use anyhow::Context;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
     use fathomable_core::config::SidebarConfig;
+    use fathomable_core::layout::display_width;
+    use ratatui::style::Modifier;
 
     use super::{Focused, Root, Submenu, child_layout, labels, root_layout, rows, submenu_rows};
     use crate::app::input::{keys, mouse};
@@ -1317,7 +1319,24 @@ mod tests {
             "{:?}",
             screen[0]
         );
-        assert!(!screen[0].contains("README.md"), "{:?}", screen[0]);
+        assert!(screen[0].contains("README.md"), "{:?}", screen[0]);
+        let filename_x = (app.size().0 - display_width("README.md")) / 2;
+        let buffer = testing::buffer(&app)?;
+        assert_eq!(buffer[(u16::try_from(filename_x)?, 0)].symbol(), "R");
+        assert_eq!(
+            buffer[(
+                u16::try_from(filename_x + display_width("README.md") - 1)?,
+                0
+            )]
+                .symbol(),
+            "d"
+        );
+        assert!(
+            buffer[(u16::try_from(filename_x)?, 0)]
+                .modifier
+                .contains(Modifier::DIM),
+            "the filename is dim"
+        );
         assert!(!screen[0].contains("SOURCE"), "{:?}", screen[0]);
         Ok(())
     }

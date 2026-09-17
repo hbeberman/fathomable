@@ -355,13 +355,15 @@ commit, branch change, idle, or quit.
 The persistent first row is:
 
 ```text
-☰  Go  Review  Diff                                  HEAD to WorkingTree
+☰  Go  Review  Diff             README.md             HEAD to WorkingTree
 ```
 
-The compact comparison pair is the bar's only right-side status. Branch,
-path, and source/view labels stay out of the bar. Immutable commits use short
-IDs; the other labels are `HEAD`, `WorkingTree`, `Index`, `EmptyTree`,
-`Point name`, or `Tag name`.
+The current file's basename is centered in subdued, dim text. It shortens
+with an ellipsis or disappears on narrow terminals rather than colliding with
+the menus or comparison. The compact comparison pair remains at the right;
+branch, full path, and source/view labels stay out of the bar. Immutable
+commits use short IDs; the other labels are `HEAD`, `WorkingTree`, `Index`,
+`EmptyTree`, `Point name`, or `Tag name`.
 Selecting HEAD or a tag still pins its resolved commit ID. If HEAD advances
 or the tag no longer resolves to that ID, the label falls back to the short
 commit ID rather than pretending the endpoint moved.

@@ -556,11 +556,6 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
             Row::Item(Item::action(
                 app,
-                Action::ComparisonFocus,
-                "Show All changes / Since…",
-            )),
-            Row::Item(Item::action(
-                app,
                 Action::ComparisonSave,
                 "Save review point",
             )),
@@ -641,7 +636,7 @@ fn action_available(app: &App, action: Action) -> bool {
             .is_some_and(|thread| {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
-        Action::ComparisonFocus | Action::ComparisonSave => app.review_points.is_some(),
+        Action::ComparisonSave => app.review_points.is_some(),
         Action::ArchiveThread => app
             .thread_cursor()
             .thread()
@@ -1280,13 +1275,18 @@ mod tests {
         assert_eq!(rows(&app, Root::Go).len(), 8);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
-        assert_eq!(diff_rows.len(), 7);
-        assert!(
-            !diff_rows
-                .iter()
-                .filter_map(super::Row::item)
-                .any(|item| item.label == "Start comparison at current HEAD")
-        );
+        assert_eq!(diff_rows.len(), 6);
+        let diff_labels = diff_rows
+            .iter()
+            .filter_map(super::Row::item)
+            .map(|item| item.label.as_str())
+            .collect::<Vec<_>>();
+        for duplicate in [
+            "Start comparison at current HEAD",
+            "Show All changes / Since…",
+        ] {
+            assert!(!diff_labels.contains(&duplicate));
+        }
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         assert!(
             !rows(&app, Root::App)

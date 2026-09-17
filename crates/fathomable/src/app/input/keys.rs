@@ -272,7 +272,6 @@ impl App {
             }
             Action::ComparisonControl => self.open_comparison_control(),
             Action::ComparisonSave => self.request_review_point(),
-            Action::ComparisonFocus => self.pick_comparison_focus(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
             Action::ComparisonWhitespace => self.toggle_whitespace(),

@@ -117,7 +117,6 @@ continuations. These tables contain the main bindings.
 | `Space d b` | choose the global base |
 | `Space d t` | choose the global target |
 | `Space d c` | **Save review point**; type an optional name or accept unnamed |
-| `Space d r` | choose **All changes** or **Since...** |
 | `Space d w` | compare or ignore whitespace |
 | `w` | compare or ignore whitespace while text has focus |
 | `:diff` | open the unified diff for the current global comparison |
@@ -272,11 +271,12 @@ for deletions. It does not write Git or the checkout. Binary, oversized,
 unreadable, raced, and ignored paths are reported honestly; an incomplete
 point is not selectable.
 
-`Space d r` can then select **Since _point_**. Since focus is a real
-point-to-working-tree delta, so it shows a reversal even when that reversal
-disappears from the overall comparison. It changes paths, counts, gutters,
-and navigation together. Switching to an immutable target leaves Since
-focus explicitly. Saving another point never selects it automatically.
+In **Comparison controls...**, the focus row can then select
+**Since _point_**. Since focus is a real point-to-working-tree delta, so it
+shows a reversal even when that reversal disappears from the overall
+comparison. It changes paths, counts, gutters, and navigation together.
+Switching to an immutable target leaves Since focus explicitly. Saving
+another point never selects it automatically.
 
 Review points depend on their recorded Git objects for unchanged committed
 files. If rewriting and garbage collection remove those objects, Fathomable
@@ -371,9 +371,9 @@ the base or target label opens that endpoint's picker.
 
 **Review** contains the board, Recently resolved, Archived threads, Archive
 resolved threads, Clear board, and contextual thread actions. **Diff**
-contains Comparison controls, base/target pickers, All changes/Since, Save
-review point, and whitespace. **Start comparison at current HEAD** remains
-inside Comparison controls.
+contains Comparison controls, base/target pickers, Save review point, and
+whitespace. **Start comparison at current HEAD** and the **All changes /
+Since...** focus remain inside Comparison controls.
 
 Configuration is KDL at
 `$XDG_CONFIG_HOME/fathomable/config.kdl` (normally

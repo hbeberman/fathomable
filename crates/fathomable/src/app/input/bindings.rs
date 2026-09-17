@@ -244,7 +244,6 @@ actions! {
     SourceView,
     ComparisonControl,
     ComparisonSave,
-    ComparisonFocus,
     ComparisonBase,
     ComparisonTarget,
     /// `]w`: the next worktree (ADR 0070).
@@ -882,13 +881,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ComparisonSave,
         "Space menu",
         "diff: save review point",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('d'), c('r')]],
-        A::ComparisonFocus,
-        "Space menu",
-        "diff: select focus",
     ),
     bind(
         W::Any,
@@ -1567,7 +1559,9 @@ mod tests {
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
-            assert_eq!(lookup(place, &[c(' '), c('d'), c('s')]), Match::Miss);
+            for suffix in ['r', 's'] {
+                assert_eq!(lookup(place, &[c(' '), c('d'), c(suffix)]), Match::Miss);
+            }
         }
         assert_eq!(lookup(Where::View, &[c('b')]), Match::Miss);
     }
@@ -1706,7 +1700,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["d", "b", "t", "c", "r", "w"]
+            ["d", "b", "t", "c", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

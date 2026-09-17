@@ -202,11 +202,12 @@ Git objects are not mirrored or retained. If history rewriting or garbage
 collection removes a required commit, the point reports unavailable content
 and never substitutes the current `HEAD` or working file.
 
-`Space d r` selects **All changes** or **Since review point**. Since focus is
-the actual point-to-working-tree delta, not a filter over the overall pair,
-so it includes a reversal that disappears from the overall net diff. It is
-available only with a working-tree target and changes paths, counts, gutters,
-and navigation together. Saving another point does not select it.
+The focus row in **Comparison controls...** selects **All changes** or
+**Since review point**. Since focus is the actual point-to-working-tree
+delta, not a filter over the overall pair, so it includes a reversal that
+disappears from the overall net diff. It is available only with a
+working-tree target and changes paths, counts, gutters, and navigation
+together. Saving another point does not select it.
 
 ### Immutable origin and qualified placement
 

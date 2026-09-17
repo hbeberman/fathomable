@@ -228,6 +228,12 @@ its commit. **Branches...** searches both local and remote-tracking branches;
 selecting one opens its commits from newest to oldest. These menus use only
 local Git data and never fetch.
 
+Rows that denote the selected endpoints show colored **[current base]** and
+**[current target]** hints at the right. On commit rows the hints appear just
+before the date. Working tree, Index, HEAD, tag, and commit rows all use the
+same endpoint identity, so a selected endpoint remains recognizable in nested
+menus.
+
 Typing four or more hexadecimal characters in the top-level picker searches
 all matching commit IDs reachable from local branches, remote-tracking
 branches, and tags, including commits older than the displayed 500. The first
@@ -344,8 +350,15 @@ commit, branch change, idle, or quit.
 The persistent first row is:
 
 ```text
-☰  Go  Review  Diff
+☰  Go  Review  Diff                 HEAD to WorkingTree  workspace · file
 ```
+
+The compact comparison pair sits immediately before the right-justified
+workspace/file status. Immutable commits use short IDs; the other labels are
+`HEAD`, `WorkingTree`, `Index`, `EmptyTree`, `Point name`, or `Tag name`.
+Selecting HEAD or a tag still pins its resolved commit ID. If HEAD advances
+or the tag no longer resolves to that ID, the label falls back to the short
+commit ID rather than pretending the endpoint moved.
 
 **Review** contains the board, Recently resolved, Archived threads, Archive
 resolved threads, Clear board, and contextual thread actions. **Diff**

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use fathomable_testing::{TempDir, git};
 
-use crate::app::testing::{AppBuilder, screen};
+use crate::app::testing::{AppBuilder, buffer, screen};
 use crate::app::{ComparisonSide, PickerKind, Popup};
 use fathomable_core::workspace::{ComparisonEndpoint, Workspace};
 
@@ -25,6 +25,80 @@ fn picker_items(app: &crate::app::App) -> Vec<String> {
     }
 }
 
+fn menu_app(root: &Path, points: &Path) -> anyhow::Result<crate::app::App> {
+    AppBuilder::at(root)
+        .unopened()
+        .review_points(points)
+        .options(|mut options| {
+            options.menu_bar = true;
+            options
+        })
+        .build()
+}
+
+fn text_cell(
+    screen: &[String],
+    buffer: &ratatui::buffer::Buffer,
+    row_text: &str,
+    text: &str,
+) -> Option<ratatui::buffer::Cell> {
+    let (row, line) = screen
+        .iter()
+        .enumerate()
+        .find(|(_, line)| line.contains(row_text) && line.contains(text))?;
+    let column = line.find(text)?;
+    Some(buffer[(u16::try_from(column).ok()?, u16::try_from(row).ok()?)].clone())
+}
+
+#[test]
+fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()> {
+    let dir = repository("comparison-picker-current-endpoints")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(|mut options| {
+            options.menu_bar = true;
+            options
+        })
+        .build()?;
+
+    app.open_picker(PickerKind::ComparisonBase);
+    let rendered = screen(&app)?;
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("Working tree") && line.contains("[current target]"))
+    );
+    assert!(
+        rendered
+            .iter()
+            .any(|line| line.contains("HEAD") && line.contains("[current base]"))
+    );
+    let commit = rendered
+        .iter()
+        .find(|line| line.contains(&head[..7]) && line.contains("[current base]"))
+        .ok_or_else(|| anyhow::anyhow!("current commit row"))?;
+    assert!(
+        commit.find("[current base]") < commit.find("1970-01-01"),
+        "the endpoint badge stays left of the date"
+    );
+    let cells = buffer(&app)?;
+    let base = text_cell(&rendered, &cells, "HEAD", "[current base]")
+        .ok_or_else(|| anyhow::anyhow!("base badge cell"))?;
+    let target = text_cell(&rendered, &cells, "Working tree", "[current target]")
+        .ok_or_else(|| anyhow::anyhow!("target badge cell"))?;
+    assert_ne!(base.fg, target.fg, "base and target use distinct colors");
+    assert!(
+        rendered.iter().all(|line| !line.contains(&head)),
+        "the picker displays short commit IDs"
+    );
+    Ok(())
+}
+
 #[test]
 fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<()> {
     let dir = repository("comparison-picker-menus")?;
@@ -34,10 +108,8 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
         .head_commit()
         .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
     git::tag(&root, "v1")?;
-    let mut app = AppBuilder::at(&root)
-        .unopened()
-        .review_points(dir.0.join("points"))
-        .build()?;
+    let points = dir.0.join("points");
+    let mut app = menu_app(&root, &points)?;
 
     app.open_picker(PickerKind::ComparisonBase);
     let items = picker_items(&app);
@@ -54,17 +126,6 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
         ]
     );
     assert!(super::commit_id_from_row(&items[7]).is_some());
-    let rendered = screen(&app)?;
-    assert!(rendered.iter().any(|line| line.contains("Working tree")));
-    assert!(
-        rendered
-            .iter()
-            .any(|line| line.contains(&head_hex[..7]) && line.contains("1970-01-01"))
-    );
-    assert!(
-        rendered.iter().all(|line| !line.contains(&head_hex)),
-        "the picker displays short commit IDs"
-    );
 
     app.open_picker(PickerKind::ComparisonBase);
     app.picker_move(3);
@@ -77,8 +138,27 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     assert_eq!(picker_items(&app), ["tag v1"]);
     app.picker_confirm();
     assert_eq!(app.comparison.base().to_string(), head_hex[..7]);
+    let tagged_screen = screen(&app)?;
+    let bar = &tagged_screen[0];
+    assert!(bar.contains("Tag v1 to WorkingTree"), "{bar:?}");
+    assert!(
+        bar.find("Tag v1 to WorkingTree") < bar.find("getting started"),
+        "the comparison pair precedes the right-justified status"
+    );
+    drop(app);
+    let mut app = menu_app(&root, &points)?;
+    assert_eq!(
+        app.comparison_menu_pair(),
+        ("Tag v1".to_owned(), "WorkingTree".to_owned())
+    );
+    app.open_picker(PickerKind::ComparisonTags(ComparisonSide::Base));
+    assert!(
+        screen(&app)?
+            .iter()
+            .any(|line| line.contains("tag v1") && line.contains("[current base]"))
+    );
+    app.picker_escape();
 
-    app.open_picker(PickerKind::ComparisonBase);
     app.picker_move(4);
     app.picker_confirm();
     assert!(matches!(
@@ -136,12 +216,45 @@ fn comparison_picker_distinguishes_index_from_head() -> anyhow::Result<()> {
     assert_eq!(app.comparison.target(), &ComparisonEndpoint::Index);
 
     app.open_picker(PickerKind::ComparisonTarget);
+    assert!(
+        screen(&app)?
+            .iter()
+            .any(|line| line.contains("Index") && line.contains("[current target]"))
+    );
     app.picker_move(2);
     app.picker_confirm();
     assert!(matches!(
         app.comparison.target(),
         ComparisonEndpoint::Commit(id) if id.as_str() == head
     ));
+    Ok(())
+}
+
+#[test]
+fn moved_tag_alias_falls_back_to_the_pinned_commit() -> anyhow::Result<()> {
+    let dir = repository("comparison-picker-moved-tag")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no first commit"))?;
+    git::tag(&root, "v1")?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.open_picker(PickerKind::ComparisonBase);
+    app.picker_move(3);
+    app.picker_confirm();
+    app.picker_confirm();
+    assert_eq!(app.comparison_menu_pair().0, "Tag v1");
+
+    git::commit_and_stage(&root, &[("a.txt", "two\n")])?;
+    git::retag(&root, "v1")?;
+    app.refresh_comparison();
+
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(fathomable_core::workspace::CommitId::parse(&first)?)
+    );
+    assert_eq!(app.comparison_menu_pair().0, first[..7]);
     Ok(())
 }
 

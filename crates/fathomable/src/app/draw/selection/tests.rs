@@ -349,7 +349,7 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
         ] {
             let picker = PickerState::new(kind, vec!["candidate".to_owned()]);
             let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
-            terminal.draw(|frame| draw::draw_picker(frame, &theme, frame.area(), &picker))?;
+            terminal.draw(|frame| draw::draw_picker(frame, &theme, frame.area(), &picker, None))?;
             let buffer = terminal.backend().buffer();
             // The ordinary 100-column terminal's picker is 90 cells wide.
             let y = row_containing(buffer, 5, 95, "candidate")?;

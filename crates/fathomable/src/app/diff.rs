@@ -184,9 +184,17 @@ impl App {
                 return;
             }
         };
+        let alias = if value.eq_ignore_ascii_case("HEAD") {
+            Some(super::comparison::EndpointAlias::Head)
+        } else {
+            value
+                .strip_prefix("tag ")
+                .map(str::to_owned)
+                .map(super::comparison::EndpointAlias::Tag)
+        };
         match kind {
-            PickerKind::ComparisonBase => self.set_comparison_base(endpoint),
-            PickerKind::ComparisonTarget => self.set_comparison_target(endpoint),
+            PickerKind::ComparisonBase => self.set_comparison_base_aliased(endpoint, alias),
+            PickerKind::ComparisonTarget => self.set_comparison_target_aliased(endpoint, alias),
             _ => {}
         }
     }

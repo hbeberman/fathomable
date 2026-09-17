@@ -1293,7 +1293,16 @@ mod tests {
         assert_eq!(app.pane_rows(), 28);
         let screen = testing::screen(&app)?;
         assert!(screen[0].contains("☰") && screen[0].contains("Go  Review  Diff"));
+        assert!(
+            screen[0].contains("EmptyTree to WorkingTree"),
+            "{:?}",
+            screen[0]
+        );
         assert!(screen[0].contains("ws · README.md"), "{:?}", screen[0]);
+        assert!(
+            screen[0].find("EmptyTree to WorkingTree") < screen[0].find("ws · README.md"),
+            "the comparison pair precedes the right-justified status"
+        );
         Ok(())
     }
 

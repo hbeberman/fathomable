@@ -95,10 +95,16 @@ tree (files on disk), index (the staged next-commit snapshot), and `HEAD`
 commits reachable from `HEAD` follow those choices, newest first.
 
 Commit rows render as short ID, subject, and right-aligned UTC `YYYY-MM-DD`;
-the subject is ellipsized before the date is displaced. **Tags...** is a
-searchable list whose selection pins the tagged commit. **Branches...**
-searches local and remote-tracking branches, then opens up to 500 commits
-reachable from the selected branch. No picker fetches or checks out.
+the subject is ellipsized before the date is displaced. Endpoint-bearing rows
+show colored **[current base]** and **[current target]** hints at the right;
+commit-row hints sit immediately before the date. Equivalent working-tree,
+index, `HEAD`, tag, and commit rows therefore expose the active pair without
+changing what selection means.
+
+**Tags...** is a searchable list whose selection pins the tagged commit.
+**Branches...** searches local and remote-tracking branches, then opens up to
+500 commits reachable from the selected branch. No picker fetches or checks
+out.
 
 Typing four or more hexadecimal characters searches older commit IDs without
 eagerly loading every old subject: the top-level picker walks commits reachable
@@ -138,6 +144,14 @@ not a shared board control. The initial pinned default is persisted after its
 first successful comparison, before a later commit or restart can redefine it.
 Two viewers on the same checkout do not live-control one another; their
 last-used preference has explicit last-successful-writer behavior.
+
+The menu bar places a compact `base to target` label immediately before its
+right-justified checkout/document status. Commit endpoints use short IDs.
+Working tree, index, empty tree, and `HEAD` use those names; an explicitly
+selected tag uses `Tag name`. `HEAD` and tag names are presentation aliases
+beside the pinned commit ID, not mutable endpoints. They persist only while
+the name still resolves to that same ID, otherwise the menu falls back to the
+short commit ID.
 
 Mutable endpoints refresh after relevant Git and filesystem events.
 Immutable commit pairs retain their content. A failed refresh keeps the last

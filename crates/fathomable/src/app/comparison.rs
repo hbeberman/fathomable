@@ -33,11 +33,26 @@ pub(crate) enum Focus {
     Since(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "kind", content = "name")]
+pub(crate) enum EndpointAlias {
+    Head,
+    Tag(String),
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EndpointRoles {
+    pub(crate) base: bool,
+    pub(crate) target: bool,
+}
+
 /// One app-owned comparison selection and its last successful result.
 #[derive(Debug)]
 pub(crate) struct State {
     base: ComparisonEndpoint,
     target: ComparisonEndpoint,
+    base_alias: Option<EndpointAlias>,
+    target_alias: Option<EndpointAlias>,
     focus: Focus,
     compare: Compare,
     preference: PathBuf,
@@ -52,6 +67,10 @@ pub(crate) struct State {
 struct Preference {
     base: String,
     target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_alias: Option<EndpointAlias>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    target_alias: Option<EndpointAlias>,
     focus: Option<String>,
     whitespace: bool,
 }
@@ -69,9 +88,13 @@ impl State {
             .head_commit()
             .and_then(|head| CommitId::parse(head).ok())
             .map_or(ComparisonEndpoint::EmptyTree, ComparisonEndpoint::Commit);
+        let default_alias =
+            matches!(default_base, ComparisonEndpoint::Commit(_)).then_some(EndpointAlias::Head);
         let mut state = Self {
             base: default_base,
             target: ComparisonEndpoint::WorkingTree,
+            base_alias: default_alias,
+            target_alias: None,
             focus: Focus::AllChanges,
             compare,
             preference,
@@ -91,12 +114,17 @@ impl State {
             if let Some(target) = parse_endpoint(&saved.target) {
                 state.target = target;
             }
+            state.base_alias = saved.base_alias;
+            state.target_alias = saved.target_alias;
             state.focus = saved.focus.map_or(Focus::AllChanges, Focus::Since);
             state.compare.whitespace = if saved.whitespace {
                 fathomable_core::diff::Whitespace::Ignore
             } else {
                 fathomable_core::diff::Whitespace::Exact
             };
+        }
+        if state.validate_aliases(workspace) {
+            state.persisted = false;
         }
         state
     }
@@ -109,6 +137,18 @@ impl State {
     /// The selected target endpoint.
     pub(crate) fn target(&self) -> &ComparisonEndpoint {
         &self.target
+    }
+
+    pub(crate) fn base_alias(&self) -> Option<&EndpointAlias> {
+        self.base_alias.as_ref()
+    }
+
+    pub(crate) fn target_alias(&self) -> Option<&EndpointAlias> {
+        self.target_alias.as_ref()
+    }
+
+    pub(crate) fn observed_head(&self) -> Option<&str> {
+        self.observed_head.as_deref()
     }
 
     /// The selected temporal focus.
@@ -151,6 +191,7 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
+        let aliases_changed = self.validate_aliases(workspace);
         self.generation = self.generation.wrapping_add(1);
         let result = match &self.focus {
             Focus::AllChanges => match (&self.base, &self.target) {
@@ -207,13 +248,16 @@ impl State {
             Ok(comparison) => {
                 self.current = Some(comparison);
                 self.error = None;
-                if !self.persisted {
+                if aliases_changed || !self.persisted {
                     self.persist();
                 }
             }
 
             Err(error) => {
                 self.error = Some(error);
+                if aliases_changed {
+                    self.persist();
+                }
             }
         }
         self.observed_head = workspace.head_commit();
@@ -226,13 +270,36 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
-        let previous = (self.base.clone(), self.target.clone(), self.focus.clone());
+        self.set_base_aliased(base, None, workspace, review_points);
+    }
+
+    pub(crate) fn set_base_aliased(
+        &mut self,
+        base: ComparisonEndpoint,
+        alias: Option<EndpointAlias>,
+        workspace: &mut Workspace,
+        review_points: Option<&ReviewPointStore>,
+    ) {
+        let previous = (
+            self.base.clone(),
+            self.target.clone(),
+            self.base_alias.clone(),
+            self.target_alias.clone(),
+            self.focus.clone(),
+        );
         let had_good = self.current.is_some();
         self.base = base;
+        self.base_alias = alias;
         self.refresh(workspace, review_points);
         if self.error.is_some() {
             if had_good {
-                (self.base, self.target, self.focus) = previous;
+                (
+                    self.base,
+                    self.target,
+                    self.base_alias,
+                    self.target_alias,
+                    self.focus,
+                ) = previous;
             }
             return;
         }
@@ -246,16 +313,39 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
-        let previous = (self.base.clone(), self.target.clone(), self.focus.clone());
+        self.set_target_aliased(target, None, workspace, review_points);
+    }
+
+    pub(crate) fn set_target_aliased(
+        &mut self,
+        target: ComparisonEndpoint,
+        alias: Option<EndpointAlias>,
+        workspace: &mut Workspace,
+        review_points: Option<&ReviewPointStore>,
+    ) {
+        let previous = (
+            self.base.clone(),
+            self.target.clone(),
+            self.base_alias.clone(),
+            self.target_alias.clone(),
+            self.focus.clone(),
+        );
         let had_good = self.current.is_some();
         self.target = target;
+        self.target_alias = alias;
         if self.target != ComparisonEndpoint::WorkingTree {
             self.focus = Focus::AllChanges;
         }
         self.refresh(workspace, review_points);
         if self.error.is_some() {
             if had_good {
-                (self.base, self.target, self.focus) = previous;
+                (
+                    self.base,
+                    self.target,
+                    self.base_alias,
+                    self.target_alias,
+                    self.focus,
+                ) = previous;
             }
             return;
         }
@@ -302,6 +392,8 @@ impl State {
         let preference = Preference {
             base: endpoint_string(&self.base),
             target: endpoint_string(&self.target),
+            base_alias: self.base_alias.clone(),
+            target_alias: self.target_alias.clone(),
             focus: match &self.focus {
                 Focus::AllChanges => None,
                 Focus::Since(id) => Some(id.clone()),
@@ -336,6 +428,27 @@ impl State {
         self.target == ComparisonEndpoint::WorkingTree
             && self.observed_head.as_deref() != workspace.head_commit().as_deref()
     }
+
+    fn validate_aliases(&mut self, workspace: &Workspace) -> bool {
+        let mut changed = false;
+        if self
+            .base_alias
+            .as_ref()
+            .is_some_and(|alias| !alias_matches(alias, &self.base, workspace))
+        {
+            self.base_alias = None;
+            changed = true;
+        }
+        if self
+            .target_alias
+            .as_ref()
+            .is_some_and(|alias| !alias_matches(alias, &self.target, workspace))
+        {
+            self.target_alias = None;
+            changed = true;
+        }
+        changed
+    }
 }
 
 fn write_atomic(temporary: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -366,6 +479,23 @@ fn parse_endpoint(value: &str) -> Option<ComparisonEndpoint> {
     }
 }
 
+fn alias_matches(
+    alias: &EndpointAlias,
+    endpoint: &ComparisonEndpoint,
+    workspace: &Workspace,
+) -> bool {
+    let ComparisonEndpoint::Commit(expected) = endpoint else {
+        return false;
+    };
+    let revision = match alias {
+        EndpointAlias::Head => "HEAD".to_owned(),
+        EndpointAlias::Tag(name) => format!("refs/tags/{name}"),
+    };
+    workspace
+        .resolve_revision(revision)
+        .is_ok_and(|commit| commit.id() == *expected)
+}
+
 fn commit_picker_row(commit: &Commit) -> String {
     let timestamp = super::draw::format_time(commit.time());
     let date = timestamp.get(..10).unwrap_or(&timestamp);
@@ -375,6 +505,31 @@ fn commit_picker_row(commit: &Commit) -> String {
 pub(crate) fn commit_id_from_row(row: &str) -> Option<&str> {
     let id = row.split_whitespace().next()?;
     (id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(id)
+}
+
+fn picker_item_matches(
+    item: &str,
+    endpoint: &ComparisonEndpoint,
+    alias: Option<&EndpointAlias>,
+    observed_head: Option<&str>,
+) -> bool {
+    match endpoint {
+        ComparisonEndpoint::WorkingTree => item == "Working tree",
+        ComparisonEndpoint::Index => item == "Index",
+        ComparisonEndpoint::EmptyTree => item == "Empty tree",
+        ComparisonEndpoint::ReviewPoint(id) => item
+            .strip_prefix("review point ")
+            .and_then(|item| item.split_whitespace().next())
+            .is_some_and(|item| item == id),
+        ComparisonEndpoint::Commit(id) => {
+            commit_id_from_row(item).is_some_and(|item| item == id.as_str())
+                || (item == "HEAD" && observed_head == Some(id.as_str()))
+                || matches!(
+                    (item.strip_prefix("tag "), alias),
+                    (Some(item), Some(EndpointAlias::Tag(name))) if item == name
+                )
+        }
+    }
 }
 
 fn branch_name_from_row(row: &str) -> Option<&str> {
@@ -421,6 +576,58 @@ impl App {
             label.push_str(" · stale");
         }
         label
+    }
+
+    /// Compact endpoint names for the persistent menu bar.
+    pub(crate) fn comparison_menu_pair(&self) -> (String, String) {
+        (
+            self.comparison_menu_endpoint(self.comparison.base(), self.comparison.base_alias()),
+            self.comparison_menu_endpoint(self.comparison.target(), self.comparison.target_alias()),
+        )
+    }
+
+    /// Whether one picker row denotes the active base or target.
+    pub(crate) fn picker_endpoint_roles(&self, item: &str) -> EndpointRoles {
+        EndpointRoles {
+            base: picker_item_matches(
+                item,
+                self.comparison.base(),
+                self.comparison.base_alias(),
+                self.comparison.observed_head(),
+            ),
+            target: picker_item_matches(
+                item,
+                self.comparison.target(),
+                self.comparison.target_alias(),
+                self.comparison.observed_head(),
+            ),
+        }
+    }
+
+    fn comparison_menu_endpoint(
+        &self,
+        endpoint: &ComparisonEndpoint,
+        alias: Option<&EndpointAlias>,
+    ) -> String {
+        match (endpoint, alias) {
+            (ComparisonEndpoint::Commit(_), Some(EndpointAlias::Head)) => "HEAD".to_owned(),
+            (ComparisonEndpoint::Commit(_), Some(EndpointAlias::Tag(name))) => {
+                format!("Tag {name}")
+            }
+            (ComparisonEndpoint::Commit(id), _) => id.short().to_owned(),
+            (ComparisonEndpoint::WorkingTree, _) => "WorkingTree".to_owned(),
+            (ComparisonEndpoint::Index, _) => "Index".to_owned(),
+            (ComparisonEndpoint::EmptyTree, _) => "EmptyTree".to_owned(),
+            (ComparisonEndpoint::ReviewPoint(id), _) => self
+                .review_points
+                .as_ref()
+                .and_then(|store| store.get(id))
+                .and_then(ReviewPoint::name)
+                .map_or_else(
+                    || format!("Point {}", id.chars().take(8).collect::<String>()),
+                    |name| format!("Point {name}"),
+                ),
+        }
     }
 
     /// Compact comparison provenance for the status line.
@@ -684,9 +891,22 @@ impl App {
     }
 
     /// Apply a new immutable or mutable base.
+    #[cfg(test)]
     pub(crate) fn set_comparison_base(&mut self, endpoint: ComparisonEndpoint) {
-        self.comparison
-            .set_base(endpoint, &mut self.workspace, self.review_points.as_ref());
+        self.set_comparison_base_aliased(endpoint, None);
+    }
+
+    pub(crate) fn set_comparison_base_aliased(
+        &mut self,
+        endpoint: ComparisonEndpoint,
+        alias: Option<EndpointAlias>,
+    ) {
+        self.comparison.set_base_aliased(
+            endpoint,
+            alias,
+            &mut self.workspace,
+            self.review_points.as_ref(),
+        );
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else {
@@ -695,9 +915,22 @@ impl App {
     }
 
     /// Apply a new immutable or mutable target.
+    #[cfg(test)]
     pub(crate) fn set_comparison_target(&mut self, endpoint: ComparisonEndpoint) {
-        self.comparison
-            .set_target(endpoint, &mut self.workspace, self.review_points.as_ref());
+        self.set_comparison_target_aliased(endpoint, None);
+    }
+
+    pub(crate) fn set_comparison_target_aliased(
+        &mut self,
+        endpoint: ComparisonEndpoint,
+        alias: Option<EndpointAlias>,
+    ) {
+        self.comparison.set_target_aliased(
+            endpoint,
+            alias,
+            &mut self.workspace,
+            self.review_points.as_ref(),
+        );
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else {
@@ -762,8 +995,12 @@ impl App {
             .head_commit()
             .and_then(|head| CommitId::parse(head).ok())
             .map_or(ComparisonEndpoint::EmptyTree, ComparisonEndpoint::Commit);
-        self.comparison
-            .set_base(base, &mut self.workspace, self.review_points.as_ref());
+        self.comparison.set_base_aliased(
+            base,
+            Some(EndpointAlias::Head),
+            &mut self.workspace,
+            self.review_points.as_ref(),
+        );
         self.comparison.set_target(
             ComparisonEndpoint::WorkingTree,
             &mut self.workspace,
@@ -1309,6 +1546,10 @@ mod tests {
             app.comparison.base(),
             &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
         );
+        assert_eq!(
+            app.comparison_menu_pair(),
+            ("HEAD".to_owned(), "WorkingTree".to_owned())
+        );
         drop(app);
 
         fs::write(root.join("a.md"), "two\n")?;
@@ -1322,8 +1563,9 @@ mod tests {
             .build()?;
         assert_eq!(
             app.comparison.base(),
-            &ComparisonEndpoint::Commit(CommitId::parse(first)?)
+            &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
         );
+        assert_eq!(app.comparison_menu_pair().0, first[..7]);
         Ok(())
     }
 

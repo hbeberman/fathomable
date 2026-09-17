@@ -115,6 +115,18 @@ pub fn tag(root: &Path, name: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+/// Move an existing lightweight tag named `name` to `HEAD`.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository, `HEAD`, or tag cannot be updated.
+pub fn retag(root: &Path, name: &str) -> Result<(), GitError> {
+    let repo = git(gix::open_opts(root, open_options()))?;
+    let head = git(repo.head_id())?.detach();
+    git(repo.tag_reference(name, head, gix::refs::transaction::PreviousValue::Any))?;
+    Ok(())
+}
+
 /// Replace the index with `files`.
 ///
 /// # Errors

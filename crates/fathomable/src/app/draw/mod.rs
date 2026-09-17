@@ -310,6 +310,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                     ..area
                 },
                 picker,
+                Some(app),
             );
         }
         Some(Popup::Compose(_)) => {
@@ -379,16 +380,36 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         used += display_width(&text);
         spans.push(Span::styled(text, style));
     }
-    let context = if compact {
+    let full_context = if compact {
         String::new()
     } else {
-        menu_bar::truncate_left(
-            &menu_bar::context(app),
-            usize::from(area.width).saturating_sub(used + 1),
-        )
+        menu_bar::context(app)
     };
-    let padding = usize::from(area.width).saturating_sub(used + display_width(&context));
+    let available = usize::from(area.width).saturating_sub(used);
+    let (base, target) = app.comparison_menu_pair();
+    let pair_width = display_width(&base) + 4 + display_width(&target);
+    let context_gap = usize::from(!full_context.is_empty()) * 3;
+    let show_pair = pair_width + context_gap + usize::from(!compact) * 12 <= available;
+    let pair_used = usize::from(show_pair) * (pair_width + context_gap);
+    let context = menu_bar::truncate_left(&full_context, available.saturating_sub(pair_used));
+    let context_width = display_width(&context);
+    let padding = available.saturating_sub(
+        usize::from(show_pair) * pair_width
+            + usize::from(show_pair && !context.is_empty()) * 3
+            + context_width,
+    );
     spans.push(Span::raw(" ".repeat(padding)));
+    if show_pair {
+        spans.push(Span::styled(base, on_surface(theme.menu, theme.diff_minus)));
+        spans.push(Span::styled(" to ", theme.menu.patch(theme.info)));
+        spans.push(Span::styled(
+            target,
+            on_surface(theme.menu, theme.diff_plus),
+        ));
+        if !context.is_empty() {
+            spans.push(Span::styled(" · ", theme.menu.patch(theme.info)));
+        }
+    }
     spans.push(Span::styled(context, theme.menu.patch(theme.info)));
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(theme.menu),
@@ -2073,24 +2094,39 @@ fn draw_table(
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
-fn picker_row_cells(item: &str, width: usize) -> Vec<(char, Option<u32>)> {
+type PickerCells = Vec<(char, Option<u32>)>;
+
+fn plain_picker_cells(item: &str, width: usize) -> PickerCells {
+    let fitted = fit_ellipsis(item, width);
+    let source_len = item.chars().count();
+    fitted
+        .chars()
+        .enumerate()
+        .map(|(index, ch)| {
+            let source = (index < source_len && ch != '…')
+                .then(|| u32::try_from(index).ok())
+                .flatten();
+            (ch, source)
+        })
+        .collect()
+}
+
+fn picker_row_parts(item: &str, width: usize, badge_width: usize) -> (PickerCells, PickerCells) {
     let Some(id) = super::comparison::commit_id_from_row(item) else {
-        return item
-            .chars()
-            .enumerate()
-            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
-            .collect();
+        return (
+            plain_picker_cells(item, width.saturating_sub(badge_width)),
+            Vec::new(),
+        );
     };
     let rest = item
         .strip_prefix(id)
         .and_then(|rest| rest.strip_prefix(' '))
         .unwrap_or_default();
     let Some((subject, date)) = rest.rsplit_once(' ') else {
-        return item
-            .chars()
-            .enumerate()
-            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
-            .collect();
+        return (
+            plain_picker_cells(item, width.saturating_sub(badge_width)),
+            Vec::new(),
+        );
     };
     if date.len() != 10
         || !date.bytes().enumerate().all(|(index, byte)| match index {
@@ -2098,13 +2134,13 @@ fn picker_row_cells(item: &str, width: usize) -> Vec<(char, Option<u32>)> {
             _ => byte.is_ascii_digit(),
         })
     {
-        return item
-            .chars()
-            .enumerate()
-            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
-            .collect();
+        return (
+            plain_picker_cells(item, width.saturating_sub(badge_width)),
+            Vec::new(),
+        );
     }
 
+    let width = width.saturating_sub(badge_width);
     let short = &id[..7];
     let subject_start = id.chars().count() + 1;
     let date_start = subject_start + subject.chars().count() + 1;
@@ -2113,16 +2149,17 @@ fn picker_row_cells(item: &str, width: usize) -> Vec<(char, Option<u32>)> {
         cells.push((ch, u32::try_from(index).ok()));
     }
     if width < 18 {
-        return cells;
+        return (cells, Vec::new());
     }
-    cells.push((' ', None));
     if width == 18 {
+        cells.push((' ', None));
         for (index, ch) in date.chars().enumerate() {
             cells.push((ch, u32::try_from(date_start + index).ok()));
         }
-        return cells;
+        return (cells, Vec::new());
     }
 
+    cells.push((' ', None));
     let subject_width = width - 19;
     let fitted = fit_ellipsis(subject, subject_width);
     let subject_len = subject.chars().count();
@@ -2132,19 +2169,146 @@ fn picker_row_cells(item: &str, width: usize) -> Vec<(char, Option<u32>)> {
             .flatten();
         cells.push((ch, source));
     }
-    cells.push((' ', None));
+    let mut trailing = vec![(' ', None)];
     for (index, ch) in date.chars().enumerate() {
-        cells.push((ch, u32::try_from(date_start + index).ok()));
+        trailing.push((ch, u32::try_from(date_start + index).ok()));
     }
-    cells
+    (cells, trailing)
 }
 
-fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &PickerState) {
+#[cfg(test)]
+fn picker_row_cells(item: &str, width: usize) -> PickerCells {
+    let (mut leading, trailing) = picker_row_parts(item, width, 0);
+    leading.extend(trailing);
+    leading
+}
+
+fn push_picker_cells(
+    spans: &mut Vec<Span<'_>>,
+    used: &mut usize,
+    cells: PickerCells,
+    matched_positions: &[u32],
+    row_style: Style,
+    match_style: Style,
+    width: usize,
+) {
+    for (ch, source_index) in cells {
+        let cells = display_width(&ch.to_string());
+        if *used + cells > width {
+            break;
+        }
+        let matched = source_index
+            .is_some_and(|source_index| matched_positions.binary_search(&source_index).is_ok());
+        let style = if matched {
+            on_surface(row_style, match_style)
+        } else {
+            row_style
+        };
+        spans.push(Span::styled(ch.to_string(), style));
+        *used += cells;
+    }
+}
+
+fn picker_roles(
+    picker: &PickerState,
+    item: &str,
+    app: Option<&App>,
+) -> super::comparison::EndpointRoles {
+    if matches!(
+        picker.kind(),
+        super::PickerKind::ComparisonBase
+            | super::PickerKind::ComparisonTarget
+            | super::PickerKind::ComparisonTags(_)
+            | super::PickerKind::ComparisonBranchCommits(_)
+            | super::PickerKind::ComparisonReviewPoints
+            | super::PickerKind::ComparisonAdvanced(_)
+    ) {
+        app.map_or_else(super::comparison::EndpointRoles::default, |app| {
+            app.picker_endpoint_roles(item)
+        })
+    } else {
+        super::comparison::EndpointRoles::default()
+    }
+}
+
+fn picker_line(
+    theme: &Theme,
+    picker: &PickerState,
+    index: usize,
+    item: &fathomable_core::picker::Match,
+    width: usize,
+    app: Option<&App>,
+) -> Line<'static> {
+    let text = picker.item(item);
+    let selection = Navigation::Active.selection(index == picker.selected());
+    let row_style = theme.popup.patch(selection.style(theme));
+    let mut spans = vec![selection.marker(theme)];
+    let mut used = 1;
+    let roles = picker_roles(picker, text, app);
+    let content_width = width.saturating_sub(1);
+    let min_content = if super::comparison::commit_id_from_row(text).is_some() {
+        18
+    } else {
+        1
+    };
+    let mut badges = Vec::new();
+    let mut reserved = 0;
+    for (shown, label, style) in [
+        (roles.base, "[current base]", theme.diff_minus),
+        (roles.target, "[current target]", theme.diff_plus),
+    ] {
+        let badge_width = 1 + display_width(label);
+        if shown && content_width.saturating_sub(reserved + badge_width) >= min_content {
+            badges.push((label, style, badge_width));
+            reserved += badge_width;
+        }
+    }
+    let badge_width = badges.iter().map(|(_, _, width)| width).sum();
+    let (leading, trailing) = picker_row_parts(text, content_width, badge_width);
+    push_picker_cells(
+        &mut spans,
+        &mut used,
+        leading,
+        item.positions(),
+        row_style,
+        theme.picker_match,
+        width,
+    );
+    for (label, style, _) in badges {
+        spans.push(Span::styled(" ", row_style));
+        spans.push(Span::styled(
+            label,
+            on_surface(row_style, style).add_modifier(Modifier::BOLD),
+        ));
+        used += 1 + display_width(label);
+    }
+    push_picker_cells(
+        &mut spans,
+        &mut used,
+        trailing,
+        item.positions(),
+        row_style,
+        theme.picker_match,
+        width,
+    );
+    spans.push(Span::styled(
+        " ".repeat(width.saturating_sub(used)),
+        row_style,
+    ));
+    Line::from(spans).style(row_style)
+}
+
+fn draw_picker(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    area: Rect,
+    picker: &PickerState,
+    app: Option<&App>,
+) {
     let width = area.width.saturating_sub(4).clamp(22, 90);
     let height = area.height.saturating_sub(2).clamp(3, 20);
     let popup = centred(area, width, height);
     let list_rows = super::picker_list_rows(usize::from(area.height));
-    let selected = picker.selected();
     let first = picker.first_visible(list_rows);
     let title = match picker.kind() {
         super::PickerKind::Files => "files".to_owned(),
@@ -2186,32 +2350,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         .skip(first)
         .take(list_rows)
     {
-        let item = picker.item(m);
-        let selection = Navigation::Active.selection(index == selected);
-        let row_style = theme.popup.patch(selection.style(theme));
-        let mut spans = vec![selection.marker(theme)];
-        let mut used = 1;
-        for (ch, source_index) in picker_row_cells(item, inner.saturating_sub(1)) {
-            let w = display_width(&ch.to_string());
-            if used + w > inner {
-                break;
-            }
-
-            let matched = source_index
-                .is_some_and(|source_index| m.positions().binary_search(&source_index).is_ok());
-            let style = if matched {
-                on_surface(row_style, theme.picker_match)
-            } else {
-                row_style
-            };
-            spans.push(Span::styled(ch.to_string(), style));
-            used += w;
-        }
-        spans.push(Span::styled(
-            " ".repeat(inner.saturating_sub(used)),
-            row_style,
-        ));
-        lines.push(Line::from(spans).style(row_style));
+        lines.push(picker_line(theme, picker, index, m, inner, app));
     }
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);

@@ -92,7 +92,7 @@ impl Toast {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoticeTone {
     Info,
-    Warning,
+    Error,
 }
 
 /// The answer to the reader's last action.
@@ -275,6 +275,13 @@ fn activity_observation(store: Option<&Store>) -> (Option<PathBuf>, ActivityCurs
     )
 }
 
+fn watch_ignore(watch: &WatchConfig) -> Ignore {
+    Ignore::new(&watch.ignore).unwrap_or_else(|error| {
+        tracing::warn!(%error, "ignoring watch.ignore");
+        Ignore::default()
+    })
+}
+
 /// All application state.
 #[derive(Debug)]
 pub(crate) struct App {
@@ -336,6 +343,8 @@ pub(crate) struct App {
     height: usize,
     viewer_id: String,
     store: Option<Store>,
+    /// Why the thread store could not open, retained for user-facing diagnostics.
+    thread_store_error: Option<String>,
     /// Store identity and append-log position already reported as activity.
     activity_store: Option<PathBuf>,
     activity_cursor: ActivityCursor,
@@ -399,6 +408,7 @@ impl App {
             record,
             dirs,
             store,
+            thread_store_error,
             jump,
             watch,
             seen,
@@ -413,13 +423,7 @@ impl App {
             user,
             config_path,
         } = options;
-        let ignore = match Ignore::new(&watch.ignore) {
-            Ok(ignore) => ignore,
-            Err(error) => {
-                tracing::warn!(%error, "ignoring watch.ignore");
-                Ignore::default()
-            }
-        };
+        let ignore = watch_ignore(&watch);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
         let mut app = Self {
             workspace,
@@ -456,6 +460,7 @@ impl App {
             height,
             viewer_id: record.id().to_string(),
             store,
+            thread_store_error,
             activity_store,
             activity_cursor,
             reach: Reach::everything(),
@@ -1738,12 +1743,12 @@ impl App {
         });
     }
 
-    fn warning(&mut self, message: impl Into<String>) {
+    fn error(&mut self, message: impl Into<String>) {
         let message = message.into();
-        tracing::warn!(message = %message, "status warning");
+        tracing::error!(message = %message, "status error");
         self.message = Some(Notice {
             text: message,
-            tone: NoticeTone::Warning,
+            tone: NoticeTone::Error,
         });
     }
 
@@ -2243,6 +2248,8 @@ pub(crate) struct Options {
     pub(crate) dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub(crate) store: Option<Store>,
+    /// The thread-store startup failure shown when `store` is unavailable.
+    pub(crate) thread_store_error: Option<String>,
     /// Change notification settings (ADR 0015).
     pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).
@@ -2285,6 +2292,7 @@ impl Options {
                     .then(|| std::env::temp_dir().join("fathomable-test-state").into())
             }),
             store: None,
+            thread_store_error: None,
             jump: JumpConfig::default(),
             watch: WatchConfig::default(),
             seen: None,

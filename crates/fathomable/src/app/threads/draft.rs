@@ -445,7 +445,7 @@ impl App {
                 self.refresh_all_marks();
                 self.notice("thread was resolved while editing; Enter reopens and submits");
             }
-            Err(error) => self.warning(error),
+            Err(error) => self.error(error),
         }
     }
 
@@ -574,7 +574,7 @@ impl App {
         .at_commit(self.workspace.head_commit());
         let where_at = range.map_or_else(|| "the file".to_owned(), |range| format!("L{range}"));
         let Some(store) = self.store_mut() else {
-            return Err(super::UNAVAILABLE.to_owned());
+            return Err(self.thread_store_unavailable());
         };
         let result = store.annotate_user(draft, &text, now(), submission);
         self.reconcile_agent_activity();
@@ -601,7 +601,7 @@ impl App {
         reopen: bool,
     ) -> Result<SubmitResult, String> {
         let Some(store) = self.store_mut() else {
-            return Err(super::UNAVAILABLE.to_owned());
+            return Err(self.thread_store_unavailable());
         };
         let result = if reopen {
             store
@@ -635,7 +635,7 @@ impl App {
         reopen: bool,
     ) -> Result<SubmitResult, String> {
         let Some(store) = self.store_mut() else {
-            return Err(super::UNAVAILABLE.to_owned());
+            return Err(self.thread_store_unavailable());
         };
         let result = if reopen {
             store

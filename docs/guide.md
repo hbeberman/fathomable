@@ -897,7 +897,9 @@ or leave either transparent. View keymap uses the regular `ui.popup.key`
 key face; help and menus use `ui.list.hover` background for hover, without
 a cursor bar. Help groups use their active overlay foreground in bold;
 View keymap uses `ui.picker.match` for
-its filter and the subdued info face for its footer.
+its filter and the subdued info face for its footer. Failed actions use
+bold red `ui.statusline.error` text without replacing the status-line
+background.
 
 List selection uses four shared theme roles: `ui.list.active` background,
 `ui.list.inactive` background, `ui.list.cursor` foreground, and
@@ -1264,6 +1266,11 @@ and, when there are several, lists its worktrees and says which one
 each viewer shows; `--doctor` counts the worktrees sharing the state and
 the visible directories that consume inotify watches. Ignored trees are
 not part of that watch budget.
+
+When the thread store cannot open, the failed action and the `threads` row
+in `:status` show the startup error directly instead of requiring a log
+search.
+
 Git state is keyed directly by the repository's common directory and
 non-Git state by its root; no old root-keyed directory is adopted or moved
 on startup

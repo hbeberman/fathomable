@@ -175,14 +175,14 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     }
 
     let config = Config::load(dirs, cli.config.as_deref())?;
-    let store = match Store::open(dirs.threads_file(&key)) {
+    let (store, thread_store_error) = match Store::open(dirs.threads_file(&key)) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
-            Some(store)
+            (Some(store), None)
         }
         Err(error) => {
             tracing::error!(%error, "cannot open the thread store; annotations disabled");
-            None
+            (None, Some(error.to_string()))
         }
     };
     // Snapshots of files with open threads are kept past their age so a
@@ -214,6 +214,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             record: record.clone(),
             dirs: dirs.clone(),
             store,
+            thread_store_error,
             jump: config.jump().clone(),
             watch: config.watch().clone(),
             seen,

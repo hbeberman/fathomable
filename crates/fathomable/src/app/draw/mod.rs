@@ -71,6 +71,8 @@ pub(crate) struct Theme {
     pub(crate) search_match: Style,
     pub(crate) statusline: Style,
     pub(crate) info: Style,
+    /// Foreground-only treatment for failed actions on the status line.
+    pub(crate) statusline_error: Style,
     /// The `deleted` banner (ADR 0028).
     pub(crate) warning: Style,
     /// A pane's header rows and the key bars (ADR 0059, ADR 0067).
@@ -131,6 +133,7 @@ impl Theme {
             search_match: style(Key::UiSearchMatch),
             statusline: style(Key::UiStatusline),
             info: style(Key::UiStatuslineInfo),
+            statusline_error: style(Key::UiStatuslineError),
             warning: style(Key::UiWarning),
             header: style(Key::UiHeader),
             mode_normal: style(Key::UiStatuslineNormal),
@@ -1592,7 +1595,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 fn status_message_style(app: &App, theme: &Theme) -> Style {
     match app.message_tone() {
         NoticeTone::Info => theme.info,
-        NoticeTone::Warning => theme.warning,
+        NoticeTone::Error => theme.statusline_error,
     }
 }
 
@@ -2573,18 +2576,19 @@ mod tests {
     }
 
     #[test]
-    fn warning_status_messages_use_the_warning_face() -> anyhow::Result<()> {
-        let dir = testing::workspace("status-warning", testing::README)?;
+    fn error_status_messages_use_the_foreground_only_error_face() -> anyhow::Result<()> {
+        let dir = testing::workspace("status-error", testing::README)?;
         let mut app = testing::app(&dir)?;
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let mut theme = Theme::from_core(&core);
         theme.info = Style::default().fg(Color::Blue);
-        theme.warning = Style::default().fg(Color::White).bg(Color::Red);
+        theme.statusline_error = Style::default().fg(Color::Red);
 
         app.notice("ordinary");
         assert_eq!(status_message_style(&app, &theme), theme.info);
-        app.warning("failed");
-        assert_eq!(status_message_style(&app, &theme), theme.warning);
+        app.error("failed");
+        assert_eq!(status_message_style(&app, &theme), theme.statusline_error);
+        assert_eq!(status_message_style(&app, &theme).bg, None);
         Ok(())
     }
 

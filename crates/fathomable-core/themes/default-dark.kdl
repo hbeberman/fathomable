@@ -40,6 +40,7 @@ colors {
     "ui.statusline.select" fg="black" bg="purple" mods="bold"
     "ui.statusline.input"  fg="black" bg="yellow" mods="bold"
     "ui.statusline.info"   fg="dim"
+    "ui.statusline.error"  fg="red" mods="bold"
     "ui.warning"           fg="black" bg="red" mods="bold"
     "ui.header"            bg="surface"
 

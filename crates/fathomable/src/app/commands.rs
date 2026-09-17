@@ -82,7 +82,7 @@ impl App {
 
     /// The rows of the `:status` overlay: label, value.
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
-        let unavailable = || "unavailable (see log path above)".to_owned();
+        let unavailable = || "unavailable".to_owned();
         let view = self.view();
         let (line, column) = view.source_position();
         let base = view
@@ -131,9 +131,15 @@ impl App {
             ),
             (
                 "threads".to_owned(),
-                self.store
-                    .as_ref()
-                    .map_or_else(unavailable, |s| s.path().display().to_string()),
+                self.store.as_ref().map_or_else(
+                    || {
+                        self.thread_store_error.as_ref().map_or_else(
+                            || "unavailable".to_owned(),
+                            |error| format!("unavailable: {error}"),
+                        )
+                    },
+                    |store| store.path().display().to_string(),
+                ),
             ),
             (
                 "snapshots".to_owned(),

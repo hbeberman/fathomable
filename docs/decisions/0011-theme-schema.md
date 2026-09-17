@@ -117,7 +117,8 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.statusline` | status line background |
 | `ui.statusline.normal`, `.select`, `.input` | mode pills |
 | `ui.statusline.info` | transient messages, pending keys, `[+]`, and muted ancestor-file context bars in review (0079) |
-| `ui.warning` | warning status messages and the `deleted` banner over a file that is gone ([0028](0028-live-workspace.md)) |
+| `ui.statusline.error` | failed-action text in the status line; the built-ins set only a bold red foreground so its background remains `ui.statusline` |
+| `ui.warning` | the `deleted` banner over a file that is gone ([0028](0028-live-workspace.md)) |
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
 | `ui.sidebar`, `ui.sidebar.dir` | the sidebar's background and directory names ([0012](0012-workspace-mode.md)); written `ui.rail*` between [0049](0049-inline-threads-and-the-rail.md) and [0057](0057-the-sidebar.md) |

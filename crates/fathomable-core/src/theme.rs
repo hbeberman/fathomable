@@ -174,6 +174,8 @@ pub enum Key {
     UiStatuslineSelect,
     UiStatuslineInput,
     UiStatuslineInfo,
+    /// Foreground-only treatment for an error in the status line.
+    UiStatuslineError,
     /// A banner that warns: the deleted-file row (ADR 0028).
     UiWarning,
     /// The background of a pane's header rows (ADR 0059).
@@ -224,7 +226,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 42] = [
+    const NAMED: [(&'static str, Self); 43] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -234,6 +236,7 @@ impl Key {
         ("ui.statusline.select", Self::UiStatuslineSelect),
         ("ui.statusline.input", Self::UiStatuslineInput),
         ("ui.statusline.info", Self::UiStatuslineInfo),
+        ("ui.statusline.error", Self::UiStatuslineError),
         ("ui.warning", Self::UiWarning),
         ("ui.header", Self::UiHeader),
         ("ui.sidebar", Self::UiSidebar),

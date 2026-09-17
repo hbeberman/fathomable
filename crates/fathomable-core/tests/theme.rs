@@ -45,6 +45,18 @@ fn builtins_resolve_and_set_every_key() -> TestResult {
 }
 
 #[test]
+fn statusline_errors_are_foreground_only() -> TestResult {
+    for name in BUILTIN_NAMES {
+        let theme = Theme::resolve(name, |_| Ok(None))?;
+        let error = theme.style(Key::UiStatuslineError);
+        assert!(error.fg().is_some(), "{name} has no error text colour");
+        assert_eq!(error.bg(), None, "{name} replaces the status background");
+        assert!(error.modifiers().bold, "{name} error text is not bold");
+    }
+    Ok(())
+}
+
+#[test]
 fn list_focus_roles_are_distinct_from_chrome_and_inherit_together() -> TestResult {
     for name in BUILTIN_NAMES {
         let theme = Theme::resolve(name, |_| Ok(None))?;

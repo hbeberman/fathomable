@@ -1384,18 +1384,26 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
 }
 
 #[test]
-fn unavailable_threads_point_to_the_warning_log_path() -> anyhow::Result<()> {
+fn unavailable_threads_show_the_startup_error() -> anyhow::Result<()> {
     let dir = fixture("threads-unavailable")?;
-    let mut app = app(&dir)?;
+    let error = "threads.jsonl line 1: format version 3, this build writes 4; \
+                 delete /state/threads.jsonl to start over";
+    let mut app = app_with(
+        &dir,
+        Options {
+            thread_store_error: Some(error.to_owned()),
+            ..Options::for_test(dir.0.clone())
+        },
+    )?;
     app.open(Path::new("README.md"));
 
     app.start_new_comment();
 
     assert_eq!(
         app.message(),
-        Some("threads unavailable; run :status for the log path")
+        Some(format!("threads unavailable; :status: {error}").as_str())
     );
-    assert_eq!(app.message_tone(), NoticeTone::Warning);
+    assert_eq!(app.message_tone(), NoticeTone::Error);
     let rows = app.status_lines();
     let log = rows
         .iter()
@@ -1410,8 +1418,7 @@ fn unavailable_threads_point_to_the_warning_log_path() -> anyhow::Result<()> {
     );
     assert!(
         rows.iter()
-            .any(|(label, value)| label == "threads"
-                && value == "unavailable (see log path above)")
+            .any(|(label, value)| label == "threads" && value == &format!("unavailable: {error}"))
     );
     Ok(())
 }

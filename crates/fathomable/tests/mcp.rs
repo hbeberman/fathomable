@@ -511,6 +511,14 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
     ));
     assert!(start_item["allOf"].is_array());
     assert!(schema_contains(start_item, "maxLength", &json!(1024)));
+    assert!(
+        start_item["properties"]["body"]["description"]
+            .as_str()
+            .is_some_and(|description| {
+                description.contains("PR-style review comment")
+                    && description.contains("Substantial replacements belong in the worktree")
+            })
+    );
 
     let reply = schema("thread_reply")?;
     assert_eq!(reply["properties"]["replies"]["minItems"], 1);
@@ -527,6 +535,14 @@ fn schemas_encode_mcp_input_constraints() -> Result<()> {
     ));
     assert!(reply_item["allOf"].is_array());
     assert!(schema_contains(reply_item, "maxLength", &json!(1024)));
+    assert!(
+        reply_item["properties"]["body"]["description"]
+            .as_str()
+            .is_some_and(|description| {
+                description.contains("PR-style review reply")
+                    && description.contains("small focused snippet")
+            })
+    );
     assert!(schema_contains(
         &reply_item["properties"]["resolve"],
         "type",

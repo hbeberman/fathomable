@@ -169,6 +169,14 @@ line. Prevalidation is not an I/O transaction: if a later write fails after
 earlier items succeeded, the error names the completed items so a caller can
 retry only what remains.
 
+The server instructions and write schemas frame these messages as pull-request
+review threads, not chat or document delivery. One thread carries one local,
+actionable issue at the narrowest useful placement. Bodies keep only essential
+evidence and the requested action or concise resolution; whole files, whole
+sections, long replacements, comprehensive reviews, plans, and status reports
+belong in the worktree. Independent issues use separate threads, but agents do
+not split or chain messages to evade the body limit.
+
 ### Identity records authorship, not routing or registration
 
 The harness-qualified automatic identity of

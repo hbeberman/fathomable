@@ -41,7 +41,10 @@ pub(crate) struct StartItem {
     #[schemars(range(min = 1))]
     #[serde(default)]
     end_line: Option<usize>,
-    /// The comment; a fresh body is at most 1024 UTF-8 bytes.
+    /// PR-style review comment, at most 1024 UTF-8 bytes for a fresh write.
+    ///
+    /// Start one independently actionable finding on the narrowest relevant
+    /// file or line range. Substantial replacements belong in the worktree.
     body: String,
     /// Optional retry key: non-whitespace text, at most 256 UTF-8 bytes.
     #[schemars(length(min = 1, max = 256))]
@@ -74,12 +77,13 @@ impl Server {
         name = "thread_start",
         output_schema = rmcp::handler::server::tool::schema_for_output::<WriteOutput>(),
         description = "Start one or more new review discussions. Pass exactly one non-empty \
-                       `comments` array; each item names a repository-relative file, fresh Markdown \
-                       body of at most 1024 UTF-8 bytes, and optional 1-based line range. Omit \
-                       `line` only for a file-level comment. An optional per-item \
-                       `idempotency_key` makes a retry, including a historical larger body, replay \
-                       the same discussion instead of creating another one. The whole batch is \
-                       validated before any discussion is written.",
+                       `comments` array. Start one discussion per independently actionable finding, \
+                       placed on the narrowest relevant repository file or optional 1-based line \
+                       range. Each fresh Markdown body is at most 1024 UTF-8 bytes; substantial \
+                       replacements belong in the worktree. Omit `line` only for a file-level \
+                       comment. An optional per-item `idempotency_key` makes a retry, including a \
+                       historical larger body, replay the same discussion instead of creating \
+                       another one. The whole batch is validated before any discussion is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,

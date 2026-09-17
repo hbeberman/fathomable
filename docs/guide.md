@@ -556,6 +556,13 @@ explicitly. A matching successful keyed reply replay returns its original
 resolution outcome and current archived thread without duplicating or
 restoring it.
 
+Agents are instructed to treat these discussions like pull-request review
+threads, not chat responses. Each thread should hold one local, actionable
+issue with only essential evidence and a concise requested action or outcome.
+Whole files, whole sections, long replacements, broad reviews, plans, and
+status reports belong in the worktree. Independent issues get separate
+threads; splitting one message merely to evade the body limit is not allowed.
+
 Supported write identity comes from the host's native channel:
 
 | Host | Channel |

@@ -76,6 +76,12 @@ older build can still be retried; the server accepts it only when its key and
 request intent match a durable receipt, and otherwise applies the fresh-write
 limit.
 
+Descriptions also state the intended shape rather than relying on the numeric
+limit alone. A start body is one independently actionable PR-style review
+comment at the narrowest relevant placement. A reply states what changed and
+where, or why no change was made, with only a small focused snippet when
+essential. Substantial replacements belong in the worktree.
+
 The reply argument is `propose_resolve`, not `resolve`. There is no alias.
 It records a proposal on the reply and never closes the thread. The
 returned reply field remains `proposed_resolved`.

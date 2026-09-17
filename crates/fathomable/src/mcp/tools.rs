@@ -107,7 +107,11 @@ impl<'de> Deserialize<'de> for StatusFilter {
 pub(crate) struct ReplyItem {
     /// Discussion id from `threads`.
     thread: String,
-    /// Reply text in Markdown; a fresh reply is at most 1024 UTF-8 bytes.
+    /// PR-style review reply, at most 1024 UTF-8 bytes for a fresh write.
+    ///
+    /// State what changed and where, or why no change was made. Include only
+    /// a small focused snippet when essential; substantial replacements
+    /// belong in the worktree.
     body: String,
     /// This reply completes the work and should resolve when authorized.
     #[serde(default)]
@@ -1094,13 +1098,15 @@ impl Server {
     #[tool(
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReplyWriteOutput>(),
         description = "Continue one or more existing, non-archived review discussions. Pass exactly one \
-                       non-empty `replies` array; each item names a thread and fresh body of at most \
-                       1024 UTF-8 bytes, with optional current line placement, `resolve` completion \
-                       intent, and retry `idempotency_key`. Resolution succeeds only with one-shot \
-                       permission; otherwise the successful result directs review to Fathomable. \
-                       Fresh replies to archived discussions fail; matching keyed retries, including \
-                       historical larger bodies, replay their original outcome. The whole batch is \
-                       validated before any reply is written.",
+                       non-empty `replies` array. Each item gives a concise resolution: what changed \
+                       and where, or why no change was made. Include only a small focused snippet \
+                       when essential; never paste the complete replacement. Each fresh body is at \
+                       most 1024 UTF-8 bytes, with optional current line placement, `resolve` \
+                       completion intent, and retry `idempotency_key`. Resolution succeeds only \
+                       with one-shot permission; otherwise the successful result directs review to \
+                       Fathomable. Fresh replies to archived discussions fail; matching keyed \
+                       retries, including historical larger bodies, replay their original outcome. \
+                       The whole batch is validated before any reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -1860,10 +1866,17 @@ pub(super) fn invalid_batch(items: &str, issues: &[BatchIssue]) -> CallToolResul
 /// Instructions supplied to every MCP client.
 pub(super) fn instructions() -> String {
     "Fathomable holds review discussions attached to files in this repository. \
-     When asked, read the relevant threads and their history. Use thread_start \
-     for new findings or questions and thread_reply to continue existing \
-     discussions. A resolution_proposed result is successful and awaits the \
-     Fathomable user's review in Fathomable; do not ask for confirmation in \
+     Treat them like GitHub pull-request review threads, not chat responses or \
+     document-delivery channels. Keep each thread focused on one local, actionable \
+     issue. Include only the essential evidence and requested action or outcome. \
+     Do not paste whole files, whole sections, long replacement text, comprehensive \
+     reviews, plans, or status reports. Put substantial edits and content in the \
+     worktree, then refer to the relevant path and lines. Start separate threads \
+     for independent issues. Never split or chain messages merely to evade the \
+     1024-byte body limit. When asked, read the relevant threads and their history. \
+     Use thread_start for new findings or questions and thread_reply to continue \
+     existing discussions. A resolution_proposed result is successful and awaits \
+     the Fathomable user's review in Fathomable; do not ask for confirmation in \
      chat and do not retry it. Reading a thread does not authorize changes."
         .to_owned()
 }
@@ -1909,6 +1922,19 @@ mod tests {
             assert_eq!(actual, expected_params, "{}", expected.name);
         }
         Ok(())
+    }
+
+    #[test]
+    fn instructions_keep_agent_messages_pr_thread_sized() {
+        let text = super::instructions();
+        for expected in [
+            "GitHub pull-request review threads",
+            "Do not paste whole files",
+            "Put substantial edits and content in the worktree",
+            "Never split or chain messages",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?}: {text}");
+        }
     }
 
     #[test]

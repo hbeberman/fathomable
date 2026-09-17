@@ -78,36 +78,43 @@ fn picker_items(app: &App) -> Vec<String> {
 }
 
 #[test]
-fn picker_scrolloff_tracks_direction_and_skips_dividers() {
-    let mut items: Vec<_> = (0..20).map(|index| format!("item {index}")).collect();
-    items.insert(5, super::comparison::PICKER_DIVIDER.to_owned());
+fn picker_scrolloff_allows_free_motion_between_margins() {
+    let items: Vec<_> = (0..20).map(|index| format!("item {index}")).collect();
     let mut picker = PickerState::new(PickerKind::Files, items);
+    let rows = 10;
 
-    for _ in 0..10 {
-        picker.move_by(1);
-    }
-    assert_eq!(picker.selected(), 11, "the divider is not a cursor stop");
-    let first = picker.first_visible(8);
-    assert_eq!(picker.selected() - first, 4);
+    picker.move_by(7, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (7, 1));
+    picker.move_by(-1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (6, 1));
+    picker.move_by(-1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (5, 1));
+    picker.move_by(-1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (4, 1));
+    picker.move_by(-1, rows);
     assert_eq!(
-        first + 8 - picker.selected() - 1,
-        3,
-        "three following rows remain visible while moving down"
+        (picker.selected(), picker.first_visible(rows)),
+        (3, 0),
+        "the list scrolls only after the cursor crosses the upper margin"
+    );
+    picker.move_by(1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (4, 0));
+    picker.move_by(1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (5, 0));
+    picker.move_by(1, rows);
+    assert_eq!((picker.selected(), picker.first_visible(rows)), (6, 0));
+    picker.move_by(1, rows);
+    assert_eq!(
+        (picker.selected(), picker.first_visible(rows)),
+        (7, 1),
+        "the cursor crosses the viewport freely before scrolling resumes"
     );
 
-    picker.move_by(-1);
-    let first = picker.first_visible(8);
+    picker.move_by(100, rows);
     assert_eq!(
-        picker.selected() - first,
-        3,
-        "reversing upward releases the cursor from the lower edge"
-    );
-    picker.move_by(1);
-    let first = picker.first_visible(8);
-    assert_eq!(
-        picker.selected() - first,
-        4,
-        "reversing downward releases the cursor from the upper edge"
+        (picker.selected(), picker.first_visible(rows)),
+        (19, 10),
+        "the cursor approaches the edge only after the list reaches its end"
     );
 }
 

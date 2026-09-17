@@ -183,8 +183,9 @@ continuations. These tables contain the main bindings.
 | `Space ?` | open **View keymap** |
 | `Space a w` | report that Wake agent is not implemented |
 
-Picker motion keeps three entries visible ahead of the cursor when possible.
-Reversing direction releases the cursor from the previous top or bottom edge.
+Picker motion lets the cursor move freely between three-entry top and bottom
+margins. Crossing a margin scrolls the list while keeping the cursor there.
+At the beginning or end of the list, the cursor can move closer to that edge.
 
 Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
 `:name NAME`, `:help`, `:doctor`, and `:about`.
@@ -212,7 +213,6 @@ Tags...
 Branches...
 Review points...  (base only)
 Advanced...
-────────────────
 <short ID> <subject, ellipsized to fit> <YYYY-MM-DD>
 ```
 
@@ -221,7 +221,7 @@ snapshot the next commit would record; it is not `HEAD`. `HEAD` is the
 currently checked-out commit and resolves immediately to a pinned ID.
 **Advanced...** contains the empty-tree endpoint.
 
-Below the divider are at most 500 commits reachable from `HEAD`, newest
+The remaining rows are at most 500 commits reachable from `HEAD`, newest
 first. The date is UTC and remains right-aligned while long subjects are
 ellipsized. **Tags...** opens a searchable tag list and selecting one pins
 its commit. **Branches...** searches both local and remote-tracking branches;

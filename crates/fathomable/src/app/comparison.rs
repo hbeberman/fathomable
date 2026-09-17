@@ -23,8 +23,6 @@ use super::diff::{DiffBody, Text};
 
 const PREFERENCE_FILE: &str = "comparison.json";
 const COMMIT_PICKER_LIMIT: usize = 500;
-/// An impossible Git path used as the disabled divider row's identity.
-pub(crate) const PICKER_DIVIDER: &str = "\0";
 
 /// Which delta the viewer lists and renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -473,7 +471,6 @@ impl App {
             choices.push("Review points...".to_owned());
         }
         choices.push("Advanced...".to_owned());
-        choices.push(PICKER_DIVIDER.to_owned());
         if self.workspace.head_commit().is_some() {
             match self.workspace.recent_commits(0, COMMIT_PICKER_LIMIT) {
                 Ok(commits) => choices.extend(commits.iter().map(commit_picker_row)),

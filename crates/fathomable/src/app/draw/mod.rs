@@ -2143,7 +2143,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     let width = area.width.saturating_sub(4).clamp(22, 90);
     let height = area.height.saturating_sub(2).clamp(3, 20);
     let popup = centred(area, width, height);
-    let list_rows = usize::from(height).saturating_sub(2);
+    let list_rows = super::picker_list_rows(usize::from(area.height));
     let selected = picker.selected();
     let first = picker.first_visible(list_rows);
     let title = match picker.kind() {
@@ -2187,10 +2187,6 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         .take(list_rows)
     {
         let item = picker.item(m);
-        if item == super::comparison::PICKER_DIVIDER {
-            lines.push(Line::from(Span::styled("─".repeat(inner), theme.info)));
-            continue;
-        }
         let selection = Navigation::Active.selection(index == selected);
         let row_style = theme.popup.patch(selection.style(theme));
         let mut spans = vec![selection.marker(theme)];

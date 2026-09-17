@@ -42,7 +42,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     app.open_picker(PickerKind::ComparisonBase);
     let items = picker_items(&app);
     assert_eq!(
-        &items[..8],
+        &items[..7],
         [
             "Working tree",
             "Index",
@@ -51,17 +51,11 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
             "Branches...",
             "Review points...",
             "Advanced...",
-            super::PICKER_DIVIDER,
         ]
     );
-    assert!(super::commit_id_from_row(&items[8]).is_some());
+    assert!(super::commit_id_from_row(&items[7]).is_some());
     let rendered = screen(&app)?;
     assert!(rendered.iter().any(|line| line.contains("Working tree")));
-    assert!(
-        rendered
-            .iter()
-            .any(|line| line.contains("────────────────"))
-    );
     assert!(
         rendered
             .iter()

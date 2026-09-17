@@ -91,9 +91,8 @@ explicitly.
 The endpoint picker is hierarchical. Its first rows distinguish the working
 tree (files on disk), index (the staged next-commit snapshot), and `HEAD`
 (the checked-out commit), followed by **Tags...**, **Branches...**, base-only
-**Review points...**, and **Advanced...** for the empty tree. A horizontal
-divider separates those choices from at most 500 commits reachable from
-`HEAD`, newest first.
+**Review points...**, and **Advanced...** for the empty tree. Up to 500
+commits reachable from `HEAD` follow those choices, newest first.
 
 Commit rows render as short ID, subject, and right-aligned UTC `YYYY-MM-DD`;
 the subject is ellipsized before the date is displaced. **Tags...** is a
@@ -109,9 +108,10 @@ first result set in memory. Other typed local Git revisions and contiguous
 `first..last` batches remain available. Escape returns from a nested picker to
 its parent before closing the endpoint picker.
 
-Picker motion keeps three rows ahead in the direction of travel whenever the
-list boundary permits it. Reversing direction moves the cursor away from the
-old viewport edge instead of pinning it there.
+Picker motion lets the cursor move freely between three-row top and bottom
+margins. Crossing a margin scrolls the list while keeping the cursor at that
+margin. Once the list reaches its beginning or end, the cursor can move closer
+to that edge.
 
 The comparison owns:
 

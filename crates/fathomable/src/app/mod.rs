@@ -186,13 +186,6 @@ impl ComparisonSide {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PickerDirection {
-    Still,
-    Up,
-    Down,
-}
-
 #[derive(Debug, Clone)]
 struct PickerSearch {
     prefix: String,
@@ -214,7 +207,7 @@ pub(crate) struct PickerState {
     input: String,
     matches: Vec<Match>,
     selected: usize,
-    direction: PickerDirection,
+    scroll: usize,
     scope: Option<String>,
     id_search: Option<PickerSearch>,
 }
@@ -235,7 +228,7 @@ impl PickerState {
             input: String::new(),
             matches,
             selected: 0,
-            direction: PickerDirection::Still,
+            scroll: 0,
             scope,
             id_search: None,
         }
@@ -267,72 +260,41 @@ impl PickerState {
 
     /// Number of candidates before filtering.
     pub(crate) fn total(&self) -> usize {
-        self.picker
-            .items()
-            .iter()
-            .filter(|item| item.as_str() != comparison::PICKER_DIVIDER)
-            .count()
+        self.picker.items().len()
     }
 
     pub(crate) fn matched(&self) -> usize {
-        self.matches
-            .iter()
-            .filter(|item| self.selectable(item))
-            .count()
+        self.matches.len()
     }
 
     pub(crate) fn first_visible(&self, rows: usize) -> usize {
         if rows == 0 {
             return 0;
         }
-        let margin = 3.min(rows.saturating_sub(1));
+        let margin = PICKER_SCROLLOFF.min(rows.saturating_sub(1) / 2);
         let last_first = self.matches.len().saturating_sub(rows);
-        match self.direction {
-            PickerDirection::Still => 0,
-            PickerDirection::Up => self.selected.saturating_sub(margin).min(last_first),
-            PickerDirection::Down => self
+        let mut first = self.scroll.min(last_first);
+        if self.selected < first.saturating_add(margin) {
+            first = self.selected.saturating_sub(margin);
+        } else if self.selected > first.saturating_add(rows).saturating_sub(margin + 1) {
+            first = self
                 .selected
                 .saturating_add(margin + 1)
-                .saturating_sub(rows)
-                .min(last_first),
+                .saturating_sub(rows);
         }
+        first.min(last_first)
     }
 
-    pub(crate) fn selectable(&self, item: &Match) -> bool {
-        self.item(item) != comparison::PICKER_DIVIDER
-    }
-
-    fn move_by(&mut self, delta: isize) {
-        self.direction = match delta.cmp(&0) {
-            std::cmp::Ordering::Less => PickerDirection::Up,
-            std::cmp::Ordering::Equal => PickerDirection::Still,
-            std::cmp::Ordering::Greater => PickerDirection::Down,
-        };
-        let Some(_) = self.matches.get(self.selected) else {
-            return;
-        };
-        let step = delta.signum();
-        if step == 0 {
+    fn move_by(&mut self, delta: isize, rows: usize) {
+        if self.matches.is_empty() {
             return;
         }
-        for _ in 0..delta.unsigned_abs() {
-            let mut candidate = self.selected;
-            loop {
-                let next = candidate.saturating_add_signed(step);
-                if next == candidate || next >= self.matches.len() {
-                    return;
-                }
-                candidate = next;
-                if self
-                    .matches
-                    .get(candidate)
-                    .is_some_and(|item| self.selectable(item))
-                {
-                    self.selected = candidate;
-                    break;
-                }
-            }
-        }
+        self.scroll = self.first_visible(rows);
+        self.selected = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.matches.len() - 1);
+        self.scroll = self.first_visible(rows);
     }
 
     fn commit_search_request(&mut self) -> Option<CommitSearch> {
@@ -397,13 +359,19 @@ impl PickerState {
 
     fn requery(&mut self) {
         self.matches = self.picker.query(&self.input);
-        self.selected = self
-            .matches
-            .iter()
-            .position(|item| self.selectable(item))
-            .unwrap_or(0);
-        self.direction = PickerDirection::Still;
+        self.selected = 0;
+        self.scroll = 0;
     }
+}
+
+/// Rows retained above and below a picker cursor during ordinary scrolling.
+const PICKER_SCROLLOFF: usize = 3;
+
+/// List rows inside the picker popup for the current pane height.
+pub(crate) fn picker_list_rows(pane_rows: usize) -> usize {
+    // The popup leaves two pane rows outside, is 3-20 rows tall, and has
+    // one border row above and below its list.
+    pane_rows.saturating_sub(2).clamp(3, 20).saturating_sub(2)
 }
 
 fn append_unique_commits(items: &mut Vec<String>, extra: Vec<String>) {
@@ -2467,8 +2435,9 @@ impl App {
     }
 
     pub(crate) fn picker_move(&mut self, delta: isize) {
+        let rows = picker_list_rows(self.pane_rows());
         if let Some(picker) = self.picker_mut() {
-            picker.move_by(delta);
+            picker.move_by(delta, rows);
         }
     }
 
@@ -2490,11 +2459,7 @@ impl App {
     /// Enter in the picker: open the file, or show the thread.
     pub(crate) fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
-            if let Some(m) = picker
-                .matches
-                .get(picker.selected)
-                .filter(|item| picker.selectable(item))
-            {
+            if let Some(m) = picker.matches.get(picker.selected) {
                 Some((
                     picker.kind,
                     picker.item(m).to_owned(),

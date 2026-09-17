@@ -122,7 +122,7 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
     assert_eq!(app.view().mode(), Mode::Select, "the selection stays");
     assert_eq!(app.menu().map(Menu::title), Some("selection"));
     let keys: Vec<String> = entries(&app)?.into_iter().map(|(k, _)| k).collect();
-    assert_eq!(keys, ["c", "Space c c", "y", "Esc"]);
+    assert_eq!(keys, ["c", "Sp c c", "y", "Esc"]);
 
     // Hover is read from the pointer; a click on an entry runs it.
     let (x, y) = entry_cell(&app, "copy selection")?;
@@ -235,7 +235,7 @@ fn the_thread_menu_replies_and_deletes_at_once() -> anyhow::Result<()> {
     let reply = entries(&app)?
         .into_iter()
         .find(|(_, label)| label == "reply");
-    assert_eq!(reply.map(|(key, _)| key).as_deref(), Some("Space c r"));
+    assert_eq!(reply.map(|(key, _)| key).as_deref(), Some("Sp c r"));
 
     let (x, y) = entry_cell(&app, "reply")?;
     left(&mut app, x, y);
@@ -1095,10 +1095,28 @@ fn the_context_menu_draws() -> anyhow::Result<()> {
         Color::LightYellow,
         "the menu title does not borrow the saturated status pill"
     );
-    let key = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y + 1)?)];
+    let label = &buffer[(u16::try_from(grid.x + 1)?, u16::try_from(grid.y + 1)?)];
+    assert_eq!(label.symbol(), "c");
+    assert_eq!(label.fg, theme.menu.fg.unwrap_or(Color::Reset));
+    assert_eq!(label.bg, overlay);
+    assert!(!label.modifier.contains(Modifier::BOLD));
+    let key = &buffer[(
+        u16::try_from(grid.x + grid.width - 2)?,
+        u16::try_from(grid.y + 1)?,
+    )];
+    assert_eq!(key.symbol(), "c");
     assert_eq!(key.fg, theme.info.fg.unwrap_or(Color::Reset));
     assert_eq!(key.bg, overlay);
     assert!(!key.modifier.contains(Modifier::BOLD));
+    assert_eq!(
+        buffer[(
+            u16::try_from(grid.x + grid.width - 3)?,
+            u16::try_from(grid.y + 1)?,
+        )]
+            .symbol(),
+        " ",
+        "the action and its right-aligned shortcut have a gap"
+    );
     Ok(())
 }
 

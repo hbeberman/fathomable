@@ -193,6 +193,9 @@ Right-clicking the header does nothing.
 Active filter words appear passively before the `+n -m` comparison totals.
 Right-clicking a file offers **Open**, **Comment on file**, and **Copy path**.
 Right-clicking a directory offers **Expand/Collapse** and **Copy path**.
+Context and menu-bar popups put action labels at the left and their subdued
+shortcuts at the right, with at least one cell between them. Those menus use
+`Sp` as the compact spelling of `Space`.
 The wheel steps one row and previews it, while dragging the sidebar divider
 resizes the sidebar.
 

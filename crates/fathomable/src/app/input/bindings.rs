@@ -152,13 +152,34 @@ pub(crate) type Keys = &'static [Chord];
 /// anything else is space-separated (`Space j j`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
+    spell_with_space(keys, "Space")
+}
+
+/// Spell a sequence compactly for action-menu shortcut columns.
+#[must_use]
+pub(crate) fn menu_spell(keys: &[Chord]) -> String {
+    spell_with_space(keys, "Sp")
+}
+
+fn spell_with_space(keys: &[Chord], space: &str) -> String {
     let separator = if keys.iter().all(|chord| chord.is_plain_char()) {
         ""
     } else {
         " "
     };
     keys.iter()
-        .map(ToString::to_string)
+        .map(|chord| {
+            let key = if chord.key == Key::Char(' ') {
+                space.to_owned()
+            } else {
+                chord.key.to_string()
+            };
+            format!(
+                "{}{}{key}",
+                if chord.ctrl { "Ctrl-" } else { "" },
+                if chord.alt { "Alt-" } else { "" }
+            )
+        })
         .collect::<Vec<_>>()
         .join(separator)
 }
@@ -1530,7 +1551,8 @@ pub(crate) fn first_keys(place: Where, action: Action) -> Option<Keys> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu, spell,
+        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu,
+        menu_spell, spell,
     };
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
@@ -1820,6 +1842,7 @@ mod tests {
         assert_eq!(spell(&[c('g'), c('g')]), "gg");
         assert_eq!(spell(&[c(']'), c('c')]), "]c");
         assert_eq!(spell(&[c(' '), c('j'), c('j')]), "Space j j");
+        assert_eq!(menu_spell(&[c(' '), c('j'), c('j')]), "Sp j j");
         assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");

@@ -71,6 +71,11 @@ and copy path; directories offer expand/collapse and copy path. Pane filters
 move to a left-click menu on the `Files` title. Right-click on that header
 does nothing.
 
+Amended later 2026-09-17: context-menu rows put the action at the left in the
+normal menu face and its right-aligned shortcut in the subdued info face.
+The widest action/shortcut pair sets the box width with at least one cell
+between them. Menu shortcuts abbreviate `Space` as `Sp`.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):
@@ -148,9 +153,11 @@ same day; the choices are below.
 - **Drawing.** The menu's top-left corner is the pointer cell, shifted
   left or up when it would leave the screen. Its rounded border names what
   the menu acts on (`selection`, `line 42`, `thread`, `README.md`), as the
-  which-key border names its breadcrumb. Entries are `key label` rows on
-  `ui.menu`; keys and borders use the subdued info face and hover uses
-  `ui.list.hover`. No new theme key.
+  which-key border names its breadcrumb. Entries are left-aligned action
+  labels in the normal `ui.menu` face and right-aligned shortcuts in the
+  subdued info face; the widest pair sizes the menu with at least one cell
+  between the two. Shortcut labels abbreviate `Space` as `Sp`. Borders use
+  the subdued info face and hover uses `ui.list.hover`. No new theme key.
 - The comment box keeps the keys and the mouse works around it
   ([0018](0018-comment-editor.md)); a right-click in the box does
   nothing. Under the help, status, and picker popups the mouse is

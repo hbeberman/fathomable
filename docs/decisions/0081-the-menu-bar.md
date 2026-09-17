@@ -31,6 +31,10 @@ Amended later 2026-09-17 by
 identity move from the Files header to the centered menu-bar label. The
 repository/worktree segment opens the worktree picker when several exist.
 
+Amended later 2026-09-17: menu rows left-align their normal-face action
+labels and right-align their subdued shortcut labels, retaining at least one
+cell between the widest pair. Menu shortcuts abbreviate `Space` as `Sp`.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -100,7 +104,11 @@ affect.
   copied into these menus.
 - Menu order is stable. Unavailable actions remain present and dim. Checked
   rows expose current state; toggle labels say what they will do where that
-  is clearer. Destructive thread deletion stays contextual.
+  is clearer. Action labels are left-aligned in the normal menu face and
+  shortcut labels are right-aligned in the subdued info face. The widest
+  pair determines the menu width with at least one cell between them, and
+  menu shortcuts abbreviate `Space` as `Sp`. Destructive thread deletion
+  stays contextual.
 
 ### Interaction
 

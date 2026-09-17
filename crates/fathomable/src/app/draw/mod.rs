@@ -1872,21 +1872,49 @@ fn grid_rect(grid: Grid) -> Rect {
     }
 }
 
-/// The context menu at the pointer (ADR 0050): a title row in the pill
-/// colour naming what it acts on, then `key  label` rows, the one under
-/// the pointer highlighted.
+/// The context menu at the pointer (ADR 0050): its action labels at the
+/// left and compact, subdued shortcuts at the right.
 fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Menu) {
     let (width, _) = app.size();
     let grid = menu.grid_in(width, app.pane_top(), app.pane_rows());
-    let entries: Vec<(String, String)> = menu
-        .entries()
-        .iter()
-        .map(|entry| (entry.key().to_owned(), entry.label().to_owned()))
-        .collect();
     let hover = app
         .pointer()
         .and_then(|(column, row)| grid.entry_at(column, row));
-    draw_menu(frame, theme, grid, menu.title(), &entries, hover);
+    if grid.height < 2 || menu.entries().is_empty() {
+        return;
+    }
+    let inner_width = grid.width.saturating_sub(2);
+    let lines = menu
+        .entries()
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let surface = if hover == Some(index) {
+                theme.menu.patch(theme.list_hover)
+            } else {
+                theme.menu
+            };
+            let gap = inner_width
+                .saturating_sub(display_width(entry.label()) + display_width(entry.key()))
+                .max(1);
+            Line::from(vec![
+                Span::styled(entry.label().to_owned(), surface),
+                Span::styled(" ".repeat(gap), surface),
+                Span::styled(entry.key().to_owned(), on_surface(surface, theme.info)),
+            ])
+            .style(surface)
+        })
+        .collect::<Vec<_>>();
+    let area = grid_rect(grid);
+    let block = rounded_block(
+        theme,
+        Span::styled(format!(" {} ", menu.title()), theme.info),
+        theme.menu,
+    );
+    let inner = block.inner(area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.menu), inner);
 }
 
 /// The compact keymap: grouped binding rows flow through one or
@@ -2448,7 +2476,7 @@ fn draw_picker(
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), body);
-    let col = (1 + display_width(&title) + 3 + display_width(picker.input()))
+    let col = (2 + display_width(&title) + 3 + display_width(picker.input()))
         .min(usize::from(popup.width.saturating_sub(1)));
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }

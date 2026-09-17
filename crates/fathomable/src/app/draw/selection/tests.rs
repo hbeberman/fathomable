@@ -4,6 +4,7 @@ use fathomable_core::theme::{BUILTIN_NAMES, Theme as CoreTheme};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use ratatui::layout::Position;
 use ratatui::style::{Color, Style};
 
 use crate::app::draw::{self, Theme};
@@ -356,6 +357,39 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
             assert_ne!(theme.list_active.bg, theme.list_hover.bg);
         }
     }
+    Ok(())
+}
+
+#[test]
+fn a_comparison_picker_cursor_follows_the_typed_query() -> anyhow::Result<()> {
+    let dir = testing::workspace("comparison-picker-cursor", testing::README)?;
+    let mut app = testing::app(&dir)?;
+    app.open_picker(PickerKind::ComparisonBase);
+    for ch in "main".chars() {
+        app.picker_char(ch);
+    }
+    let core = CoreTheme::resolve("default-dark", |_| Ok(None))?;
+    let theme = Theme::from_core(&core);
+    let mut terminal = Terminal::new(TestBackend::new(100, 30))?;
+    terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
+    let cursor = terminal.get_cursor_position()?;
+    let buffer = terminal.backend().buffer();
+    let row = row_containing(buffer, 0, 100, "comparison base > main")?;
+    let input = (0..=96_u16)
+        .find(|&x| {
+            (0..4)
+                .map(|offset| buffer[(x + offset, row)].symbol())
+                .collect::<String>()
+                == "main"
+        })
+        .context("typed picker query")?;
+    assert_eq!(
+        cursor,
+        Position::new(input + 4, row),
+        "the cursor rests where the next character will be inserted"
+    );
+    assert_eq!(buffer[(input + 3, row)].symbol(), "n");
+    assert_eq!(buffer[(input + 4, row)].symbol(), " ");
     Ok(())
 }
 

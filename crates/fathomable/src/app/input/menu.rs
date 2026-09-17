@@ -76,7 +76,7 @@ impl Menu {
     fn push(&mut self, shown: Action, run: Action, label: impl Into<String>) {
         if let Some(keys) = bindings::first_keys(self.place, shown) {
             self.entries.push(Entry {
-                key: bindings::spell(keys),
+                key: bindings::menu_spell(keys),
                 keys,
                 label: label.into(),
                 action: run,
@@ -128,8 +128,8 @@ impl Menu {
                 .iter()
                 .map(|entry| (entry.key.as_str(), entry.label.as_str())),
         );
-        let column_width = Grid::column_width(key_width, label_width);
-        let box_width = (column_width + 2)
+        let action_width = label_width + 1 + key_width;
+        let box_width = (action_width + 2)
             .max(display_width(&self.title) + 4)
             .min(width);
         let box_height = (self.entries.len() + 2).min(height);
@@ -265,8 +265,11 @@ impl Grid {
             return None;
         }
         let r = row - self.y - 1;
-        let c = (column.checked_sub(self.x + 1)?)
-            / Self::column_width(self.key_width, self.label_width);
+        let c = if self.columns == 1 {
+            0
+        } else {
+            (column.checked_sub(self.x + 1)?) / Self::column_width(self.key_width, self.label_width)
+        };
         if r >= self.rows || c >= self.columns {
             return None;
         }

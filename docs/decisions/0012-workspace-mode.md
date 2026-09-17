@@ -123,7 +123,8 @@ choices were captured in a question round on 2026-08-26.
   below, the best match selected. Typing filters immediately; `Ctrl-n`/`Ctrl-p`
   (since 2026-09-03 `Ctrl-j`/`Ctrl-k`, [0045](0045-bindings-are-data.md))
   are taken by zellij, so `Up`/`Down` and `Ctrl-j`/`Ctrl-k` move, `Enter`
-  opens, `Esc` closes.
+  opens, `Esc` closes. The terminal cursor rests immediately after the typed
+  query, on the cell where the next character will be inserted.
 - Matching uses `nucleo-matcher` (Helix's matcher; helix-editor org,
   MPL-2.0, already in the licence allow-list) with its `Pattern` parser, so
   Helix users get the same `^`, `$`, `!`, and `'` syntax. The 0001 table is

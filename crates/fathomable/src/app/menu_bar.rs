@@ -92,19 +92,24 @@ pub(crate) struct Item {
 
 impl Item {
     fn action(app: &App, action: Action, label: impl Into<String>) -> Self {
+        let target = Target::Action(action);
         Self {
             label: label.into(),
-            hint: bindings::hint(Where::View, action).unwrap_or_default(),
+            hint: target_keys(target)
+                .map(bindings::menu_spell)
+                .unwrap_or_default(),
             enabled: action_available(app, action),
             checked: action_checked(app, action),
-            target: Target::Action(action),
+            target,
         }
     }
 
-    fn command(label: &'static str, hint: &'static str, target: Target) -> Self {
+    fn command(label: &'static str, target: Target) -> Self {
         Self {
             label: label.to_owned(),
-            hint: hint.to_owned(),
+            hint: target_keys(target)
+                .map(bindings::menu_spell)
+                .unwrap_or_default(),
             enabled: true,
             checked: false,
             target,
@@ -112,7 +117,7 @@ impl Item {
     }
 
     fn submenu(label: &'static str, submenu: Submenu) -> Self {
-        Self::command(label, "", Target::Submenu(submenu))
+        Self::command(label, Target::Submenu(submenu))
     }
 }
 
@@ -545,9 +550,9 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             }
             rows.extend([
                 Row::Separator,
-                Row::Item(Item::command("Status", ":status", Target::Status)),
-                Row::Item(Item::command("About", ":about", Target::About)),
-                Row::Item(Item::command("Quit", ":q", Target::Quit)),
+                Row::Item(Item::command("Status", Target::Status)),
+                Row::Item(Item::command("About", Target::About)),
+                Row::Item(Item::command("Quit", Target::Quit)),
             ]);
             rows
         }
@@ -572,7 +577,9 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 } else {
                     "Open review threads".to_owned()
                 },
-                hint: bindings::hint(Where::View, Action::Review).unwrap_or_default(),
+                hint: bindings::first_keys(Where::View, Action::Review)
+                    .map(bindings::menu_spell)
+                    .unwrap_or_default(),
                 enabled: true,
                 checked: app.review_list().is_open(),
                 target: Target::ReviewToggle,
@@ -693,17 +700,9 @@ pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
             )),
         ],
         Submenu::Help => vec![
-            Row::Item(Item::command(
-                "Getting started",
-                ":help",
-                Target::GettingStarted,
-            )),
-            Row::Item(Item::command("Doctor", ":doctor", Target::Doctor)),
-            Row::Item(Item::command(
-                "View keymap",
-                "Space ?",
-                Target::Action(Action::Help),
-            )),
+            Row::Item(Item::command("Getting started", Target::GettingStarted)),
+            Row::Item(Item::command("Doctor", Target::Doctor)),
+            Row::Item(Item::command("View keymap", Target::Action(Action::Help))),
         ],
         Submenu::Go => rows(app, Root::Go),
         Submenu::Review => rows(app, Root::Review),
@@ -1357,7 +1356,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
     use fathomable_core::config::SidebarConfig;
     use fathomable_core::layout::display_width;
-    use ratatui::style::Modifier;
+    use fathomable_core::theme::Theme as CoreTheme;
+    use ratatui::style::{Color, Modifier};
 
     use super::{
         Focused, Root, Submenu, bar_identity, child_layout, identity_within, labels, root_layout,
@@ -1397,6 +1397,9 @@ mod tests {
             ]
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
+        let go = rows(&app, Root::Go);
+        assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f"));
+        assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp F i"));
         assert!(
             !rows(&app, Root::App)
                 .iter()
@@ -1736,10 +1739,51 @@ mod tests {
     fn menu_width_preserves_full_shortcuts_and_colon_commands_run() -> anyhow::Result<()> {
         let mut app = shown_app("menu-width")?;
         testing::click(&mut app, 4, 0);
+        let go_rows = rows(&app, Root::Go);
+        let layout = root_layout(&app, &go_rows).context("Go menu layout")?;
+        let item = go_rows[1].item().context("ignored-files item")?;
+        let row = layout.y + 2;
+        let label_x = layout.x + 3;
+        let hint_x = layout.x + layout.width - 1 - display_width(&item.hint);
+        let buffer = testing::buffer(&app)?;
+        let theme =
+            crate::app::draw::Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+        assert_eq!(
+            buffer[(u16::try_from(label_x)?, u16::try_from(row)?)].symbol(),
+            "O"
+        );
+        assert_eq!(
+            buffer[(u16::try_from(label_x)?, u16::try_from(row)?)].fg,
+            theme.menu.fg.unwrap_or(Color::Reset),
+            "the action uses the normal menu colour"
+        );
+        assert_eq!(
+            buffer[(u16::try_from(hint_x)?, u16::try_from(row)?)].symbol(),
+            "S"
+        );
+        assert_eq!(
+            buffer[(u16::try_from(hint_x)?, u16::try_from(row)?)].fg,
+            theme.info.fg.unwrap_or(Color::Reset),
+            "the shortcut uses the subdued info colour"
+        );
+        assert_eq!(
+            buffer[(u16::try_from(hint_x - 1)?, u16::try_from(row)?)].symbol(),
+            " ",
+            "the widest action and shortcut retain a gap"
+        );
+        assert_eq!(
+            buffer[(
+                u16::try_from(layout.x + layout.width - 2)?,
+                u16::try_from(row)?,
+            )]
+                .symbol(),
+            "i",
+            "the shortcut is right-aligned"
+        );
         assert!(
             testing::screen(&app)?
                 .iter()
-                .any(|row| row.contains("Space F i")),
+                .any(|row| row.contains("Sp F i")),
             "the longest Go hint is not clipped"
         );
         app.close_title_menu();

@@ -23,6 +23,7 @@ mod file_index;
 mod files_pane;
 mod files_shown;
 mod goto_file;
+mod highlight;
 pub(crate) mod input;
 mod jumplist;
 mod menu_bar;
@@ -57,6 +58,7 @@ use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
 use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
+use fathomable_core::layout::LineIndex;
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::reach::Reach;
 use fathomable_core::session::{Record, Request, Response};
@@ -416,6 +418,7 @@ pub(crate) enum Popup {
 
 #[derive(Debug)]
 struct Doc {
+    id: u64,
     document: Document,
     relative: PathBuf,
     view: View,
@@ -483,6 +486,7 @@ fn watch_ignore(watch: &WatchConfig) -> Ignore {
 pub(crate) struct App {
     workspace: Workspace,
     docs: Vec<Doc>,
+    highlights: highlight::Queue,
     current: Option<usize>,
     /// Documents by index, most recently shown first (`Space F r`).
     recent: Vec<usize>,
@@ -604,6 +608,10 @@ impl App {
     /// Start with no document open, for a terminal of `width` by `height`.
     ///
     /// Start the viewer with repository comparison and thread state loaded.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "construction keeps every application state field explicit in one place"
+    )]
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -633,6 +641,7 @@ impl App {
         let mut app = Self {
             workspace,
             docs: Vec::new(),
+            highlights: highlight::Queue::new(),
             current: None,
             recent: Vec::new(),
             jumplist: jumplist::Jumplist::default(),
@@ -1423,6 +1432,7 @@ impl App {
                                                 .unwrap_or_default()
                                                 .to_owned();
                                             self.docs[index].view.reload(text);
+                                            self.queue_highlight(index);
                                             marks_to_refresh.push(index);
                                         }
                                         self.docs[index].view.set_worktree_missing(true);
@@ -1902,6 +1912,15 @@ impl App {
         self.scroll_tree();
     }
 
+    /// The initial source width before a new document becomes `self.current`.
+    fn document_width(&self, text: &str) -> usize {
+        let gutter = draw::gutter_width_for_lines(LineIndex::new(text).line_count());
+        self.width
+            .saturating_sub(self.sidebar_width())
+            .saturating_sub(gutter)
+            .max(1)
+    }
+
     /// Scrolling uses only rows the key bar does not cover.
     fn sync_text_height(&mut self) {
         let rows = self
@@ -2034,10 +2053,12 @@ impl App {
                 Ok(document) => {
                     // A binary or over-limit file has no text: the view is
                     // empty and the file-info pane draws instead (ADR 0026).
-                    let mut view = View::with_syntax(
-                        document.text().unwrap_or_default().to_owned(),
-                        1,
-                        1,
+                    let text = document.text().unwrap_or_default().to_owned();
+                    let width = self.document_width(&text);
+                    let mut view = View::with_deferred_syntax(
+                        text,
+                        width,
+                        self.pane_rows(),
                         self.syntax_for(&relative),
                     );
                     view.set_compare(self.compare);
@@ -2047,7 +2068,9 @@ impl App {
                             .get(&relative)
                             .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
                     );
+                    let id = self.highlights.next_document();
                     self.docs.push(Doc {
+                        id,
                         document,
                         relative: relative.clone(),
                         view,
@@ -2134,6 +2157,7 @@ impl App {
         // The document's stubs follow the session's toggles (ADR 0049).
         self.place_stub_rows();
         self.relayout();
+        self.queue_highlight(index);
         self.resume_draft();
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
@@ -2219,6 +2243,7 @@ impl App {
                 let diff = Diff::new(&old, text);
                 doc.view.reload(text.to_owned());
                 self.apply_comparison_projection(index);
+                self.queue_highlight(index);
                 if tracks_working_tree {
                     self.remap_marks(index, &old);
                 } else {

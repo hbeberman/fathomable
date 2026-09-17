@@ -68,6 +68,20 @@ pub(crate) fn press_key(app: &mut App, code: KeyCode) {
     keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
 }
 
+/// Complete every source highlight the app has queued.
+pub(crate) fn complete_highlights(app: &mut App) {
+    loop {
+        let jobs = app.take_highlight_jobs();
+        if jobs.is_empty() {
+            break;
+        }
+        for job in jobs {
+            let highlighted = job.complete();
+            app.apply_highlight(highlighted);
+        }
+    }
+}
+
 /// The event for a plain character key.
 pub(crate) fn key(ch: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE)

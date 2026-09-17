@@ -36,7 +36,7 @@ use tokio::sync::mpsc;
 use crate::crash;
 
 use super::view::Effect;
-use super::{App, Options, clipboard, input, socket, watch};
+use super::{App, Options, clipboard, highlight, input, socket, watch};
 
 /// Run the app until the user quits, showing `open` first when given,
 /// else the tree (ADR 0012).
@@ -272,6 +272,10 @@ fn keep_socket(app: &mut App, socket: Result<socket::Serving, String>) -> Option
     socket.map_err(|why| app.notice(why)).ok()
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the event loop keeps every readiness source and its redraw decision together"
+)]
 async fn run_async(
     workspace: Workspace,
     options: Options,
@@ -302,11 +306,16 @@ async fn run_async(
     );
     start_watching(&mut app, &mut doc_watcher);
     app.start_on(open);
+    let mut highlights =
+        highlight::Worker::new().context("cannot start syntax highlight worker")?;
     let _socket = keep_socket(&mut app, socket);
 
     let mut batch = watch::Batch::default();
     let mut redraw = true;
     loop {
+        highlights
+            .submit(app.take_highlight_jobs())
+            .context("syntax highlight worker stopped")?;
         redraw |= rewatch(&mut app, &mut doc_watcher);
         sync_loaded_watches(&app, &mut doc_watcher);
         redraw |= app.set_watching_root(doc_watcher.coverage_complete());
@@ -346,6 +355,13 @@ async fn run_async(
             walked = app.next_walk() => {
                 app.on_walked(walked);
                 (Effect::None, true)
+            }
+            highlighted = highlights.next() => {
+                let Some(highlighted) = highlighted else {
+                    return Err(anyhow::anyhow!("syntax highlight worker stopped"));
+                };
+                let changed = app.apply_highlight(highlighted);
+                (Effect::None, changed)
             }
             envelope = request_rx.recv() => {
                 if let Some(socket::Envelope { request, reply }) = envelope {

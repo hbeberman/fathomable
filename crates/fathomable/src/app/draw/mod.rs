@@ -221,7 +221,12 @@ fn convert_color(color: fathomable_core::theme::Color) -> Color {
 /// Width of the gutter: the annotation cell, line numbers, a space, and
 /// the diff bar cell (ADR 0006 order).
 pub(crate) fn gutter_width(view: &View) -> usize {
-    let digits = view.index().line_count().max(1).to_string().len();
+    gutter_width_for_lines(view.index().line_count())
+}
+
+/// Width of the gutter for a source with `line_count` lines.
+pub(crate) fn gutter_width_for_lines(line_count: usize) -> usize {
+    let digits = line_count.max(1).to_string().len();
     digits + 3
 }
 

@@ -405,6 +405,9 @@ fn source_layout_colours_by_extension_and_keeps_line_ranges() -> TestResult {
     let text = "fn main() {\n\n    let long_name = 1;\n}\n";
     let plain = Layout::source(text, 12);
     let coloured = Layout::source_with(text, 12, "rs", &highlighter);
+    let highlights = highlighter.highlight(text, "rs");
+    let cached = Layout::source_with_highlights(text, 12, highlights.as_ref());
+    assert_eq!(cached, coloured, "cached highlighting is the same layout");
     assert_eq!(texts(&plain), texts(&coloured), "colouring changes no text");
     assert!(
         coloured.lines().iter().all(|line| line.width() <= 12),

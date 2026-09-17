@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Compare, Diff, LineStatus};
-use fathomable_core::highlight::Highlighter;
+use fathomable_core::highlight::{Highlighter, Highlights};
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
@@ -156,10 +156,23 @@ impl Syntax {
 }
 
 #[derive(Debug)]
+enum SourceHighlights {
+    /// A synchronous view has not needed its source representation yet.
+    Unprepared,
+    /// A background request for this generation may be in flight.
+    Pending,
+    /// Highlighting finished, including the plain result for an unknown hint.
+    Ready(Option<Highlights>),
+}
+
+#[derive(Debug)]
 pub(crate) struct View {
     text: String,
     layout: Layout,
     syntax: Syntax,
+    source_highlights: SourceHighlights,
+    highlight_generation: u64,
+    deferred_highlighting: bool,
     width: usize,
     height: usize,
     display: Display,
@@ -238,19 +251,58 @@ impl View {
     /// Lay `text` out for a text area of `width` by `height` cells,
     /// coloured and initially displayed as `syntax` says.
     pub(crate) fn with_syntax(text: String, width: usize, height: usize, syntax: Syntax) -> Self {
+        Self::build(text, width, height, syntax, false)
+    }
+
+    /// Lay `text` out immediately without blocking on whole-file highlighting.
+    pub(crate) fn with_deferred_syntax(
+        text: String,
+        width: usize,
+        height: usize,
+        syntax: Syntax,
+    ) -> Self {
+        Self::build(text, width, height, syntax, true)
+    }
+
+    fn build(
+        text: String,
+        width: usize,
+        height: usize,
+        syntax: Syntax,
+        deferred_highlighting: bool,
+    ) -> Self {
         let display = if syntax.markdown {
             Display::Rendered
         } else {
             Display::Source
         };
-        let layout = match display {
-            Display::Rendered => Layout::render_with(&text, width, &syntax.highlighter),
-            _ => Layout::source_with(&text, width, &syntax.hint, &syntax.highlighter),
+        let source_highlights = if deferred_highlighting {
+            if syntax.highlighter.knows(&syntax.hint) {
+                SourceHighlights::Pending
+            } else {
+                SourceHighlights::Ready(None)
+            }
+        } else if display == Display::Source {
+            SourceHighlights::Ready(syntax.highlighter.highlight(&text, &syntax.hint))
+        } else {
+            SourceHighlights::Unprepared
+        };
+        let layout = if display == Display::Rendered {
+            Layout::render_with(&text, width, &syntax.highlighter)
+        } else {
+            let runs = match &source_highlights {
+                SourceHighlights::Ready(runs) => runs.as_ref(),
+                SourceHighlights::Unprepared | SourceHighlights::Pending => None,
+            };
+            Layout::source_with_highlights(&text, width, runs)
         };
         Self {
             text,
             layout,
             syntax,
+            source_highlights,
+            highlight_generation: 0,
+            deferred_highlighting,
             width,
             height: height.max(1),
             display,
@@ -456,6 +508,33 @@ impl View {
         &self.text
     }
 
+    /// Clone the work needed to colour this source generation off-thread.
+    pub(crate) fn pending_highlight(&self) -> Option<(u64, String, String, Arc<Highlighter>)> {
+        if !matches!(self.source_highlights, SourceHighlights::Pending) {
+            return None;
+        }
+        Some((
+            self.highlight_generation,
+            self.text.clone(),
+            self.syntax.hint.clone(),
+            Arc::clone(&self.syntax.highlighter),
+        ))
+    }
+
+    /// Cache a completed source highlight if it still matches this text.
+    pub(crate) fn apply_highlight(&mut self, generation: u64, runs: Option<Highlights>) -> bool {
+        if generation != self.highlight_generation
+            || !matches!(self.source_highlights, SourceHighlights::Pending)
+        {
+            return false;
+        }
+        self.source_highlights = SourceHighlights::Ready(runs);
+        if self.display == Display::Source {
+            self.relayout();
+        }
+        true
+    }
+
     /// The text the layout's source ranges index.
     fn shown(&self) -> &str {
         match self.diff().map(|d| &d.body) {
@@ -472,12 +551,11 @@ impl View {
     }
 
     fn source_layout(&self) -> Layout {
-        Layout::source_with(
-            &self.text,
-            self.width,
-            &self.syntax.hint,
-            &self.syntax.highlighter,
-        )
+        let runs = match &self.source_highlights {
+            SourceHighlights::Ready(runs) => runs.as_ref(),
+            SourceHighlights::Unprepared | SourceHighlights::Pending => None,
+        };
+        Layout::source_with_highlights(&self.text, self.width, runs)
     }
 
     fn rendered_layout(&self) -> Layout {
@@ -576,11 +654,12 @@ impl View {
             return;
         }
         self.missing.worktree = missing;
+        let display_changed = missing && self.display == Display::Rendered;
         if missing && self.display != Display::Diff {
             self.display = Display::Source;
         }
         self.rediff();
-        if self.diff_view() {
+        if display_changed || self.diff_view() {
             self.relayout();
         }
     }
@@ -706,10 +785,15 @@ impl View {
     }
 
     /// Re-lay out for a new pane size, keeping the cursor on the same source.
-    pub(crate) fn resize(&mut self, width: usize, height: usize) {
+    pub(crate) fn resize(&mut self, width: usize, height: usize) -> bool {
+        if self.width == width {
+            self.set_height(height);
+            return false;
+        }
         self.width = width;
         self.height = height.max(1);
         self.relayout();
+        true
     }
 
     /// Update the unobscured viewport without rewrapping or moving visible text.
@@ -726,12 +810,35 @@ impl View {
     }
 
     /// Replace the document text after a change on disk (ADR 0010 reload).
-    pub(crate) fn reload(&mut self, text: String) {
+    pub(crate) fn reload(&mut self, text: String) -> bool {
+        if self.text == text {
+            return false;
+        }
         self.text = text;
         self.missing.worktree = false;
         self.changed = true;
+        let Some(generation) = self.highlight_generation.checked_add(1) else {
+            unreachable!("source highlight generation overflow");
+        };
+        self.highlight_generation = generation;
+        self.source_highlights = if self.deferred_highlighting {
+            if self.syntax.highlighter.knows(&self.syntax.hint) {
+                SourceHighlights::Pending
+            } else {
+                SourceHighlights::Ready(None)
+            }
+        } else if self.display == Display::Source {
+            SourceHighlights::Ready(
+                self.syntax
+                    .highlighter
+                    .highlight(&self.text, &self.syntax.hint),
+            )
+        } else {
+            SourceHighlights::Unprepared
+        };
         self.rediff();
         self.relayout();
+        true
     }
 
     /// Set the index and committed comparison bases.
@@ -766,6 +873,15 @@ impl View {
             Display::Source => Display::Rendered,
             _ => Display::Source,
         };
+        if self.display == Display::Source
+            && matches!(self.source_highlights, SourceHighlights::Unprepared)
+        {
+            self.source_highlights = SourceHighlights::Ready(
+                self.syntax
+                    .highlighter
+                    .highlight(&self.text, &self.syntax.hint),
+            );
+        }
         self.relayout();
     }
 
@@ -1677,17 +1793,78 @@ fn ceil_char(text: &str, mut offset: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
 
+    use anyhow::Context as _;
     use fathomable_core::annotations::LineRange;
+    use fathomable_core::highlight::Highlighter;
 
-    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Text, View};
+    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Syntax, Text, View};
     use crate::app::diff::Side;
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
     fn view() -> View {
         View::new(DOC.to_owned(), 40, 5)
+    }
+
+    #[test]
+    fn deferred_highlighting_rejects_a_reloaded_generation() -> anyhow::Result<()> {
+        let syntax = Syntax {
+            highlighter: Arc::new(Highlighter::new("base16-ocean.dark")?),
+            hint: "rs".to_owned(),
+            markdown: false,
+        };
+        let mut view = View::with_deferred_syntax("fn old() {}\n".to_owned(), 40, 5, syntax);
+        assert!(
+            view.layout()
+                .lines()
+                .iter()
+                .flat_map(fathomable_core::layout::Line::spans)
+                .all(|span| span.style().fg.is_none()),
+            "deferred source starts plain"
+        );
+        let (generation, text, hint, highlighter) =
+            view.pending_highlight().context("highlight request")?;
+        let stale = highlighter.highlight(&text, &hint);
+        assert!(view.reload("fn new() {}\n".to_owned()));
+        assert!(
+            !view.apply_highlight(generation, stale),
+            "old text cannot colour the new generation"
+        );
+
+        let (generation, text, hint, highlighter) =
+            view.pending_highlight().context("new highlight request")?;
+        assert!(view.apply_highlight(generation, highlighter.highlight(&text, &hint)));
+        assert!(
+            view.layout()
+                .lines()
+                .iter()
+                .flat_map(fathomable_core::layout::Line::spans)
+                .any(|span| span.style().fg.is_some()),
+            "current highlighting is applied"
+        );
+        assert!(view.pending_highlight().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_text_and_width_skip_relayout() {
+        let mut view = view();
+        assert!(!view.reload(DOC.to_owned()));
+        assert!(!view.resize(40, 10));
+        assert_eq!(view.height, 10);
+        assert!(view.resize(20, 10));
+    }
+
+    #[test]
+    fn a_missing_worktree_rebuilds_rendered_markdown_as_source() {
+        let mut view = view();
+        assert_eq!(view.layout().lines()[0].text(), "Title");
+        view.set_worktree_missing(true);
+        assert!(view.source_view());
+        assert_eq!(view.layout().lines()[0].text(), "# Title");
     }
 
     #[test]

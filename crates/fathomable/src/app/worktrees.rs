@@ -229,6 +229,7 @@ impl App {
         let label = self.label_of(&root);
         self.close_popup();
         self.docs.clear();
+        self.highlights.clear();
         self.current = None;
         self.recent.clear();
         self.jumplist = crate::app::jumplist::Jumplist::default();

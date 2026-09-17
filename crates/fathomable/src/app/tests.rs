@@ -1,6 +1,6 @@
 use fathomable_testing::{TempDir, git};
 
-use crate::app::testing::AppBuilder;
+use crate::app::testing::{AppBuilder, complete_highlights};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -131,6 +131,16 @@ fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result
         .build()?;
     app.open(Path::new("main.rs"));
     assert!(app.view().source_view(), "a .rs file opens as source");
+    assert!(
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .flat_map(fathomable_core::layout::Line::spans)
+            .all(|span| span.style().fg.is_none()),
+        "the initial source layout does not wait for highlighting"
+    );
+    complete_highlights(&mut app);
     let coloured = app.view().layout().lines()[0]
         .spans()
         .iter()

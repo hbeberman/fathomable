@@ -3,6 +3,8 @@ type: Decision
 title: Syntax highlighting and source files
 description: syntect highlighting for fenced code blocks and whole non-Markdown files, the Markdown file list, and how colour crosses the core boundary.
 resource: crates/fathomable-core/src/highlight.rs
+related_resources:
+  - crates/fathomable/src/app/highlight.rs
 tags:
   - decision
   - rendering
@@ -11,7 +13,8 @@ tags:
 
 # 0016 Syntax highlighting and source files
 
-Status: accepted (2026-08-26), amended 2026-08-27 (the extensionless rule)
+Status: accepted (2026-08-26), amended 2026-08-27 (the extensionless rule),
+amended 2026-09-17 (asynchronous source highlighting)
 
 ## Context
 
@@ -54,8 +57,27 @@ settled in a question round on 2026-08-26.
   `Layout::source_with(text, width, hint, &Highlighter)` are the highlighted
   entry points; `render` and `source` keep their signatures and use the
   plain highlighter. The diff view is not highlighted.
-- Highlighting runs inside layout, per relayout, from the start of the block
-  or file, so syntect's state machine is always correct; there is no cache.
+- `Highlighter::highlight` returns opaque `Highlights`, and
+  `Layout::source_with_highlights` applies that result at any width.
+  Source views cache one result per immutable text generation, so resizing
+  rewraps coloured spans without rerunning syntect. Fenced Markdown blocks
+  continue to highlight inside rendered layout from the start of each block.
+
+### Responsive source loading
+
+- A source file first lays out plain text at its real pane width. It does not
+  construct a throwaway one-column layout or wait for syntect before the
+  event loop can draw.
+- One dedicated worker highlights immutable source generations away from the
+  terminal event loop. Its completion carries a stable document identity and
+  generation; a result for a removed or reloaded document is discarded.
+- The worker processes one file at a time. Before starting its next file it
+  keeps only the newest queued preview, so rapidly paging the files pane
+  cannot create a growing CPU backlog. A skipped document remains eligible
+  and is queued again if the reader returns to it.
+- Applying highlights only rebuilds width-dependent spans. An unchanged
+  comparison projection, source text, or pane width keeps the existing
+  cached layout.
 
 ### Markdown versus source files
 
@@ -102,9 +124,10 @@ settled in a question round on 2026-08-26.
   "unmaintained" advisory (RUSTSEC-2025-0141) but no vulnerability;
   `deny.toml` ignores that one id with a reason, amending
   [0001](0001-dependency-policy.md).
-- Large source files are re-highlighted on every resize and reload; if that
-  shows up, a per-document highlight cache is the next step and needs no
-  API change since `Style::fg` is already the carrier.
+- First presentation of a source file is plain for the short interval before
+  its syntax colours arrive. Whole-file syntect cost no longer blocks input,
+  and revisits, comparison projection, and width changes reuse the cached
+  result until the text changes.
 - `config.kdl` grows its third node; `Config` gains `markdown()`.
 - Inline code highlighting, `.tmTheme` loading, and horizontal scroll for
   code blocks stay parked.

@@ -1235,8 +1235,11 @@ impl App {
         self.docs[index].view.set_compare(self.comparison.compare());
         self.docs[index].view.set_bases(index_text, base.clone());
         self.docs[index].view.set_comparison_body(body);
-        self.docs[index].view.reload(display);
+        let changed = self.docs[index].view.reload(display);
         self.docs[index].view.set_worktree_missing(target_missing);
+        if changed {
+            self.queue_highlight(index);
+        }
     }
 
     fn plain_default_comparison(&self) -> bool {

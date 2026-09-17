@@ -13,9 +13,9 @@
 //! use fathomable_core::highlight::Highlighter;
 //!
 //! let highlighter = Highlighter::new("base16-ocean.dark").unwrap();
-//! let lines = highlighter.highlight("fn main() {}\n", "rs").unwrap();
-//! assert_eq!(lines.len(), 1);
-//! assert!(lines[0].iter().any(|run| run.range.start == 0));
+//! let highlights = highlighter.highlight("fn main() {}\n", "rs").unwrap();
+//! assert_eq!(highlights.lines().len(), 1);
+//! assert!(highlights.lines()[0].iter().any(|run| run.range.start == 0));
 //! assert!(Highlighter::plain().highlight("x", "rs").is_none());
 //! ```
 
@@ -39,6 +39,20 @@ pub struct Run {
     pub range: Range<usize>,
     /// Foreground colour for the run.
     pub fg: Color,
+}
+
+/// Syntax-colour runs for immutable source text, grouped by source line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Highlights {
+    lines: Vec<Vec<Run>>,
+}
+
+impl Highlights {
+    /// Colour runs for each source line.
+    #[must_use]
+    pub fn lines(&self) -> &[Vec<Run>] {
+        &self.lines
+    }
 }
 
 /// Loaded syntaxes and one syntect theme.
@@ -171,7 +185,7 @@ impl Highlighter {
     /// `text` (as `str::lines` counts them). `None` when highlighting is
     /// off or the hint is unknown, in which case the text renders plain.
     #[must_use]
-    pub fn highlight(&self, text: &str, hint: &str) -> Option<Vec<Vec<Run>>> {
+    pub fn highlight(&self, text: &str, hint: &str) -> Option<Highlights> {
         let inner = self.inner.as_ref()?;
         let Some(syntax) = inner.syntaxes.find_syntax_by_token(hint) else {
             self.miss(hint);
@@ -203,7 +217,7 @@ impl Highlighter {
             }
             out.push(runs);
         }
-        Some(out)
+        Some(Highlights { lines: out })
     }
 
     fn miss(&self, hint: &str) {
@@ -257,11 +271,12 @@ mod tests {
     fn runs_cover_each_line_without_the_newline() -> TestResult {
         let highlighter = Highlighter::new("base16-ocean.dark")?;
         let text = "fn main() {\n    let x = 1;\n}\n";
-        let lines = highlighter
+        let highlights = highlighter
             .highlight(text, "rust")
             .ok_or("rust is bundled")?;
+        let lines = highlights.lines();
         assert_eq!(lines.len(), 3);
-        for (line, runs) in text.lines().zip(&lines) {
+        for (line, runs) in text.lines().zip(lines) {
             let end = runs.last().map_or(0, |run| run.range.end);
             assert_eq!(end, line.len(), "line {line:?}");
         }

@@ -29,7 +29,7 @@ mod wrap;
 use std::ops::Range;
 
 use crate::diff::{Compare, DiffKind};
-use crate::highlight::Highlighter;
+use crate::highlight::{Highlighter, Highlights};
 use crate::theme::Color;
 
 use blocks::{Align, Block, Inline, Item, Table};
@@ -411,15 +411,28 @@ impl Layout {
     /// hint leaves the text plain.
     #[must_use]
     pub fn source_with(text: &str, width: usize, hint: &str, highlighter: &Highlighter) -> Self {
-        let index = LineIndex::new(text);
         let runs = highlighter.highlight(text, hint);
+        Self::source_with_highlights(text, width, runs.as_ref())
+    }
+
+    /// Lay `text` out as source using previously computed highlighting.
+    ///
+    /// `None` lays the text out without syntax colours.
+    #[must_use]
+    pub fn source_with_highlights(
+        text: &str,
+        width: usize,
+        highlights: Option<&Highlights>,
+    ) -> Self {
+        let index = LineIndex::new(text);
+        let runs = highlights.map(Highlights::lines);
         let mut lines = Vec::new();
         for line in 1..=index.line_count() {
             let Some(range) = index.range_of(line) else {
                 continue;
             };
             let source = &text[range.clone()];
-            let line_runs = runs.as_ref().and_then(|runs| runs.get(line - 1));
+            let line_runs = runs.and_then(|runs| runs.get(line - 1));
             let chunks = coloured_chunks(source, range.start, &Style::default(), line_runs);
             lines.extend(wrap_hard_chunks(&chunks, width));
         }
@@ -748,7 +761,9 @@ impl Renderer<'_> {
                 cursor = (cursor + pos + line.len() + 1).min(block.len());
                 start..start + line.len()
             });
-            let line_runs = runs.as_ref().and_then(|runs| runs.get(index));
+            let line_runs = runs
+                .as_ref()
+                .and_then(|highlights| highlights.lines().get(index));
             let chunks = match (&range, line_runs) {
                 (Some(range), Some(line_runs)) if !line_runs.is_empty() => {
                     coloured_chunks(line, range.start, &style, Some(line_runs))

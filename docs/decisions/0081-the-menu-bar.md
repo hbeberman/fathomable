@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information to the mouse without displacing contextual key bars; it centers the current filename in subdued text, keeps its compact comparison on the right, is optional and keyboard-navigable once open, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information; it centers repository, worktree, and current-file identity, keeps compact comparison controls on the right, and shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
@@ -25,6 +25,11 @@ Amended 2026-09-17: **Start comparison at current HEAD** remains available
 inside **Comparison controls...** but is no longer duplicated in the
 **Diff** menu. The redundant **All changes / Since...** temporal focus is
 removed entirely.
+
+Amended later 2026-09-17 by
+[0068](0068-what-the-files-pane-shows.md): repository and active-worktree
+identity move from the Files header to the centered menu-bar label. The
+repository/worktree segment opens the worktree picker when several exist.
 
 ## Context
 
@@ -53,14 +58,17 @@ affect.
   reserves one row; it never paints over pane headers or content.
 - Its left side is `☰  Go  Review  Diff`, with no down-arrow glyphs. A label
   takes `ui.list.hover` while hovered or open.
-- The current document's basename is centered against the whole terminal in
-  subdued, dim text. It truncates with an ellipsis and disappears before it
-  could overlap the workflow menus or comparison controls. Getting started
-  and the review list have no filename label.
+- The repository directory name is centered against the whole terminal,
+  followed by ` · <filename>` when a document is open outside the review
+  list and getting-started view. With several worktrees, ` · <branch>` or
+  the short detached commit follows the repository before the filename.
+  The filename truncates first; if space remains too narrow, the repository
+  identity truncates and then disappears before overlapping controls.
 - Its right side names only the active comparison. The base and target labels
   are muted-blue `ui.popup.key` buttons: hovering patches `ui.list.hover`, and
   clicking opens that endpoint's picker. Passive branch or worktree, full
-  path, and major-view identity are deliberately absent.
+  path, and major-view identity are deliberately absent from this right-side
+  comparison pair.
 - On narrow terminals the right-side comparison disappears first. When the
   four labels no longer fit, only `☰` remains and Go, Review, and Diff become
   one-level children of that menu. The row never wraps or scrolls.
@@ -102,6 +110,9 @@ affect.
 - The compact comparison labels behave like the menu titles: each receives
   the shared accent and hover background, and a click opens its base or target
   picker without opening a title menu.
+- With several worktrees, the centered repository/worktree segment uses the
+  same accent and hover background; clicking it opens the worktree picker.
+  With one worktree the repository identity is subdued and inert.
 - A submenu opens on hover, click, `l`/Right, or Enter. Its top border aligns
   with its parent row and touches the parent box. `h`/Left returns to the
   parent. Nesting stops at one level.

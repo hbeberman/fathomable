@@ -207,7 +207,9 @@ mod tests {
         press(&mut app, "c");
         assert_eq!(names(&app), ["notes.txt", "README.md"]);
         let header = header_row(&app)?;
-        assert!(header.contains("+2 -1 · changed"), "{header}");
+        assert!(header.starts_with(" Files"), "{header}");
+        assert!(header.contains("changed +2 -1"), "{header}");
+        assert!(!header.contains('·'), "{header}");
 
         press(&mut app, " F");
         assert_eq!(label_of(&app, 'c')?, "all files");
@@ -217,15 +219,14 @@ mod tests {
             ["README.md"],
             "untracked dropped from the changed list"
         );
-        assert!(header_row(&app)?.contains("· changed tracked"));
+        assert!(header_row(&app)?.contains("changed tracked +2 -1"));
 
         // Ignored files are never changed ones: only changed wins.
         press(&mut app, " Fg");
         assert_eq!(names(&app), ["README.md"]);
-        // Three words do not fit a 33-column sidebar beside the counts:
-        // the last drops, as every header's items do.
+        // Filter words drop before the counts as the header narrows.
         let header = header_row(&app)?;
-        assert!(header.contains("+2 -1 · changed tracked"), "{header}");
+        assert!(header.contains("changed tracked +2 -1"), "{header}");
         assert!(!header.contains("ignored"), "{header}");
         press(&mut app, " F");
         assert_eq!(label_of(&app, 'u')?, "show untracked");
@@ -328,22 +329,23 @@ mod tests {
     }
 
     #[test]
-    fn the_files_pane_menu_carries_the_toggles_with_live_labels() -> anyhow::Result<()> {
+    fn the_files_title_opens_the_settings_with_live_labels() -> anyhow::Result<()> {
         let dir = fixture("menu")?;
         let mut app = AppBuilder::new(&dir).build()?;
         app.show_tree();
-        let right_click = |app: &mut App| {
+        let click_title = |app: &mut App| {
+            let row = app.pane_top();
             handle_mouse(
                 app,
                 MouseEvent {
-                    kind: MouseEventKind::Down(MouseButton::Right),
+                    kind: MouseEventKind::Down(MouseButton::Left),
                     column: 2,
-                    row: 3, // `README.md`, under the header and two rows
+                    row: u16::try_from(row).unwrap_or(u16::MAX),
                     modifiers: KeyModifiers::NONE,
                 },
             )
         };
-        right_click(&mut app);
+        click_title(&mut app);
         let labels = |app: &App| -> Vec<String> {
             app.menu()
                 .map(|menu| {
@@ -355,16 +357,26 @@ mod tests {
                 .unwrap_or_default()
         };
         let shown = labels(&app);
-        assert_eq!(
-            &shown[shown.len() - 3..],
-            ["only changed", "hide untracked", "show ignored"]
-        );
+        assert_eq!(shown, ["only changed", "hide untracked", "show ignored"]);
         app.close_popup();
         press(&mut app, " Fc");
-        right_click(&mut app);
+        click_title(&mut app);
         let shown = labels(&app);
         assert_eq!(shown.last().map(String::as_str), Some("show ignored"));
         assert!(shown.iter().any(|label| label == "all files"), "{shown:?}");
+        app.close_popup();
+
+        let row = app.pane_top();
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: 2,
+                row: u16::try_from(row).unwrap_or(u16::MAX),
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(app.menu().is_none(), "right-click leaves the header inert");
         Ok(())
     }
 }

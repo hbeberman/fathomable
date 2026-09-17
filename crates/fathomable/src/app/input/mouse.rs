@@ -81,10 +81,14 @@ fn sidebar_mouse(
                 app.show_highlight();
             }
         }
-        // Row 0 is the root header.
+        // Row 0 is the Files header.
         MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.tree_click(row - 1),
-        // A click on the branch opens the worktree picker (ADR 0070).
-        MouseEventKind::Down(MouseButton::Left) if app.has_worktrees() => app.pick_worktree(),
+        MouseEventKind::Down(MouseButton::Left)
+            if column < header::files_pane_header(app).left_width() =>
+        {
+            app.focus_pane(Focus::Tree);
+            app.open_files_menu(column, screen_row);
+        }
         MouseEventKind::Down(MouseButton::Left) => app.focus_pane(Focus::Tree),
         MouseEventKind::Down(MouseButton::Right) if row >= 1 => {
             app.open_tree_menu(row - 1, column, screen_row);

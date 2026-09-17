@@ -197,6 +197,8 @@ const BAR_MARGIN: usize = 2;
 pub(crate) struct Header {
     left: Vec<(String, Tone)>,
     hints: Vec<HintOf>,
+    /// Hints retained after `hints` while optional hints are dropped.
+    tail: Vec<HintOf>,
     align: Align,
     /// What joins the hints: ` · ` for keys, a space for counts.
     sep: &'static str,
@@ -208,6 +210,7 @@ impl Header {
         Self {
             left,
             hints,
+            tail: Vec::new(),
             align: Align::Right,
             sep: " · ",
         }
@@ -218,6 +221,7 @@ impl Header {
         Self {
             left: Vec::new(),
             hints,
+            tail: Vec::new(),
             align: Align::Left,
             sep: " · ",
         }
@@ -229,7 +233,19 @@ impl Header {
         Self {
             left,
             hints: counts,
+            tail: Vec::new(),
             align,
+            sep: " ",
+        }
+    }
+
+    /// Words and optional state, then a required tail against the right edge.
+    fn counted_with_tail(left: Vec<(String, Tone)>, hints: Vec<HintOf>, tail: Vec<HintOf>) -> Self {
+        Self {
+            left,
+            hints,
+            tail,
+            align: Align::Right,
             sep: " ",
         }
     }
@@ -241,9 +257,9 @@ impl Header {
 
     /// The hints that fit after the left part on `width` cells, the
     /// column the first starts at, and their form (ADR 0075): every
-    /// hint with its word when that fits, else bare, losing items from
-    /// the end until they do.
-    fn shown(&self, width: usize) -> Option<(usize, &[HintOf], Form)> {
+    /// hint with its word when that fits, else bare, dropping optional
+    /// hints from the end before the retained tail.
+    fn shown(&self, width: usize) -> Option<(usize, &[HintOf], &[HintOf], Form)> {
         let used = self.left_width();
         let free = width.saturating_sub(used);
         let sep = display_width(self.sep);
@@ -252,31 +268,48 @@ impl Header {
         } else {
             HINT_MARGIN
         };
-        let fits = |shown: &[HintOf], form: Form| free >= hints_width(shown, sep, form) + margin;
-        let worded =
-            self.hints.iter().any(|hint| !hint.word.is_empty()) && fits(&self.hints, Form::Worded);
-        let (shown, form) = if worded {
-            (self.hints.as_slice(), Form::Worded)
+        let fits = |hints: &[HintOf], tail: &[HintOf], form: Form| {
+            free >= hints_width(hints, tail, sep, form) + margin
+        };
+        let worded = self
+            .hints
+            .iter()
+            .chain(&self.tail)
+            .any(|hint| !hint.word.is_empty())
+            && fits(&self.hints, &self.tail, Form::Worded);
+        let (hints, tail, form) = if worded {
+            (self.hints.as_slice(), self.tail.as_slice(), Form::Worded)
         } else {
-            let shown = (1..=self.hints.len())
+            let hints = (0..=self.hints.len())
                 .rev()
                 .map(|n| &self.hints[..n])
-                .find(|shown| fits(shown, Form::Bare))?;
-            (shown, Form::Bare)
+                .find(|hints| {
+                    (!hints.is_empty() || !self.tail.is_empty())
+                        && fits(hints, &self.tail, Form::Bare)
+                });
+            if let Some(hints) = hints {
+                (hints, self.tail.as_slice(), Form::Bare)
+            } else {
+                let tail = (1..=self.tail.len())
+                    .rev()
+                    .map(|n| &self.tail[..n])
+                    .find(|tail| fits(&[], tail, Form::Bare))?;
+                (&[][..], tail, Form::Bare)
+            }
         };
         let start = match self.align {
-            Align::Right => used + (free - hints_width(shown, sep, form) - 1),
+            Align::Right => used + (free - hints_width(hints, tail, sep, form) - 1),
             Align::Left => used + 1,
         };
-        Some((start, shown, form))
+        Some((start, hints, tail, form))
     }
 
     /// The action a click at `column` on a `width`-cell header runs: the
     /// hint under the pointer, its left or right half for a pair.
     pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
-        let (mut at, shown, form) = self.shown(width)?;
+        let (mut at, hints, tail, form) = self.shown(width)?;
         let sep = display_width(self.sep);
-        for (i, hint) in shown.iter().enumerate() {
+        for (i, hint) in hints.iter().chain(tail).enumerate() {
             if i > 0 {
                 at += sep;
             }
@@ -317,12 +350,12 @@ impl Header {
             .map(|(text, tone)| Span::styled(text.clone(), tone_style(*tone)))
             .collect();
         let mut at = self.left_width();
-        if let Some((start, shown, form)) = self.shown(width) {
+        if let Some((start, hints, tail, form)) = self.shown(width) {
             spans.push(Span::raw(" ".repeat(start - at)));
             at = start;
             let faint = theme.info.add_modifier(Modifier::DIM);
             let sep = display_width(self.sep);
-            for (i, hint) in shown.iter().enumerate() {
+            for (i, hint) in hints.iter().chain(tail).enumerate() {
                 if i > 0 {
                     spans.push(Span::styled(self.sep, faint));
                     at += sep;
@@ -358,10 +391,15 @@ impl Header {
     }
 }
 
-/// The cells `shown` hints take in `form` with `sep`-wide separators
-/// between them.
-fn hints_width(shown: &[HintOf], sep: usize, form: Form) -> usize {
-    shown.iter().map(|hint| hint.width(form)).sum::<usize>() + sep * shown.len().saturating_sub(1)
+/// The cells `hints` and `tail` take with `sep`-wide separators.
+fn hints_width(hints: &[HintOf], tail: &[HintOf], sep: usize, form: Form) -> usize {
+    let count = hints.len() + tail.len();
+    hints
+        .iter()
+        .chain(tail)
+        .map(|hint| hint.width(form))
+        .sum::<usize>()
+        + sep * count.saturating_sub(1)
 }
 
 /// A diff's header (ADR 0049, ADR 0060): the pair's names and nothing
@@ -618,31 +656,26 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
     )
 }
 
-/// The files pane's header (ADR 0017, ADR 0068): the repo's directory
-/// name as `title`, then against the right edge its `+n -m` counts and
-/// the words for the active filters, `· changed tracked ignored`, each
-/// naming what is on screen. Items drop from the end as the column
-/// narrows.
-pub(crate) fn files_pane_header(app: &App, title: String) -> Header {
-    let mut hints = Vec::new();
+/// The files pane's header (ADR 0017, ADR 0068): `Files` at the left,
+/// then the active filter words before the `+n -m` totals at the right.
+/// Filter words drop before the totals as the pane narrows.
+pub(crate) fn files_pane_header(app: &App) -> Header {
+    let filters = app
+        .files_shown_words()
+        .into_iter()
+        .map(|word| HintOf::word(word.to_owned(), Tone::Info))
+        .collect();
+    let mut counts = Vec::new();
     let comparison_status = app.comparison_status();
     if let Some(total) = comparison_status.summary_under(Path::new("")) {
         if total.added > 0 {
-            hints.push(HintOf::word(format!("+{}", total.added), Tone::Added));
+            counts.push(HintOf::word(format!("+{}", total.added), Tone::Added));
         }
         if total.removed > 0 {
-            hints.push(HintOf::word(format!("-{}", total.removed), Tone::Removed));
+            counts.push(HintOf::word(format!("-{}", total.removed), Tone::Removed));
         }
     }
-    for (i, word) in app.files_shown_words().into_iter().enumerate() {
-        let text = if i == 0 {
-            format!("· {word}")
-        } else {
-            word.to_owned()
-        };
-        hints.push(HintOf::word(text, Tone::Info));
-    }
-    Header::counted(vec![(title, Tone::Dir)], hints, Align::Right)
+    Header::counted_with_tail(vec![(" Files".to_owned(), Tone::Dir)], filters, counts)
 }
 
 /// The threads pane's key bar on its bottom row while it has the keys

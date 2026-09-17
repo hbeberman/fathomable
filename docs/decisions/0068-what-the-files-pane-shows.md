@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: What the files pane shows
-description: The files pane gains three session toggles under `Space F`, only changed files, hide untracked files, and show ignored files, each entry naming what pressing it does now; the pane's header row moves onto `ui.header` and names the active filters after the repo's counts; the right-click menu carries the same three; a which-key entry may carry a live label.
+description: The Files pane filters changed, untracked, and ignored paths through live-labelled controls under `Space F` and its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
 resource: crates/fathomable/src/app/files_shown.rs
 related_resources:
   - crates/fathomable-core/src/tree.rs
@@ -19,6 +19,12 @@ tags:
 # 0068 What the files pane shows
 
 Status: accepted (2026-09-06)
+
+Amended 2026-09-17: the left header label is now `Files`, and a left-click
+on that word opens the three pane settings. The passive filter words move
+before the diff totals without a dot. Repository and worktree identity move
+to the global menu bar. Right-click on the header does nothing, and row
+context menus contain only actions on the pointed item.
 
 ## Context
 
@@ -97,24 +103,28 @@ Space F r    recent files                            (unchanged)
   ignored`, what `Space ?` lists), and while the toggle is on the popup
   reads `all files`, `show untracked`, `hide ignored`. The label states
   the outcome of pressing the key now, in the fewest words.
-- The **right-click menu** on a files pane row carries the same three
-  entries with the same live wording, after `copy path`.
+- A left-click on the header's **`Files` title** opens a pane settings menu
+  carrying the same three entries with the same live wording. The title is
+  the only clickable part of the Files header; right-click on the header
+  does nothing.
+- A file row's **right-click menu** is item-local: `open`, `comment on file`,
+  and `copy path`. A directory row offers `expand` or `collapse`, then
+  `copy path`. Save review point remains in the global **Diff** menu, and
+  review navigation and pane filters do not appear on row menus.
 
 ### The header names the state
 
 - The files pane's header row is a `Header` on **`ui.header`**, as the
-  threads pane's is (0066): the repo's directory name bold in the
-  directory colour at the left, then against the right edge the repo's
-  `+n -m` counts (0017) and the active filters, one word each, naming
-  what is on screen: `changed` while only changed files are listed,
-  `tracked` while untracked files are hidden, `ignored` while ignored
-  files are shown. A ` · ` separates the counts from the first word.
-- `demo +12 -3 · changed tracked`. Items drop from the end as the column
-  narrows, as every header's do: the words first, then the counts.
-  (Amended 2026-09-06 by [0070](0070-one-workspace-many-worktrees.md):
-  while the workspace has more than one worktree the header begins
-  with the active worktree's branch, and a click on it opens a picker
-  of them.)
+  threads pane's is (0066): `Files` is bold in the directory colour at the
+  left. Against the right edge, the active filters name what is on screen:
+  `changed` while only changed files are listed, `tracked` while untracked
+  files are hidden, and `ignored` while ignored files are shown. The
+  comparison's `+n -m` totals (0017) follow those words, separated only by
+  spaces.
+- `Files                         changed tracked +12 -3`. Filter words drop
+  from their end as the column narrows, before either diff total is dropped.
+  Repository, active worktree, and current-file identity live in the global
+  menu bar under [0081](0081-the-menu-bar.md).
 
 ### Amendments
 
@@ -122,8 +132,8 @@ Space F r    recent files                            (unchanged)
   and a filter on the pane, not a key on it; the picker at `Space F i`
   stays.
 - 0056's map: `Space F` is `c` / `u` / `g` / `i` / `r`.
-- 0050's files pane menu gains the three toggles; the header row of the
-  files pane takes no clicks.
+- 0050's Files title opens the three pane settings. Row context menus stay
+  item-local, and right-click on the header remains inert.
 - 0017's tree bullet: the pane may list a subset; the letters, the
   counts, and the root totals are unchanged.
 - 0087's comparison model (amended 2026-09-17): with a non-working target,
@@ -149,6 +159,7 @@ Space F r    recent files                            (unchanged)
   and the mouse go through it. The binding table gains `FilesChanged`,
   `FilesUntracked`, and `FilesIgnored` under `Space F`.
 - `draw::tree_lines` builds the header through `Header`; `Tone` gains
-  the diff colours for the counts.
+  the diff colours for the counts. Header layout retains the totals while
+  dropping filter words from the end.
 - The guide's key table, its files pane passage, and its mouse passage
   name the three toggles and the header's words.

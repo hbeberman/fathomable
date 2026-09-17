@@ -65,6 +65,12 @@ right-click thread menus include auto-resolve. The status line no longer
 has a waiting-count action; its total thread count still focuses the
 threads pane.
 
+Amended 2026-09-17 by [0068](0068-what-the-files-pane-shows.md): a Files
+row's context menu is strictly item-local. Files offer open, comment on file,
+and copy path; directories offer expand/collapse and copy path. Pane filters
+move to a left-click menu on the `Files` title. Right-click on that header
+does nothing.
+
 ## Context
 
 The mouse has been first-class since [0007](0007-key-grammar-and-mouse.md):
@@ -117,13 +123,11 @@ same day; the choices are below.
     now copies the cursor line, so the entry has a key; it copied
     nothing before.
 
-  In the tree: `open` (`Enter`), `checkpoint this file` (`Space v c`,
-  on a file), `copy path` (`y`, new), `re-read the tree` (`R`), `toggle
-  ignored` (`I`). "Reveal" was in the proposal and is dropped: it
-  reveals the current file, which a right-click has just made the row.
-  (2026-09-06: the menu carries the three filter toggles of
-  [0068](0068-what-the-files-pane-shows.md), worded as they would act
-  now.)
+  In the Files pane: a file offers `open` (`Enter`), `comment on file`
+  (`Space c f`), and `copy path` (`y`); a directory offers `expand` or
+  `collapse` (`Enter`) and `copy path`. The pointed row becomes the tree
+  cursor before the menu opens. Save review point stays in the global
+  **Diff** menu; review navigation and pane filters are not item actions.
   In the threads pane and the review list: `go to` (`Enter`), `reply`
   (`c`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
   thread` (`dd`).
@@ -206,6 +210,9 @@ same day; the choices are below.
   and a click on the header's sort word switches the sort.
 - A click on the threads pane's header text toggles its reach between
   the file and the workspace, as `s` does.
+- A click on the `Files` title opens that pane's changed, untracked, and
+  ignored settings with live labels. The filter-state words and diff totals
+  are passive, and right-click anywhere on the Files header does nothing.
 - In the checkpoint header a click on the base name opens the base
   picker and a click on the target name the target picker, as `b` and
   `t` do. (Amended 2026-09-06 by

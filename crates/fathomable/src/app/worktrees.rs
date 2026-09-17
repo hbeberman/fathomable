@@ -41,8 +41,8 @@ impl App {
         self.worktrees.len() > 1
     }
 
-    /// The branch (or short commit) the files pane header leads with
-    /// while the workspace has more than one worktree.
+    /// The branch (or short commit) the menu bar names while the
+    /// workspace has more than one worktree.
     pub(crate) fn worktree_label(&self) -> Option<String> {
         if !self.has_worktrees() {
             return None;
@@ -372,7 +372,7 @@ impl App {
             .join(", ")
     }
 
-    /// A click on the branch: the worktree picker (ADR 0070).
+    /// A click on the menu bar's repository/worktree identity.
     pub(crate) fn pick_worktree(&mut self) {
         if !self.has_worktrees() {
             self.notice("one worktree");
@@ -393,8 +393,9 @@ mod tests {
     use fathomable_testing::git;
 
     use crate::app::input::bindings::Action;
-    use crate::app::testing::{AppBuilder, screen};
-    use crate::app::{App, Options};
+    use crate::app::menu_bar;
+    use crate::app::testing::{self, AppBuilder, screen};
+    use crate::app::{App, Options, PickerKind, Popup};
 
     /// A repository at `main/` with `a.md` committed, and a linked
     /// worktree at `feature/` on branch `feature`.
@@ -427,31 +428,32 @@ mod tests {
     }
 
     /// `]w` makes the next worktree active: the workspace re-roots, the
-    /// open file follows by its relative path, and the files pane
-    /// header leads with the branch.
+    /// open file follows by its relative path, and the menu bar names
+    /// the repository, worktree, and file.
     #[test]
     fn paging_re_roots_the_viewer_and_keeps_the_file() -> anyhow::Result<()> {
         let (dir, main, feature) = repo("page")?;
         let mut app = app_on(&dir, &main)?;
         assert_eq!(app.worktrees.len(), 2);
         assert_eq!(app.worktree_label().as_deref(), Some("main"));
+        app.toggle_menu_bar();
         app.open(Path::new("a.md"));
         app.show_tree();
-        assert!(
-            screen(&app)?
-                .iter()
-                .any(|line| line.contains(" main · main"))
-        );
+        assert!(screen(&app)?[0].contains("main · main · a.md"));
 
         app.act(Action::WorktreeNext);
         assert_eq!(app.workspace().root(), feature);
         assert_eq!(app.worktree_label().as_deref(), Some("feature"));
         assert_eq!(app.current_path(), Path::new("a.md"), "the file follows");
-        assert!(
-            screen(&app)?
-                .iter()
-                .any(|line| line.contains(" feature · feature"))
-        );
+        assert!(screen(&app)?[0].contains("feature · feature · a.md"));
+        let identity = menu_bar::bar_identity(&app, app.width)
+            .ok_or_else(|| anyhow::anyhow!("worktree identity"))?;
+        testing::click(&mut app, identity.x, 0);
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::Picker(picker)) if picker.kind() == PickerKind::Worktree
+        ));
+        app.close_popup();
         let rewatch = app
             .take_rewatch()
             .ok_or_else(|| anyhow::anyhow!("no rewatch"))?;

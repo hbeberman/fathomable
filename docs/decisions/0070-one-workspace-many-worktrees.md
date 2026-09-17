@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One workspace, many worktrees
-description: A git workspace is the repository, keyed by its common dir, and every worktree of it is one checkout of the same threads; the viewer finds the worktrees itself, pages through them with `]w` / `[w`, names the active one at the head of the files pane, and shows a thread from any worktree's branch with that branch on the entry; the tools and hooks resolve a worktree the way they resolve a root, and no tool is added.
+description: A git workspace is the repository, keyed by its common dir, and every worktree of it is one checkout of the same threads; the viewer finds the worktrees itself, pages through them with `]w` / `[w`, names the active one in the global menu bar, and shows a thread from any worktree's branch with that branch on the entry; the tools and hooks resolve a worktree the way they resolve a root, and no tool is added.
 resource: crates/fathomable-core/src/worktrees.rs
 related_resources:
   - crates/fathomable-core/src/workspace.rs
@@ -22,6 +22,10 @@ tags:
 
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
+
+Amended 2026-09-17: repository and active-worktree identity move from the
+Files header to the global menu bar beside the current filename. Clicking
+that identity opens the worktree picker when the repository has several.
 
 Amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): the repository still
@@ -163,14 +167,12 @@ in the host, labelled with its branch.
   it, at the same line, else the welcome shows; other open documents
   close, and the jumplist and the recent list are cleared. A viewer is
   one window onto one checkout; two checkouts at once are two viewers.
-- The files pane header ([0068](0068-what-the-files-pane-shows.md))
-  begins with the active worktree's branch, or its short commit when
-  detached, whenever the workspace has more than one worktree, then
-  the repo's counts and the filters as 0068 has them. A click on the
-  branch opens a picker of the worktrees, the active one marked: a
-  context menu of [0050](0050-mouse-menus-and-gestures.md) carries
-  actions, and a worktree is a choice, as a diff base is. With one
-  worktree the header is unchanged.
+- The global menu bar ([0081](0081-the-menu-bar.md)) centers the repository
+  name, then the active worktree's branch or short detached commit whenever
+  there is more than one, then the current filename when one is open. The
+  repository/worktree segment uses the menu accent and opens a picker of
+  worktrees on click, with the active one marked. With one worktree the
+  repository name is passive and subdued.
 - `:status` lists the worktrees with the active one marked; the viewer
   record names the worktree the viewer is on, `--viewers` groups by
   workspace, then worktree, and `--doctor` counts the worktrees that
@@ -243,8 +245,8 @@ in the host, labelled with its branch.
 - 0055's `workspaces` row: worktrees in the listing, `switch` and
   `workspace` take a worktree root; the `threads` row gains
   `worktree`.
-- 0068's header bullet: the branch leads the header while the
-  workspace has more than one worktree.
+- 0068's header bullet: repository and branch identity leave the Files
+  header for the global menu bar.
 - 0066's entry bullet: the branch after the author's words on an
   entry the active worktree does not reach.
 - 0062: the one-time move of a state directory is noted as a rename,

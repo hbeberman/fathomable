@@ -667,17 +667,7 @@ fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
     assert_eq!(app.focus(), Focus::Tree);
     assert_eq!(app.menu().map(Menu::title), Some("README.md"));
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, l)| l).collect();
-    assert_eq!(
-        labels,
-        [
-            "open",
-            "save review point",
-            "copy path",
-            "only changed",
-            "hide untracked",
-            "show ignored"
-        ]
-    );
+    assert_eq!(labels, ["open", "comment on file", "copy path"]);
     let (x, y) = entry_cell(&app, "copy path")?;
     assert_eq!(left(&mut app, x, y), Effect::Copy("README.md".to_owned()));
     assert_eq!(
@@ -973,8 +963,7 @@ fn the_list_folds_a_thread_by_chevron_double_click_and_menu() -> anyhow::Result<
 
 /// A right-click on a file row offers the file's menu, and its `fold`
 /// entry folds the file on the surface it opened for (ADR 0066); the
-/// files pane's menu offers `threads` and `review` on a file with
-/// threads.
+/// files pane's menu keeps only actions local to the pointed item.
 #[test]
 fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     let dir = fixture("file-menu")?;
@@ -1003,8 +992,7 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
     assert_eq!(labels[..2], ["unfold", "unfold all"]);
     app.close_popup();
 
-    // The files pane keeps review but no longer gives bare `t` a
-    // file-scoped threads shortcut.
+    // The files pane offers only actions on the pointed file.
     let readme_row = (0..app.tree_rows())
         .find(|&row| {
             app.tree()
@@ -1014,8 +1002,25 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
         .context("README in the tree")?;
     right(&mut app, 2, readme_row + 1);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert!(!labels.contains(&"threads".to_owned()), "{labels:?}");
-    assert!(labels.contains(&"review".to_owned()), "{labels:?}");
+    assert_eq!(labels, ["open", "comment on file", "copy path"]);
+    let cell = entry_cell(&app, "comment on file")?;
+    left(&mut app, cell.0, cell.1);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Compose(compose)) if compose.target() == &ComposeTarget::OnFile
+    ));
+    app.close_popup();
+
+    let docs_row = (0..app.tree_rows())
+        .find(|&row| {
+            app.tree()
+                .and_then(|tree| tree.rows().get(row))
+                .is_some_and(|r| r.name() == "docs")
+        })
+        .context("docs in the tree")?;
+    right(&mut app, 2, docs_row + 1);
+    let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
+    assert_eq!(labels, ["expand", "copy path"]);
     Ok(())
 }
 

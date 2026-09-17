@@ -1,8 +1,8 @@
 // @okf-doc: /decisions/0050-mouse-menus-and-gestures.md
-//! The context menu a right-click opens (ADR 0050): the actions that
-//! apply under the pointer, each showing the key the binding table
-//! gives it, and the grids that the drawn menus and the mouse share so
-//! a click lands on the entry that was drawn there.
+//! Context and pane-settings menus (ADR 0050, ADR 0068): the actions
+//! that apply under the pointer or to the Files pane, each showing the
+//! key the binding table gives it, and the grids that the drawn menus
+//! and the mouse share so a click lands on the drawn entry.
 //!
 //! A [`Menu`] is one more [`Popup`]. Its entries act on the cursor the
 //! right-click placed, so they are ordinary [`Action`]s run through
@@ -440,6 +440,19 @@ impl App {
         menu
     }
 
+    /// A left-click on the Files title opens the pane's display settings.
+    pub(super) fn open_files_menu(&mut self, column: usize, row: usize) {
+        let mut menu = Menu::new("Files", Where::Tree, column, row);
+        for action in [
+            Action::FilesChanged,
+            Action::FilesUntracked,
+            Action::FilesIgnored,
+        ] {
+            menu.push(action, action, self.toggle_label(action));
+        }
+        self.open_menu(menu);
+    }
+
     /// A right-click on tree row `tree_row` at screen `(column, row)`:
     /// the highlight moves there, showing the file as the wheel does,
     /// and the menu offers what the row can do.
@@ -449,34 +462,22 @@ impl App {
             return;
         };
         let is_dir = current.is_dir();
-        let has_threads = !is_dir
-            && self
-                .file_circles()
-                .iter()
-                .any(|(path, _)| path == current.path());
         let mut menu = Menu::new(current.name().to_owned(), Where::Tree, column, row);
-        menu.push(Action::Confirm, Action::Confirm, "open");
-        if !is_dir {
+        if is_dir {
             menu.push(
-                Action::ComparisonSave,
-                Action::ComparisonSave,
-                "save review point",
+                Action::Confirm,
+                Action::Confirm,
+                if current.expanded() {
+                    "collapse"
+                } else {
+                    "expand"
+                },
             );
-        }
-        // A file with listed threads offers the review view.
-        if has_threads {
-            menu.push(Action::Review, Action::Review, "review");
+        } else {
+            menu.push(Action::Confirm, Action::Confirm, "open");
+            menu.push(Action::FileComment, Action::FileComment, "comment on file");
         }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
-        // What the pane shows, each entry saying what a press does now
-        // (ADR 0068).
-        for action in [
-            Action::FilesChanged,
-            Action::FilesUntracked,
-            Action::FilesIgnored,
-        ] {
-            menu.push(action, action, self.toggle_label(action));
-        }
         self.open_menu(menu);
     }
 

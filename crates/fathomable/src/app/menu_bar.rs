@@ -275,6 +275,25 @@ pub(crate) struct BarTail {
     pub(crate) target: Option<BarLabel>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BarIdentity {
+    pub(crate) repo: String,
+    pub(crate) suffix: String,
+    pub(crate) x: usize,
+    pub(crate) width: usize,
+    pub(crate) picker: Option<PickerKind>,
+}
+
+impl BarIdentity {
+    pub(crate) fn repo_contains(&self, column: usize) -> bool {
+        column >= self.x && column < self.x + display_width(&self.repo)
+    }
+
+    fn picker_at(&self, column: usize) -> Option<PickerKind> {
+        self.repo_contains(column).then_some(self.picker).flatten()
+    }
+}
+
 impl BarTail {
     pub(crate) fn picker_at(&self, column: usize) -> Option<PickerKind> {
         [&self.base, &self.target]
@@ -314,6 +333,78 @@ pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
             picker: PickerKind::ComparisonTarget,
         }),
     }
+}
+
+/// Lay out the centered repository, active worktree, and current file.
+pub(crate) fn bar_identity(app: &App, width: usize) -> Option<BarIdentity> {
+    let left_end = labels(width)
+        .last()
+        .map_or(0, |label| label.x.saturating_add(label.width));
+    let tail = bar_tail(app, width);
+    let right_start = tail.base.as_ref().map_or(width, |base| base.x);
+    identity_within(
+        app,
+        width,
+        left_end.saturating_add(TAIL_GAP),
+        right_start.saturating_sub(TAIL_GAP),
+    )
+}
+
+fn identity_within(
+    app: &App,
+    width: usize,
+    left_bound: usize,
+    right_bound: usize,
+) -> Option<BarIdentity> {
+    let left_room = width.saturating_sub(left_bound.saturating_mul(2));
+    let right_room = right_bound
+        .saturating_mul(2)
+        .saturating_add(1)
+        .saturating_sub(width);
+    let max_width = left_room.min(right_room);
+    let repo = app.workspace().root().file_name().map_or_else(
+        || "/".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let worktree = app.worktree_label();
+    let repo = worktree
+        .as_ref()
+        .map_or(repo.clone(), |branch| format!("{repo} · {branch}"));
+    let fitted_repo = super::draw::fit_ellipsis(&repo, max_width)
+        .trim_end()
+        .to_owned();
+    if fitted_repo.is_empty() || fitted_repo == "…" {
+        return None;
+    }
+    let repo_width = display_width(&fitted_repo);
+    let suffix = if repo_width == display_width(&repo)
+        && !app.getting_started()
+        && !app.review_list().is_open()
+        && app.has_document()
+    {
+        app.current_path()
+            .file_name()
+            .map(std::ffi::OsStr::to_string_lossy)
+            .and_then(|filename| {
+                let separator = " · ";
+                let available = max_width.saturating_sub(repo_width + display_width(separator));
+                let filename = super::draw::fit_ellipsis(&filename, available)
+                    .trim_end()
+                    .to_owned();
+                (!filename.is_empty() && filename != "…").then(|| format!("{separator}{filename}"))
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let identity_width = repo_width + display_width(&suffix);
+    Some(BarIdentity {
+        repo: fitted_repo,
+        suffix,
+        x: width.saturating_sub(identity_width) / 2,
+        width: identity_width,
+        picker: worktree.map(|_| PickerKind::Worktree),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1134,6 +1225,41 @@ fn scroll_menu(app: &mut App, child: bool, delta: isize) {
     state.focused = selected.map_or(Focused::Label, Focused::Root);
 }
 
+fn bar_mouse(app: &mut App, kind: MouseEventKind, column: usize) -> Effect {
+    let left = kind == MouseEventKind::Down(MouseButton::Left);
+    if let Some(root) = label_at(app.width, column) {
+        match kind {
+            MouseEventKind::Moved if app.menu_bar.open().is_some_and(|open| open.root != root) => {
+                app.open_title_menu(root);
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if app.menu_bar.open().is_some_and(|open| open.root == root) {
+                    app.close_title_menu();
+                } else {
+                    app.open_title_menu(root);
+                }
+            }
+            _ => {}
+        }
+    } else if let Some(picker) = bar_tail(app, app.width).picker_at(column) {
+        if left {
+            app.close_title_menu();
+            app.open_picker(picker);
+        }
+    } else if bar_identity(app, app.width)
+        .and_then(|identity| identity.picker_at(column))
+        .is_some()
+    {
+        if left {
+            app.close_title_menu();
+            app.pick_worktree();
+        }
+    } else if left {
+        app.close_title_menu();
+    }
+    Effect::None
+}
+
 /// The title bar and its open menu's share of one mouse event. `None`
 /// lets an event outside a closed menu continue to the panes.
 pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> Option<Effect> {
@@ -1142,35 +1268,11 @@ pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> Option<Effect> {
     }
     let column = usize::from(event.column);
     let row = usize::from(event.row);
+    if row == 0 {
+        return Some(bar_mouse(app, event.kind, column));
+    }
     let left = event.kind == MouseEventKind::Down(MouseButton::Left);
     let right = event.kind == MouseEventKind::Down(MouseButton::Right);
-    if row == 0 {
-        if let Some(root) = label_at(app.width, column) {
-            match event.kind {
-                MouseEventKind::Moved
-                    if app.menu_bar.open().is_some_and(|open| open.root != root) =>
-                {
-                    app.open_title_menu(root);
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    if app.menu_bar.open().is_some_and(|open| open.root == root) {
-                        app.close_title_menu();
-                    } else {
-                        app.open_title_menu(root);
-                    }
-                }
-                _ => {}
-            }
-        } else if let Some(picker) = bar_tail(app, app.width).picker_at(column) {
-            if left {
-                app.close_title_menu();
-                app.open_picker(picker);
-            }
-        } else if left {
-            app.close_title_menu();
-        }
-        return Some(Effect::None);
-    }
     let open = app.menu_bar.open().cloned()?;
     let root_rows = rows(app, open.root);
     let root = root_layout(app, &root_rows)?;
@@ -1257,7 +1359,10 @@ mod tests {
     use fathomable_core::layout::display_width;
     use ratatui::style::Modifier;
 
-    use super::{Focused, Root, Submenu, child_layout, labels, root_layout, rows, submenu_rows};
+    use super::{
+        Focused, Root, Submenu, bar_identity, child_layout, identity_within, labels, root_layout,
+        rows, submenu_rows,
+    };
     use crate::app::input::{keys, mouse};
     use crate::app::testing;
 
@@ -1325,25 +1430,42 @@ mod tests {
             "{:?}",
             screen[0]
         );
-        assert!(screen[0].contains("README.md"), "{:?}", screen[0]);
-        let filename_x = (app.size().0 - display_width("README.md")) / 2;
+        assert!(screen[0].contains("ws · README.md"), "{:?}", screen[0]);
+        let identity = bar_identity(&app, app.size().0).context("bar identity")?;
+        assert_eq!(identity.repo, "ws");
+        assert_eq!(identity.suffix, " · README.md");
+        assert_eq!(
+            identity.x,
+            (app.size().0 - display_width("ws · README.md")) / 2
+        );
         let buffer = testing::buffer(&app)?;
-        assert_eq!(buffer[(u16::try_from(filename_x)?, 0)].symbol(), "R");
+        assert_eq!(buffer[(u16::try_from(identity.x)?, 0)].symbol(), "w");
         assert_eq!(
             buffer[(
-                u16::try_from(filename_x + display_width("README.md") - 1)?,
+                u16::try_from(identity.x + display_width("ws · README.md") - 1)?,
                 0
             )]
                 .symbol(),
             "d"
         );
         assert!(
-            buffer[(u16::try_from(filename_x)?, 0)]
+            buffer[(u16::try_from(identity.x)?, 0)]
                 .modifier
                 .contains(Modifier::DIM),
-            "the filename is dim"
+            "the repository identity is dim with one worktree"
         );
         assert!(!screen[0].contains("SOURCE"), "{:?}", screen[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn repository_identity_stays_centred_and_shortens_the_filename() -> anyhow::Result<()> {
+        let app = shown_app("menu-bar-identity")?;
+        let identity = identity_within(&app, 40, 12, 24).context("visible identity")?;
+        assert_eq!(identity.x, (40 - identity.width) / 2);
+        assert!(identity.x >= 12 && identity.x + identity.width <= 24);
+        assert!(identity.suffix.ends_with('…'), "{identity:?}");
+        assert!(identity_within(&app, 20, 10, 11).is_none());
         Ok(())
     }
 

@@ -186,6 +186,15 @@ At the beginning or end of the list, the cursor can move closer to that edge.
 Hovering over a picker row highlights it, clicking chooses it, and the mouse
 wheel moves the selection and list.
 
+The Files header reads `Files` at the left. Clicking that word opens the
+pane's **Only changed/All files**, **Hide/Show untracked**, and
+**Show/Hide ignored** settings; right-clicking the header does nothing.
+Active filter words appear passively before the `+n -m` comparison totals.
+Right-clicking a file offers **Open**, **Comment on file**, and **Copy path**.
+Right-clicking a directory offers **Expand/Collapse** and **Copy path**.
+The wheel steps one row and previews it, while dragging the sidebar divider
+resizes the sidebar.
+
 Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
 `:name NAME`, `:help`, `:doctor`, and `:about`.
 
@@ -352,15 +361,18 @@ commit, branch change, idle, or quit.
 The persistent first row is:
 
 ```text
-☰  Go  Review  Diff             README.md             HEAD to WorkingTree
+☰  Go  Review  Diff          fathomable · README.md    HEAD to WorkingTree
 ```
 
-The current file's basename is centered in subdued, dim text. It shortens
-with an ellipsis or disappears on narrow terminals rather than colliding with
-the menus or comparison. The compact comparison pair remains at the right;
-branch, full path, and source/view labels stay out of the bar. Immutable
-commits use short IDs; the other labels are `HEAD`, `WorkingTree`, `Index`,
-`EmptyTree`, `Point name`, or `Tag name`.
+The repository directory and current file's basename are centered in
+subdued, dim text. With multiple worktrees, the active branch or short
+detached commit appears between them; hovering and clicking that
+repository/worktree segment opens the worktree picker. The filename shortens
+first, then the repository identity shortens or disappears on narrow
+terminals rather than colliding with the menus or comparison. The compact
+comparison pair remains at the right; full paths and source/view labels stay
+out of the bar. Immutable commits use short IDs; the other labels are `HEAD`,
+`WorkingTree`, `Index`, `EmptyTree`, `Point name`, or `Tag name`.
 Selecting HEAD or a tag still pins its resolved commit ID. If HEAD advances
 or the tag no longer resolves to that ID, the label falls back to the short
 commit ID rather than pretending the endpoint moved.

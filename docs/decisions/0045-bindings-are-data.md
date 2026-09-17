@@ -35,6 +35,10 @@ are removed. A second Space is simply an unmatched continuation, so the
 existing miss behavior still clears the pending chord without running
 the broader `Esc` action.
 
+Amended 2026-09-17: picking the comparison base uses `Space d b`; the
+text-focused `b` alias is removed. `Space d s` no longer starts a comparison
+at current `HEAD`; that action remains in **Comparison controls...**.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

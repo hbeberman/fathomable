@@ -243,7 +243,6 @@ actions! {
     FileComment,
     SourceView,
     ComparisonControl,
-    ComparisonStart,
     ComparisonSave,
     ComparisonFocus,
     ComparisonBase,
@@ -567,13 +566,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ThreadPrevAcross,
         "Threads",
         "previous thread in workspace",
-    ),
-    bind(
-        W::View,
-        &[&[c('b')]],
-        A::ComparisonBase,
-        "Display",
-        "comparison: pick the base",
     ),
     bind(
         W::View,
@@ -904,13 +896,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ComparisonWhitespace,
         "Space menu",
         "diff: whitespace",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('d'), c('s')]],
-        A::ComparisonStart,
-        "Space menu",
-        "diff: start at current HEAD",
     ),
     bind(
         W::Any,
@@ -1578,10 +1563,13 @@ mod tests {
             for (keys, action) in [
                 ([c(' '), c('v'), c('s')], Action::SourceView),
                 ([c(' '), c('d'), c('d')], Action::ComparisonControl),
+                ([c(' '), c('d'), c('b')], Action::ComparisonBase),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
+            assert_eq!(lookup(place, &[c(' '), c('d'), c('s')]), Match::Miss);
         }
+        assert_eq!(lookup(Where::View, &[c('b')]), Match::Miss);
     }
 
     /// An action nobody can press is dead code the table would hide.
@@ -1718,7 +1706,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["d", "b", "t", "c", "r", "w", "s"]
+            ["d", "b", "t", "c", "r", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

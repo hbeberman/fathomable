@@ -118,9 +118,7 @@ continuations. These tables contain the main bindings.
 | `Space d t` | choose the global target |
 | `Space d c` | **Save review point**; type an optional name or accept unnamed |
 | `Space d r` | choose **All changes** or **Since...** |
-| `Space d s` | **Start comparison at current HEAD** |
 | `Space d w` | compare or ignore whitespace |
-| `b` | choose the base while text has focus |
 | `w` | compare or ignore whitespace while text has focus |
 | `:diff` | open the unified diff for the current global comparison |
 
@@ -249,8 +247,9 @@ revisions and object IDs remain accepted. Press `Esc` to return from commits
 to branches, or from another submenu to the main endpoint picker.
 
 Selecting `HEAD` resolves it immediately. If it names commit `B`, later
-commits do not move that endpoint. Use `Space d s` only when you deliberately
-want the base to become the checkout's current `HEAD`.
+commits do not move that endpoint. Open **Comparison controls...** with
+`Space d d` and choose **Start comparison at current HEAD** only when you
+deliberately want the base to become the checkout's current `HEAD`.
 
 To compare a contiguous committed batch, open the base picker and type:
 
@@ -372,8 +371,9 @@ the base or target label opens that endpoint's picker.
 
 **Review** contains the board, Recently resolved, Archived threads, Archive
 resolved threads, Clear board, and contextual thread actions. **Diff**
-contains Comparison controls, Start comparison at current HEAD, base/target
-pickers, All changes/Since, Save review point, and whitespace.
+contains Comparison controls, base/target pickers, All changes/Since, Save
+review point, and whitespace. **Start comparison at current HEAD** remains
+inside Comparison controls.
 
 Configuration is KDL at
 `$XDG_CONFIG_HOME/fathomable/config.kdl` (normally

@@ -80,7 +80,8 @@ A fresh Git checkout pins the current `HEAD` commit once as its base and uses
 the working tree as target. An unborn repository uses the empty tree.
 Persisted checkout-local selection takes precedence. A later commit never
 advances an already selected commit endpoint. **Start comparison at current
-HEAD** is the explicit action that advances the base.
+HEAD** in **Comparison controls...** is the explicit action that advances the
+base. It has no dedicated key or duplicate row in the **Diff** menu.
 
 `A -> B` means the direct net delta between those endpoint trees. It never
 silently substitutes a merge base or three-dot comparison. A contiguous

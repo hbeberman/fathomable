@@ -552,11 +552,6 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 Action::ComparisonControl,
                 "Comparison controls…",
             )),
-            Row::Item(Item::action(
-                app,
-                Action::ComparisonStart,
-                "Start comparison at current HEAD",
-            )),
             Row::Item(Item::action(app, Action::ComparisonBase, "Pick base…")),
             Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
             Row::Item(Item::action(
@@ -1284,7 +1279,14 @@ mod tests {
         assert_eq!(rows(&app, Root::App).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 8);
         assert_eq!(rows(&app, Root::Review).len(), 16);
-        assert_eq!(rows(&app, Root::Diff).len(), 8);
+        let diff_rows = rows(&app, Root::Diff);
+        assert_eq!(diff_rows.len(), 7);
+        assert!(
+            !diff_rows
+                .iter()
+                .filter_map(super::Row::item)
+                .any(|item| item.label == "Start comparison at current HEAD")
+        );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         assert!(
             !rows(&app, Root::App)

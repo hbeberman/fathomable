@@ -21,6 +21,10 @@ The Auto-jump entry described below was removed by
 [0082](0082-three-tool-review-core.md); the rest of this decision remains
 current.
 
+Amended 2026-09-17: **Start comparison at current HEAD** remains available
+inside **Comparison controls...** but is no longer duplicated in the
+**Diff** menu.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take

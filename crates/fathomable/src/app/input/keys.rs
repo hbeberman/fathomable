@@ -271,7 +271,6 @@ impl App {
                 self.view_mut().toggle_source_view();
             }
             Action::ComparisonControl => self.open_comparison_control(),
-            Action::ComparisonStart => self.start_comparison_at_head(),
             Action::ComparisonSave => self.request_review_point(),
             Action::ComparisonFocus => self.pick_comparison_focus(),
             Action::ComparisonBase => self.pick_diff_side(false),

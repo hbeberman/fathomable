@@ -86,6 +86,11 @@ Settled in a question round on 2026-08-28:
 
 The unwrapped code-block consequence above was superseded by
 [0044](0044-wrap-all-lines.md): code blocks wrap in both files and messages.
+Since 2026-09-17, a fenced block in a message prefers whitespace when it
+wraps, hard-breaking only a token wider than an empty row. File code remains
+hard-wrapped because its exact visual structure is primary; message fences
+often carry prose, patches, or short replacement examples that must remain
+readable in an indented review lane.
 
 The review list of [0025](0025-thread-list.md) had gone on wrapping
 bodies as plain text; since 2026-09-09 its body rows come from the same

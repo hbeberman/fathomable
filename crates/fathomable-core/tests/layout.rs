@@ -203,6 +203,37 @@ fn code_blocks_wrap_and_map_lines() -> TestResult {
 }
 
 #[test]
+fn message_code_blocks_prefer_word_boundaries() -> TestResult {
+    use fathomable_core::highlight::Highlighter;
+
+    let line = "Knowledge Relations, Supplied Evidence, Constraints, and Claim Provider Metadata.";
+    let source = format!("```markdown\n{line}\n```\n");
+    let highlighter = Highlighter::new("base16-ocean.dark")?;
+    let message = Layout::render_message(&source, 60, &highlighter);
+    assert_eq!(
+        texts(&message),
+        [
+            "Knowledge Relations, Supplied Evidence, Constraints, and",
+            "Claim Provider Metadata.",
+        ]
+    );
+    assert!(message.lines().iter().all(|line| line.width() <= 60));
+
+    assert_eq!(
+        texts(&Layout::render(&source, 60)),
+        [
+            "Knowledge Relations, Supplied Evidence, Constraints, and Cla",
+            "im Provider Metadata.",
+        ],
+        "file code remains hard-wrapped"
+    );
+
+    let long = Layout::render_message("```\nshort abcdefghijkl\n```\n", 10, &Highlighter::plain());
+    assert_eq!(texts(&long), ["short", "abcdefghij", "kl"]);
+    Ok(())
+}
+
+#[test]
 fn blockquotes_prefix_every_line() {
     let layout = Layout::render("> quoted text here\n>\n> more\n", 12);
     assert_eq!(texts(&layout), ["│ quoted", "│ text here", "│ ", "│ more"]);

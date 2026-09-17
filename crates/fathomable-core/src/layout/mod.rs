@@ -35,7 +35,7 @@ use crate::theme::Color;
 use blocks::{Align, Block, Inline, Item, Table};
 #[doc(inline)]
 pub use text::{LineIndex, display_width, graphemes};
-use wrap::{Chunk, wrap, wrap_hard, wrap_hard_chunks};
+use wrap::{Chunk, wrap, wrap_code_chunks, wrap_hard, wrap_hard_chunks};
 
 /// What a single newline inside a paragraph means.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,6 +45,12 @@ pub enum Breaks {
     Soft,
     /// A line break, as comments on a code host render them (ADR 0037).
     Hard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CodeWrapping {
+    Hard,
+    AtWords,
 }
 
 /// What a span is, for theming.
@@ -375,23 +381,36 @@ impl Layout {
     /// colouring fenced code blocks by their info string (ADR 0016).
     #[must_use]
     pub fn render_with(text: &str, width: usize, highlighter: &Highlighter) -> Self {
-        Self::render_breaks(text, width, highlighter, Breaks::Soft)
+        Self::render_breaks(text, width, highlighter, Breaks::Soft, CodeWrapping::Hard)
     }
 
     /// Lay `text` out as a comment: rendered Markdown in which a single
-    /// newline is a line break, as comments on GitHub read (ADR 0037).
+    /// newline is a line break and fenced blocks prefer word boundaries.
     #[must_use]
     pub fn render_message(text: &str, width: usize, highlighter: &Highlighter) -> Self {
-        Self::render_breaks(text, width, highlighter, Breaks::Hard)
+        Self::render_breaks(
+            text,
+            width,
+            highlighter,
+            Breaks::Hard,
+            CodeWrapping::AtWords,
+        )
     }
 
-    fn render_breaks(text: &str, width: usize, highlighter: &Highlighter, breaks: Breaks) -> Self {
+    fn render_breaks(
+        text: &str,
+        width: usize,
+        highlighter: &Highlighter,
+        breaks: Breaks,
+        code_wrapping: CodeWrapping,
+    ) -> Self {
         let index = LineIndex::new(text);
         let mut renderer = Renderer {
             text,
             width: width.max(1),
             lines: Vec::new(),
             highlighter,
+            code_wrapping,
         };
         renderer.blocks(&blocks::parse(text, breaks), "", "");
         while renderer.lines.last().is_some_and(is_blank) {
@@ -656,6 +675,7 @@ struct Renderer<'a> {
     width: usize,
     lines: Vec<Line>,
     highlighter: &'a Highlighter,
+    code_wrapping: CodeWrapping,
 }
 
 impl Renderer<'_> {
@@ -738,7 +758,7 @@ impl Renderer<'_> {
         }
     }
 
-    /// Code lines hard-wrap to the pane; a non-empty `lang` colours them.
+    /// Wrap code lines for this surface; a non-empty `lang` colours them.
     fn code(&mut self, text: &str, source: Range<usize>, lang: &str, first: &str, rest: &str) {
         let style = Style {
             face: Face::CodeBlock,
@@ -774,7 +794,10 @@ impl Renderer<'_> {
                     range.clone().or_else(|| Some(source.clone())),
                 )],
             };
-            let lines = wrap_hard_chunks(&chunks, self.avail(prefix));
+            let lines = match self.code_wrapping {
+                CodeWrapping::Hard => wrap_hard_chunks(&chunks, self.avail(prefix)),
+                CodeWrapping::AtWords => wrap_code_chunks(&chunks, self.avail(prefix)),
+            };
             self.emit(lines, prefix, rest);
             prefix = rest;
         }

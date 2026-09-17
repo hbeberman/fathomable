@@ -11,7 +11,8 @@ tags:
 
 # 0044 Width-bounded wrapping in every display mode
 
-Status: accepted (2026-09-02)
+Status: accepted (2026-09-02); amended 2026-09-17 so fenced blocks in
+thread messages prefer whitespace while file code remains hard-wrapped.
 
 ## Context
 
@@ -24,8 +25,10 @@ consistent rule: long lines wrap in every display mode.
 ## Decision
 
 - Every layout line is bounded by the text pane width. Prose continues to wrap
-  at whitespace; fenced code, source files, diffs, and table fallback rows
-  hard-wrap between grapheme clusters.
+  at whitespace; fenced code in files, source files, diffs, and table fallback
+  rows hard-wrap between grapheme clusters. A fenced block in a thread message
+  prefers whitespace and hard-wraps only a token wider than an empty row,
+  keeping prose and replacement examples readable in the narrower review lane.
 - Styled runs and source byte ranges survive wrapping. Only the first visual
   row from a source line gets its gutter number.
 - Nested code repeats its quote or list prefix on continuation rows. A wrapped
@@ -47,7 +50,8 @@ consistent rule: long lines wrap in every display mode.
   search, selection, annotations, and reload anchoring continue to use the
   existing source ranges.
 - Hard wrapping can split a source token or a very narrow table border, but it
-  never alters copied source text.
+  never alters copied source text. Message fences avoid that split when a
+  whitespace boundary is available.
 - This supersedes [0029](0029-horizontal-scroll.md) and its code-block
   exception in [0004](0004-markdown-rendering.md) and
   [0037](0037-markdown-in-threads.md).

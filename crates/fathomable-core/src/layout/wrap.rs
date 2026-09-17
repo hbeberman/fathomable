@@ -48,6 +48,14 @@ struct Word<'a> {
     width: usize,
 }
 
+#[derive(Debug)]
+struct Atom {
+    chunk: usize,
+    bytes: Range<usize>,
+    width: usize,
+    whitespace: bool,
+}
+
 fn words(chunk: &Chunk) -> Vec<Word<'_>> {
     let mut out = Vec::new();
     let text = &chunk.text;
@@ -226,4 +234,85 @@ pub(super) fn wrap_hard_chunks(chunks: &[Chunk], width: usize) -> Vec<Line> {
         lines[0].source.clone_from(&first.source);
     }
     lines
+}
+
+/// Wrap styled code at whitespace when possible, preserving hard wrapping for
+/// a token wider than the line.
+pub(super) fn wrap_code_chunks(chunks: &[Chunk], width: usize) -> Vec<Line> {
+    let width = width.max(1);
+    let atoms: Vec<Atom> = chunks
+        .iter()
+        .enumerate()
+        .flat_map(|(chunk, value)| {
+            graphemes(&value.text).map(move |(offset, grapheme)| Atom {
+                chunk,
+                bytes: offset..offset + grapheme.len(),
+                width: display_width(grapheme),
+                whitespace: grapheme.chars().all(char::is_whitespace),
+            })
+        })
+        .collect();
+    if atoms.is_empty() {
+        let mut line = Line::from_spans(Vec::new());
+        line.source = chunks.first().and_then(|chunk| chunk.source.clone());
+        return vec![line];
+    }
+
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < atoms.len() {
+        let mut end = start;
+        let mut used = 0;
+        let mut seen_content = false;
+        let mut last_break = None;
+        while end < atoms.len() {
+            let atom = &atoms[end];
+            if used > 0 && used + atom.width > width {
+                break;
+            }
+            used += atom.width;
+            end += 1;
+            if atom.whitespace {
+                if seen_content {
+                    last_break = Some(end);
+                }
+            } else {
+                seen_content = true;
+            }
+        }
+        let split = if end == atoms.len() {
+            end
+        } else {
+            last_break.unwrap_or(end)
+        };
+        lines.push(line_from_atoms(chunks, &atoms[start..split]));
+        start = split;
+    }
+    lines
+}
+
+fn line_from_atoms(chunks: &[Chunk], atoms: &[Atom]) -> Line {
+    let mut builder = Builder::default();
+    let mut start = 0;
+    while start < atoms.len() {
+        let chunk = atoms[start].chunk;
+        let bytes_start = atoms[start].bytes.start;
+        let mut end = start + 1;
+        let mut bytes_end = atoms[start].bytes.end;
+        while end < atoms.len() && atoms[end].chunk == chunk && atoms[end].bytes.start == bytes_end
+        {
+            bytes_end = atoms[end].bytes.end;
+            end += 1;
+        }
+        builder.push(&chunks[chunk], bytes_start..bytes_end);
+        start = end;
+    }
+    let mut line = builder.finish();
+    if line.source.is_none() {
+        line.source = atoms
+            .iter()
+            .filter_map(|atom| chunks[atom.chunk].sub_source(atom.bytes.clone()))
+            .reduce(|a, b| a.start.min(b.start)..a.end.max(b.end));
+    }
+    line
 }

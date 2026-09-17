@@ -9,7 +9,7 @@ use std::path::Path;
 
 use fathomable_core::diff::Whitespace;
 
-use super::{App, PickerKind};
+use super::{App, ComparisonSide, PickerKind};
 
 /// A side name retained by the layout and input code.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +113,30 @@ impl App {
 
     /// Apply the selected endpoint from a picker.
     pub(super) fn choose_diff_side_input(&mut self, kind: PickerKind, item: &str, input: &str) {
+        let side = match kind {
+            PickerKind::ComparisonBase => ComparisonSide::Base,
+            PickerKind::ComparisonTarget => ComparisonSide::Target,
+            _ => return,
+        };
+        match item {
+            "Tags..." => {
+                self.open_picker(PickerKind::ComparisonTags(side));
+                return;
+            }
+            "Branches..." => {
+                self.open_picker(PickerKind::ComparisonBranches(side));
+                return;
+            }
+            "Review points..." if side == ComparisonSide::Base => {
+                self.open_picker(PickerKind::ComparisonReviewPoints);
+                return;
+            }
+            "Advanced..." => {
+                self.open_picker(PickerKind::ComparisonAdvanced(side));
+                return;
+            }
+            _ => {}
+        }
         let value = if input.trim().is_empty() || item != input {
             item.to_owned()
         } else {

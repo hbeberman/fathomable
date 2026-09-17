@@ -2073,29 +2073,105 @@ fn draw_table(
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
+fn picker_row_cells(item: &str, width: usize) -> Vec<(char, Option<u32>)> {
+    let Some(id) = super::comparison::commit_id_from_row(item) else {
+        return item
+            .chars()
+            .enumerate()
+            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
+            .collect();
+    };
+    let rest = item
+        .strip_prefix(id)
+        .and_then(|rest| rest.strip_prefix(' '))
+        .unwrap_or_default();
+    let Some((subject, date)) = rest.rsplit_once(' ') else {
+        return item
+            .chars()
+            .enumerate()
+            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
+            .collect();
+    };
+    if date.len() != 10
+        || !date.bytes().enumerate().all(|(index, byte)| match index {
+            4 | 7 => byte == b'-',
+            _ => byte.is_ascii_digit(),
+        })
+    {
+        return item
+            .chars()
+            .enumerate()
+            .map(|(index, ch)| (ch, u32::try_from(index).ok()))
+            .collect();
+    }
+
+    let short = &id[..7];
+    let subject_start = id.chars().count() + 1;
+    let date_start = subject_start + subject.chars().count() + 1;
+    let mut cells = Vec::with_capacity(width);
+    for (index, ch) in short.chars().enumerate() {
+        cells.push((ch, u32::try_from(index).ok()));
+    }
+    if width < 18 {
+        return cells;
+    }
+    cells.push((' ', None));
+    if width == 18 {
+        for (index, ch) in date.chars().enumerate() {
+            cells.push((ch, u32::try_from(date_start + index).ok()));
+        }
+        return cells;
+    }
+
+    let subject_width = width - 19;
+    let fitted = fit_ellipsis(subject, subject_width);
+    let subject_len = subject.chars().count();
+    for (index, ch) in fitted.chars().enumerate() {
+        let source = (index < subject_len && ch != '…')
+            .then(|| u32::try_from(subject_start + index).ok())
+            .flatten();
+        cells.push((ch, source));
+    }
+    cells.push((' ', None));
+    for (index, ch) in date.chars().enumerate() {
+        cells.push((ch, u32::try_from(date_start + index).ok()));
+    }
+    cells
+}
+
 fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &PickerState) {
-    let width = area.width.saturating_sub(4).clamp(20, 90);
+    let width = area.width.saturating_sub(4).clamp(22, 90);
     let height = area.height.saturating_sub(2).clamp(3, 20);
     let popup = centred(area, width, height);
     let list_rows = usize::from(height).saturating_sub(2);
     let selected = picker.selected();
-    let first = selected.saturating_sub(list_rows.saturating_sub(1));
+    let first = picker.first_visible(list_rows);
     let title = match picker.kind() {
-        super::PickerKind::Files => "files",
-        super::PickerKind::AllFiles => "files (incl. ignored)",
-        super::PickerKind::Recent => "recent",
-        super::PickerKind::ComparisonControl => "comparison",
-        super::PickerKind::ComparisonBase => "comparison base",
-        super::PickerKind::ComparisonTarget => "comparison target",
-        super::PickerKind::ComparisonFocus => "comparison focus",
-        super::PickerKind::ReviewPointName => "review point name (optional)",
-        super::PickerKind::Worktree => "worktree",
+        super::PickerKind::Files => "files".to_owned(),
+        super::PickerKind::AllFiles => "files (incl. ignored)".to_owned(),
+        super::PickerKind::Recent => "recent".to_owned(),
+        super::PickerKind::ComparisonControl => "comparison".to_owned(),
+        super::PickerKind::ComparisonBase => "comparison base".to_owned(),
+        super::PickerKind::ComparisonTarget => "comparison target".to_owned(),
+        super::PickerKind::ComparisonTags(side) => format!("{} tags", side.label()),
+        super::PickerKind::ComparisonBranches(side) => format!("{} branches", side.label()),
+        super::PickerKind::ComparisonBranchCommits(side) => picker.scope().map_or_else(
+            || format!("{} branch commits", side.label()),
+            |branch| format!("{} · {branch}", side.label()),
+        ),
+        super::PickerKind::ComparisonReviewPoints => "comparison review points".to_owned(),
+        super::PickerKind::ComparisonAdvanced(side) => {
+            format!("{} advanced endpoints", side.label())
+        }
+        super::PickerKind::ComparisonFocus => "comparison focus".to_owned(),
+        super::PickerKind::ReviewPointName => "review point name (optional)".to_owned(),
+        super::PickerKind::Worktree => "worktree".to_owned(),
     };
     let title_line = Line::from(vec![
         Span::styled(format!(" {title} > "), theme.popup_key),
         Span::raw(picker.input().to_owned()),
         Span::styled(
-            format!("   {}/{} ", picker.matches().len(), picker.total()),
+            format!("   {}/{} ", picker.matched(), picker.total()),
             theme.info,
         ),
     ]);
@@ -2111,20 +2187,22 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         .take(list_rows)
     {
         let item = picker.item(m);
+        if item == super::comparison::PICKER_DIVIDER {
+            lines.push(Line::from(Span::styled("─".repeat(inner), theme.info)));
+            continue;
+        }
         let selection = Navigation::Active.selection(index == selected);
         let row_style = theme.popup.patch(selection.style(theme));
         let mut spans = vec![selection.marker(theme)];
         let mut used = 1;
-        for (char_index, ch) in item.chars().enumerate() {
+        for (ch, source_index) in picker_row_cells(item, inner.saturating_sub(1)) {
             let w = display_width(&ch.to_string());
             if used + w > inner {
                 break;
             }
 
-            let matched = m
-                .positions()
-                .binary_search(&u32::try_from(char_index).unwrap_or(u32::MAX))
-                .is_ok();
+            let matched = source_index
+                .is_some_and(|source_index| m.positions().binary_search(&source_index).is_ok());
             let style = if matched {
                 on_surface(row_style, theme.picker_match)
             } else {
@@ -2142,7 +2220,8 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), body);
-    let col = 1 + display_width(title) + 3 + display_width(picker.input());
+    let col = (1 + display_width(&title) + 3 + display_width(picker.input()))
+        .min(usize::from(popup.width.saturating_sub(1)));
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
 }
 
@@ -2611,7 +2690,7 @@ mod tests {
 
     use super::{
         ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
-        status_message_style,
+        picker_row_cells, status_message_style,
     };
 
     #[test]
@@ -2645,6 +2724,22 @@ mod tests {
     fn fitting_a_long_label_only_copies_its_visible_prefix() {
         let text = "label".repeat(20_000);
         assert_eq!(fit_ellipsis(&text, 6), "label…");
+    }
+
+    #[test]
+    fn commit_picker_rows_keep_short_ids_and_dates_visible() {
+        let row = format!(
+            "{} this subject is much too long for the picker 2026-09-16",
+            "1234567890abcdef1234567890abcdef12345678"
+        );
+        let rendered: String = picker_row_cells(&row, 36)
+            .into_iter()
+            .map(|(ch, _)| ch)
+            .collect();
+        assert_eq!(display_width(&rendered), 36);
+        assert!(rendered.starts_with("1234567 "));
+        assert!(rendered.contains('…'));
+        assert!(rendered.ends_with(" 2026-09-16"));
     }
 
     #[test]

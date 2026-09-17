@@ -88,9 +88,30 @@ commit batch means the parent before its first commit through its last
 commit. A root begins at the empty tree; a merge boundary must be selected
 explicitly.
 
-The endpoint picker lists local branches and tags resolved to pinned commit
-IDs, recent repository-wide commits, and accepts typed local Git revisions.
-It performs no fetch and no checkout mutation.
+The endpoint picker is hierarchical. Its first rows distinguish the working
+tree (files on disk), index (the staged next-commit snapshot), and `HEAD`
+(the checked-out commit), followed by **Tags...**, **Branches...**, base-only
+**Review points...**, and **Advanced...** for the empty tree. A horizontal
+divider separates those choices from at most 500 commits reachable from
+`HEAD`, newest first.
+
+Commit rows render as short ID, subject, and right-aligned UTC `YYYY-MM-DD`;
+the subject is ellipsized before the date is displaced. **Tags...** is a
+searchable list whose selection pins the tagged commit. **Branches...**
+searches local and remote-tracking branches, then opens up to 500 commits
+reachable from the selected branch. No picker fetches or checks out.
+
+Typing four or more hexadecimal characters searches older commit IDs without
+eagerly loading every old subject: the top-level picker walks commits reachable
+from local branches, remote-tracking branches, and tags, while a selected
+branch's commit picker remains within that branch. Longer prefixes refine the
+first result set in memory. Other typed local Git revisions and contiguous
+`first..last` batches remain available. Escape returns from a nested picker to
+its parent before closing the endpoint picker.
+
+Picker motion keeps three rows ahead in the direction of travel whenever the
+list boundary permits it. Reversing direction moves the cursor away from the
+old viewport edge instead of pinning it there.
 
 The comparison owns:
 

@@ -179,8 +179,12 @@ continuations. These tables contain the main bindings.
 | `Ctrl-w` | delete the prior word |
 | `Ctrl-k` | delete to line end |
 | `Ctrl-c` | clear a draft; close it when already empty |
+| `Esc` | return to the parent comparison picker, then close the picker |
 | `Space ?` | open **View keymap** |
 | `Space a w` | report that Wake agent is not implemented |
+
+Picker motion keeps three entries visible ahead of the cursor when possible.
+Reversing direction releases the cursor from the previous top or bottom edge.
 
 Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
 `:name NAME`, `:help`, `:doctor`, and `:about`.
@@ -198,15 +202,40 @@ changed paths drive the files pane, counts, gutters, `]g`/`[g`, and
 `]G`/`[G`. A deleted or historical-only path opens from its selected
 endpoint even when no matching file exists on disk.
 
-The base and target pickers offer:
+The base and target pickers begin with:
 
-- local branches and tags, labelled with their resolved commit IDs;
-- recent commits from the repository, not only the current file;
-- `working tree`, `index`, and `empty tree`;
-- any typed local revision or object ID.
+```text
+Working tree
+Index
+HEAD
+Tags...
+Branches...
+Review points...  (base only)
+Advanced...
+────────────────
+<short ID> <subject, ellipsized to fit> <YYYY-MM-DD>
+```
 
-The base picker also offers saved review points when the target is the
-working tree.
+The working tree is the current content on disk. The index is the staged
+snapshot the next commit would record; it is not `HEAD`. `HEAD` is the
+currently checked-out commit and resolves immediately to a pinned ID.
+**Advanced...** contains the empty-tree endpoint.
+
+Below the divider are at most 500 commits reachable from `HEAD`, newest
+first. The date is UTC and remains right-aligned while long subjects are
+ellipsized. **Tags...** opens a searchable tag list and selecting one pins
+its commit. **Branches...** searches both local and remote-tracking branches;
+selecting one opens its commits from newest to oldest. These menus use only
+local Git data and never fetch.
+
+Typing four or more hexadecimal characters in the top-level picker searches
+all matching commit IDs reachable from local branches, remote-tracking
+branches, and tags, including commits older than the displayed 500. The first
+four-character search walks IDs without decoding every old subject; extending
+the prefix filters that result in memory. In a selected branch's commit menu,
+the same search covers that branch's complete reachable history. Typed local
+revisions and object IDs remain accepted. Press `Esc` to return from commits
+to branches, or from another submenu to the main endpoint picker.
 
 Selecting `HEAD` resolves it immediately. If it names commit `B`, later
 commits do not move that endpoint. Use `Space d s` only when you deliberately

@@ -13,7 +13,7 @@ use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
 
 use super::input::bindings::Action;
-use super::{App, Focus, NoticeTone, Options, PickerKind, Popup};
+use super::{App, Focus, NoticeTone, Options, PickerKind, PickerState, Popup};
 
 fn fixture(name: &str) -> std::io::Result<TempDir> {
     let dir = TempDir::new(&format!("app-{name}"))?;
@@ -75,6 +75,40 @@ fn picker_items(app: &App) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+#[test]
+fn picker_scrolloff_tracks_direction_and_skips_dividers() {
+    let mut items: Vec<_> = (0..20).map(|index| format!("item {index}")).collect();
+    items.insert(5, super::comparison::PICKER_DIVIDER.to_owned());
+    let mut picker = PickerState::new(PickerKind::Files, items);
+
+    for _ in 0..10 {
+        picker.move_by(1);
+    }
+    assert_eq!(picker.selected(), 11, "the divider is not a cursor stop");
+    let first = picker.first_visible(8);
+    assert_eq!(picker.selected() - first, 4);
+    assert_eq!(
+        first + 8 - picker.selected() - 1,
+        3,
+        "three following rows remain visible while moving down"
+    );
+
+    picker.move_by(-1);
+    let first = picker.first_visible(8);
+    assert_eq!(
+        picker.selected() - first,
+        3,
+        "reversing upward releases the cursor from the lower edge"
+    );
+    picker.move_by(1);
+    let first = picker.first_visible(8);
+    assert_eq!(
+        picker.selected() - first,
+        4,
+        "reversing downward releases the cursor from the upper edge"
+    );
 }
 
 #[test]

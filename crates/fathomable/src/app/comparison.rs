@@ -13,13 +13,18 @@ use std::path::{Path, PathBuf};
 use fathomable_core::diff::{Compare, Comparison, PathChangeKind, PathState};
 use fathomable_core::review_points::{ReviewPoint, ReviewPointStore};
 use fathomable_core::status::{Changes, Entry, State as GitState, Status};
-use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
+use fathomable_core::workspace::{
+    Commit, CommitId, ComparisonEndpoint, RevisionChoiceKind, Workspace,
+};
 use serde::{Deserialize, Serialize};
 
 use super::App;
 use super::diff::{DiffBody, Text};
 
 const PREFERENCE_FILE: &str = "comparison.json";
+const COMMIT_PICKER_LIMIT: usize = 500;
+/// An impossible Git path used as the disabled divider row's identity.
+pub(crate) const PICKER_DIVIDER: &str = "\0";
 
 /// Which delta the viewer lists and renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,6 +368,24 @@ fn parse_endpoint(value: &str) -> Option<ComparisonEndpoint> {
     }
 }
 
+fn commit_picker_row(commit: &Commit) -> String {
+    let timestamp = super::draw::format_time(commit.time());
+    let date = timestamp.get(..10).unwrap_or(&timestamp);
+    format!("{} {} {date}", commit.hex(), commit.subject())
+}
+
+pub(crate) fn commit_id_from_row(row: &str) -> Option<&str> {
+    let id = row.split_whitespace().next()?;
+    (id.len() == 40 && id.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(id)
+}
+
+fn branch_name_from_row(row: &str) -> Option<&str> {
+    let row = row
+        .strip_prefix("remote branch ")
+        .or_else(|| row.strip_prefix("branch "))?;
+    Some(row.rsplit_once(" (").map_or(row, |(name, _)| name))
+}
+
 impl App {
     /// The effective comparison result, if the last refresh succeeded.
     pub(crate) fn comparison(&self) -> Option<&Comparison> {
@@ -435,32 +458,85 @@ impl App {
         self.comparison.persist();
     }
 
-    /// A repository-wide endpoint picker list.
+    /// The top-level endpoint picker list.
     pub(crate) fn comparison_choices(&mut self, target: bool) -> Vec<String> {
-        let mut choices = vec![
-            "working tree".to_owned(),
-            "index".to_owned(),
-            "empty tree".to_owned(),
-        ];
+        let mut choices = vec!["Working tree".to_owned()];
         if self.workspace.is_git() {
-            if let Ok(revisions) = self.workspace.revision_choices() {
-                choices.extend(revisions.into_iter().map(|choice| {
-                    format!("{} {} ({})", choice.kind(), choice.name(), choice.commit())
-                }));
+            choices.push("Index".to_owned());
+            if self.workspace.head_commit().is_some() {
+                choices.push("HEAD".to_owned());
             }
-            if let Ok(commits) = self.workspace.recent_commits(0, 50) {
-                choices.extend(commits.into_iter().map(|commit| {
-                    format!(
-                        "commit {} · {} · {}",
-                        commit.short(),
-                        commit.subject(),
-                        super::draw::format_age(commit.time(), fathomable_core::clock::now())
-                    )
-                }));
+            choices.push("Tags...".to_owned());
+            choices.push("Branches...".to_owned());
+        }
+        if !target && self.review_points.is_some() {
+            choices.push("Review points...".to_owned());
+        }
+        choices.push("Advanced...".to_owned());
+        choices.push(PICKER_DIVIDER.to_owned());
+        if self.workspace.head_commit().is_some() {
+            match self.workspace.recent_commits(0, COMMIT_PICKER_LIMIT) {
+                Ok(commits) => choices.extend(commits.iter().map(commit_picker_row)),
+                Err(error) => self.notice(format!("cannot list HEAD commits: {error}")),
             }
         }
-        if !target && let Some(store) = &self.review_points {
-            choices.extend(store.list().into_iter().map(|point| {
+        choices
+    }
+
+    /// Tags that can be pinned as one comparison side.
+    pub(crate) fn comparison_tag_choices(&mut self) -> Vec<String> {
+        match self.workspace.revision_choices() {
+            Ok(choices) => choices
+                .into_iter()
+                .filter(|choice| choice.kind() == RevisionChoiceKind::Tag)
+                .map(|choice| format!("tag {}", choice.name()))
+                .collect(),
+            Err(error) => {
+                self.notice(format!("cannot list tags: {error}"));
+                Vec::new()
+            }
+        }
+    }
+
+    /// Local and remote-tracking branches that can supply commit history.
+    pub(crate) fn comparison_branch_choices(&mut self) -> Vec<String> {
+        match self.workspace.revision_choices() {
+            Ok(choices) => choices
+                .into_iter()
+                .filter(|choice| choice.kind() == RevisionChoiceKind::Branch)
+                .map(|choice| {
+                    if choice.is_remote_branch() {
+                        format!("remote branch {}", choice.name())
+                    } else {
+                        format!("branch {}", choice.name())
+                    }
+                })
+                .collect(),
+            Err(error) => {
+                self.notice(format!("cannot list branches: {error}"));
+                Vec::new()
+            }
+        }
+    }
+
+    /// The newest commits reachable from `branch`.
+    pub(crate) fn comparison_branch_commit_choices(&mut self, branch: &str) -> Vec<String> {
+        match self.workspace.commits_from(branch, 0, COMMIT_PICKER_LIMIT) {
+            Ok(commits) => commits.iter().map(commit_picker_row).collect(),
+            Err(error) => {
+                self.notice(format!("cannot list commits on {branch}: {error}"));
+                Vec::new()
+            }
+        }
+    }
+
+    /// Saved review points offered through their own base-only menu.
+    pub(crate) fn comparison_review_point_choices(&self) -> Vec<String> {
+        self.review_points
+            .as_ref()
+            .into_iter()
+            .flat_map(ReviewPointStore::list)
+            .map(|point| {
                 format!(
                     "review point {}{}",
                     point.id(),
@@ -468,9 +544,59 @@ impl App {
                         .name()
                         .map_or_else(String::new, |name| format!(" ({name})"))
                 )
-            }));
+            })
+            .collect()
+    }
+
+    /// Resolve an ID-prefix search beyond the menu's bounded commit page.
+    pub(crate) fn complete_picker_commit_search(&mut self, search: &super::CommitSearch) {
+        let commits = match search.revision.as_deref() {
+            Some(revision) => self
+                .workspace
+                .commits_from_matching_prefix(revision, &search.prefix),
+            None => self.workspace.commits_matching_prefix(&search.prefix),
+        };
+        match commits {
+            Ok(commits) => {
+                let rows = commits.iter().map(commit_picker_row).collect();
+                if let Some(picker) = self.picker_mut() {
+                    picker.set_commit_search(&search.prefix, rows);
+                }
+            }
+            Err(error) => self.notice(format!("cannot search commit IDs: {error}")),
         }
-        choices
+    }
+
+    /// Continue or complete one nested comparison picker.
+    pub(crate) fn choose_nested_comparison(
+        &mut self,
+        kind: super::PickerKind,
+        item: &str,
+        input: &str,
+    ) {
+        match kind {
+            super::PickerKind::ComparisonBranches(side) => {
+                let Some(branch) = branch_name_from_row(item) else {
+                    self.notice("choose a branch");
+                    return;
+                };
+                let choices = self.comparison_branch_commit_choices(branch);
+                self.open_scoped_picker(
+                    super::PickerKind::ComparisonBranchCommits(side),
+                    choices,
+                    Some(branch.to_owned()),
+                );
+            }
+            super::PickerKind::ComparisonTags(side)
+            | super::PickerKind::ComparisonBranchCommits(side)
+            | super::PickerKind::ComparisonAdvanced(side) => {
+                self.choose_diff_side_input(side.picker_kind(), item, input);
+            }
+            super::PickerKind::ComparisonReviewPoints => {
+                self.choose_diff_side_input(super::PickerKind::ComparisonBase, item, input);
+            }
+            _ => {}
+        }
     }
 
     /// The single control's actions.
@@ -535,7 +661,17 @@ impl App {
             }
             return Err(format!("review point {id} is unavailable"));
         }
-        let typed_revision = if let Some(value) = value.strip_prefix("commit ") {
+        if let Some(name) = value.strip_prefix("tag ") {
+            let revision = format!("refs/tags/{name}");
+            return self
+                .workspace
+                .resolve_revision(&revision)
+                .map(|commit| ComparisonEndpoint::Commit(commit.id()))
+                .map_err(|error| format!("cannot resolve tag `{name}`: {error}"));
+        }
+        let typed_revision = if let Some(id) = commit_id_from_row(value) {
+            id
+        } else if let Some(value) = value.strip_prefix("commit ") {
             value.split(" · ").next().unwrap_or(value).trim()
         } else if (value.starts_with("branch ") || value.starts_with("tag "))
             && let Some((_, suffix)) = value.rsplit_once(" (")

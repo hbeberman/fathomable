@@ -145,6 +145,16 @@ pub(crate) enum PickerKind {
     ComparisonBase,
     /// The target endpoint of the viewer-wide comparison.
     ComparisonTarget,
+    /// Tags offered for one comparison side.
+    ComparisonTags(ComparisonSide),
+    /// Local and remote-tracking branches offered for one comparison side.
+    ComparisonBranches(ComparisonSide),
+    /// Commits reachable from one selected branch.
+    ComparisonBranchCommits(ComparisonSide),
+    /// Saved review points offered as comparison bases.
+    ComparisonReviewPoints,
+    /// Uncommon endpoint choices for one comparison side.
+    ComparisonAdvanced(ComparisonSide),
     /// The All changes or Since review point focus.
     ComparisonFocus,
     /// Optional name for a new workspace review point.
@@ -153,26 +163,81 @@ pub(crate) enum PickerKind {
     Worktree,
 }
 
+/// Which side a nested comparison picker will replace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ComparisonSide {
+    Base,
+    Target,
+}
+
+impl ComparisonSide {
+    const fn picker_kind(self) -> PickerKind {
+        match self {
+            Self::Base => PickerKind::ComparisonBase,
+            Self::Target => PickerKind::ComparisonTarget,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Base => "base",
+            Self::Target => "target",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerDirection {
+    Still,
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone)]
+struct PickerSearch {
+    prefix: String,
+    rows: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommitSearch {
+    revision: Option<String>,
+    prefix: String,
+}
+
 /// The open picker popup.
 #[derive(Debug)]
 pub(crate) struct PickerState {
     kind: PickerKind,
     picker: Picker,
+    base_items: Vec<String>,
     input: String,
     matches: Vec<Match>,
     selected: usize,
+    direction: PickerDirection,
+    scope: Option<String>,
+    id_search: Option<PickerSearch>,
 }
 
 impl PickerState {
+    #[cfg(test)]
     fn new(kind: PickerKind, items: Vec<String>) -> Self {
+        Self::scoped(kind, items, None)
+    }
+
+    fn scoped(kind: PickerKind, items: Vec<String>, scope: Option<String>) -> Self {
         let mut picker = Picker::new(items);
         let matches = picker.query("");
         Self {
             kind,
+            base_items: picker.items().to_vec(),
             picker,
             input: String::new(),
             matches,
             selected: 0,
+            direction: PickerDirection::Still,
+            scope,
+            id_search: None,
         }
     }
 
@@ -192,18 +257,166 @@ impl PickerState {
         self.selected
     }
 
+    pub(crate) fn scope(&self) -> Option<&str> {
+        self.scope.as_deref()
+    }
+
     pub(crate) fn item(&self, m: &Match) -> &str {
         &self.picker.items()[m.index()]
     }
 
     /// Number of candidates before filtering.
     pub(crate) fn total(&self) -> usize {
-        self.picker.items().len()
+        self.picker
+            .items()
+            .iter()
+            .filter(|item| item.as_str() != comparison::PICKER_DIVIDER)
+            .count()
+    }
+
+    pub(crate) fn matched(&self) -> usize {
+        self.matches
+            .iter()
+            .filter(|item| self.selectable(item))
+            .count()
+    }
+
+    pub(crate) fn first_visible(&self, rows: usize) -> usize {
+        if rows == 0 {
+            return 0;
+        }
+        let margin = 3.min(rows.saturating_sub(1));
+        let last_first = self.matches.len().saturating_sub(rows);
+        match self.direction {
+            PickerDirection::Still => 0,
+            PickerDirection::Up => self.selected.saturating_sub(margin).min(last_first),
+            PickerDirection::Down => self
+                .selected
+                .saturating_add(margin + 1)
+                .saturating_sub(rows)
+                .min(last_first),
+        }
+    }
+
+    pub(crate) fn selectable(&self, item: &Match) -> bool {
+        self.item(item) != comparison::PICKER_DIVIDER
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        self.direction = match delta.cmp(&0) {
+            std::cmp::Ordering::Less => PickerDirection::Up,
+            std::cmp::Ordering::Equal => PickerDirection::Still,
+            std::cmp::Ordering::Greater => PickerDirection::Down,
+        };
+        let Some(_) = self.matches.get(self.selected) else {
+            return;
+        };
+        let step = delta.signum();
+        if step == 0 {
+            return;
+        }
+        for _ in 0..delta.unsigned_abs() {
+            let mut candidate = self.selected;
+            loop {
+                let next = candidate.saturating_add_signed(step);
+                if next == candidate || next >= self.matches.len() {
+                    return;
+                }
+                candidate = next;
+                if self
+                    .matches
+                    .get(candidate)
+                    .is_some_and(|item| self.selectable(item))
+                {
+                    self.selected = candidate;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn commit_search_request(&mut self) -> Option<CommitSearch> {
+        let revision = match self.kind {
+            PickerKind::ComparisonBase | PickerKind::ComparisonTarget => None,
+            PickerKind::ComparisonBranchCommits(_) => self.scope.clone(),
+            _ => {
+                self.requery();
+                return None;
+            }
+        };
+        let prefix = self.input.trim().to_ascii_lowercase();
+        if prefix.len() < 4 || !prefix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            self.id_search = None;
+            self.replace_items(Vec::new());
+            return None;
+        }
+        if let Some(search) = &self.id_search
+            && prefix.starts_with(&search.prefix)
+        {
+            let rows = search
+                .rows
+                .iter()
+                .filter(|row| row.starts_with(&prefix))
+                .cloned()
+                .collect();
+            self.replace_commit_items(&prefix, rows);
+            return None;
+        }
+        self.requery();
+        Some(CommitSearch { revision, prefix })
+    }
+
+    fn set_commit_search(&mut self, prefix: &str, rows: Vec<String>) {
+        self.id_search = Some(PickerSearch {
+            prefix: prefix.to_owned(),
+            rows: rows.clone(),
+        });
+        self.replace_commit_items(prefix, rows);
+    }
+
+    fn replace_items(&mut self, extra: Vec<String>) {
+        let mut items = self.base_items.clone();
+        append_unique_commits(&mut items, extra);
+        self.picker = Picker::new(items);
+        self.requery();
+    }
+
+    fn replace_commit_items(&mut self, prefix: &str, extra: Vec<String>) {
+        let mut items: Vec<_> = self
+            .base_items
+            .iter()
+            .filter(|item| {
+                comparison::commit_id_from_row(item).is_some_and(|id| id.starts_with(prefix))
+            })
+            .cloned()
+            .collect();
+        append_unique_commits(&mut items, extra);
+        self.picker = Picker::new(items);
+        self.requery();
     }
 
     fn requery(&mut self) {
         self.matches = self.picker.query(&self.input);
-        self.selected = 0;
+        self.selected = self
+            .matches
+            .iter()
+            .position(|item| self.selectable(item))
+            .unwrap_or(0);
+        self.direction = PickerDirection::Still;
+    }
+}
+
+fn append_unique_commits(items: &mut Vec<String>, extra: Vec<String>) {
+    for item in extra {
+        let id = comparison::commit_id_from_row(&item);
+        let duplicate = id.is_some_and(|id| {
+            items
+                .iter()
+                .any(|candidate| comparison::commit_id_from_row(candidate) == Some(id))
+        });
+        if !duplicate {
+            items.push(item);
+        }
     }
 }
 
@@ -2179,14 +2392,28 @@ impl App {
                 .collect(),
             PickerKind::ComparisonBase => self.comparison_choices(false),
             PickerKind::ComparisonTarget => self.comparison_choices(true),
+            PickerKind::ComparisonTags(_) => self.comparison_tag_choices(),
+            PickerKind::ComparisonBranches(_) => self.comparison_branch_choices(),
+            PickerKind::ComparisonBranchCommits(_) => Vec::new(),
+            PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
+            PickerKind::ComparisonAdvanced(_) => vec!["Empty tree".to_owned()],
             PickerKind::ComparisonControl => self.comparison_control_choices(),
             PickerKind::ComparisonFocus => self.comparison_focus_choices(),
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
             PickerKind::Worktree => self.worktree_choices(),
         };
+        self.open_scoped_picker(kind, items, None);
+    }
+
+    pub(crate) fn open_scoped_picker(
+        &mut self,
+        kind: PickerKind,
+        items: Vec<String>,
+        scope: Option<String>,
+    ) {
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.park_draft();
-        self.popup = Some(Popup::Picker(PickerState::new(kind, items)));
+        self.popup = Some(Popup::Picker(PickerState::scoped(kind, items, scope)));
     }
 
     fn index(&mut self, filter: Filter) -> Vec<String> {
@@ -2216,30 +2443,58 @@ impl App {
     }
 
     pub(crate) fn picker_char(&mut self, ch: char) {
-        if let Some(picker) = self.picker_mut() {
+        let search = if let Some(picker) = self.picker_mut() {
             picker.input.push(ch);
-            picker.requery();
+            picker.commit_search_request()
+        } else {
+            None
+        };
+        if let Some(search) = search {
+            self.complete_picker_commit_search(&search);
         }
     }
 
     pub(crate) fn picker_backspace(&mut self) {
-        if let Some(picker) = self.picker_mut() {
+        let search = if let Some(picker) = self.picker_mut() {
             picker.input.pop();
-            picker.requery();
+            picker.commit_search_request()
+        } else {
+            None
+        };
+        if let Some(search) = search {
+            self.complete_picker_commit_search(&search);
         }
     }
 
     pub(crate) fn picker_move(&mut self, delta: isize) {
         if let Some(picker) = self.picker_mut() {
-            let last = picker.matches.len().saturating_sub(1);
-            picker.selected = picker.selected.saturating_add_signed(delta).min(last);
+            picker.move_by(delta);
+        }
+    }
+
+    pub(crate) fn picker_escape(&mut self) {
+        let parent = self.picker_mut().map(|picker| match picker.kind {
+            PickerKind::ComparisonBranchCommits(side) => Some(PickerKind::ComparisonBranches(side)),
+            PickerKind::ComparisonTags(side)
+            | PickerKind::ComparisonBranches(side)
+            | PickerKind::ComparisonAdvanced(side) => Some(side.picker_kind()),
+            PickerKind::ComparisonReviewPoints => Some(PickerKind::ComparisonBase),
+            _ => None,
+        });
+        match parent.flatten() {
+            Some(kind) => self.open_picker(kind),
+            None => self.close_popup(),
         }
     }
 
     /// Enter in the picker: open the file, or show the thread.
     pub(crate) fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
-            if let Some(m) = picker.matches.get(picker.selected) {
+            if let Some(m) = picker
+                .matches
+                .get(picker.selected)
+                .filter(|item| picker.selectable(item))
+            {
                 Some((
                     picker.kind,
                     picker.item(m).to_owned(),
@@ -2249,6 +2504,7 @@ impl App {
                 picker.kind,
                 PickerKind::ComparisonBase
                     | PickerKind::ComparisonTarget
+                    | PickerKind::ComparisonBranchCommits(_)
                     | PickerKind::ReviewPointName
             ) && !picker.input().trim().is_empty()
             {
@@ -2272,6 +2528,17 @@ impl App {
                 input,
             )) => {
                 self.choose_diff_side_input(kind, &item, &input);
+            }
+            Some((
+                kind @ (PickerKind::ComparisonTags(_)
+                | PickerKind::ComparisonBranches(_)
+                | PickerKind::ComparisonBranchCommits(_)
+                | PickerKind::ComparisonReviewPoints
+                | PickerKind::ComparisonAdvanced(_)),
+                item,
+                input,
+            )) => {
+                self.choose_nested_comparison(kind, &item, &input);
             }
             Some((PickerKind::ComparisonControl, item, _)) => {
                 self.choose_comparison_control(&item);

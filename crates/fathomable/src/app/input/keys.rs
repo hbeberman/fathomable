@@ -493,7 +493,7 @@ impl App {
 
     fn act_picker(&mut self, action: Action) -> Effect {
         match action {
-            Action::Escape => self.close_popup(),
+            Action::Escape => self.picker_escape(),
             Action::Confirm => self.picker_confirm(),
             Action::Backspace => self.picker_backspace(),
             Action::MoveDown => self.picker_move(1),

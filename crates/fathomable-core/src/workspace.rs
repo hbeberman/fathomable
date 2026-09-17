@@ -197,7 +197,7 @@ impl fmt::Display for CommitIdError {
 
 impl std::error::Error for CommitIdError {}
 
-/// The kind of named local revision offered to a viewer picker.
+/// The kind of named revision offered to a viewer picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RevisionChoiceKind {
     /// A local branch under `refs/heads`.
@@ -215,12 +215,13 @@ impl fmt::Display for RevisionChoiceKind {
     }
 }
 
-/// A named local branch or tag resolved to an immutable commit ID.
+/// A named branch or tag resolved to an immutable commit ID.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RevisionChoice {
     kind: RevisionChoiceKind,
     name: String,
     commit: CommitId,
+    remote: bool,
 }
 
 impl RevisionChoice {
@@ -241,11 +242,21 @@ impl RevisionChoice {
     pub const fn commit(&self) -> &CommitId {
         &self.commit
     }
+
+    /// Whether this branch is a remote-tracking branch.
+    #[must_use]
+    pub const fn is_remote_branch(&self) -> bool {
+        matches!(self.kind, RevisionChoiceKind::Branch) && self.remote
+    }
 }
 
 impl fmt::Display for RevisionChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} {} ({})", self.kind, self.name, self.commit.short())
+        if self.is_remote_branch() {
+            write!(f, "remote branch {} ({})", self.name, self.commit.short())
+        } else {
+            write!(f, "{} {} ({})", self.kind, self.name, self.commit.short())
+        }
     }
 }
 
@@ -540,16 +551,17 @@ impl Workspace {
         commit_record(&git.repo, id).map_err(|message| self.revision_error(revision, &message))
     }
 
-    /// Enumerate local branches and tags resolved to pinned commit IDs.
+    /// Enumerate branches and tags resolved to pinned commit IDs.
     ///
     /// Lightweight and annotated tags are both peeled to the commit they
-    /// name. Choices are ordered by kind, then display name, then commit ID.
+    /// name. Local and remote-tracking branches are included without fetching.
+    /// Choices are ordered by kind, then display name, then commit ID.
     /// Typed revisions and recent commits remain available through
     /// [`Workspace::resolve_revision`] and [`Workspace::recent_commits`].
     ///
     /// # Errors
     ///
-    /// Returns [`WorkspaceError`] when local reference enumeration fails.
+    /// Returns [`WorkspaceError`] when reference enumeration fails.
     /// Names that do not resolve to commits are omitted from the picker.
     pub fn revision_choices(&self) -> Result<Vec<RevisionChoice>, WorkspaceError> {
         let Some(git) = self.ignore.as_ref() else {
@@ -571,7 +583,26 @@ impl Workspace {
                 path: self.root.clone(),
                 message: format!("cannot read a local branch reference: {error}"),
             })?;
-            if let Some(choice) = named_revision_choice(&mut reference, RevisionChoiceKind::Branch)
+            if let Some(choice) =
+                named_revision_choice(&mut reference, RevisionChoiceKind::Branch, false)
+            {
+                choices.push(choice);
+            }
+        }
+        let remote_branches = references
+            .remote_branches()
+            .map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot enumerate remote branches: {error}"),
+            })?;
+        for reference in remote_branches {
+            let mut reference = reference.map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read a remote branch reference: {error}"),
+            })?;
+            if let Some(choice) =
+                named_revision_choice(&mut reference, RevisionChoiceKind::Branch, true)
+                && !choice.name.ends_with("/HEAD")
             {
                 choices.push(choice);
             }
@@ -585,7 +616,9 @@ impl Workspace {
                 path: self.root.clone(),
                 message: format!("cannot read a local tag reference: {error}"),
             })?;
-            if let Some(choice) = named_revision_choice(&mut reference, RevisionChoiceKind::Tag) {
+            if let Some(choice) =
+                named_revision_choice(&mut reference, RevisionChoiceKind::Tag, false)
+            {
                 choices.push(choice);
             }
         }
@@ -598,7 +631,7 @@ impl Workspace {
         Ok(choices)
     }
 
-    /// Discover bounded repository-wide commits, newest first.
+    /// Discover bounded commits reachable from `HEAD`, newest first.
     ///
     /// `offset` and `limit` support paging without restricting later
     /// resolution of an older revision by its branch, tag, or object ID.
@@ -612,40 +645,153 @@ impl Workspace {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<Commit>, WorkspaceError> {
-        let Some(git) = self.ignore.as_ref() else {
+        if self.head_commit().is_none() {
             return Ok(Vec::new());
-        };
+        }
+        self.commits_from("HEAD", offset, limit)
+    }
+
+    /// Discover commits reachable from `revision`, newest first.
+    ///
+    /// The walk is local and bounded by `offset` and `limit`. It never fetches
+    /// or mutates references.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `revision` cannot be resolved or its
+    /// history cannot be read.
+    pub fn commits_from(
+        &self,
+        revision: impl AsRef<str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Commit>, WorkspaceError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let Ok(head) = git.repo.head_id() else {
+        let commit = self.resolve_revision(revision.as_ref())?;
+        let tip = ObjectId::from_hex(commit.hex().as_bytes()).map_err(|error| {
+            self.revision_error(
+                revision.as_ref(),
+                &format!("resolved commit ID is invalid: {error}"),
+            )
+        })?;
+        self.walk_commits([tip], offset, Some(limit), None)
+    }
+
+    /// Find reachable commits whose object IDs start with `prefix`.
+    ///
+    /// Every local branch, remote-tracking branch, and tag contributes a walk
+    /// tip. Commit objects are decoded only after their IDs match.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `prefix` is not hexadecimal or local
+    /// reference/history enumeration fails.
+    pub fn commits_matching_prefix(
+        &self,
+        prefix: impl AsRef<str>,
+    ) -> Result<Vec<Commit>, WorkspaceError> {
+        let prefix = prefix.as_ref();
+        self.validate_commit_prefix(prefix)?;
+        let mut tips = Vec::new();
+        if let Some(head) = self.head_commit() {
+            tips.push(ObjectId::from_hex(head.as_bytes()).map_err(|error| {
+                self.revision_error(prefix, &format!("HEAD commit ID is invalid: {error}"))
+            })?);
+        }
+        for choice in self.revision_choices()? {
+            tips.push(
+                ObjectId::from_hex(choice.commit().as_str().as_bytes()).map_err(|error| {
+                    self.revision_error(prefix, &format!("reference commit ID is invalid: {error}"))
+                })?,
+            );
+        }
+        tips.sort();
+        tips.dedup();
+        self.walk_commits(tips, 0, None, Some(prefix))
+    }
+
+    /// Find commits under `revision` whose object IDs start with `prefix`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when either input is invalid or history
+    /// cannot be read.
+    pub fn commits_from_matching_prefix(
+        &self,
+        revision: impl AsRef<str>,
+        prefix: impl AsRef<str>,
+    ) -> Result<Vec<Commit>, WorkspaceError> {
+        let prefix = prefix.as_ref();
+        self.validate_commit_prefix(prefix)?;
+        let commit = self.resolve_revision(revision.as_ref())?;
+        let tip = ObjectId::from_hex(commit.hex().as_bytes()).map_err(|error| {
+            self.revision_error(
+                revision.as_ref(),
+                &format!("resolved commit ID is invalid: {error}"),
+            )
+        })?;
+        self.walk_commits([tip], 0, None, Some(prefix))
+    }
+
+    fn validate_commit_prefix(&self, prefix: &str) -> Result<(), WorkspaceError> {
+        if prefix.is_empty()
+            || prefix.len() > 40
+            || !prefix.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(
+                self.revision_error(prefix, "commit prefix must be 1-40 hexadecimal digits")
+            );
+        }
+        Ok(())
+    }
+
+    fn walk_commits(
+        &self,
+        tips: impl IntoIterator<Item = ObjectId>,
+        offset: usize,
+        limit: Option<usize>,
+        prefix: Option<&str>,
+    ) -> Result<Vec<Commit>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
             return Ok(Vec::new());
         };
+        let tips: Vec<_> = tips.into_iter().collect();
+        if tips.is_empty() {
+            return Ok(Vec::new());
+        }
         let walk = git
             .repo
-            .rev_walk(repository_commit_tips(&git.repo, head.detach()))
+            .rev_walk(tips)
             .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
             .all()
             .map_err(|error| WorkspaceError {
                 path: self.root.clone(),
-                message: format!("cannot discover repository commits: {error}"),
+                message: format!("cannot discover commit history: {error}"),
             })?;
-        let mut commits = Vec::with_capacity(limit);
-        for (index, info) in walk.enumerate() {
-            if index < offset {
-                continue;
-            }
-            if commits.len() >= limit {
-                break;
-            }
+        let mut commits = limit.map_or_else(Vec::new, Vec::with_capacity);
+        let mut seen = 0;
+        for info in walk {
             let info = info.map_err(|error| WorkspaceError {
                 path: self.root.clone(),
-                message: format!("cannot read repository history: {error}"),
+                message: format!("cannot read commit history: {error}"),
             })?;
+            let hex = info.id.to_hex().to_string();
+            if prefix.is_some_and(|prefix| !hex.starts_with(prefix)) {
+                continue;
+            }
+            if seen < offset {
+                seen += 1;
+                continue;
+            }
+            if limit.is_some_and(|limit| commits.len() >= limit) {
+                break;
+            }
             commits.push(
                 commit_record(&git.repo, info.id).map_err(|message| WorkspaceError {
                     path: self.root.clone(),
-                    message: format!("cannot read commit {}: {message}", info.id.to_hex()),
+                    message: format!("cannot read commit {hex}: {message}"),
                 })?,
             );
         }
@@ -2122,6 +2268,7 @@ fn commit_record(repo: &gix::Repository, id: ObjectId) -> Result<Commit, String>
 fn named_revision_choice(
     reference: &mut gix::Reference<'_>,
     kind: RevisionChoiceKind,
+    remote: bool,
 ) -> Option<RevisionChoice> {
     let name = reference.name().shorten().to_str_lossy().into_owned();
     let commit = match reference.peel_to_commit() {
@@ -2139,38 +2286,8 @@ fn named_revision_choice(
         kind,
         name,
         commit: CommitId(commit.id.to_hex().to_string()),
+        remote,
     })
-}
-
-fn repository_commit_tips(repo: &gix::Repository, head: ObjectId) -> Vec<ObjectId> {
-    let mut tips = vec![head];
-    let Ok(references) = repo.references() else {
-        return tips;
-    };
-    if let Ok(branches) = references.local_branches() {
-        for reference in branches.flatten() {
-            let mut reference = reference;
-            if let Ok(commit) = reference.peel_to_commit() {
-                tips.push(commit.id);
-            }
-        }
-    }
-    let Ok(references) = repo.references() else {
-        tips.sort();
-        tips.dedup();
-        return tips;
-    };
-    if let Ok(tags) = references.tags() {
-        for reference in tags.flatten() {
-            let mut reference = reference;
-            if let Ok(commit) = reference.peel_to_commit() {
-                tips.push(commit.id);
-            }
-        }
-    }
-    tips.sort();
-    tips.dedup();
-    tips
 }
 
 fn collect_endpoint_tree(
@@ -2838,6 +2955,14 @@ mod tests {
             repo.head_tree_id()?.detach(),
             Some(commit_object),
         )?;
+        repo.commit_as(
+            signature,
+            signature,
+            "refs/remotes/origin/review",
+            "remote review",
+            repo.head_tree_id()?.detach(),
+            Some(commit_object),
+        )?;
         repo.tag_reference(
             "lightweight",
             commit_object,
@@ -2870,6 +2995,7 @@ mod tests {
             vec![
                 (RevisionChoiceKind::Branch, "feature".to_owned()),
                 (RevisionChoiceKind::Branch, "main".to_owned()),
+                (RevisionChoiceKind::Branch, "origin/review".to_owned()),
                 (RevisionChoiceKind::Tag, "annotated".to_owned()),
                 (RevisionChoiceKind::Tag, "lightweight".to_owned()),
             ]
@@ -2888,11 +3014,26 @@ mod tests {
                 .map(RevisionChoice::kind),
             Some(RevisionChoiceKind::Branch)
         );
+        assert_eq!(
+            choices
+                .iter()
+                .find(|choice| choice.name() == "origin/review")
+                .map(RevisionChoice::kind),
+            Some(RevisionChoiceKind::Branch)
+        );
+        assert!(
+            choices
+                .iter()
+                .find(|choice| choice.name() == "origin/review")
+                .is_some_and(RevisionChoice::is_remote_branch)
+        );
+        assert_eq!(workspace.commits_from("origin/review", 0, 500)?.len(), 2);
         Ok(())
     }
 
     #[test]
-    fn recent_commits_and_batches_are_repository_wide() -> Result<(), Box<dyn std::error::Error>> {
+    fn recent_head_commits_and_batches_use_explicit_history()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new("workspace-commit-picker")?;
         init(&dir.0)?;
         commit_and_stage(&dir.0, &[("a.md", "0\n")])?;
@@ -2902,6 +3043,16 @@ mod tests {
         let last = head(&dir.0)?;
         let workspace = Workspace::discover(&dir.0)?;
         assert_eq!(workspace.recent_commits(0, 2)?.len(), 2);
+        assert_eq!(workspace.commits_from("HEAD", 0, 500)?.len(), 3);
+        assert_eq!(workspace.commits_from("HEAD~1", 0, 500)?.len(), 2);
+        assert_eq!(
+            workspace.commits_matching_prefix(&first.as_str()[..8])?[0].id(),
+            first
+        );
+        assert_eq!(
+            workspace.commits_from_matching_prefix("HEAD", &last.as_str()[..8])?[0].id(),
+            last
+        );
         let batch = workspace.contiguous_batch(&first, &last)?;
         assert_eq!(batch.before(), &ComparisonEndpoint::EmptyTree);
         assert_eq!(batch.after(), &ComparisonEndpoint::Commit(last));

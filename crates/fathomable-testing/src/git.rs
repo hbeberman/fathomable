@@ -1,4 +1,4 @@
-//! Git repositories for tests: init, commit, stage, and amend through
+//! Git repositories for tests: init, commit, stage, tag, and amend through
 //! `gix`, with the workspace's own open options so `GIT_*` overrides in
 //! the environment are ignored.
 
@@ -97,6 +97,22 @@ pub fn commit_and_stage(root: &Path, files: &[(&str, &str)]) -> Result<(), GitEr
     let author = signature("0 +0000");
     git(repo.commit_as(author, author, "HEAD", "commit", tree, parent))?;
     stage(root, files)
+}
+
+/// Create a lightweight tag named `name` at `HEAD`.
+///
+/// # Errors
+///
+/// Returns [`GitError`] when the repository, `HEAD`, or tag cannot be written.
+pub fn tag(root: &Path, name: &str) -> Result<(), GitError> {
+    let repo = git(gix::open_opts(root, open_options()))?;
+    let head = git(repo.head_id())?.detach();
+    git(repo.tag_reference(
+        name,
+        head,
+        gix::refs::transaction::PreviousValue::MustNotExist,
+    ))?;
+    Ok(())
 }
 
 /// Replace the index with `files`.

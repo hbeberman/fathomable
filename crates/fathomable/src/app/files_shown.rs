@@ -131,11 +131,13 @@ mod tests {
 
     use anyhow::Context as _;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use fathomable_core::theme::Theme as CoreTheme;
     use fathomable_testing::{TempDir, git};
 
+    use crate::app::draw::Theme;
     use crate::app::input::bindings::Where;
     use crate::app::input::mouse::handle_mouse;
-    use crate::app::testing::{self, AppBuilder, press, screen};
+    use crate::app::testing::{self, AppBuilder, buffer, press, screen};
     use crate::app::{App, Focus};
 
     /// A repository with a clean `src/lib.rs`, a modified `README.md`,
@@ -377,6 +379,39 @@ mod tests {
             },
         );
         assert!(app.menu().is_none(), "right-click leaves the header inert");
+        Ok(())
+    }
+
+    #[test]
+    fn the_files_title_uses_the_shared_hover_background() -> anyhow::Result<()> {
+        let dir = fixture("title-hover")?;
+        let mut app = AppBuilder::new(&dir).build()?;
+        app.show_tree();
+        let row = app.pane_top();
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 2,
+                row: u16::try_from(row)?,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+
+        let cells = buffer(&app)?;
+        let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+        for column in 0..6 {
+            assert_eq!(
+                Some(cells[(column, u16::try_from(row)?)].bg),
+                theme.list_hover.bg,
+                "Files title cell {column}"
+            );
+        }
+        assert_eq!(
+            Some(cells[(6, u16::try_from(row)?)].bg),
+            theme.header.bg,
+            "hover stops at the title hit region"
+        );
         Ok(())
     }
 }

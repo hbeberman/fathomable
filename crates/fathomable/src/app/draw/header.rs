@@ -336,6 +336,16 @@ impl Header {
     /// hints joined by the separator, the key dim and its action dimmer
     /// still, padded to `width` so the surface reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
+        self.line_with_left_hover(theme, width, false)
+    }
+
+    /// Draw the header with hover behind its clickable left label.
+    pub(super) fn line_with_left_hover(
+        &self,
+        theme: &Theme,
+        width: usize,
+        left_hovered: bool,
+    ) -> Line<'static> {
         let tone_style = |tone: Tone| match tone {
             Tone::Key => theme.popup_key,
             Tone::Info => theme.info,
@@ -347,7 +357,14 @@ impl Header {
         let mut spans: Vec<Span<'static>> = self
             .left
             .iter()
-            .map(|(text, tone)| Span::styled(text.clone(), tone_style(*tone)))
+            .map(|(text, tone)| {
+                let style = if left_hovered {
+                    tone_style(*tone).patch(theme.list_hover)
+                } else {
+                    tone_style(*tone)
+                };
+                Span::styled(text.clone(), style)
+            })
             .collect();
         let mut at = self.left_width();
         if let Some((start, hints, tail, form)) = self.shown(width) {

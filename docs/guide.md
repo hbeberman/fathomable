@@ -186,9 +186,10 @@ At the beginning or end of the list, the cursor can move closer to that edge.
 Hovering over a picker row highlights it, clicking chooses it, and the mouse
 wheel moves the selection and list.
 
-The Files header reads `Files` at the left. Clicking that word opens the
-pane's **Only changed/All files**, **Hide/Show untracked**, and
-**Show/Hide ignored** settings; right-clicking the header does nothing.
+The Files header reads `Files` at the left. That word takes the shared hover
+background under the pointer; clicking it opens the pane's **Only changed/All
+files**, **Hide/Show untracked**, and **Show/Hide ignored** settings.
+Right-clicking the header does nothing.
 Active filter words appear passively before the `+n -m` comparison totals.
 Right-clicking a file offers **Open**, **Comment on file**, and **Copy path**.
 Right-clicking a directory offers **Expand/Collapse** and **Copy path**.

@@ -894,7 +894,11 @@ fn tree_lines<'a>(
     let mut out = Vec::with_capacity(rows);
     // The header row on `ui.header` (ADR 0068): Files, then the filter
     // state before the summed `+n -m` totals (ADR 0017).
-    let mut header = files_pane_header(app).line(theme, inner);
+    let files_header = files_pane_header(app);
+    let title_hovered = app
+        .pointer()
+        .is_some_and(|(column, row)| row == app.pane_top() && column < files_header.left_width());
+    let mut header = files_header.line_with_left_hover(theme, inner, title_hovered);
     header.spans.push(divider.clone());
     out.push(header);
     let navigation = Navigation::for_pane(app, Focus::Tree);

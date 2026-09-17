@@ -20,11 +20,11 @@ tags:
 
 Status: accepted (2026-09-06)
 
-Amended 2026-09-17: the left header label is now `Files`, and a left-click
-on that word opens the three pane settings. The passive filter words move
-before the diff totals without a dot. Repository and worktree identity move
-to the global menu bar. Right-click on the header does nothing, and row
-context menus contain only actions on the pointed item.
+Amended 2026-09-17: the left header label is now `Files`; it takes the shared
+hover background and a left-click opens the three pane settings. The passive
+filter words move before the diff totals without a dot. Repository and
+worktree identity move to the global menu bar. Right-click on the header does
+nothing, and row context menus contain only actions on the pointed item.
 
 ## Context
 
@@ -105,8 +105,8 @@ Space F r    recent files                            (unchanged)
   the outcome of pressing the key now, in the fewest words.
 - A left-click on the header's **`Files` title** opens a pane settings menu
   carrying the same three entries with the same live wording. The title is
-  the only clickable part of the Files header; right-click on the header
-  does nothing.
+  the only clickable part of the Files header and takes `ui.list.hover`
+  under the pointer; right-click on the header does nothing.
 - A file row's **right-click menu** is item-local: `open`, `comment on file`,
   and `copy path`. A directory row offers `expand` or `collapse`, then
   `copy path`. Save review point remains in the global **Diff** menu, and

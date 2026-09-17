@@ -4,7 +4,6 @@ title: The diff's keys on the bar
 description: The diff header gives up its keys to the text's key bar; `D` steps through unstaged and staged Git layers, last seen, and the newest checkpoint; `Space d s` marks every file seen.
 resource: crates/fathomable/src/app/diff_keys.rs
 related_resources:
-  - crates/fathomable/src/app/last_seen.rs
   - crates/fathomable/src/app/diff.rs
   - crates/fathomable/src/app/draw/bar.rs
   - crates/fathomable/src/app/draw/header.rs
@@ -21,6 +20,12 @@ tags:
 # 0069 The diff's keys on the bar
 
 Status: accepted (2026-09-06); amended 2026-09-14 (layer-aware cycle)
+
+Superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). The diff key bar remains,
+but `D`, last-seen, checkpoint paging, and mark-all-seen retire. `Space d`
+now controls the single global pair, review points, temporal focus, and
+whitespace.
 
 ## Context
 

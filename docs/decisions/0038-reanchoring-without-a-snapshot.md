@@ -12,6 +12,12 @@ tags:
 
 Status: accepted (2026-08-28)
 
+Amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): the bounded context
+window and mapping algorithm remain, but there is no snapshot-first path,
+startup persistence, or historical backfill. Viewer and MCP project at read
+time; live working-tree reload may persist a trustworthy local relocation.
+
 Context backfill amended 2026-09-15 by
 [0083](0083-single-user-alpha-clean-slate.md): snapshot-first and
 context-window mapping remains current for records written by the new build,

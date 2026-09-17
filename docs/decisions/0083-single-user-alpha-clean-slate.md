@@ -14,6 +14,12 @@ tags:
 Status: accepted (2026-09-15)
 
 Current format boundary amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): immutable origin,
+placement and resolution history, and archive events advance annotations to
+format **5**; the matching serialized thread shape advances the internal
+socket to protocol **8**. Exact-current and operator-only reset rules remain.
+
+Current format boundary amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md): the annotation event
 format is now **4** and the internal socket protocol is **7**. Lifecycle,
 one-shot auto-resolve, atomic reply outcomes, uniform messages, and activity

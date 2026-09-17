@@ -437,3 +437,11 @@ Milestones are ordered; each is usable on its own. Details live in the
     two-row cards from the same facts, lifecycle counts no longer overlap,
     and `t`, `r`, and `R` form the direct review grammar
     ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).
+78. **Global comparisons and deliberate board history.** One pinned
+    checkout-wide comparison drives every file and change surface; explicit
+    content-addressed workspace review points replace last-seen and per-file
+    timelines; immutable origins and qualified placement preserve historical
+    comments; the repository board remains visible across histories and gains
+    Recently resolved, deliberate archive/restore, and confirmed Clear board
+    actions
+    ([0087](decisions/0087-global-comparisons-and-board-history.md)).

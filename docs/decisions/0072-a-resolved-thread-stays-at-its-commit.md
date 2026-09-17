@@ -13,6 +13,13 @@ tags:
 
 Status: accepted (2026-09-09)
 
+Board visibility superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). Resolution context still
+records the acting checkout and version, but current-HEAD equality no longer
+hides a resolved thread from board or MCP history. File marks remain
+placement-qualified; Recently resolved provides the repository-wide ordered
+view.
+
 Amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md): direct user resolution
 and an authorized one-shot agent reply both atomically pin the resolved

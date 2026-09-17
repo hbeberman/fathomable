@@ -6,7 +6,7 @@ tag_definitions:
   annotations: Annotation records, threads, and anchoring.
   architecture: Crate boundaries and process structure.
   charter: Project identity, scope, and principles.
-  checkpoints: Reader-made marks of a file's or the workspace's content, and the diffs between them.
+  checkpoints: Historical per-file and workspace marks superseded by review points.
   configuration: User configuration files and formats.
   decision: Architecture decision records.
   dependencies: Third-party crate policy and selection.
@@ -16,6 +16,7 @@ tag_definitions:
   input: Keyboard grammar and mouse handling.
   onboarding: Human-facing setup and usage walkthroughs.
   rendering: Markdown and code layout and highlighting.
+  review-points: Explicit saved workspace states used as temporal comparison bases.
   sessions: Running-instance discovery and the MCP endpoint.
 ---
 

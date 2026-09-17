@@ -7,7 +7,6 @@
 //! This crate never depends on `ratatui`, `crossterm`, or `rmcp`.
 
 pub mod annotations;
-pub mod checkpoints;
 pub mod clock;
 pub mod config;
 pub mod content;
@@ -23,7 +22,7 @@ pub mod link;
 pub mod picker;
 pub mod reach;
 pub mod reanchor;
-pub mod seen;
+pub mod review_points;
 pub mod session;
 pub mod status;
 pub mod theme;

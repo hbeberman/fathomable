@@ -153,7 +153,7 @@ mod tests {
             thread.locate(testing::README),
             Placement::Anchored(LineRange::new(3, 4))
         );
-        assert_eq!(thread.edited(), None);
+        assert_eq!(thread.reanchored_at(), None);
         Ok(())
     }
 }

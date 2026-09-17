@@ -14,6 +14,12 @@ tags:
 
 Status: accepted (2026-09-16)
 
+History views and cleanup actions amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): the same summary/list
+engine now serves Recently resolved and Archived threads, with archive and
+restore actions. `Space c a`, `Space c A`, `Space c R`, and `Space c h`
+provide deliberate repository-board cleanup and history.
+
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
 [0066](0066-one-circle-language.md), and

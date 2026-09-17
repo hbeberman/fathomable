@@ -15,6 +15,7 @@ pub(crate) struct ThreadSummary {
     id: ThreadId,
     lifecycle: Lifecycle,
     auto_resolve: AutoResolve,
+    archived: bool,
     location: String,
     context: Option<String>,
     author: String,
@@ -38,6 +39,7 @@ impl ThreadSummary {
             id: thread.id().clone(),
             lifecycle: thread.lifecycle(),
             auto_resolve: thread.auto_resolve(),
+            archived: thread.is_archived(),
             location: location(thread, placement),
             context: context.map(str::to_owned),
             author: author_label(author, user),
@@ -94,11 +96,14 @@ impl ThreadSummary {
     }
 
     pub(crate) fn actions(&self) -> Vec<Action> {
+        if self.archived {
+            return vec![Action::RestoreThread];
+        }
         match self.lifecycle {
             Lifecycle::Active | Lifecycle::ResolutionProposed => {
                 vec![Action::ToggleAutoResolve, Action::ToggleResolved]
             }
-            Lifecycle::Resolved => vec![Action::ToggleResolved],
+            Lifecycle::Resolved => vec![Action::ToggleResolved, Action::ArchiveThread],
         }
     }
 
@@ -108,6 +113,8 @@ impl ThreadSummary {
             Action::ToggleAutoResolve => "Auto-resolve",
             Action::ToggleResolved if self.lifecycle == Lifecycle::Resolved => "Reopen",
             Action::ToggleResolved => "Resolve",
+            Action::ArchiveThread => "Archive",
+            Action::RestoreThread => "Restore",
             _ => "",
         }
     }
@@ -338,6 +345,8 @@ pub(crate) fn layout(
                     match action {
                         Action::ToggleAutoResolve => "  R",
                         Action::ToggleResolved => "  r",
+                        Action::ArchiveThread => "  a",
+                        Action::RestoreThread => "  u",
                         _ => "",
                     },
                     SummaryTone::ActionKey,
@@ -707,9 +716,39 @@ mod tests {
             },
             3,
         );
-        let text = text(&resolved);
-        assert!(text.contains("Reopen  r"), "{text}");
-        assert!(!text.contains("Auto-resolve"), "{text}");
+        let rendered = text(&resolved);
+        assert!(rendered.contains("Reopen  r"), "{rendered}");
+        assert!(rendered.contains("Archive  a"), "{rendered}");
+        assert!(!rendered.contains("Auto-resolve"), "{rendered}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn archived_headers_offer_restore_only() -> anyhow::Result<()> {
+        let (_dir, mut store, id) = fixture("summary-archived-actions", Author::User)?;
+        store.resolve(&id, None, 3)?;
+        store.archive(&id, 4)?;
+        let summary = ThreadSummary::new(
+            store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
+            Some(Placement::Detached(LineRange::new(42, 46))),
+            "User",
+            None,
+        );
+        let row = layout(
+            &summary,
+            SummaryLayoutOptions {
+                width: 50,
+                leading: 0,
+                expanded: true,
+                cursor: true,
+            },
+            4,
+        );
+        let rendered = text(&row);
+        assert!(rendered.contains("Restore  u"), "{rendered}");
+        assert!(!rendered.contains("Reopen"), "{rendered}");
+        assert!(!rendered.contains("Archive"), "{rendered}");
         Ok(())
     }
 

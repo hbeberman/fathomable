@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0038-reanchoring-without-a-snapshot.md
 //! A thread's context window: the text it was last placed in, carried
-//! with the thread so an offline edit is followed even when the file has
-//! no last-seen snapshot (ADR 0038).
+//! with the thread so an offline edit can be projected without storing a
+//! reader snapshot (ADR 0038).
 //!
 //! [`Context::capture`] takes the annotated lines and up to
 //! [`CONTEXT_LINES`] lines either side. [`map_context`] finds the window's
@@ -33,6 +33,9 @@ use crate::reanchor::{LOCAL_CONTEXT, Mapping, map_range};
 /// Lines kept on each side of the annotated range.
 pub const CONTEXT_LINES: usize = 3;
 
+/// Maximum bytes retained by a context window.
+pub const MAX_CONTEXT_BYTES: usize = 16 * 1024;
+
 /// The annotated lines of a thread with the lines around them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Context {
@@ -41,6 +44,8 @@ pub struct Context {
     lines: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     after: Vec<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    truncated: bool,
 }
 
 impl Context {
@@ -48,17 +53,63 @@ impl Context {
     /// side; `None` when the range runs past the end of the text.
     #[must_use]
     pub fn capture(text: &str, range: LineRange) -> Option<Self> {
+        Self::capture_bounded(text, range, MAX_CONTEXT_BYTES)
+    }
+
+    /// Capture a context window with an explicit byte bound.
+    #[must_use]
+    pub fn capture_bounded(text: &str, range: LineRange, max_bytes: usize) -> Option<Self> {
         let lines: Vec<&str> = text.lines().collect();
         if range.end() > lines.len() {
             return None;
         }
         let owned = |slice: &[&str]| slice.iter().map(|line| (*line).to_owned()).collect();
         let start = range.start() - 1;
-        Some(Self {
+        let mut context = Self {
             before: owned(&lines[start.saturating_sub(CONTEXT_LINES)..start]),
             lines: owned(&lines[start..range.end()]),
             after: owned(&lines[range.end()..(range.end() + CONTEXT_LINES).min(lines.len())]),
-        })
+            truncated: false,
+        };
+        context.bound_to(max_bytes);
+        Some(context)
+    }
+
+    fn bound_to(&mut self, max_bytes: usize) {
+        while self.text().len() > max_bytes && !self.before.is_empty() {
+            self.before.remove(0);
+            self.truncated = true;
+        }
+        while self.text().len() > max_bytes && !self.after.is_empty() {
+            self.after.pop();
+            self.truncated = true;
+        }
+        if self.text().len() <= max_bytes {
+            return;
+        }
+        let mut remaining = max_bytes;
+        for line in self
+            .before
+            .iter_mut()
+            .chain(self.lines.iter_mut())
+            .chain(self.after.iter_mut())
+        {
+            if remaining == 0 {
+                line.clear();
+                self.truncated = true;
+                continue;
+            }
+            let budget = remaining.saturating_sub(1);
+            if line.len() > budget {
+                let mut end = budget.min(line.len());
+                while end > 0 && !line.is_char_boundary(end) {
+                    end -= 1;
+                }
+                line.truncate(end);
+                self.truncated = true;
+            }
+            remaining = remaining.saturating_sub(line.len() + 1);
+        }
     }
 
     /// The window as one text, lines joined by newlines.
@@ -83,6 +134,12 @@ impl Context {
     #[must_use]
     pub fn snippet(&self) -> String {
         self.lines.join("\n")
+    }
+
+    /// Whether the context was shortened to satisfy its byte bound.
+    #[must_use]
+    pub fn is_truncated(&self) -> bool {
+        self.truncated
     }
 }
 
@@ -263,6 +320,17 @@ mod tests {
             Mapping::Edited(LineRange::new(10, 10))
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_capture_marks_and_limits_large_evidence() -> Result {
+        let text = "aaaaaaaaaa\nbbbbbbbbbb\ncccccccccc\ndddddddddd\n";
+        let context =
+            Context::capture_bounded(text, LineRange::new(2, 3), 12).ok_or("range in text")?;
+        assert!(context.is_truncated());
+        assert!(context.text().len() <= 12);
+        assert_eq!(context.range().len(), 2);
         Ok(())
     }
 }

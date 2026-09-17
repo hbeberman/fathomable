@@ -183,15 +183,12 @@ pub struct ViewerConfig {
     /// The largest text file the viewer reads, in MiB; larger ones show
     /// the file-info pane instead.
     pub max_file_size_mib: u64,
-    /// Idle time in a file before it counts as seen (ADR 0015).
-    pub seen_idle: Duration,
 }
 
 impl Default for ViewerConfig {
     fn default() -> Self {
         Self {
             max_file_size_mib: crate::content::DEFAULT_MAX_MIB,
-            seen_idle: Duration::from_secs(5),
         }
     }
 }
@@ -579,7 +576,6 @@ impl Config {
                             "max-file-size-mib" => {
                                 config.viewer.max_file_size_mib = count(child, line, "MiB count")?;
                             }
-                            "seen-idle" => config.viewer.seen_idle = millis(child, line)?,
                             other => {
                                 return Err(ConfigError {
                                     path: None,
@@ -685,7 +681,6 @@ impl fmt::Display for Config {
         let viewer = &self.viewer;
         writeln!(f, "\nviewer {{")?;
         writeln!(f, "    max-file-size-mib {}", viewer.max_file_size_mib)?;
-        writeln!(f, "    seen-idle {}", viewer.seen_idle.as_millis())?;
         writeln!(f, "}}")?;
         let layout = &self.layout;
         let sidebar = &layout.sidebar;
@@ -886,9 +881,6 @@ watch {
     ignore "target/**" "*.lock"
     debounce 50
 }
-viewer {
-    seen-idle 10
-}
 layout {
     menu-bar #false
     sidebar {
@@ -908,7 +900,6 @@ threads {
         assert_eq!(config.jump().toast, Duration::ZERO);
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
-        assert_eq!(config.viewer().seen_idle, Duration::from_millis(10));
         assert!(!config.layout().menu_bar);
         assert!(!config.layout().sidebar.visible);
         assert!(config.layout().sidebar.files);

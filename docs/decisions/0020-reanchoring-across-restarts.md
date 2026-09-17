@@ -2,7 +2,6 @@
 type: Decision
 title: Re-anchoring across restarts
 description: How a thread edited while Fathomable was closed finds its lines again, using the last-seen snapshot as the text it was last placed in.
-resource: crates/fathomable/src/app/threads/reanchor.rs
 tags:
   - decision
   - annotations
@@ -11,6 +10,13 @@ tags:
 # 0020 Re-anchoring across restarts
 
 Status: accepted (2026-08-27)
+
+Superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). Startup no longer reads,
+pins, or writes reader snapshots and does not persist implicit relocation.
+Bounded thread context is projected into the displayed or MCP-bound content;
+failure to establish a trustworthy match leaves the original excerpt
+detached.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

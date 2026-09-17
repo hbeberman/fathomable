@@ -19,7 +19,7 @@
 //! ```
 //! use fathomable_core::session::{Request, Response};
 //!
-//! let request: Request = r#"{"v":7,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
+//! let request: Request = r#"{"v":8,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
 //! assert!(matches!(request, Request::ThreadStart { .. }));
 //! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
 //! # Ok::<(), fathomable_core::session::ProtocolError>(())
@@ -37,7 +37,7 @@ use crate::XdgDirs;
 use crate::annotations::{Author, LineRange, ResolutionOutcome, Thread, ThreadId};
 
 /// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 7;
+pub(crate) const PROTOCOL_VERSION: u32 = 8;
 
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
@@ -710,7 +710,7 @@ mod tests {
         ];
         for request in requests {
             let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":7,"op":""#), "{line}");
+            assert!(line.starts_with(r#"{"v":8,"op":""#), "{line}");
             assert_eq!(line.parse::<Request>()?, request);
         }
         Ok(())
@@ -719,7 +719,7 @@ mod tests {
     /// Every request needs the exact version this build speaks (ADR 0062).
     #[test]
     fn every_request_needs_the_current_version() -> Result<(), ProtocolError> {
-        let accepted = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let accepted = r#"{"v":8,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>();
         accepted?;
 
@@ -728,25 +728,25 @@ mod tests {
             .err();
         assert!(missing.is_some_and(|e| e.to_string().contains("missing field `v`")));
 
-        let too_old = r#"{"v":6,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_old = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_old.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 6")
+            e.to_string().contains("unsupported protocol version 7")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        let too_new = r#"{"v":8,"op":"thread_start","path":"a","author":"user","body":"x"}"#
+        let too_new = r#"{"v":9,"op":"thread_start","path":"a","author":"user","body":"x"}"#
             .parse::<Request>()
             .err();
         assert!(too_new.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 8")
+            e.to_string().contains("unsupported protocol version 9")
                 && e.to_string()
                     .contains("restart the matching viewer and MCP processes")
         }));
-        assert_eq!(r#"{"v":7,"op":"invented"}"#.parse::<Request>().ok(), None);
+        assert_eq!(r#"{"v":8,"op":"invented"}"#.parse::<Request>().ok(), None);
         assert_eq!(
-            r#"{"v":7,"op":"thread_reply","thread":"1-2-3","author":{"name":"bot"},"body":"x","propose_resolve":true}"#
+            r#"{"v":8,"op":"thread_reply","thread":"1-2-3","author":{"name":"bot"},"body":"x","propose_resolve":true}"#
                 .parse::<Request>()
                 .ok(),
             None

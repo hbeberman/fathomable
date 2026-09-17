@@ -7,10 +7,11 @@ use fathomable_testing::TempDir;
 use crate::reach::Reach;
 
 use super::{
-    AgentReplyCommand, Anchor, Author, AutoResolve, Draft, Event, FORMAT_VERSION, Lifecycle,
-    LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MessageTarget, Placement, Reply,
+    AgentReplyCommand, Anchor, ArchiveContext, Author, AutoResolve, ComparisonFacts, Draft, Event,
+    FORMAT_VERSION, Lifecycle, LineHashes, LineRange, MAX_IDEMPOTENCY_KEY_BYTES, MessageTarget,
+    OriginSide, OriginVersion, Placement, PlacementContext, PlacementEvidence, Provenance, Reply,
     ResolutionOutcome, Status, Store, StoreError, Thread, ThreadId, UserSubmit, UserWriteOutcome,
-    line_hash,
+    WorkingTreeFacts, WorkingTreeState, line_hash,
 };
 
 const TEXT: &str = "# Title\n\nalpha\nbeta\ngamma\n\ndelta\n";
@@ -90,11 +91,11 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
         1,
     )?;
     let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
-    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":3"#);
+    let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":4"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
     let store_error = Store::open(&file.0).err();
     let mismatch = store_error.as_ref().and_then(StoreError::format_mismatch);
-    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(3));
+    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(4));
     assert_eq!(
         mismatch.as_ref().map(super::FormatMismatch::expected),
         Some(FORMAT_VERSION)
@@ -103,7 +104,7 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
     assert_eq!(
         error,
         Some(format!(
-            "threads.jsonl line 1: format version 3, this build writes {FORMAT_VERSION}; delete {} to start over",
+            "threads.jsonl line 1: format version 4, this build writes {FORMAT_VERSION}; delete {} to start over",
             file.0.display()
         ))
     );
@@ -261,7 +262,7 @@ fn user_messages_can_be_edited_and_other_messages_cannot() -> Result<(), StoreEr
     assert_eq!(thread.comment(), "why exactly?");
     assert_eq!(thread.replies()[0].body(), "because");
     assert_eq!(thread.replies()[1].body(), "understood");
-    assert_eq!(thread.updated(), 14);
+    assert_eq!(thread.modified(), 14);
     Ok(())
 }
 
@@ -295,7 +296,13 @@ fn a_comment_on_the_file_has_no_lines() -> Result<(), StoreError> {
         "{record}"
     );
     // The moves that need lines refuse it.
-    let moved = store.relocate(&id, LineRange::new(2, 2), TEXT, 11);
+    let moved = store.relocate(
+        &id,
+        LineRange::new(2, 2),
+        TEXT,
+        PlacementContext::new(OriginVersion::working_tree(None)),
+        11,
+    );
     assert!(
         moved
             .as_ref()
@@ -392,15 +399,27 @@ fn relocate_moves_a_thread_and_keeps_the_reanchor_fact() -> Result<(), StoreErro
         100,
     )?;
     let edited = "# Title\n\nalpha\nBETA\ngamma\n";
-    store.relocate(&id, LineRange::new(3, 4), edited, 110)?;
+    store.relocate(
+        &id,
+        LineRange::new(3, 4),
+        edited,
+        PlacementContext::new(OriginVersion::working_tree(Some("head".to_owned())))
+            .at_checkout("/checkout"),
+        110,
+    )?;
     let again = Store::open(&file.0)?;
     assert_eq!(again.threads(), store.threads());
     let thread = again
         .thread(&id)
         .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
     assert!(thread.context().is_some());
-    assert_eq!(thread.edited(), Some(110));
-    assert_eq!(thread.updated(), 110);
+    assert_eq!(thread.reanchored_at(), Some(110));
+    assert_eq!(thread.modified(), 110);
+    assert_eq!(
+        thread.placement_evidence().version(),
+        &OriginVersion::working_tree(Some("head".to_owned()))
+    );
+    assert_eq!(thread.placement_evidence().checkout(), Some("/checkout"));
     assert_eq!(
         thread.snippet(),
         "alpha\nbeta",
@@ -410,7 +429,11 @@ fn relocate_moves_a_thread_and_keeps_the_reanchor_fact() -> Result<(), StoreErro
     assert!(thread.locate(TEXT).is_detached());
     // Replies preserve the factual re-anchor time.
     store.reply(&id, Reply::new(Author::agent("claude"), 111, "fixed"))?;
-    assert!(store.thread(&id).is_some_and(|t| t.edited().is_some()));
+    assert!(
+        store
+            .thread(&id)
+            .is_some_and(|t| t.reanchored_at().is_some())
+    );
     store.reply(&id, Reply::new(Author::User, 112, "ok"))?;
     assert_eq!(store.thread(&id).and_then(Thread::reanchored_at), Some(110));
     assert!(
@@ -418,48 +441,27 @@ fn relocate_moves_a_thread_and_keeps_the_reanchor_fact() -> Result<(), StoreErro
             .thread(&id)
             .is_some_and(|t| t.locate(edited).is_edited())
     );
+    store.resolve(&id, Some("resolved-head"), 112)?;
+    assert_eq!(
+        store
+            .thread(&id)
+            .map(Thread::placement_evidence)
+            .map(PlacementEvidence::version),
+        Some(&OriginVersion::working_tree(Some("head".to_owned()))),
+        "resolution context does not retag placement evidence"
+    );
     // A bad range is an error and writes nothing.
     assert!(
         store
-            .relocate(&id, LineRange::new(8, 9), edited, 113)
+            .relocate(
+                &id,
+                LineRange::new(8, 9),
+                edited,
+                PlacementContext::new(OriginVersion::working_tree(None)),
+                113,
+            )
             .is_err()
     );
-    Ok(())
-}
-
-#[test]
-fn move_path_carries_a_thread_to_the_renamed_file() -> Result<(), StoreError> {
-    let file = TempFile::new("move")?;
-    let mut store = Store::open(&file.0)?;
-    let id = store.annotate(
-        Draft::new(
-            Author::User,
-            Path::new("old.md"),
-            LineRange::new(3, 4),
-            "rename",
-        ),
-        TEXT,
-        100,
-    )?;
-    store.move_path(&id, Path::new("docs/new.md"), 120)?;
-    let again = Store::open(&file.0)?;
-    assert_eq!(again.threads(), store.threads());
-    let thread = again
-        .thread(&id)
-        .ok_or_else(|| StoreError::parse(0, "lost".into()))?;
-    assert_eq!(thread.path(), Path::new("docs/new.md"));
-    assert_eq!(thread.updated(), 120, "since polling sees the move");
-    assert_eq!(thread.range(), Some(LineRange::new(3, 4)));
-    assert_eq!(
-        thread.locate(TEXT).range(),
-        Some(LineRange::new(3, 4)),
-        "the anchor still finds its lines"
-    );
-    assert!(again.for_path(Path::new("old.md")).next().is_none());
-    let log = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
-    assert!(log.contains(r#""event":"move""#));
-    let unknown = ThreadId("nope".to_owned());
-    assert!(store.move_path(&unknown, Path::new("x"), 1).is_err());
     Ok(())
 }
 
@@ -718,12 +720,12 @@ fn store_round_trips_threads_replies_and_status() -> Result<(), StoreError> {
     assert!(thread.replies()[0].proposes_resolution());
     assert_eq!(thread.lifecycle(), Lifecycle::Active);
     assert_eq!(thread.replies()[0].author().to_string(), "claude");
-    assert_eq!(thread.updated(), 105);
+    assert_eq!(thread.modified(), 105);
     assert_eq!(
         again.thread(&other).map(super::Thread::status),
         Some(Status::Resolved)
     );
-    assert_eq!(again.thread(&other).map(super::Thread::updated), Some(103));
+    assert_eq!(again.thread(&other).map(super::Thread::modified), Some(103));
     assert_eq!(again.for_path(Path::new("README.md")).count(), 1);
 
     let raw = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
@@ -781,31 +783,7 @@ fn threads_are_scoped_by_the_commit_they_were_written_against() -> Result<(), St
     };
     assert_eq!(visible(&everywhere), [&unscoped, &scoped]);
     assert_eq!(visible(&on_branch), [&unscoped, &scoped]);
-    assert_eq!(visible(&elsewhere), [&unscoped]);
-    Ok(())
-}
-
-/// A rescope moves the thread to another commit and bumps `updated`,
-/// and survives a reload (ADR 0035).
-#[test]
-fn a_rescope_moves_the_thread_to_the_new_commit() -> Result<(), StoreError> {
-    let file = TempFile::new("rescope")?;
-    let mut store = Store::open(&file.0)?;
-    let id = store.annotate(
-        Draft::new(Author::User, Path::new("a.md"), LineRange::new(1, 1), "hm")
-            .at_commit(Some("old".to_owned())),
-        TEXT,
-        10,
-    )?;
-    store.rescope(&id, "new", 20)?;
-    let again = Store::open(&file.0)?;
-    let thread = again.thread(&id).ok_or(StoreError {
-        kind: super::ErrorKind::UnknownThread(id.clone()),
-    })?;
-    assert_eq!(thread.commit(), Some("new"));
-    assert_eq!(thread.updated(), 20);
-    assert_eq!(thread.status(), Status::Open);
-    assert!(Reach::at("new", HashSet::from(["new".to_owned()])).includes(thread));
+    assert_eq!(visible(&elsewhere), [&unscoped, &scoped]);
     Ok(())
 }
 
@@ -1163,7 +1141,7 @@ fn keyed_reply_replays_without_relocation_or_mutable_validation() -> Result<(), 
         .thread(&id)
         .ok_or_else(|| StoreError::message("thread missing after replay"))?;
     assert_eq!(after.replies().len(), 1);
-    assert_eq!(after.updated(), before.updated());
+    assert_eq!(after.modified(), before.modified());
     assert_eq!(after.range(), Some(LineRange::new(3, 4)));
     Ok(())
 }
@@ -1191,7 +1169,7 @@ fn keyed_reply_at_the_current_range_preserves_the_anchor() -> Result<(), StoreEr
         .thread(&id)
         .ok_or_else(|| StoreError::message("thread missing after reply"))?;
     assert_eq!(thread.locate(TEXT), Placement::Anchored(range));
-    assert_eq!(thread.edited(), None);
+    assert_eq!(thread.reanchored_at(), None);
     assert_eq!(thread.replies().len(), 1);
     Ok(())
 }
@@ -1611,7 +1589,6 @@ fn direct_resolve_pins_head_in_one_event() -> Result<(), StoreError> {
         .ok_or_else(|| StoreError::message("missing event"))?;
     assert!(last.contains(r#""event":"resolve""#));
     assert!(last.contains(r#""commit":"head""#));
-    assert!(!raw.contains(r#""event":"rescope""#));
     assert_eq!(store.thread(&id).and_then(Thread::commit), Some("head"));
     Ok(())
 }
@@ -1662,7 +1639,13 @@ fn reanchor_time_survives_reply_resolve_and_reopen() -> Result<(), StoreError> {
         TEXT,
         1,
     )?;
-    store.relocate(&id, LineRange::new(3, 4), TEXT, 2)?;
+    store.relocate(
+        &id,
+        LineRange::new(3, 4),
+        TEXT,
+        PlacementContext::new(OriginVersion::working_tree(None)),
+        2,
+    )?;
     store.reply_user(&id, 3, "answer", UserSubmit::Normal)?;
     store.resolve(&id, Some("head"), 4)?;
     store.reopen(&id, 5)?;
@@ -1971,6 +1954,354 @@ fn user_writes_reject_a_thread_deleted_while_its_draft_was_open() -> Result<(), 
             .count(),
         lines_after_delete,
         "failed writes append no ignored events"
+    );
+    Ok(())
+}
+
+#[test]
+fn origin_survives_relocation_move_resolution_and_reopen() -> Result<(), StoreError> {
+    let file = TempFile::new("immutable-origin")?;
+    let mut store = Store::open(&file.0)?;
+    let provenance = Provenance::new(OriginVersion::commit("base"), OriginSide::Base)
+        .with_comparison(ComparisonFacts::new(
+            OriginVersion::commit("base"),
+            OriginVersion::working_tree(Some("base".to_owned())),
+        ))
+        .with_working_tree(WorkingTreeFacts::new(
+            Some("base".to_owned()),
+            WorkingTreeState::Modified,
+            None,
+        ));
+    let id = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("old.md"),
+            LineRange::new(3, 3),
+            "question",
+        )
+        .at_commit(Some("base".to_owned()))
+        .with_provenance(provenance),
+        TEXT,
+        1,
+    )?;
+    let original = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("missing origin thread"))?
+        .origin()
+        .clone();
+
+    store.relocate(
+        &id,
+        LineRange::new(3, 4),
+        TEXT,
+        PlacementContext::new(OriginVersion::working_tree(None)),
+        2,
+    )?;
+    store.resolve(&id, Some("resolved"), 5)?;
+    store.reopen(&id, 6)?;
+
+    let thread = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("missing relocated thread"))?;
+    assert_eq!(thread.origin(), &original);
+    assert_eq!(thread.origin().path(), Path::new("old.md"));
+    assert_eq!(thread.origin().range(), Some(LineRange::new(3, 3)));
+    assert_eq!(thread.origin().version(), &OriginVersion::commit("base"));
+    assert_eq!(thread.path(), Path::new("old.md"));
+    assert_eq!(thread.range(), Some(LineRange::new(3, 4)));
+    assert_eq!(thread.commit(), Some("resolved"));
+    assert_eq!(thread.lifecycle(), Lifecycle::Active);
+    Ok(())
+}
+
+#[test]
+fn resolution_history_is_immutable_and_recent_order_ignores_metadata_edits()
+-> Result<(), StoreError> {
+    let file = TempFile::new("resolution-history")?;
+    let mut store = Store::open(&file.0)?;
+    let first = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("a.md"),
+            LineRange::new(3, 3),
+            "first",
+        ),
+        TEXT,
+        1,
+    )?;
+    let second = store.annotate(
+        Draft::on_file(Author::User, Path::new("b.md"), "second"),
+        TEXT,
+        2,
+    )?;
+    store.resolve(&first, Some("head-a"), 10)?;
+    store.resolve_with_context(
+        &second,
+        &super::ResolutionContext::new(Author::User, Some("head-b".to_owned()))
+            .at_checkout("checkout-b"),
+        20,
+    )?;
+    store.relocate(
+        &first,
+        LineRange::new(3, 3),
+        TEXT,
+        PlacementContext::new(OriginVersion::working_tree(Some("head-a".to_owned()))),
+        100,
+    )?;
+
+    let recent = store.recently_resolved();
+    assert_eq!(
+        recent.iter().map(|thread| thread.id()).collect::<Vec<_>>(),
+        [&second, &first]
+    );
+    assert_eq!(
+        recent[0]
+            .latest_resolution()
+            .map(super::ResolutionRecord::created),
+        Some(20)
+    );
+    assert_eq!(
+        recent[0]
+            .latest_resolution()
+            .and_then(|event| event.checkout()),
+        Some("checkout-b")
+    );
+    assert_eq!(
+        store
+            .thread(&first)
+            .map(|thread| thread.resolution_history().len()),
+        Some(1)
+    );
+
+    store.reopen(&second, 30)?;
+    assert!(
+        store
+            .recently_resolved()
+            .iter()
+            .all(|thread| thread.id() != &second)
+    );
+    store.resolve(&second, Some("head-c"), 40)?;
+    assert_eq!(
+        store.recently_resolved().first().map(|thread| thread.id()),
+        Some(&second)
+    );
+    assert_eq!(
+        store
+            .thread(&second)
+            .map(|thread| thread.resolution_history().len()),
+        Some(2)
+    );
+    Ok(())
+}
+
+#[test]
+fn archive_restore_preserves_lifecycle_history_and_disables_auto_resolve() -> Result<(), StoreError>
+{
+    let file = TempFile::new("archive-restore")?;
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate_user(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+        UserSubmit::EnableAutoResolve,
+    )?;
+    store.resolve(&id, Some("head"), 2)?;
+    let origin = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("thread"))?
+        .origin()
+        .clone();
+    store.archive_with_context(
+        &id,
+        ArchiveContext::new(Author::User, 3).at_checkout("main"),
+    )?;
+    assert!(store.threads().is_empty());
+    let archived = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("archived thread"))?;
+    assert!(archived.is_archived());
+    assert_eq!(archived.lifecycle(), Lifecycle::Resolved);
+    assert_eq!(archived.auto_resolve(), AutoResolve::Disabled);
+    assert_eq!(archived.origin(), &origin);
+
+    store.restore(&id, 4)?;
+    let restored = store
+        .thread(&id)
+        .ok_or_else(|| StoreError::message("restored thread"))?;
+    assert!(!restored.is_archived());
+    assert_eq!(restored.lifecycle(), Lifecycle::Resolved);
+    assert_eq!(restored.resolution_history().len(), 1);
+    assert_eq!(restored.archive_history().len(), 1);
+    assert_eq!(restored.restore_history().len(), 1);
+    assert_eq!(restored.auto_resolve(), AutoResolve::Disabled);
+    let reloaded = Store::open(&file.0)?;
+    assert_eq!(reloaded.threads().len(), 1);
+    assert_eq!(reloaded.archived_threads().len(), 0);
+    assert_eq!(
+        reloaded
+            .thread(&id)
+            .map(|thread| thread.resolution_history().len()),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn archive_and_restore_keep_creation_order_in_both_collections() -> Result<(), StoreError> {
+    let file = TempFile::new("archive-order")?;
+    let mut store = Store::open(&file.0)?;
+    let first = store.annotate(
+        Draft::on_file(Author::User, Path::new("first.md"), "first"),
+        TEXT,
+        1,
+    )?;
+    let second = store.annotate(
+        Draft::on_file(Author::User, Path::new("second.md"), "second"),
+        TEXT,
+        2,
+    )?;
+    let third = store.annotate(
+        Draft::on_file(Author::User, Path::new("third.md"), "third"),
+        TEXT,
+        3,
+    )?;
+    for id in [&first, &second, &third] {
+        store.resolve(id, None, 10)?;
+    }
+
+    assert_eq!(
+        store.archive_resolved(11)?,
+        vec![first.clone(), second.clone(), third.clone()]
+    );
+    assert_eq!(
+        store
+            .archived_threads()
+            .iter()
+            .map(Thread::id)
+            .collect::<Vec<_>>(),
+        [&first, &second, &third]
+    );
+    assert!(store.threads().is_empty());
+
+    store.restore(&third, 12)?;
+    store.restore(&first, 13)?;
+    store.restore(&second, 14)?;
+    assert_eq!(
+        store.threads().iter().map(Thread::id).collect::<Vec<_>>(),
+        [&first, &second, &third]
+    );
+    assert!(store.archived_threads().is_empty());
+    let reloaded = Store::open(&file.0)?;
+    assert_eq!(
+        reloaded
+            .threads()
+            .iter()
+            .map(Thread::id)
+            .collect::<Vec<_>>(),
+        [&first, &second, &third]
+    );
+    assert!(reloaded.archived_threads().is_empty());
+    Ok(())
+}
+
+#[test]
+fn archive_resolved_rechecks_reopen_under_the_write_lock() -> Result<(), StoreError> {
+    let file = TempFile::new("archive-race")?;
+    let mut writer = Store::open(&file.0)?;
+    let id = writer.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    writer.resolve(&id, Some("head"), 2)?;
+    let mut stale_archiver = Store::open(&file.0)?;
+    let mut reopener = Store::open(&file.0)?;
+    reopener.reopen(&id, 3)?;
+    assert!(stale_archiver.archive_resolved(4)?.is_empty());
+    assert!(
+        !Store::open(&file.0)?
+            .thread(&id)
+            .is_some_and(Thread::is_archived)
+    );
+    Ok(())
+}
+
+#[test]
+fn clear_board_archives_only_the_acknowledged_unchanged_slate() -> Result<(), StoreError> {
+    let file = TempFile::new("clear-board")?;
+    let mut store = Store::open(&file.0)?;
+    let original = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "original"),
+        TEXT,
+        1,
+    )?;
+    let slate = store.board_slate();
+    let new_thread = store.annotate(
+        Draft::on_file(Author::User, Path::new("b.md"), "new"),
+        TEXT,
+        2,
+    )?;
+    let archived = store.clear_board(&slate, 3)?;
+    assert_eq!(archived, vec![original.clone()]);
+    assert!(store.thread(&original).is_some_and(Thread::is_archived));
+    assert!(!store.thread(&new_thread).is_some_and(Thread::is_archived));
+
+    let changed = store.annotate(
+        Draft::on_file(Author::User, Path::new("c.md"), "changed"),
+        TEXT,
+        4,
+    )?;
+    let changed_slate = store.board_slate();
+    store.reply_user(&changed, 5, "metadata", UserSubmit::Normal)?;
+    assert!(
+        store.clear_board(&changed_slate, 6).is_err(),
+        "changed acknowledged state must reject the clear"
+    );
+    assert!(!store.thread(&changed).is_some_and(Thread::is_archived));
+    Ok(())
+}
+
+#[test]
+fn archived_fresh_reply_fails_but_keyed_replay_keeps_its_original_outcome() -> Result<(), StoreError>
+{
+    let file = TempFile::new("archive-replay")?;
+    let author = Author::Agent {
+        name: "bot".to_owned(),
+        client: Some("mcp".to_owned()),
+        id: Some("caller-1".to_owned()),
+    };
+    let mut store = Store::open(&file.0)?;
+    let id = store.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "question"),
+        TEXT,
+        1,
+    )?;
+    let command =
+        AgentReplyCommand::new(author.clone(), 2, "answer").idempotent("caller-1", "reply-1");
+    let first = store.agent_reply(&id, command.clone(), |_| Ok(TEXT.to_owned()))?;
+    assert_eq!(first.value(), &ResolutionOutcome::NotRequested);
+    store.archive(&id, 3)?;
+
+    let replay = store.agent_reply(&id, command, |_| {
+        Err(StoreError::message(
+            "replay must precede archive validation",
+        ))
+    })?;
+    assert!(replay.replayed());
+    assert_eq!(replay.value(), &ResolutionOutcome::NotRequested);
+    let fresh = store.agent_reply(
+        &id,
+        AgentReplyCommand::new(author, 4, "fresh").idempotent("caller-1", "reply-2"),
+        |_| Ok(TEXT.to_owned()),
+    );
+    assert!(
+        fresh
+            .as_ref()
+            .is_err_and(|error| error.to_string().contains("archived"))
+    );
+    assert_eq!(
+        store.thread(&id).map(|thread| thread.replies().len()),
+        Some(1)
     );
     Ok(())
 }

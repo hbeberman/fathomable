@@ -15,6 +15,12 @@ tags:
 Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded
 watches); amended 2026-09-14 (searchable Git tombstones)
 
+Thread rename placement amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): an exact live rename
+still carries the active viewer and its thread marks, but the path projection
+is checkout-local and no longer overwrites one global board path shared by
+other worktrees.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

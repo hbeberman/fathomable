@@ -7,6 +7,12 @@
 //! ignores, using the repository's own exclude stack, so the tree pane and the
 //! picker agree with `git status` on what exists.
 //!
+//! [`ComparisonEndpoint`] and [`Workspace::compare`] provide one direct,
+//! repository-wide pair delta. Commit endpoints are resolved and pinned to
+//! object IDs; [`ComparisonEndpoint::WorkingTree`] is the final on-disk
+//! state, and [`ComparisonEndpoint::Index`] remains an explicit mutable
+//! layer.
+//!
 //! # Examples
 //!
 //! ```no_run
@@ -34,7 +40,7 @@ use gix::worktree::stack::state::attributes::Source as AttrSource;
 use gix::worktree::stack::state::ignore::Source;
 
 use crate::content::{self, Attr};
-use crate::diff::Diff;
+use crate::diff::{Comparison, Diff, FileMode, PathChange, PathInfo, PathState};
 use crate::status::{self, Changes, State, Status};
 
 /// One directory entry, as the tree pane shows it.
@@ -85,12 +91,19 @@ pub enum Filter {
     All,
 }
 
-/// One commit that changed a file, from [`Workspace::file_history`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Listing {
+    BestEffort,
+    Complete,
+}
+
+/// One repository commit discovered or resolved by the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
     hex: String,
     time: u64,
     subject: String,
+    parents: Vec<String>,
 }
 
 impl Commit {
@@ -98,6 +111,12 @@ impl Commit {
     #[must_use]
     pub fn hex(&self) -> &str {
         &self.hex
+    }
+
+    /// The immutable object identity of this commit.
+    #[must_use]
+    pub fn id(&self) -> CommitId {
+        CommitId(self.hex.clone())
     }
 
     /// The first seven characters of the id.
@@ -117,6 +136,181 @@ impl Commit {
     pub fn subject(&self) -> &str {
         &self.subject
     }
+
+    /// The commit's direct parents, in Git order.
+    #[must_use]
+    pub fn parents(&self) -> impl ExactSizeIterator<Item = CommitId> + '_ {
+        self.parents.iter().cloned().map(CommitId)
+    }
+}
+
+/// A validated immutable Git commit object ID.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CommitId(String);
+
+impl CommitId {
+    /// Parse a full hexadecimal Git object ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CommitIdError`] when `value` is not a full SHA-1 object ID.
+    pub fn parse(value: impl AsRef<str>) -> Result<Self, CommitIdError> {
+        let value = value.as_ref();
+        if value.len() != 40 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(CommitIdError {
+                value: value.to_owned(),
+            });
+        }
+        Ok(Self(value.to_ascii_lowercase()))
+    }
+
+    /// The full hexadecimal object ID.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The first seven hexadecimal characters.
+    #[must_use]
+    pub fn short(&self) -> &str {
+        &self.0[..7]
+    }
+}
+
+impl fmt::Display for CommitId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A commit ID that could not be parsed as a full object ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitIdError {
+    value: String,
+}
+
+impl fmt::Display for CommitIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid commit object ID `{}`", self.value)
+    }
+}
+
+impl std::error::Error for CommitIdError {}
+
+/// The kind of named local revision offered to a viewer picker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum RevisionChoiceKind {
+    /// A local branch under `refs/heads`.
+    Branch,
+    /// A local tag under `refs/tags`.
+    Tag,
+}
+
+impl fmt::Display for RevisionChoiceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Branch => "branch",
+            Self::Tag => "tag",
+        })
+    }
+}
+
+/// A named local branch or tag resolved to an immutable commit ID.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct RevisionChoice {
+    kind: RevisionChoiceKind,
+    name: String,
+    commit: CommitId,
+}
+
+impl RevisionChoice {
+    /// Whether this choice is a branch or tag.
+    #[must_use]
+    pub const fn kind(&self) -> RevisionChoiceKind {
+        self.kind
+    }
+
+    /// The branch or tag name without its `refs/*` prefix.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The pinned commit resolved from this name.
+    #[must_use]
+    pub const fn commit(&self) -> &CommitId {
+        &self.commit
+    }
+}
+
+impl fmt::Display for RevisionChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {} ({})", self.kind, self.name, self.commit.short())
+    }
+}
+
+/// An immutable or mutable side of a repository comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ComparisonEndpoint {
+    /// The empty tree, used before a root commit or in an empty repository.
+    EmptyTree,
+    /// A commit pinned to this resolved object ID.
+    Commit(CommitId),
+    /// An explicit saved review point, resolved by its owning store.
+    ReviewPoint(String),
+    /// The current Git index.
+    Index,
+    /// The final current on-disk state, including eligible additions and deletions.
+    WorkingTree,
+}
+
+impl fmt::Display for ComparisonEndpoint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyTree => f.write_str("empty tree"),
+            Self::Commit(id) => f.write_str(id.short()),
+            Self::ReviewPoint(id) => {
+                let preview: String = id.chars().take(12).collect();
+                write!(f, "review point {preview}")
+            }
+            Self::Index => f.write_str("index"),
+            Self::WorkingTree => f.write_str("working tree"),
+        }
+    }
+}
+
+/// A contiguous first-parent commit selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitBatch {
+    before: ComparisonEndpoint,
+    after: ComparisonEndpoint,
+    commits: Vec<CommitId>,
+}
+
+impl CommitBatch {
+    /// The endpoint immediately before the first selected commit.
+    #[must_use]
+    pub const fn before(&self) -> &ComparisonEndpoint {
+        &self.before
+    }
+
+    /// The last selected commit endpoint.
+    #[must_use]
+    pub const fn after(&self) -> &ComparisonEndpoint {
+        &self.after
+    }
+
+    /// Selected commits in chronological order.
+    #[must_use]
+    pub fn commits(&self) -> &[CommitId] {
+        &self.commits
+    }
+}
+
+/// Metadata for an endpoint path, shared with review-point capture.
+#[derive(Debug, Clone)]
+pub(crate) struct EndpointFile {
+    pub(crate) info: PathInfo,
 }
 
 /// How far below the oldest wanted commit's committer time a reach walk
@@ -320,6 +514,760 @@ impl Workspace {
         }
     }
 
+    /// Resolve a local branch, tag, `HEAD`, object ID, or simple parent
+    /// expression to one immutable commit.
+    ///
+    /// Resolution reads local Git metadata only. It never fetches, checks
+    /// out, updates refs, or substitutes the current working file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when this workspace is not Git, the
+    /// revision is invalid, the object is unavailable, or it is not a
+    /// commit.
+    pub fn resolve_revision(&self, revision: impl AsRef<str>) -> Result<Commit, WorkspaceError> {
+        let revision = revision.as_ref().trim();
+        if revision.is_empty() {
+            return Err(self.revision_error(revision, "revision is empty"));
+        }
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(self.revision_error(
+                revision,
+                "revision resolution is unavailable outside a Git repository",
+            ));
+        };
+        let id = self.resolve_revision_id(&git.repo, revision)?;
+        commit_record(&git.repo, id).map_err(|message| self.revision_error(revision, &message))
+    }
+
+    /// Enumerate local branches and tags resolved to pinned commit IDs.
+    ///
+    /// Lightweight and annotated tags are both peeled to the commit they
+    /// name. Choices are ordered by kind, then display name, then commit ID.
+    /// Typed revisions and recent commits remain available through
+    /// [`Workspace::resolve_revision`] and [`Workspace::recent_commits`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when local reference enumeration fails.
+    /// Names that do not resolve to commits are omitted from the picker.
+    pub fn revision_choices(&self) -> Result<Vec<RevisionChoice>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let references = git.repo.references().map_err(|error| WorkspaceError {
+            path: self.root.clone(),
+            message: format!("cannot enumerate local revisions: {error}"),
+        })?;
+        let mut choices = Vec::new();
+        let branches = references
+            .local_branches()
+            .map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot enumerate local branches: {error}"),
+            })?;
+        for reference in branches {
+            let mut reference = reference.map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read a local branch reference: {error}"),
+            })?;
+            if let Some(choice) = named_revision_choice(&mut reference, RevisionChoiceKind::Branch)
+            {
+                choices.push(choice);
+            }
+        }
+        let tags = references.tags().map_err(|error| WorkspaceError {
+            path: self.root.clone(),
+            message: format!("cannot enumerate local tags: {error}"),
+        })?;
+        for reference in tags {
+            let mut reference = reference.map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read a local tag reference: {error}"),
+            })?;
+            if let Some(choice) = named_revision_choice(&mut reference, RevisionChoiceKind::Tag) {
+                choices.push(choice);
+            }
+        }
+        choices.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.commit.cmp(&right.commit))
+        });
+        Ok(choices)
+    }
+
+    /// Discover bounded repository-wide commits, newest first.
+    ///
+    /// `offset` and `limit` support paging without restricting later
+    /// resolution of an older revision by its branch, tag, or object ID.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the repository history cannot be
+    /// read. An unborn repository returns an empty page.
+    pub fn recent_commits(
+        &self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<Commit>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(Vec::new());
+        };
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let Ok(head) = git.repo.head_id() else {
+            return Ok(Vec::new());
+        };
+        let walk = git
+            .repo
+            .rev_walk(repository_commit_tips(&git.repo, head.detach()))
+            .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
+            .all()
+            .map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot discover repository commits: {error}"),
+            })?;
+        let mut commits = Vec::with_capacity(limit);
+        for (index, info) in walk.enumerate() {
+            if index < offset {
+                continue;
+            }
+            if commits.len() >= limit {
+                break;
+            }
+            let info = info.map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read repository history: {error}"),
+            })?;
+            commits.push(
+                commit_record(&git.repo, info.id).map_err(|message| WorkspaceError {
+                    path: self.root.clone(),
+                    message: format!("cannot read commit {}: {message}", info.id.to_hex()),
+                })?,
+            );
+        }
+        Ok(commits)
+    }
+
+    /// Compute the direct first-parent boundary for a contiguous commit batch.
+    ///
+    /// The returned pair is the tree before the first selected commit and the
+    /// last selected commit. No merge base or three-dot comparison is used.
+    /// If the first selected commit is a merge, the boundary is ambiguous and
+    /// an actionable error names its parents.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when either commit is unavailable, the
+    /// first is not an ancestor on the last commit's first-parent chain, or
+    /// the first commit has multiple possible parents.
+    pub fn contiguous_batch(
+        &self,
+        first: &CommitId,
+        last: &CommitId,
+    ) -> Result<CommitBatch, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(WorkspaceError {
+                path: self.root.clone(),
+                message: "contiguous commit batches require a Git repository".to_owned(),
+            });
+        };
+        let first_id = ObjectId::from_hex(first.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(first.as_str(), &format!("invalid first commit: {error}"))
+        })?;
+        let last_id = ObjectId::from_hex(last.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(last.as_str(), &format!("invalid last commit: {error}"))
+        })?;
+        let mut chain = Vec::new();
+        let mut current = last_id;
+        loop {
+            let commit = git
+                .repo
+                .find_commit(current)
+                .map_err(|error| WorkspaceError {
+                    path: self.root.clone(),
+                    message: format!("cannot read commit {}: {error}", current.to_hex()),
+                })?;
+            let parents: Vec<ObjectId> = commit.parent_ids().map(gix::Id::detach).collect();
+            if parents.len() > 1 {
+                let listed = parents
+                    .iter()
+                    .map(|parent| parent.to_hex().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(WorkspaceError {
+                    path: self.root.clone(),
+                    message: format!(
+                        "commit {} is a merge; choose an explicit parent boundary ({listed})",
+                        current.to_hex()
+                    ),
+                });
+            }
+            chain.push(current);
+            if current == first_id {
+                break;
+            }
+            let Some(parent) = parents.first().copied() else {
+                return Err(WorkspaceError {
+                    path: self.root.clone(),
+                    message: format!(
+                        "commit {} is not an ancestor of {} on the first-parent chain",
+                        first.short(),
+                        last.short()
+                    ),
+                });
+            };
+            current = parent;
+        }
+        let first_commit = git
+            .repo
+            .find_commit(first_id)
+            .map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read first commit {}: {error}", first.short()),
+            })?;
+        let parents: Vec<ObjectId> = first_commit.parent_ids().map(gix::Id::detach).collect();
+        let before = match parents.as_slice() {
+            [] => ComparisonEndpoint::EmptyTree,
+            [parent] => ComparisonEndpoint::Commit(CommitId(parent.to_hex().to_string())),
+            _ => {
+                let listed = parents
+                    .iter()
+                    .map(|parent| parent.to_hex().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(WorkspaceError {
+                    path: self.root.clone(),
+                    message: format!(
+                        "commit {} is a merge; choose an explicit parent boundary ({listed})",
+                        first.short()
+                    ),
+                });
+            }
+        };
+        chain.reverse();
+        Ok(CommitBatch {
+            before,
+            after: ComparisonEndpoint::Commit(last.clone()),
+            commits: chain
+                .into_iter()
+                .map(|id| CommitId(id.to_hex().to_string()))
+                .collect(),
+        })
+    }
+
+    /// Compare two repository-wide endpoints directly.
+    ///
+    /// Commit endpoints read their pinned trees, `Index` reads the current
+    /// index, and `WorkingTree` reads the final eligible on-disk state.
+    /// Staged and unstaged layers therefore cancel when their final working
+    /// tree content equals the selected base.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when an endpoint cannot be enumerated.
+    /// Missing blobs and unreadable mutable files remain explicit
+    /// [`PathState::Missing`] changes rather than falling back to `HEAD`.
+    pub fn compare(
+        &mut self,
+        base: ComparisonEndpoint,
+        target: ComparisonEndpoint,
+    ) -> Result<Comparison, WorkspaceError> {
+        let base_files = self.endpoint_files(&base)?;
+        let target_files = self.endpoint_files(&target)?;
+        let mut paths = BTreeSet::new();
+        paths.extend(base_files.keys().cloned());
+        paths.extend(target_files.keys().cloned());
+        let mut changes = Vec::new();
+        for path in paths {
+            let base_file = base_files.get(&path);
+            let target_file = target_files.get(&path);
+            let mut base_state = base_file.map_or(PathState::Absent, |file| {
+                PathState::Present(file.info.clone())
+            });
+            let mut target_state = target_file.map_or(PathState::Absent, |file| {
+                PathState::Present(file.info.clone())
+            });
+            let base_bytes = if base_file.is_some_and(|file| file.info.is_supported()) {
+                match self.endpoint_bytes(&base, &path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        base_state = PathState::Missing(error.to_string());
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let target_bytes = if target_file.is_some_and(|file| file.info.is_supported()) {
+                match self.endpoint_bytes(&target, &path) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        target_state = PathState::Missing(error.to_string());
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            if let Some(bytes) = base_bytes.as_deref()
+                && let PathState::Present(info) = &mut base_state
+            {
+                *info = info
+                    .clone()
+                    .with_binary(self.is_binary(path.as_path(), bytes));
+            }
+            if let Some(bytes) = target_bytes.as_deref()
+                && let PathState::Present(info) = &mut target_state
+            {
+                *info = info
+                    .clone()
+                    .with_binary(self.is_binary(path.as_path(), bytes));
+            }
+            if let Some(change) = PathChange::from_states(
+                path,
+                base_state,
+                target_state,
+                base_bytes.as_deref(),
+                target_bytes.as_deref(),
+            ) {
+                changes.push(change);
+            }
+        }
+        Ok(Comparison::from_parts(base, target, changes))
+    }
+
+    /// Load endpoint bytes for one repository-relative path.
+    ///
+    /// `None` means the endpoint has no path. It never means "use `HEAD`".
+    /// A directory, submodule, unreadable file, or missing Git object is an
+    /// error with the selected endpoint named in its message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the endpoint is unavailable or its
+    /// path cannot be read.
+    pub fn endpoint_bytes(
+        &self,
+        endpoint: &ComparisonEndpoint,
+        relative: &Path,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        match endpoint {
+            ComparisonEndpoint::EmptyTree => Ok(None),
+            ComparisonEndpoint::Commit(id) => self.commit_bytes(id, relative),
+            ComparisonEndpoint::Index => self.index_endpoint_bytes(relative),
+            ComparisonEndpoint::WorkingTree => self.working_tree_endpoint_bytes(relative),
+            ComparisonEndpoint::ReviewPoint(id) => Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "review point {id} requires ReviewPointStore to load endpoint content"
+                ),
+            }),
+        }
+    }
+
+    /// Load endpoint UTF-8 text for one repository-relative path.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the endpoint bytes are unavailable or
+    /// are not valid UTF-8.
+    pub fn endpoint_text(
+        &self,
+        endpoint: &ComparisonEndpoint,
+        relative: &Path,
+    ) -> Result<Option<String>, WorkspaceError> {
+        let Some(bytes) = self.endpoint_bytes(endpoint, relative)? else {
+            return Ok(None);
+        };
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("{endpoint:?} content is not UTF-8 text: {error}"),
+            })
+    }
+
+    pub(crate) fn endpoint_files(
+        &mut self,
+        endpoint: &ComparisonEndpoint,
+    ) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+        match endpoint {
+            ComparisonEndpoint::EmptyTree => Ok(BTreeMap::new()),
+            ComparisonEndpoint::Commit(id) => self.commit_files(id),
+            ComparisonEndpoint::Index => self.index_files(),
+            ComparisonEndpoint::WorkingTree => self.working_tree_files(),
+            ComparisonEndpoint::ReviewPoint(id) => Err(WorkspaceError {
+                path: self.root.clone(),
+                message: format!(
+                    "review point {id} requires ReviewPointStore to enumerate endpoint paths"
+                ),
+            }),
+        }
+    }
+
+    fn revision_error(&self, revision: &str, detail: &str) -> WorkspaceError {
+        WorkspaceError {
+            path: self.root.clone(),
+            message: format!("cannot resolve revision `{revision}`: {detail}"),
+        }
+    }
+
+    fn resolve_revision_id(
+        &self,
+        repo: &gix::Repository,
+        revision: &str,
+    ) -> Result<ObjectId, WorkspaceError> {
+        if let Some((base, ancestry)) = parent_expression(revision) {
+            let base_id = self.resolve_revision_id(repo, base)?;
+            match ancestry {
+                Ancestry::FirstParents(count) => {
+                    let mut id = base_id;
+                    for _ in 0..count {
+                        let commit = repo.find_commit(id).map_err(|error| {
+                            self.revision_error(
+                                revision,
+                                &format!("cannot read parent of {}: {error}", id.to_hex()),
+                            )
+                        })?;
+                        let Some(next) = commit.parent_ids().next() else {
+                            return Err(self.revision_error(
+                                revision,
+                                &format!("{} has no requested parent", id.to_hex()),
+                            ));
+                        };
+                        id = next.detach();
+                    }
+                    return Ok(id);
+                }
+                Ancestry::Parent(0) => return Ok(base_id),
+                Ancestry::Parent(number) => {
+                    let commit = repo.find_commit(base_id).map_err(|error| {
+                        self.revision_error(
+                            revision,
+                            &format!("cannot read parent of {}: {error}", base_id.to_hex()),
+                        )
+                    })?;
+                    let Some(parent) = commit.parent_ids().nth(number - 1) else {
+                        return Err(self.revision_error(
+                            revision,
+                            &format!("{} has no parent number {number}", base_id.to_hex()),
+                        ));
+                    };
+                    return Ok(parent.detach());
+                }
+            }
+        }
+
+        if let Ok(mut reference) = repo.find_reference(revision) {
+            let commit = reference.peel_to_commit().map_err(|error| {
+                self.revision_error(revision, &format!("not a commit: {error}"))
+            })?;
+            return Ok(commit.id);
+        }
+
+        if revision.len() < 40
+            && let Ok(prefix) = gix::hash::Prefix::from_hex(revision)
+        {
+            match repo.objects.lookup_prefix(prefix, None).map_err(|error| {
+                self.revision_error(revision, &format!("cannot search object IDs: {error}"))
+            })? {
+                Some(Ok(id)) => {
+                    let object = repo.find_object(id).map_err(|error| {
+                        self.revision_error(revision, &format!("object is unavailable: {error}"))
+                    })?;
+                    let commit = object.peel_to_commit().map_err(|error| {
+                        self.revision_error(revision, &format!("object is not a commit: {error}"))
+                    })?;
+                    return Ok(commit.id);
+                }
+                Some(Err(())) => {
+                    return Err(self.revision_error(
+                        revision,
+                        "abbreviated object ID is ambiguous; use a longer ID",
+                    ));
+                }
+                None => {}
+            }
+        }
+
+        let id = ObjectId::from_hex(revision.as_bytes()).map_err(|error| {
+            self.revision_error(
+                revision,
+                &format!("no local branch or tag matches, and it is not an object ID: {error}"),
+            )
+        })?;
+        let object = repo.find_object(id).map_err(|error| {
+            self.revision_error(revision, &format!("object is unavailable: {error}"))
+        })?;
+        let commit = object.peel_to_commit().map_err(|error| {
+            self.revision_error(revision, &format!("object is not a commit: {error}"))
+        })?;
+        Ok(commit.id)
+    }
+
+    fn commit_bytes(
+        &self,
+        id: &CommitId,
+        relative: &Path,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(self.revision_error(
+                id.as_str(),
+                "commit content is unavailable outside a Git repository",
+            ));
+        };
+        let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
+        })?;
+        let commit = git
+            .repo
+            .find_commit(object_id)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("cannot read commit {}: {error}", id.short()),
+            })?;
+        let tree = commit.tree().map_err(|error| WorkspaceError {
+            path: self.root.join(relative),
+            message: format!("cannot read tree of commit {}: {error}", id.short()),
+        })?;
+        let Some(entry) = tree
+            .lookup_entry_by_path(relative)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "cannot look up {} in commit {}: {error}",
+                    relative.display(),
+                    id.short()
+                ),
+            })?
+        else {
+            return Ok(None);
+        };
+        if !entry.mode().is_blob_or_symlink() {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!(
+                    "commit {} has an unsupported non-file entry at {}",
+                    id.short(),
+                    relative.display()
+                ),
+            });
+        }
+        let object = entry.object().map_err(|error| WorkspaceError {
+            path: self.root.join(relative),
+            message: format!(
+                "cannot read blob for {} at commit {}: {error}",
+                relative.display(),
+                id.short()
+            ),
+        })?;
+        Ok(Some(object.detach().data))
+    }
+
+    fn index_endpoint_bytes(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: "index content is unavailable outside a Git repository".to_owned(),
+            });
+        };
+        let index = git.repo.index_or_empty().map_err(|error| WorkspaceError {
+            path: self.root.join(relative),
+            message: format!("cannot read the index: {error}"),
+        })?;
+        let path = unix_path(relative);
+        let Some(entry) = index.entry_by_path(path.as_ref()) else {
+            return Ok(None);
+        };
+        if !is_status_entry(entry) {
+            return Err(WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("index has an unsupported entry at {}", relative.display()),
+            });
+        }
+        let object = git
+            .repo
+            .find_object(entry.id)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("cannot read index blob at {}: {error}", relative.display()),
+            })?;
+        Ok(Some(object.detach().data))
+    }
+
+    fn working_tree_endpoint_bytes(
+        &self,
+        relative: &Path,
+    ) -> Result<Option<Vec<u8>>, WorkspaceError> {
+        let absolute = self.root.join(relative);
+        let metadata = match fs::symlink_metadata(&absolute) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(WorkspaceError {
+                    path: absolute,
+                    message: format!("cannot inspect working-tree path: {error}"),
+                });
+            }
+        };
+        if metadata.is_symlink() {
+            return fs::read_link(&absolute)
+                .map(|target| Some(target.to_string_lossy().into_owned().into_bytes()))
+                .map_err(|error| WorkspaceError {
+                    path: absolute,
+                    message: format!("cannot read symbolic link: {error}"),
+                });
+        }
+        if metadata.is_file() {
+            return fs::read(&absolute)
+                .map(Some)
+                .map_err(|error| WorkspaceError {
+                    path: absolute,
+                    message: format!("cannot read working-tree file: {error}"),
+                });
+        }
+        Err(WorkspaceError {
+            path: absolute,
+            message: "working-tree path is not a regular file or symbolic link".to_owned(),
+        })
+    }
+
+    fn commit_files(
+        &self,
+        id: &CommitId,
+    ) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(self.revision_error(
+                id.as_str(),
+                "commit paths are unavailable outside a Git repository",
+            ));
+        };
+        let object_id = ObjectId::from_hex(id.as_str().as_bytes()).map_err(|error| {
+            self.revision_error(id.as_str(), &format!("invalid commit object ID: {error}"))
+        })?;
+        let commit = git
+            .repo
+            .find_commit(object_id)
+            .map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read commit {}: {error}", id.short()),
+            })?;
+        let tree = commit.tree().map_err(|error| WorkspaceError {
+            path: self.root.clone(),
+            message: format!("cannot read tree of commit {}: {error}", id.short()),
+        })?;
+        let mut files = BTreeMap::new();
+        collect_endpoint_tree(&git.repo, &tree, Path::new(""), &mut files).map_err(|message| {
+            WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot enumerate commit {}: {message}", id.short()),
+            }
+        })?;
+        Ok(files)
+    }
+
+    fn index_files(&self) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Err(WorkspaceError {
+                path: self.root.clone(),
+                message: "index paths are unavailable outside a Git repository".to_owned(),
+            });
+        };
+        let index = git.repo.index_or_empty().map_err(|error| WorkspaceError {
+            path: self.root.clone(),
+            message: format!("cannot read the index: {error}"),
+        })?;
+        let mut files = BTreeMap::new();
+        for entry in index.entries() {
+            if entry.stage() != gix::index::entry::Stage::Unconflicted {
+                continue;
+            }
+            let path = gix::path::from_bstr(entry.path(&index)).into_owned();
+            let mode = index_mode(entry.mode);
+            let size = git
+                .repo
+                .find_header(entry.id)
+                .ok()
+                .map(|header| header.size());
+            files.insert(
+                path,
+                EndpointFile {
+                    info: PathInfo::new(mode, size, Some(entry.id.to_hex().to_string()), false)
+                        .with_supported(endpoint_size_supported(mode, size)),
+                },
+            );
+        }
+        Ok(files)
+    }
+
+    fn working_tree_files(&mut self) -> Result<BTreeMap<PathBuf, EndpointFile>, WorkspaceError> {
+        let mut files = BTreeMap::new();
+        for relative in self.walk_files_checked(Filter::All)? {
+            if self.is_ignored(&relative, EntryKind::File) && !self.is_tracked_path(&relative) {
+                continue;
+            }
+            let absolute = self.root.join(&relative);
+            let metadata = match fs::symlink_metadata(&absolute) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(WorkspaceError {
+                        path: absolute,
+                        message: format!("cannot inspect working-tree path: {error}"),
+                    });
+                }
+            };
+            let mode = working_tree_mode(&metadata);
+            let size = metadata.is_file().then_some(metadata.len());
+            let mut parent = relative.parent();
+            while let Some(directory) = parent.filter(|path| !path.as_os_str().is_empty()) {
+                let absolute_directory = self.root.join(directory);
+                let is_directory = fs::symlink_metadata(&absolute_directory)
+                    .is_ok_and(|metadata| metadata.is_dir() && !metadata.is_symlink());
+                if is_directory {
+                    files
+                        .entry(directory.to_path_buf())
+                        .or_insert_with(|| EndpointFile {
+                            info: PathInfo::new(FileMode::Directory, None, None, false),
+                        });
+                }
+                parent = directory.parent();
+            }
+            files.insert(
+                relative,
+                EndpointFile {
+                    info: PathInfo::new(mode, size, None, false)
+                        .with_supported(endpoint_size_supported(mode, size)),
+                },
+            );
+        }
+        Ok(files)
+    }
+
+    fn is_tracked_path(&self, relative: &Path) -> bool {
+        let Some(git) = self.ignore.as_ref() else {
+            return false;
+        };
+        if let Ok(index) = git.repo.index_or_empty()
+            && index.entry_by_path(unix_path(relative).as_ref()).is_some()
+        {
+            return true;
+        }
+        git.repo
+            .head_tree()
+            .ok()
+            .and_then(|tree| tree.lookup_entry_by_path(relative).ok().flatten())
+            .is_some()
+    }
+
+    fn is_binary(&mut self, relative: &Path, bytes: &[u8]) -> bool {
+        self.diff_attr(relative).classify(bytes).unwrap_or(false)
+    }
+
     /// Which of `wanted` (hex commits) are `HEAD` or one of its ancestors
     /// (ADR 0024). One walk from `HEAD` answers the whole set; it stops as
     /// soon as every wanted commit has been met, and never descends past
@@ -470,113 +1418,6 @@ impl Workspace {
             .object()
             .map_err(|error| fail(format!("cannot read blob from {whence}: {error}")))?;
         Ok(object.detach().data)
-    }
-
-    /// The text of root-relative `relative` as committed in `commit` (hex),
-    /// a side of the checkpoint diff (ADR 0049).
-    ///
-    /// Returns `None` outside git, and `Some("")` for a file the commit
-    /// does not have.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WorkspaceError`] when the commit or the blob cannot be
-    /// read, or the blob is not UTF-8 text.
-    pub fn text_at(&self, commit: &str, relative: &Path) -> Result<Option<String>, WorkspaceError> {
-        let Some(git) = self.ignore.as_ref() else {
-            return Ok(None);
-        };
-        let fail = |message: String| WorkspaceError {
-            path: self.root.join(relative),
-            message,
-        };
-        let id = ObjectId::from_hex(commit.as_bytes())
-            .map_err(|error| fail(format!("not a commit id: {error}")))?;
-        let tree = git
-            .repo
-            .find_commit(id)
-            .map_err(|error| fail(format!("cannot read commit {commit}: {error}")))?
-            .tree()
-            .map_err(|error| fail(format!("cannot read the tree of {commit}: {error}")))?;
-        let short = &commit[..commit.len().min(7)];
-        let bytes = self.blob_in(&tree, relative, short)?;
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|error| fail(format!("blob at {short} is not UTF-8 text: {error}")))
-    }
-
-    /// The commits reachable from `HEAD` that changed root-relative
-    /// `relative`, newest first, at most `limit` of them (ADR 0049). A
-    /// commit changed the file when its blob differs from the one in its
-    /// first parent, or the file is new there. Empty outside git or before
-    /// the first commit.
-    #[must_use]
-    pub fn file_history(&self, relative: &Path, limit: usize) -> Vec<Commit> {
-        let Some(git) = self.ignore.as_ref() else {
-            return Vec::new();
-        };
-        let Ok(head) = git.repo.head_id() else {
-            return Vec::new();
-        };
-        let walk = match git.repo.rev_walk([head]).all() {
-            Ok(walk) => walk,
-            Err(error) => {
-                tracing::warn!(%error, "cannot walk history from HEAD");
-                return Vec::new();
-            }
-        };
-        let blob_of = |id: ObjectId| -> Option<Option<ObjectId>> {
-            let tree = git.repo.find_commit(id).ok()?.tree().ok()?;
-            let entry = tree.lookup_entry_by_path(relative).ok()?;
-            Some(entry.map(|entry| entry.oid().to_owned()))
-        };
-        let mut out = Vec::new();
-        for info in walk {
-            if out.len() >= limit {
-                break;
-            }
-            let info = match info {
-                Ok(info) => info,
-                Err(error) => {
-                    tracing::warn!(%error, "history walk stopped early");
-                    break;
-                }
-            };
-            let id = info.id;
-            let Some(blob) = blob_of(id) else {
-                continue;
-            };
-            let parent_blob = info
-                .parent_ids()
-                .next()
-                .map_or(Some(None), |parent| blob_of(parent.detach()));
-            let changed = match (blob, parent_blob) {
-                (None, _) => false,
-                (Some(_), None) => true,
-                (Some(now), Some(before)) => Some(now) != before,
-            };
-            if !changed {
-                continue;
-            }
-            let Ok(commit) = git.repo.find_commit(id) else {
-                continue;
-            };
-            let time = commit
-                .time()
-                .map_or(0, |time| u64::try_from(time.seconds).unwrap_or(0));
-            let subject = commit
-                .message_raw_sloppy()
-                .lines()
-                .next()
-                .map(|line| line.to_str_lossy().into_owned())
-                .unwrap_or_default();
-            out.push(Commit {
-                hex: id.to_hex().to_string(),
-                time,
-                subject,
-            });
-        }
-        out
     }
 
     /// The text of root-relative `relative` as staged in the index, the
@@ -1040,6 +1881,23 @@ impl Workspace {
         relative: &Path,
         filter: Filter,
     ) -> Result<Vec<Entry>, WorkspaceError> {
+        self.list_dir_with_policy(relative, filter, Listing::BestEffort)
+    }
+
+    fn list_dir_checked(
+        &mut self,
+        relative: &Path,
+        filter: Filter,
+    ) -> Result<Vec<Entry>, WorkspaceError> {
+        self.list_dir_with_policy(relative, filter, Listing::Complete)
+    }
+
+    fn list_dir_with_policy(
+        &mut self,
+        relative: &Path,
+        filter: Filter,
+        listing: Listing,
+    ) -> Result<Vec<Entry>, WorkspaceError> {
         let dir = self.root.join(relative);
         let read = fs::read_dir(&dir).map_err(|source| WorkspaceError {
             path: dir.clone(),
@@ -1049,15 +1907,30 @@ impl Workspace {
         for item in read {
             let item = match item {
                 Ok(item) => item,
+                Err(error) if listing == Listing::Complete => {
+                    return Err(WorkspaceError {
+                        path: dir,
+                        message: format!("cannot enumerate directory: {error}"),
+                    });
+                }
                 Err(error) => {
                     tracing::warn!(%error, dir = %dir.display(), "skipping unreadable entry");
                     continue;
                 }
             };
             let name = item.file_name();
-            let Some(name) = name.to_str().map(str::to_owned) else {
-                tracing::debug!(dir = %dir.display(), "skipping non-UTF-8 file name");
-                continue;
+            let name = match name.to_str() {
+                Some(name) => name.to_owned(),
+                None if listing == Listing::Complete => {
+                    return Err(WorkspaceError {
+                        path: item.path(),
+                        message: "file name is not valid UTF-8".to_owned(),
+                    });
+                }
+                None => {
+                    tracing::debug!(dir = %dir.display(), "skipping non-UTF-8 file name");
+                    continue;
+                }
             };
             if name == ".git" {
                 continue;
@@ -1065,7 +1938,23 @@ impl Workspace {
             // Browsing may follow a symlink into its target directory,
             // but git never does: for ignore rules and the dirty set the
             // link is a file-like entry, wherever it points.
-            let file_type = item.file_type().ok();
+            let file_type = match item.file_type() {
+                Ok(file_type) => Some(file_type),
+                Err(error) if listing == Listing::Complete => {
+                    return Err(WorkspaceError {
+                        path: item.path(),
+                        message: format!("cannot inspect directory entry: {error}"),
+                    });
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        path = %item.path().display(),
+                        "cannot inspect directory entry"
+                    );
+                    None
+                }
+            };
             let is_link = file_type.is_some_and(|kind| kind.is_symlink());
             let is_dir = if is_link {
                 item.path().is_dir()
@@ -1098,6 +1987,37 @@ impl Workspace {
     /// Directories that cannot be read are logged and skipped.
     pub fn walk_files(&mut self, filter: Filter) -> Vec<String> {
         self.walk_files_under(Path::new(""), filter)
+    }
+
+    /// Every file under the root, refusing an incomplete traversal.
+    ///
+    /// Comparison and review-point capture use this path so an unreadable
+    /// directory cannot be mistaken for verified deletion.
+    fn walk_files_checked(&mut self, filter: Filter) -> Result<Vec<PathBuf>, WorkspaceError> {
+        self.walk_files_checked_under(Path::new(""), filter)
+    }
+
+    fn walk_files_checked_under(
+        &mut self,
+        root: &Path,
+        filter: Filter,
+    ) -> Result<Vec<PathBuf>, WorkspaceError> {
+        let mut files = Vec::new();
+        let mut pending = vec![root.to_path_buf()];
+        while let Some(dir) = pending.pop() {
+            let entries = self.list_dir_checked(&dir, filter)?;
+            let mut dirs = Vec::new();
+            for entry in entries {
+                let path = dir.join(&entry.name);
+                if entry.is_dir && !entry.is_link {
+                    dirs.push(path);
+                } else {
+                    files.push(path);
+                }
+            }
+            pending.extend(dirs.into_iter().rev());
+        }
+        Ok(files)
     }
 
     /// The files under root-relative `dir` as [`Workspace::walk_files`]
@@ -1140,6 +2060,213 @@ impl Workspace {
             pending.extend(dirs.into_iter().rev());
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ancestry {
+    FirstParents(usize),
+    Parent(usize),
+}
+
+fn parent_expression(spec: &str) -> Option<(&str, Ancestry)> {
+    if let Some((base, suffix)) = spec.rsplit_once('~')
+        && !base.is_empty()
+    {
+        let count = if suffix.is_empty() {
+            1
+        } else {
+            suffix.parse().ok()?
+        };
+        return Some((base, Ancestry::FirstParents(count)));
+    }
+    if let Some((base, suffix)) = spec.rsplit_once('^')
+        && !base.is_empty()
+    {
+        let count = if suffix.is_empty() {
+            1
+        } else {
+            suffix.parse().ok()?
+        };
+        return Some((base, Ancestry::Parent(count)));
+    }
+    None
+}
+
+fn commit_record(repo: &gix::Repository, id: ObjectId) -> Result<Commit, String> {
+    let commit = repo
+        .find_commit(id)
+        .map_err(|error| format!("cannot read commit object: {error}"))?;
+    let time = commit
+        .time()
+        .map_err(|error| format!("cannot read commit time: {error}"))?
+        .seconds;
+    let time = u64::try_from(time).unwrap_or(0);
+    let subject = commit
+        .message_raw_sloppy()
+        .lines()
+        .next()
+        .map(|line| line.to_str_lossy().into_owned())
+        .unwrap_or_default();
+    let parents = commit
+        .parent_ids()
+        .map(|parent| parent.detach().to_hex().to_string())
+        .collect();
+    Ok(Commit {
+        hex: id.to_hex().to_string(),
+        time,
+        subject,
+        parents,
+    })
+}
+
+fn named_revision_choice(
+    reference: &mut gix::Reference<'_>,
+    kind: RevisionChoiceKind,
+) -> Option<RevisionChoice> {
+    let name = reference.name().shorten().to_str_lossy().into_owned();
+    let commit = match reference.peel_to_commit() {
+        Ok(commit) => commit,
+        Err(error) => {
+            tracing::debug!(
+                reference = %name,
+                %error,
+                "skipping local revision that does not resolve to a commit"
+            );
+            return None;
+        }
+    };
+    Some(RevisionChoice {
+        kind,
+        name,
+        commit: CommitId(commit.id.to_hex().to_string()),
+    })
+}
+
+fn repository_commit_tips(repo: &gix::Repository, head: ObjectId) -> Vec<ObjectId> {
+    let mut tips = vec![head];
+    let Ok(references) = repo.references() else {
+        return tips;
+    };
+    if let Ok(branches) = references.local_branches() {
+        for reference in branches.flatten() {
+            let mut reference = reference;
+            if let Ok(commit) = reference.peel_to_commit() {
+                tips.push(commit.id);
+            }
+        }
+    }
+    let Ok(references) = repo.references() else {
+        tips.sort();
+        tips.dedup();
+        return tips;
+    };
+    if let Ok(tags) = references.tags() {
+        for reference in tags.flatten() {
+            let mut reference = reference;
+            if let Ok(commit) = reference.peel_to_commit() {
+                tips.push(commit.id);
+            }
+        }
+    }
+    tips.sort();
+    tips.dedup();
+    tips
+}
+
+fn collect_endpoint_tree(
+    repo: &gix::Repository,
+    tree: &gix::Tree<'_>,
+    prefix: &Path,
+    out: &mut BTreeMap<PathBuf, EndpointFile>,
+) -> Result<(), String> {
+    for entry in tree.iter() {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = prefix.join(gix::path::from_bstr(entry.filename()));
+        let mode = tree_mode(entry.mode());
+        if mode.is_directory() {
+            out.insert(
+                path.clone(),
+                EndpointFile {
+                    info: PathInfo::new(
+                        mode,
+                        None,
+                        Some(entry.object_id().to_hex().to_string()),
+                        false,
+                    )
+                    .with_supported(endpoint_size_supported(mode, None)),
+                },
+            );
+            let subtree = entry
+                .object()
+                .map_err(|error| error.to_string())?
+                .into_tree();
+            collect_endpoint_tree(repo, &subtree, &path, out)?;
+            continue;
+        }
+        let size = mode
+            .is_supported()
+            .then(|| {
+                repo.find_header(entry.object_id())
+                    .map(|header| header.size())
+            })
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        out.insert(
+            path,
+            EndpointFile {
+                info: PathInfo::new(
+                    mode,
+                    size,
+                    Some(entry.object_id().to_hex().to_string()),
+                    false,
+                )
+                .with_supported(endpoint_size_supported(mode, size)),
+            },
+        );
+    }
+    Ok(())
+}
+
+fn tree_mode(mode: gix::objs::tree::EntryMode) -> FileMode {
+    match mode.kind() {
+        gix::objs::tree::EntryKind::Blob => FileMode::Regular,
+        gix::objs::tree::EntryKind::BlobExecutable => FileMode::Executable,
+        gix::objs::tree::EntryKind::Link => FileMode::Symlink,
+        gix::objs::tree::EntryKind::Tree => FileMode::Directory,
+        gix::objs::tree::EntryKind::Commit => FileMode::Submodule,
+    }
+}
+
+fn index_mode(mode: gix::index::entry::Mode) -> FileMode {
+    match mode {
+        gix::index::entry::Mode::FILE => FileMode::Regular,
+        gix::index::entry::Mode::FILE_EXECUTABLE => FileMode::Executable,
+        gix::index::entry::Mode::SYMLINK => FileMode::Symlink,
+        gix::index::entry::Mode::DIR => FileMode::Directory,
+        gix::index::entry::Mode::COMMIT => FileMode::Submodule,
+        other => FileMode::Other(other.bits()),
+    }
+}
+
+fn working_tree_mode(metadata: &fs::Metadata) -> FileMode {
+    if metadata.is_symlink() {
+        return FileMode::Symlink;
+    }
+    if metadata.is_file() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o111 != 0 {
+                return FileMode::Executable;
+            }
+        }
+        return FileMode::Regular;
+    }
+    FileMode::Other(0)
+}
+
+fn endpoint_size_supported(mode: FileMode, size: Option<u64>) -> bool {
+    mode.is_supported() && size.is_none_or(|size| size <= content::Policy::default().max_bytes)
 }
 
 impl Ignore {
@@ -1229,6 +2356,12 @@ impl WorkspaceError {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The actionable failure detail without the path prefix.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
     }
 }
 
@@ -1491,4 +2624,367 @@ fn collect_blobs(
         prefix.truncate(len);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use fathomable_testing::TempDir;
+
+    use super::*;
+    use fathomable_testing::git::{commit_and_stage, init, stage};
+
+    fn head(root: &Path) -> Result<CommitId, Box<dyn std::error::Error>> {
+        let repo = gix::open_opts(root, open_options())?;
+        Ok(CommitId::parse(repo.head_id()?.to_hex().to_string())?)
+    }
+
+    #[test]
+    fn direct_commit_comparison_includes_historical_additions_and_deletions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-comparison-history")?;
+        init(&dir.0)?;
+        commit_and_stage(
+            &dir.0,
+            &[
+                ("a.md", "one\n"),
+                ("gone.md", "gone\n"),
+                ("dir/old.md", "old\n"),
+            ],
+        )?;
+        let first = head(&dir.0)?;
+        commit_and_stage(
+            &dir.0,
+            &[
+                ("a.md", "two\n"),
+                ("new.md", "new\n"),
+                ("dir/new.md", "new\n"),
+            ],
+        )?;
+        let second = head(&dir.0)?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+
+        let comparison = workspace.compare(
+            ComparisonEndpoint::Commit(first.clone()),
+            ComparisonEndpoint::Commit(second.clone()),
+        )?;
+        let paths: Vec<_> = comparison
+            .changes()
+            .iter()
+            .map(|change| (change.path().to_owned(), change.kind()))
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                (
+                    PathBuf::from("a.md"),
+                    crate::diff::PathChangeKind::ContentChanged
+                ),
+                (
+                    PathBuf::from("dir/new.md"),
+                    crate::diff::PathChangeKind::Added
+                ),
+                (
+                    PathBuf::from("dir/old.md"),
+                    crate::diff::PathChangeKind::Deleted
+                ),
+                (
+                    PathBuf::from("gone.md"),
+                    crate::diff::PathChangeKind::Deleted
+                ),
+                (PathBuf::from("new.md"), crate::diff::PathChangeKind::Added),
+            ]
+        );
+        assert_eq!(
+            workspace.endpoint_text(&ComparisonEndpoint::Commit(first), Path::new("gone.md"))?,
+            Some("gone\n".to_owned())
+        );
+        assert_eq!(
+            workspace.endpoint_text(&ComparisonEndpoint::Commit(second), Path::new("gone.md"))?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn root_and_empty_tree_comparisons_are_explicit() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-comparison-root")?;
+        init(&dir.0)?;
+        fs::write(dir.0.join("root.md"), "root\n")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let empty = workspace.compare(
+            ComparisonEndpoint::EmptyTree,
+            ComparisonEndpoint::WorkingTree,
+        )?;
+        assert_eq!(empty.changes().len(), 1);
+        assert_eq!(
+            empty.changes()[0].kind(),
+            crate::diff::PathChangeKind::Added
+        );
+
+        commit_and_stage(&dir.0, &[("root.md", "root\n")])?;
+        let commit = head(&dir.0)?;
+        let root = workspace.compare(
+            ComparisonEndpoint::EmptyTree,
+            ComparisonEndpoint::Commit(commit),
+        )?;
+        assert_eq!(root.changes().len(), 1);
+        assert_eq!(root.changes()[0].path(), Path::new("root.md"));
+        Ok(())
+    }
+
+    #[test]
+    fn revisions_resolve_branches_tags_ids_and_reject_non_commits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-revisions")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let commit = head(&dir.0)?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        repo.tag_reference(
+            "v1",
+            ObjectId::from_hex(commit.as_str().as_bytes())?,
+            gix::refs::transaction::PreviousValue::MustNotExist,
+        )?;
+        let workspace = Workspace::discover(&dir.0)?;
+        assert_eq!(workspace.resolve_revision("HEAD")?.id(), commit);
+        assert_eq!(workspace.resolve_revision("main")?.id(), commit);
+        assert_eq!(workspace.resolve_revision("v1")?.id(), commit);
+        assert_eq!(workspace.resolve_revision(commit.short())?.id(), commit);
+        let invalid = workspace
+            .resolve_revision("not-a-revision")
+            .err()
+            .ok_or("invalid revision was accepted")?;
+        assert!(invalid.message().contains("no local branch or tag"));
+        let blob = repo.write_blob(b"not a commit")?.detach();
+        let error = workspace
+            .resolve_revision(blob.to_hex().to_string())
+            .err()
+            .ok_or("blob revision was accepted")?;
+        assert!(error.to_string().contains("not a commit"));
+        Ok(())
+    }
+
+    #[test]
+    fn numbered_caret_selects_one_merge_parent() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-numbered-parent")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let first = head(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "b\n")])?;
+        let main_parent = head(&dir.0)?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "2 +0000",
+        };
+        let tree = repo.head_tree_id()?.detach();
+        let side_parent = repo
+            .commit_as(
+                signature,
+                signature,
+                "refs/heads/side",
+                "side",
+                tree,
+                Some(ObjectId::from_hex(first.as_str().as_bytes())?),
+            )?
+            .detach();
+        repo.commit_as(
+            signature,
+            signature,
+            "HEAD",
+            "merge",
+            tree,
+            [
+                ObjectId::from_hex(main_parent.as_str().as_bytes())?,
+                side_parent,
+            ],
+        )?;
+
+        let workspace = Workspace::discover(&dir.0)?;
+        assert_eq!(workspace.resolve_revision("HEAD^1")?.id(), main_parent);
+        assert_eq!(
+            workspace.resolve_revision("HEAD^2")?.id(),
+            CommitId(side_parent.to_hex().to_string())
+        );
+        assert_eq!(workspace.resolve_revision("HEAD~2")?.id(), first);
+        assert!(
+            workspace
+                .resolve_revision("HEAD^3")
+                .is_err_and(|error| error.message().contains("parent number 3"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn revision_choices_list_branches_and_peel_both_tag_kinds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-revision-choices")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "a\n")])?;
+        let commit = head(&dir.0)?;
+        let repo = gix::open_opts(&dir.0, open_options())?;
+        let commit_object = ObjectId::from_hex(commit.as_str().as_bytes())?;
+        let signature = gix::actor::SignatureRef {
+            name: "test".into(),
+            email: "test@example.com".into(),
+            time: "1 +0000",
+        };
+        repo.commit_as(
+            signature,
+            signature,
+            "refs/heads/feature",
+            "feature",
+            repo.head_tree_id()?.detach(),
+            Some(commit_object),
+        )?;
+        repo.tag_reference(
+            "lightweight",
+            commit_object,
+            gix::refs::transaction::PreviousValue::MustNotExist,
+        )?;
+        let annotated = repo
+            .write_object(gix::objs::Tag {
+                target: commit_object,
+                target_kind: gix::objs::Kind::Commit,
+                name: "annotated".into(),
+                tagger: None,
+                message: "annotated tag\n".into(),
+                signature: None,
+            })?
+            .detach();
+        repo.tag_reference(
+            "annotated",
+            annotated,
+            gix::refs::transaction::PreviousValue::MustNotExist,
+        )?;
+
+        let workspace = Workspace::discover(&dir.0)?;
+        let choices = workspace.revision_choices()?;
+        let names: Vec<_> = choices
+            .iter()
+            .map(|choice| (choice.kind(), choice.name().to_owned()))
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                (RevisionChoiceKind::Branch, "feature".to_owned()),
+                (RevisionChoiceKind::Branch, "main".to_owned()),
+                (RevisionChoiceKind::Tag, "annotated".to_owned()),
+                (RevisionChoiceKind::Tag, "lightweight".to_owned()),
+            ]
+        );
+        for name in ["annotated", "lightweight"] {
+            let choice = choices
+                .iter()
+                .find(|choice| choice.kind() == RevisionChoiceKind::Tag && choice.name() == name)
+                .ok_or("missing tag choice")?;
+            assert_eq!(choice.commit(), &commit);
+        }
+        assert_eq!(
+            choices
+                .iter()
+                .find(|choice| choice.name() == "feature")
+                .map(RevisionChoice::kind),
+            Some(RevisionChoiceKind::Branch)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recent_commits_and_batches_are_repository_wide() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-commit-picker")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "0\n")])?;
+        let first = head(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "1\n")])?;
+        commit_and_stage(&dir.0, &[("b.md", "2\n")])?;
+        let last = head(&dir.0)?;
+        let workspace = Workspace::discover(&dir.0)?;
+        assert_eq!(workspace.recent_commits(0, 2)?.len(), 2);
+        let batch = workspace.contiguous_batch(&first, &last)?;
+        assert_eq!(batch.before(), &ComparisonEndpoint::EmptyTree);
+        assert_eq!(batch.after(), &ComparisonEndpoint::Commit(last));
+        assert_eq!(batch.commits().len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn working_tree_is_final_and_index_remains_explicit() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("workspace-working-final")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("a.md", "base\n"), ("gone.md", "gone\n")])?;
+        let commit = head(&dir.0)?;
+        fs::write(dir.0.join("a.md"), "base\n")?;
+        fs::write(dir.0.join("gone.md"), "gone\n")?;
+        stage(&dir.0, &[("a.md", "staged\n")])?;
+        fs::write(dir.0.join("a.md"), "base\n")?;
+        fs::remove_file(dir.0.join("gone.md"))?;
+        fs::write(dir.0.join("added.md"), "added\n")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+
+        let net = workspace.compare(
+            ComparisonEndpoint::Commit(commit.clone()),
+            ComparisonEndpoint::WorkingTree,
+        )?;
+        let net_paths: Vec<_> = net
+            .changes()
+            .iter()
+            .map(crate::diff::PathChange::path)
+            .collect();
+        assert_eq!(net_paths, [Path::new("added.md"), Path::new("gone.md")]);
+        assert_eq!(net.changes()[0].kind(), crate::diff::PathChangeKind::Added);
+        assert_eq!(
+            net.changes()[1].kind(),
+            crate::diff::PathChangeKind::Deleted
+        );
+
+        let staged = workspace.compare(
+            ComparisonEndpoint::Commit(commit),
+            ComparisonEndpoint::Index,
+        )?;
+        assert_eq!(staged.changes().len(), 2);
+        assert_eq!(staged.changes()[0].path(), Path::new("a.md"));
+        assert_eq!(staged.changes()[1].path(), Path::new("gone.md"));
+        assert_eq!(
+            workspace
+                .status()?
+                .get(Path::new("a.md"))
+                .map(crate::status::Entry::state),
+            Some(State::Modified)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_comparison_walk_refuses_an_incomplete_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-checked-walk")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let error = workspace
+            .walk_files_checked_under(Path::new("missing"), Filter::Visible)
+            .err()
+            .ok_or("missing directory was silently skipped")?;
+        assert!(error.to_string().contains("missing"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_comparison_walk_refuses_an_unrepresentable_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let dir = TempDir::new("workspace-checked-walk-entry")?;
+        fs::write(dir.0.join(OsString::from_vec(vec![0xff])), "content")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+        let error = workspace
+            .walk_files_checked(Filter::Visible)
+            .err()
+            .ok_or("unrepresentable entry was silently skipped")?;
+        assert!(error.to_string().contains("UTF-8"));
+        Ok(())
+    }
 }

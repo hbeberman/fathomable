@@ -295,6 +295,11 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Menu(menu)) => {
             draw_context_menu(frame, app, theme, menu);
         }
+        Some(Popup::ConfirmBoard {
+            counts, changed, ..
+        }) => {
+            draw_board_confirmation(frame, theme, app, *counts, *changed);
+        }
         Some(Popup::Picker(picker)) => {
             draw_picker(
                 frame,
@@ -660,9 +665,7 @@ fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     );
 }
 
-/// A diff's header over the text and, while the file has checkpoints,
-/// the strip of them under it (ADR 0049, ADR 0060); the rows between
-/// are returned.
+/// A comparison header over the text; the rows below it are returned.
 fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) -> Rect {
     let rows = app.diff_chrome_rows();
     let Some(header) = app
@@ -676,39 +679,9 @@ fn draw_diff_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
         Paragraph::new(diff_header(&header).line(theme, width)).style(theme.info),
         Rect { height: 1, ..area },
     );
-    let strip = app.checkpoint_strip();
-    if rows < 2 || strip.is_empty() {
-        return Rect {
-            y: area.y + 1,
-            height: area.height - 1,
-            ..area
-        };
-    }
-    let faint = theme.info.add_modifier(Modifier::DIM);
-    let mut spans = vec![Span::styled(" checkpoints ", faint)];
-    for (i, entry) in strip.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        let glyph = if entry.workspace { "◆" } else { "·" };
-        let style = if entry.shown {
-            theme.popup_key
-        } else {
-            theme.info
-        };
-        spans.push(Span::styled(format!("{glyph} {}", entry.label), style));
-    }
-    frame.render_widget(
-        Paragraph::new(Line::from(spans)).style(theme.info),
-        Rect {
-            y: area.y + area.height - 1,
-            height: 1,
-            ..area
-        },
-    );
     Rect {
         y: area.y + 1,
-        height: area.height - 2,
+        height: area.height - 1,
         ..area
     }
 }
@@ -979,10 +952,12 @@ pub(super) fn sidebar_divider_style(theme: &Theme) -> Style {
     theme.marker.bg(theme.sidebar.bg.unwrap_or(Color::Reset))
 }
 
-/// The marks around a files pane name: Git's XY code in the gutter
-/// (ADR 0017; files only, a folder's state is its children's), then the
-/// counts, the follow badge (ADR 0015), and the thread circle (ADR 0066)
-/// that follow the name, each drawn over the row's background.
+/// The marks around a files pane name: current Git XY status, selected
+/// comparison counts, the follow badge, and the thread circle.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the files row keeps Git status and comparison facts aligned"
+)]
 fn tree_marks<'a>(
     app: &App,
     row: &fathomable_core::tree::Row,
@@ -992,6 +967,21 @@ fn tree_marks<'a>(
     circles: &[(std::path::PathBuf, Words)],
 ) -> (Vec<Span<'a>>, Vec<Span<'a>>) {
     // A collapsed directory folds what is beneath it.
+    let comparison_status = app.comparison_status();
+    let comparison = if row.is_dir() {
+        (!row.expanded())
+            .then(|| comparison_status.summary_under(row.path()))
+            .flatten()
+    } else {
+        comparison_status.get(row.path()).map(|entry| Summary {
+            state: entry.state(),
+            staged: entry.is_staged(),
+            changes: entry.changes(),
+            added: entry.added(),
+            removed: entry.removed(),
+            binary: entry.is_binary(),
+        })
+    };
     let git = if row.is_dir() {
         (!row.expanded())
             .then(|| app.status().summary_under(row.path()))
@@ -1009,34 +999,52 @@ fn tree_marks<'a>(
     let on_bg = |mark: Style| style.bg.map_or(mark, |bg| mark.bg(bg));
     let mut letters = Vec::new();
     let mut tail = Vec::new();
-    if let Some(git) = git {
-        if !row.is_dir() {
-            let [staged, unstaged] = git.changes.code();
-            for (letter, staged_side) in [(staged, true), (unstaged, false)] {
-                let letter_style = match letter {
-                    'D' => theme.diff_minus,
-                    '?' | 'U' => theme.diff_plus,
-                    _ if staged_side => theme.git_staged,
-                    ' ' => Style::default(),
-                    _ => theme.git_unstaged,
-                };
-                letters.push(Span::styled(letter.to_string(), on_bg(letter_style)));
-            }
+    let comparison_kind = (!row.is_dir())
+        .then(|| app.comparison_kind(row.path()))
+        .flatten();
+    if let Some(kind) = comparison_kind {
+        let (letter, letter_style) = match kind {
+            fathomable_core::diff::PathChangeKind::Added => ('A', theme.diff_plus),
+            fathomable_core::diff::PathChangeKind::Deleted => ('D', theme.diff_minus),
+            fathomable_core::diff::PathChangeKind::Binary
+            | fathomable_core::diff::PathChangeKind::Unsupported => ('B', theme.info),
+            fathomable_core::diff::PathChangeKind::Missing => ('!', theme.info),
+            fathomable_core::diff::PathChangeKind::ContentChanged
+            | fathomable_core::diff::PathChangeKind::ModeChanged
+            | fathomable_core::diff::PathChangeKind::TypeChanged => ('M', theme.git_unstaged),
+        };
+        letters.push(Span::styled(letter.to_string(), on_bg(letter_style)));
+        letters.push(Span::styled(" ".to_owned(), on_bg(Style::default())));
+    } else if let Some(git) = git
+        && !row.is_dir()
+    {
+        let [staged, unstaged] = git.changes.code();
+        for (letter, staged_side) in [(staged, true), (unstaged, false)] {
+            let letter_style = match letter {
+                'D' => theme.diff_minus,
+                '?' | 'U' => theme.diff_plus,
+                _ if staged_side => theme.git_staged,
+                ' ' => Style::default(),
+                _ => theme.git_unstaged,
+            };
+            letters.push(Span::styled(letter.to_string(), on_bg(letter_style)));
         }
-        if git.added > 0 {
+    }
+    if let Some(comparison) = comparison {
+        if comparison.added > 0 {
             tail.push(Span::styled(
-                format!(" +{}", git.added),
+                format!(" +{}", comparison.added),
                 on_bg(theme.diff_plus),
             ));
         }
-        if git.removed > 0 {
+        if comparison.removed > 0 {
             tail.push(Span::styled(
-                format!(" -{}", git.removed),
+                format!(" -{}", comparison.removed),
                 on_bg(theme.diff_minus),
             ));
         }
         // A dirty binary file has no counts; the tag says why (ADR 0026).
-        if git.binary {
+        if comparison.binary {
             tail.push(Span::styled(" bin", on_bg(theme.info)));
         }
     }
@@ -1689,6 +1697,9 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         } else if view.source_view() {
             badges.push("SRC".to_owned());
         }
+        if app.comparison_badge_visible() {
+            badges.push(app.comparison_badge());
+        }
     }
     let mut right = Vec::new();
     if directory.is_none() {
@@ -2073,8 +2084,11 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
         super::PickerKind::Files => "files",
         super::PickerKind::AllFiles => "files (incl. ignored)",
         super::PickerKind::Recent => "recent",
-        super::PickerKind::DiffBase => "base",
-        super::PickerKind::DiffTarget => "target",
+        super::PickerKind::ComparisonControl => "comparison",
+        super::PickerKind::ComparisonBase => "comparison base",
+        super::PickerKind::ComparisonTarget => "comparison target",
+        super::PickerKind::ComparisonFocus => "comparison focus",
+        super::PickerKind::ReviewPointName => "review point name (optional)",
         super::PickerKind::Worktree => "worktree",
     };
     let title_line = Line::from(vec![
@@ -2106,6 +2120,7 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
             if used + w > inner {
                 break;
             }
+
             let matched = m
                 .positions()
                 .binary_search(&u32::try_from(char_index).unwrap_or(u32::MAX))
@@ -2129,6 +2144,41 @@ fn draw_picker(frame: &mut Frame<'_>, theme: &Theme, area: Rect, picker: &Picker
     frame.render_widget(Paragraph::new(lines).style(theme.popup), body);
     let col = 1 + display_width(title) + 3 + display_width(picker.input());
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
+}
+
+fn draw_board_confirmation(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    counts: crate::app::threads::archive::BoardCounts,
+    changed: bool,
+) {
+    let area = Rect {
+        x: 0,
+        y: u16_of(app.pane_top()),
+        width: u16_of(app.size().0),
+        height: u16_of(app.pane_rows()),
+    };
+    let width = area.width.saturating_sub(4).clamp(42, 90);
+    let height = 7_u16.min(area.height.max(1));
+    let popup = centred(area, width, height);
+    let block = rounded_block(theme, " Clear board ", theme.popup);
+    let inner = block.inner(popup);
+    let mut lines = Vec::new();
+    if changed {
+        lines.push(Line::from("The board changed; review the updated counts."));
+    }
+    lines.extend([
+        Line::from("Archive the shared board across this repository and all worktrees?"),
+        Line::from(format!(
+            "{} active/proposed · {} resolved",
+            counts.open, counts.resolved
+        )),
+        Line::from("Enter clear · Esc cancel"),
+    ]);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(block, popup);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
 /// The file-info pane (ADR 0026): the path as a header, the labelled
@@ -2407,6 +2457,28 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
                 )
             }));
             message_line(spans, width, row_style(theme, &list_author(*user)))
+        }
+        Row::Evidence {
+            line,
+            dim,
+            selected,
+            ..
+        } => {
+            let mut spans = vec![
+                navigation.selection(*selected).marker(theme),
+                Span::raw(" ".repeat(BODY_INDENT - 1)),
+            ];
+            spans.extend(line.spans().iter().map(|span| {
+                Span::styled(
+                    span.text().to_owned(),
+                    if *dim {
+                        theme.info
+                    } else {
+                        theme.info.patch(face_style(theme, span.style()))
+                    },
+                )
+            }));
+            message_line(spans, width, theme.info)
         }
         Row::Blank => Line::from(""),
     }

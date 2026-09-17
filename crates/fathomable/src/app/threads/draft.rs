@@ -13,13 +13,17 @@
 //! the document; showing that document again restores it.
 
 use fathomable_core::annotations::{
-    Author, Draft, LineRange, MessageTarget, ThreadId, UserSubmit, UserWriteOutcome,
+    Author, ComparisonFacts, ContentIdentity, Draft, IndexFacts, IndexState, LineRange,
+    MessageTarget, OriginSide, OriginVersion, Provenance, ReviewPointFacts, ThreadId, UserSubmit,
+    UserWriteOutcome, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::content::Content;
 use fathomable_core::editor::{Buffer, Cell, Edit};
 
+use crate::app::diff::{DiffBody, Text};
 use crate::app::draw::message::MESSAGE_INDENT;
+use crate::app::threads::list::ReviewView;
 use crate::app::{App, Popup};
 
 #[cfg(test)]
@@ -76,9 +80,8 @@ pub(crate) struct Compose {
     confirm_discard: bool,
     /// Submission paused because another writer resolved the thread.
     confirm_reopen: Option<UserSubmit>,
-    /// The review list was showing when the draft opened; it comes back
-    /// when the draft closes.
-    from_review: bool,
+    /// The review view that was showing when the draft opened.
+    from_review: Option<ReviewView>,
 }
 
 impl Compose {
@@ -156,13 +159,29 @@ impl App {
             return;
         }
         let view = self.view();
+        if let Some(selection) = view.selection()
+            && view.diff_view()
+            && mixed_diff_selection(view, selection)
+        {
+            self.notice("select one diff side before commenting");
+            return;
+        }
+        if view.diff_view()
+            && cursor_on_removed_diff_line(view)
+            && displayed_diff_side_and_range(view).is_none()
+        {
+            self.notice("cannot determine the removed line's base evidence");
+            return;
+        }
         // A detached thread's row is not text (ADR 0039).
         let on_detached_row = view.selected_lines().is_none()
             && view.detached_anchor_of_row(view.cursor().row).is_some();
-        let range = view.selected_lines().or_else(|| {
-            view.cursor_source_line()
-                .map(|line| LineRange::new(line, line))
-        });
+        let range = displayed_diff_range(view)
+            .or_else(|| view.selected_lines())
+            .or_else(|| {
+                view.cursor_source_line()
+                    .map(|line| LineRange::new(line, line))
+            });
         let Some(range) = range.filter(|_| !on_detached_row) else {
             self.notice("no lines here to annotate");
             return;
@@ -175,37 +194,30 @@ impl App {
     /// with the cursor on the message the draft answers or edits, and
     /// the draft's rows join the block (ADR 0054).
     pub(super) fn open_compose(&mut self, target: ComposeTarget) {
-        // A new thread would anchor to a snapshot no file matches, and a
-        // reply would land on one (ADR 0028).
+        // A new thread or reply cannot be written against a missing file
+        // because there is no trustworthy current placement (ADR 0028).
         let deleted = match &target {
             ComposeTarget::New(_) | ComposeTarget::OnFile => self
                 .current
                 .and_then(|index| self.docs.get(index))
-                .filter(|doc| doc.deleted.is_some())
+                .filter(|doc| {
+                    doc.deleted.is_some()
+                        && doc.deleted != Some(crate::app::Deleted::ComparisonBase)
+                })
                 .map(|doc| doc.relative.clone()),
             ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } => self
                 .thread(id)
-                .map(|thread| thread.path().to_path_buf())
+                .map(|thread| self.thread_path(thread).to_path_buf())
                 .filter(|path| {
-                    self.docs
-                        .iter()
-                        .any(|doc| doc.relative == *path && doc.deleted.is_some())
+                    self.docs.iter().any(|doc| {
+                        doc.relative == *path
+                            && doc.deleted.is_some()
+                            && doc.deleted != Some(crate::app::Deleted::ComparisonBase)
+                    })
                 }),
         };
         if let Some(path) = deleted {
             self.notice(format!("{} was deleted; cannot comment", path.display()));
-            return;
-        }
-        // A thread resolved at an earlier commit is not written in from
-        // the past: `r` brings it back first (ADR 0072).
-        if let ComposeTarget::Reply(id) | ComposeTarget::Edit { thread: id, .. } = &target
-            && let Some(commit) = self
-                .thread(id)
-                .filter(|thread| self.reach.past(thread))
-                .and_then(|thread| thread.commit())
-        {
-            let commit = crate::app::threads::list::short_commit(commit);
-            self.notice(format!("resolved at {commit}; r reopens it"));
             return;
         }
         let original = match &target {
@@ -224,8 +236,8 @@ impl App {
                 String::new()
             }
         };
-        let from_review = self.review_list.is_open();
-        if from_review {
+        let from_review = self.review_list.is_open().then_some(self.review.view);
+        if from_review.is_some() {
             self.close_review();
         }
         // The draft is written in the thread's rows, so the thread shows
@@ -233,7 +245,7 @@ impl App {
         if let Some(id) = target.thread().cloned() {
             let elsewhere = self
                 .thread(&id)
-                .is_some_and(|thread| thread.path() != self.current_path());
+                .is_some_and(|thread| self.thread_path(thread) != self.current_path());
             if elsewhere && !self.land_on_thread(id.clone()) {
                 return;
             }
@@ -459,11 +471,11 @@ impl App {
     /// The draft closed: its rows go, and the review list comes back
     /// with the keys when it was showing. From the threads pane the keys
     /// never left it (ADR 0034).
-    fn draft_closed(&mut self, from_review: bool) {
+    fn draft_closed(&mut self, from_review: Option<ReviewView>) {
         // A new message changes what the stubs show (ADR 0049).
         self.place_stub_rows();
-        if from_review {
-            self.open_review();
+        if let Some(view) = from_review {
+            self.open_review_view(view);
         }
     }
 
@@ -561,17 +573,16 @@ impl App {
             return Err("no open file".to_owned());
         };
         let path = self.docs[index].relative.clone();
-        let text = self.docs[index]
-            .document
-            .text()
-            .unwrap_or_default()
-            .to_owned();
+        let displayed_text = self.docs[index].view.text().to_owned();
+        let (text, side) = self.annotation_source(range, &displayed_text);
+        let provenance = self.user_provenance(&path, range, &text, side);
         // The thread belongs to the work it was written against (ADR 0024).
         let draft = match range {
             Some(range) => Draft::new(Author::User, &path, range, comment),
             None => Draft::on_file(Author::User, &path, comment),
         }
-        .at_commit(self.workspace.head_commit());
+        .at_source(provenance.version().clone(), side)
+        .with_provenance(provenance);
         let where_at = range.map_or_else(|| "the file".to_owned(), |range| format!("L{range}"));
         let Some(store) = self.store_mut() else {
             return Err(self.thread_store_unavailable());
@@ -583,12 +594,11 @@ impl App {
                 tracing::info!(%id, path = %path.display(), %where_at, "thread started");
                 self.refresh_reach();
                 self.refresh_marks(index);
-                // Commenting on lines means they were read (ADR 0020).
-                self.mark_seen(index);
                 self.view_mut().clear_selection();
                 self.notice(format!("commented on {where_at}"));
                 Ok(SubmitResult::Applied)
             }
+
             Err(error) => Err(format!("cannot save comment: {error}")),
         }
     }
@@ -657,6 +667,241 @@ impl App {
             Err(error) => Err(format!("cannot edit message: {error}")),
         }
     }
+}
+
+impl App {
+    fn annotation_source(
+        &self,
+        range: Option<LineRange>,
+        displayed_text: &str,
+    ) -> (String, OriginSide) {
+        if !self.view().diff_view() {
+            return (displayed_text.to_owned(), self.displayed_source_side());
+        }
+        let Some(range) = range else {
+            return (displayed_text.to_owned(), self.displayed_source_side());
+        };
+        let Some((side, source_range)) = displayed_diff_side_and_range(self.view()) else {
+            return (displayed_text.to_owned(), OriginSide::Unspecified);
+        };
+        if side != OriginSide::Base {
+            return (displayed_text.to_owned(), side);
+        }
+        let Some(DiffBody::Diff {
+            base: Text::Owned(base),
+            ..
+        }) = self.view().diff().map(|diff| &diff.body)
+        else {
+            return (displayed_text.to_owned(), side);
+        };
+        if source_range != range {
+            return (displayed_text.to_owned(), OriginSide::Base);
+        }
+        (base.clone(), side)
+    }
+
+    fn user_provenance(
+        &self,
+        path: &std::path::Path,
+        _range: Option<LineRange>,
+        text: &str,
+        side: OriginSide,
+    ) -> Provenance {
+        let effective = self.comparison();
+        let endpoint = if side == OriginSide::Base {
+            effective.map_or_else(
+                || self.comparison.base(),
+                fathomable_core::diff::Comparison::base,
+            )
+        } else {
+            effective.map_or_else(
+                || self.comparison.target(),
+                fathomable_core::diff::Comparison::target,
+            )
+        };
+        let version = endpoint_version(self, endpoint);
+        let mut provenance = Provenance::new(version, side).with_comparison(comparison_facts(self));
+        match endpoint {
+            fathomable_core::workspace::ComparisonEndpoint::WorkingTree => {
+                let state = self.status.get(path).map_or_else(
+                    || {
+                        if self.workspace.is_git() {
+                            WorkingTreeState::Clean
+                        } else {
+                            WorkingTreeState::Added
+                        }
+                    },
+                    |entry| match entry.state() {
+                        fathomable_core::status::State::Modified => WorkingTreeState::Modified,
+                        fathomable_core::status::State::Deleted => WorkingTreeState::Deleted,
+                        fathomable_core::status::State::Added
+                        | fathomable_core::status::State::Untracked => WorkingTreeState::Added,
+                    },
+                );
+                provenance = provenance.with_working_tree(WorkingTreeFacts::new(
+                    self.workspace.head_commit(),
+                    state,
+                    Some(ContentIdentity::from_text(text)),
+                ));
+            }
+            fathomable_core::workspace::ComparisonEndpoint::Index => {
+                let state = self
+                    .status
+                    .get(path)
+                    .filter(|entry| entry.staged_state().is_some())
+                    .map_or(IndexState::Unchanged, |_| IndexState::Staged);
+                provenance = provenance.with_index(IndexFacts::new(
+                    self.workspace.head_commit(),
+                    state,
+                    Some(ContentIdentity::from_text(text)),
+                ));
+            }
+            fathomable_core::workspace::ComparisonEndpoint::ReviewPoint(id) => {
+                let facts = self
+                    .review_points
+                    .as_ref()
+                    .and_then(|store| store.get(id))
+                    .map(|point| {
+                        ReviewPointFacts::new(
+                            point.id(),
+                            point.head().map(ToString::to_string),
+                            Some(ContentIdentity::from_text(text)),
+                        )
+                    });
+                if let Some(facts) = facts {
+                    provenance = provenance.with_review_point(facts);
+                }
+            }
+            fathomable_core::workspace::ComparisonEndpoint::Commit(_)
+            | fathomable_core::workspace::ComparisonEndpoint::EmptyTree => {}
+        }
+        provenance
+    }
+
+    fn displayed_source_side(&self) -> OriginSide {
+        let Some(comparison) = self.comparison() else {
+            return OriginSide::Target;
+        };
+        let path = self.current_path();
+        let target_absent = comparison
+            .changes()
+            .iter()
+            .find(|change| change.path() == path)
+            .is_some_and(|change| {
+                matches!(change.target(), fathomable_core::diff::PathState::Absent)
+            });
+        if target_absent {
+            OriginSide::Base
+        } else {
+            OriginSide::Target
+        }
+    }
+}
+
+fn comparison_facts(app: &App) -> ComparisonFacts {
+    let facts = ComparisonFacts::new(
+        endpoint_version(app, app.comparison.base()),
+        endpoint_version(app, app.comparison.target()),
+    );
+    match app.comparison.focus() {
+        crate::app::comparison::Focus::AllChanges => facts,
+        crate::app::comparison::Focus::Since(id) => facts.since_review_point(id.clone()),
+    }
+}
+
+fn endpoint_version(
+    app: &App,
+    endpoint: &fathomable_core::workspace::ComparisonEndpoint,
+) -> OriginVersion {
+    match endpoint {
+        fathomable_core::workspace::ComparisonEndpoint::EmptyTree => OriginVersion::EmptyTree,
+        fathomable_core::workspace::ComparisonEndpoint::Commit(id) => {
+            OriginVersion::commit(id.to_string())
+        }
+        fathomable_core::workspace::ComparisonEndpoint::ReviewPoint(id) => {
+            let base = app
+                .review_points
+                .as_ref()
+                .and_then(|store| store.get(id))
+                .and_then(|point| point.head())
+                .map(ToString::to_string);
+            OriginVersion::review_point(id.clone(), base)
+        }
+        fathomable_core::workspace::ComparisonEndpoint::Index => {
+            OriginVersion::index(app.workspace.head_commit())
+        }
+        fathomable_core::workspace::ComparisonEndpoint::WorkingTree => {
+            OriginVersion::working_tree(app.workspace.head_commit())
+        }
+    }
+}
+
+fn mixed_diff_selection(
+    view: &crate::app::view::View,
+    selection: crate::app::view::Selection,
+) -> bool {
+    let (start, end) = selection.ordered();
+    diff_rows(view, start.row..=end.row)
+        .is_some_and(|rows| rows.base.is_some() && rows.target.is_some())
+}
+
+fn cursor_on_removed_diff_line(view: &crate::app::view::View) -> bool {
+    view.layout()
+        .lines()
+        .get(view.cursor().row)
+        .is_some_and(|line| line.diff_old_line().is_some() && line.diff_new_line().is_none())
+}
+
+fn displayed_diff_range(view: &crate::app::view::View) -> Option<LineRange> {
+    if !view.diff_view() {
+        return None;
+    }
+    displayed_diff_side_and_range(view).map(|(_, range)| range)
+}
+
+fn displayed_diff_side_and_range(view: &crate::app::view::View) -> Option<(OriginSide, LineRange)> {
+    let rows = view.selection().map_or_else(
+        || view.cursor().row..=view.cursor().row,
+        |selection| {
+            let (start, end) = selection.ordered();
+            start.row..=end.row
+        },
+    );
+    let rows = diff_rows(view, rows)?;
+    match (rows.base, rows.target) {
+        (Some(range), None) => Some((OriginSide::Base, range)),
+        (None, Some(range)) => Some((OriginSide::Target, range)),
+        _ => None,
+    }
+}
+
+#[derive(Debug, Default)]
+struct DiffRows {
+    base: Option<LineRange>,
+    target: Option<LineRange>,
+}
+
+fn diff_rows(
+    view: &crate::app::view::View,
+    rows: std::ops::RangeInclusive<usize>,
+) -> Option<DiffRows> {
+    let mut found = DiffRows::default();
+    for row in rows {
+        let line = view.layout().lines().get(row)?;
+        match (line.diff_old_line(), line.diff_new_line()) {
+            (Some(old), None) => extend_range(&mut found.base, old),
+            (_, Some(new)) => extend_range(&mut found.target, new),
+            (None, None) => {}
+        }
+    }
+    (found.base.is_some() || found.target.is_some()).then_some(found)
+}
+
+fn extend_range(range: &mut Option<LineRange>, line: usize) {
+    *range = Some(match *range {
+        Some(current) => LineRange::new(current.start().min(line), current.end().max(line)),
+        None => LineRange::new(line, line),
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

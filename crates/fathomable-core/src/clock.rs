@@ -1,8 +1,8 @@
 //! The wall clock as Unix seconds, the unit every store timestamps in.
 //!
-//! Thread messages, checkpoints, snapshots, sessions, and bonds all record
-//! when they happened as whole seconds since the Unix epoch; this is the
-//! one place that reads the clock for them.
+//! Thread messages, review points, sessions, and board events all record when
+//! they happened as whole seconds since the Unix epoch; this is the one place
+//! that reads the clock for them.
 //!
 //! # Examples
 //!

@@ -17,7 +17,6 @@ impl App {
             (Some("doctor"), None, _) => self.open_doctor(),
             (Some("about"), None, _) => self.open_about(),
             (Some("diff"), None, _) => self.toggle_head_diff(),
-            (Some("diff"), Some("seen"), None) => self.toggle_seen_diff(),
             (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),
         }
@@ -82,13 +81,9 @@ impl App {
 
     /// The rows of the `:status` overlay: label, value.
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
-        let unavailable = || "unavailable".to_owned();
         let view = self.view();
         let (line, column) = view.source_position();
-        let base = view
-            .diff()
-            .map(|d| format!(", diff {}", d.header))
-            .unwrap_or_default();
+        let base = format!(", {}", self.comparison_label());
         let deleted = if self.deleted() { ", deleted" } else { "" };
         let document = if self.has_document() {
             format!(
@@ -135,12 +130,6 @@ impl App {
                     || "unavailable; run :doctor".to_owned(),
                     |store| store.path().display().to_string(),
                 ),
-            ),
-            (
-                "snapshots".to_owned(),
-                self.seen
-                    .as_ref()
-                    .map_or_else(unavailable, |s| s.dir().display().to_string()),
             ),
             (
                 "watching".to_owned(),

@@ -6,7 +6,9 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+#[cfg(test)]
+use std::time::Duration;
+use std::time::Instant;
 
 use fathomable_core::annotations::LineRange;
 use fathomable_core::diff::{Compare, Diff, LineStatus};
@@ -14,8 +16,6 @@ use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
-#[cfg(test)]
-use super::diff::Side;
 use super::diff::{DiffBody, DiffView, Text};
 
 mod navigation;
@@ -51,8 +51,7 @@ pub(crate) enum Display {
     Rendered,
     /// The raw source (`Space v s`, ADR 0010).
     Source,
-    /// A unified diff between two sides (ADR 0060): `HEAD`, the index,
-    /// last-seen snapshot, a checkpoint, a commit, or the working file.
+    /// A unified diff between the selected comparison endpoints.
     Diff,
 }
 
@@ -164,15 +163,14 @@ pub(crate) struct View {
     width: usize,
     height: usize,
     display: Display,
-    /// The last-seen snapshot (ADR 0015), `None` when the file has never
-    /// been seen.
-    seen: Option<String>,
     /// The file as staged in the index (ADR 0017), `None` outside git.
     index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
     head: Option<String>,
     /// Absent Git endpoints whose retained display text must not replace them.
     missing: Missing,
+    /// The body from the last successful comparison projection.
+    comparison: Option<DiffBody>,
     /// The diff's sides while it is shown (ADR 0060).
     diff_shown: Option<DiffView>,
     /// How diffs are compared and listed (ADR 0060).
@@ -256,10 +254,10 @@ impl View {
             width,
             height: height.max(1),
             display,
-            seen: None,
             index: None,
             head: None,
             missing: Missing::default(),
+            comparison: None,
             diff_shown: None,
             compare: Compare::default(),
             diff: None,
@@ -458,25 +456,18 @@ impl View {
         &self.text
     }
 
-    /// The text the layout's source ranges index: the diff's target
-    /// when that is not the working file, else the text.
+    /// The text the layout's source ranges index.
     fn shown(&self) -> &str {
         match self.diff().map(|d| &d.body) {
-            Some(DiffBody::Diff { target, .. }) => self.text_of(target).unwrap_or(&self.text),
+            Some(DiffBody::Diff { target, .. }) => Self::text_of(target),
             _ => &self.text,
         }
     }
 
-    /// The text a diff side reads: the view's own copies, or the text
-    /// fetched for it; `None` when the copy does not exist.
-    fn text_of<'a>(&'a self, text: &'a Text) -> Option<&'a str> {
+    /// The owned text a diff side reads.
+    fn text_of(text: &Text) -> &str {
         match text {
-            Text::Working if self.missing.worktree => Some(""),
-            Text::Working => Some(&self.text),
-            Text::Index => self.index.as_deref(),
-            Text::Head => self.head.as_deref(),
-            Text::Seen => self.seen.as_deref(),
-            Text::Owned(owned) => Some(owned),
+            Text::Owned(owned) => owned,
         }
     }
 
@@ -491,14 +482,6 @@ impl View {
 
     fn rendered_layout(&self) -> Layout {
         Layout::render_with(&self.text, self.width, &self.syntax.highlighter)
-    }
-
-    /// The layout of the home display.
-    fn home_layout(&self) -> Layout {
-        match self.home() {
-            Display::Source => self.source_layout(),
-            _ => self.rendered_layout(),
-        }
     }
 
     /// The display the file returns to when a diff closes: rendered for
@@ -518,10 +501,26 @@ impl View {
         self.diff_shown.as_ref().filter(|_| self.diff_view())
     }
 
-    /// The base of the diff shown, if one is.
-    #[cfg(test)]
-    pub(crate) fn diff_base(&self) -> Option<&Side> {
-        self.diff().map(|d| &d.base)
+    /// Mark retained unified-diff content as stale after a failed refresh.
+    pub(crate) fn mark_diff_stale(&mut self) {
+        if let Some(diff) = self.diff_shown.as_mut() {
+            "DIFF stale".clone_into(&mut diff.badge);
+        }
+    }
+
+    /// The body loaded by the last successful comparison projection.
+    pub(crate) fn retained_comparison_body(&self) -> Option<DiffBody> {
+        self.comparison.clone()
+    }
+
+    /// Retain a body independently of later working-document reloads.
+    pub(crate) fn set_comparison_body(&mut self, body: DiffBody) {
+        self.comparison = Some(body);
+    }
+
+    /// Forget a body when this view no longer uses a comparison projection.
+    pub(crate) fn clear_comparison_body(&mut self) {
+        self.comparison = None;
     }
 
     /// `(added, removed)` between the diff's sides, while one is shown.
@@ -529,8 +528,8 @@ impl View {
         match &self.diff()?.body {
             DiffBody::Diff { base, target } => Some(
                 Diff::compare(
-                    self.text_of(base)?,
-                    self.text_of(target)?,
+                    Self::text_of(base),
+                    Self::text_of(target),
                     self.compare.whitespace,
                 )
                 .counts(),
@@ -566,26 +565,6 @@ impl View {
         }
     }
 
-    /// Whether the file has a `HEAD` text to diff against.
-    pub(crate) fn has_head(&self) -> bool {
-        self.head.is_some()
-    }
-
-    /// Whether the file has an index text to diff against.
-    pub(crate) fn has_index(&self) -> bool {
-        self.index.is_some()
-    }
-
-    /// Whether the worktree side of a diff is absent.
-    pub(crate) fn worktree_missing(&self) -> bool {
-        self.missing.worktree
-    }
-
-    /// Whether the index side of a diff is absent.
-    pub(crate) fn index_missing(&self) -> bool {
-        self.missing.index
-    }
-
     /// Set whether an empty index side represents an absent path.
     pub(crate) fn set_index_missing(&mut self, missing: bool) {
         self.missing.index = missing;
@@ -606,17 +585,13 @@ impl View {
         }
     }
 
-    /// Whether the file has a last-seen snapshot to diff against.
-    pub(crate) fn has_seen(&self) -> bool {
-        self.seen.is_some()
-    }
-
-    /// Note that the reader did something here for seen-idle tracking.
+    /// Record reader activity for in-memory interaction timing.
     pub(crate) fn touch(&mut self) {
         self.activity = Instant::now();
     }
 
     /// Time since the reader last did something here.
+    #[cfg(test)]
     pub(crate) fn idle(&self) -> Duration {
         self.activity.elapsed()
     }
@@ -709,13 +684,6 @@ impl View {
         self.diff.as_ref().map(Diff::counts)
     }
 
-    /// Whether the aggregate `HEAD -> worktree` comparison has no hunks.
-    pub(crate) fn net_diff_empty(&self) -> bool {
-        self.diff
-            .as_ref()
-            .is_some_and(|diff| diff.hunks().is_empty())
-    }
-
     /// Progress through the document as a percentage of rendered lines.
     pub(crate) fn percent(&self) -> usize {
         let last = self.layout.lines().len().saturating_sub(1);
@@ -766,18 +734,11 @@ impl View {
         self.relayout();
     }
 
-    /// Set the diff bases, each `None` when it does not exist; the
-    /// gutter and the diff view follow.
-    pub(crate) fn set_bases(
-        &mut self,
-        seen: Option<String>,
-        index: Option<String>,
-        head: Option<String>,
-    ) {
-        if seen == self.seen && index == self.index && head == self.head {
+    /// Set the index and committed comparison bases.
+    pub(crate) fn set_bases(&mut self, index: Option<String>, head: Option<String>) {
+        if index == self.index && head == self.head {
             return;
         }
-        self.seen = seen;
         self.index = index;
         self.head = head;
         self.rediff();
@@ -905,14 +866,12 @@ impl View {
         let screen_row = kept_row.saturating_sub(self.scroll);
         let layout = match self.display {
             Display::Diff => match self.diff_shown.as_ref().map(|d| &d.body) {
-                Some(DiffBody::Diff { base, target }) => {
-                    match (self.text_of(base), self.text_of(target)) {
-                        (Some(old), Some(new)) => Layout::diff(old, new, self.width, self.compare),
-                        // A side that has gone (no `HEAD` after a base
-                        // refresh) keeps the display; the layout falls back.
-                        _ => self.home_layout(),
-                    }
-                }
+                Some(DiffBody::Diff { base, target }) => Layout::diff(
+                    Self::text_of(base),
+                    Self::text_of(target),
+                    self.width,
+                    self.compare,
+                ),
                 Some(DiffBody::Notice(text)) => Layout::notice(text, self.width),
                 None => Layout::notice("no diff", self.width),
             },
@@ -1722,7 +1681,8 @@ mod tests {
 
     use fathomable_core::annotations::LineRange;
 
-    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Side, Text, View};
+    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Text, View};
+    use crate::app::diff::Side;
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
 
@@ -2075,7 +2035,7 @@ mod tests {
         // the index already holds "- two", so that hunk is staged.
         let head = "# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned();
         let index = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast word here\n".to_owned();
-        v.set_bases(None, Some(index), Some(head));
+        v.set_bases(Some(index), Some(head.clone()));
         assert_eq!(v.line_status(6), Some(LineStatus::Added));
         assert!(v.line_staged(6), "the index has the added line");
         assert_eq!(v.line_status(9), Some(LineStatus::Modified));
@@ -2097,16 +2057,16 @@ mod tests {
         v.goto_source_line(9);
 
         let diff = DiffView {
-            base: Side::Head,
-            target: Side::Working,
+            base: Side::ComparisonBase,
+            target: Side::ComparisonTarget,
             header: String::new(),
             badge: String::new(),
             body: DiffBody::Diff {
-                base: Text::Head,
-                target: Text::Working,
+                base: Text::Owned(head.clone()),
+                target: Text::Owned(DOC.to_owned()),
             },
         };
-        v.show_diff(diff.clone());
+        v.show_diff(diff);
         assert!(v.diff_view());
         assert_eq!(v.source_position().0, 9, "relayout keeps the source line");
         let texts: Vec<String> = v
@@ -2132,22 +2092,34 @@ mod tests {
         v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
         assert_eq!(v.diff_counts(), Some((0, 0)));
         assert_eq!(v.next_hunk(), HunkStep::Clean);
-        v.show_diff(diff);
+        v.show_diff(DiffView {
+            base: Side::ComparisonBase,
+            target: Side::ComparisonTarget,
+            header: String::new(),
+            badge: String::new(),
+            body: DiffBody::Diff {
+                base: Text::Owned(head),
+                target: Text::Owned(v.text().to_owned()),
+            },
+        });
         assert_eq!(v.layout().lines().len(), 1);
-        v.set_bases(None, None, None);
+        v.set_bases(None, None);
         assert_eq!(v.diff_counts(), None);
-        assert!(v.diff_view(), "display sticks; layout falls back");
-        assert!(v.layout().lines().len() > 1);
+        assert!(
+            v.diff_view(),
+            "display sticks with its owned comparison text"
+        );
+        assert_eq!(v.layout().lines().len(), 1);
     }
 
     #[test]
     fn app_commands_are_forwarded_and_activity_is_tracked() {
         let mut v = view();
         v.start_command();
-        for ch in "diff seen".chars() {
+        for ch in "diff".chars() {
             v.input_char(ch);
         }
-        assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff seen"));
+        assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff"));
         v.start_command();
         for ch in "about".chars() {
             v.input_char(ch);

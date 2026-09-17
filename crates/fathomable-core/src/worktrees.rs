@@ -3,8 +3,8 @@
 //!
 //! A git workspace is the repository: every checkout that shares one
 //! common dir. Its state directory is keyed by that common dir, so every
-//! worktree reads and writes one thread store, one register, one set of
-//! seen marks and checkpoints. [`Worktree`] is one checkout as the
+//! worktree reads and writes one thread store and one set of explicit
+//! review points. [`Worktree`] is one checkout as the
 //! viewer lists it: the main worktree, whose `.git` is the common dir,
 //! or a linked one made by `git worktree add`. The union reach over
 //! worktrees lives on [`Reach`](crate::reach::Reach).

@@ -378,7 +378,6 @@ async fn run_async(
             break;
         }
     }
-    app.on_quit();
     tracing::info!("app closed");
     Ok(())
 }
@@ -404,7 +403,7 @@ fn sync_loaded_watches(app: &App, watcher: &mut watch::Watcher) {
 
 /// Apply one debounced watcher batch and repair structural watch changes.
 fn apply_batch(app: &mut App, watcher: &mut watch::Watcher, batch: &mut watch::Batch) -> bool {
-    let mut events = batch.take(|path| app.last_seen_fingerprint(path), app.max_file_bytes());
+    let mut events = batch.take(|path| app.loaded_fingerprint(path), app.max_file_bytes());
     events.retain(|event| event.path().is_none_or(|path| watcher.is_target(path)));
     let sync = watcher.needs_root_sync(&events);
     let mut changed = !events.is_empty();

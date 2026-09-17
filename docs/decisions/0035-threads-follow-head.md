@@ -2,7 +2,6 @@
 type: Decision
 title: Threads follow HEAD across a rewrite
 description: An open thread whose commit a history rewrite dropped, but whose lines are still in the working tree, is rescoped to the new HEAD and stays visible; recorded as a rescope event.
-resource: crates/fathomable/src/app/threads/reach.rs
 tags:
   - decision
   - annotations
@@ -13,6 +12,12 @@ tags:
 # 0035 Threads follow HEAD across a rewrite
 
 Status: accepted (2026-08-28)
+
+Superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). Branch ancestry is
+placement context, not board membership, and history rewrites do not
+automatically rescope a thread. Immutable origin survives; current content is
+projected from bounded evidence or reported detached.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

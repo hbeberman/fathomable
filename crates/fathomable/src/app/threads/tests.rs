@@ -20,7 +20,7 @@ use fathomable_core::editor::{Cursor, Edit, Motion};
 use super::{ComposeTarget, ThreadState};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::draft::DraftRow;
-use crate::app::threads::list::Row;
+use crate::app::threads::list::{ReviewView, Row};
 use crate::app::threads::stubs::Subject;
 use crate::app::{App, Popup};
 use fathomable_core::layout::{Face, Line};
@@ -33,6 +33,118 @@ fn type_in(app: &mut App, text: &str) {
             app.compose_insert(&ch.to_string());
         }
     }
+}
+
+#[test]
+fn board_history_views_archive_restore_and_recent_resolution() -> anyhow::Result<()> {
+    let dir = testing::workspace("board-history-views", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "keep the discussion")?;
+    let id = app.marks()[0].id().clone();
+    let origin = app
+        .thread(&id)
+        .ok_or_else(|| anyhow::anyhow!("thread"))?
+        .origin();
+    assert_eq!(
+        origin.side(),
+        fathomable_core::annotations::OriginSide::Target
+    );
+    assert!(
+        matches!(
+            origin.version(),
+            fathomable_core::annotations::OriginVersion::WorkingTree { .. }
+        ),
+        "working-tree comments retain their displayed endpoint"
+    );
+    assert!(origin.comparison().is_some());
+
+    app.toggle_resolved(&id);
+    let resolution = app
+        .thread(&id)
+        .and_then(Thread::latest_resolution)
+        .ok_or_else(|| anyhow::anyhow!("resolution history"))?;
+    let checkout = dir.0.join("ws").canonicalize()?.display().to_string();
+    assert_eq!(resolution.checkout(), Some(checkout.as_str()));
+    app.open_review_view(ReviewView::RecentlyResolved);
+    assert_eq!(app.review_entries(false).len(), 1);
+    assert_eq!(app.review_entries(false)[0].id(), &id);
+
+    app.archive_thread(&id);
+    assert!(app.review_entries(false).is_empty());
+    app.open_review_view(ReviewView::Archived);
+    assert_eq!(app.review_entries(false).len(), 1);
+    assert!(app.thread(&id).is_some_and(Thread::is_archived));
+
+    app.restore_thread(&id);
+    assert!(app.review_entries(false).is_empty());
+    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
+    assert_eq!(
+        app.thread(&id).map(Thread::status),
+        Some(Status::Resolved),
+        "restore retains lifecycle"
+    );
+    app.open(Path::new("README.md"));
+    assert!(!app.review_list().is_open());
+    assert_eq!(app.review().view, ReviewView::Board);
+    Ok(())
+}
+
+#[test]
+fn clear_board_confirmation_cancels_without_archiving() -> anyhow::Result<()> {
+    let dir = testing::workspace("clear-board-confirmation", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "keep the board")?;
+    let id = app.marks()[0].id().clone();
+
+    app.request_clear_board();
+    assert!(matches!(app.popup(), Some(Popup::ConfirmBoard { .. })));
+    app.cancel_clear_board();
+    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
+
+    app.request_clear_board();
+    app.confirm_clear_board();
+    assert!(app.thread(&id).is_some_and(Thread::is_archived));
+    Ok(())
+}
+
+#[test]
+fn clear_board_uses_the_acknowledged_slate_and_refreshes_changed_counts() -> anyhow::Result<()> {
+    let dir = testing::workspace("clear-board-race", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "acknowledged")?;
+    let acknowledged = app.marks()[0].id().clone();
+
+    app.request_clear_board();
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    let later = writer.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(4, 4),
+            "arrived later",
+        ),
+        testing::README,
+        20,
+    )?;
+    app.confirm_clear_board();
+    assert!(app.thread(&acknowledged).is_some_and(Thread::is_archived));
+    assert!(!app.thread(&later).is_some_and(Thread::is_archived));
+
+    app.restore_thread(&acknowledged);
+    app.request_clear_board();
+    Store::open(testing::store_path(&dir))?.reply_user(
+        &acknowledged,
+        21,
+        "changed after confirmation",
+        fathomable_core::annotations::UserSubmit::Normal,
+    )?;
+    app.confirm_clear_board();
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::ConfirmBoard { changed: true, .. })
+    ));
+    assert!(!app.thread(&acknowledged).is_some_and(Thread::is_archived));
+    Ok(())
 }
 
 /// Annotate L3-5 of the open README with `comment`.
@@ -90,8 +202,8 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     app.view_mut().move_down(1);
     let cursor = app.view().cursor();
 
-    // A file rename: the view follows with cursor and marks intact
-    // and the store records the move.
+    // A file rename: this checkout's view follows with cursor and marks
+    // intact, while the shared store keeps the repository origin path.
     fs::create_dir_all(dir.0.join("ws/docs"))?;
     fs::rename(dir.0.join("ws/README.md"), dir.0.join("ws/docs/GUIDE.md"))?;
     app.on_events(vec![Event::Renamed {
@@ -104,14 +216,14 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 5)));
     assert_eq!(app.mark_in(LineRange::new(4, 4)), Some(ThreadState::Active));
     assert_eq!(
-        app.thread(&id).map(Thread::path),
+        app.thread(&id).map(|thread| app.thread_path(thread)),
         Some(Path::new("docs/GUIDE.md"))
     );
     let store = Store::open(dir.0.join("state/threads.jsonl"))?;
     assert_eq!(
         store.thread(&id).map(Thread::path),
-        Some(Path::new("docs/GUIDE.md")),
-        "the move is on disk"
+        Some(Path::new("README.md")),
+        "one checkout does not rewrite the shared board path"
     );
 
     // A directory rename moves everything under it by prefix.
@@ -122,7 +234,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
     }]);
     assert_eq!(app.current_path(), Path::new("notes/GUIDE.md"));
     assert_eq!(
-        app.thread(&id).map(Thread::path),
+        app.thread(&id).map(|thread| app.thread_path(thread)),
         Some(Path::new("notes/GUIDE.md"))
     );
     assert_eq!(app.thread_counts(), (1, 1));
@@ -210,7 +322,7 @@ fn changing_a_tombstones_git_source_relocates_its_threads() -> anyhow::Result<()
     fs::remove_file(root.join("README.md"))?;
     let mut tombstone = testing::AppBuilder::new(&dir).unopened().build()?;
     tombstone.open(Path::new("README.md"));
-    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(4, 6)));
+    assert_eq!(tombstone.marks()[0].range(), Some(LineRange::new(3, 5)));
 
     fathomable_testing::git::stage(&root, &[])?;
     tombstone.on_events(vec![crate::app::watch::Event::Change(
@@ -267,7 +379,7 @@ fn selection_becomes_a_thread_and_survives_reload() -> anyhow::Result<()> {
     assert!(app.marks()[0].placement().is_edited());
     assert_eq!(app.mark_in(LineRange::new(6, 6)), Some(ThreadState::Active));
     let reopened = Store::open(dir.0.join("state/threads.jsonl"))?;
-    assert!(reopened.threads()[0].edited().is_some());
+    assert!(reopened.threads()[0].reanchored_at().is_some());
     assert_eq!(reopened.threads()[0].range(), Some(LineRange::new(5, 7)));
 
     // The user's reply acknowledges the edit.

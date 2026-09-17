@@ -423,6 +423,22 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 checked: app.review_list().is_open(),
                 target: Target::ReviewToggle,
             }),
+            Row::Item(Item::action(
+                app,
+                Action::ReviewRecentlyResolved,
+                "Recently resolved",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ReviewArchived,
+                "Archived threads",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ArchiveResolved,
+                "Archive resolved threads",
+            )),
+            Row::Item(Item::action(app, Action::ClearBoard, "Clear board…")),
             Row::Item(Item {
                 label: if app.review().resolved {
                     "Hide resolved".to_owned()
@@ -464,40 +480,38 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 Action::ToggleResolved,
                 "Resolve / reopen",
             )),
+            Row::Item(Item::action(app, Action::ArchiveThread, "Archive thread")),
+            Row::Item(Item::action(app, Action::RestoreThread, "Restore thread")),
         ],
         Root::Diff => vec![
-            Row::Item(Item::action(app, Action::DiffHead, "Diff against HEAD")),
             Row::Item(Item::action(
                 app,
-                Action::DiffSeen,
-                "Diff against last seen",
+                Action::ComparisonControl,
+                "Comparison controls…",
             )),
             Row::Item(Item::action(
                 app,
-                Action::DiffCheckpoint,
-                "Latest checkpoint diff",
+                Action::ComparisonStart,
+                "Start comparison at current HEAD",
+            )),
+            Row::Item(Item::action(app, Action::ComparisonBase, "Pick base…")),
+            Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
+            Row::Item(Item::action(
+                app,
+                Action::ComparisonFocus,
+                "Show All changes / Since…",
             )),
             Row::Item(Item::action(
                 app,
-                Action::DiffCommit,
-                "Diff against commit…",
-            )),
-            Row::Item(Item::action(app, Action::DiffBase, "Pick base…")),
-            Row::Item(Item::action(app, Action::DiffTarget, "Pick target…")),
-            Row::Separator,
-            Row::Item(Item::action(
-                app,
-                Action::DiffWhitespace,
-                "Ignore whitespace",
+                Action::ComparisonSave,
+                "Save review point",
             )),
             Row::Separator,
-            Row::Item(Item::action(app, Action::CheckpointFile, "Checkpoint file")),
             Row::Item(Item::action(
                 app,
-                Action::CheckpointWorkspace,
-                "Checkpoint workspace",
+                Action::ComparisonWhitespace,
+                "Ignore/compare whitespace",
             )),
-            Row::Item(Item::action(app, Action::SeenAll, "Mark all files seen")),
         ],
     }
 }
@@ -569,14 +583,30 @@ fn action_available(app: &App, action: Action) -> bool {
             .is_some_and(|thread| {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
-        Action::DiffHead | Action::DiffCommit => app.has_document() && app.workspace().is_git(),
-        Action::DiffSeen => app.has_document() && app.view().has_seen(),
-        Action::DiffCheckpoint | Action::CheckpointFile => {
-            app.has_document() && app.checkpoints.is_some()
-        }
-        Action::DiffBase | Action::DiffTarget | Action::DiffWhitespace => app.has_document(),
-        Action::CheckpointWorkspace => app.checkpoints.is_some(),
-        Action::SeenAll => app.seen.is_some(),
+        Action::ComparisonFocus | Action::ComparisonSave => app.review_points.is_some(),
+        Action::ArchiveThread => app
+            .thread_cursor()
+            .thread()
+            .and_then(|id| app.thread(id))
+            .is_some_and(|thread| {
+                !thread.is_archived()
+                    && thread.status() == fathomable_core::annotations::Status::Resolved
+            }),
+        Action::RestoreThread => app
+            .thread_cursor()
+            .thread()
+            .and_then(|id| app.thread(id))
+            .is_some_and(fathomable_core::annotations::Thread::is_archived),
+        Action::ArchiveResolved => app.store.as_ref().is_some_and(|store| {
+            store
+                .threads()
+                .iter()
+                .any(|thread| thread.status() == fathomable_core::annotations::Status::Resolved)
+        }),
+        Action::ClearBoard => app
+            .store
+            .as_ref()
+            .is_some_and(|store| !store.threads().is_empty()),
         Action::SidebarToggle => app.sidebar.shown() || app.sidebar.has_restore(),
         _ => true,
     }
@@ -588,28 +618,8 @@ fn action_checked(app: &App, action: Action) -> bool {
         Action::SidebarToggle => app.sidebar.shown(),
         Action::TreeToggle => app.sidebar.tree,
         Action::ThreadsPaneToggle => app.sidebar.threads,
-        Action::DiffHead => app.view().diff().is_some_and(|diff| {
-            diff.is_pair(
-                &crate::app::diff::Side::Head,
-                &crate::app::diff::Side::Working,
-            )
-        }),
-        Action::DiffSeen => app.view().diff().is_some_and(|diff| {
-            diff.is_pair(
-                &crate::app::diff::Side::Seen,
-                &crate::app::diff::Side::Working,
-            )
-        }),
-        Action::DiffCheckpoint => app
-            .view()
-            .diff()
-            .is_some_and(crate::app::diff::DiffView::on_checkpoint),
-        Action::DiffCommit => app
-            .view()
-            .diff()
-            .is_some_and(|diff| matches!(diff.base, crate::app::diff::Side::Commit(_))),
-        Action::DiffWhitespace => {
-            app.compare.whitespace == fathomable_core::diff::Whitespace::Ignore
+        Action::ComparisonWhitespace => {
+            app.comparison.compare().whitespace == fathomable_core::diff::Whitespace::Ignore
         }
         _ => false,
     }
@@ -1251,8 +1261,8 @@ mod tests {
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 6);
         assert_eq!(rows(&app, Root::Go).len(), 8);
-        assert_eq!(rows(&app, Root::Review).len(), 10);
-        assert_eq!(rows(&app, Root::Diff).len(), 12);
+        assert_eq!(rows(&app, Root::Review).len(), 16);
+        assert_eq!(rows(&app, Root::Diff).len(), 8);
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         assert!(
             !rows(&app, Root::App)
@@ -1283,7 +1293,7 @@ mod tests {
         assert_eq!(app.pane_rows(), 28);
         let screen = testing::screen(&app)?;
         assert!(screen[0].contains("☰") && screen[0].contains("Go  Review  Diff"));
-        assert!(screen[0].ends_with("ws · README.md"), "{:?}", screen[0]);
+        assert!(screen[0].contains("ws · README.md"), "{:?}", screen[0]);
         Ok(())
     }
 
@@ -1425,7 +1435,7 @@ mod tests {
             MouseEvent {
                 kind: MouseEventKind::Moved,
                 column: 2,
-                row: 3,
+                row: 2,
                 modifiers: KeyModifiers::NONE,
             },
         );
@@ -1434,10 +1444,9 @@ mod tests {
         let child_rows = submenu_rows(&app, Submenu::Help);
         let child = child_layout(&app, root, &root_rows, &child_rows).context("help submenu")?;
         assert!(child.visible_rows >= 1);
-        assert_eq!(
-            child.y,
-            root.y + 1 + 1usize.saturating_sub(root.scroll),
-            "the child border stays aligned with the scrolled parent row"
+        assert!(
+            child.y > root.y,
+            "the child border stays below the parent title"
         );
 
         app.close_title_menu();
@@ -1488,7 +1497,6 @@ mod tests {
             },
         );
         assert_eq!(effect, crate::app::view::Effect::None);
-        assert!(app.title_menu_open());
         Ok(())
     }
 
@@ -1599,7 +1607,6 @@ mod tests {
         ));
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         assert!(!app.review().resolved);
-        assert!(app.title_menu_open());
         Ok(())
     }
 

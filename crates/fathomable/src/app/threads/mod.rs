@@ -9,10 +9,11 @@
 //! (`stubs`) read a thread in place. The submodules
 //! are the thread cursor (`cursor`), the threads pane (`pane`),
 //! the review list (`list`), deletion, detached rows, the open thread's
-//! lines (`open`), git reach, re-anchoring, lifecycle, and summary facts.
+//! lines (`open`), lifecycle, and summary facts.
 //! All of it is plain state, tested without a terminal (ADRs 0013, 0046,
 //! and 0086).
 
+pub(crate) mod archive;
 pub(crate) mod cursor;
 pub(crate) mod delete;
 pub(crate) mod detached;
@@ -24,22 +25,25 @@ pub(crate) mod list_fold;
 pub(crate) mod open;
 pub(crate) mod pane;
 pub(crate) mod proposed;
-pub(crate) mod reach;
-pub(crate) mod reanchor;
 pub(crate) mod stubs;
 pub(crate) mod summary;
 pub(crate) mod words;
 
 pub(crate) use draft::{Compose, ComposeTarget};
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    AgentReplyCommand, Author, Draft, Lifecycle, LineHashes, LineRange, MessageTarget, Placement,
-    ResolutionOutcome, Status, Store, Thread, ThreadId,
+    AgentReplyCommand, Author, ContentIdentity, Draft, Lifecycle, LineHashes, LineRange,
+    MessageTarget, OriginVersion, Placement, PlacementContext, ResolutionContext,
+    ResolutionOutcome, Status, Store, Thread, ThreadId, WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
+use fathomable_core::context::map_context;
 use fathomable_core::reanchor::{Mapping, map_range};
+use fathomable_core::status::State;
+use fathomable_core::workspace::Workspace;
 
 use crate::app::App;
 use crate::app::input::bindings::Action;
@@ -126,6 +130,66 @@ pub(crate) fn author_label(author: &Author, user: &str) -> String {
     }
 }
 
+/// Capture an agent opening comment from the bound checkout.
+///
+/// The observed `HEAD`, working-tree state, and content identity are
+/// captured together so live-viewer and headless MCP starts use one origin
+/// contract without inheriting a human comparison.
+pub(crate) fn agent_start_draft(
+    workspace: &mut Workspace,
+    author: Author,
+    path: &Path,
+    range: Option<LineRange>,
+    body: String,
+) -> Result<(Draft, String), String> {
+    const MAX_CAPTURE_ATTEMPTS: usize = 2;
+
+    for attempt in 0..MAX_CAPTURE_ATTEMPTS {
+        let observed_head = workspace.head_commit();
+        let status = workspace
+            .status()
+            .map_err(|error| format!("cannot capture {} provenance: {error}", path.display()))?;
+        let text = std::fs::read_to_string(workspace.root().join(path))
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        if workspace.head_commit() != observed_head {
+            if attempt + 1 == MAX_CAPTURE_ATTEMPTS {
+                return Err(format!(
+                    "checkout HEAD changed while capturing {}",
+                    path.display()
+                ));
+            }
+            continue;
+        }
+
+        let state = status.get(path).map_or_else(
+            || {
+                if workspace.is_git() {
+                    WorkingTreeState::Clean
+                } else {
+                    WorkingTreeState::Added
+                }
+            },
+            |entry| match entry.state() {
+                State::Modified => WorkingTreeState::Modified,
+                State::Deleted => WorkingTreeState::Deleted,
+                State::Added | State::Untracked => WorkingTreeState::Added,
+            },
+        );
+        let facts = WorkingTreeFacts::new(
+            observed_head,
+            state,
+            Some(ContentIdentity::from_text(&text)),
+        );
+        let draft = match range {
+            Some(range) => Draft::new(author, path, range, body),
+            None => Draft::on_file(author, path, body),
+        }
+        .with_working_tree_facts(facts);
+        return Ok((draft, text));
+    }
+    unreachable!("capture attempts always return or retry")
+}
+
 pub(super) fn overlaps(a: LineRange, b: LineRange) -> bool {
     a.start() <= b.end() && b.start() <= a.end()
 }
@@ -140,6 +204,19 @@ pub(super) fn message_target(message: usize) -> MessageTarget {
 }
 
 impl App {
+    /// The path where this viewer projects `thread` in its active checkout.
+    pub(super) fn thread_path<'a>(&'a self, thread: &'a Thread) -> &'a Path {
+        if self.comparison().is_some_and(|comparison| {
+            comparison.target() == &fathomable_core::workspace::ComparisonEndpoint::WorkingTree
+        }) {
+            self.local_thread_paths
+                .get(thread.id())
+                .map_or_else(|| thread.path(), PathBuf::as_path)
+        } else {
+            thread.path()
+        }
+    }
+
     pub(super) fn thread_store_unavailable(&self) -> String {
         self.thread_store_error
             .as_ref()
@@ -215,19 +292,31 @@ impl App {
         let Some(doc) = self.docs.get(index) else {
             return;
         };
-        let text = doc.document.text().unwrap_or_default().to_owned();
+        let text = doc.view.text().to_owned();
         let hashes = LineHashes::of(&text);
         let path = doc.relative.clone();
+        let placement =
+            PlacementContext::new(OriginVersion::working_tree(self.workspace.head_commit()))
+                .at_checkout(self.workspace.root().display().to_string());
         let previous: Vec<(ThreadId, Placement)> = doc
             .marks
             .iter()
             .map(|mark| (mark.id.clone(), mark.placement))
             .collect();
+        let on_path: HashSet<ThreadId> = self
+            .store
+            .iter()
+            .flat_map(Store::threads)
+            .filter(|thread| self.thread_path(thread) == path)
+            .map(|thread| thread.id().clone())
+            .collect();
         let Some(store) = self.store.as_mut() else {
             return;
         };
         let stale: Vec<(ThreadId, LineRange)> = store
-            .for_path(&path)
+            .threads()
+            .iter()
+            .filter(|thread| on_path.contains(thread.id()))
             .filter(|thread| thread.locate_in(&hashes).is_detached())
             .filter_map(|thread| {
                 // Where it sat in the old text; a thread already detached
@@ -244,7 +333,7 @@ impl App {
                 Mapping::Edited(range) | Mapping::Moved(range) => range,
                 Mapping::Removed => continue,
             };
-            match store.relocate(&id, target, &text, now()) {
+            match store.relocate(&id, target, &text, placement.clone(), now()) {
                 Ok(()) => {
                     tracing::info!(%id, path = %path.display(), from = %range, to = %target, "thread re-anchored to edited lines");
                 }
@@ -259,15 +348,30 @@ impl App {
         let Some(store) = self.store.as_ref() else {
             return;
         };
+        let local_paths = &self.local_thread_paths;
+        let use_local_paths = self.comparison().is_some_and(|comparison| {
+            comparison.target() == &fathomable_core::workspace::ComparisonEndpoint::WorkingTree
+        });
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };
-        let hashes = LineHashes::of(doc.document.text().unwrap_or_default());
+        let text = doc.view.text().to_owned();
+        let hashes = LineHashes::of(&text);
         doc.marks = store
-            .for_path(&doc.relative)
-            .filter(|thread| self.reach.here(thread))
+            .threads()
+            .iter()
+            .filter(|thread| {
+                let path = if use_local_paths {
+                    local_paths
+                        .get(thread.id())
+                        .map_or_else(|| thread.path(), PathBuf::as_path)
+                } else {
+                    thread.path()
+                };
+                path == doc.relative
+            })
             .map(|thread| {
-                let placement = thread.locate_in(&hashes);
+                let placement = Self::project_placement(thread, &text, &hashes);
                 Mark {
                     id: thread.id().clone(),
                     placement,
@@ -286,30 +390,50 @@ impl App {
         }
     }
 
-    /// Move every thread whose path `moved` maps to its new path, after a
-    /// file or directory rename (ADR 0028). Range and anchor are kept, so
-    /// the threads sit on the same lines in the renamed file.
-    pub(super) fn move_threads(&mut self, moved: &impl Fn(&Path) -> Option<PathBuf>) {
-        let Some(store) = self.store.as_mut() else {
+    /// Project a thread into a displayed document without persisting an
+    /// implicit relocation. The origin context is the bounded restart
+    /// evidence when the stored anchor no longer locates.
+    pub(crate) fn project_placement(thread: &Thread, text: &str, hashes: &LineHashes) -> Placement {
+        let placement = thread.locate_in(hashes);
+        if !placement.is_detached() {
+            return placement;
+        }
+        let Some(context) = thread
+            .placement_evidence()
+            .context()
+            .or_else(|| thread.origin().context())
+        else {
+            return placement;
+        };
+        let Some(hint) = thread.range().or_else(|| thread.origin().range()) else {
+            return placement;
+        };
+        match map_context(context, text, hint) {
+            Mapping::Moved(range) | Mapping::Edited(range) => Placement::Edited(range),
+            Mapping::Removed => placement,
+        }
+    }
+
+    /// Remember exact renames for this viewer without mutating the shared board.
+    pub(super) fn remember_thread_moves(&mut self, moved: &impl Fn(&Path) -> Option<PathBuf>) {
+        let Some(store) = self.store.as_ref() else {
             return;
         };
         let targets: Vec<(ThreadId, PathBuf)> = store
             .threads()
             .iter()
-            .filter_map(|thread| Some((thread.id().clone(), moved(thread.path())?)))
+            .filter_map(|thread| {
+                let path = self
+                    .local_thread_paths
+                    .get(thread.id())
+                    .map_or_else(|| thread.path(), PathBuf::as_path);
+                Some((thread.id().clone(), moved(path)?))
+            })
             .collect();
-        if targets.is_empty() {
-            return;
-        }
-        let when = now();
         for (id, path) in &targets {
-            match store.move_path(id, path, when) {
-                Ok(()) => tracing::info!(%id, to = %path.display(), "thread moved with its file"),
-                Err(error) => tracing::warn!(%id, %error, "cannot move thread"),
-            }
+            self.local_thread_paths.insert(id.clone(), path.clone());
+            tracing::info!(%id, to = %path.display(), "thread projected through local rename");
         }
-        self.reconcile_agent_activity();
-        self.refresh_all_marks();
     }
 
     /// Re-locate every loaded document's threads, after a change that
@@ -339,10 +463,10 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.here(thread) && Some(thread.path()) != current)
+            .filter(|thread| Some(self.thread_path(thread)) != current)
             .map(|thread| {
                 let start = thread.range().map(|range| range.start());
-                (thread.path(), start, thread.id().clone())
+                (self.thread_path(thread), start, thread.id().clone())
             })
             .collect();
         others.sort();
@@ -416,9 +540,19 @@ impl App {
         idempotency_key: Option<String>,
     ) -> Result<(Thread, ResolutionOutcome, bool), String> {
         let root = self.workspace.root().to_path_buf();
+        let placement_path = self
+            .thread(id)
+            .map(|thread| self.thread_path(thread).to_path_buf())
+            .unwrap_or_default();
         let head = self.workspace.head_commit();
         let when = now();
-        let mut command = AgentReplyCommand::new(author, when, body).at_head(head);
+        let mut command = AgentReplyCommand::new(author, when, body)
+            .at_head(head.clone())
+            .at_checkout(root.display().to_string())
+            .place_in(
+                PlacementContext::new(OriginVersion::working_tree(head))
+                    .at_checkout(root.display().to_string()),
+            );
         if resolve {
             command = command.resolve();
         }
@@ -432,11 +566,11 @@ impl App {
             let Some(store) = self.store.as_mut() else {
                 return Err(self.thread_store_unavailable());
             };
-            store.agent_reply(id, command, |path| {
-                std::fs::read_to_string(root.join(path)).map_err(|error| {
+            store.agent_reply(id, command, |_path| {
+                std::fs::read_to_string(root.join(&placement_path)).map_err(|error| {
                     fathomable_core::annotations::StoreError::message(format!(
                         "cannot read {}: {error}",
-                        path.display()
+                        placement_path.display()
                     ))
                 })
             })
@@ -460,9 +594,9 @@ impl App {
 
     /// An agent starts a thread on `range` of `path` (ADR 0061), or on
     /// the file as a whole with no range (ADR 0063): the comment is
-    /// stamped with `HEAD` as the user's is, the viewer toasts it and
-    /// refreshes its marks, and nothing moves or is marked seen. Answers
-    /// with the thread as it stands.
+    /// stamped with checkout provenance, the viewer toasts it and refreshes
+    /// its marks, without changing any reader-tracking state. Answers with
+    /// the thread as it stands.
     #[expect(
         clippy::needless_pass_by_value,
         reason = "The caller scope follows the owned socket request into this handler."
@@ -481,39 +615,49 @@ impl App {
             Some(range) => format!("{}:{}", path.display(), range.start()),
             None => path.display().to_string(),
         };
-        let draft = match range {
-            Some(range) => Draft::new(author, path, range, body),
-            None => Draft::on_file(author, path, body),
-        }
-        .at_commit(self.workspace.head_commit());
         let result = if let Some(key) = idempotency_key {
-            let root = self.workspace.root().to_path_buf();
+            let probe = match range {
+                Some(range) => Draft::new(author.clone(), path, range, body.clone()),
+                None => Draft::on_file(author.clone(), path, body.clone()),
+            };
+            let replay = {
+                let Some(store) = self.store.as_mut() else {
+                    return Err(self.thread_store_unavailable());
+                };
+                store
+                    .probe_start_idempotency_for_caller(&probe, &caller, &key)
+                    .map_err(|error| error.to_string())?
+            };
+            if let Some(id) = replay {
+                Ok((id, true))
+            } else {
+                let (draft, text) =
+                    agent_start_draft(&mut self.workspace, author, path, range, body)?;
+                let Some(store) = self.store.as_mut() else {
+                    return Err(self.thread_store_unavailable());
+                };
+                store
+                    .annotate_idempotent_for_caller(draft, now(), &caller, &key, |_| {
+                        Ok(text.clone())
+                    })
+                    .map(|outcome| {
+                        let replayed = outcome.replayed();
+                        (outcome.into_value(), replayed)
+                    })
+                    .map_err(|error| error.to_string())
+            }
+        } else {
+            let (draft, text) = agent_start_draft(&mut self.workspace, author, path, range, body)?;
             let Some(store) = self.store.as_mut() else {
                 return Err(self.thread_store_unavailable());
             };
             store
-                .annotate_idempotent_for_caller(draft, now(), &caller, &key, |path| {
-                    std::fs::read_to_string(root.join(path)).map_err(|error| {
-                        fathomable_core::annotations::StoreError::message(format!(
-                            "cannot read {}: {error}",
-                            path.display()
-                        ))
-                    })
-                })
-                .map(|outcome| {
-                    let replayed = outcome.replayed();
-                    (outcome.into_value(), replayed)
-                })
-        } else {
-            let text = std::fs::read_to_string(self.workspace.root().join(path))
-                .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-            let Some(store) = self.store.as_mut() else {
-                return Err(self.thread_store_unavailable());
-            };
-            store.annotate(draft, &text, now()).map(|id| (id, false))
+                .annotate(draft, &text, now())
+                .map(|id| (id, false))
+                .map_err(|error| error.to_string())
         };
         self.reconcile_agent_activity();
-        let (id, replayed) = result.map_err(|error| error.to_string())?;
+        let (id, replayed) = result?;
         tracing::info!(%id, %place, %label, "agent thread started");
         self.refresh_reach();
         self.refresh_all_marks();
@@ -567,12 +711,19 @@ impl App {
     /// otherwise; every loaded document's marks follow.
     pub(super) fn toggle_resolved(&mut self, id: &ThreadId) {
         let head = self.workspace.head_commit();
+        let root = self.workspace.root().display().to_string();
+        let version = head
+            .clone()
+            .map_or_else(|| OriginVersion::working_tree(None), OriginVersion::commit);
+        let context = ResolutionContext::new(Author::User, head.clone())
+            .at_checkout(root)
+            .at_version(version);
         let Some(store) = self.store_mut() else {
             return;
         };
         let open = store.thread(id).is_some_and(|t| t.status() == Status::Open);
         let result = if open {
-            store.resolve(id, head.as_deref(), now())
+            store.resolve_with_context(id, &context, now())
         } else {
             store.reopen(id, now())
         };
@@ -621,6 +772,8 @@ impl App {
         match action {
             Action::ToggleAutoResolve => self.toggle_auto_resolve(id),
             Action::ToggleResolved => self.toggle_resolved(id),
+            Action::ArchiveThread => self.archive_thread(id),
+            Action::RestoreThread => self.restore_thread(id),
             _ => {}
         }
         self.review_reselect(place);

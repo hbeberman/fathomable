@@ -17,9 +17,7 @@ related_resources:
   - crates/fathomable/src/app/jumplist.rs
   - crates/fathomable-core/src/config.rs
   - crates/fathomable-core/src/theme.rs
-  - crates/fathomable-core/src/checkpoints.rs
   - crates/fathomable-core/src/workspace.rs
-  - crates/fathomable/src/app/checkpoints.rs
 tags:
   - decision
   - annotations
@@ -45,6 +43,11 @@ from a thread row and otherwise starts a comment without changing
 thread expansion, `z` alone expands or folds, and standalone `C` and
 `r` are unbound;
 amended 2026-09-04 as the work landed:
+
+Checkpoint timelines superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). Inline threads, the
+sidebar, and jumplist remain; per-file marks, strips, and paging are replaced
+by explicit workspace review points and an optional Since-point focus.
 
 - `dd` on an expanded thread's rows deletes the **thread**, not the
   message under the cursor: the store has no message-delete event

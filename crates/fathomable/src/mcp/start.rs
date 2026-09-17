@@ -17,6 +17,8 @@ use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::app::threads::agent_start_draft;
+
 use super::tools::{
     BatchIssue, Shown, Tree, WriteOutput, check_path, failure, invalid_batch,
     require_line_for_end_line, shown_lines,
@@ -183,11 +185,18 @@ impl Server {
                 }
             }
         }
-        let shown: Vec<Shown> = started
-            .iter()
-            .map(|t| Shown::new(t, tree.place(t)))
-            .collect();
-        CallToolResult::structured(json!(WriteOutput { threads: shown }))
+        let mut shown = Vec::with_capacity(started.len());
+        for thread in &started {
+            let placement = match tree.try_place(thread) {
+                Ok(placement) => placement,
+                Err(error) => return failure(error),
+            };
+            shown.push(Shown::new(thread, placement));
+        }
+        CallToolResult::structured(json!(WriteOutput {
+            checkout: self.target.root.clone(),
+            threads: shown,
+        }))
     }
 }
 
@@ -322,30 +331,32 @@ fn headless_start(
     caller: &str,
     item: Placed,
 ) -> Result<Thread, String> {
-    let commit = Workspace::discover(root)
-        .ok()
-        .and_then(|workspace| workspace.head_commit());
     let mut store = Store::open(dirs.threads_file(key)).map_err(|e| e.to_string())?;
-    let draft = match item.range {
-        Some(range) => Draft::new(author, &item.path, range, item.body),
-        None => Draft::on_file(author, &item.path, item.body),
-    }
-    .at_commit(commit);
-    let id = if let Some(key) = item.idempotency_key.as_deref() {
-        store
-            .annotate_idempotent_for_caller(draft, now(), caller, key, |path| {
-                fs::read_to_string(root.join(path)).map_err(|error| {
-                    fathomable_core::annotations::StoreError::message(format!(
-                        "cannot read {}: {error}",
-                        path.display()
-                    ))
+    let id = if let Some(idempotency_key) = item.idempotency_key.as_deref() {
+        let probe = match item.range {
+            Some(range) => Draft::new(author.clone(), &item.path, range, item.body.clone()),
+            None => Draft::on_file(author.clone(), &item.path, item.body.clone()),
+        };
+        if let Some(id) = store
+            .probe_start_idempotency_for_caller(&probe, caller, idempotency_key)
+            .map_err(|error| error.to_string())?
+        {
+            id
+        } else {
+            let mut workspace = Workspace::discover(root).map_err(|error| error.to_string())?;
+            let (draft, text) =
+                agent_start_draft(&mut workspace, author, &item.path, item.range, item.body)?;
+            store
+                .annotate_idempotent_for_caller(draft, now(), caller, idempotency_key, |_| {
+                    Ok(text.clone())
                 })
-            })
-            .map_err(|e| e.to_string())?
-            .into_value()
+                .map_err(|e| e.to_string())?
+                .into_value()
+        }
     } else {
-        let text = fs::read_to_string(root.join(&item.path))
-            .map_err(|error| format!("cannot read {}: {error}", item.path.display()))?;
+        let mut workspace = Workspace::discover(root).map_err(|error| error.to_string())?;
+        let (draft, text) =
+            agent_start_draft(&mut workspace, author, &item.path, item.range, item.body)?;
         store
             .annotate(draft, &text, now())
             .map_err(|e| e.to_string())?

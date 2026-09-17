@@ -11,13 +11,13 @@ use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    AgentReplyCommand, Author, AutoResolve, Lifecycle, LineHashes, LineRange, Message, Placement,
-    Reply, ResolutionOutcome, Status, Store, Thread, ThreadId,
+    AgentReplyCommand, ArchiveRecord, Author, AutoResolve, ComparisonFacts, ComparisonFocus,
+    ContentIdentity, IndexFacts, Lifecycle, LineHashes, LineRange, Message, OriginSide,
+    OriginVersion, Placement, PlacementContext, Reply, ResolutionOutcome, ResolutionRecord,
+    RestoreRecord, ReviewPointFacts, Status, Store, Thread, ThreadId, WorkingTreeFacts,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
-use fathomable_core::reanchor::{Mapping, map_range};
-use fathomable_core::seen;
 use fathomable_core::session::{Request, Response};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::{Filter, Workspace};
@@ -34,7 +34,7 @@ use super::{Server, Target, call};
 #[serde(deny_unknown_fields)]
 #[schemars(transform = exclusive_ids_lookup)]
 pub(crate) struct ThreadsParams {
-    /// Which discussions to list: `open` (default), `resolved`, or `all`.
+    /// Which non-archived discussions to list: `open` (default), `resolved`, or `all`.
     #[serde(default)]
     status: Option<StatusFilter>,
     /// Only discussions on this repository-relative file or below this directory.
@@ -49,7 +49,7 @@ pub(crate) struct ThreadsParams {
     /// At most this many discussions, oldest change first; default 50.
     #[serde(default)]
     limit: Option<usize>,
-    /// Exact discussion ids to read in the given order, including resolved history.
+    /// Exact discussion ids to read in the given order, including archived history.
     /// Do not combine this with filters or pagination.
     #[serde(default)]
     ids: Vec<String>,
@@ -204,6 +204,9 @@ impl Which {
     }
 
     fn admits(self, thread: &Thread) -> bool {
+        if thread.is_archived() {
+            return false;
+        }
         match self {
             Self::Open => matches!(thread.status(), Status::Open),
             Self::Resolved => matches!(thread.status(), Status::Resolved),
@@ -224,6 +227,10 @@ pub(super) struct Shown {
     id: String,
     /// Repository-relative annotated file.
     path: PathBuf,
+    /// Immutable source evidence captured when the discussion started.
+    origin: OriginOutput,
+    /// Current checkout-qualified placement evidence.
+    placement_evidence: PlacementEvidenceOutput,
     /// The currently projected range, or the last-known range when detached.
     #[serde(skip_serializing_if = "Option::is_none")]
     range: Option<RangeOutput>,
@@ -243,8 +250,16 @@ pub(super) struct Shown {
     modified: u64,
     /// Whether the next agent reply has one-shot resolution permission.
     auto_resolve: bool,
+    /// Whether this discussion is outside normal board membership.
+    archived: bool,
     /// Opening comment and replies in append order.
     messages: Vec<MessageOutput>,
+    /// Every successful resolution, oldest first.
+    resolution_history: Vec<ResolutionOutput>,
+    /// Every archive event, oldest first.
+    archive_history: Vec<ArchiveOutput>,
+    /// Every restore event, oldest first.
+    restore_history: Vec<RestoreOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     snippet: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -253,6 +268,162 @@ pub(super) struct Shown {
     reanchored_at: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     worktree: Option<PathBuf>,
+}
+
+/// Immutable origin and provenance facts in an MCP result.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct OriginOutput {
+    path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<RangeOutput>,
+    snippet: String,
+    truncated: bool,
+    version: VersionOutput,
+    side: SideOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    comparison: Option<ComparisonOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    working_tree: Option<WorkingTreeOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    index: Option<IndexOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_point: Option<ReviewPointOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<ContentOutput>,
+}
+
+/// Current placement evidence, separate from immutable origin.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct PlacementEvidenceOutput {
+    path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range: Option<RangeOutput>,
+    version: VersionOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observed_at: Option<u64>,
+}
+
+/// A compact content identity.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ContentOutput {
+    hash: String,
+    bytes: usize,
+}
+
+/// A stable version fact used by origin and lifecycle history.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(super) enum VersionOutput {
+    Commit { id: String },
+    WorkingTree { observed_head: Option<String> },
+    Index { observed_head: Option<String> },
+    ReviewPoint { id: String, base: Option<String> },
+    EmptyTree,
+    Unknown,
+}
+
+/// Which side supplied the immutable source evidence.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum SideOutput {
+    Base,
+    Target,
+    Unspecified,
+}
+
+/// The human comparison whose lines were shown, when supplied.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ComparisonOutput {
+    base: VersionOutput,
+    target: VersionOutput,
+    focus: FocusOutput,
+}
+
+/// The temporal focus active when the origin was captured.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub(super) enum FocusOutput {
+    AllChanges,
+    SinceReviewPoint { id: String },
+}
+
+/// Working-tree provenance facts.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct WorkingTreeOutput {
+    observed_head: Option<String>,
+    dirty: bool,
+    added: bool,
+    deleted: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<ContentOutput>,
+}
+
+/// Index provenance facts.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct IndexOutput {
+    observed_head: Option<String>,
+    staged: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<ContentOutput>,
+}
+
+/// Review-point provenance facts.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ReviewPointOutput {
+    id: String,
+    base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<ContentOutput>,
+}
+
+/// One immutable resolution event.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ResolutionOutput {
+    created: u64,
+    actor: AuthorOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<VersionOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    head: Option<String>,
+    ordinal: u64,
+}
+
+/// One immutable archive event.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct ArchiveOutput {
+    created: u64,
+    actor: AuthorOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<VersionOutput>,
+    ordinal: u64,
+}
+
+/// One immutable restore event.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(super) struct RestoreOutput {
+    created: u64,
+    actor: AuthorOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<VersionOutput>,
+    ordinal: u64,
 }
 
 /// A 1-based inclusive source range in an MCP result.
@@ -315,6 +486,133 @@ impl From<&Author> for AuthorOutput {
                 client: client.clone(),
                 id: id.clone(),
             },
+        }
+    }
+}
+
+impl From<&ContentIdentity> for ContentOutput {
+    fn from(content: &ContentIdentity) -> Self {
+        Self {
+            hash: content.hash().to_owned(),
+            bytes: content.bytes(),
+        }
+    }
+}
+
+impl From<&OriginVersion> for VersionOutput {
+    fn from(version: &OriginVersion) -> Self {
+        match version {
+            OriginVersion::Commit { id } => Self::Commit { id: id.clone() },
+            OriginVersion::WorkingTree { observed_head } => Self::WorkingTree {
+                observed_head: observed_head.clone(),
+            },
+            OriginVersion::Index { observed_head } => Self::Index {
+                observed_head: observed_head.clone(),
+            },
+            OriginVersion::ReviewPoint { id, base } => Self::ReviewPoint {
+                id: id.clone(),
+                base: base.clone(),
+            },
+            OriginVersion::EmptyTree => Self::EmptyTree,
+            OriginVersion::Unknown => Self::Unknown,
+        }
+    }
+}
+
+impl From<OriginSide> for SideOutput {
+    fn from(side: OriginSide) -> Self {
+        match side {
+            OriginSide::Base => Self::Base,
+            OriginSide::Target => Self::Target,
+            OriginSide::Unspecified => Self::Unspecified,
+        }
+    }
+}
+
+impl From<&ComparisonFocus> for FocusOutput {
+    fn from(focus: &ComparisonFocus) -> Self {
+        match focus {
+            ComparisonFocus::AllChanges => Self::AllChanges,
+            ComparisonFocus::SinceReviewPoint { id } => Self::SinceReviewPoint { id: id.clone() },
+        }
+    }
+}
+
+impl From<&ComparisonFacts> for ComparisonOutput {
+    fn from(comparison: &ComparisonFacts) -> Self {
+        Self {
+            base: VersionOutput::from(comparison.base()),
+            target: VersionOutput::from(comparison.target()),
+            focus: FocusOutput::from(comparison.focus()),
+        }
+    }
+}
+
+impl From<&WorkingTreeFacts> for WorkingTreeOutput {
+    fn from(facts: &WorkingTreeFacts) -> Self {
+        Self {
+            observed_head: facts.observed_head().map(str::to_owned),
+            dirty: facts.is_dirty(),
+            added: facts.is_added(),
+            deleted: facts.is_deleted(),
+            content: facts.content().map(ContentOutput::from),
+        }
+    }
+}
+
+impl From<&IndexFacts> for IndexOutput {
+    fn from(facts: &IndexFacts) -> Self {
+        Self {
+            observed_head: facts.observed_head().map(str::to_owned),
+            staged: facts.is_staged(),
+            content: facts.content().map(ContentOutput::from),
+        }
+    }
+}
+
+impl From<&ReviewPointFacts> for ReviewPointOutput {
+    fn from(facts: &ReviewPointFacts) -> Self {
+        Self {
+            id: facts.id().to_owned(),
+            base: facts.base().map(str::to_owned),
+            content: facts.content().map(ContentOutput::from),
+        }
+    }
+}
+
+impl From<&ResolutionRecord> for ResolutionOutput {
+    fn from(record: &ResolutionRecord) -> Self {
+        Self {
+            created: record.created(),
+            actor: AuthorOutput::from(record.actor()),
+            checkout: record.checkout().map(str::to_owned),
+            version: record.version().map(VersionOutput::from),
+            head: record.head().map(str::to_owned),
+            ordinal: record.ordinal(),
+        }
+    }
+}
+
+impl From<&ArchiveRecord> for ArchiveOutput {
+    fn from(record: &ArchiveRecord) -> Self {
+        Self {
+            created: record.created(),
+            actor: AuthorOutput::from(record.actor()),
+            checkout: record.checkout().map(str::to_owned),
+            version: record.version().map(VersionOutput::from),
+            ordinal: record.ordinal(),
+        }
+    }
+}
+
+impl From<&RestoreRecord> for RestoreOutput {
+    fn from(record: &RestoreRecord) -> Self {
+        Self {
+            created: record.created(),
+            actor: AuthorOutput::from(record.actor()),
+            checkout: record.checkout().map(str::to_owned),
+            version: record.version().map(VersionOutput::from),
+            ordinal: record.ordinal(),
         }
     }
 }
@@ -405,6 +703,8 @@ enum LifecycleOutput {
 /// The complete result returned by a read.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct ThreadsOutput {
+    /// The immutable checkout this MCP server was bound to at startup.
+    checkout: PathBuf,
     threads: Vec<Shown>,
     more: usize,
     #[schemars(required)]
@@ -414,6 +714,8 @@ pub(super) struct ThreadsOutput {
 /// The complete result returned by a write.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct WriteOutput {
+    /// The immutable checkout this MCP server was bound to at startup.
+    pub(super) checkout: PathBuf,
     pub(super) threads: Vec<Shown>,
 }
 
@@ -479,6 +781,8 @@ pub(super) struct ReplyResult {
 /// The complete successful `thread_reply` result.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(super) struct ReplyWriteOutput {
+    /// The immutable checkout this MCP server was bound to at startup.
+    checkout: PathBuf,
     results: Vec<ReplyResult>,
 }
 
@@ -487,6 +791,32 @@ impl Shown {
         Self {
             id: thread.id().to_string(),
             path: thread.path().to_path_buf(),
+            origin: OriginOutput {
+                path: thread.origin().path().to_path_buf(),
+                range: thread.origin().range().map(RangeOutput::from),
+                snippet: thread.origin().snippet().to_owned(),
+                truncated: thread.origin().evidence_truncated(),
+                version: VersionOutput::from(thread.origin_version()),
+                side: SideOutput::from(thread.origin_side()),
+                comparison: thread.comparison().map(ComparisonOutput::from),
+                working_tree: thread
+                    .provenance()
+                    .working_tree()
+                    .map(WorkingTreeOutput::from),
+                index: thread.provenance().index().map(IndexOutput::from),
+                review_point: thread
+                    .provenance()
+                    .review_point()
+                    .map(ReviewPointOutput::from),
+                content: thread.content_identity().map(ContentOutput::from),
+            },
+            placement_evidence: PlacementEvidenceOutput {
+                path: thread.placement_evidence().path().to_path_buf(),
+                range: thread.placement_evidence().range().map(RangeOutput::from),
+                version: VersionOutput::from(thread.placement_evidence().version()),
+                checkout: thread.placement_evidence().checkout().map(str::to_owned),
+                observed_at: thread.placement_evidence().observed_at(),
+            },
             range: placement.range().map(RangeOutput::from),
             placement: placement_output(placement),
             anchor_range: thread.range().map(RangeOutput::from),
@@ -496,17 +826,28 @@ impl Shown {
             created: thread.created(),
             modified: thread.modified(),
             auto_resolve: thread.auto_resolve() == AutoResolve::Enabled,
+            archived: thread.is_archived(),
             messages: thread.messages().map(MessageOutput::from).collect(),
+            resolution_history: thread
+                .resolution_history()
+                .iter()
+                .map(ResolutionOutput::from)
+                .collect(),
+            archive_history: thread
+                .archive_history()
+                .iter()
+                .map(ArchiveOutput::from)
+                .collect(),
+            restore_history: thread
+                .restore_history()
+                .iter()
+                .map(RestoreOutput::from)
+                .collect(),
             snippet: (!thread.is_on_file()).then(|| thread.snippet().to_owned()),
             commit: thread.commit().map(str::to_owned),
             reanchored_at: thread.reanchored_at(),
             worktree: None,
         }
-    }
-
-    fn in_worktree(mut self, worktree: Option<&Path>) -> Self {
-        self.worktree = worktree.map(Path::to_path_buf);
-        self
     }
 }
 
@@ -551,86 +892,103 @@ const fn lifecycle_output(lifecycle: Lifecycle) -> LifecycleOutput {
 /// Repository files hashed once per response for placement.
 pub(super) struct Tree {
     root: PathBuf,
+    texts: HashMap<PathBuf, Option<String>>,
     hashes: HashMap<PathBuf, Option<LineHashes>>,
-    snapshots: Option<seen::Snapshots>,
 }
 
 impl Tree {
     pub(super) fn new(root: &Path) -> Self {
         Self {
             root: root.to_path_buf(),
+            texts: HashMap::new(),
             hashes: HashMap::new(),
-            snapshots: None,
         }
     }
 
-    fn from_state(dirs: &XdgDirs, key: &Path, root: &Path) -> Self {
-        let snapshots = match seen::Snapshots::read(&dirs.seen_dir(key)) {
-            Ok(snapshots) => Some(snapshots),
-            Err(error) => {
-                tracing::warn!(%error, "cannot read snapshots for projected thread placement");
-                None
+    /// Maximum attempts used to capture one checkout consistently.
+    const MAX_PROJECTION_ATTEMPTS: usize = 2;
+
+    fn observed_head(&self) -> Option<String> {
+        Workspace::discover(&self.root)
+            .ok()
+            .and_then(|workspace| workspace.head_commit())
+    }
+
+    fn capture_text(&self, path: &Path) -> Result<Option<String>, String> {
+        for attempt in 0..Self::MAX_PROJECTION_ATTEMPTS {
+            let before = self.observed_head();
+            let text = match fs::read_to_string(self.root.join(path)) {
+                Ok(text) => Some(text),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) if error.kind() == std::io::ErrorKind::InvalidData => None,
+                Err(error) => {
+                    return Err(format!("cannot read {}: {error}", path.display()));
+                }
+            };
+            let after = self.observed_head();
+            if before == after {
+                return Ok(text);
             }
-        };
-        Self {
-            root: root.to_path_buf(),
-            hashes: HashMap::new(),
-            snapshots,
+            if attempt + 1 == Self::MAX_PROJECTION_ATTEMPTS {
+                return Err(format!(
+                    "checkout HEAD changed while projecting {}",
+                    path.display()
+                ));
+            }
         }
+        unreachable!("projection attempts always return or retry")
     }
 
-    pub(super) fn place(&mut self, thread: &Thread) -> Placement {
-        let hashes = self
-            .hashes
-            .entry(thread.path().to_path_buf())
-            .or_insert_with(|| {
-                fs::read_to_string(self.root.join(thread.path()))
-                    .ok()
-                    .map(|text| LineHashes::of(&text))
-            });
+    fn ensure_captured(&mut self, path: &Path) -> Result<(), String> {
+        if !self.texts.contains_key(path) {
+            let text = self.capture_text(path)?;
+            let hashes = text.as_deref().map(LineHashes::of);
+            self.texts.insert(path.to_path_buf(), text);
+            self.hashes.insert(path.to_path_buf(), hashes);
+        }
+        Ok(())
+    }
+
+    pub(super) fn try_place(&mut self, thread: &Thread) -> Result<Placement, String> {
+        self.ensure_captured(thread.path())?;
+        let text = self.texts.get(thread.path()).and_then(Option::as_deref);
+        let hashes = self.hashes.get(thread.path()).and_then(Option::as_ref);
         let placement = match (hashes, thread.range()) {
             (Some(hashes), _) => thread.locate_in(hashes),
             (None, Some(range)) => Placement::Detached(range),
             (None, None) => Placement::File,
         };
         if !placement.is_detached() {
-            return placement;
+            return Ok(placement);
         }
         let Some(from) = thread.range() else {
-            return placement;
+            return Ok(placement);
         };
-        let Ok(text) = fs::read_to_string(self.root.join(thread.path())) else {
-            return placement;
+        let Some(text) = text else {
+            return Ok(placement);
         };
-        let through_snapshot = self
-            .snapshots
-            .as_ref()
-            .and_then(|snapshots| match snapshots.text(thread.path()) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        path = %thread.path().display(),
-                        "cannot read snapshot; falling back to thread context"
-                    );
-                    None
-                }
-            })
-            .and_then(|snapshot| {
-                let placement = thread.locate(&snapshot);
-                let snapshot_range = placement.range().filter(|_| !placement.is_detached())?;
-                Some(map_range(&snapshot, &text, snapshot_range))
-            });
-        let mapping = match through_snapshot {
-            Some(mapping @ (Mapping::Edited(_) | Mapping::Moved(_))) => mapping,
-            _ => match thread.context() {
-                Some(context) => map_context(context, &text, from),
-                None => Mapping::Removed,
-            },
+        let mapping = match thread
+            .placement_evidence()
+            .context()
+            .or_else(|| thread.origin().context())
+        {
+            Some(context) => map_context(context, text, from),
+            None => fathomable_core::reanchor::Mapping::Removed,
         };
         match mapping {
-            Mapping::Edited(range) | Mapping::Moved(range) => Placement::Edited(range),
-            Mapping::Removed => placement,
+            fathomable_core::reanchor::Mapping::Edited(range)
+            | fathomable_core::reanchor::Mapping::Moved(range) => Ok(Placement::Edited(range)),
+            fathomable_core::reanchor::Mapping::Removed => Ok(placement),
+        }
+    }
+
+    pub(super) fn place(&mut self, thread: &Thread) -> Placement {
+        match self.try_place(thread) {
+            Ok(placement) => placement,
+            Err(error) => {
+                tracing::warn!(%error, path = %thread.path().display(), "cannot project thread placement");
+                thread.range().map_or(Placement::File, Placement::Detached)
+            }
         }
     }
 }
@@ -641,73 +999,34 @@ pub(super) struct Location {
     placement: Placement,
 }
 
-impl Location {
-    fn worktree(&self, bound: &Path) -> Option<&Path> {
-        (self.root != bound).then_some(self.root.as_path())
-    }
-}
-
-pub(super) struct Trees<'a> {
-    dirs: &'a XdgDirs,
-    key: &'a Path,
+pub(super) struct Trees {
     here: Tree,
-    others: HashMap<PathBuf, Tree>,
 }
 
-impl<'a> Trees<'a> {
-    pub(super) fn new(dirs: &'a XdgDirs, key: &'a Path, root: &Path) -> Self {
+impl Trees {
+    pub(super) fn new(root: &Path) -> Self {
         Self {
-            dirs,
-            key,
-            here: Tree::from_state(dirs, key, root),
-            others: HashMap::new(),
+            here: Tree::new(root),
         }
     }
 
-    fn place(&mut self, bound: &Path, root: &Path, thread: &Thread) -> Placement {
-        if root == bound {
-            return self.here.place(thread);
+    fn place(&mut self, root: &Path, thread: &Thread) -> Result<Placement, String> {
+        if root != self.here.root {
+            return Err(format!(
+                "MCP placement is bound to {}; cannot use {}",
+                self.here.root.display(),
+                root.display()
+            ));
         }
-        self.others
-            .entry(root.to_path_buf())
-            .or_insert_with(|| Tree::from_state(self.dirs, self.key, root))
-            .place(thread)
+        self.here.try_place(thread)
     }
 
-    /// Find a current worktree where the discussion still has a file and
-    /// a usable projected placement.
-    pub(super) fn project(&mut self, roots: &[PathBuf], thread: &Thread) -> Option<Location> {
-        let bound = self.here.root.clone();
-        roots.iter().find_map(|root| {
-            if !root.join(thread.path()).is_file() {
-                return None;
-            }
-            let placement = self.place(&bound, root, thread);
-            (!placement.is_detached()).then(|| Location {
-                root: root.clone(),
-                placement,
-            })
+    fn locate(&mut self, bound: &Path, thread: &Thread) -> Result<Location, String> {
+        let placement = self.place(bound, thread)?;
+        Ok(Location {
+            root: bound.to_path_buf(),
+            placement,
         })
-    }
-
-    fn locate(
-        &mut self,
-        scope: &fathomable_core::reach::Reach,
-        bound: &Path,
-        roots: &[PathBuf],
-        thread: &Thread,
-    ) -> Location {
-        let root = if scope.here(thread) {
-            bound.to_path_buf()
-        } else if let Some(root) = scope.elsewhere(thread) {
-            root.to_path_buf()
-        } else if let Some(location) = self.project(roots, thread) {
-            return location;
-        } else {
-            bound.to_path_buf()
-        };
-        let placement = self.place(bound, &root, thread);
-        Location { root, placement }
     }
 }
 
@@ -716,11 +1035,12 @@ impl Server {
     #[tool(
         output_schema = rmcp::handler::server::tool::schema_for_output::<ThreadsOutput>(),
         description = "Read review discussions in this repository checkout. By default returns \
-                       all open discussions with their complete conversation, author identities, \
-                       file placement, and ranges. Filter with `status`, `path`, and `since`; page \
-                       with `limit` and the returned `next_after`; or pass `ids` alone to retrieve \
-                       exact discussions and resolved history. Reading never assigns, \
-                       acknowledges, or consumes a discussion.",
+                       all non-archived open discussions with their complete conversation, \
+                       immutable origin, current placement, and lifecycle history. Filter with \
+                       `status`, `path`, and `since`; page with `limit` and the returned \
+                       `next_after`; or pass `ids` alone to retrieve exact discussions, including \
+                       archived history. Reading never assigns, acknowledges, or consumes a \
+                       discussion.",
         annotations(
             destructive_hint = false,
             idempotent_hint = true,
@@ -728,14 +1048,13 @@ impl Server {
         )
     )]
     fn threads(&self, Parameters(p): Parameters<ThreadsParams>) -> CallToolResult {
-        let roots = self.target.roots();
-        let (selected, scope) = if p.ids.is_empty() {
-            let (all, scope) = match self.fetch() {
+        let selected = if p.ids.is_empty() {
+            let all = match self.fetch() {
                 Ok(all) => all,
                 Err(error) => return failure(error),
             };
-            match select_filtered(&roots, &all, &p) {
-                Ok(selected) => (OwnedSelection::from(selected), scope),
+            match select_filtered(std::slice::from_ref(&self.target.root), &all, &p) {
+                Ok(selected) => OwnedSelection::from(selected),
                 Err(error) => return failure(error),
             }
         } else {
@@ -747,27 +1066,27 @@ impl Server {
             {
                 return failure("pass `ids` alone, without status, path, since, after, or limit");
             }
-            let (all, scope) = match self.fetch_exact() {
+            let all = match self.fetch_exact() {
                 Ok(all) => all,
                 Err(error) => return failure(error),
             };
             match select_exact(&all, &p.ids) {
-                Ok(selected) => (OwnedSelection::from(selected), scope),
+                Ok(selected) => OwnedSelection::from(selected),
                 Err(error) => return failure(error),
             }
         };
 
-        let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
-        let shown: Vec<Shown> = selected
-            .threads
-            .iter()
-            .map(|thread| {
-                let location = trees.locate(&scope, &self.target.root, &roots, thread);
-                Shown::new(thread, location.placement)
-                    .in_worktree(location.worktree(&self.target.root))
-            })
-            .collect();
+        let mut trees = Trees::new(&self.target.root);
+        let mut shown = Vec::with_capacity(selected.threads.len());
+        for thread in &selected.threads {
+            let location = match trees.locate(&self.target.root, thread) {
+                Ok(location) => location,
+                Err(error) => return failure(error),
+            };
+            shown.push(Shown::new(thread, location.placement));
+        }
         CallToolResult::structured(json!(ThreadsOutput {
+            checkout: self.target.root.clone(),
             threads: shown,
             more: selected.more,
             next_after: selected.next_after,
@@ -776,12 +1095,13 @@ impl Server {
 
     #[tool(
         output_schema = rmcp::handler::server::tool::schema_for_output::<ReplyWriteOutput>(),
-        description = "Continue one or more existing review discussions. Pass exactly one \
+        description = "Continue one or more existing, non-archived review discussions. Pass exactly one \
                        non-empty `replies` array; each item names a thread and body, with optional \
                        current line placement, `resolve` completion intent, and retry \
                        `idempotency_key`. Resolution succeeds only with one-shot permission; \
-                       otherwise the successful result directs review to Fathomable. The whole \
-                       batch is validated before any reply is written.",
+                       otherwise the successful result directs review to Fathomable. Fresh replies \
+                       to archived discussions fail; matching keyed retries replay their original \
+                       outcome. The whole batch is validated before any reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -800,20 +1120,15 @@ impl Server {
             Ok(identity) => identity,
             Err(error) => return failure(error),
         };
-        let (all, scope) = match self.fetch() {
+        let all = match self.fetch() {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
-        let probe_store = if p.replies.iter().any(|item| item.idempotency_key.is_some()) {
-            match Store::open(self.dirs.threads_file(&self.target.key)) {
-                Ok(store) => Some(store),
-                Err(error) => return failure(error.to_string()),
-            }
-        } else {
-            None
+        let probe_store = match Store::open(self.dirs.threads_file(&self.target.key)) {
+            Ok(store) => store,
+            Err(error) => return failure(error.to_string()),
         };
-        let roots = self.target.roots();
-        let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
+        let mut trees = Trees::new(&self.target.root);
         let mut seen = HashSet::with_capacity(p.replies.len());
         let mut seen_keys = HashSet::with_capacity(p.replies.len());
         let mut validated = Vec::with_capacity(p.replies.len());
@@ -845,7 +1160,7 @@ impl Server {
                     continue;
                 }
             };
-            let exact_thread = probe_store.as_ref().and_then(|store| store.thread(&id));
+            let exact_thread = probe_store.thread(&id);
             if let Err(error) = exact_thread.map_or_else(
                 || structural_reply_without_thread(&item),
                 |thread| structural_reply(&item, thread),
@@ -853,11 +1168,9 @@ impl Server {
                 problems.push(BatchIssue::new(index, error));
                 continue;
             }
-            let replay = if let (Some(key), Some(store)) =
-                (item.idempotency_key.as_deref(), probe_store.as_ref())
-            {
+            let replay = if let Some(key) = item.idempotency_key.as_deref() {
                 let reply = reply_probe(author.clone(), &item);
-                match store.probe_reply_idempotency_for_caller(
+                match probe_store.probe_reply_idempotency_for_caller(
                     &id,
                     &reply,
                     item_lines(&item),
@@ -874,13 +1187,20 @@ impl Server {
                 false
             };
             if replay {
-                let root = match exact_thread {
-                    Some(thread) => trees.locate(&scope, &self.target.root, &roots, thread).root,
-                    None => self.target.root.clone(),
-                };
-                validated.push(ValidatedReply { index, item, root });
+                validated.push(ValidatedReply {
+                    index,
+                    item,
+                    root: self.target.root.clone(),
+                });
             } else {
-                match validate_reply(&item, &all, &scope, &roots, &mut trees, &self.target.root) {
+                if exact_thread.is_some_and(Thread::is_archived) {
+                    problems.push(BatchIssue::new(
+                        index,
+                        format!("{} is archived; restore it before replying", item.thread),
+                    ));
+                    continue;
+                }
+                match validate_reply(&item, &all, &mut trees, &self.target.root) {
                     Ok(root) => validated.push(ValidatedReply { index, item, root }),
                     Err(error) => problems.push(BatchIssue::new(index, error)),
                 }
@@ -901,28 +1221,28 @@ impl Server {
                         item,
                         &validated[position + 1..],
                         error,
-                        &self.dirs,
-                        &self.target.key,
                         &self.target.root,
                     );
                 }
             }
         }
-        let mut trees = Trees::new(&self.dirs, &self.target.key, &self.target.root);
-        let results = answered
-            .iter()
-            .map(|answered| {
-                let placement = trees.place(&self.target.root, &answered.root, &answered.thread);
-                ReplyResult {
-                    thread: Shown::new(&answered.thread, placement).in_worktree(
-                        (answered.root != self.target.root).then_some(answered.root.as_path()),
-                    ),
-                    resolution: ResolutionResult::from(answered.resolution),
-                    replayed: answered.replayed,
-                }
-            })
-            .collect();
-        CallToolResult::structured(json!(ReplyWriteOutput { results }))
+        let mut trees = Trees::new(&self.target.root);
+        let mut results = Vec::with_capacity(answered.len());
+        for answered in &answered {
+            let placement = match trees.place(&answered.root, &answered.thread) {
+                Ok(placement) => placement,
+                Err(error) => return failure(error),
+            };
+            results.push(ReplyResult {
+                thread: Shown::new(&answered.thread, placement),
+                resolution: ResolutionResult::from(answered.resolution),
+                replayed: answered.replayed,
+            });
+        }
+        CallToolResult::structured(json!(ReplyWriteOutput {
+            checkout: self.target.root.clone(),
+            results,
+        }))
     }
 }
 
@@ -1027,14 +1347,27 @@ fn select_filtered<'a>(
     params: &ThreadsParams,
 ) -> Result<Selected<'a>, String> {
     let which = Which::from_status(params.status);
-    let path = check_path_in_roots(roots, params.path.as_deref())?;
+    let path = match check_path_in_roots(roots, params.path.as_deref()) {
+        Ok(path) => path,
+        Err(error) => {
+            let historical = params
+                .path
+                .as_deref()
+                .and_then(|path| normalize_repository_path(path).ok().flatten())
+                .filter(|path| all.iter().any(|thread| thread.path().starts_with(path)));
+            match historical {
+                Some(path) => Some(path),
+                None => return Err(error),
+            }
+        }
+    };
     let mut threads: Vec<&Thread> = all
         .iter()
         .filter(|thread| which.admits(thread))
-        .filter(|thread| params.since.is_none_or(|since| thread.updated() >= since))
+        .filter(|thread| params.since.is_none_or(|since| thread.modified() >= since))
         .filter(|thread| {
             params.after.as_ref().is_none_or(|after| {
-                (thread.updated(), thread.id().as_str()) > (after.updated, after.id.as_str())
+                (thread.modified(), thread.id().as_str()) > (after.updated, after.id.as_str())
             })
         })
         .filter(|thread| {
@@ -1042,13 +1375,14 @@ fn select_filtered<'a>(
                 .is_none_or(|path| thread.path().starts_with(path))
         })
         .collect();
-    threads.sort_by(|left, right| (left.updated(), left.id()).cmp(&(right.updated(), right.id())));
+    threads
+        .sort_by(|left, right| (left.modified(), left.id()).cmp(&(right.modified(), right.id())));
     let limit = params.limit.unwrap_or(DEFAULT_LIMIT);
     let more = threads.len().saturating_sub(limit);
     threads.truncate(limit);
     let next_after = if more > 0 {
         threads.last().map(|thread| After {
-            updated: thread.updated(),
+            updated: thread.modified(),
             id: thread.id().to_string(),
         })
     } else {
@@ -1106,9 +1440,7 @@ fn select_exact<'a>(all: &'a [Thread], ids: &[String]) -> Result<Selected<'a>, S
 fn validate_reply(
     item: &ReplyItem,
     all: &[Thread],
-    scope: &fathomable_core::reach::Reach,
-    roots: &[PathBuf],
-    trees: &mut Trees<'_>,
+    trees: &mut Trees,
     bound: &Path,
 ) -> Result<PathBuf, String> {
     let id = match thread_id(&item.thread) {
@@ -1121,16 +1453,15 @@ fn validate_reply(
             item.thread
         ));
     };
-    let location = trees.locate(scope, bound, roots, thread);
+    let location = trees.locate(bound, thread)?;
     refusal(item, thread, location.placement, &location.root)?;
     Ok(location.root)
 }
 
-/// Encode the requested resolve intent for the Phase A idempotency probe.
+/// Project the canonical reply request into the idempotency probe shape.
 ///
-/// The actual write uses [`AgentReplyCommand`]; this historical message flag
-/// is only the compatibility input through which the probe reconstructs the
-/// same request fingerprint.
+/// The actual write uses [`AgentReplyCommand`]; the probe uses this same
+/// request fingerprint before mutable thread validation.
 fn reply_probe(author: Author, item: &ReplyItem) -> Reply {
     let reply = Reply::new(author, now(), item.body.clone());
     if item.resolve {
@@ -1268,21 +1599,10 @@ fn check_path_in_roots(roots: &[PathBuf], path: Option<&Path>) -> Result<Option<
     let Some(path) = path else {
         return Ok(None);
     };
-    let inside = path.is_relative()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
-    let shown = path.display();
-    if !inside {
-        return Err(format!("{shown} is not a repository-relative path"));
-    }
-    let path: PathBuf = path
-        .components()
-        .filter(|component| !matches!(component, Component::CurDir))
-        .collect();
-    if path.as_os_str().is_empty() {
+    let Some(path) = normalize_repository_path(path)? else {
         return Ok(None);
-    }
+    };
+    let shown = path.display();
     if roots.iter().any(|root| {
         let full = root.join(&path);
         full.is_file() || full.is_dir()
@@ -1308,6 +1628,22 @@ fn check_path_in_roots(roots: &[PathBuf], path: Option<&Path>) -> Result<Option<
             same.join(", ")
         )
     })
+}
+
+fn normalize_repository_path(path: &Path) -> Result<Option<PathBuf>, String> {
+    let shown = path.display();
+    let inside = path.is_relative()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+    if !inside {
+        return Err(format!("{shown} is not a repository-relative path"));
+    }
+    let normalized: PathBuf = path
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect();
+    Ok((!normalized.as_os_str().is_empty()).then_some(normalized))
 }
 
 fn repository_paths(root: &Path) -> Vec<PathBuf> {
@@ -1358,7 +1694,13 @@ fn headless_reply(
     let head = Workspace::discover(root)
         .map_err(|error| error.to_string())?
         .head_commit();
-    let mut command = AgentReplyCommand::new(author, when, item.body.clone()).at_head(head);
+    let mut command = AgentReplyCommand::new(author, when, item.body.clone())
+        .at_head(head.clone())
+        .at_checkout(root.display().to_string())
+        .place_in(
+            PlacementContext::new(OriginVersion::working_tree(head))
+                .at_checkout(root.display().to_string()),
+        );
     if item.resolve {
         command = command.resolve();
     }
@@ -1420,6 +1762,7 @@ struct UnattemptedReply {
 #[derive(Debug, Serialize)]
 struct PartialReplyFailure {
     error_code: &'static str,
+    checkout: PathBuf,
     completed: Vec<IndexedReplyResult>,
     failed: FailedReply,
     unattempted: Vec<UnattemptedReply>,
@@ -1430,20 +1773,17 @@ fn partial_reply_failure(
     failed: &ValidatedReply,
     unattempted: &[ValidatedReply],
     error: String,
-    dirs: &XdgDirs,
-    key: &Path,
     bound: &Path,
 ) -> CallToolResult {
-    let mut trees = Trees::new(dirs, key, bound);
+    let mut tree = Tree::new(bound);
     let completed = answered
         .iter()
         .map(|answered| {
-            let placement = trees.place(bound, &answered.root, &answered.thread);
+            let placement = tree.place(&answered.thread);
             IndexedReplyResult {
                 item_index: answered.index,
                 result: ReplyResult {
-                    thread: Shown::new(&answered.thread, placement)
-                        .in_worktree((answered.root != bound).then_some(answered.root.as_path())),
+                    thread: Shown::new(&answered.thread, placement),
                     resolution: ResolutionResult::from(answered.resolution),
                     replayed: answered.replayed,
                 },
@@ -1452,6 +1792,7 @@ fn partial_reply_failure(
         .collect();
     structured_error(json!(PartialReplyFailure {
         error_code: "PARTIAL_BATCH",
+        checkout: bound.to_path_buf(),
         completed,
         failed: FailedReply {
             item_index: failed.index,

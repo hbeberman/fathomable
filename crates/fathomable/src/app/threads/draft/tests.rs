@@ -3,14 +3,371 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use fathomable_core::annotations::{AutoResolve, Lifecycle, LineRange, MessageTarget, Store};
+use fathomable_core::annotations::{
+    AutoResolve, Lifecycle, LineRange, MessageTarget, OriginSide, OriginVersion, Store, Thread,
+};
 use fathomable_core::editor::{Edit, Motion};
+use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
+use fathomable_testing::{TempDir, git};
 
-use super::ComposeTarget;
+use super::{ComposeTarget, displayed_diff_side_and_range, mixed_diff_selection};
 use crate::app::App;
+use crate::app::diff::{DiffBody, DiffView, Side, Text};
 use crate::app::input::bindings::Where;
 use crate::app::input::keys;
 use crate::app::testing::{self, click, press, press_key, screen};
+
+#[test]
+fn historical_deleted_source_comments_keep_base_origin() -> anyhow::Result<()> {
+    let dir = TempDir::new("historical-deleted-origin")?;
+    git::init(&dir.0)?;
+    fs::write(dir.0.join("gone.md"), "original line\n")?;
+    git::commit_and_stage(&dir.0, &[("gone.md", "original line\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    fs::remove_file(dir.0.join("gone.md"))?;
+    git::commit_and_stage(&dir.0, &[])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.open(Path::new("gone.md"));
+    app.start_new_comment();
+    anyhow::ensure!(
+        matches!(app.popup(), Some(crate::app::Popup::Compose(_))),
+        "comment draft did not open: {:?}",
+        app.message()
+    );
+    press(&mut app, "historical finding");
+    app.compose_submit();
+
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("historical thread")?;
+    assert_eq!(thread.origin_side(), OriginSide::Base);
+    assert_eq!(thread.origin().range(), Some(LineRange::new(1, 1)));
+    assert_eq!(thread.origin().snippet(), "original line");
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+    Ok(())
+}
+
+#[test]
+fn switching_an_open_working_file_to_history_captures_displayed_text() -> anyhow::Result<()> {
+    let dir = TempDir::new("open-then-historical-origin")?;
+    git::init(&dir.0)?;
+    fs::write(dir.0.join("a.txt"), "historical\n")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "historical\n")])?;
+    let historical = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("historical commit")?;
+    fs::write(dir.0.join("a.txt"), "working\nshort\n")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.open(Path::new("a.txt"));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&historical)?));
+    app.start_new_comment();
+    press(&mut app, "displayed history");
+    app.compose_submit();
+
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("historical thread")?;
+    assert_eq!(thread.origin().snippet(), "historical");
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(historical));
+    Ok(())
+}
+
+#[test]
+fn off_branch_historical_target_projects_inline_without_rescoping() -> anyhow::Result<()> {
+    let dir = TempDir::new("off-branch-historical-origin")?;
+    let main = dir.0.join("main");
+    fs::create_dir(&main)?;
+    git::init(&main)?;
+    fs::write(main.join("a.txt"), "main\n")?;
+    git::commit_and_stage(&main, &[("a.txt", "main\n")])?;
+    let base = Workspace::discover(&main)?
+        .head_commit()
+        .context("main commit")?;
+    let feature = dir.0.join("feature");
+    git::worktree_add(&main, &feature, "feature")?;
+    fs::write(feature.join("a.txt"), "feature\n")?;
+    git::commit_and_stage(&feature, &[("a.txt", "feature\n")])?;
+    let target = Workspace::discover(&feature)?
+        .head_commit()
+        .context("feature commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&main)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(base)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.open(Path::new("a.txt"));
+    app.start_new_comment();
+    press(&mut app, "feature discussion");
+    app.compose_submit();
+
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("feature thread")?;
+    assert!(!app.reach.here(thread));
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(target));
+    assert_eq!(app.marks().len(), 1);
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(1, 1)));
+    Ok(())
+}
+
+#[test]
+fn duplicate_removed_lines_keep_the_selected_base_range_in_origin() -> anyhow::Result<()> {
+    let dir = TempDir::new("duplicate-removed-origin")?;
+    git::init(&dir.0)?;
+    let old = "same\nremove\nsame\nremove\n";
+    let new = "same\nsame\n";
+    git::commit_and_stage(&dir.0, &[("a.md", old)])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&dir.0, &[("a.md", new)])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.open(Path::new("a.md"));
+    app.show_comparison_diff();
+    let row = app
+        .view()
+        .layout()
+        .lines()
+        .iter()
+        .position(|line| line.diff_old_line() == Some(4) && line.diff_new_line().is_none())
+        .context("second removed line")?;
+    app.view_mut().goto_row(row);
+    app.start_new_comment();
+    press(&mut app, "second duplicate");
+    app.compose_submit();
+
+    let thread = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .context("removed-line thread")?;
+    assert_eq!(thread.origin_side(), OriginSide::Base);
+    assert_eq!(thread.origin().range(), Some(LineRange::new(4, 4)));
+    assert_eq!(thread.origin().snippet(), "remove");
+    assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+    Ok(())
+}
+
+#[test]
+fn working_edits_do_not_relocate_threads_in_an_immutable_comparison() -> anyhow::Result<()> {
+    let dir = TempDir::new("immutable-comparison-reload")?;
+    git::init(&dir.0)?;
+    fs::write(dir.0.join("a.txt"), "one\ntwo\n")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\ntwo\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    fs::write(dir.0.join("a.txt"), "one\nTWO\n")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\nTWO\n")])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    let store_path = dir.0.join("threads.jsonl");
+    let store = Store::open(&store_path)?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.open(Path::new("a.txt"));
+    app.view_mut().goto_source_line(2);
+    app.start_new_comment();
+    press(&mut app, "historical target");
+    app.compose_submit();
+    let id = app
+        .store
+        .as_ref()
+        .and_then(|store| store.threads().first())
+        .map(|thread| thread.id().clone())
+        .context("historical target thread")?;
+    let before = fs::read(&store_path)?;
+
+    fs::write(dir.0.join("a.txt"), "unrelated\nworking\nrewrite\n")?;
+    app.on_changes(vec![dir.0.join("a.txt")]);
+
+    assert_eq!(app.view().text(), "one\nTWO\n");
+    assert_eq!(app.marks()[0].range(), Some(LineRange::new(2, 2)));
+    assert_eq!(fs::read(&store_path)?, before);
+    assert_eq!(
+        app.thread(&id).and_then(Thread::range),
+        Some(LineRange::new(2, 2))
+    );
+    Ok(())
+}
+
+#[test]
+fn working_renames_do_not_rewrite_immutable_comparison_paths() -> anyhow::Result<()> {
+    let dir = TempDir::new("immutable-comparison-rename")?;
+    git::init(&dir.0)?;
+    fs::write(dir.0.join("a.txt"), "one\n")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    fs::write(dir.0.join("a.txt"), "two\n")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "two\n")])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    let store_path = dir.0.join("threads.jsonl");
+    let store = Store::open(&store_path)?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.open(Path::new("a.txt"));
+    app.start_new_comment();
+    press(&mut app, "historical target");
+    app.compose_submit();
+    let before = fs::read(&store_path)?;
+
+    fs::rename(dir.0.join("a.txt"), dir.0.join("b.txt"))?;
+    app.on_events(vec![crate::app::watch::Event::Renamed {
+        from: dir.0.join("a.txt"),
+        to: dir.0.join("b.txt"),
+    }]);
+
+    assert_eq!(app.current_path(), Path::new("a.txt"));
+    assert_eq!(app.view().text(), "two\n");
+    assert_eq!(app.marks().len(), 1);
+    assert_eq!(fs::read(&store_path)?, before);
+    assert_eq!(
+        app.store
+            .as_ref()
+            .and_then(|store| store.threads().first())
+            .map(Thread::path),
+        Some(Path::new("a.txt"))
+    );
+    Ok(())
+}
+
+#[test]
+fn removed_diff_rows_keep_exact_original_line_identity() -> anyhow::Result<()> {
+    let old = "same\nremove\nsame\nremove\n";
+    let new = "same\nsame\n";
+    let mut view = crate::app::view::View::new(new.to_owned(), 80, 20);
+    view.show_diff(DiffView {
+        base: Side::ComparisonBase,
+        target: Side::ComparisonTarget,
+        header: "base · target".to_owned(),
+        badge: "DIFF comparison".to_owned(),
+        body: DiffBody::Diff {
+            base: Text::Owned(old.to_owned()),
+            target: Text::Owned(new.to_owned()),
+        },
+    });
+    let row = view
+        .layout()
+        .lines()
+        .iter()
+        .position(|line| line.diff_old_line() == Some(4) && line.diff_new_line().is_none())
+        .context("second duplicate removed line")?;
+    view.goto_row(row);
+    assert_eq!(
+        displayed_diff_side_and_range(&view),
+        Some((
+            fathomable_core::annotations::OriginSide::Base,
+            LineRange::new(4, 4)
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_diff_selection_must_stay_on_one_side() -> anyhow::Result<()> {
+    let old = "keep\nfirst\nsecond\nkeep\n";
+    let new = "keep\nreplacement\nkeep\n";
+    let mut view = crate::app::view::View::new(new.to_owned(), 80, 20);
+    view.show_diff(DiffView {
+        base: Side::ComparisonBase,
+        target: Side::ComparisonTarget,
+        header: "base · target".to_owned(),
+        badge: "DIFF comparison".to_owned(),
+        body: DiffBody::Diff {
+            base: Text::Owned(old.to_owned()),
+            target: Text::Owned(new.to_owned()),
+        },
+    });
+    let removed: Vec<usize> = view
+        .layout()
+        .lines()
+        .iter()
+        .enumerate()
+        .filter_map(|(row, line)| {
+            (line.diff_old_line().is_some() && line.diff_new_line().is_none()).then_some(row)
+        })
+        .collect();
+    view.goto_row(removed[0]);
+    view.select_lines();
+    view.move_down(1);
+    let selection = view.selection().context("removed selection")?;
+    assert!(!mixed_diff_selection(&view, selection));
+    assert_eq!(
+        displayed_diff_side_and_range(&view),
+        Some((
+            fathomable_core::annotations::OriginSide::Base,
+            LineRange::new(2, 3)
+        ))
+    );
+
+    view.move_down(1);
+    let selection = view.selection().context("mixed selection")?;
+    assert!(mixed_diff_selection(&view, selection));
+    Ok(())
+}
 
 fn click_file(app: &mut App, path: &str) -> anyhow::Result<()> {
     let row = app

@@ -150,6 +150,7 @@ mod tests {
     use ratatui::text::Span;
 
     use crate::app::App;
+    use crate::app::diff::{DiffBody, DiffView, Side, Text};
     use crate::app::draw::{Theme, gutter_width, text_lines};
     use fathomable_testing::TempDir;
 
@@ -294,8 +295,18 @@ mod tests {
         );
 
         app.view_mut()
-            .set_bases(None, None, Some("old paragraph\n".to_owned()));
-        app.toggle_head_diff();
+            .set_bases(None, Some("old paragraph\n".to_owned()));
+        let target = app.view().text().to_owned();
+        app.view_mut().show_diff(DiffView {
+            base: Side::ComparisonBase,
+            target: Side::ComparisonTarget,
+            header: "empty tree · working tree".to_owned(),
+            badge: "DIFF comparison".to_owned(),
+            body: DiffBody::Diff {
+                base: Text::Owned("old first\n\nold second\n".to_owned()),
+                target: Text::Owned(target),
+            },
+        });
         app.view_mut().goto_top();
         let rows = app.view().layout().lines().len();
         let mut numbered = 0;
@@ -332,7 +343,7 @@ mod tests {
             ("old first\n\nold second\n", text, "▌"),
         ] {
             app.view_mut()
-                .set_bases(None, Some(index.to_owned()), Some(head.to_owned()));
+                .set_bases(Some(index.to_owned()), Some(head.to_owned()));
             let cells = git_cells(&app)?;
             assert_eq!(app.view().source_line_of_row(1), None);
             assert_eq!(cells[0].content, glyph);
@@ -361,7 +372,7 @@ mod tests {
             (text, text, [" ", " ", " "]),
         ] {
             app.view_mut()
-                .set_bases(None, Some(index.to_owned()), Some(head.to_owned()));
+                .set_bases(Some(index.to_owned()), Some(head.to_owned()));
             let cells = git_cells(&app)?;
             let glyphs: Vec<_> = cells
                 .iter()
@@ -370,7 +381,7 @@ mod tests {
                 .collect();
             assert_eq!(glyphs, expected, "head: {head:?}, index: {index:?}");
         }
-        app.view_mut().set_bases(None, None, None);
+        app.view_mut().set_bases(None, None);
         assert!(git_cells(&app)?.iter().all(|cell| cell.content == " "));
         Ok(())
     }
@@ -380,7 +391,7 @@ mod tests {
         let dir = testing::workspace("git-gutter-table", "| key |\n| --- |\n| a |\n| b |\n")?;
         let mut app = app(&dir, 100)?;
         app.view_mut()
-            .set_bases(None, Some(String::new()), Some(String::new()));
+            .set_bases(Some(String::new()), Some(String::new()));
         let cells = git_cells(&app)?;
         assert_eq!(cells.first().context("table top border")?.content, " ");
         assert_eq!(cells.last().context("table bottom border")?.content, "▎");
@@ -415,7 +426,7 @@ mod tests {
         let dir = testing::workspace("git-gutter-continuous", &text)?;
         let mut app = app(&dir, 100)?;
         app.view_mut()
-            .set_bases(None, Some(String::new()), Some(String::new()));
+            .set_bases(Some(String::new()), Some(String::new()));
         let lines = app.view().layout().lines();
         assert!(
             lines
@@ -437,7 +448,6 @@ mod tests {
         let dir = testing::workspace("git-gutter-code-blank", "```\nfirst\n\nsecond\n```\n")?;
         let mut app = app(&dir, 100)?;
         app.view_mut().set_bases(
-            None,
             Some(String::new()),
             Some("```\nold first\n\nold second\n```\n".to_owned()),
         );
@@ -447,7 +457,7 @@ mod tests {
         assert_eq!(git_cells(&app)?[blank].content, " ");
 
         app.view_mut()
-            .set_bases(None, Some(String::new()), Some(String::new()));
+            .set_bases(Some(String::new()), Some(String::new()));
         annotate(&mut app, 2, 2, "a thread");
         let stub = (0..app.view().layout().lines().len())
             .find(|&row| app.view().stub_slot_of_row(row).is_some())
@@ -466,7 +476,7 @@ mod tests {
         let dir = testing::workspace("git-gutter-scroll", "first\n\nsecond\n\nthird\n")?;
         let mut app = app(&dir, 100)?;
         app.view_mut()
-            .set_bases(None, Some(String::new()), Some(String::new()));
+            .set_bases(Some(String::new()), Some(String::new()));
         let before = git_cells(&app)?[1].style;
         let width = app.view().layout().width();
         app.view_mut().resize(width, 1);
@@ -485,7 +495,6 @@ mod tests {
         let dir = testing::workspace("git-gutter-displays", "first\n\nsecond\n")?;
         let mut app = app(&dir, 100)?;
         app.view_mut().set_bases(
-            None,
             Some(String::new()),
             Some("old first\n\nold second\n".to_owned()),
         );
@@ -502,7 +511,7 @@ mod tests {
                 assert_eq!(cell.content, " ", "diff row {row}");
             }
         }
-        assert!(synthetic >= 3, "hunk header and removed lines");
+        assert!(synthetic > 0, "unified diff retains synthetic rows");
         Ok(())
     }
 

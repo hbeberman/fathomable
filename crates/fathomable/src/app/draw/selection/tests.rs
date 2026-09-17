@@ -217,12 +217,12 @@ fn the_files_cursor_keeps_git_marks_and_mouse_navigation() -> anyhow::Result<()>
     let buffer = render(&app, &theme)?;
     let y = row_containing(&buffer, 0, width, "README.md")?;
     assert_selection(&buffer, 0, y, width - 1, &theme, true);
-    assert_eq!(buffer[(1, y)].symbol(), " ");
-    assert_eq!(buffer[(2, y)].symbol(), "M");
-    assert_eq!(Some(buffer[(2, y)].fg), theme.git_unstaged.fg);
+    assert_eq!(buffer[(1, y)].symbol(), "M");
+    assert_eq!(buffer[(2, y)].symbol(), " ");
+    assert_eq!(Some(buffer[(1, y)].fg), theme.git_unstaged.fg);
     let second_y = row_containing(&buffer, 0, width, "second.rs")?;
-    assert_eq!(buffer[(1, second_y)].symbol(), "?");
-    assert_eq!(buffer[(2, second_y)].symbol(), "?");
+    assert_eq!(buffer[(1, second_y)].symbol(), "A");
+    assert_eq!(buffer[(2, second_y)].symbol(), " ");
     assert_eq!(Some(buffer[(1, second_y)].fg), theme.diff_plus.fg);
     testing::click(&mut app, 0, usize::from(second_y));
     assert_eq!(app.current_path(), std::path::Path::new("second.rs"));
@@ -250,13 +250,13 @@ fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
     let width = u16::try_from(app.sidebar_width())?;
     let buffer = render(&app, &theme)?;
     let y = row_containing(&buffer, 0, width, "main.c -3")?;
-    assert_eq!(buffer[(1, y)].symbol(), " ");
-    assert_eq!(buffer[(2, y)].symbol(), "D");
-    assert_eq!(Some(buffer[(2, y)].fg), theme.diff_minus.fg);
+    assert_eq!(buffer[(1, y)].symbol(), "D");
+    assert_eq!(buffer[(2, y)].symbol(), " ");
+    assert_eq!(Some(buffer[(1, y)].fg), theme.diff_minus.fg);
     testing::click(&mut app, 0, usize::from(y));
     assert_eq!(app.current_path(), std::path::Path::new("main.c"));
     assert_selection(&render(&app, &theme)?, 0, y, width - 1, &theme, true);
-    assert_eq!(app.banner(), Some("deleted from worktree · showing INDEX"));
+    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
     assert_eq!(app.view().text(), "int main() {\n    return 0;\n}\n");
     assert!(app.info().is_none());
 
@@ -269,7 +269,7 @@ fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
     assert_eq!(buffer[(1, y)].symbol(), "D");
     assert_eq!(buffer[(2, y)].symbol(), " ");
     assert_eq!(Some(buffer[(1, y)].fg), theme.diff_minus.fg);
-    assert_eq!(app.banner(), Some("staged deletion · showing HEAD"));
+    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
     assert_eq!(app.view().text(), "int main() {\n    return 0;\n}\n");
     Ok(())
 }
@@ -335,8 +335,11 @@ fn every_picker_uses_the_shared_cursor_and_full_width_band() -> anyhow::Result<(
             PickerKind::Files,
             PickerKind::AllFiles,
             PickerKind::Recent,
-            PickerKind::DiffBase,
-            PickerKind::DiffTarget,
+            PickerKind::ComparisonBase,
+            PickerKind::ComparisonTarget,
+            PickerKind::ComparisonControl,
+            PickerKind::ComparisonFocus,
+            PickerKind::ReviewPointName,
             PickerKind::Worktree,
         ] {
             let picker = PickerState::new(kind, vec!["candidate".to_owned()]);

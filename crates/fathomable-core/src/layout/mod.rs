@@ -160,6 +160,10 @@ pub struct Line {
     spans: Vec<Span>,
     source: Option<Range<usize>>,
     number: Option<usize>,
+    /// Original-side line represented by a unified-diff row.
+    old_diff: Option<usize>,
+    /// Updated-side line represented by a unified-diff row.
+    new_diff: Option<usize>,
     /// A blank row inserted before this source line by
     /// [`Layout::with_rows_before`] (ADR 0039).
     before: Option<usize>,
@@ -189,6 +193,8 @@ impl Line {
             spans,
             source,
             number: None,
+            old_diff: None,
+            new_diff: None,
             before: None,
             stub: None,
         }
@@ -245,6 +251,24 @@ impl Line {
     #[must_use]
     pub fn source_line(&self) -> Option<usize> {
         self.number
+    }
+
+    /// The 1-based original-side line represented by this diff row.
+    ///
+    /// Wrapped continuations retain the same line. Non-diff rows and hunk
+    /// headers return `None`.
+    #[must_use]
+    pub fn diff_old_line(&self) -> Option<usize> {
+        self.old_diff
+    }
+
+    /// The 1-based updated-side line represented by this diff row.
+    ///
+    /// Wrapped continuations retain the same line. Non-diff rows and hunk
+    /// headers return `None`.
+    #[must_use]
+    pub fn diff_new_line(&self) -> Option<usize> {
+        self.new_diff
     }
 
     /// The plain text of the line.
@@ -402,15 +426,7 @@ impl Layout {
         Self::finish(lines, width, index)
     }
 
-    /// Lay out a unified diff of `old` against `new` for a pane `width`
-    /// cells wide (ADR 0006).
-    ///
-    /// Context and added lines carry the source range of the line in
-    /// `new`, so the gutter numbers, the cursor, and annotation marks keep
-    /// working; removed lines and hunk headers have no source. Long lines
-    /// One sourceless marker line saying `text`: what a view shows when it
-    /// has nothing else to show (ADR 0049's checkpoint view with no
-    /// checkpoint yet).
+    /// Lay out one sourceless marker notice.
     #[must_use]
     pub fn notice(text: &str, width: usize) -> Self {
         let chunk = Chunk::new(text, Style::marker(), None);
@@ -418,9 +434,14 @@ impl Layout {
         Self::finish(lines, width, LineIndex::new(""))
     }
 
-    /// wrap under a blank diff-sign cell. When the texts are identical the
-    /// layout is one sourceless notice line. `compare` sets the whitespace
-    /// rule and the context lines (ADR 0060).
+    /// Lay out a unified diff of `old` against `new`.
+    ///
+    /// Context and added lines carry updated-text source ranges. Removed
+    /// lines and hunk headers have no updated-text source. Every diff row
+    /// retains exact original and updated line identities, and wrapped
+    /// continuations keep the same identities. When the texts are identical
+    /// the layout is one sourceless notice. `compare` controls whitespace and
+    /// context lines.
     #[must_use]
     pub fn diff(old: &str, new: &str, width: usize, compare: Compare) -> Self {
         let index = LineIndex::new(new);
@@ -432,6 +453,8 @@ impl Layout {
             return Self::finish(lines, width, index);
         }
         for entry in diff.unified(old, new, compare.context) {
+            let old_line = entry.old_line();
+            let new_line = entry.new_line();
             let (face, sign) = match entry.kind() {
                 DiffKind::Header => (Face::DiffHeader, ""),
                 DiffKind::Context => (Face::Text, " "),
@@ -457,6 +480,8 @@ impl Layout {
                         },
                     );
                 }
+                line.old_diff = old_line;
+                line.new_diff = new_line;
                 lines.push(line);
             }
         }

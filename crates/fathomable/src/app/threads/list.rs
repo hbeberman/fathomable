@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0025-thread-list.md
-//! The review list (ADR 0025, reshaped by ADR 0049 and ADR 0066): every
-//! thread on the current work by file and line under a row per file,
-//! resolved ones hidden until asked for, drawn in place of the document.
+//! The review list (ADR 0025, reshaped by ADR 0049 and ADR 0066): the
+//! shared board, Recently resolved, and Archived threads use one list
+//! engine and one set of summary rows.
 //!
 //! The list keeps only its own state — whether it is open, the scroll,
 //! which files and threads are folded (ADR 0076), and whether the
@@ -17,7 +17,9 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use fathomable_core::annotations::{Author, LineRange, Store, Thread, ThreadId};
+use fathomable_core::annotations::{
+    Author, LineRange, OriginVersion, Placement, Store, Thread, ThreadId,
+};
 use fathomable_core::layout::{Layout, Line};
 
 use crate::app::draw::nest::NEST;
@@ -33,14 +35,75 @@ const SCROLLOFF: usize = 2;
 /// indent before each body row; the wrap width already accounts for it.
 pub(crate) const BODY_INDENT: usize = NEST + 5;
 
+/// Which repository-board view the review list shows.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReviewView {
+    /// Unarchived board threads, with the normal lifecycle filter.
+    #[default]
+    Board,
+    /// Unarchived threads whose current lifecycle is resolved.
+    RecentlyResolved,
+    /// Archived threads, regardless of lifecycle.
+    Archived,
+}
+
+fn origin_evidence(thread: &Thread) -> String {
+    let side = match thread.origin_side() {
+        fathomable_core::annotations::OriginSide::Base => "base",
+        fathomable_core::annotations::OriginSide::Target => "target",
+        fathomable_core::annotations::OriginSide::Unspecified => "unspecified",
+    };
+    let version = origin_label(thread).unwrap_or_else(|| "origin unknown".to_owned());
+    let location = thread
+        .origin()
+        .range()
+        .map_or_else(|| "file".to_owned(), |range| format!("L{range}"));
+    let excerpt = if thread.origin().snippet().is_empty() {
+        "[file-wide]".to_owned()
+    } else {
+        thread.origin().snippet().to_owned()
+    };
+    let context = thread
+        .origin()
+        .context()
+        .map(|context| format!("\ncontext: {}", context.text().trim_end()))
+        .unwrap_or_default();
+    format!(
+        "origin: {version} · {side} · {}:{location}\nexcerpt: {excerpt}{context}",
+        thread.origin().path().display()
+    )
+}
+
+impl ReviewView {
+    pub(crate) const fn title(self) -> &'static str {
+        match self {
+            Self::Board => "review threads",
+            Self::RecentlyResolved => "Recently resolved",
+            Self::Archived => "Archived threads",
+        }
+    }
+}
+
 /// What the review shows (ADR 0049), shared by the review list and the
 /// sidebar's threads pane.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ReviewState {
+    /// The board view or one of its explicit history views.
+    pub(crate) view: ReviewView,
     /// Resolved threads are listed too; hidden by default.
     pub(crate) resolved: bool,
     /// Only the current document's threads (the list's `f`).
     pub(crate) file_only: bool,
+}
+
+impl Default for ReviewState {
+    fn default() -> Self {
+        Self {
+            view: ReviewView::Board,
+            resolved: false,
+            file_only: false,
+        }
+    }
 }
 
 /// The list's state; the rows are derived from the store.
@@ -65,11 +128,6 @@ impl ReviewList {
 
     pub(crate) fn scroll(&self) -> usize {
         self.scroll
-    }
-
-    /// A document took the column back.
-    pub(crate) fn close(&mut self) {
-        self.open = false;
     }
 }
 
@@ -134,12 +192,26 @@ pub(crate) struct Entry {
     /// The commit a past thread was resolved at, short, when no
     /// checkout shows it (ADR 0072).
     commit: Option<String>,
+    /// Original evidence shown when current placement is historical or
+    /// unavailable.
+    evidence: Option<String>,
     summary: ThreadSummary,
 }
 
 /// A commit as an entry names it: its first seven hex digits.
 pub(crate) fn short_commit(commit: &str) -> String {
     commit.chars().take(7).collect()
+}
+
+fn origin_label(thread: &Thread) -> Option<String> {
+    match thread.origin_version() {
+        OriginVersion::Commit { id } => Some(format!("origin {}", short_commit(id))),
+        OriginVersion::WorkingTree { .. } => Some("origin working tree".to_owned()),
+        OriginVersion::Index { .. } => Some("origin index".to_owned()),
+        OriginVersion::ReviewPoint { id, .. } => Some(format!("origin point {id}")),
+        OriginVersion::EmptyTree => Some("origin empty tree".to_owned()),
+        OriginVersion::Unknown => None,
+    }
 }
 
 impl Entry {
@@ -202,6 +274,13 @@ pub(crate) enum Row {
         folded: bool,
         current: bool,
         inside: bool,
+        selected: bool,
+    },
+    /// Immutable origin evidence shown for archived/history entries.
+    Evidence {
+        entry: usize,
+        line: Line,
+        dim: bool,
         selected: bool,
     },
     /// An expanded entry's shared one-row summary.
@@ -305,7 +384,7 @@ impl Rows {
             Row::Message { entry, message, .. } | Row::Body { entry, message, .. } => {
                 Some(Landing::Message(*entry, *message))
             }
-            Row::Blank => None,
+            Row::Evidence { .. } | Row::Blank => None,
         }
     }
 
@@ -337,7 +416,7 @@ impl Rows {
             .filter_map(|row| match row {
                 Row::File { path, .. } => Some(Stop::File(path.clone())),
                 Row::Header { entry, .. } | Row::Stub { entry, .. } => Some(Stop::Entry(*entry)),
-                Row::Message { .. } | Row::Body { .. } | Row::Blank => None,
+                Row::Message { .. } | Row::Body { .. } | Row::Evidence { .. } | Row::Blank => None,
             })
             .collect()
     }
@@ -377,6 +456,11 @@ impl App {
     /// filter and folds are whatever they were last time, and the cursor
     /// is where the reader was (ADR 0046).
     pub(crate) fn open_review(&mut self) {
+        self.open_review_view(ReviewView::Board);
+    }
+
+    /// Open an explicit board history view in place of the document.
+    pub(crate) fn open_review_view(&mut self, view: ReviewView) {
         self.getting_started = None;
         if self.store.is_none() {
             self.store_mut();
@@ -386,6 +470,10 @@ impl App {
         let cursor = self.thread_cursor();
         if let Some(id) = cursor.thread().cloned() {
             self.set_thread_cursor_message(id, cursor.message());
+        }
+        self.review.view = view;
+        if view != ReviewView::Board {
+            self.review.file_only = false;
         }
         self.review_list.open = true;
         self.focus = Focus::Review;
@@ -402,7 +490,11 @@ impl App {
         if self.review.file_only {
             "no threads in this file"
         } else {
-            "no threads in the workspace"
+            match self.review.view {
+                ReviewView::Board => "no threads in the workspace",
+                ReviewView::RecentlyResolved => "no recently resolved threads",
+                ReviewView::Archived => "no archived threads",
+            }
         }
     }
 
@@ -426,45 +518,97 @@ impl App {
             return Vec::new();
         };
         let current = self.current_path();
-        let mut entries: Vec<Entry> = store
-            .threads()
-            .iter()
-            .filter(|thread| self.reach.includes(thread) || (resolved && self.reach.past(thread)))
-            .filter(|thread| !file_only || thread.path() == current)
+        let view = self.review.view;
+        let candidates: Vec<&Thread> = match view {
+            ReviewView::Board => store
+                .threads()
+                .iter()
+                .filter(|thread| self.reach.includes(thread))
+                .collect(),
+            ReviewView::RecentlyResolved => store.recently_resolved(),
+            ReviewView::Archived => store.archived_threads().iter().collect(),
+        };
+        let mut entries: Vec<Entry> = candidates
+            .into_iter()
+            .filter(|thread| {
+                let path = if view == ReviewView::Archived {
+                    thread.origin().path()
+                } else {
+                    self.thread_path(thread)
+                };
+                !file_only || path == current
+            })
             .filter_map(|thread| {
                 let (placement, words) = self.placement_of(thread);
                 let range = placement.range();
-                if !resolved && !is_open(words.state()) {
+                if view == ReviewView::Board && !resolved && !is_open(words.state()) {
                     return None;
                 }
                 let worktree = self.worktree_of(thread.id());
-                let commit = (worktree.is_none() && self.reach.past(thread))
-                    .then(|| thread.commit().map(short_commit))
+                let commit =
+                    (view == ReviewView::Board && worktree.is_none() && !self.reach.here(thread))
+                        .then(|| thread.commit().map(short_commit))
+                        .flatten();
+                let origin_context = (view == ReviewView::Archived)
+                    .then(|| origin_label(thread))
                     .flatten();
-                let context = worktree.as_deref().or(commit.as_deref());
+                let context = worktree
+                    .as_deref()
+                    .or(commit.as_deref())
+                    .or(origin_context.as_deref());
                 let summary =
                     ThreadSummary::new(thread, Some(placement), self.user_name(), context);
+                let evidence = (view != ReviewView::Board
+                    || worktree.is_some()
+                    || commit.is_some()
+                    || placement.is_detached())
+                .then(|| origin_evidence(thread));
                 Some(Entry {
                     id: thread.id().clone(),
-                    path: thread.path().to_path_buf(),
+                    path: if view == ReviewView::Archived {
+                        thread.origin().path().to_path_buf()
+                    } else {
+                        self.thread_path(thread).to_path_buf()
+                    },
                     range,
                     words,
-                    updated: thread.updated(),
+                    updated: thread.modified(),
                     worktree,
                     commit,
+                    evidence,
                     summary,
                 })
             })
             .collect();
-        entries.sort_by(|a, b| tree_order(&a.path, &b.path).then(start_of(a).cmp(&start_of(b))));
+        match view {
+            ReviewView::RecentlyResolved => entries.sort_by(|a, b| {
+                let a_time = self
+                    .thread(&a.id)
+                    .and_then(Thread::latest_resolution)
+                    .map(|record| (record.created(), record.ordinal()))
+                    .unwrap_or_default();
+                let b_time = self
+                    .thread(&b.id)
+                    .and_then(Thread::latest_resolution)
+                    .map(|record| (record.created(), record.ordinal()))
+                    .unwrap_or_default();
+                b_time.cmp(&a_time).then_with(|| a.id.cmp(&b.id))
+            }),
+            ReviewView::Board | ReviewView::Archived => entries
+                .sort_by(|a, b| tree_order(&a.path, &b.path).then(start_of(a).cmp(&start_of(b)))),
+        }
         entries
+    }
+
+    fn review_threads_for_counts(&self, file_only: bool) -> Vec<Entry> {
+        self.review_entries_showing(file_only, true)
     }
 
     /// The threads of the review's scope by circle (ADR 0066, ADR
     /// 0075), the resolved ones counted whether or not they are listed.
     pub(crate) fn review_counts(&self, file_only: bool) -> Counts {
         let mut counts = Counts::default();
-        for entry in self.review_entries_showing(file_only, true) {
+        for entry in self.review_threads_for_counts(file_only) {
             match entry.kind() {
                 ThreadState::Active => counts.active += 1,
                 ThreadState::Proposed => counts.proposed += 1,
@@ -481,8 +625,8 @@ impl App {
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| self.reach.includes(thread))
-            .filter(|thread| thread.path().starts_with(directory))
+            .filter(|thread| self.reach.here(thread))
+            .filter(|thread| self.thread_path(thread).starts_with(directory))
             .filter(|thread| self.worktree_of(thread.id()).is_none())
         {
             match ThreadState::of(thread) {
@@ -499,11 +643,12 @@ impl App {
     pub(crate) fn file_circles(&self) -> Vec<(PathBuf, Words)> {
         let mut out: Vec<(PathBuf, Words)> = Vec::new();
         // The circles count what the active worktree reaches (ADR 0070).
-        for entry in self
-            .review_entries(false)
-            .into_iter()
-            .filter(|entry| entry.worktree.is_none())
-        {
+        for entry in self.review_entries(false).into_iter().filter(|entry| {
+            entry.worktree.is_none()
+                && self
+                    .thread(entry.id())
+                    .is_some_and(|thread| self.reach.here(thread))
+        }) {
             match out.iter_mut().find(|(path, _)| path == entry.path()) {
                 Some((_, words)) => {
                     if entry.words().urgency() > words.urgency() {
@@ -522,6 +667,7 @@ impl App {
             return;
         }
         self.review_list.open = false;
+        self.review.view = ReviewView::Board;
         if self.focus == Focus::Review {
             self.focus = Focus::View;
         }
@@ -596,6 +742,13 @@ impl App {
         &self,
         thread: &Thread,
     ) -> (fathomable_core::annotations::Placement, Words) {
+        if thread.is_archived() {
+            let placement = thread
+                .origin()
+                .range()
+                .map_or(Placement::File, Placement::Detached);
+            return (placement, Words::of(Some(placement), thread));
+        }
         // A thread another worktree shows is placed in that worktree's
         // file (ADR 0070).
         if let Some(placement) = self.elsewhere_placement(thread.id()) {
@@ -603,14 +756,28 @@ impl App {
         }
         self.docs
             .iter()
-            .find(|doc| doc.relative == thread.path())
+            .find(|doc| doc.relative == self.thread_path(thread))
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == thread.id()))
             .map_or_else(
                 || {
-                    let placement = thread.range().map_or(
-                        fathomable_core::annotations::Placement::File,
-                        fathomable_core::annotations::Placement::Anchored,
-                    );
+                    let detached = || {
+                        thread.range().map_or(
+                            fathomable_core::annotations::Placement::File,
+                            fathomable_core::annotations::Placement::Detached,
+                        )
+                    };
+                    let absolute = self.workspace().root().join(self.thread_path(thread));
+                    let placement = if absolute.is_file() {
+                        std::fs::read_to_string(absolute).map_or_else(
+                            |_| detached(),
+                            |text| {
+                                let hashes = fathomable_core::annotations::LineHashes::of(&text);
+                                App::project_placement(thread, &text, &hashes)
+                            },
+                        )
+                    } else {
+                        detached()
+                    };
                     (placement, Words::of(Some(placement), thread))
                 },
                 |mark| (mark.placement(), mark.words()),
@@ -692,6 +859,16 @@ impl App {
                 reply.body(),
                 badge,
             );
+        }
+        if let Some(evidence) = &entry.evidence {
+            for line in Layout::render_message(evidence, body_width, self.highlighter()).lines() {
+                out.rows.push(Row::Evidence {
+                    entry: index,
+                    line: line.clone(),
+                    dim: false,
+                    selected: false,
+                });
+            }
         }
         out.rows.push(Row::Blank);
     }
@@ -949,6 +1126,9 @@ impl App {
 
     /// `f`: narrow to the current file, or widen again.
     pub(crate) fn review_toggle_file(&mut self) {
+        if self.review.view != ReviewView::Board {
+            return;
+        }
         self.review.file_only = !self.review.file_only;
         self.reshow_review();
     }
@@ -956,6 +1136,9 @@ impl App {
     /// `x` in the list or the threads pane: list resolved threads too,
     /// or hide them again (ADR 0049).
     pub(crate) fn review_toggle_resolved(&mut self) {
+        if self.review.view != ReviewView::Board {
+            return;
+        }
         self.review.resolved = !self.review.resolved;
         self.notice(if self.review.resolved {
             "resolved shown"

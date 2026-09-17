@@ -420,7 +420,7 @@ impl App {
             .thread_cursor()
             .thread()
             .and_then(|id| self.thread(id))
-            .map(|thread| thread.path().to_path_buf())
+            .map(|thread| self.thread_path(thread).to_path_buf())
         else {
             return;
         };

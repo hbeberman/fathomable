@@ -242,21 +242,17 @@ actions! {
     /// `Space c f`: a comment on the open file as a whole (ADR 0063).
     FileComment,
     SourceView,
-    DiffHead,
-    DiffSeen,
-    CheckpointFile,
-    CheckpointWorkspace,
-    DiffCheckpoint,
-    DiffCommit,
-    DiffBase,
-    DiffTarget,
-    DiffNext,
+    ComparisonControl,
+    ComparisonStart,
+    ComparisonSave,
+    ComparisonFocus,
+    ComparisonBase,
+    ComparisonTarget,
     /// `]w`: the next worktree (ADR 0070).
     WorktreeNext,
     /// `[w`: the previous worktree (ADR 0070).
     WorktreePrev,
-    DiffWhitespace,
-    SeenAll,
+    ComparisonWhitespace,
     StubsToggle,
     /// `Space F c`: only changed files in the files pane (ADR 0068).
     FilesChanged,
@@ -281,6 +277,12 @@ actions! {
     PickAnyFile,
     PickRecent,
     Review,
+    ReviewRecentlyResolved,
+    ReviewArchived,
+    ArchiveResolved,
+    ClearBoard,
+    ArchiveThread,
+    RestoreThread,
     /// `Space p s`: hide or show the sidebar as one remembered layout.
     SidebarToggle,
     /// `Space p m`: hide or show the persistent menu bar.
@@ -569,23 +571,16 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::View,
         &[&[c('b')]],
-        A::DiffBase,
+        A::ComparisonBase,
         "Display",
-        "diff: pick the base",
-    ),
-    bind(
-        W::View,
-        &[&[c('D')]],
-        A::DiffNext,
-        "Display",
-        "diff: next diff (unstaged, staged, last seen, checkpoint, file)",
+        "comparison: pick the base",
     ),
     bind(
         W::View,
         &[&[c('w')]],
-        A::DiffWhitespace,
+        A::ComparisonWhitespace,
         "Display",
-        "diff: ignore whitespace",
+        "comparison: whitespace",
     ),
     bind(
         W::View,
@@ -706,6 +701,34 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::Review,
         "Threads",
         "toggle review threads",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('R')]],
+        A::ReviewRecentlyResolved,
+        "Space menu",
+        "threads: recently resolved",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('h')]],
+        A::ReviewArchived,
+        "Space menu",
+        "threads: archived threads",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('a')]],
+        A::ArchiveResolved,
+        "Space menu",
+        "threads: archive resolved",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('c'), c('A')]],
+        A::ClearBoard,
+        "Space menu",
+        "threads: clear board",
     ),
     bind(
         W::Any,
@@ -843,72 +866,51 @@ pub(crate) const BINDINGS: &[Binding] = &[
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('d')]],
-        A::DiffHead,
+        A::ComparisonControl,
         "Space menu",
-        "diff: vs HEAD",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('d'), c('D')]],
-        A::DiffSeen,
-        "Space menu",
-        "diff: vs last seen",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('d'), c('r')]],
-        A::DiffCheckpoint,
-        "Space menu",
-        "diff: checkpoint diff",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('d'), c('g')]],
-        A::DiffCommit,
-        "Space menu",
-        "diff: vs commit…",
+        "diff: comparison control",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('b')]],
-        A::DiffBase,
+        A::ComparisonBase,
         "Space menu",
         "diff: pick base…",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('t')]],
-        A::DiffTarget,
+        A::ComparisonTarget,
         "Space menu",
         "diff: pick target…",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('c')]],
-        A::CheckpointFile,
+        A::ComparisonSave,
         "Space menu",
-        "diff: checkpoint file",
+        "diff: save review point",
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('d'), c('C')]],
-        A::CheckpointWorkspace,
+        &[&[c(' '), c('d'), c('r')]],
+        A::ComparisonFocus,
         "Space menu",
-        "diff: checkpoint workspace",
+        "diff: select focus",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('w')]],
-        A::DiffWhitespace,
+        A::ComparisonWhitespace,
         "Space menu",
-        "diff: ignore whitespace",
+        "diff: whitespace",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('s')]],
-        A::SeenAll,
+        A::ComparisonStart,
         "Space menu",
-        "diff: mark all files seen",
+        "diff: start at current HEAD",
     ),
     bind(
         W::Any,
@@ -1147,6 +1149,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "open the file with the thread expanded on this message",
     ),
     bind(W::Review, &[&[c('c')]], A::Reply, "Review list", "reply"),
+    bind(
+        W::Review,
+        &[&[c('a')]],
+        A::ArchiveThread,
+        "Review list",
+        "archive thread",
+    ),
+    bind(
+        W::Review,
+        &[&[c('u')]],
+        A::RestoreThread,
+        "Review list",
+        "restore thread",
+    ),
     bind(
         W::Review,
         &[&[c('e')]],
@@ -1561,8 +1577,7 @@ mod tests {
         for place in PANES {
             for (keys, action) in [
                 ([c(' '), c('v'), c('s')], Action::SourceView),
-                ([c(' '), c('d'), c('d')], Action::DiffHead),
-                ([c(' '), c('d'), c('D')], Action::DiffSeen),
+                ([c(' '), c('d'), c('d')], Action::ComparisonControl),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
@@ -1698,12 +1713,12 @@ mod tests {
         assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j"]);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
-            ["c", "r", "e", "d", "f"]
+            ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
         );
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["d", "D", "r", "g", "b", "t", "c", "C", "w", "s"]
+            ["d", "b", "t", "c", "r", "w", "s"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

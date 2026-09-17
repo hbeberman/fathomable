@@ -111,18 +111,18 @@ impl XdgDirs {
         self.workspace_dir(key).join(crate::session::WORKSPACE_FILE)
     }
 
-    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/seen`, where last-seen
-    /// snapshots live (ADR 0015).
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/review-points`, where
+    /// explicit workspace review points live.
     #[must_use]
-    pub fn seen_dir(&self, key: &Path) -> PathBuf {
-        self.workspace_dir(key).join("seen")
+    pub fn review_points_dir(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join("review-points")
     }
 
-    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/checkpoints`, where the
-    /// reader's checkpoints live (ADR 0049).
+    /// `$XDG_STATE_HOME/fathomable/workspaces/<hash>/comparison`, where
+    /// the viewer's checkout-local comparison preference lives.
     #[must_use]
-    pub fn checkpoints_dir(&self, key: &Path) -> PathBuf {
-        self.workspace_dir(key).join("checkpoints")
+    pub fn comparison_dir(&self, key: &Path) -> PathBuf {
+        self.workspace_dir(key).join("comparison")
     }
 
     /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.

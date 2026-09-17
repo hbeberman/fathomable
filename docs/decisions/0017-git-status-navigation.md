@@ -21,6 +21,12 @@ red `D`; untracked files use a green `U`. Amended 2026-09-14: each path
 retains Git's separate `HEAD -> index` and `index -> worktree` states,
 and the files pane renders their `XY` code.
 
+Amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): current Git `XY`
+status remains separately labelled, while the selected checkout-wide
+comparison owns the changed-file set, comparison marks and counts, gutters,
+and cross-file change navigation.
+
 ## Context
 
 [0006](0006-git-access.md) gave the gutter and `]c`/`[c` a diff base, and

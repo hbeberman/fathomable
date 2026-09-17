@@ -419,6 +419,13 @@ impl App {
                     "resolve thread"
                 },
             );
+            if resolved {
+                menu.push(
+                    Action::ArchiveThread,
+                    Action::ArchiveThread,
+                    "archive thread",
+                );
+            }
             if self.thread_message_editable() {
                 menu.push(Action::EditMessage, Action::EditMessage, "edit message");
             }
@@ -451,9 +458,9 @@ impl App {
         menu.push(Action::Confirm, Action::Confirm, "open");
         if !is_dir {
             menu.push(
-                Action::CheckpointFile,
-                Action::CheckpointFile,
-                "checkpoint this file",
+                Action::ComparisonSave,
+                Action::ComparisonSave,
+                "save review point",
             );
         }
         // A file with listed threads offers the review view.
@@ -584,6 +591,19 @@ impl App {
             );
         }
         menu.push(Action::Confirm, Action::Confirm, "go to");
+        let archived = self
+            .thread_cursor()
+            .thread()
+            .and_then(|id| self.thread(id))
+            .is_some_and(fathomable_core::annotations::Thread::is_archived);
+        if archived {
+            menu.push(
+                Action::RestoreThread,
+                Action::RestoreThread,
+                "restore thread",
+            );
+            return menu;
+        }
         menu.push(Action::Reply, Action::Reply, "reply");
         let resolved = self
             .thread_cursor()
@@ -615,6 +635,13 @@ impl App {
                 "resolve thread"
             },
         );
+        if resolved {
+            menu.push(
+                Action::ArchiveThread,
+                Action::ArchiveThread,
+                "archive thread",
+            );
+        }
         if place == Where::Review {
             if self.thread_message_editable() {
                 menu.push(Action::EditMessage, Action::EditMessage, "edit message");

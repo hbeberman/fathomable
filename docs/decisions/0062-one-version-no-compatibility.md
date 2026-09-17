@@ -21,6 +21,12 @@ tags:
 Status: accepted (2026-09-05)
 
 Current formats amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): annotation format **5**
+stores immutable origin, qualified placement, resolution history, and
+archives; socket protocol **8** carries the matching thread shape.
+Exact-current guards and the no-migration/no-reset-on-startup rule remain.
+
+Current formats amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md): atomic lifecycle,
 auto-resolve, activity, uniform-message, and reply-outcome records advance
 the annotation event format to **4** and internal socket protocol to **7**.

@@ -1,20 +1,17 @@
 // @okf-doc: /decisions/0072-a-resolved-thread-stays-at-its-commit.md
-//! Which threads a checkout shows (ADR 0024, ADR 0072).
+//! Contextual placement of threads in a checkout (not board membership).
 //!
-//! A thread belongs to the commit it was written against. An open one
-//! shows while that commit is `HEAD` or one of its ancestors, so it
-//! follows the work through merges and rebases; a resolved one shows
-//! only while that commit *is* `HEAD`, so a finished discussion drops
-//! out of the file on the next commit and comes back when that commit is
-//! checked out again. A thread without a commit, or a workspace without
-//! git, is always shown.
+//! A thread's origin and lifecycle are repository-board facts. An open one
+//! may be contextualized against a commit ancestry, and a resolved one may
+//! be contextualized against its resolution checkout, but ancestry never
+//! decides whether an unarchived thread belongs to the shared board.
 //!
-//! A workspace with several worktrees (ADR 0070) reaches the union:
-//! [`Reach::includes`] asks about every worktree, [`Reach::here`] about
-//! the checkout in hand alone, and [`Reach::elsewhere`] names the first
-//! other worktree that shows a thread this one does not. [`Reach::past`]
-//! names the resolved threads of earlier commits on this checkout's
-//! branch: not shown in the file, listed by the review on request.
+//! A workspace with several worktrees still provides contextual placement:
+//! [`Reach::here`] asks about the checkout in hand, [`Reach::elsewhere`] names
+//! the first other worktree that can place a thread, and [`Reach::past`]
+//! identifies an earlier resolved commit. [`Reach::includes`] is deliberately
+//! board-oriented and returns every unarchived thread, including off-branch
+//! history.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -34,6 +31,9 @@ impl Checkout {
     /// `HEAD` reaches, a resolved one at `HEAD` itself, or any thread
     /// without a commit.
     fn shows(&self, thread: &Thread) -> bool {
+        if thread.is_archived() {
+            return false;
+        }
         let Some(commit) = thread.commit() else {
             return true;
         };
@@ -47,7 +47,8 @@ impl Checkout {
     /// Whether `thread` is resolved at a commit `HEAD` reaches but is
     /// not.
     fn past(&self, thread: &Thread) -> bool {
-        thread.status() == Status::Resolved
+        !thread.is_archived()
+            && thread.status() == Status::Resolved
             && thread
                 .commit()
                 .is_some_and(|commit| commit != self.head && self.reachable.contains(commit))
@@ -64,7 +65,7 @@ pub struct Reach {
 }
 
 impl Reach {
-    /// A reach that shows every thread: no git, or no `HEAD` yet.
+    /// A context with no Git ancestry restrictions.
     #[must_use]
     pub fn everything() -> Self {
         Self::default()
@@ -103,18 +104,20 @@ impl Reach {
         self
     }
 
-    /// Whether `thread` is on the current work in any worktree.
+    /// Whether `thread` belongs to the unarchived shared discussion board.
     #[must_use]
     pub fn includes(&self, thread: &Thread) -> bool {
-        self.here(thread) || self.elsewhere(thread).is_some()
+        !thread.is_archived()
     }
 
     /// Whether the checkout in hand shows `thread`.
     #[must_use]
     pub fn here(&self, thread: &Thread) -> bool {
-        self.here
-            .as_ref()
-            .is_none_or(|checkout| checkout.shows(thread))
+        !thread.is_archived()
+            && self
+                .here
+                .as_ref()
+                .is_none_or(|checkout| checkout.shows(thread))
     }
 
     /// The first other worktree that shows `thread` when the checkout in
@@ -189,8 +192,7 @@ mod tests {
     }
 
     /// The checkout in hand reaches its own commits; another worktree's
-    /// reach widens what shows and names where (ADR 0070), a resolved
-    /// thread only at that worktree's `HEAD` (ADR 0072).
+    /// Ancestry remains contextual while board membership stays unarchived.
     #[test]
     fn another_worktree_widens_the_reach_and_is_named() -> Result<(), Box<dyn std::error::Error>> {
         let here: HashSet<String> = ["aaa".to_owned()].into();
@@ -205,7 +207,10 @@ mod tests {
         assert_eq!(reach.elsewhere(&mine), None);
         assert!(!reach.here(&theirs) && reach.includes(&theirs));
         assert_eq!(reach.elsewhere(&theirs), Some(Path::new("/feature")));
-        assert!(!reach.includes(&nobody));
+        assert!(
+            reach.includes(&nobody),
+            "off-branch threads remain on the board"
+        );
         assert!(reach.here(&unscoped) && reach.elsewhere(&unscoped).is_none());
         // Resolved at this HEAD: here, and not elsewhere even though the
         // other worktree reaches the commit.

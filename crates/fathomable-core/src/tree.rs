@@ -244,14 +244,23 @@ struct Deleted {
 }
 
 impl Deleted {
-    fn new(status: &Status) -> Self {
+    fn new(status: &Status, virtual_paths: &[PathBuf]) -> Self {
         let mut deleted = Self::default();
-        for entry in status.entries().iter().filter(|entry| {
-            entry.unstaged_state() == Some(State::Deleted)
-                || (entry.staged_state() == Some(State::Deleted)
-                    && entry.unstaged_state().is_none())
-        }) {
-            for path in entry.path().ancestors() {
+        let mut paths: Vec<PathBuf> = status
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry.unstaged_state() == Some(State::Deleted)
+                    || (entry.staged_state() == Some(State::Deleted)
+                        && entry.unstaged_state().is_none())
+            })
+            .map(|entry| entry.path().to_path_buf())
+            .collect();
+        paths.extend(virtual_paths.iter().cloned());
+        paths.sort();
+        paths.dedup();
+        for entry_path in paths {
+            for path in entry_path.ancestors() {
                 let Some((parent, name)) = path
                     .parent()
                     .zip(path.file_name().and_then(|name| name.to_str()))
@@ -264,7 +273,7 @@ impl Deleted {
                 }
                 children.push(Node {
                     name: name.to_owned(),
-                    is_dir: path != entry.path(),
+                    is_dir: path != entry_path.as_path(),
                     expanded: false,
                     children: None,
                     deleted: true,
@@ -318,6 +327,7 @@ pub struct Tree {
     shown: Shown,
     admitted: Admitted,
     deleted: Deleted,
+    virtual_paths: Vec<PathBuf>,
 }
 
 impl Tree {
@@ -340,6 +350,7 @@ impl Tree {
             shown: Shown::all(),
             admitted: Admitted::default(),
             deleted: Deleted::default(),
+            virtual_paths: Vec::new(),
         };
         tree.refresh(workspace)?;
         Ok(tree)
@@ -378,12 +389,24 @@ impl Tree {
     /// files remain listed, together with any missing parent directories.
     pub fn sift(&mut self, status: &Status) {
         self.admitted = Admitted::new(self.shown, status);
-        self.deleted = Deleted::new(status);
+        self.deleted = Deleted::new(status, &self.virtual_paths);
         let cursor_path = self.current().map(|row| row.path.clone());
         self.rebuild();
         if let Some(path) = cursor_path {
             self.select_path(&path);
         }
+    }
+
+    /// Retain selected-comparison paths absent from the active checkout.
+    ///
+    /// These virtual entries use the tree's missing-entry channel for
+    /// navigation, while the viewer supplies their comparison-specific
+    /// addition/deletion presentation.
+    pub fn set_virtual_paths(&mut self, status: &Status, paths: Vec<PathBuf>) {
+        self.virtual_paths = paths;
+        self.virtual_paths.sort();
+        self.virtual_paths.dedup();
+        self.sift(status);
     }
 
     /// The visible rows, top to bottom.

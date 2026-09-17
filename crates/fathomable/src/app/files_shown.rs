@@ -20,14 +20,17 @@ impl App {
         if !self.ensure_tree() {
             return;
         }
+        let status = self.comparison_status().clone();
+        let virtual_paths = self.comparison_virtual_paths();
         let Some(tree) = self.tree.as_mut() else {
             return;
         };
         let shown = tree.shown().toggled(rule);
-        if let Err(error) = tree.set_shown(&mut self.workspace, &self.status, shown) {
+        if let Err(error) = tree.set_shown(&mut self.workspace, &status, shown) {
             self.notice(error.to_string());
             return;
         }
+        tree.set_virtual_paths(&status, virtual_paths);
         self.scroll_tree();
         self.refresh_directory_selection();
         if !self.sidebar.tree {
@@ -44,8 +47,10 @@ impl App {
 
     /// A new status landed: the files pane lists by it.
     pub(super) fn sift_tree(&mut self) {
+        let status = self.comparison_status().clone();
+        let virtual_paths = self.comparison_virtual_paths();
         if let Some(tree) = self.tree.as_mut() {
-            tree.sift(&self.status);
+            tree.set_virtual_paths(&status, virtual_paths);
             self.scroll_tree();
             self.refresh_directory_selection();
         }
@@ -244,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn live_deletion_restoration_and_commit_update_the_default_list() -> anyhow::Result<()> {
+    fn live_deletion_restoration_keeps_pinned_comparison_entries() -> anyhow::Result<()> {
         use std::path::Path;
 
         use crate::app::watch::Event;
@@ -257,7 +262,16 @@ mod tests {
         app.with_tree_result(|tree, workspace| tree.reveal(workspace, file).map(|_| None));
         fs::remove_file(root.join(file))?;
         app.on_events(vec![Event::Removed(root.join(file))]);
-        assert!(names(&app).contains(&"src/lib.rs".to_owned()));
+        assert!(
+            names(&app).contains(&"src/lib.rs".to_owned()),
+            "rows={:?} comparison={:?}",
+            names(&app),
+            app.comparison().map(|comparison| comparison
+                .changes()
+                .iter()
+                .map(|change| (change.path().display().to_string(), change.kind()))
+                .collect::<Vec<_>>())
+        );
         assert_eq!(
             app.tree()
                 .and_then(|tree| tree.current())
@@ -284,9 +298,22 @@ mod tests {
         )?;
         app.on_events(vec![Event::Change(root.join(".git/index"))]);
         app.settle_status();
-        assert!(names(&app).is_empty());
+        assert!(
+            names(&app).contains(&"src/lib.rs".to_owned()),
+            "the pinned comparison does not advance with a later commit: {:?}",
+            app.comparison().map(|comparison| comparison
+                .changes()
+                .iter()
+                .map(|change| change.path().display().to_string())
+                .collect::<Vec<_>>())
+        );
         press(&mut app, " Fc Fu");
-        assert!(!names(&app).contains(&"src/lib.rs".to_owned()));
+        assert!(app.comparison().is_some_and(|comparison| {
+            comparison
+                .changes()
+                .iter()
+                .any(|change| change.path() == Path::new("src/lib.rs"))
+        }));
         Ok(())
     }
 

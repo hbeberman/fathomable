@@ -212,6 +212,10 @@ fn diff_layout_carries_faces_and_new_text_sources() -> Result<(), Box<dyn std::e
     // Gutter numbers are new-text lines; removed rows and headers have none.
     let numbers: Vec<Option<usize>> = layout.lines().iter().map(Line::source_line).collect();
     assert_eq!(numbers, [None, Some(1), Some(2), None, Some(3), Some(4)]);
+    assert_eq!(layout.lines()[3].diff_old_line(), Some(3));
+    assert_eq!(layout.lines()[3].diff_new_line(), None);
+    assert_eq!(layout.lines()[4].diff_old_line(), None);
+    assert_eq!(layout.lines()[4].diff_new_line(), Some(3));
     let range = layout.lines()[4]
         .source()
         .ok_or("added line has no source")?;
@@ -239,4 +243,6 @@ fn diff_layout_wraps_long_lines_under_their_sign() {
         "only the first visual row gets a gutter number"
     );
     assert_eq!(layout.lines()[2].source_line(), None);
+    assert_eq!(layout.lines()[1].diff_new_line(), Some(1));
+    assert_eq!(layout.lines()[2].diff_new_line(), Some(1));
 }

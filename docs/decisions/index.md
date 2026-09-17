@@ -90,3 +90,4 @@ supersede rather than edit history.
 - [0084 Explicit MCP contracts](0084-explicit-mcp-contracts.md) — reply contract amended by 0085
 - [0085 Thread lifecycle and one-shot auto-resolve](0085-thread-lifecycle-and-auto-resolve.md)
 - [0086 One thread summary and its actions](0086-one-thread-summary-and-its-actions.md)
+- [0087 Global comparisons and deliberate board history](0087-global-comparisons-and-board-history.md)

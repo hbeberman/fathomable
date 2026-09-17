@@ -228,9 +228,6 @@ impl App {
         });
         let label = self.label_of(&root);
         self.close_popup();
-        for index in 0..self.docs.len() {
-            self.mark_seen(index);
-        }
         self.docs.clear();
         self.current = None;
         self.recent.clear();
@@ -243,7 +240,13 @@ impl App {
         self.all_index.clear();
         self.status = fathomable_core::status::Status::default();
         self.status_stale = false;
+        self.local_thread_paths.clear();
         self.workspace = workspace;
+        self.comparison = super::comparison::State::load(
+            self.dirs.comparison_dir(self.workspace.root()),
+            &self.workspace,
+            self.comparison.compare(),
+        );
         self.rewatch = Some(Rewatch {
             root: Some(root.clone()),
             extras: self.worktree_paths.clone(),
@@ -254,7 +257,7 @@ impl App {
         }
         self.relayout();
         self.refresh_status();
-        self.reanchor_from_snapshots();
+        self.refresh_comparison();
         self.refresh_reach();
         if self.sidebar.tree {
             self.ensure_tree();
@@ -327,6 +330,7 @@ impl App {
     pub(super) fn refresh_elsewhere(&mut self) {
         let Some(store) = self.store.as_ref() else {
             self.elsewhere.clear();
+            self.local_thread_paths.clear();
             return;
         };
         let mut hashes: HashMap<PathBuf, Option<LineHashes>> = HashMap::new();
@@ -340,7 +344,11 @@ impl App {
                 .entry(full.clone())
                 .or_insert_with(|| fs::read_to_string(&full).ok().map(|t| LineHashes::of(&t)));
             let placement = match (hashes.as_ref(), thread.range()) {
-                (Some(hashes), _) => thread.locate_in(hashes),
+                (Some(hashes), _) => crate::app::App::project_placement(
+                    thread,
+                    &fs::read_to_string(&full).unwrap_or_default(),
+                    hashes,
+                ),
                 (None, Some(range)) => Placement::Detached(range),
                 (None, None) => Placement::File,
             };
@@ -463,6 +471,38 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn paging_discards_checkout_local_rename_projections() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("rename-projection")?;
+        let store = dir.0.join("state/threads.jsonl");
+        fs::create_dir_all(dir.0.join("state"))?;
+        let head = Workspace::discover(&main)?
+            .head_commit()
+            .ok_or_else(|| anyhow::anyhow!("no main head"))?;
+        let id = Store::open(&store)?.annotate(
+            Draft::new(
+                Author::agent("bot"),
+                Path::new("a.md"),
+                LineRange::new(2, 2),
+                "keep the checkout path local",
+            )
+            .at_commit(Some(head)),
+            "one\ntwo\nthree\n",
+            5,
+        )?;
+
+        let mut app = app_on(&dir, &main)?;
+        app.open(Path::new("a.md"));
+        app.local_thread_paths
+            .insert(id, PathBuf::from("renamed.md"));
+        assert!(app.activate_worktree(&feature));
+
+        assert!(app.local_thread_paths.is_empty());
+        assert_eq!(app.current_path(), Path::new("a.md"));
+        assert_eq!(app.marks().len(), 1);
+        Ok(())
+    }
+
     /// A thread on a commit only the feature worktree reaches shows in
     /// the main worktree's threads pane with the branch on its entry,
     /// counts in no file circle, and opening it pages there.
@@ -502,9 +542,10 @@ mod tests {
             "the circles count the active worktree"
         );
         app.open(Path::new("a.md"));
+        assert_eq!(app.marks().len(), 1);
         assert!(
-            app.marks().is_empty(),
-            "no stub in the main worktree's text"
+            app.marks()[0].is_detached(),
+            "the active checkout must not claim the feature-only line"
         );
 
         assert!(app.land_on_thread(id));

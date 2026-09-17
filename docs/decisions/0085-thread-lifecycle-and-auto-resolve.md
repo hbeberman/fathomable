@@ -12,6 +12,11 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Origin and resolution context amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): lifecycle and one-shot
+permission remain, while every resolution records its own actor, time,
+checkout, and version and never rewrites immutable comment origin.
+
 Supersedes the waiting and last-act model of
 [0030](0030-waiting-threads.md) and [0058](0058-the-user-has-the-last-word.md),
 and replaces the human-only proposal contract of
@@ -170,4 +175,3 @@ state comparison cannot.
 - [0084](0084-explicit-mcp-contracts.md) remains the general schema and
   idempotency contract; this record replaces its reply-specific shape and
   result.
-

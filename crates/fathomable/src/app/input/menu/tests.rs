@@ -671,7 +671,7 @@ fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
         labels,
         [
             "open",
-            "checkpoint this file",
+            "save review point",
             "copy path",
             "only changed",
             "hide untracked",

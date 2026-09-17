@@ -29,7 +29,7 @@ use crate::app::draw::counts::count_hints;
 use crate::app::draw::nest::NEST;
 use crate::app::draw::{Theme, mark_style};
 use crate::app::input::bindings::{self, Action, Where};
-use crate::app::threads::list::Entry;
+use crate::app::threads::list::{Entry, ReviewView};
 use crate::app::threads::summary::{
     SummaryLayout, SummaryLayoutOptions, SummarySpan, SummaryTone, ThreadSummary, layout,
 };
@@ -504,14 +504,17 @@ pub(crate) fn summary_rehover(
 /// counts by colour with their words.
 pub(crate) fn review_header(app: &App) -> Header {
     let review = app.review();
-    let mut left = vec![(" review threads".to_owned(), Tone::Key)];
-    if review.file_only {
+    let mut left = vec![(format!(" {}", review.view.title()), Tone::Key)];
+    if review.view == ReviewView::Board && review.file_only {
         left.push((format!(" · {}", app.current_path().display()), Tone::Info));
     }
     left.push((" ".to_owned(), Tone::Info));
     Header::counted(
         left,
-        count_hints(app.review_counts(review.file_only), review.resolved),
+        count_hints(
+            app.review_counts(review.file_only),
+            review.view != ReviewView::Board || review.resolved,
+        ),
         Align::Left,
     )
 }
@@ -521,11 +524,15 @@ pub(crate) fn review_header(app: &App) -> Header {
 pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     let place = Where::Review;
     let hints = if app.focus() == Focus::Review {
-        let mut hints = vec![HintOf::keyed(place, Action::Reply, "reply")];
-        if app.thread_message_editable() {
-            hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
+        let view = app.review().view;
+        let mut hints = Vec::new();
+        if view != ReviewView::Archived {
+            hints.push(HintOf::keyed(place, Action::Reply, "reply"));
+            if app.thread_message_editable() {
+                hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
+            }
         }
-        if !app.review_thread_header_visible() {
+        if view != ReviewView::Archived && !app.review_thread_header_visible() {
             let resolved = app
                 .thread_cursor()
                 .thread()
@@ -542,12 +549,28 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 if resolved { "reopen" } else { "resolve" },
             ));
         }
+        let resolved = app
+            .thread_cursor()
+            .thread()
+            .and_then(|id| app.thread(id))
+            .is_some_and(|thread| {
+                thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
+            });
+        if !app.review_thread_header_visible() {
+            if view == ReviewView::Archived {
+                hints.push(HintOf::keyed(place, Action::RestoreThread, "restore"));
+            } else if view == ReviewView::RecentlyResolved || resolved {
+                hints.push(HintOf::keyed(place, Action::ArchiveThread, "archive"));
+            }
+        }
         // `z` and `Z` fold threads in file scope too (ADR 0076).
         hints.push(HintOf::keyed(place, Action::Fold, "fold"));
         hints.push(HintOf::keyed(place, Action::FoldAll, "fold all"));
         hints.push(HintOf::keyed(place, Action::Confirm, "open"));
-        hints.push(HintOf::keyed(place, Action::ReviewResolved, "resolved"));
-        hints.push(HintOf::keyed(place, Action::FileOnly, "file"));
+        if view == ReviewView::Board {
+            hints.push(HintOf::keyed(place, Action::ReviewResolved, "resolved"));
+            hints.push(HintOf::keyed(place, Action::FileOnly, "file"));
+        }
         if entries.len() > 1 {
             hints.push(HintOf::paired(
                 place,
@@ -587,7 +610,10 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
     let file_only = scope == crate::app::threads::pane::PaneScope::File;
     Header::counted(
         left,
-        count_hints(app.review_counts(file_only), app.review().resolved),
+        count_hints(
+            app.review_counts(file_only),
+            app.review().view != ReviewView::Board || app.review().resolved,
+        ),
         Align::Right,
     )
 }
@@ -599,7 +625,8 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
 /// narrows.
 pub(crate) fn files_pane_header(app: &App, title: String) -> Header {
     let mut hints = Vec::new();
-    if let Some(total) = app.status().summary_under(Path::new("")) {
+    let comparison_status = app.comparison_status();
+    if let Some(total) = comparison_status.summary_under(Path::new("")) {
         if total.added > 0 {
             hints.push(HintOf::word(format!("+{}", total.added), Tone::Added));
         }

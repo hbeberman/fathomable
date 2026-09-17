@@ -7,14 +7,16 @@
 //! lines immediately above and below, and [`Thread::locate`] finds the range
 //! again after the file changes. When the lines are gone the thread is
 //! [`Placement::Detached`] at its last known range rather than lost. Each
-//! line thread also carries a [`Context`] window of the text it was last
-//! placed in, so an edit made while nothing runs can be followed (ADR 0038).
-//! A file-wide thread has no range, anchor, or context.
+//! line thread carries bounded [`Context`] evidence for offline anchoring.
+//! Immutable [`Origin`] provenance is separate from mutable placement,
+//! resolution history, and orthogonal archival state. A file-wide thread has
+//! no range, anchor, or context.
 //!
 //! Every change is one JSON line appended to `threads.jsonl` under the
 //! workspace's state directory (ADR 0013); [`Store::open`] folds the file
-//! back into threads. Timestamps are supplied by the caller so the module
-//! stays pure and testable.
+//! back into threads. Normal iteration excludes archived history, while
+//! [`Store::thread`] can inspect an archived ID. Timestamps are supplied by
+//! the caller so the module stays pure and testable.
 //!
 //! # Examples
 //!
@@ -43,10 +45,13 @@ use sha2::{Digest, Sha256};
 
 /// The format version written in every event line; [`Store::open`]
 /// refuses a file of another (ADR 0062).
-pub(crate) const FORMAT_VERSION: u32 = 4;
+pub(crate) const FORMAT_VERSION: u32 = 5;
 
 /// Maximum size of a persisted idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 256;
+
+/// Maximum number of bytes retained for immutable origin snippets.
+pub const MAX_ORIGIN_EVIDENCE_BYTES: usize = 16 * 1024;
 
 /// File name of the thread store inside a workspace state directory.
 pub(crate) const THREADS_FILE: &str = "threads.jsonl";
@@ -282,6 +287,747 @@ impl Placement {
     pub fn is_detached(&self) -> bool {
         matches!(self, Self::Detached(_))
     }
+}
+
+/// The version that supplied a thread's original source evidence.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum OriginVersion {
+    /// An immutable Git commit.
+    Commit {
+        /// The resolved object ID.
+        id: String,
+    },
+    /// The checkout's final working-tree content.
+    WorkingTree {
+        /// The checkout `HEAD` observed with the content, when available.
+        observed_head: Option<String>,
+    },
+    /// The checkout's staged index content.
+    Index {
+        /// The checkout `HEAD` observed with the index, when available.
+        observed_head: Option<String>,
+    },
+    /// Content captured at an explicit workspace review point.
+    ReviewPoint {
+        /// Stable review-point identifier.
+        id: String,
+        /// Git baseline used by the point, when available.
+        base: Option<String>,
+    },
+    /// The empty tree used before a repository's root commit.
+    EmptyTree,
+    /// No human comparison endpoint was supplied.
+    #[default]
+    Unknown,
+}
+
+impl OriginVersion {
+    /// Construct a commit version.
+    #[must_use]
+    pub fn commit(id: impl Into<String>) -> Self {
+        Self::Commit { id: id.into() }
+    }
+
+    /// Construct a working-tree version.
+    #[must_use]
+    pub fn working_tree(observed_head: Option<String>) -> Self {
+        Self::WorkingTree { observed_head }
+    }
+
+    /// Construct an index version.
+    #[must_use]
+    pub fn index(observed_head: Option<String>) -> Self {
+        Self::Index { observed_head }
+    }
+
+    /// Construct a review-point version.
+    #[must_use]
+    pub fn review_point(id: impl Into<String>, base: Option<String>) -> Self {
+        Self::ReviewPoint {
+            id: id.into(),
+            base,
+        }
+    }
+
+    /// The immutable commit ID when this is a commit version.
+    #[must_use]
+    pub fn commit_id(&self) -> Option<&str> {
+        match self {
+            Self::Commit { id } => Some(id),
+            Self::WorkingTree { .. }
+            | Self::Index { .. }
+            | Self::ReviewPoint { .. }
+            | Self::EmptyTree
+            | Self::Unknown => None,
+        }
+    }
+}
+
+/// Which side of a human comparison supplied the original lines.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginSide {
+    /// Lines from the comparison base.
+    Base,
+    /// Lines from the comparison target.
+    Target,
+    /// No human comparison side was supplied.
+    #[default]
+    Unspecified,
+}
+
+/// The temporal focus a human was inspecting when a thread was created.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum ComparisonFocus {
+    /// The complete selected endpoint comparison.
+    #[default]
+    AllChanges,
+    /// The actual delta from a saved review point to the target.
+    SinceReviewPoint {
+        /// Stable review-point identifier.
+        id: String,
+    },
+}
+
+/// The endpoint pair and temporal focus a person was viewing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ComparisonFacts {
+    base: OriginVersion,
+    target: OriginVersion,
+    #[serde(default)]
+    focus: ComparisonFocus,
+}
+
+impl ComparisonFacts {
+    /// Construct a comparison of `base` to `target`.
+    #[must_use]
+    pub fn new(base: OriginVersion, target: OriginVersion) -> Self {
+        Self {
+            base,
+            target,
+            focus: ComparisonFocus::AllChanges,
+        }
+    }
+
+    /// Mark the comparison as focused since `review_point`.
+    #[must_use]
+    pub fn since_review_point(mut self, review_point: impl Into<String>) -> Self {
+        self.focus = ComparisonFocus::SinceReviewPoint {
+            id: review_point.into(),
+        };
+        self
+    }
+
+    /// The selected base endpoint.
+    #[must_use]
+    pub fn base(&self) -> &OriginVersion {
+        &self.base
+    }
+
+    /// The selected target endpoint.
+    #[must_use]
+    pub fn target(&self) -> &OriginVersion {
+        &self.target
+    }
+
+    /// The selected temporal focus.
+    #[must_use]
+    pub fn focus(&self) -> &ComparisonFocus {
+        &self.focus
+    }
+}
+
+/// Facts observed for a working-tree source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkingTreeState {
+    /// The path matched the observed committed baseline.
+    Clean,
+    /// Existing content changed in the working tree.
+    Modified,
+    /// The path exists only in the working tree.
+    Added,
+    /// The baseline path is absent from the working tree.
+    Deleted,
+}
+
+/// Facts observed for a working-tree source.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct WorkingTreeFacts {
+    observed_head: Option<String>,
+    dirty: bool,
+    added: bool,
+    deleted: bool,
+    content: Option<ContentIdentity>,
+}
+
+impl WorkingTreeFacts {
+    /// Construct working-tree facts.
+    #[must_use]
+    pub fn new(
+        observed_head: Option<String>,
+        state: WorkingTreeState,
+        content: Option<ContentIdentity>,
+    ) -> Self {
+        let (dirty, added, deleted) = match state {
+            WorkingTreeState::Clean => (false, false, false),
+            WorkingTreeState::Modified => (true, false, false),
+            WorkingTreeState::Added => (true, true, false),
+            WorkingTreeState::Deleted => (true, false, true),
+        };
+        Self {
+            observed_head,
+            dirty,
+            added,
+            deleted,
+            content,
+        }
+    }
+
+    /// The observed checkout `HEAD`, when available.
+    #[must_use]
+    pub fn observed_head(&self) -> Option<&str> {
+        self.observed_head.as_deref()
+    }
+
+    /// Whether the working file differed from its observed `HEAD`.
+    #[must_use]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Whether the path was added relative to the observed `HEAD`.
+    #[must_use]
+    pub fn is_added(&self) -> bool {
+        self.added
+    }
+
+    /// Whether the path was deleted relative to the observed `HEAD`.
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        self.deleted
+    }
+
+    /// The captured content identity, when content was available.
+    #[must_use]
+    pub fn content(&self) -> Option<&ContentIdentity> {
+        self.content.as_ref()
+    }
+}
+
+/// Facts observed for staged index content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexState {
+    /// The path has no staged change.
+    Unchanged,
+    /// The path has staged content.
+    Staged,
+}
+
+/// Facts observed for staged index content.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct IndexFacts {
+    observed_head: Option<String>,
+    staged: bool,
+    content: Option<ContentIdentity>,
+}
+
+impl IndexFacts {
+    /// Construct index facts.
+    #[must_use]
+    pub fn new(
+        observed_head: Option<String>,
+        state: IndexState,
+        content: Option<ContentIdentity>,
+    ) -> Self {
+        Self {
+            observed_head,
+            staged: state == IndexState::Staged,
+            content,
+        }
+    }
+
+    /// The observed checkout `HEAD`, when available.
+    #[must_use]
+    pub fn observed_head(&self) -> Option<&str> {
+        self.observed_head.as_deref()
+    }
+
+    /// Whether the path was staged at capture time.
+    #[must_use]
+    pub fn is_staged(&self) -> bool {
+        self.staged
+    }
+
+    /// The captured content identity, when content was available.
+    #[must_use]
+    pub fn content(&self) -> Option<&ContentIdentity> {
+        self.content.as_ref()
+    }
+}
+
+/// Facts identifying an explicit review-point source.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ReviewPointFacts {
+    id: String,
+    base: Option<String>,
+    content: Option<ContentIdentity>,
+}
+
+impl ReviewPointFacts {
+    /// Construct review-point facts.
+    #[must_use]
+    pub fn new(
+        id: impl Into<String>,
+        base: Option<String>,
+        content: Option<ContentIdentity>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            base,
+            content,
+        }
+    }
+
+    /// The stable review-point identifier.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The Git baseline used by the point, when available.
+    #[must_use]
+    pub fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+
+    /// The captured content identity, when content was available.
+    #[must_use]
+    pub fn content(&self) -> Option<&ContentIdentity> {
+        self.content.as_ref()
+    }
+}
+
+/// A stable identity for captured content, not a reconstructable snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ContentIdentity {
+    hash: String,
+    bytes: usize,
+}
+
+impl ContentIdentity {
+    /// Hash `text` without retaining the complete file.
+    #[must_use]
+    pub fn from_text(text: &str) -> Self {
+        Self {
+            hash: short_hash(text.as_bytes()),
+            bytes: text.len(),
+        }
+    }
+
+    /// The short SHA-256 identity.
+    #[must_use]
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// Number of bytes represented by the identity.
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+}
+
+/// Optional provenance supplied at a thread's input boundary.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Provenance {
+    #[serde(default)]
+    version: OriginVersion,
+    #[serde(default)]
+    side: OriginSide,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    comparison: Option<ComparisonFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    working_tree: Option<WorkingTreeFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    index: Option<IndexFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    review_point: Option<ReviewPointFacts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    content: Option<ContentIdentity>,
+    #[serde(default)]
+    evidence_truncated: bool,
+}
+
+impl Provenance {
+    /// Construct provenance for a source version and comparison side.
+    #[must_use]
+    pub fn new(version: OriginVersion, side: OriginSide) -> Self {
+        Self {
+            version,
+            side,
+            ..Self::default()
+        }
+    }
+
+    /// Set the source version.
+    #[must_use]
+    pub fn with_version(mut self, version: OriginVersion) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Set the source side.
+    #[must_use]
+    pub fn with_side(mut self, side: OriginSide) -> Self {
+        self.side = side;
+        self
+    }
+
+    /// Set the selected comparison facts.
+    #[must_use]
+    pub fn with_comparison(mut self, comparison: ComparisonFacts) -> Self {
+        self.comparison = Some(comparison);
+        self
+    }
+
+    /// Set working-tree facts.
+    #[must_use]
+    pub fn with_working_tree(mut self, facts: WorkingTreeFacts) -> Self {
+        self.working_tree = Some(facts);
+        self
+    }
+
+    /// Set index facts.
+    #[must_use]
+    pub fn with_index(mut self, facts: IndexFacts) -> Self {
+        self.index = Some(facts);
+        self
+    }
+
+    /// Set review-point facts.
+    #[must_use]
+    pub fn with_review_point(mut self, facts: ReviewPointFacts) -> Self {
+        self.review_point = Some(facts);
+        self
+    }
+
+    /// Set the captured content identity.
+    #[must_use]
+    pub fn with_content(mut self, content: ContentIdentity) -> Self {
+        self.content = Some(content);
+        self
+    }
+
+    /// Mark the bounded evidence as truncated.
+    #[must_use]
+    pub fn truncated(mut self) -> Self {
+        self.evidence_truncated = true;
+        self
+    }
+
+    /// The source version supplying the lines.
+    #[must_use]
+    pub fn version(&self) -> &OriginVersion {
+        &self.version
+    }
+
+    /// The comparison side supplying the lines.
+    #[must_use]
+    pub fn side(&self) -> OriginSide {
+        self.side
+    }
+
+    /// The human comparison, when one was supplied.
+    #[must_use]
+    pub fn comparison(&self) -> Option<&ComparisonFacts> {
+        self.comparison.as_ref()
+    }
+
+    /// Working-tree facts, when supplied.
+    #[must_use]
+    pub fn working_tree(&self) -> Option<&WorkingTreeFacts> {
+        self.working_tree.as_ref()
+    }
+
+    /// Index facts, when supplied.
+    #[must_use]
+    pub fn index(&self) -> Option<&IndexFacts> {
+        self.index.as_ref()
+    }
+
+    /// Review-point facts, when supplied.
+    #[must_use]
+    pub fn review_point(&self) -> Option<&ReviewPointFacts> {
+        self.review_point.as_ref()
+    }
+
+    /// Content identity, when supplied.
+    #[must_use]
+    pub fn content(&self) -> Option<&ContentIdentity> {
+        self.content.as_ref()
+    }
+
+    /// Whether retained evidence was bounded or truncated.
+    #[must_use]
+    pub fn evidence_truncated(&self) -> bool {
+        self.evidence_truncated
+    }
+}
+
+/// Immutable source evidence captured when a thread is created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Origin {
+    path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    range: Option<LineRange>,
+    snippet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    anchor: Option<Anchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<Context>,
+    #[serde(default)]
+    provenance: Provenance,
+}
+
+impl Origin {
+    /// Capture immutable source evidence for a thread.
+    #[must_use]
+    pub fn new(
+        path: &Path,
+        range: Option<LineRange>,
+        snippet: impl AsRef<str>,
+        anchor: Option<Anchor>,
+        context: Option<Context>,
+    ) -> Self {
+        let (snippet, truncated) = bound_evidence(snippet.as_ref());
+        let context_truncated = context.as_ref().is_some_and(Context::is_truncated);
+        let provenance = Provenance::default().with_content(ContentIdentity::from_text(&snippet));
+        Self {
+            path: path.to_path_buf(),
+            range,
+            snippet,
+            anchor,
+            context,
+            provenance: if truncated || context_truncated {
+                provenance.truncated()
+            } else {
+                provenance
+            },
+        }
+    }
+
+    /// Attach input-bound provenance facts without changing source evidence.
+    #[must_use]
+    pub fn with_provenance(mut self, mut provenance: Provenance) -> Self {
+        if provenance.content.is_none() {
+            provenance.content = Some(ContentIdentity::from_text(&self.snippet));
+        }
+        if self.snippet.len() > MAX_ORIGIN_EVIDENCE_BYTES {
+            provenance.evidence_truncated = true;
+        }
+        self.provenance = provenance;
+        self
+    }
+
+    /// The original workspace-relative path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The original line range, or `None` for a file-wide thread.
+    #[must_use]
+    pub fn range(&self) -> Option<LineRange> {
+        self.range
+    }
+
+    /// The bounded original snippet.
+    #[must_use]
+    pub fn snippet(&self) -> &str {
+        &self.snippet
+    }
+
+    /// The original content anchor, when this is a line thread.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
+    }
+
+    /// The original bounded context window, when this is a line thread.
+    #[must_use]
+    pub fn context(&self) -> Option<&Context> {
+        self.context.as_ref()
+    }
+
+    /// The immutable provenance facts.
+    #[must_use]
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    /// The source version that supplied the original lines.
+    #[must_use]
+    pub fn version(&self) -> &OriginVersion {
+        self.provenance.version()
+    }
+
+    /// The side that supplied the original lines.
+    #[must_use]
+    pub fn side(&self) -> OriginSide {
+        self.provenance.side()
+    }
+
+    /// The human comparison, when supplied.
+    #[must_use]
+    pub fn comparison(&self) -> Option<&ComparisonFacts> {
+        self.provenance.comparison()
+    }
+
+    /// Working-tree facts, when supplied.
+    #[must_use]
+    pub fn working_tree(&self) -> Option<&WorkingTreeFacts> {
+        self.provenance.working_tree()
+    }
+
+    /// Index facts, when supplied.
+    #[must_use]
+    pub fn index(&self) -> Option<&IndexFacts> {
+        self.provenance.index()
+    }
+
+    /// Review-point facts, when supplied.
+    #[must_use]
+    pub fn review_point(&self) -> Option<&ReviewPointFacts> {
+        self.provenance.review_point()
+    }
+
+    /// The immutable content identity.
+    #[must_use]
+    pub fn content(&self) -> Option<&ContentIdentity> {
+        self.provenance.content()
+    }
+
+    /// Whether the source evidence was bounded or truncated.
+    #[must_use]
+    pub fn evidence_truncated(&self) -> bool {
+        self.provenance.evidence_truncated()
+    }
+}
+
+/// Mutable evidence describing where a thread is currently projected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacementEvidence {
+    path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    range: Option<LineRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    anchor: Option<Anchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<Context>,
+    #[serde(default)]
+    version: OriginVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    observed_at: Option<u64>,
+}
+
+impl PlacementEvidence {
+    /// Construct current placement from immutable origin evidence.
+    #[must_use]
+    pub fn from_origin(origin: &Origin, version: OriginVersion) -> Self {
+        Self {
+            path: origin.path.clone(),
+            range: origin.range,
+            anchor: origin.anchor.clone(),
+            context: origin.context.clone(),
+            version,
+            checkout: None,
+            observed_at: None,
+        }
+    }
+
+    /// The currently projected path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The currently projected range.
+    #[must_use]
+    pub fn range(&self) -> Option<LineRange> {
+        self.range
+    }
+
+    /// The current placement anchor.
+    #[must_use]
+    pub fn anchor(&self) -> Option<&Anchor> {
+        self.anchor.as_ref()
+    }
+
+    /// The current placement context.
+    #[must_use]
+    pub fn context(&self) -> Option<&Context> {
+        self.context.as_ref()
+    }
+
+    /// The version or checkout qualified by this placement.
+    #[must_use]
+    pub fn version(&self) -> &OriginVersion {
+        &self.version
+    }
+
+    /// The checkout that supplied this placement evidence, when known.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The time of the latest explicit placement update.
+    #[must_use]
+    pub fn observed_at(&self) -> Option<u64> {
+        self.observed_at
+    }
+}
+
+/// Version and checkout qualification for newly captured placement evidence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacementContext {
+    version: OriginVersion,
+    checkout: Option<String>,
+}
+
+impl PlacementContext {
+    /// Qualify placement evidence with its source version.
+    #[must_use]
+    pub fn new(version: OriginVersion) -> Self {
+        Self {
+            version,
+            checkout: None,
+        }
+    }
+
+    /// Qualify placement evidence with its checkout.
+    #[must_use]
+    pub fn at_checkout(mut self, checkout: impl Into<String>) -> Self {
+        self.checkout = Some(checkout.into());
+        self
+    }
+}
+
+fn bound_evidence(text: &str) -> (String, bool) {
+    if text.len() <= MAX_ORIGIN_EVIDENCE_BYTES {
+        return (text.to_owned(), false);
+    }
+    let mut end = MAX_ORIGIN_EVIDENCE_BYTES;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    (text[..end].to_owned(), true)
 }
 
 /// Identifier of a thread, unique within one store.
@@ -609,9 +1355,6 @@ impl DoubleEndedIterator for Messages<'_> {
 impl ExactSizeIterator for Messages<'_> {}
 
 /// Whether a thread is open or resolved.
-///
-/// Only the user resolves (ADR 0053); an agent's reply can propose it,
-/// see [`Thread::proposes_resolution`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -702,19 +1445,313 @@ pub enum ResolutionOutcome {
     Resolved,
 }
 
-/// An annotation with its replies and status.
+/// Context recorded for one resolution event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolutionContext {
+    actor: Author,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+    head: Option<String>,
+}
+
+impl ResolutionContext {
+    /// Construct a resolution context for `actor` and `head`.
+    #[must_use]
+    pub fn new(actor: Author, head: Option<String>) -> Self {
+        let version = head.clone().map(OriginVersion::commit);
+        Self {
+            actor,
+            checkout: None,
+            version,
+            head,
+        }
+    }
+
+    /// Add the bound checkout identity.
+    #[must_use]
+    pub fn at_checkout(mut self, checkout: impl Into<String>) -> Self {
+        self.checkout = Some(checkout.into());
+        self
+    }
+
+    /// Add the version supplying the resolution context.
+    #[must_use]
+    pub fn at_version(mut self, version: OriginVersion) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// The actor that resolved the thread.
+    #[must_use]
+    pub fn actor(&self) -> &Author {
+        &self.actor
+    }
+
+    /// The bound checkout identity, when supplied.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The resolution version, when supplied.
+    #[must_use]
+    pub fn version(&self) -> Option<&OriginVersion> {
+        self.version.as_ref()
+    }
+
+    /// The observed `HEAD`, when available.
+    #[must_use]
+    pub fn head(&self) -> Option<&str> {
+        self.head.as_deref()
+    }
+}
+
+/// One immutable resolution event in a thread's history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolutionRecord {
+    created: u64,
+    actor: Author,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+    head: Option<String>,
+    #[serde(default)]
+    ordinal: u64,
+}
+
+impl ResolutionRecord {
+    fn from_context(context: ResolutionContext, created: u64, ordinal: u64) -> Self {
+        Self {
+            created,
+            actor: context.actor,
+            checkout: context.checkout,
+            version: context.version,
+            head: context.head,
+            ordinal,
+        }
+    }
+
+    /// When this resolution happened, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// Who resolved the thread.
+    #[must_use]
+    pub fn actor(&self) -> &Author {
+        &self.actor
+    }
+
+    /// The bound checkout identity, when supplied.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The version supplying the resolution context, when supplied.
+    #[must_use]
+    pub fn version(&self) -> Option<&OriginVersion> {
+        self.version.as_ref()
+    }
+
+    /// The observed `HEAD`, when available.
+    #[must_use]
+    pub fn head(&self) -> Option<&str> {
+        self.head.as_deref()
+    }
+
+    /// Append-log order used to break equal-time ordering ties.
+    #[must_use]
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+}
+
+/// Context recorded when a thread is archived.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchiveContext {
+    actor: Author,
+    created: u64,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+}
+
+impl ArchiveContext {
+    /// Construct archive context for `actor` at `created`.
+    #[must_use]
+    pub fn new(actor: Author, created: u64) -> Self {
+        Self {
+            actor,
+            created,
+            checkout: None,
+            version: None,
+        }
+    }
+
+    /// Add the bound checkout identity.
+    #[must_use]
+    pub fn at_checkout(mut self, checkout: impl Into<String>) -> Self {
+        self.checkout = Some(checkout.into());
+        self
+    }
+
+    /// Add the version visible when archiving.
+    #[must_use]
+    pub fn at_version(mut self, version: OriginVersion) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// The actor that archived the thread.
+    #[must_use]
+    pub fn actor(&self) -> &Author {
+        &self.actor
+    }
+
+    /// The archive event time.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// The bound checkout identity, when supplied.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The visible version, when supplied.
+    #[must_use]
+    pub fn version(&self) -> Option<&OriginVersion> {
+        self.version.as_ref()
+    }
+}
+
+/// One immutable archival event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchiveRecord {
+    created: u64,
+    actor: Author,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+    #[serde(default)]
+    ordinal: u64,
+}
+
+impl ArchiveRecord {
+    fn from_context(context: ArchiveContext, ordinal: u64) -> Self {
+        Self {
+            created: context.created,
+            actor: context.actor,
+            checkout: context.checkout,
+            version: context.version,
+            ordinal,
+        }
+    }
+
+    /// When the archive event happened, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// Who archived the thread.
+    #[must_use]
+    pub fn actor(&self) -> &Author {
+        &self.actor
+    }
+
+    /// The bound checkout identity, when supplied.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The visible version, when supplied.
+    #[must_use]
+    pub fn version(&self) -> Option<&OriginVersion> {
+        self.version.as_ref()
+    }
+
+    /// Append-log order for this archive event.
+    #[must_use]
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+}
+
+/// One immutable restore event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RestoreRecord {
+    created: u64,
+    actor: Author,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+    #[serde(default)]
+    ordinal: u64,
+}
+
+impl RestoreRecord {
+    fn from_context(context: ArchiveContext, ordinal: u64) -> Self {
+        Self {
+            created: context.created,
+            actor: context.actor,
+            checkout: context.checkout,
+            version: context.version,
+            ordinal,
+        }
+    }
+
+    /// When the restore event happened, in Unix seconds.
+    #[must_use]
+    pub fn created(&self) -> u64 {
+        self.created
+    }
+
+    /// Who restored the thread.
+    #[must_use]
+    pub fn actor(&self) -> &Author {
+        &self.actor
+    }
+
+    /// The bound checkout identity, when supplied.
+    #[must_use]
+    pub fn checkout(&self) -> Option<&str> {
+        self.checkout.as_deref()
+    }
+
+    /// The visible version, when supplied.
+    #[must_use]
+    pub fn version(&self) -> Option<&OriginVersion> {
+        self.version.as_ref()
+    }
+
+    /// Append-log order for this restore event.
+    #[must_use]
+    pub fn ordinal(&self) -> u64 {
+        self.ordinal
+    }
+}
+
+/// A discussion with immutable origin, current placement, replies, and status.
 ///
 /// Serializes as a plain object so it can travel over the session socket
 /// (ADR 0014); the JSONL file stores events, not threads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Thread {
     id: ThreadId,
+    /// Immutable source evidence captured at creation.
+    origin: Origin,
+    /// Mutable projection evidence for the currently selected placement.
+    placement: PlacementEvidence,
+    /// Current projected workspace-relative path.
     path: PathBuf,
-    /// The lines the comment is on; `None` for a comment on the file as
-    /// a whole (ADR 0063), which then has no anchor and an empty snippet.
+    /// Current projected range; `None` for a file-wide thread.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     range: Option<LineRange>,
+    /// Bounded immutable source excerpt captured at creation.
     snippet: String,
+    /// Current projected content anchor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     anchor: Option<Anchor>,
     created: u64,
@@ -731,8 +1768,7 @@ pub struct Thread {
     /// When the thread was last re-anchored to rewritten lines (ADR 0019).
     #[serde(default, rename = "edited", skip_serializing_if = "Option::is_none")]
     reanchored_at: Option<u64>,
-    /// The `HEAD` commit the annotation was written against, when the
-    /// workspace had one (ADR 0024); `None` reads as unscoped.
+    /// Current commit context used for contextual placement, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     commit: Option<String>,
     /// When the user last edited the comment (ADR 0058).
@@ -741,10 +1777,24 @@ pub struct Thread {
     /// When the user last reopened the thread (ADR 0058).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reopened: Option<u64>,
-    /// The text the thread was last placed in (ADR 0038). Not sent over
-    /// the session socket, where the snippet already travels.
+    /// Current placement context window (ADR 0038).
     #[serde(skip)]
     context: Option<Context>,
+    /// Every successful resolution, including resolutions before a reopen.
+    #[serde(default)]
+    resolution_history: Vec<ResolutionRecord>,
+    /// Whether the thread is outside the normal board iteration.
+    #[serde(default)]
+    archived: bool,
+    /// Durable archive events for history inspection.
+    #[serde(default)]
+    archive_history: Vec<ArchiveRecord>,
+    /// Durable restore events for history inspection.
+    #[serde(default)]
+    restore_history: Vec<RestoreRecord>,
+    /// Append-log revision used for atomic board-slate validation.
+    #[serde(default)]
+    revision: u64,
 }
 
 impl Thread {
@@ -754,20 +1804,67 @@ impl Thread {
         &self.id
     }
 
+    /// Immutable source evidence captured when this thread was created.
+    #[must_use]
+    pub fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// Immutable provenance facts captured at creation.
+    #[must_use]
+    pub fn provenance(&self) -> &Provenance {
+        self.origin.provenance()
+    }
+
+    /// The source version supplying the original lines.
+    #[must_use]
+    pub fn origin_version(&self) -> &OriginVersion {
+        self.origin.version()
+    }
+
+    /// The comparison side supplying the original lines.
+    #[must_use]
+    pub fn origin_side(&self) -> OriginSide {
+        self.origin.side()
+    }
+
+    /// The human comparison whose lines were shown, when supplied.
+    #[must_use]
+    pub fn comparison(&self) -> Option<&ComparisonFacts> {
+        self.origin.comparison()
+    }
+
+    /// The immutable content identity, when available.
+    #[must_use]
+    pub fn content_identity(&self) -> Option<&ContentIdentity> {
+        self.origin.content()
+    }
+
+    /// Current placement evidence, separate from immutable origin.
+    #[must_use]
+    pub fn placement_evidence(&self) -> &PlacementEvidence {
+        &self.placement
+    }
+
     /// Who wrote the comment that opened the thread (ADR 0061).
     #[must_use]
     pub fn author(&self) -> &Author {
         &self.author
     }
 
-    /// Workspace-relative path of the annotated file.
+    /// Stored workspace-relative placement path.
+    ///
+    /// A viewer may derive a checkout-local path without rewriting this
+    /// shared value. The immutable creation path is [`Thread::origin`].
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The range as it was when the annotation was made; `None` for a
-    /// thread on the file as a whole (ADR 0063).
+    /// The current projected range; `None` for a file-wide thread.
+    ///
+    /// This placement may change after relocation or projection. The
+    /// immutable creation range is [`Thread::origin`]'s range.
     #[must_use]
     pub fn range(&self) -> Option<LineRange> {
         self.range
@@ -780,8 +1877,7 @@ impl Thread {
         self.range.is_none()
     }
 
-    /// Where the thread is, the way notices name it: `path:lines`, or
-    /// the path alone for a thread on the file as a whole (ADR 0063).
+    /// Where the current placement sits: `path:lines`, or just `path`.
     #[must_use]
     pub fn place(&self) -> String {
         match self.range {
@@ -790,21 +1886,29 @@ impl Thread {
         }
     }
 
-    /// The annotated source lines, without the trailing newline; empty
-    /// for a thread on the file as a whole.
+    /// The bounded source excerpt captured at creation, without a newline.
+    ///
+    /// This remains an immutable origin fact; current placement evidence is
+    /// available through [`Thread::placement_evidence`].
     #[must_use]
     pub fn snippet(&self) -> &str {
         &self.snippet
     }
 
-    /// The content anchor; `None` for a thread on the file as a whole.
+    /// The current content anchor; `None` for a file-wide thread.
+    ///
+    /// Relocation can replace this placement anchor. The immutable creation
+    /// anchor is available through [`Thread::origin`].
     #[must_use]
     pub fn anchor(&self) -> Option<&Anchor> {
         self.anchor.as_ref()
     }
 
-    /// The window of text the line thread was last placed in (ADR 0038);
-    /// `None` for a file-wide thread.
+    /// The current placement context window (ADR 0038), or `None` for a
+    /// file-wide thread.
+    ///
+    /// Relocation can replace this context. The immutable creation context
+    /// is available through [`Thread::origin`].
     #[must_use]
     pub fn context(&self) -> Option<&Context> {
         self.context.as_ref()
@@ -819,16 +1923,10 @@ impl Thread {
     /// When the thread last changed, in Unix seconds.
     ///
     /// This includes messages, edits, lifecycle and auto-resolve changes,
-    /// relocation, moves, and commit rescoping.
+    /// relocation, and archive history.
     #[must_use]
     pub fn modified(&self) -> u64 {
         self.modified
-    }
-
-    /// Compatibility name for [`Thread::modified`].
-    #[must_use]
-    pub fn updated(&self) -> u64 {
-        self.modified()
     }
 
     /// The user's comment.
@@ -885,13 +1983,10 @@ impl Thread {
         self.reanchored_at
     }
 
-    /// Compatibility name for [`Thread::reanchored_at`].
-    #[must_use]
-    pub fn edited(&self) -> Option<u64> {
-        self.reanchored_at()
-    }
-
-    /// The `HEAD` commit the annotation was written against, if any.
+    /// The current commit context used for contextual placement, if any.
+    ///
+    /// Resolution can change this value. The immutable source version
+    /// captured at creation is [`Thread::origin_version`].
     #[must_use]
     pub fn commit(&self) -> Option<&str> {
         self.commit.as_deref()
@@ -907,6 +2002,54 @@ impl Thread {
     #[must_use]
     pub fn reopened(&self) -> Option<u64> {
         self.reopened
+    }
+
+    /// Every successful resolution event in append order.
+    #[must_use]
+    pub fn resolution_history(&self) -> &[ResolutionRecord] {
+        &self.resolution_history
+    }
+
+    /// The newest resolution event, if this thread has been resolved.
+    #[must_use]
+    pub fn latest_resolution(&self) -> Option<&ResolutionRecord> {
+        self.resolution_history.last()
+    }
+
+    /// Whether the thread is archived out of normal board iteration.
+    #[must_use]
+    pub fn is_archived(&self) -> bool {
+        self.archived
+    }
+
+    /// The archive history, oldest first.
+    #[must_use]
+    pub fn archive_history(&self) -> &[ArchiveRecord] {
+        &self.archive_history
+    }
+
+    /// The restore history, oldest first.
+    #[must_use]
+    pub fn restore_history(&self) -> &[RestoreRecord] {
+        &self.restore_history
+    }
+
+    /// The newest archive event, if any.
+    #[must_use]
+    pub fn latest_archive(&self) -> Option<&ArchiveRecord> {
+        self.archive_history.last()
+    }
+
+    /// The newest restore event, if any.
+    #[must_use]
+    pub fn latest_restore(&self) -> Option<&RestoreRecord> {
+        self.restore_history.last()
+    }
+
+    /// Append-log revision of the latest event touching this thread.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The last act on the thread: its author and time.
@@ -995,6 +2138,7 @@ pub struct Draft {
     range: Option<LineRange>,
     comment: String,
     commit: Option<String>,
+    provenance: Provenance,
 }
 
 impl Draft {
@@ -1010,6 +2154,7 @@ impl Draft {
             range: Some(range),
             comment: comment.into(),
             commit: None,
+            provenance: Provenance::default(),
         }
     }
 
@@ -1023,6 +2168,7 @@ impl Draft {
             range: None,
             comment: comment.into(),
             commit: None,
+            provenance: Provenance::default(),
         }
     }
 
@@ -1031,7 +2177,66 @@ impl Draft {
     /// reachable.
     #[must_use]
     pub fn at_commit(mut self, commit: Option<String>) -> Self {
+        if let Some(commit_id) = commit.as_deref() {
+            self.provenance.version = OriginVersion::commit(commit_id);
+        }
         self.commit = commit;
+        self
+    }
+
+    /// Supply immutable origin facts captured at the input boundary.
+    #[must_use]
+    pub fn with_provenance(mut self, provenance: Provenance) -> Self {
+        self.provenance = provenance;
+        self
+    }
+
+    /// Supply the source version and side for the original evidence.
+    #[must_use]
+    pub fn at_source(mut self, version: OriginVersion, side: OriginSide) -> Self {
+        self.provenance.version = version.clone();
+        if let OriginVersion::Commit { id } = version {
+            self.commit = Some(id);
+        }
+        self.provenance.side = side;
+        self
+    }
+
+    /// Supply the human comparison whose lines are being discussed.
+    #[must_use]
+    pub fn in_comparison(mut self, comparison: ComparisonFacts) -> Self {
+        self.provenance.comparison = Some(comparison);
+        self
+    }
+
+    /// The provenance facts supplied for this draft.
+    #[must_use]
+    pub fn provenance(&self) -> &Provenance {
+        &self.provenance
+    }
+
+    /// Record bound working-tree facts for this draft.
+    #[must_use]
+    pub fn with_working_tree_facts(mut self, facts: WorkingTreeFacts) -> Self {
+        self.provenance.version = OriginVersion::working_tree(facts.observed_head.clone());
+        self.provenance.working_tree = Some(facts);
+        self
+    }
+
+    /// Record bound index facts for this draft.
+    #[must_use]
+    pub fn with_index_facts(mut self, facts: IndexFacts) -> Self {
+        self.provenance.version = OriginVersion::index(facts.observed_head.clone());
+        self.provenance.index = Some(facts);
+        self
+    }
+
+    /// Record a review-point source for this draft.
+    #[must_use]
+    pub fn at_review_point(mut self, facts: ReviewPointFacts, side: OriginSide) -> Self {
+        self.provenance.version = OriginVersion::review_point(facts.id.clone(), facts.base.clone());
+        self.provenance.side = side;
+        self.provenance.review_point = Some(facts);
         self
     }
 }
@@ -1084,6 +2289,9 @@ pub struct AgentReplyCommand {
     resolution: ResolutionIntent,
     relocation: Option<LineRange>,
     head: Option<String>,
+    checkout: Option<String>,
+    version: Option<OriginVersion>,
+    placement: Option<PlacementContext>,
     idempotency: Option<Idempotency>,
 }
 
@@ -1096,6 +2304,9 @@ impl AgentReplyCommand {
             resolution: ResolutionIntent::NotRequested,
             relocation: None,
             head: None,
+            checkout: None,
+            version: None,
+            placement: None,
             idempotency: None,
         }
     }
@@ -1117,7 +2328,31 @@ impl AgentReplyCommand {
     /// Supply the current checkout's `HEAD` for an authorized resolution.
     #[must_use]
     pub fn at_head(mut self, head: Option<String>) -> Self {
+        if self.version.is_none() {
+            self.version = head.clone().map(OriginVersion::commit);
+        }
         self.head = head;
+        self
+    }
+
+    /// Record the checkout that supplied the resolution context.
+    #[must_use]
+    pub fn at_checkout(mut self, checkout: impl Into<String>) -> Self {
+        self.checkout = Some(checkout.into());
+        self
+    }
+
+    /// Record the version visible when the agent resolved the thread.
+    #[must_use]
+    pub fn at_version(mut self, version: OriginVersion) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// Qualify any relocation captured with this reply.
+    #[must_use]
+    pub fn place_in(mut self, placement: PlacementContext) -> Self {
+        self.placement = Some(placement);
         self
     }
 
@@ -1268,6 +2503,78 @@ struct ReplyRelocation {
     anchor: Anchor,
     created: u64,
     context: Context,
+    version: OriginVersion,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    checkout: Option<String>,
+}
+
+/// One thread's acknowledged state in a clear-board confirmation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardSlateEntry {
+    id: ThreadId,
+    lifecycle: Lifecycle,
+    modified: u64,
+    resolution_ordinal: Option<u64>,
+    revision: u64,
+}
+
+impl BoardSlateEntry {
+    /// The acknowledged thread ID.
+    #[must_use]
+    pub fn id(&self) -> &ThreadId {
+        &self.id
+    }
+
+    /// The lifecycle acknowledged by the user.
+    #[must_use]
+    pub fn lifecycle(&self) -> Lifecycle {
+        self.lifecycle
+    }
+
+    /// The generic modification time acknowledged by the user.
+    #[must_use]
+    pub fn modified(&self) -> u64 {
+        self.modified
+    }
+
+    /// The latest resolution event acknowledged by the user.
+    #[must_use]
+    pub fn resolution_ordinal(&self) -> Option<u64> {
+        self.resolution_ordinal
+    }
+
+    /// The append-log revision acknowledged by the user.
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+}
+
+/// An acknowledged repository-board slate for a later atomic clear.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardSlate {
+    entries: Vec<BoardSlateEntry>,
+    observed_cursor: ActivityCursor,
+}
+
+impl BoardSlate {
+    /// The exact non-archived entries acknowledged by the user.
+    #[must_use]
+    pub fn entries(&self) -> &[BoardSlateEntry] {
+        &self.entries
+    }
+
+    /// The append cursor observed while acknowledging the slate.
+    #[must_use]
+    pub fn observed_cursor(&self) -> ActivityCursor {
+        self.observed_cursor
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ArchiveEntry {
+    thread: ThreadId,
+    context: ArchiveContext,
 }
 
 /// The `v` of one event line, read before the event itself.
@@ -1283,6 +2590,7 @@ enum Event {
     Annotate {
         v: u32,
         id: ThreadId,
+        origin: Box<Origin>,
         path: PathBuf,
         /// Absent for a comment on the file as a whole (ADR 0063).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1329,6 +2637,10 @@ enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkout: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<OriginVersion>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         receipt: Option<IdempotencyReceipt>,
     },
     /// The user replaced one of their messages (ADR 0013).
@@ -1347,6 +2659,12 @@ enum Event {
         created: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         commit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<Author>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkout: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        version: Option<OriginVersion>,
     },
     Reopen {
         v: u32,
@@ -1362,28 +2680,15 @@ enum Event {
         anchor: Anchor,
         created: u64,
         context: Context,
-    },
-    /// The file was renamed and the thread now lives at `path`, range
-    /// and anchor unchanged (ADR 0028).
-    Move {
-        v: u32,
-        thread: ThreadId,
-        path: PathBuf,
-        created: u64,
+        version: OriginVersion,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        checkout: Option<String>,
     },
     /// The user deleted the thread (ADR 0034). A tombstone: the thread
     /// is dropped on load and later events on it are ignored.
     Delete {
         v: u32,
         thread: ThreadId,
-        created: u64,
-    },
-    /// A history rewrite dropped the thread's commit while its lines
-    /// stayed; it now belongs to `commit` (ADR 0035).
-    Rescope {
-        v: u32,
-        thread: ThreadId,
-        commit: String,
         created: u64,
     },
     /// The user changed one-shot auto-resolve permission.
@@ -1393,23 +2698,30 @@ enum Event {
         value: AutoResolve,
         created: u64,
     },
+    /// Archive one or more threads in one durable board operation.
+    ArchiveMany { v: u32, entries: Vec<ArchiveEntry> },
+    /// Restore one archived thread without changing its lifecycle.
+    Restore {
+        v: u32,
+        thread: ThreadId,
+        context: ArchiveContext,
+    },
 }
 
 impl Event {
     /// The thread an event acts on; none for the one that creates it.
     fn thread_id(&self) -> Option<&ThreadId> {
         match self {
-            Self::Annotate { .. } => None,
+            Self::Annotate { .. } | Self::ArchiveMany { .. } => None,
             Self::Reply { thread, .. }
             | Self::AgentReply { thread, .. }
             | Self::Edit { thread, .. }
             | Self::Resolve { thread, .. }
             | Self::Reopen { thread, .. }
             | Self::Relocate { thread, .. }
-            | Self::Move { thread, .. }
             | Self::Delete { thread, .. }
-            | Self::Rescope { thread, .. }
-            | Self::SetAutoResolve { thread, .. } => Some(thread),
+            | Self::SetAutoResolve { thread, .. }
+            | Self::Restore { thread, .. } => Some(thread),
         }
     }
 
@@ -1422,10 +2734,10 @@ impl Event {
             | Self::Resolve { .. }
             | Self::Reopen { .. }
             | Self::Relocate { .. }
-            | Self::Move { .. }
             | Self::Delete { .. }
-            | Self::Rescope { .. }
-            | Self::SetAutoResolve { .. } => None,
+            | Self::SetAutoResolve { .. }
+            | Self::ArchiveMany { .. }
+            | Self::Restore { .. } => None,
         }
     }
 }
@@ -1434,7 +2746,10 @@ impl Event {
 #[derive(Debug)]
 pub struct Store {
     path: PathBuf,
+    /// Non-archived repository-board threads, in creation order.
     threads: Vec<Thread>,
+    /// Archived threads retained for exact-ID and history inspection.
+    archived: Vec<Thread>,
     /// Threads a tombstone removed, so an event that raced the deletion
     /// (a headless reply) is skipped rather than rejected as unknown.
     deleted: HashSet<ThreadId>,
@@ -1456,6 +2771,7 @@ impl Store {
         let mut store = Self {
             path,
             threads: Vec::new(),
+            archived: Vec::new(),
             deleted: HashSet::new(),
             receipts: HashMap::new(),
             cursor: ActivityCursor::default(),
@@ -1484,6 +2800,7 @@ impl Store {
         let mut loaded = Self {
             path: self.path.clone(),
             threads: Vec::new(),
+            archived: Vec::new(),
             deleted: HashSet::new(),
             receipts: HashMap::new(),
             cursor: ActivityCursor::default(),
@@ -1506,6 +2823,7 @@ impl Store {
                 .map_err(|error| StoreError::parse(index + 1, error.to_string()))?;
         }
         self.threads = loaded.threads;
+        self.archived = loaded.archived;
         self.deleted = loaded.deleted;
         self.receipts = loaded.receipts;
         self.cursor = loaded.cursor;
@@ -1538,10 +2856,68 @@ impl Store {
         &self.path
     }
 
-    /// Every thread, oldest first.
+    /// Every non-archived board thread, oldest first.
     #[must_use]
     pub fn threads(&self) -> &[Thread] {
         &self.threads
+    }
+
+    /// Every archived thread, oldest first.
+    #[must_use]
+    pub fn archived_threads(&self) -> &[Thread] {
+        &self.archived
+    }
+
+    /// Every thread, including archived history.
+    pub fn all_threads(&self) -> impl Iterator<Item = &Thread> {
+        self.threads.iter().chain(&self.archived)
+    }
+
+    /// Every non-archived thread resolved at least once, newest resolution first.
+    ///
+    /// Ordering uses the actual latest resolution event and an append ordinal
+    /// tie-breaker, never generic thread modification metadata.
+    #[must_use]
+    pub fn recently_resolved(&self) -> Vec<&Thread> {
+        let mut threads: Vec<&Thread> = self
+            .threads
+            .iter()
+            .filter(|thread| thread.status() == Status::Resolved)
+            .filter(|thread| thread.latest_resolution().is_some())
+            .collect();
+        threads.sort_by(|left, right| {
+            let left_key = left
+                .latest_resolution()
+                .map(|record| (record.created(), record.ordinal()))
+                .unwrap_or_default();
+            let right_key = right
+                .latest_resolution()
+                .map(|record| (record.created(), record.ordinal()))
+                .unwrap_or_default();
+            right_key
+                .cmp(&left_key)
+                .then_with(|| right.id.cmp(&left.id))
+        });
+        threads
+    }
+
+    /// Capture the exact non-archived board state for a later clear.
+    #[must_use]
+    pub fn board_slate(&self) -> BoardSlate {
+        BoardSlate {
+            entries: self
+                .threads
+                .iter()
+                .map(|thread| BoardSlateEntry {
+                    id: thread.id.clone(),
+                    lifecycle: thread.lifecycle,
+                    modified: thread.modified,
+                    resolution_ordinal: thread.latest_resolution().map(ResolutionRecord::ordinal),
+                    revision: thread.revision,
+                })
+                .collect(),
+            observed_cursor: self.cursor,
+        }
     }
 
     /// Cursor at the current end of the append log.
@@ -1601,7 +2977,10 @@ impl Store {
     /// The thread with `id`, if any.
     #[must_use]
     pub fn thread(&self, id: &ThreadId) -> Option<&Thread> {
-        self.threads.iter().find(|thread| thread.id == *id)
+        self.threads
+            .iter()
+            .chain(&self.archived)
+            .find(|thread| thread.id == *id)
     }
 
     /// Start a thread from `draft` over the file's current `text` at `now`
@@ -1648,11 +3027,20 @@ impl Store {
         let id = ThreadId(format!(
             "{now}-{}-{}",
             std::process::id(),
-            self.threads.len() + self.deleted.len() + 1
+            self.threads.len() + self.archived.len() + self.deleted.len() + 1
         ));
+        let origin = Origin::new(
+            &draft.path,
+            draft.range,
+            &snippet,
+            anchor.clone(),
+            context.clone(),
+        )
+        .with_provenance(origin_provenance(&draft, &snippet));
         let event = Event::Annotate {
             v: FORMAT_VERSION,
             id: id.clone(),
+            origin: Box::new(origin),
             path: draft.path,
             range: draft.range,
             snippet,
@@ -1743,8 +3131,16 @@ impl Store {
         let id = ThreadId(format!(
             "{now}-{}-{}",
             std::process::id(),
-            self.threads.len() + self.deleted.len() + 1
+            self.threads.len() + self.archived.len() + self.deleted.len() + 1
         ));
+        let origin = Origin::new(
+            &draft.path,
+            draft.range,
+            &snippet,
+            anchor.clone(),
+            context.clone(),
+        )
+        .with_provenance(origin_provenance(&draft, &snippet));
         let receipt = IdempotencyReceipt {
             key: key.to_owned(),
             caller: caller.to_owned(),
@@ -1756,6 +3152,7 @@ impl Store {
         let event = Event::Annotate {
             v: FORMAT_VERSION,
             id: id.clone(),
+            origin: Box::new(origin),
             path: draft.path,
             range: draft.range,
             snippet,
@@ -1804,6 +3201,9 @@ impl Store {
                 resolution,
                 relocation: None,
                 head: None,
+                checkout: None,
+                version: None,
+                placement: None,
                 idempotency: None,
             },
             |_| Err(StoreError::message("an ordinary reply has no relocation")),
@@ -1859,6 +3259,12 @@ impl Store {
             });
         };
         let lifecycle = thread.lifecycle();
+        if thread.is_archived() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
+            });
+        }
         if lifecycle == Lifecycle::Resolved {
             let _ = file.unlock();
             return Ok(UserWriteOutcome::ReopenRequired);
@@ -1949,13 +3355,27 @@ impl Store {
         let thread = self.thread(id).ok_or_else(|| StoreError {
             kind: ErrorKind::UnknownThread(id.clone()),
         })?;
+        if thread.is_archived() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
+            });
+        }
         if thread.status() != Status::Open {
+            let _ = file.unlock();
             return Err(StoreError::message(format!(
                 "{id} is resolved; only the user can reopen it"
             )));
         }
+        let placement = command.placement.unwrap_or_else(|| {
+            let context = PlacementContext::new(OriginVersion::working_tree(command.head.clone()));
+            command
+                .checkout
+                .as_deref()
+                .map_or(context.clone(), |checkout| context.at_checkout(checkout))
+        });
         let relocation =
-            capture_reply_relocation(thread, lines, command.reply.created(), load_text)?;
+            capture_reply_relocation(thread, lines, command.reply.created(), placement, load_text)?;
         let outcome = match command.resolution {
             ResolutionIntent::NotRequested => ResolutionOutcome::NotRequested,
             ResolutionIntent::Resolve if thread.auto_resolve().is_enabled() => {
@@ -1981,7 +3401,13 @@ impl Store {
                 relocation,
                 resolution: outcome,
                 commit: (outcome == ResolutionOutcome::Resolved)
-                    .then_some(command.head)
+                    .then_some(command.head.clone())
+                    .flatten(),
+                checkout: (outcome == ResolutionOutcome::Resolved)
+                    .then_some(command.checkout)
+                    .flatten(),
+                version: (outcome == ResolutionOutcome::Resolved)
+                    .then_some(command.version)
                     .flatten(),
                 receipt,
             },
@@ -2048,6 +3474,9 @@ impl Store {
                 resolution,
                 relocation: lines,
                 head: None,
+                checkout: None,
+                version: None,
+                placement: Some(PlacementContext::new(OriginVersion::working_tree(None))),
                 idempotency: Some(Idempotency {
                     caller: caller.to_owned(),
                     key: key.to_owned(),
@@ -2084,7 +3513,19 @@ impl Store {
         let thread = self.thread(id).ok_or_else(|| StoreError {
             kind: ErrorKind::UnknownThread(id.clone()),
         })?;
-        let relocation = capture_reply_relocation(thread, lines, reply.created(), load_text)?;
+        if thread.is_archived() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
+            });
+        }
+        let relocation = capture_reply_relocation(
+            thread,
+            lines,
+            reply.created(),
+            PlacementContext::new(OriginVersion::working_tree(None)),
+            load_text,
+        )?;
         let receipt = IdempotencyReceipt {
             key: key.to_owned(),
             caller: caller.to_owned(),
@@ -2266,6 +3707,12 @@ impl Store {
             });
         };
         let lifecycle = thread.lifecycle();
+        if thread.is_archived() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
+            });
+        }
         if lifecycle == Lifecycle::Resolved {
             let _ = file.unlock();
             return Ok(UserWriteOutcome::ReopenRequired);
@@ -2299,11 +3746,35 @@ impl Store {
         head: Option<&str>,
         now: u64,
     ) -> Result<(), StoreError> {
+        self.resolve_with_context(
+            id,
+            &ResolutionContext::new(Author::User, head.map(str::to_owned)),
+            now,
+        )
+    }
+
+    /// Resolve a thread while recording immutable actor and checkout context.
+    ///
+    /// The origin and current placement remain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown, archived, or the
+    /// event cannot be appended.
+    pub fn resolve_with_context(
+        &mut self,
+        id: &ThreadId,
+        context: &ResolutionContext,
+        now: u64,
+    ) -> Result<(), StoreError> {
         self.commit(Event::Resolve {
             v: FORMAT_VERSION,
             thread: id.clone(),
             created: now,
-            commit: head.map(str::to_owned),
+            commit: context.head.clone(),
+            actor: Some(context.actor.clone()),
+            checkout: context.checkout.clone(),
+            version: context.version.clone(),
         })
     }
 
@@ -2354,13 +3825,16 @@ impl Store {
         now: u64,
     ) -> Result<AutoResolve, StoreError> {
         let mut file = self.lock_for_write()?;
-        let value = self
-            .thread(id)
-            .ok_or_else(|| StoreError {
-                kind: ErrorKind::UnknownThread(id.clone()),
-            })?
-            .auto_resolve()
-            .toggled();
+        let thread = self.thread(id).ok_or_else(|| StoreError {
+            kind: ErrorKind::UnknownThread(id.clone()),
+        })?;
+        if thread.is_archived() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
+            });
+        }
+        let value = thread.auto_resolve().toggled();
         let result = self.append_locked(
             &mut file,
             Event::SetAutoResolve {
@@ -2373,6 +3847,222 @@ impl Store {
         let _ = file.unlock();
         result?;
         Ok(value)
+    }
+
+    /// Archive one thread without changing its lifecycle or origin.
+    ///
+    /// Archival disables pending one-shot auto-resolve permission. Repeating
+    /// an archive of an already archived thread is an idempotent no-op.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the archive event
+    /// cannot be persisted.
+    pub fn archive(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
+        self.archive_with_context(id, ArchiveContext::new(Author::User, now))
+    }
+
+    /// Archive one thread with explicit event context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the archive event
+    /// cannot be persisted.
+    pub fn archive_with_context(
+        &mut self,
+        id: &ThreadId,
+        context: ArchiveContext,
+    ) -> Result<(), StoreError> {
+        let mut file = self.lock_for_write()?;
+        if self.thread(id).is_none() {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::UnknownThread(id.clone()),
+            });
+        }
+        if self.archived.iter().any(|thread| thread.id == *id) {
+            let _ = file.unlock();
+            return Ok(());
+        }
+        let result = self.append_locked(
+            &mut file,
+            Event::ArchiveMany {
+                v: FORMAT_VERSION,
+                entries: vec![ArchiveEntry {
+                    thread: id.clone(),
+                    context,
+                }],
+            },
+        );
+        let _ = file.unlock();
+        result
+    }
+
+    /// Archive every thread that is still resolved when the write lock is held.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the archive event cannot be persisted.
+    pub fn archive_resolved(&mut self, now: u64) -> Result<Vec<ThreadId>, StoreError> {
+        self.archive_resolved_with_context(&ArchiveContext::new(Author::User, now))
+    }
+
+    /// Archive every thread that is still resolved with explicit context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the archive event cannot be persisted.
+    pub fn archive_resolved_with_context(
+        &mut self,
+        context: &ArchiveContext,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        let mut file = self.lock_for_write()?;
+        let ids: Vec<ThreadId> = self
+            .threads
+            .iter()
+            .filter(|thread| thread.status() == Status::Resolved)
+            .map(|thread| thread.id.clone())
+            .collect();
+        if ids.is_empty() {
+            let _ = file.unlock();
+            return Ok(ids);
+        }
+        let entries = ids
+            .iter()
+            .cloned()
+            .map(|thread| ArchiveEntry {
+                thread,
+                context: (*context).clone(),
+            })
+            .collect();
+        let result = self.append_locked(
+            &mut file,
+            Event::ArchiveMany {
+                v: FORMAT_VERSION,
+                entries,
+            },
+        );
+        let _ = file.unlock();
+        result?;
+        Ok(ids)
+    }
+
+    /// Clear exactly an acknowledged board slate under one store lock.
+    ///
+    /// A new thread is not part of the slate and is never swept. If an
+    /// acknowledged thread was changed, reopened, archived, or deleted, the
+    /// operation fails without archiving any entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when an acknowledged entry changed or the
+    /// archive event cannot be persisted.
+    pub fn clear_board(
+        &mut self,
+        slate: &BoardSlate,
+        now: u64,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        self.clear_board_with_context(slate, &ArchiveContext::new(Author::User, now))
+    }
+
+    /// Clear an acknowledged board slate with explicit event context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when an acknowledged entry changed or the
+    /// archive event cannot be persisted.
+    pub fn clear_board_with_context(
+        &mut self,
+        slate: &BoardSlate,
+        context: &ArchiveContext,
+    ) -> Result<Vec<ThreadId>, StoreError> {
+        let mut file = self.lock_for_write()?;
+        for entry in &slate.entries {
+            let Some(thread) = self.threads.iter().find(|thread| thread.id == entry.id) else {
+                let _ = file.unlock();
+                return Err(StoreError {
+                    kind: ErrorKind::SlateChanged(entry.id.clone()),
+                });
+            };
+            if thread.lifecycle != entry.lifecycle
+                || thread.modified != entry.modified
+                || thread.latest_resolution().map(ResolutionRecord::ordinal)
+                    != entry.resolution_ordinal
+                || thread.revision != entry.revision
+            {
+                let _ = file.unlock();
+                return Err(StoreError {
+                    kind: ErrorKind::SlateChanged(entry.id.clone()),
+                });
+            }
+        }
+        let ids: Vec<ThreadId> = slate.entries.iter().map(|entry| entry.id.clone()).collect();
+        if ids.is_empty() {
+            let _ = file.unlock();
+            return Ok(ids);
+        }
+        let entries = ids
+            .iter()
+            .cloned()
+            .map(|thread| ArchiveEntry {
+                thread,
+                context: (*context).clone(),
+            })
+            .collect();
+        let result = self.append_locked(
+            &mut file,
+            Event::ArchiveMany {
+                v: FORMAT_VERSION,
+                entries,
+            },
+        );
+        let _ = file.unlock();
+        result?;
+        Ok(ids)
+    }
+
+    /// Restore an archived thread while retaining its lifecycle and history.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the restore event
+    /// cannot be persisted.
+    pub fn restore(&mut self, id: &ThreadId, now: u64) -> Result<(), StoreError> {
+        self.restore_with_context(id, ArchiveContext::new(Author::User, now))
+    }
+
+    /// Restore an archived thread with explicit event context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the thread is unknown or the restore event
+    /// cannot be persisted.
+    pub fn restore_with_context(
+        &mut self,
+        id: &ThreadId,
+        context: ArchiveContext,
+    ) -> Result<(), StoreError> {
+        let mut file = self.lock_for_write()?;
+        if self.archived.iter().all(|thread| thread.id != *id) {
+            if self.thread(id).is_none() {
+                let _ = file.unlock();
+                return Err(StoreError {
+                    kind: ErrorKind::UnknownThread(id.clone()),
+                });
+            }
+            let _ = file.unlock();
+            return Ok(());
+        }
+        let result = self.append_locked(
+            &mut file,
+            Event::Restore {
+                v: FORMAT_VERSION,
+                thread: id.clone(),
+                context,
+            },
+        );
+        let _ = file.unlock();
+        result
     }
 
     /// Move the thread `id` onto `range` of `text`, the lines that replaced
@@ -2388,6 +4078,7 @@ impl Store {
         id: &ThreadId,
         range: LineRange,
         text: &str,
+        placement: PlacementContext,
         now: u64,
     ) -> Result<(), StoreError> {
         self.on_lines(id)?;
@@ -2404,6 +4095,8 @@ impl Store {
             anchor,
             created: now,
             context,
+            version: placement.version,
+            checkout: placement.checkout,
         })
     }
 
@@ -2423,40 +4116,6 @@ impl Store {
         })
     }
 
-    /// Move the thread `id` to `path`, the file's name after a rename
-    /// (ADR 0028). Its range and anchor are untouched, so it locates in
-    /// the renamed file exactly as it did before.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the thread is unknown or the file cannot
-    /// be appended to.
-    pub fn move_path(&mut self, id: &ThreadId, path: &Path, now: u64) -> Result<(), StoreError> {
-        self.commit(Event::Move {
-            v: FORMAT_VERSION,
-            thread: id.clone(),
-            path: path.to_path_buf(),
-            created: now,
-        })
-    }
-
-    /// Record that the thread `id` now belongs to `commit` (ADR 0035):
-    /// a rewrite dropped the commit it was written against while its
-    /// lines stayed in the working tree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`StoreError`] when the thread is unknown or the file cannot
-    /// be appended to.
-    pub fn rescope(&mut self, id: &ThreadId, commit: &str, now: u64) -> Result<(), StoreError> {
-        self.commit(Event::Rescope {
-            v: FORMAT_VERSION,
-            thread: id.clone(),
-            commit: commit.to_owned(),
-            created: now,
-        })
-    }
-
     /// Apply an event in memory, then append it; the file is only written
     /// when the event is valid, and the memory only kept when the file
     /// took it, so what the viewer shows is what the next reload reads.
@@ -2469,6 +4128,14 @@ impl Store {
             let _ = file.unlock();
             return Err(StoreError {
                 kind: ErrorKind::UnknownThread(id),
+            });
+        }
+        if let Some(id) = event.thread_id()
+            && self.archived.iter().any(|thread| thread.id == *id)
+        {
+            let _ = file.unlock();
+            return Err(StoreError {
+                kind: ErrorKind::Archived(id.clone()),
             });
         }
         let result = self.append_locked(&mut file, event);
@@ -2500,6 +4167,7 @@ impl Store {
         })?;
         let before = (
             self.threads.clone(),
+            self.archived.clone(),
             self.deleted.clone(),
             self.receipts.clone(),
             self.cursor,
@@ -2509,6 +4177,7 @@ impl Store {
         if let Err(error) = self.apply(event, cursor) {
             (
                 self.threads,
+                self.archived,
                 self.deleted,
                 self.receipts,
                 self.cursor,
@@ -2526,6 +4195,7 @@ impl Store {
         {
             (
                 self.threads,
+                self.archived,
                 self.deleted,
                 self.receipts,
                 self.cursor,
@@ -2556,9 +4226,11 @@ impl Store {
             self.cursor = cursor;
             return Ok(());
         }
+        let touched = event.thread_id().cloned();
         match event {
             Event::Annotate {
                 id,
+                origin,
                 path,
                 range,
                 snippet,
@@ -2572,11 +4244,26 @@ impl Store {
                 receipt,
                 ..
             } => {
+                let origin = *origin;
                 if range.is_some() != anchor.is_some() || range.is_some() != context.is_some() {
                     return Err(StoreError {
                         kind: ErrorKind::AnnotationShape,
                     });
                 }
+                if origin.path() != path
+                    || origin.range() != range
+                    || origin.snippet() != snippet
+                    || origin.anchor() != anchor.as_ref()
+                    || origin.context() != context.as_ref()
+                {
+                    return Err(StoreError::message(
+                        "annotation origin and placement evidence disagree",
+                    ));
+                }
+                let placement_version = commit
+                    .as_deref()
+                    .map_or_else(|| origin.version().clone(), OriginVersion::commit);
+                let placement = PlacementEvidence::from_origin(&origin, placement_version);
                 let activity = (!author.is_user()).then(|| AgentActivity {
                     cursor,
                     thread: id.clone(),
@@ -2590,6 +4277,8 @@ impl Store {
                 });
                 self.threads.push(Thread {
                     id,
+                    origin,
+                    placement,
                     path,
                     range,
                     snippet,
@@ -2606,7 +4295,13 @@ impl Store {
                     comment_edited: None,
                     reopened: None,
                     context,
+                    resolution_history: Vec::new(),
+                    archived: false,
+                    archive_history: Vec::new(),
+                    restore_history: Vec::new(),
+                    revision: cursor.ordinal(),
                 });
+                order_threads_by_creation(&mut self.threads);
                 if let Some(activity) = activity {
                     self.agent_activity.push(activity);
                 }
@@ -2630,7 +4325,13 @@ impl Store {
                         thread.range = Some(relocation.range);
                         thread.anchor = Some(relocation.anchor);
                         thread.reanchored_at = Some(relocation.created);
-                        thread.context = Some(relocation.context);
+                        thread.context = Some(relocation.context.clone());
+                        thread.placement.range = thread.range;
+                        thread.placement.anchor = thread.anchor.clone();
+                        thread.placement.context = thread.context.clone();
+                        thread.placement.version = relocation.version;
+                        thread.placement.checkout = relocation.checkout;
+                        thread.placement.observed_at = Some(relocation.created);
                     }
                     thread.modified = thread.modified.max(reply.created);
                     if reply.author.is_user() {
@@ -2677,6 +4378,8 @@ impl Store {
                 relocation,
                 resolution,
                 commit,
+                checkout,
+                version,
                 receipt,
                 ..
             } => {
@@ -2688,7 +4391,13 @@ impl Store {
                         thread.range = Some(relocation.range);
                         thread.anchor = Some(relocation.anchor);
                         thread.reanchored_at = Some(relocation.created);
-                        thread.context = Some(relocation.context);
+                        thread.context = Some(relocation.context.clone());
+                        thread.placement.range = thread.range;
+                        thread.placement.anchor = thread.anchor.clone();
+                        thread.placement.context = thread.context.clone();
+                        thread.placement.version = relocation.version;
+                        thread.placement.checkout = relocation.checkout;
+                        thread.placement.observed_at = Some(relocation.created);
                     }
                     thread.modified = thread.modified.max(reply.created);
                     thread.auto_resolve = AutoResolve::Disabled;
@@ -2698,9 +4407,23 @@ impl Store {
                         ResolutionOutcome::Resolved => Lifecycle::Resolved,
                     };
                     if resolution == ResolutionOutcome::Resolved
-                        && let Some(commit) = commit
+                        && let Some(commit_id) = commit.clone()
                     {
-                        thread.commit = Some(commit);
+                        thread.commit = Some(commit_id);
+                    }
+                    if resolution == ResolutionOutcome::Resolved {
+                        thread
+                            .resolution_history
+                            .push(ResolutionRecord::from_context(
+                                ResolutionContext {
+                                    actor: reply.author.clone(),
+                                    checkout,
+                                    version,
+                                    head: commit,
+                                },
+                                reply.created,
+                                cursor.ordinal(),
+                            ));
                     }
                     activity = AgentActivity {
                         cursor,
@@ -2759,15 +4482,30 @@ impl Store {
                 thread,
                 created,
                 commit,
+                actor,
+                checkout,
+                version,
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
                 thread.modified = thread.modified.max(created);
                 thread.lifecycle = Lifecycle::Resolved;
                 thread.auto_resolve = AutoResolve::Disabled;
-                if let Some(commit) = commit {
-                    thread.commit = Some(commit);
+                if let Some(commit_id) = commit.clone() {
+                    thread.commit = Some(commit_id);
                 }
+                thread
+                    .resolution_history
+                    .push(ResolutionRecord::from_context(
+                        ResolutionContext {
+                            actor: actor.unwrap_or(Author::User),
+                            checkout,
+                            version,
+                            head: commit,
+                        },
+                        created,
+                        cursor.ordinal(),
+                    ));
             }
             Event::Reopen {
                 thread, created, ..
@@ -2784,6 +4522,8 @@ impl Store {
                 anchor,
                 created,
                 context,
+                version,
+                checkout,
                 ..
             } => {
                 let thread = self.thread_mut(&thread)?;
@@ -2791,32 +4531,19 @@ impl Store {
                 thread.range = Some(range);
                 thread.anchor = Some(anchor);
                 thread.reanchored_at = Some(created);
-                thread.context = Some(context);
-            }
-            Event::Move {
-                thread,
-                path,
-                created,
-                ..
-            } => {
-                let thread = self.thread_mut(&thread)?;
-                thread.modified = thread.modified.max(created);
-                thread.path = path;
+                thread.context = Some(context.clone());
+                thread.placement.range = thread.range;
+                thread.placement.anchor = thread.anchor.clone();
+                thread.placement.context = thread.context.clone();
+                thread.placement.version = version;
+                thread.placement.checkout = checkout;
+                thread.placement.observed_at = Some(created);
             }
             Event::Delete { thread, .. } => {
                 self.thread_mut(&thread)?;
                 self.threads.retain(|other| other.id != thread);
+                self.archived.retain(|other| other.id != thread);
                 self.deleted.insert(thread);
-            }
-            Event::Rescope {
-                thread,
-                commit,
-                created,
-                ..
-            } => {
-                let thread = self.thread_mut(&thread)?;
-                thread.modified = thread.modified.max(created);
-                thread.commit = Some(commit);
             }
             Event::SetAutoResolve {
                 thread,
@@ -2834,6 +4561,80 @@ impl Store {
                 thread.modified = thread.modified.max(created);
                 thread.auto_resolve = value;
             }
+            Event::ArchiveMany { entries, .. } => {
+                let mut positions = Vec::with_capacity(entries.len());
+                for entry in &entries {
+                    let Some((position, thread)) = self
+                        .threads
+                        .iter()
+                        .enumerate()
+                        .find(|(_, thread)| thread.id == entry.thread)
+                    else {
+                        return Err(StoreError {
+                            kind: ErrorKind::SlateChanged(entry.thread.clone()),
+                        });
+                    };
+                    if thread.is_archived() || positions.iter().any(|(index, _)| *index == position)
+                    {
+                        return Err(StoreError {
+                            kind: ErrorKind::SlateChanged(entry.thread.clone()),
+                        });
+                    }
+                    positions.push((position, entry));
+                }
+                positions.sort_by_key(|(position, _)| *position);
+                let mut moved = Vec::with_capacity(positions.len());
+                for (_, entry) in positions.into_iter().rev() {
+                    let position = self
+                        .threads
+                        .iter()
+                        .position(|thread| thread.id == entry.thread)
+                        .ok_or_else(|| StoreError {
+                            kind: ErrorKind::SlateChanged(entry.thread.clone()),
+                        })?;
+                    let mut thread = self.threads.remove(position);
+                    thread.archived = true;
+                    thread.auto_resolve = AutoResolve::Disabled;
+                    thread.modified = thread.modified.max(entry.context.created);
+                    thread.archive_history.push(ArchiveRecord::from_context(
+                        entry.context.clone(),
+                        cursor.ordinal(),
+                    ));
+                    thread.revision = cursor.ordinal();
+                    moved.push(thread);
+                }
+                moved.reverse();
+                self.archived.extend(moved);
+                order_threads_by_creation(&mut self.archived);
+            }
+            Event::Restore {
+                thread: id,
+                context,
+                ..
+            } => {
+                let position = self
+                    .archived
+                    .iter()
+                    .position(|thread| thread.id == id)
+                    .ok_or_else(|| StoreError {
+                        kind: ErrorKind::UnknownThread(id.clone()),
+                    })?;
+                let mut thread = self.archived.remove(position);
+                thread.archived = false;
+                thread.auto_resolve = AutoResolve::Disabled;
+                thread.modified = thread.modified.max(context.created);
+                thread
+                    .restore_history
+                    .push(RestoreRecord::from_context(context, cursor.ordinal()));
+                thread.revision = cursor.ordinal();
+                self.threads.push(thread);
+                order_threads_by_creation(&mut self.threads);
+            }
+        }
+        if let Some(id) = touched
+            && let Ok(thread) = self.thread_mut(&id)
+        {
+            thread.revision = cursor.ordinal();
         }
         self.cursor = cursor;
         Ok(())
@@ -2856,6 +4657,7 @@ impl Store {
     fn thread_mut(&mut self, id: &ThreadId) -> Result<&mut Thread, StoreError> {
         self.threads
             .iter_mut()
+            .chain(self.archived.iter_mut())
             .find(|thread| thread.id == *id)
             .ok_or_else(|| StoreError {
                 kind: ErrorKind::UnknownThread(id.clone()),
@@ -3004,6 +4806,7 @@ fn capture_reply_relocation<F>(
     thread: &Thread,
     lines: Option<LineRange>,
     created: u64,
+    placement: PlacementContext,
     load_text: F,
 ) -> Result<Option<ReplyRelocation>, StoreError>
 where
@@ -3037,7 +4840,31 @@ where
         anchor,
         created,
         context,
+        version: placement.version,
+        checkout: placement.checkout,
     }))
+}
+
+fn order_threads_by_creation(threads: &mut [Thread]) {
+    threads.sort_by(|left, right| {
+        left.created
+            .cmp(&right.created)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+}
+
+fn origin_provenance(draft: &Draft, snippet: &str) -> Provenance {
+    let mut provenance = draft.provenance.clone();
+    if matches!(provenance.version, OriginVersion::Unknown) {
+        provenance.version = draft.commit.as_deref().map_or_else(
+            || OriginVersion::working_tree(draft.commit.clone()),
+            OriginVersion::commit,
+        );
+    }
+    if provenance.content.is_none() {
+        provenance.content = Some(ContentIdentity::from_text(snippet));
+    }
+    provenance
 }
 
 fn capture_annotation(
@@ -3058,6 +4885,7 @@ fn capture_annotation(
                 .take(range.len())
                 .collect::<Vec<_>>()
                 .join("\n");
+            let (snippet, _) = bound_evidence(&snippet);
             Ok((Some(anchor), Some(context), snippet))
         }
         None => Ok((None, None, String::new())),
@@ -3080,6 +4908,8 @@ enum ErrorKind {
     IdempotencyConflict(String),
     IdempotencyDeleted(ThreadId),
     InvalidPath(PathBuf),
+    Archived(ThreadId),
+    SlateChanged(ThreadId),
     Message(String),
 }
 
@@ -3154,6 +4984,18 @@ impl StoreError {
     pub fn is_io(&self) -> bool {
         matches!(self.kind, ErrorKind::Io(..))
     }
+
+    /// Whether a mutation was refused because its target is archived.
+    #[must_use]
+    pub fn is_archived(&self) -> bool {
+        matches!(self.kind, ErrorKind::Archived(_))
+    }
+
+    /// Whether an acknowledged clear-board slate is stale.
+    #[must_use]
+    pub fn is_slate_changed(&self) -> bool {
+        matches!(self.kind, ErrorKind::SlateChanged(_))
+    }
 }
 
 impl fmt::Display for StoreError {
@@ -3210,6 +5052,13 @@ impl fmt::Display for StoreError {
                     path.display()
                 )
             }
+            ErrorKind::Archived(id) => {
+                write!(f, "thread {id} is archived; restore it before writing")
+            }
+            ErrorKind::SlateChanged(id) => write!(
+                f,
+                "board slate changed for thread {id}; review the board again"
+            ),
             ErrorKind::Message(message) => f.write_str(message),
         }
     }

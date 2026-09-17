@@ -12,9 +12,9 @@
 //! [`run`] owns the terminal, the file watcher, and the viewer socket.
 
 pub(crate) mod agents;
-mod checkpoints;
 mod clipboard;
 mod commands;
+mod comparison;
 mod diff;
 mod diff_keys;
 mod doctor_view;
@@ -25,8 +25,8 @@ mod files_shown;
 mod goto_file;
 pub(crate) mod input;
 mod jumplist;
-mod last_seen;
 mod menu_bar;
+mod review_points;
 pub(crate) mod run;
 mod sidebar;
 mod socket;
@@ -59,11 +59,12 @@ use fathomable_core::follow::{Change, Ignore, Queue, Target};
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::reach::Reach;
-use fathomable_core::seen;
 use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::status::{State, Status};
 use fathomable_core::tree::Tree;
-use fathomable_core::workspace::{EntryKind, Filter, Workspace, WorkspaceError, is_rules_file};
+use fathomable_core::workspace::{
+    ComparisonEndpoint, EntryKind, Filter, Workspace, WorkspaceError, is_rules_file,
+};
 use fathomable_core::{Document, XdgDirs};
 use input::bindings::Chord;
 
@@ -138,10 +139,16 @@ pub(crate) enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
-    /// The base side of the diff (ADR 0060).
-    DiffBase,
-    /// The target side of the diff (ADR 0060).
-    DiffTarget,
+    /// The unified comparison control.
+    ComparisonControl,
+    /// The base endpoint of the viewer-wide comparison.
+    ComparisonBase,
+    /// The target endpoint of the viewer-wide comparison.
+    ComparisonTarget,
+    /// The All changes or Since review point focus.
+    ComparisonFocus,
+    /// Optional name for a new workspace review point.
+    ReviewPointName,
     /// The worktrees of the workspace, the active one marked (ADR 0070).
     Worktree,
 }
@@ -218,6 +225,12 @@ pub(crate) enum Popup {
     About,
     /// The context menu a right-click opened (ADR 0050).
     Menu(input::menu::Menu),
+    /// Confirmation for a repository-wide clear-board operation.
+    ConfirmBoard {
+        slate: annotations::BoardSlate,
+        counts: threads::archive::BoardCounts,
+        changed: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -228,12 +241,11 @@ struct Doc {
     marks: Vec<Mark>,
     /// The draft waiting here while another file or popup has the keys.
     draft: Option<Compose>,
-    /// Whether the text has changed or been read since it was last
-    /// snapshotted as seen.
-    seen_dirty: bool,
     /// Set while the file is gone from disk (ADR 0028); retained content
     /// stays available until it returns.
     deleted: Option<Deleted>,
+    /// Why the selected comparison cannot present text for this path.
+    comparison_notice: Option<String>,
 }
 
 /// Which retained source a deleted file shows (ADR 0028).
@@ -245,6 +257,8 @@ enum Deleted {
     Index,
     /// The deletion is staged; the `HEAD` blob is shown.
     Head,
+    /// The selected comparison target has no path; its base is shown.
+    ComparisonBase,
 }
 
 impl Deleted {
@@ -253,6 +267,7 @@ impl Deleted {
             Self::Loaded => "deleted from worktree · showing last loaded",
             Self::Index => "deleted from worktree · showing INDEX",
             Self::Head => "staged deletion · showing HEAD",
+            Self::ComparisonBase => "deleted in comparison · showing base",
         }
     }
 }
@@ -366,13 +381,14 @@ pub(crate) struct App {
     ignore: Ignore,
     queue: Queue,
     toasts: Vec<Toast>,
-    seen: Option<seen::Store>,
-    /// The reader's checkpoints (ADR 0049).
-    checkpoints: Option<fathomable_core::checkpoints::Store>,
-    /// What each item of an open side picker names (ADR 0060).
-    diff_choices: Vec<(String, diff::Side)>,
-    /// The target `Space d g` fixes for the next base choice.
-    diff_target_next: Option<diff::Side>,
+    /// Explicit workspace review points.
+    review_points: Option<fathomable_core::review_points::ReviewPointStore>,
+    /// The one comparison selection for this checkout.
+    comparison: comparison::State,
+    /// Cached path/count projection for the current comparison generation.
+    comparison_status: Status,
+    /// Whether unified diff presentation follows file switches.
+    comparison_diff: bool,
     /// How diffs are compared this session: the config's start, then
     /// `Space d w` (ADR 0060).
     compare: fathomable_core::diff::Compare,
@@ -394,6 +410,11 @@ pub(crate) struct App {
     /// Where a thread another worktree shows sits in that worktree's
     /// file (ADR 0070).
     elsewhere: HashMap<ThreadId, annotations::Placement>,
+    /// Exact file renames observed in this active checkout.
+    ///
+    /// This viewer-local projection prevents one worktree from rewriting the
+    /// repository board's path for every other worktree.
+    local_thread_paths: HashMap<ThreadId, PathBuf>,
     /// What the loop's watcher must move to, once (ADR 0070).
     rewatch: Option<worktrees::Rewatch>,
 }
@@ -401,8 +422,7 @@ pub(crate) struct App {
 impl App {
     /// Start with no document open, for a terminal of `width` by `height`.
     ///
-    /// Threads on files edited while Fathomable was closed are followed
-    /// through their last-seen snapshots before anything opens (ADR 0020).
+    /// Start the viewer with repository comparison and thread state loaded.
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -411,8 +431,7 @@ impl App {
             thread_store_error,
             jump,
             watch,
-            seen,
-            checkpoints,
+            review_points,
             highlighter,
             markdown,
             viewer,
@@ -425,6 +444,11 @@ impl App {
         } = options;
         let ignore = watch_ignore(&watch);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
+        let comparison = comparison::State::load(
+            dirs.comparison_dir(workspace.root()),
+            &workspace,
+            diff.compare(),
+        );
         let mut app = Self {
             workspace,
             docs: Vec::new(),
@@ -475,10 +499,10 @@ impl App {
             ignore,
             queue: Queue::default(),
             toasts: Vec::new(),
-            seen,
-            checkpoints,
-            diff_choices: Vec::new(),
-            diff_target_next: None,
+            review_points,
+            comparison,
+            comparison_status: Status::default(),
+            comparison_diff: false,
             compare: diff.compare(),
             watching_root: true,
             status_stale: false,
@@ -488,6 +512,7 @@ impl App {
             worktree_paths: Vec::new(),
             reach_cache: HashMap::new(),
             elsewhere: HashMap::new(),
+            local_thread_paths: HashMap::new(),
             rewatch: None,
         };
         if app.sidebar.tree && !app.ensure_tree() {
@@ -496,9 +521,7 @@ impl App {
         app.relayout();
         app.refresh_worktrees();
         app.refresh_status();
-        // Snapshots first: a thread edited offline must locate before the
-        // scope refresh can keep it across a rewrite (ADR 0035).
-        app.reanchor_from_snapshots();
+        app.refresh_comparison();
         app.refresh_reach();
         app
     }
@@ -510,17 +533,10 @@ impl App {
     pub(super) fn refresh_reach(&mut self) {
         let head = self.workspace.head_commit();
         let active = match (self.store.as_mut(), head) {
-            (Some(store), Some(head)) => match self.workspace.reachable(store.commits()) {
-                Some(mut reachable) => {
-                    if crate::app::threads::reach::follow_head(store, &self.workspace, &reachable)
-                        > 0
-                    {
-                        reachable.insert(head.clone());
-                    }
-                    Some((head, reachable))
-                }
-                None => None,
-            },
+            (Some(store), Some(head)) => self
+                .workspace
+                .reachable(store.commits())
+                .map(|reachable| (head, reachable)),
             _ => None,
         };
         self.reconcile_agent_activity();
@@ -773,6 +789,10 @@ impl App {
     /// join the queue; the directories whose listings changed are
     /// re-read in the tree. A platform event-loss notice reconciles the
     /// whole remembered workspace from disk.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "watch batches keep event ordering and stale-state handling together"
+    )]
     pub(crate) fn on_events(&mut self, events: Vec<watch::Event>) {
         if events
             .iter()
@@ -791,7 +811,7 @@ impl App {
         let mut changed: Vec<PathBuf> = Vec::new();
         // Root-relative directories whose listing changed.
         let mut dirs: Vec<PathBuf> = Vec::new();
-        let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+        let mut observed_paths: HashSet<PathBuf> = HashSet::new();
         for event in events {
             let Some(event) = on_this_side(event, &root) else {
                 continue;
@@ -823,7 +843,7 @@ impl App {
             let created = matches!(&event, watch::Event::Created(_));
             match event {
                 watch::Event::Change(absolute) | watch::Event::Created(absolute) => {
-                    if !seen_paths.insert(relative.clone()) {
+                    if !observed_paths.insert(relative.clone()) {
                         continue;
                     }
                     let listed = self
@@ -869,6 +889,9 @@ impl App {
         } else if !changed.is_empty() {
             self.refresh_status_for(&changed);
         }
+        if git_changed || rules_changed || !changed.is_empty() {
+            self.refresh_comparison();
+        }
         // The banner row takes a text row, so the view re-fits when it
         // comes or goes.
         if banner_before != self.banner().is_some() {
@@ -899,6 +922,7 @@ impl App {
     fn on_git_changed(&mut self) {
         tracing::info!("git metadata changed; refreshing HEAD bases");
         self.refresh_worktrees();
+        self.refresh_comparison();
         for index in 0..self.docs.len() {
             self.refresh_base(index);
         }
@@ -913,6 +937,7 @@ impl App {
         self.reload_rules();
         self.reload_store();
         self.refresh_worktrees();
+        self.refresh_comparison();
         for index in 0..self.docs.len() {
             self.refresh_base(index);
         }
@@ -1014,8 +1039,8 @@ impl App {
         }
     }
 
-    /// Root-relative `from` became `to`: threads move with it, and a
-    /// loaded document follows with its view intact (ADR 0028).
+    /// Root-relative `from` became `to`: a working-tree document follows,
+    /// and thread paths are projected locally without rewriting the board.
     fn on_renamed(&mut self, from: &Path, to: &Path) {
         tracing::info!(from = %from.display(), to = %to.display(), "renamed");
         self.file_index.removed(from);
@@ -1034,6 +1059,18 @@ impl App {
             }
         };
         self.queue.remove(from);
+        self.remember_thread_moves(&moved);
+        let tracks_working_tree = self
+            .comparison()
+            .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree);
+        if !tracks_working_tree {
+            tracing::info!(
+                from = %from.display(),
+                to = %to.display(),
+                "working rename left immutable comparison identities unchanged"
+            );
+            return;
+        }
         let mut current_moved = None;
         let mut renamed = Vec::new();
         for index in 0..self.docs.len() {
@@ -1050,9 +1087,6 @@ impl App {
             }
             renamed.push(index);
         }
-        // The store moves first, so the marks are read once under the new
-        // path rather than emptied and refilled.
-        self.move_threads(&moved);
         for index in renamed {
             self.refresh_base(index);
             self.refresh_marks(index);
@@ -1062,14 +1096,15 @@ impl App {
         }
     }
 
-    /// The fingerprint the file at absolute `path` last had, from its
-    /// loaded text or its last-seen snapshot, for rename pairing.
     /// The largest file the viewer reads (`viewer.max-file-size-mib`).
     pub(crate) fn max_file_bytes(&self) -> u64 {
         self.viewer.max_file_bytes()
     }
 
-    pub(crate) fn last_seen_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
+    /// The loaded text fingerprint used for in-memory rename pairing.
+    ///
+    /// The method name remains for the watcher/run seam owned elsewhere.
+    pub(crate) fn loaded_fingerprint(&self, path: &Path) -> Option<Fingerprint> {
         let relative = path.strip_prefix(self.workspace.root()).ok()?;
         if let Some(text) = self
             .docs
@@ -1079,8 +1114,7 @@ impl App {
         {
             return Some(Fingerprint::from_bytes(text.as_bytes()));
         }
-        let text = self.seen.as_ref()?.text(relative).ok().flatten()?;
-        Some(Fingerprint::from_bytes(text.as_bytes()))
+        None
     }
 
     // ----- git status (ADR 0017) -----
@@ -1161,11 +1195,6 @@ impl App {
                 if status != self.status {
                     tracing::info!(dirty = status.len(), "dirty set changed");
                 }
-                let shown = self
-                    .current
-                    .and_then(|index| self.docs.get(index))
-                    .and_then(|doc| doc.view.diff())
-                    .map(|diff| (diff.base.clone(), diff.target.clone()));
                 self.status = status;
                 self.status_stale = false;
                 let root = self.workspace.root().to_path_buf();
@@ -1184,6 +1213,9 @@ impl App {
                 let mut marks_to_refresh = Vec::new();
                 for (index, source, relative) in deleted_updates {
                     let current = self.docs[index].deleted;
+                    if current == Some(Deleted::ComparisonBase) {
+                        continue;
+                    }
                     if current.is_none() {
                         self.docs[index].deleted = Some(Deleted::Loaded);
                         self.docs[index].view.set_worktree_missing(true);
@@ -1192,6 +1224,7 @@ impl App {
                             Deleted::Index => self.workspace.index_bytes(&relative),
                             Deleted::Head => self.workspace.head_bytes(&relative),
                             Deleted::Loaded => unreachable!("loaded content is not a Git source"),
+                            Deleted::ComparisonBase => continue,
                         };
                         match bytes {
                             Ok(Some(bytes)) => {
@@ -1238,9 +1271,7 @@ impl App {
                     );
                 }
                 self.sift_tree();
-                if let Some((base, target)) = shown {
-                    self.show_diff(base, target);
-                }
+                self.refresh_comparison();
             }
             Err(error) => {
                 self.status_stale = true;
@@ -1290,16 +1321,17 @@ impl App {
     /// `]G` always lands on the first.
     fn step_dirty(&mut self, forward: bool, from_hunk: bool) {
         let current = self.current.map(|i| self.docs[i].relative.clone());
+        let comparison_status = self.comparison_status();
         let next = if forward {
-            self.status.after(current.as_deref())
+            comparison_status.after(current.as_deref())
         } else {
-            self.status.before(current.as_deref())
+            comparison_status.before(current.as_deref())
         };
         let Some(entry) = next else {
             self.notice(if self.walks.in_flight() {
                 "git status is still walking the tree"
             } else {
-                "nothing uncommitted"
+                "nothing in the selected comparison"
             });
             return;
         };
@@ -1312,13 +1344,12 @@ impl App {
                 _ => false,
             };
         if !is_current {
-            if !self.workspace.root().join(&path).is_file() {
-                self.notice(format!("{} is deleted", path.display()));
-                return;
-            }
             self.close_popup();
             self.focus = Focus::View;
             self.open(&path);
+            if self.current_path() != path {
+                return;
+            }
         }
         let line = if forward || !from_hunk {
             self.view().first_hunk_line()
@@ -1389,18 +1420,12 @@ impl App {
         self.push_change(Change::new(path, Target::Line(line.unwrap_or(1))), counts);
     }
 
-    /// The first hunk and counts of a file that is not open, against
-    /// `HEAD` (ADR 0017), or against its last-seen snapshot outside git.
+    /// The first hunk and counts of a file that is not open against `HEAD`.
     fn unloaded_change(&self, relative: &Path, absolute: &Path) -> (Option<usize>, (usize, usize)) {
         let Ok(text) = fs::read_to_string(absolute) else {
             return (None, (0, 0));
         };
-        let base = self
-            .workspace
-            .head_text(relative)
-            .ok()
-            .flatten()
-            .or_else(|| self.seen.as_ref()?.text(relative).ok().flatten());
+        let base = self.workspace.head_text(relative).ok().flatten();
         let Some(base) = base else {
             return (None, (0, 0));
         };
@@ -1444,16 +1469,10 @@ impl App {
         }
     }
 
-    /// Expire toasts and snapshot the current file once it has been idle.
+    /// Expire transient toasts.
     pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|toast| toast.until > now);
-        if let Some(index) = self.current
-            && self.docs[index].seen_dirty
-            && self.docs[index].view.idle() >= self.viewer.seen_idle
-        {
-            self.mark_seen(index);
-        }
     }
 
     /// How long until [`App::tick`] has something to do, `None` when
@@ -1466,12 +1485,6 @@ impl App {
         };
         if let Some(toast) = self.toasts.first() {
             consider(toast.until.saturating_duration_since(now));
-        }
-        if let Some(index) = self.current
-            && self.docs[index].seen_dirty
-        {
-            let idle = self.docs[index].view.idle();
-            consider(self.viewer.seen_idle.saturating_sub(idle));
         }
         next
     }
@@ -1753,6 +1766,10 @@ impl App {
     }
 
     /// Open the root-relative `path`, loading it or switching to it.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "opening retains the explicit endpoint and missing-path decisions together"
+    )]
     pub(crate) fn open(&mut self, path: &Path) {
         self.getting_started = None;
         let had_directory = self.directory.take().is_some();
@@ -1766,36 +1783,71 @@ impl App {
                 attr: self.workspace.diff_attr(&relative),
                 max_bytes: self.viewer.max_file_bytes(),
             };
-            let deleted = matches!(absolute.try_exists(), Ok(false))
-                .then(|| deleted_source(self.status.get(&relative)))
-                .flatten();
-            let document = match deleted {
-                Some(Deleted::Index) => self
-                    .workspace
-                    .index_bytes(&relative)
-                    .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        bytes
-                            .ok_or_else(|| "no index snapshot is available".to_owned())
-                            .and_then(|bytes| {
-                                Document::from_snapshot(&absolute, bytes, policy)
-                                    .map_err(|error| error.to_string())
-                            })
-                    }),
-                Some(Deleted::Head) => self
-                    .workspace
-                    .head_bytes(&relative)
-                    .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        bytes
-                            .ok_or_else(|| "no HEAD snapshot is available".to_owned())
-                            .and_then(|bytes| {
-                                Document::from_snapshot(&absolute, bytes, policy)
-                                    .map_err(|error| error.to_string())
-                            })
-                    }),
-                Some(Deleted::Loaded) => unreachable!("new documents have no loaded snapshot"),
-                None => Document::load(&absolute, policy).map_err(|error| error.to_string()),
+            let selected_target_is_working =
+                self.comparison.target() == &ComparisonEndpoint::WorkingTree;
+            let comparison_target_missing = self
+                .comparison
+                .current()
+                .and_then(|comparison| {
+                    comparison
+                        .changes()
+                        .iter()
+                        .find(|change| change.path() == relative)
+                })
+                .is_some_and(|change| {
+                    matches!(change.target(), fathomable_core::diff::PathState::Absent)
+                });
+            let deleted = if comparison_target_missing {
+                Some(Deleted::ComparisonBase)
+            } else {
+                (selected_target_is_working && matches!(absolute.try_exists(), Ok(false)))
+                    .then(|| deleted_source(self.status.get(&relative)))
+                    .flatten()
+            };
+            let historical = (!selected_target_is_working || comparison_target_missing)
+                .then(|| self.comparison_display_text(&relative))
+                .or_else(|| {
+                    matches!(self.comparison.focus(), comparison::Focus::Since(_))
+                        .then(|| self.comparison_display_text(&relative))
+                });
+            let document = match historical {
+                Some(Ok(Some(text))) => {
+                    Document::from_snapshot(&absolute, text.into_bytes(), policy)
+                        .map_err(|error| error.to_string())
+                }
+                Some(Ok(None)) => Ok(Document::missing(&absolute, policy)),
+                Some(Err(error)) => Err(error),
+                None => match deleted {
+                    Some(Deleted::Index) => self
+                        .workspace
+                        .index_bytes(&relative)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| {
+                            bytes
+                                .ok_or_else(|| "no index snapshot is available".to_owned())
+                                .and_then(|bytes| {
+                                    Document::from_snapshot(&absolute, bytes, policy)
+                                        .map_err(|error| error.to_string())
+                                })
+                        }),
+                    Some(Deleted::Head) => self
+                        .workspace
+                        .head_bytes(&relative)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| {
+                            bytes
+                                .ok_or_else(|| "no HEAD snapshot is available".to_owned())
+                                .and_then(|bytes| {
+                                    Document::from_snapshot(&absolute, bytes, policy)
+                                        .map_err(|error| error.to_string())
+                                })
+                        }),
+                    Some(Deleted::Loaded) => unreachable!("new documents have no loaded snapshot"),
+                    Some(Deleted::ComparisonBase) => {
+                        unreachable!("comparison-base content is handled above")
+                    }
+                    None => Document::load(&absolute, policy).map_err(|error| error.to_string()),
+                },
             };
             match document {
                 Ok(document) => {
@@ -1820,8 +1872,8 @@ impl App {
                         view,
                         marks: Vec::new(),
                         draft: None,
-                        seen_dirty: true,
                         deleted,
+                        comparison_notice: None,
                     });
                     self.docs.len() - 1
                 }
@@ -1888,14 +1940,16 @@ impl App {
             && previous != index
         {
             self.park_draft();
-            self.mark_seen(previous);
         }
         self.current = Some(index);
         // A document takes the column back from the list (ADR 0025).
-        self.review_list.close();
+        self.close_review();
         self.focus = Focus::View;
-        self.refresh_base(index);
+        self.apply_comparison_projection(index);
         self.refresh_marks(index);
+        if self.comparison_diff {
+            self.show_comparison_diff();
+        }
         // The document's stubs follow the session's toggles (ADR 0049).
         self.place_stub_rows();
         self.relayout();
@@ -1961,20 +2015,34 @@ impl App {
         self.view_mut().goto_source_line(target.line);
     }
 
-    /// Re-read the document at `index`; the diff from the text that was
-    /// on screen to the text that replaced it, if they differ.
+    /// Re-read the working document at `index`.
+    ///
+    /// The returned diff is between consecutive working-tree contents for
+    /// change hints. Persistent live relocation applies only while the
+    /// effective comparison target is that working tree; immutable historical
+    /// displays are projected again without rewriting thread placement.
     fn reload_doc(&mut self, index: usize) -> Option<Diff> {
-        let doc = &mut self.docs[index];
-        match doc.document.reload() {
+        let old = self.docs[index]
+            .document
+            .text()
+            .unwrap_or_default()
+            .to_owned();
+        let tracks_working_tree = self
+            .comparison()
+            .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree);
+        match self.docs[index].document.reload() {
             Ok(true) => {
+                let doc = &mut self.docs[index];
                 tracing::info!(path = %doc.relative.display(), "reloaded after change");
-                let old = doc.view.text().to_owned();
                 let text = doc.document.text().unwrap_or_default();
                 let diff = Diff::new(&old, text);
                 doc.view.reload(text.to_owned());
-                doc.seen_dirty = true;
-                self.refresh_base(index);
-                self.remap_marks(index, &old);
+                self.apply_comparison_projection(index);
+                if tracks_working_tree {
+                    self.remap_marks(index, &old);
+                } else {
+                    self.refresh_marks(index);
+                }
                 Some(diff)
             }
             Ok(false) => None,
@@ -1985,61 +2053,9 @@ impl App {
         }
     }
 
-    /// Re-read the diff bases of the document at `index`: the last-seen
-    /// snapshot (ADR 0015) and the `HEAD` text (ADR 0006). A `HEAD` read
-    /// failure is reported once and leaves no base.
+    /// Re-apply the selected comparison projection to a loaded document.
     fn refresh_base(&mut self, index: usize) {
-        // A binary or over-limit file has nothing to diff (ADR 0026).
-        let Some(relative) = self
-            .docs
-            .get(index)
-            .filter(|doc| doc.document.text().is_some())
-            .map(|doc| doc.relative.clone())
-        else {
-            return;
-        };
-        let head = match self.workspace.head_text(&relative) {
-            Ok(base) => base,
-            Err(error) => {
-                self.notice(format!("no diff base: {error}"));
-                None
-            }
-        };
-        let staged = match self.workspace.index_text(&relative) {
-            Ok(base) => base,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read the index text; hunks show as unstaged");
-                None
-            }
-        };
-        let seen = self
-            .seen
-            .as_ref()
-            .and_then(|seen| match seen.text(&relative) {
-                Ok(text) => text,
-                Err(error) => {
-                    tracing::warn!(%error, "cannot read last-seen snapshot");
-                    None
-                }
-            });
-        let shown = self
-            .docs
-            .get(index)
-            .and_then(|doc| doc.view.diff())
-            .map(|diff| (diff.base.clone(), diff.target.clone()));
-        if let Some(doc) = self.docs.get_mut(index) {
-            doc.view.set_bases(seen, staged, head);
-            doc.view.set_index_missing(
-                self.status
-                    .get(&relative)
-                    .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
-            );
-        }
-        if self.current == Some(index)
-            && let Some((base, target)) = shown
-        {
-            self.show_diff(base, target);
-        }
+        self.apply_comparison_projection(index);
     }
 
     // ----- sidebar -----
@@ -2050,7 +2066,9 @@ impl App {
         }
         match Tree::new(&mut self.workspace) {
             Ok(mut tree) => {
-                tree.sift(&self.status);
+                let status = self.comparison_status().clone();
+                tree.sift(&status);
+                tree.set_virtual_paths(&status, self.comparison_virtual_paths());
                 self.tree = Some(tree);
                 true
             }
@@ -2159,7 +2177,11 @@ impl App {
                 .iter()
                 .map(|&index| self.docs[index].relative.to_string_lossy().into_owned())
                 .collect(),
-            PickerKind::DiffBase | PickerKind::DiffTarget => self.diff_choices(),
+            PickerKind::ComparisonBase => self.comparison_choices(false),
+            PickerKind::ComparisonTarget => self.comparison_choices(true),
+            PickerKind::ComparisonControl => self.comparison_control_choices(),
+            PickerKind::ComparisonFocus => self.comparison_focus_choices(),
+            PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
             PickerKind::Worktree => self.worktree_choices(),
         };
         tracing::info!(?kind, items = items.len(), "picker opened");
@@ -2168,10 +2190,22 @@ impl App {
     }
 
     fn index(&mut self, filter: Filter) -> Vec<String> {
-        match filter {
+        let mut files = match filter {
             Filter::All => self.all_index.files(&mut self.workspace),
             Filter::Visible => self.file_index.files(&mut self.workspace),
+        };
+        for path in self
+            .comparison()
+            .into_iter()
+            .flat_map(fathomable_core::diff::Comparison::changes)
+            .map(|change| change.path().to_string_lossy().into_owned())
+        {
+            if !files.contains(&path) {
+                files.push(path);
+            }
         }
+        files.sort();
+        files
     }
 
     fn picker_mut(&mut self) -> Option<&mut PickerState> {
@@ -2205,18 +2239,56 @@ impl App {
     /// Enter in the picker: open the file, or show the thread.
     pub(crate) fn picker_confirm(&mut self) {
         let choice = self.picker_mut().and_then(|picker| {
-            let m = picker.matches.get(picker.selected)?;
-            Some((picker.kind, picker.item(m).to_owned()))
+            if let Some(m) = picker.matches.get(picker.selected) {
+                Some((
+                    picker.kind,
+                    picker.item(m).to_owned(),
+                    picker.input().to_owned(),
+                ))
+            } else if matches!(
+                picker.kind,
+                PickerKind::ComparisonBase
+                    | PickerKind::ComparisonTarget
+                    | PickerKind::ReviewPointName
+            ) && !picker.input().trim().is_empty()
+            {
+                Some((
+                    picker.kind,
+                    picker.input().to_owned(),
+                    picker.input().to_owned(),
+                ))
+            } else {
+                None
+            }
         });
         self.popup = None;
         match choice {
-            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path)) => {
+            Some((PickerKind::Files | PickerKind::AllFiles | PickerKind::Recent, path, _)) => {
                 self.open(Path::new(&path));
             }
-            Some((kind @ (PickerKind::DiffBase | PickerKind::DiffTarget), item)) => {
-                self.choose_diff_side(kind, &item);
+            Some((
+                kind @ (PickerKind::ComparisonBase | PickerKind::ComparisonTarget),
+                item,
+                input,
+            )) => {
+                self.choose_diff_side_input(kind, &item, &input);
             }
-            Some((PickerKind::Worktree, item)) => self.choose_worktree(&item),
+            Some((PickerKind::ComparisonControl, item, _)) => {
+                self.choose_comparison_control(&item);
+            }
+            Some((PickerKind::ComparisonFocus, item, _)) => {
+                self.choose_comparison_focus(&item);
+            }
+            Some((PickerKind::ReviewPointName, item, input)) => {
+                let name = if input.trim().is_empty() {
+                    None
+                } else {
+                    Some(input.trim())
+                };
+                let _ = item;
+                self.save_review_point(name);
+            }
+            Some((PickerKind::Worktree, item, _)) => self.choose_worktree(&item),
             None => {}
         }
     }
@@ -2254,10 +2326,8 @@ pub(crate) struct Options {
     pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).
     pub(crate) watch: WatchConfig,
-    /// The last-seen snapshot store, or `None` when it could not be opened.
-    pub(crate) seen: Option<seen::Store>,
-    /// The checkpoint store (ADR 0049), or `None` when it could not be opened.
-    pub(crate) checkpoints: Option<fathomable_core::checkpoints::Store>,
+    /// Explicit workspace review points, or `None` when storage is unavailable.
+    pub(crate) review_points: Option<fathomable_core::review_points::ReviewPointStore>,
     /// Code highlighting for fences and source files (ADR 0016).
     pub(crate) highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
@@ -2295,8 +2365,7 @@ impl Options {
             thread_store_error: None,
             jump: JumpConfig::default(),
             watch: WatchConfig::default(),
-            seen: None,
-            checkpoints: None,
+            review_points: None,
             highlighter: Arc::new(Highlighter::plain()),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),

@@ -150,14 +150,6 @@ impl App {
             return;
         };
         if is_dir {
-            if self
-                .directory
-                .as_ref()
-                .is_none_or(|directory| directory.path != path)
-                && let Some(index) = self.current
-            {
-                self.mark_seen(index);
-            }
             let counts = match self.tree.as_mut().and_then(|tree| {
                 match tree.current_directory_counts(&mut self.workspace) {
                     Ok(counts) => counts.map(Ok),
@@ -219,8 +211,8 @@ impl App {
             .tree
             .as_ref()
             .map_or_else(Default::default, Tree::shown);
-        let changes: Vec<_> = self
-            .status
+        let comparison_status = self.comparison_status();
+        let changes: Vec<_> = comparison_status
             .entries()
             .iter()
             .filter(|entry| entry.path().starts_with(&directory.path))

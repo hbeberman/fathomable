@@ -15,6 +15,7 @@ use fathomable_core::tree::{Rule, Tree};
 use super::super::{App, Focus, PickerKind, Popup};
 use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use super::help;
+use crate::app::threads::list::ReviewView;
 use crate::app::view::{Effect, Mode};
 use crate::app::{doctor_view, menu_bar};
 
@@ -37,9 +38,14 @@ pub(crate) fn place(app: &App) -> Option<Where> {
         return None;
     }
     match app.popup() {
-        Some(Popup::Help(_) | Popup::Status | Popup::Doctor(_) | Popup::About | Popup::Menu(_)) => {
-            None
-        }
+        Some(
+            Popup::Help(_)
+            | Popup::Status
+            | Popup::Doctor(_)
+            | Popup::About
+            | Popup::Menu(_)
+            | Popup::ConfirmBoard { .. },
+        ) => None,
         Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
         None => Some(match app.focus() {
@@ -57,6 +63,9 @@ pub(crate) fn place(app: &App) -> Option<Where> {
 fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     if app.title_menu_open() {
         return menu_bar::key(app, key);
+    }
+    if matches!(app.popup(), Some(Popup::ConfirmBoard { .. })) {
+        return board_confirmation_key(app, key);
     }
     if matches!(app.popup(), Some(Popup::Doctor(_))) {
         return doctor_view::key(app, key);
@@ -86,7 +95,7 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
         return Effect::None;
     };
     if app.focus() == Focus::View {
-        // Reader activity delays the last-seen snapshot (ADR 0015).
+        // Reader activity is retained only for in-memory interaction timing.
         app.view_mut().touch();
     }
     typed(app, place, chord)
@@ -212,6 +221,24 @@ impl App {
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
             Action::PickRecent => self.open_picker(PickerKind::Recent),
             Action::Review => self.toggle_review(),
+            Action::ReviewRecentlyResolved => self.open_review_view(ReviewView::RecentlyResolved),
+            Action::ReviewArchived => self.open_review_view(ReviewView::Archived),
+            Action::ArchiveResolved => self.archive_resolved_threads(),
+            Action::ClearBoard => self.request_clear_board(),
+            Action::ArchiveThread => {
+                if let Some(id) = self.thread_cursor().thread().cloned() {
+                    self.archive_thread(&id);
+                } else {
+                    self.notice("no thread here");
+                }
+            }
+            Action::RestoreThread => {
+                if let Some(id) = self.thread_cursor().thread().cloned() {
+                    self.restore_thread(&id);
+                } else {
+                    self.notice("no thread here");
+                }
+            }
             Action::SidebarToggle => self.toggle_sidebar(),
             Action::MenuBarToggle => self.toggle_menu_bar(),
             Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
@@ -237,20 +264,21 @@ impl App {
             Action::EditNewestOwn => self.thread_edit_newest_own(),
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
             Action::DeleteThread => self.thread_delete_here(),
-            Action::SourceView => self.view_mut().toggle_source_view(),
-            Action::DiffHead => self.toggle_head_diff(),
-            Action::DiffSeen => self.toggle_seen_diff(),
-            Action::DiffCheckpoint => self.toggle_checkpoint_diff(),
-            Action::DiffCommit => self.diff_against_commit(),
-            Action::DiffBase => self.pick_diff_side(false),
-            Action::DiffTarget => self.pick_diff_side(true),
-            Action::DiffNext => self.diff_next(),
-            Action::DiffWhitespace => self.toggle_whitespace(),
-            Action::SeenAll => self.mark_all_seen(),
+            Action::SourceView => {
+                if self.comparison_diff {
+                    self.leave_diff();
+                }
+                self.view_mut().toggle_source_view();
+            }
+            Action::ComparisonControl => self.open_comparison_control(),
+            Action::ComparisonStart => self.start_comparison_at_head(),
+            Action::ComparisonSave => self.request_review_point(),
+            Action::ComparisonFocus => self.pick_comparison_focus(),
+            Action::ComparisonBase => self.pick_diff_side(false),
+            Action::ComparisonTarget => self.pick_diff_side(true),
+            Action::ComparisonWhitespace => self.toggle_whitespace(),
             Action::WorktreeNext => self.worktree_step(1),
             Action::WorktreePrev => self.worktree_step(-1),
-            Action::CheckpointFile => self.checkpoint_file(),
-            Action::CheckpointWorkspace => self.checkpoint_workspace(),
             Action::StubsToggle => self.toggle_stubs(),
             Action::FilesChanged => self.files_toggle(Rule::Changed),
             Action::FilesUntracked => self.files_toggle(Rule::Untracked),
@@ -285,9 +313,6 @@ impl App {
             return Effect::None;
         }
         match action {
-            // In a diff `h`/`l` page the checkpoint timeline (ADR 0060).
-            Action::MoveLeft if self.view().diff_view() => self.diff_page(-1),
-            Action::MoveRight if self.view().diff_view() => self.diff_page(1),
             // `Esc` clears, then leaves the diff (ADR 0060).
             Action::Escape => self.escape_view(),
             // Enter folds or unfolds only when the cursor rests on a
@@ -490,6 +515,19 @@ impl App {
         }
         Effect::None
     }
+}
+
+fn board_confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
+    match key.code {
+        crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
+            app.confirm_clear_board();
+        }
+        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
+            app.cancel_clear_board();
+        }
+        _ => {}
+    }
+    Effect::None
 }
 
 #[cfg(test)]
@@ -746,8 +784,7 @@ mod tests {
         }
         app.focus = Focus::View;
         app.view_mut().clear_selection();
-        app.view_mut()
-            .set_bases(None, None, Some("before\n".to_owned()));
+        app.view_mut().set_bases(None, Some("before\n".to_owned()));
         app.toggle_head_diff();
         press(&mut app, "  ");
         assert!(app.view().diff_view(), "cancel does not act as Escape");

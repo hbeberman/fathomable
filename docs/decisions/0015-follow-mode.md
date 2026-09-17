@@ -3,8 +3,6 @@ type: Decision
 title: Follow mode and the last-seen diff base
 description: Change hints, sidebar badges, toasts, jump keys, debounced auto-jump, and the content-addressed snapshots that define "since I last looked".
 resource: crates/fathomable-core/src/follow.rs
-related_resources:
-  - crates/fathomable-core/src/seen.rs
 tags:
   - decision
   - input
@@ -16,6 +14,11 @@ tags:
 
 Status: accepted (2026-08-26); amended 2026-09-06: `--doctor` reports
 the watch budget; amended 2026-09-13: ignored trees spend no watches.
+
+Last-seen storage and behavior superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). Live reload, transient
+change hints, toasts, and manual change jumps remain; automatic reader
+snapshots, seen-idle, mark-all-seen, and last-seen diff routes are removed.
 
 Agent following and auto-jump superseded 2026-09-15 by
 [0082](0082-three-tool-review-core.md). Live reload, last-seen snapshots,

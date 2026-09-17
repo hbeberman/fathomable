@@ -703,18 +703,18 @@ impl Batch {
         }
     }
 
-    /// Fold the batch into one event per path. `last_seen` gives the
+    /// Fold the batch into one event per path. `previous_fingerprint` gives the
     /// fingerprint a removed path last had, for pairing an unpaired
     /// remove-then-create as a rename; a created file over `max_bytes`
     /// is not read for one.
     pub(crate) fn take(
         &mut self,
-        last_seen: impl Fn(&Path) -> Option<Fingerprint>,
+        previous_fingerprint: impl Fn(&Path) -> Option<Fingerprint>,
         max_bytes: u64,
     ) -> Vec<Event> {
         self.flush_at = None;
         let raw = std::mem::take(&mut self.raw);
-        classify(&raw, last_seen, max_bytes)
+        classify(&raw, previous_fingerprint, max_bytes)
     }
 }
 
@@ -725,12 +725,12 @@ impl Batch {
 /// them as a pair, which is folded away); a rename whose old name is
 /// created again in the batch is an editor's backup swap, a change to
 /// that name; what is left is created, removed, or changed by the last
-/// thing that happened to the path, and a removed path whose last-seen
+/// thing that happened to the path, and a removed path whose previous
 /// fingerprint matches a created file is a rename after all. A created file over `max_bytes` is never read
 /// for its fingerprint, so a large drop costs the loop nothing.
 fn classify(
     raw: &[Raw],
-    last_seen: impl Fn(&Path) -> Option<Fingerprint>,
+    previous_fingerprint: impl Fn(&Path) -> Option<Fingerprint>,
     max_bytes: u64,
 ) -> Vec<Event> {
     if raw.contains(&Raw::Rescan) {
@@ -807,10 +807,13 @@ fn classify(
             .filter_map(|p| Fingerprint::read(&p, max_bytes).map(|f| (p, f)))
             .collect();
         for from in removed {
-            let Some(seen) = last_seen(&from) else {
+            let Some(previous) = previous_fingerprint(&from) else {
                 continue;
             };
-            if let Some(index) = created_prints.iter().position(|(_, f)| *f == seen) {
+            if let Some(index) = created_prints
+                .iter()
+                .position(|(_, fingerprint)| *fingerprint == previous)
+            {
                 let (to, _) = created_prints.swap_remove(index);
                 fate.remove(&from);
                 fate.remove(&to);

@@ -191,10 +191,6 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "the report keeps the ordered workspace checks together"
-)]
 fn workspace_checks(
     report: &mut Report,
     dirs: &XdgDirs,
@@ -274,37 +270,20 @@ fn workspace_checks(
         }
     }
 
-    let threads = thread_store(report, dirs, workspace.key());
-    let dir = dirs.seen_dir(workspace.key());
-    let pinned = threads.iter().flat_map(Store::open_paths);
-    match fathomable_core::seen::Store::open_pinned(&dir, pinned) {
-        Ok(seen) => report.check(
+    let _threads = thread_store(report, dirs, workspace.key());
+    let dir = dirs.review_points_dir(workspace.key());
+    match fathomable_core::review_points::ReviewPointStore::open(&dir) {
+        Ok(points) => report.check(
             true,
             format!(
-                "{} last-seen snapshot{} ({} bytes) in {}",
-                seen.len(),
-                if seen.len() == 1 { "" } else { "s" },
-                seen.blob_bytes(),
+                "{} review point{} ({} bytes) in {}",
+                points.len(),
+                if points.len() == 1 { "" } else { "s" },
+                points.blob_bytes(),
                 dir.display()
             ),
         ),
-        Err(error) => report.check(false, format!("snapshots: {error}")),
-    }
-    let dir = dirs.checkpoints_dir(workspace.key());
-    match fathomable_core::checkpoints::Store::open(&dir) {
-        Ok(checkpoints) => report.check(
-            true,
-            format!(
-                "{} checkpoint{} over {} file{} ({} bytes) in {}",
-                checkpoints.events(),
-                if checkpoints.events() == 1 { "" } else { "s" },
-                checkpoints.len(),
-                if checkpoints.len() == 1 { "" } else { "s" },
-                checkpoints.blob_bytes(),
-                dir.display()
-            ),
-        ),
-        Err(error) => report.check(false, format!("checkpoints: {error}")),
+        Err(error) => report.check(false, format!("review points: {error}")),
     }
 }
 
@@ -489,7 +468,7 @@ mod tests {
         assert!(!report.passed());
         assert!(report.lines().iter().any(|line| {
             line.kind == Kind::Fail
-                && line.text == "incompatible thread storage versions: 3 on disk, 4 expected"
+                && line.text == "incompatible thread storage versions: 3 on disk, 5 expected"
         }));
         assert!(report.lines().iter().any(|line| {
             line.kind == Kind::Info

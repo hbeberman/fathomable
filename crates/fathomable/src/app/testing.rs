@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fathomable_core::annotations::Store;
-use fathomable_core::seen;
 use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
 
@@ -92,7 +91,7 @@ pub(crate) fn click(app: &mut App, column: usize, row: usize) {
 pub(crate) struct AppBuilder {
     root: PathBuf,
     store: Option<PathBuf>,
-    seen: Option<PathBuf>,
+    review_points: Option<PathBuf>,
     width: usize,
     height: usize,
     open: Option<PathBuf>,
@@ -114,7 +113,7 @@ impl AppBuilder {
         Self {
             root: root.into(),
             store: None,
-            seen: None,
+            review_points: None,
             width: 100,
             height: 30,
             open: Some(PathBuf::from("README.md")),
@@ -141,9 +140,9 @@ impl AppBuilder {
         self
     }
 
-    /// Open a snapshot store at `path`, so edited threads follow.
-    pub(crate) fn seen(mut self, path: impl Into<PathBuf>) -> Self {
-        self.seen = Some(path.into());
+    /// Open explicit workspace review-point storage at `path`.
+    pub(crate) fn review_points(mut self, path: impl Into<PathBuf>) -> Self {
+        self.review_points = Some(path.into());
         self
     }
 
@@ -160,8 +159,10 @@ impl AppBuilder {
         if let Some(path) = &self.store {
             options.store = Some(Store::open(path)?);
         }
-        if let Some(path) = &self.seen {
-            options.seen = Some(seen::Store::open(path)?);
+        if let Some(path) = &self.review_points {
+            options.review_points = Some(fathomable_core::review_points::ReviewPointStore::open(
+                path,
+            )?);
         }
         if let Some(adjust) = self.options {
             options = adjust(options);

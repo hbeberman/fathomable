@@ -35,7 +35,7 @@ fn answer_later(app: &mut App, index: usize) -> anyhow::Result<()> {
     let later = store
         .threads()
         .iter()
-        .map(Thread::updated)
+        .map(Thread::modified)
         .max()
         .unwrap_or(0)
         + 1;

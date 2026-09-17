@@ -327,6 +327,25 @@ fn dirty_status() -> Status {
 }
 
 #[test]
+fn virtual_comparison_paths_are_retained_even_when_absent_on_disk()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("virtual-comparison")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    let status = Status::from_entries(vec![Entry::new(
+        PathBuf::from("historical.md"),
+        Changes::Unstaged(State::Added),
+        1,
+        0,
+    )]);
+
+    tree.set_virtual_paths(&status, vec![PathBuf::from("historical.md")]);
+    assert!(tree.contains(Path::new("historical.md")));
+    assert_eq!(tree.current().map(Row::path), Some(Path::new(".hidden")));
+    Ok(())
+}
+
+#[test]
 fn only_changed_lists_the_dirty_files_and_their_directories()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("changed")?;

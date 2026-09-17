@@ -114,7 +114,7 @@ impl std::error::Error for UnknownGlob {}
 /// Where a jump lands in a changed file (1-based lines).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// A single line: the first hunk against the last-seen base, or line 1.
+    /// A single line: the first current-comparison hunk, or line 1.
     Line(usize),
     /// An inclusive range an agent asked to `open`.
     Range(usize, usize),

@@ -133,7 +133,7 @@ theme "mine \"quoted\" \\ back"
 jump { toast 0 }
 watch { ignore "target/**" "a b" "c\"d"; debounce 1 }
 markdown { extensions "txt"; names "notes" }
-viewer { max-file-size-mib 1; seen-idle 2 }
+viewer { max-file-size-mib 1 }
 layout {
     menu-bar #false
     sidebar {
@@ -162,9 +162,9 @@ user { name "O'Brien" }
 fn guide_example_matches_the_text_form() -> TestResult {
     let guide = std::fs::read_to_string(fathomable_testing::repo_file("docs/guide.md"))?;
     let section = guide
-        .split("## 7. Configuration and themes")
+        .split("## 6. Menu bar and configuration")
         .nth(1)
-        .ok_or("guide section 7 not found")?;
+        .ok_or("guide configuration section not found")?;
     let example = section
         .split("```kdl\n")
         .nth(1)

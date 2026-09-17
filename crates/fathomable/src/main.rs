@@ -185,26 +185,19 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             (None, Some(error))
         }
     };
-    // Snapshots of files with open threads are kept past their age so a
-    // thread edited offline can still be followed (ADR 0020).
-    let pinned = store.iter().flat_map(Store::open_paths);
-    let seen = match fathomable_core::seen::Store::open_pinned(&dirs.seen_dir(&key), pinned) {
-        Ok(seen) => {
-            tracing::info!(path = %seen.dir().display(), files = seen.len(), "last-seen snapshots loaded");
-            Some(seen)
+    let review_points = match fathomable_core::review_points::ReviewPointStore::open(
+        dirs.review_points_dir(&key),
+    ) {
+        Ok(review_points) => {
+            tracing::info!(
+                path = %review_points.dir().display(),
+                points = review_points.len(),
+                "review points loaded"
+            );
+            Some(review_points)
         }
         Err(error) => {
-            tracing::error!(%error, "cannot open the snapshot store; no last-seen base");
-            None
-        }
-    };
-    let checkpoints = match fathomable_core::checkpoints::Store::open(&dirs.checkpoints_dir(&key)) {
-        Ok(checkpoints) => {
-            tracing::info!(path = %checkpoints.dir().display(), events = checkpoints.events(), "checkpoints loaded");
-            Some(checkpoints)
-        }
-        Err(error) => {
-            tracing::error!(%error, "cannot open the checkpoint store; checkpoints disabled");
+            tracing::error!(%error, "cannot open the review-point store; review points disabled");
             None
         }
     };
@@ -217,8 +210,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             thread_store_error,
             jump: config.jump().clone(),
             watch: config.watch().clone(),
-            seen,
-            checkpoints,
+            review_points,
             highlighter: Arc::new(highlighter),
             markdown: config.markdown().clone(),
             viewer: config.viewer().clone(),

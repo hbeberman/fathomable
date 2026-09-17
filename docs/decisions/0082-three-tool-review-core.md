@@ -16,6 +16,12 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Board membership and provenance amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): the same three bound
+tools remain, while normal reads cover the non-archived repository board
+without ancestry gating, exact IDs can inspect archived history, and results
+separate immutable origin from bound-checkout placement.
+
 Reply lifecycle amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md): the three-tool,
 repository-bound, read-without-delivery model remains, but human-only

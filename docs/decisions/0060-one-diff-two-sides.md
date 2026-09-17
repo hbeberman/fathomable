@@ -4,7 +4,6 @@ title: One diff, two sides
 description: All comparisons share one two-sided diff view; Git exposes HEAD, index, and worktree endpoints with staged, unstaged, and net badges alongside snapshots, checkpoints, and commit sides.
 resource: crates/fathomable/src/app/diff.rs
 related_resources:
-  - crates/fathomable/src/app/checkpoints.rs
   - crates/fathomable/src/app/view.rs
   - crates/fathomable/src/app/input/bindings.rs
   - crates/fathomable/src/app/draw/header.rs
@@ -23,6 +22,12 @@ tags:
 
 Status: accepted (2026-09-05); amended 2026-09-14 (index side and
 layer-labelled diffs)
+
+Superseded 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md). The two-sided unified
+presentation remains, but endpoint selection is checkout-wide rather than
+stored per file; last-seen and checkpoint sides and their parallel modes are
+removed.
 
 ## Context
 

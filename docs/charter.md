@@ -28,8 +28,10 @@ the agent does the writing.
   snippet, the source range, a timestamp, and the user's comment. Annotations
   form threads. Agents reply into threads, so a document can carry a
   long-running local review conversation across many agent sessions.
-- A **diff lens**: a Git gutter strip showing changed lines, and diff views for
-  both "working tree vs HEAD" and "what changed since I last looked".
+- A **diff lens**: one pinned, checkout-wide comparison drives the changed
+  paths, gutters, counts, navigation, historical source, and unified diff.
+  Explicit review points provide deliberate "since this workspace state"
+  comparisons.
 - An **agent endpoint**: `fathomable --mcp [DIR]` is a repository-bound stdio
   MCP server that works without a viewer, so agents can read discussions,
   start threads, and reply to them.
@@ -76,9 +78,10 @@ Deferred, not rejected:
 
 1. **Read-only by construction.** The workspace is an input. Every write goes to
    XDG state or config directories, never to the watched tree.
-2. **Follow, don't fight.** Live updates always win. The viewer preserves the
-   reader's position and re-anchors annotations rather than blocking or
-   discarding updates.
+2. **Follow, don't fight.** Mutable endpoints refresh while immutable commits
+   stay pinned. The viewer preserves the reader's position and projects
+   threads from bounded evidence rather than blocking updates or pretending an
+   ambiguous match is current.
 3. **Rendered view, source truth.** The human annotates what they see; the
    record that reaches the agent carries the source range and snippet so the
    agent can act on it.
@@ -114,23 +117,22 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
   content hashes so it survives re-renders.
 - **Placement**: where a thread's lines are now: anchored, edited, or
   detached.
-- **Waiting**: an open thread whose last act — comment, reply, edit, or
-  reopen — is an agent's, so the viewer presents it for the human's
-  attention. There is no corresponding agent-obligation or consumption
-  state ([0082](decisions/0082-three-tool-review-core.md)).
+- **Lifecycle**: active, resolution proposed, or resolved
+  ([0085](decisions/0085-thread-lifecycle-and-auto-resolve.md)).
 - **Mark**: a thread placed in the text as the viewer draws it (code only).
-- **Reach**: the threads the current `HEAD` shows, those written against a
-  commit it can reach.
-- **Change**: a write the watcher queued for the reader; **last seen** is the
-  snapshot "what changed since I looked" is measured from.
+- **Placement context**: the checkout or historical endpoint in which bounded
+  evidence can currently place a thread. It qualifies a location; it does not
+  decide repository-board membership.
+- **Change**: a write the watcher queued for the reader, or a path in the
+  selected comparison.
 - **Sidebar**: the left column, holding the **files pane** and the
   **threads pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md),
   named by [0057](decisions/0057-the-sidebar.md)).
 - **Stub**: the condensed block a thread shows under its lines, collapsed
   to two rows or expanded to the whole thread.
 - **Review list**: the `Space t` view of every thread on the work.
-- **Checkpoint**: a content of one file the reader recorded on purpose, on
-  that file's **checkpoint timeline**; a **workspace checkpoint** records
-  every file that moved. Last seen is automatic; a checkpoint is not.
+- **Review point**: an explicit saved workspace manifest used as a temporal
+  comparison base. It is not a review session, task boundary, or automatic
+  reader snapshot.
 - **Jumplist**: the positions far moves leave behind, walked with
   `Alt-Left` and `Alt-Right`.

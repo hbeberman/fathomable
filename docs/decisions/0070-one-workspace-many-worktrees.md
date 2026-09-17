@@ -23,6 +23,12 @@ tags:
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
 
+Amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): the repository still
+shares threads and review points across linked worktrees, while comparison
+preferences are checkout-local. Every unarchived thread remains on the board;
+worktree ancestry qualifies projection rather than membership.
+
 MCP routing amended again 2026-09-15 by
 [0082](0082-three-tool-review-core.md): a server binds one repository
 checkout at startup and tools have no per-call workspace or viewer selector.

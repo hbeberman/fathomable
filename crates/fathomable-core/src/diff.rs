@@ -8,6 +8,10 @@
 //! shows for a line of the new text ([`Diff::status`]), and what a unified
 //! diff view lists ([`Diff::unified`]). Hunk starts drive `]g` / `[g`.
 //!
+//! Repository-wide endpoint deltas use [`Comparison`], [`PathChange`], and
+//! [`PathState`]. They retain additions, deletions, content, mode, type,
+//! binary, unsupported, and missing-content facts without exposing Git types.
+//!
 //! # Examples
 //!
 //! ```
@@ -22,6 +26,9 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
+
+use crate::workspace::ComparisonEndpoint;
 
 /// How lines are compared (ADR 0060): exactly, or with whitespace
 /// ignored as `git diff -w` does.
@@ -43,6 +50,350 @@ pub struct Compare {
     pub context: usize,
     /// The whitespace rule.
     pub whitespace: Whitespace,
+}
+
+/// The Git file mode represented by a comparison endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FileMode {
+    /// A non-executable regular file.
+    Regular,
+    /// An executable regular file.
+    Executable,
+    /// A symbolic link.
+    Symlink,
+    /// A directory entry.
+    Directory,
+    /// A Git submodule entry.
+    Submodule,
+    /// A mode not supported by the viewer.
+    Other(u32),
+}
+
+impl FileMode {
+    /// Whether this mode can be loaded as file content.
+    #[must_use]
+    pub const fn is_supported(self) -> bool {
+        matches!(self, Self::Regular | Self::Executable | Self::Symlink)
+    }
+
+    /// Whether this mode describes a directory-like entry.
+    #[must_use]
+    pub const fn is_directory(self) -> bool {
+        matches!(self, Self::Directory)
+    }
+
+    fn type_tag(self) -> u8 {
+        match self {
+            Self::Regular | Self::Executable => 0,
+            Self::Symlink => 1,
+            Self::Directory => 2,
+            Self::Submodule => 3,
+            Self::Other(_) => 4,
+        }
+    }
+}
+
+/// Facts about one path on one comparison endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PathInfo {
+    mode: FileMode,
+    size: Option<u64>,
+    object: Option<String>,
+    binary: bool,
+    supported: bool,
+}
+
+impl PathInfo {
+    /// Creates endpoint facts for a path.
+    #[must_use]
+    pub(crate) fn new(
+        mode: FileMode,
+        size: Option<u64>,
+        object: Option<String>,
+        binary: bool,
+    ) -> Self {
+        Self {
+            mode,
+            size,
+            object,
+            binary,
+            supported: mode.is_supported(),
+        }
+    }
+
+    pub(crate) fn with_binary(mut self, binary: bool) -> Self {
+        self.binary = binary;
+        self
+    }
+
+    pub(crate) fn with_supported(mut self, supported: bool) -> Self {
+        self.supported = supported && self.mode.is_supported();
+        self
+    }
+
+    /// The Git file mode or endpoint type.
+    #[must_use]
+    pub const fn mode(&self) -> FileMode {
+        self.mode
+    }
+
+    /// The byte size when the endpoint can report one.
+    #[must_use]
+    pub const fn size(&self) -> Option<u64> {
+        self.size
+    }
+
+    /// The immutable object identity, when the endpoint has one.
+    #[must_use]
+    pub fn object(&self) -> Option<&str> {
+        self.object.as_deref()
+    }
+
+    /// Whether the endpoint content is binary.
+    #[must_use]
+    pub const fn is_binary(&self) -> bool {
+        self.binary
+    }
+
+    /// Whether the endpoint content can be loaded as file bytes.
+    #[must_use]
+    pub const fn is_supported(&self) -> bool {
+        self.supported
+    }
+}
+
+/// The state of one path on one side of a comparison.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PathState {
+    /// The path is not present on this endpoint.
+    Absent,
+    /// The path is present with these facts.
+    Present(PathInfo),
+    /// The path exists, but its backing content could not be read.
+    Missing(String),
+}
+
+/// The primary fact established for a changed path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PathChangeKind {
+    /// The path exists only on the target endpoint.
+    Added,
+    /// The path exists only on the base endpoint.
+    Deleted,
+    /// File content differs.
+    ContentChanged,
+    /// File mode differs while its type remains the same.
+    ModeChanged,
+    /// The endpoint types differ.
+    TypeChanged,
+    /// The path is binary, so line-level content is not available.
+    Binary,
+    /// The path or its mode is unsupported.
+    Unsupported,
+    /// Endpoint content is missing or unavailable.
+    Missing,
+}
+
+/// One repository-relative path in a comparison delta.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PathChange {
+    path: PathBuf,
+    base: PathState,
+    target: PathState,
+    kind: PathChangeKind,
+    content_changed: bool,
+    mode_changed: bool,
+    type_changed: bool,
+}
+
+impl PathChange {
+    /// The root-relative path.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The base-side facts.
+    #[must_use]
+    pub const fn base(&self) -> &PathState {
+        &self.base
+    }
+
+    /// The target-side facts.
+    #[must_use]
+    pub const fn target(&self) -> &PathState {
+        &self.target
+    }
+
+    /// The primary classification of this path.
+    #[must_use]
+    pub const fn kind(&self) -> PathChangeKind {
+        self.kind
+    }
+
+    /// Whether file bytes differ.
+    #[must_use]
+    pub const fn content_changed(&self) -> bool {
+        self.content_changed
+    }
+
+    /// Whether file mode bits differ.
+    #[must_use]
+    pub const fn mode_changed(&self) -> bool {
+        self.mode_changed
+    }
+
+    /// Whether endpoint file types differ.
+    #[must_use]
+    pub const fn type_changed(&self) -> bool {
+        self.type_changed
+    }
+
+    pub(crate) fn from_states(
+        path: PathBuf,
+        base: PathState,
+        target: PathState,
+        base_bytes: Option<&[u8]>,
+        target_bytes: Option<&[u8]>,
+    ) -> Option<Self> {
+        if matches!(base, PathState::Missing(_)) || matches!(target, PathState::Missing(_)) {
+            return Some(Self {
+                path,
+                base,
+                target,
+                kind: PathChangeKind::Missing,
+                content_changed: false,
+                mode_changed: false,
+                type_changed: false,
+            });
+        }
+        let (base_info, target_info) = match (&base, &target) {
+            (PathState::Present(base), PathState::Present(target)) => (base, target),
+            (PathState::Absent, PathState::Present(target)) => {
+                if target.mode.is_directory() {
+                    return None;
+                }
+                return Some(Self {
+                    path,
+                    base: base.clone(),
+                    target: PathState::Present(target.clone()),
+                    kind: if target.is_supported() {
+                        if target.is_binary() {
+                            PathChangeKind::Binary
+                        } else {
+                            PathChangeKind::Added
+                        }
+                    } else {
+                        PathChangeKind::Unsupported
+                    },
+                    content_changed: true,
+                    mode_changed: false,
+                    type_changed: false,
+                });
+            }
+            (PathState::Present(base), PathState::Absent) => {
+                if base.mode.is_directory() {
+                    return None;
+                }
+                return Some(Self {
+                    path,
+                    base: PathState::Present(base.clone()),
+                    target: target.clone(),
+                    kind: PathChangeKind::Deleted,
+                    content_changed: true,
+                    mode_changed: false,
+                    type_changed: false,
+                });
+            }
+            (PathState::Absent, PathState::Absent) => return None,
+            _ => unreachable!("missing path states were handled above"),
+        };
+        if base_info.mode.is_directory() && target_info.mode.is_directory() {
+            return None;
+        }
+
+        let type_changed = base_info.mode.type_tag() != target_info.mode.type_tag();
+        let mode_changed = base_info.mode != target_info.mode;
+        let content_changed = match (base_bytes, target_bytes) {
+            (Some(base), Some(target)) => base != target,
+            _ => base_info.object != target_info.object,
+        };
+        if !type_changed && !mode_changed && !content_changed {
+            return None;
+        }
+        let kind = if !base_info.is_supported() || !target_info.is_supported() {
+            PathChangeKind::Unsupported
+        } else if base_info.binary || target_info.binary {
+            PathChangeKind::Binary
+        } else if type_changed {
+            PathChangeKind::TypeChanged
+        } else if mode_changed && !content_changed {
+            PathChangeKind::ModeChanged
+        } else {
+            PathChangeKind::ContentChanged
+        };
+        Some(Self {
+            path,
+            base,
+            target,
+            kind,
+            content_changed,
+            mode_changed,
+            type_changed,
+        })
+    }
+}
+
+/// The repository-wide direct delta between two selected endpoints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comparison {
+    base: ComparisonEndpoint,
+    target: ComparisonEndpoint,
+    changes: Vec<PathChange>,
+}
+
+impl Comparison {
+    /// The immutable or mutable base selected for this comparison.
+    #[must_use]
+    pub const fn base(&self) -> &ComparisonEndpoint {
+        &self.base
+    }
+
+    /// The immutable or mutable target selected for this comparison.
+    #[must_use]
+    pub const fn target(&self) -> &ComparisonEndpoint {
+        &self.target
+    }
+
+    /// Every changed repository-relative path, in path order.
+    #[must_use]
+    pub fn changes(&self) -> &[PathChange] {
+        &self.changes
+    }
+
+    /// The number of changed paths.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.changes.len()
+    }
+
+    /// Whether the selected endpoints have no net path changes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.changes.is_empty()
+    }
+
+    pub(crate) fn from_parts(
+        base: ComparisonEndpoint,
+        target: ComparisonEndpoint,
+        changes: Vec<PathChange>,
+    ) -> Self {
+        Self {
+            base,
+            target,
+            changes,
+        }
+    }
 }
 
 impl Default for Compare {

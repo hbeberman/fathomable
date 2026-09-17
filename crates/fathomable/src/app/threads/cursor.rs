@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 
-use fathomable_core::annotations::{MessageTarget, ThreadId};
+use fathomable_core::annotations::{MessageTarget, Thread, ThreadId};
 
 use crate::app::App;
 use crate::app::threads::{ComposeTarget, message_target};
@@ -207,11 +207,11 @@ impl App {
         let range = self
             .docs
             .iter()
-            .find(|doc| doc.relative == thread.path())
+            .find(|doc| doc.relative == self.thread_path(thread))
             .and_then(|doc| doc.marks.iter().find(|mark| mark.id() == id))
             .map_or_else(|| thread.range(), crate::app::threads::Mark::range);
         Some((
-            thread.path().to_path_buf(),
+            self.thread_path(thread).to_path_buf(),
             range.map(|range| range.start()),
         ))
     }
@@ -267,9 +267,16 @@ impl App {
     /// on its first line, and the cursor on it. A deleted file is
     /// reported instead.
     pub(crate) fn land_on_thread(&mut self, id: ThreadId) -> bool {
-        let Some(path) = self.thread(&id).map(|thread| thread.path().to_path_buf()) else {
+        let Some(path) = self
+            .thread(&id)
+            .map(|thread| self.thread_path(thread).to_path_buf())
+        else {
             return false;
         };
+        if self.thread(&id).is_some_and(Thread::is_archived) {
+            self.notice("original evidence remains available in the review entry");
+            return false;
+        }
         // A thread another worktree shows is the way into it (ADR 0070).
         if let Some(root) = self
             .thread(&id)
@@ -414,6 +421,10 @@ impl App {
         let Some(id) = cursor.thread().cloned() else {
             return;
         };
+        if self.thread(&id).is_some_and(Thread::is_archived) {
+            self.notice("original evidence remains available in the review entry");
+            return;
+        }
         self.close_review();
         if self.land_on_thread(id.clone()) {
             self.goto_message(id, cursor.message());

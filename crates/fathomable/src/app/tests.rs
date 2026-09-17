@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fathomable_core::annotations::Store;
-use fathomable_core::config::{
-    JumpConfig, MarkdownConfig, SidebarConfig, ViewerConfig, WatchConfig,
-};
+use fathomable_core::config::{JumpConfig, MarkdownConfig, SidebarConfig, WatchConfig};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
@@ -349,7 +347,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
         match display {
             0 => app.view_mut().toggle_source_view(),
             1 => {
-                app.view_mut().set_bases(None, None, Some(String::new()));
+                app.view_mut().set_bases(None, Some(String::new()));
                 app.toggle_head_diff();
             }
             _ => {}
@@ -635,10 +633,9 @@ fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A thread written against a commit HEAD does not contain is hidden
-/// from the marks; one written against HEAD, or with no commit, shows.
-/// An append by another writer reaches the viewer through the store
-/// watch (ADR 0024).
+/// Board membership is ancestry-independent; every thread is projected into
+/// the displayed content or represented as detached. Another writer's append
+/// reaches the viewer through the store watch.
 #[test]
 fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store};
@@ -667,7 +664,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     // Written on lines this checkout does not have, as a thread from
     // another branch is; one whose lines are here would follow HEAD
     // (ADR 0035).
-    store.annotate(
+    let other = store.annotate(
         Draft::new(
             Author::User,
             Path::new("README.md"),
@@ -698,7 +695,7 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.open(Path::new("README.md"));
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here.clone(), unscoped.clone()]);
+    assert_eq!(ids, [here.clone(), other.clone(), unscoped.clone()]);
 
     // Another writer appends while this viewer runs.
     let late = store.annotate(
@@ -713,19 +710,18 @@ fn threads_follow_the_work_and_other_writers_are_picked_up() -> anyhow::Result<(
     )?;
     app.on_changes(vec![store_path.clone()]);
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, [here, unscoped, late]);
+    assert_eq!(ids, [here, other, unscoped, late]);
     Ok(())
 }
 
 /// An amend replaces `HEAD` with a commit that does not descend from
-/// it. An open thread whose lines are still in the working tree moves
-/// to the new commit and stays visible; one whose lines are gone, and
-/// a resolved one, stay scoped to the dropped commit (ADR 0035).
+/// it. Origins remain pinned, while the shared board still lists the
+/// open discussions even when this checkout cannot project them.
 #[test]
-fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
+fn open_threads_keep_origin_across_an_amend() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
 
-    let dir = fixture("rescope")?;
+    let dir = fixture("origin-amend")?;
     git::init(&dir.0)?;
     let text = "# Readme\n\nhello\n";
     git::commit_and_stage(&dir.0, &[("README.md", text)])?;
@@ -772,11 +768,17 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
     assert_ne!(first, second);
 
     let ids: Vec<_> = app.marks().iter().map(|m| m.id().clone()).collect();
-    assert_eq!(ids, std::slice::from_ref(&kept));
+    assert_eq!(ids, [kept.clone(), gone.clone(), done.clone()]);
+    assert!(
+        app.marks()
+            .iter()
+            .find(|mark| mark.id() == &gone)
+            .is_some_and(crate::app::threads::Mark::is_detached)
+    );
     let again = Store::open(&store_path)?;
     assert_eq!(
         again.thread(&kept).and_then(Thread::commit),
-        Some(second.as_str())
+        Some(first.as_str())
     );
     assert_eq!(
         again.thread(&gone).and_then(Thread::commit),
@@ -786,15 +788,14 @@ fn open_threads_follow_head_across_an_amend() -> anyhow::Result<()> {
         again.thread(&done).and_then(Thread::commit),
         Some(first.as_str())
     );
+    assert_eq!(app.review_entries(false).len(), 2);
     Ok(())
 }
 
-/// Resolving fixes a thread to `HEAD`, where it still shows; the next
-/// commit takes it out of the marks and the thread list, the review
-/// lists it under `x` naming its commit, `r` is refused there, `Enter`
-/// lands on its stored lines, and `o` brings it back (ADR 0072).
+/// Resolution records its checkout commit without making later `HEAD`
+/// equality a board or placement-membership rule.
 #[test]
-fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
+fn a_resolved_thread_remains_projectable_after_the_next_commit() -> anyhow::Result<()> {
     use fathomable_core::annotations::{Author, Draft, LineRange, Store, Thread};
 
     let dir = fixture("past")?;
@@ -850,13 +851,14 @@ fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
         Some(second.as_str())
     );
 
-    // A third commit: the resolved thread is past.
+    // A third commit: the resolved thread remains projectable and stays in
+    // repository history, hidden only by the normal resolved filter.
     git::commit_and_stage(
         &dir.0,
         &[("README.md", text), ("docs/notes.md", "# Notes\n\nmore\n")],
     )?;
     app.on_changes(vec![dir.0.join(".git/HEAD")]);
-    assert!(app.marks().is_empty(), "gone from the file");
+    assert_eq!(app.marks().len(), 1, "still projected in displayed content");
     assert!(app.review_entries(false).is_empty(), "hidden until x");
     app.review_toggle_resolved();
     let entries = app.review_entries(false);
@@ -865,16 +867,14 @@ fn a_resolved_thread_leaves_with_the_next_commit() -> anyhow::Result<()> {
     assert_eq!(entries[0].range(), Some(LineRange::new(3, 3)));
     assert_eq!(app.review_counts(false).resolved, 1);
 
-    // In the list: `r` is refused, `Enter` lands on the stored lines,
-    // `o` reopens it and it is back in the file.
+    // In the list the complete conversation remains usable. A reply draft
+    // preserves the normal resolved-thread confirmation, and Enter can open
+    // the trustworthy placement.
     app.open_review();
     app.set_thread_cursor(old.clone());
     app.thread_reply();
-    assert!(app.draft().is_none());
-    assert_eq!(
-        app.message(),
-        Some(format!("resolved at {}; r reopens it", &second[..7]).as_str())
-    );
+    assert!(app.draft().is_some());
+    app.compose_cancel();
     app.thread_open_in_file();
     assert!(!app.review_list().is_open());
     assert_eq!(app.view().cursor_source_line(), Some(3));
@@ -1013,7 +1013,8 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
         Some((State::Modified, true))
     );
 
-    // Committing everything empties the set.
+    // Committing everything empties current Git status, but the pinned
+    // comparison intentionally remains anchored to its original HEAD.
     git::commit_and_stage(
         &dir.0,
         &[
@@ -1025,9 +1026,7 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
     )?;
     app.on_changes(vec![dir.0.join(".git/HEAD")]);
     assert!(app.status().is_empty());
-    assert_eq!(app.view().diff_counts(), Some((0, 0)));
-    app.hunk_next();
-    assert_eq!(app.message(), Some("nothing uncommitted"));
+    assert_eq!(app.view().diff_counts(), Some((4, 0)));
     Ok(())
 }
 
@@ -1406,7 +1405,7 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     assert_eq!(
         app.message(),
         Some(
-            "threads unavailable: incompatible storage versions (3 on disk, 4 expected); run :doctor"
+            "threads unavailable: incompatible storage versions (3 on disk, 5 expected); run :doctor"
         )
     );
     assert_eq!(app.message_tone(), NoticeTone::Error);
@@ -1426,93 +1425,6 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
         rows.iter()
             .any(|(label, value)| label == "threads" && value == "unavailable; run :doctor")
     );
-    Ok(())
-}
-
-/// The added lines of the last-seen diff view, or `None` when the
-/// view cannot show one.
-fn seen_diff_added(app: &mut App) -> Option<Vec<String>> {
-    app.toggle_seen_diff();
-    if app.view().diff_base() != Some(&crate::app::diff::Side::Seen) {
-        return None;
-    }
-    let added = app
-        .view()
-        .layout()
-        .lines()
-        .iter()
-        .map(fathomable_core::layout::Line::text)
-        .filter(|t| t.starts_with('+'))
-        .collect();
-    app.toggle_seen_diff();
-    Some(added)
-}
-
-#[test]
-fn seen_snapshots_feed_the_seen_diff_view() -> anyhow::Result<()> {
-    let dir = fixture("seen")?;
-    let seen_store = || fathomable_core::seen::Store::open(&dir.0.join(".seen-state"));
-    let mut app = app_with(
-        &dir,
-        Options {
-            seen: Some(seen_store()?),
-            ..Options::for_test(dir.0.clone())
-        },
-    )?;
-    app.open(Path::new("README.md"));
-    assert_eq!(app.view().diff_counts(), None, "not in git: no gutter");
-    assert_eq!(seen_diff_added(&mut app), None, "never seen: no seen diff");
-
-    // Switching away snapshots the file; coming back, the seen diff
-    // view shows what arrived, while the gutter stays git-only.
-    app.open(Path::new("docs/guide.md"));
-    fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n")?;
-    app.on_changes(vec![dir.0.join("README.md")]);
-    assert_eq!(
-        app.queue().newest().map(|c| c.target.line()),
-        Some(4),
-        "outside git an unopened file's target comes from its last-seen base"
-    );
-    app.open(Path::new("README.md"));
-    assert_eq!(app.view().diff_counts(), None, "the gutter means git");
-    assert_eq!(
-        seen_diff_added(&mut app).as_deref(),
-        Some(&["+".to_owned(), "+world".to_owned()][..])
-    );
-
-    // Idle long enough, the tick marks it seen and the next change is
-    // measured from there.
-    app.settle();
-    assert!(
-        app.queue().is_empty(),
-        "target on screen settles the change"
-    );
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let idle = ViewerConfig {
-        seen_idle: std::time::Duration::from_millis(1),
-        ..ViewerConfig::default()
-    };
-    let mut app2 = app_with(
-        &dir,
-        Options {
-            viewer: idle,
-            seen: Some(seen_store()?),
-            ..Options::for_test(dir.0.clone())
-        },
-    )?;
-    app2.open(Path::new("README.md"));
-    assert_eq!(seen_diff_added(&mut app2).map(|a| a.len()), Some(2));
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    assert!(app2.tick_in().is_some());
-    app2.tick();
-    fs::write(dir.0.join("README.md"), "# Readme\n\nhello\n\nworld\n\n!\n")?;
-    app2.on_changes(vec![dir.0.join("README.md")]);
-    assert_eq!(
-        seen_diff_added(&mut app2).as_deref(),
-        Some(&["+".to_owned(), "+!".to_owned()][..]),
-        "base is the idle snapshot"
-    );
-    app2.on_quit();
     Ok(())
 }
 
@@ -1548,7 +1460,6 @@ fn binary_and_oversized_files_open_as_file_info() -> anyhow::Result<()> {
         Options {
             viewer: ViewerConfig {
                 max_file_size_mib: 2,
-                ..ViewerConfig::default()
             },
             config_path: PathBuf::from("/etc/fathomable/config.kdl"),
             ..Options::for_test(dir.0.clone())

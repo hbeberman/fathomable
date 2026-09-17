@@ -267,12 +267,19 @@ fn assert_mcp_output_schemas(tools: &[Value]) -> Result<()> {
         .context("threads output schema")?["outputSchema"]
         .clone();
     for field in [
+        "checkout",
+        "origin",
+        "placement_evidence",
         "anchor_range",
         "location",
         "lifecycle",
         "modified",
         "auto_resolve",
+        "archived",
         "messages",
+        "resolution_history",
+        "archive_history",
+        "restore_history",
         "reanchored_at",
         "worktree",
     ] {
@@ -922,6 +929,126 @@ fn reading_returns_every_open_conversation_without_mutating_state() -> Result<()
 }
 
 #[test]
+fn agent_starts_capture_bound_checkout_working_tree_provenance() -> Result<()> {
+    let fixture = Fixture::new("mcp-working-provenance")?;
+    fathomable_testing::git::init(&fixture.root)?;
+    fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
+    let observed_head = Workspace::discover(&fixture.root)?
+        .head_commit()
+        .context("observed HEAD")?;
+    fs::write(fixture.root.join("a.md"), "one\nchanged\n")?;
+
+    let mut client = Mcp::copilot(&fixture, "dirty-start")?;
+    let result = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "line": 2, "body": "dirty finding"}]}),
+    )?;
+    assert_eq!(
+        result["structuredContent"]["checkout"],
+        fixture.root.to_string_lossy().as_ref()
+    );
+    let shown = &result["structuredContent"]["threads"][0];
+    assert_eq!(shown["origin"]["path"], "a.md");
+    assert_eq!(shown["origin"]["range"], json!({"start": 2, "end": 2}));
+    assert_eq!(shown["origin"]["version"]["kind"], "working_tree");
+    assert_eq!(shown["origin"]["version"]["observed_head"], observed_head);
+    assert_eq!(shown["origin"]["side"], "unspecified");
+    assert_eq!(shown["origin"]["working_tree"]["dirty"], true);
+    assert_eq!(shown["origin"]["working_tree"]["added"], false);
+    assert_eq!(shown["origin"]["working_tree"]["deleted"], false);
+    assert_eq!(shown["origin"]["working_tree"]["content"]["bytes"], 12);
+    assert_eq!(shown["origin"]["content"]["bytes"], 7);
+    assert!(
+        shown["commit"].is_null(),
+        "agent starts have no human commit origin"
+    );
+    Ok(())
+}
+
+#[test]
+fn archived_threads_leave_normal_reads_but_exact_replay_is_safe() -> Result<()> {
+    let fixture = Fixture::new("mcp-archive-replay")?;
+    let thread = fixture.user_thread("archive me")?;
+    let request = json!({"replies": [{
+        "thread": thread,
+        "body": "completed before archive",
+        "idempotency_key": "archive-replay"
+    }]});
+    let mut client = Mcp::copilot(&fixture, "archive-chat")?;
+    client.ok("thread_reply", request.clone())?;
+
+    let mut store = fixture.store()?;
+    store.archive(&thread, now())?;
+    drop(store);
+
+    for arguments in [
+        json!({}),
+        json!({"status": "open"}),
+        json!({"status": "all"}),
+    ] {
+        let result = client.ok("threads", arguments)?;
+        assert!(
+            result["structuredContent"]["threads"]
+                .as_array()
+                .context("normal threads")?
+                .is_empty()
+        );
+    }
+    let exact = client.ok("threads", json!({"ids": [thread]}))?;
+    let exact_thread = &exact["structuredContent"]["threads"][0];
+    assert_eq!(exact_thread["archived"], true);
+    assert_eq!(
+        exact_thread["archive_history"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(exact_thread["messages"].as_array().map(Vec::len), Some(2));
+
+    let fresh = client.call(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": thread,
+            "body": "must fail",
+            "idempotency_key": "fresh-after-archive"
+        }]}),
+    )?;
+    assert_eq!(fresh["isError"], true);
+    assert!(
+        fresh["content"][0]["text"]
+            .as_str()
+            .context("archive error")?
+            .contains("archived")
+    );
+    assert_eq!(
+        fixture
+            .store()?
+            .thread(&thread)
+            .context("archived thread")?
+            .replies()
+            .len(),
+        1
+    );
+
+    let replay = client.ok("thread_reply", request)?;
+    let replayed = &replay["structuredContent"]["results"][0];
+    assert_eq!(replayed["replayed"], true);
+    assert_eq!(replayed["thread"]["archived"], true);
+    assert_eq!(
+        replayed["thread"]["messages"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        fixture
+            .store()?
+            .thread(&thread)
+            .context("replayed thread")?
+            .replies()
+            .len(),
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn placement_and_location_report_detached_and_file_threads() -> Result<()> {
     let fixture = Fixture::new("mcp-placement-states")?;
     let detached = {
@@ -1024,7 +1151,7 @@ fn zero_limit_returns_no_threads() -> Result<()> {
 }
 
 #[test]
-fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Result<()> {
+fn context_projection_preserves_placement_without_read_side_effects() -> Result<()> {
     let fixture = Fixture::new("mcp-read-placement")?;
     let original = "one\ntwo\nthree\n";
     fs::write(fixture.root.join("a.md"), original)?;
@@ -1038,9 +1165,6 @@ fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Resul
         original,
         1,
     )?;
-    let mut seen = fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.key()?))?;
-    seen.record(Path::new("a.md"), original)?;
-    drop(seen);
     fs::write(fixture.root.join("a.md"), "zero\none\nTWO\nthree\n")?;
 
     let mut client = Mcp::start(&fixture, "unknown-client", &[])?;
@@ -1050,8 +1174,8 @@ fn startup_housekeeping_preserves_placement_without_read_side_effects() -> Resul
     let shown = &result["structuredContent"]["threads"][0];
     assert_eq!(shown["range"], json!({"start": 3, "end": 3}));
     assert_eq!(shown["placement"], "edited");
-    assert_eq!(shown["anchor_range"], json!({"start": 3, "end": 3}));
-    assert_eq!(shown["location"], "unchanged");
+    assert_eq!(shown["anchor_range"], json!({"start": 2, "end": 2}));
+    assert_eq!(shown["location"], "moved");
     assert_eq!(
         fs::read(path)?,
         after_startup,
@@ -1790,7 +1914,8 @@ fn exact_ids_retrieve_resolved_history_hidden_by_checkout_status() -> Result<()>
             .as_array()
             .context("ordinary threads")?
             .len(),
-        0
+        1,
+        "resolved board membership is not gated by current HEAD ancestry"
     );
     let exact = client.ok("threads", json!({"ids": [thread]}))?;
     assert_eq!(
@@ -1822,8 +1947,6 @@ fn review_live_head_rewrites_keep_open_discussions_visible() -> Result<()> {
         now(),
     )?;
     drop(store);
-    fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(workspace.key()))?
-        .record(Path::new("a.md"), original)?;
     let mut client = Mcp::copilot(&fixture, "chat")?;
     client.ok("threads", json!({}))?;
 
@@ -1872,8 +1995,6 @@ fn review_live_rewrites_report_current_placement_without_mutation() -> Result<()
         original,
         now(),
     )?;
-    fathomable_core::seen::Store::open(&fixture.dirs.seen_dir(&fixture.key()?))?
-        .record(Path::new("a.md"), original)?;
     let mut client = Mcp::copilot(&fixture, "chat")?;
     fs::write(fixture.root.join("a.md"), "zero\none\nTWO\nthree\n")?;
     let before = fs::read(&path)?;
@@ -1947,7 +2068,7 @@ fn replying_at_the_current_multiline_range_preserves_the_anchor() -> Result<()> 
 }
 
 #[test]
-fn review_shared_repository_threads_keep_their_worktree_placement() -> Result<()> {
+fn review_reads_stay_bound_to_the_startup_checkout() -> Result<()> {
     let fixture = Fixture::new("mcp-other-worktree")?;
     fathomable_testing::git::init(&fixture.root)?;
     fathomable_testing::git::commit_and_stage(&fixture.root, &[("a.md", "one\ntwo\n")])?;
@@ -1983,8 +2104,9 @@ fn review_shared_repository_threads_keep_their_worktree_placement() -> Result<()
         .iter()
         .find(|thread| thread["id"] == id.to_string())
         .context("shared worktree discussion missing")?;
-    assert_eq!(shown["placement"], "anchored");
-    assert_eq!(shown["worktree"], linked.to_string_lossy().as_ref());
+    assert_eq!(shown["placement"], "detached");
+    assert!(shown["worktree"].is_null());
+    assert_eq!(shown["origin"]["path"], "feature.md");
 
     let filtered = client.ok("threads", json!({"path": "feature.md"}))?;
     let filtered = &filtered["structuredContent"]["threads"][0];
@@ -2005,36 +2127,22 @@ fn review_shared_repository_threads_keep_their_worktree_placement() -> Result<()
         "line": 2,
         "idempotency_key": "feature-reply"
     }]});
-    let first_reply = client.ok("thread_reply", reply.clone())?;
-    let before_replay = fs::read(fixture.threads_path()?)?;
-    let repeated = client.ok("thread_reply", reply)?;
-    assert_eq!(
-        repeated["structuredContent"]["results"][0]["thread"],
-        first_reply["structuredContent"]["results"][0]["thread"],
-        "replay changed the sibling worktree placement"
+    let reply_result = client.call("thread_reply", reply)?;
+    assert_eq!(reply_result["isError"], true);
+    assert!(
+        reply_result["content"][0]["text"]
+            .as_str()
+            .context("bound checkout reply error")?
+            .contains("cannot place")
     );
-    assert_eq!(
-        first_reply["structuredContent"]["results"][0]["replayed"],
-        false
-    );
-    assert_eq!(
-        repeated["structuredContent"]["results"][0]["replayed"],
-        true
-    );
-    assert_eq!(
-        repeated["structuredContent"]["results"][0]["thread"]["worktree"],
-        linked.to_string_lossy().as_ref()
-    );
-    assert_eq!(fs::read(fixture.threads_path()?)?, before_replay);
     let store = Store::open(fixture.dirs.threads_file(workspace.key()))?;
     let thread = store.thread(&id).context("replied branch thread")?;
     assert_eq!(thread.author(), &Author::User);
-    assert_eq!(thread.replies().len(), 1);
-    assert_eq!(thread.replies()[0].author().id(), Some("copilot:chat"));
-    assert_eq!(thread.range(), Some(LineRange::new(2, 2)));
+    assert!(thread.replies().is_empty());
+    assert_eq!(thread.range(), Some(LineRange::new(1, 1)));
     assert!(
         !fixture.root.join("feature.md").exists(),
-        "reply created or required the sibling-only file in the bound checkout"
+        "reply created the sibling-only file in the bound checkout"
     );
     Ok(())
 }

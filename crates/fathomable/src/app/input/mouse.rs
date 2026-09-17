@@ -247,8 +247,8 @@ fn diff_header_click(app: &mut App, column: usize) -> Effect {
             .find(" · ")
             .map(|byte| 1 + display_width(&text[..byte]));
         let action = match split {
-            Some(split) if column > split + 1 => bindings::Action::DiffTarget,
-            _ => bindings::Action::DiffBase,
+            Some(split) if column > split + 1 => bindings::Action::ComparisonTarget,
+            _ => bindings::Action::ComparisonBase,
         };
         return app.act(action);
     }
@@ -365,7 +365,9 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                 Some(Effect::None)
             }
         }
-        Some(Popup::Status | Popup::About | Popup::Picker(_)) => Some(Effect::None),
+        Some(Popup::Status | Popup::About | Popup::Picker(_) | Popup::ConfirmBoard { .. }) => {
+            Some(Effect::None)
+        }
         _ => None,
     }
 }

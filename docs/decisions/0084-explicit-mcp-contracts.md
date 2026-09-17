@@ -12,6 +12,13 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Provenance and archive reads amended 2026-09-16 by
+[0087](0087-global-comparisons-and-board-history.md): normal filters read the
+non-archived repository board independent of `HEAD`; exact IDs may return
+archived history. Results add compact immutable origin, qualified placement,
+resolution history, and archive/restore facts. Fresh archived writes fail,
+while a matching keyed replay still returns its original outcome first.
+
 Reply contract amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md). The reply-specific
 `propose_resolve` input, returned `proposed_resolved` flag, and plain thread

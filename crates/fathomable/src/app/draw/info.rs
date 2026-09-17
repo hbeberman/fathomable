@@ -26,8 +26,17 @@ impl App {
     #[must_use]
     pub(crate) fn info(&self) -> Option<Info> {
         let doc = self.current.and_then(|index| self.docs.get(index))?;
+        let comparison_notice = doc.comparison_notice.clone();
         let (size, format_row, notice) = match doc.document.content() {
-            Content::Text(_) => return None,
+            Content::Text(text) if comparison_notice.is_none() => return None,
+            Content::Text(text) => (
+                text.len() as u64,
+                "text".to_owned(),
+                vec![
+                    comparison_notice
+                        .unwrap_or_else(|| "comparison content is unavailable".to_owned()),
+                ],
+            ),
             Content::Binary { size, format } => (
                 *size,
                 format.map_or_else(|| "binary data".to_owned(), |f| f.to_string()),

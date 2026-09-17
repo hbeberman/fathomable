@@ -52,7 +52,8 @@ Command line:
   from `$XDG_CONFIG_HOME/fathomable/themes/` for this run.
 - Admin flags, all non-interactive and printing to stdout:
   `--doctor` (terminal capabilities, XDG directories, config parse, git,
-  live sessions), `--sessions` (list sessions and sockets),
+  thread-store readability and recovery, live sessions), `--sessions`
+  (list sessions and sockets),
   `--dump-state` (session and thread state as JSON), `--replay-log`
   (re-emit the log for a session in order), `--config-show` (effective
   configuration after defaults and overrides).
@@ -92,3 +93,6 @@ tests, not for users; the viewer and the tools are how threads are made.
 - Every subsystem is expected to emit enough tracing to reconstruct a bug
   report; this is part of code review.
 - Admin flags reuse `fathomable-core` readers, so they never need a terminal.
+- A thread-store version mismatch keeps failed-action notices short: they
+  name the on-disk and expected versions and point to `:doctor`. The shared
+  Doctor report names the state file to delete and the required restart.

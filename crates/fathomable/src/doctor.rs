@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use fathomable_core::XdgDirs;
+use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
 use fathomable_core::highlight::{self, Highlighter};
 use fathomable_core::session::Record;
@@ -273,12 +274,9 @@ fn workspace_checks(
         }
     }
 
+    let threads = thread_store(report, dirs, workspace.key());
     let dir = dirs.seen_dir(workspace.key());
-    let threads =
-        fathomable_core::annotations::Store::open(dirs.threads_file(workspace.key())).ok();
-    let pinned = threads
-        .iter()
-        .flat_map(fathomable_core::annotations::Store::open_paths);
+    let pinned = threads.iter().flat_map(Store::open_paths);
     match fathomable_core::seen::Store::open_pinned(&dir, pinned) {
         Ok(seen) => report.check(
             true,
@@ -307,6 +305,43 @@ fn workspace_checks(
             ),
         ),
         Err(error) => report.check(false, format!("checkpoints: {error}")),
+    }
+}
+
+fn thread_store(report: &mut Report, dirs: &XdgDirs, key: &Path) -> Option<Store> {
+    let path = dirs.threads_file(key);
+    match Store::open(&path) {
+        Ok(store) => {
+            let count = store.threads().len();
+            report.check(
+                true,
+                format!(
+                    "{count} thread{} in {}",
+                    if count == 1 { "" } else { "s" },
+                    path.display()
+                ),
+            );
+            Some(store)
+        }
+        Err(error) => {
+            if let Some(mismatch) = error.format_mismatch() {
+                report.check(
+                    false,
+                    format!(
+                        "incompatible thread storage versions: {} on disk, {} expected",
+                        mismatch.found(),
+                        mismatch.expected()
+                    ),
+                );
+                report.info(format!(
+                    "recovery  delete {}, then restart Fathomable",
+                    path.display()
+                ));
+            } else {
+                report.check(false, format!("thread store {}: {error}", path.display()));
+            }
+            None
+        }
     }
 }
 
@@ -400,6 +435,7 @@ mod tests {
     use std::fs;
 
     use fathomable_core::XdgDirs;
+    use fathomable_core::workspace::Workspace;
     use fathomable_testing::TempDir;
 
     use super::{Kind, collect};
@@ -428,6 +464,41 @@ mod tests {
                 .iter()
                 .any(|line| line.text.contains("is not a git work tree"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn incompatible_thread_store_names_versions_and_recovery_file() -> anyhow::Result<()> {
+        let dir = TempDir::new("doctor-thread-store")?;
+        let root = dir.0.join("workspace");
+        fs::create_dir_all(&root)?;
+        fs::write(root.join("README.md"), "# test\n")?;
+        let xdg = dir.0.join("xdg");
+        let dirs = XdgDirs::resolve(|name| Some(xdg.join(name).into_os_string()));
+        let workspace = Workspace::discover(&root)?;
+        let thread_file = dirs.threads_file(workspace.key());
+        fs::create_dir_all(
+            thread_file
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("thread store path has no parent"))?,
+        )?;
+        fs::write(&thread_file, "{\"v\":3}\n")?;
+
+        let report = collect(&dirs, None, Some(&root), Some((90, 28)));
+
+        assert!(!report.passed());
+        assert!(report.lines().iter().any(|line| {
+            line.kind == Kind::Fail
+                && line.text == "incompatible thread storage versions: 3 on disk, 4 expected"
+        }));
+        assert!(report.lines().iter().any(|line| {
+            line.kind == Kind::Info
+                && line.text
+                    == format!(
+                        "recovery  delete {}, then restart Fathomable",
+                        thread_file.display()
+                    )
+        }));
         Ok(())
     }
 }

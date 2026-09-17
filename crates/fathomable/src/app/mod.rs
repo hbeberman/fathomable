@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 
 use crate::app::threads::list::ReviewList;
 use fathomable_core::annotations::{
-    self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, ThreadId,
+    self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, StoreError, ThreadId,
 };
 use fathomable_core::config::{
     DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
@@ -344,7 +344,7 @@ pub(crate) struct App {
     viewer_id: String,
     store: Option<Store>,
     /// Why the thread store could not open, retained for user-facing diagnostics.
-    thread_store_error: Option<String>,
+    thread_store_error: Option<StoreError>,
     /// Store identity and append-log position already reported as activity.
     activity_store: Option<PathBuf>,
     activity_cursor: ActivityCursor,
@@ -2249,7 +2249,7 @@ pub(crate) struct Options {
     /// The workspace's thread store, or `None` when it could not be opened.
     pub(crate) store: Option<Store>,
     /// The thread-store startup failure shown when `store` is unavailable.
-    pub(crate) thread_store_error: Option<String>,
+    pub(crate) thread_store_error: Option<StoreError>,
     /// Change notification settings (ADR 0015).
     pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).

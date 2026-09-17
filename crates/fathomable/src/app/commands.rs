@@ -132,12 +132,7 @@ impl App {
             (
                 "threads".to_owned(),
                 self.store.as_ref().map_or_else(
-                    || {
-                        self.thread_store_error.as_ref().map_or_else(
-                            || "unavailable".to_owned(),
-                            |error| format!("unavailable: {error}"),
-                        )
-                    },
+                    || "unavailable; run :doctor".to_owned(),
                     |store| store.path().display().to_string(),
                 ),
             ),

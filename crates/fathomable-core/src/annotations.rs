@@ -3083,6 +3083,27 @@ enum ErrorKind {
     Message(String),
 }
 
+/// Incompatible on-disk and current thread-store format versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatMismatch {
+    found: u32,
+    expected: u32,
+}
+
+impl FormatMismatch {
+    /// Returns the version found in the thread store.
+    #[must_use]
+    pub const fn found(&self) -> u32 {
+        self.found
+    }
+
+    /// Returns the version required by this build.
+    #[must_use]
+    pub const fn expected(&self) -> u32 {
+        self.expected
+    }
+}
+
 /// Why the store could not be read or written.
 #[derive(Debug)]
 pub struct StoreError {
@@ -3113,6 +3134,18 @@ impl StoreError {
     pub fn message(message: impl Into<String>) -> Self {
         Self {
             kind: ErrorKind::Message(message.into()),
+        }
+    }
+
+    /// Returns the incompatible versions when a format mismatch caused the error.
+    #[must_use]
+    pub fn format_mismatch(&self) -> Option<FormatMismatch> {
+        match &self.kind {
+            ErrorKind::Version(_, _, found) => Some(FormatMismatch {
+                found: *found,
+                expected: FORMAT_VERSION,
+            }),
+            _ => None,
         }
     }
 

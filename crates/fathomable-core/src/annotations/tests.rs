@@ -92,7 +92,14 @@ fn a_store_of_another_format_version_is_refused() -> Result<(), StoreError> {
     let current = fs::read_to_string(&file.0).map_err(|e| StoreError::io(&file.0, e))?;
     let stale = current.replace(&format!(r#""v":{FORMAT_VERSION}"#), r#""v":3"#);
     fs::write(&file.0, stale).map_err(|e| StoreError::io(&file.0, e))?;
-    let error = Store::open(&file.0).err().map(|e| e.to_string());
+    let store_error = Store::open(&file.0).err();
+    let mismatch = store_error.as_ref().and_then(StoreError::format_mismatch);
+    assert_eq!(mismatch.as_ref().map(super::FormatMismatch::found), Some(3));
+    assert_eq!(
+        mismatch.as_ref().map(super::FormatMismatch::expected),
+        Some(FORMAT_VERSION)
+    );
+    let error = store_error.map(|error| error.to_string());
     assert_eq!(
         error,
         Some(format!(

@@ -182,7 +182,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
         }
         Err(error) => {
             tracing::error!(%error, "cannot open the thread store; annotations disabled");
-            (None, Some(error.to_string()))
+            (None, Some(error))
         }
     };
     // Snapshots of files with open threads are kept past their age so a

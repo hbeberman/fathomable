@@ -1267,9 +1267,11 @@ each viewer shows; `--doctor` counts the worktrees sharing the state and
 the visible directories that consume inotify watches. Ignored trees are
 not part of that watch budget.
 
-When the thread store cannot open, the failed action and the `threads` row
-in `:status` show the startup error directly instead of requiring a log
-search.
+When the thread store cannot open, the failed action briefly names an
+incompatible on-disk version when applicable and points to `:doctor`. Doctor
+reports the on-disk and expected versions, the exact thread state file to
+delete, and the required restart; the `threads` row in `:status` points there
+too.
 
 Git state is keyed directly by the repository's common directory and
 non-Git state by its root; no old root-keyed directory is adopted or moved

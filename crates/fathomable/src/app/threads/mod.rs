@@ -141,10 +141,19 @@ pub(super) fn message_target(message: usize) -> MessageTarget {
 
 impl App {
     pub(super) fn thread_store_unavailable(&self) -> String {
-        self.thread_store_error.as_ref().map_or_else(
-            || "threads unavailable".to_owned(),
-            |error| format!("threads unavailable; :status: {error}"),
-        )
+        self.thread_store_error
+            .as_ref()
+            .and_then(fathomable_core::annotations::StoreError::format_mismatch)
+            .map_or_else(
+                || "threads unavailable; run :doctor".to_owned(),
+                |mismatch| {
+                    format!(
+                        "threads unavailable: incompatible storage versions ({} on disk, {} expected); run :doctor",
+                        mismatch.found(),
+                        mismatch.expected()
+                    )
+                },
+            )
     }
 
     /// The store, or a status-line notice explaining why there is none.

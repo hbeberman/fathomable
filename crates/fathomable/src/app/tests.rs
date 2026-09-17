@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use std::sync::Arc;
 
+use fathomable_core::annotations::Store;
 use fathomable_core::config::{
     JumpConfig, MarkdownConfig, SidebarConfig, ViewerConfig, WatchConfig,
 };
@@ -1384,14 +1385,17 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
 }
 
 #[test]
-fn unavailable_threads_show_the_startup_error() -> anyhow::Result<()> {
+fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     let dir = fixture("threads-unavailable")?;
-    let error = "threads.jsonl line 1: format version 3, this build writes 4; \
-                 delete /state/threads.jsonl to start over";
+    let thread_file = dir.0.join("threads.jsonl");
+    fs::write(&thread_file, "{\"v\":3}\n")?;
+    let Err(error) = Store::open(thread_file) else {
+        return Err(anyhow::anyhow!("stale thread store unexpectedly opened"));
+    };
     let mut app = app_with(
         &dir,
         Options {
-            thread_store_error: Some(error.to_owned()),
+            thread_store_error: Some(error),
             ..Options::for_test(dir.0.clone())
         },
     )?;
@@ -1401,7 +1405,9 @@ fn unavailable_threads_show_the_startup_error() -> anyhow::Result<()> {
 
     assert_eq!(
         app.message(),
-        Some(format!("threads unavailable; :status: {error}").as_str())
+        Some(
+            "threads unavailable: incompatible storage versions (3 on disk, 4 expected); run :doctor"
+        )
     );
     assert_eq!(app.message_tone(), NoticeTone::Error);
     let rows = app.status_lines();
@@ -1418,7 +1424,7 @@ fn unavailable_threads_show_the_startup_error() -> anyhow::Result<()> {
     );
     assert!(
         rows.iter()
-            .any(|(label, value)| label == "threads" && value == &format!("unavailable: {error}"))
+            .any(|(label, value)| label == "threads" && value == "unavailable; run :doctor")
     );
     Ok(())
 }

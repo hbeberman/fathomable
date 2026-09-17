@@ -1883,6 +1883,7 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
     if grid.height < 2 || menu.entries().is_empty() {
         return;
     }
+    let checkable = menu.entries().iter().any(|entry| entry.checked().is_some());
     let inner_width = grid.width.saturating_sub(2);
     let lines = menu
         .entries()
@@ -1894,10 +1895,24 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
             } else {
                 theme.menu
             };
+            let check = if checkable {
+                if entry.checked() == Some(true) {
+                    "✓ "
+                } else {
+                    "  "
+                }
+            } else {
+                ""
+            };
             let gap = inner_width
-                .saturating_sub(display_width(entry.label()) + display_width(entry.key()))
+                .saturating_sub(
+                    display_width(check)
+                        + display_width(entry.label())
+                        + display_width(entry.key()),
+                )
                 .max(1);
             Line::from(vec![
+                Span::styled(check.to_owned(), surface),
                 Span::styled(entry.label().to_owned(), surface),
                 Span::styled(" ".repeat(gap), surface),
                 Span::styled(entry.key().to_owned(), on_surface(surface, theme.info)),

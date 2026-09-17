@@ -572,11 +572,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
         ],
         Root::Review => vec![
             Row::Item(Item {
-                label: if app.review_list().is_open() {
-                    "Close review threads".to_owned()
-                } else {
-                    "Open review threads".to_owned()
-                },
+                label: "Review threads".to_owned(),
                 hint: bindings::first_keys(Where::View, Action::Review)
                     .map(bindings::menu_spell)
                     .unwrap_or_default(),
@@ -601,22 +597,14 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             )),
             Row::Item(Item::action(app, Action::ClearBoard, "Clear board…")),
             Row::Item(Item {
-                label: if app.review().resolved {
-                    "Hide resolved".to_owned()
-                } else {
-                    "Show resolved".to_owned()
-                },
+                label: "Show resolved".to_owned(),
                 hint: "x".to_owned(),
                 enabled: app.review_list().is_open() || app.focus() == Focus::ThreadsPane,
                 checked: app.review().resolved,
                 target: Target::ReviewResolved,
             }),
             Row::Item(Item {
-                label: if app.review().file_only {
-                    "Show all files".to_owned()
-                } else {
-                    "Only current file".to_owned()
-                },
+                label: "Only current file".to_owned(),
                 hint: "f".to_owned(),
                 enabled: app.review_list().is_open(),
                 checked: app.review().file_only,
@@ -624,7 +612,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             }),
             Row::Separator,
             Row::Item(Item::action(app, Action::NewThread, "New thread")),
-            Row::Item(Item::action(app, Action::FileComment, "Comment on file")),
+            Row::Item(Item::action(app, Action::FileComment, "File comment")),
             Row::Item(Item::action(app, Action::Reply, "Reply")),
             Row::Item(Item::action(
                 app,
@@ -661,7 +649,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(
                 app,
                 Action::ComparisonWhitespace,
-                "Ignore/compare whitespace",
+                "Ignore whitespace",
             )),
         ],
     }
@@ -670,34 +658,10 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
 pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
     match submenu {
         Submenu::Layout => vec![
-            Row::Item(Item::action(
-                app,
-                Action::SidebarToggle,
-                if app.sidebar.shown() {
-                    "Hide sidebar"
-                } else {
-                    "Show sidebar"
-                },
-            )),
+            Row::Item(Item::action(app, Action::SidebarToggle, "Sidebar")),
             Row::Separator,
-            Row::Item(Item::action(
-                app,
-                Action::TreeToggle,
-                if app.sidebar.tree {
-                    "Files pane"
-                } else {
-                    "Show Files pane"
-                },
-            )),
-            Row::Item(Item::action(
-                app,
-                Action::ThreadsPaneToggle,
-                if app.sidebar.threads {
-                    "Threads pane"
-                } else {
-                    "Show Threads pane"
-                },
-            )),
+            Row::Item(Item::action(app, Action::TreeToggle, "Files pane")),
+            Row::Item(Item::action(app, Action::ThreadsPaneToggle, "Threads pane")),
         ],
         Submenu::Help => vec![
             Row::Item(Item::command("Getting started", Target::GettingStarted)),
@@ -1393,8 +1357,21 @@ mod tests {
                 "Pick base…",
                 "Pick target…",
                 "Save review point",
-                "Ignore/compare whitespace",
+                "Ignore whitespace",
             ]
+        );
+        let review = rows(&app, Root::Review);
+        assert_eq!(
+            review[0].item().map(|item| (&*item.label, item.checked)),
+            Some(("Review threads", false))
+        );
+        assert_eq!(
+            review[5].item().map(|item| (&*item.label, item.checked)),
+            Some(("Show resolved", false))
+        );
+        assert_eq!(
+            review[6].item().map(|item| (&*item.label, item.checked)),
+            Some(("Only current file", false))
         );
         assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 3);
         let go = rows(&app, Root::Go);
@@ -1537,6 +1514,45 @@ mod tests {
         assert_eq!(
             app.message(),
             Some("sidebar has no panes; show Files or Threads first")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn layout_menu_uses_stable_checked_labels() -> anyhow::Result<()> {
+        let mut app = shown_app("layout-checks")?;
+        let items = |app: &crate::app::App| {
+            submenu_rows(app, Submenu::Layout)
+                .into_iter()
+                .filter_map(|row| row.item().cloned())
+                .map(|item| (item.label, item.checked))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            items(&app),
+            [
+                ("Sidebar".to_owned(), true),
+                ("Files pane".to_owned(), true),
+                ("Threads pane".to_owned(), true),
+            ]
+        );
+        testing::press(&mut app, " pf");
+        assert_eq!(
+            items(&app),
+            [
+                ("Sidebar".to_owned(), true),
+                ("Files pane".to_owned(), false),
+                ("Threads pane".to_owned(), true),
+            ]
+        );
+        testing::press(&mut app, " ps");
+        assert_eq!(
+            items(&app),
+            [
+                ("Sidebar".to_owned(), false),
+                ("Files pane".to_owned(), false),
+                ("Threads pane".to_owned(), false),
+            ]
         );
         Ok(())
     }

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: What the files pane shows
-description: The Files pane filters changed, untracked, and ignored paths through live-labelled controls under `Space F` and its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
+description: The Files pane filters changed, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
 resource: crates/fathomable/src/app/files_shown.rs
 related_resources:
   - crates/fathomable-core/src/tree.rs
@@ -25,6 +25,12 @@ hover background and a left-click opens the three pane settings. The passive
 filter words move before the diff totals without a dot. Repository and
 worktree identity move to the global menu bar. Right-click on the header does
 nothing, and row context menus contain only actions on the pointed item.
+
+Amended later 2026-09-17: the title menu uses stable **Only changed**,
+**Show untracked**, and **Show ignored** labels with checkmarks for active
+settings instead of changing its action wording. Files and directories also
+offer relative and full-path copy actions; the file action is **File
+comment**.
 
 ## Context
 
@@ -104,13 +110,16 @@ Space F r    recent files                            (unchanged)
   reads `all files`, `show untracked`, `hide ignored`. The label states
   the outcome of pressing the key now, in the fewest words.
 - A left-click on the header's **`Files` title** opens a pane settings menu
-  carrying the same three entries with the same live wording. The title is
-  the only clickable part of the Files header and takes `ui.list.hover`
-  under the pointer; right-click on the header does nothing.
-- A file row's **right-click menu** is item-local: `open`, `comment on file`,
-  and `copy path`. A directory row offers `expand` or `collapse`, then
-  `copy path`. Save review point remains in the global **Diff** menu, and
-  review navigation and pane filters do not appear on row menus.
+  with stable `only changed`, `show untracked`, and `show ignored` labels.
+  Each active setting carries a checkmark; inactive settings reserve the
+  same space without one. The title is the only clickable part of the Files
+  header and takes `ui.list.hover` under the pointer; right-click on the
+  header does nothing.
+- A file row's **right-click menu** is item-local: `open`, `file comment`,
+  `copy path` (`y`), and `copy full path` (`Y`). A directory row offers
+  `expand` or `collapse`, then both path-copy actions. Save review point
+  remains in the global **Diff** menu, and review navigation and pane filters
+  do not appear on row menus.
 
 ### The header names the state
 

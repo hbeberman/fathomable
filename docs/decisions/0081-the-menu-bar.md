@@ -35,6 +35,14 @@ Amended later 2026-09-17: menu rows left-align their normal-face action
 labels and right-align their subdued shortcut labels, retaining at least one
 cell between the widest pair. Menu shortcuts abbreviate `Space` as `Sp`.
 
+Amended later 2026-09-17: **Layout** uses stable **Sidebar**, **Files pane**,
+and **Threads pane** labels. A checkmark means that surface is shown; toggling
+it changes the mark rather than rewriting the label.
+
+The same state-label rule applies to the other checked menu items: **Review
+threads**, **Show resolved**, **Only current file**, and **Ignore
+whitespace** retain their text while their checkmark changes.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -83,7 +91,8 @@ affect.
 
 - `☰` is titled **Fathomable**. It contains one-level **Layout** and
   **Help** submenus, then Status, About, and Quit.
-- **Layout** contains Hide/Show sidebar, Files pane, and Threads pane.
+- **Layout** contains Sidebar, Files pane, and Threads pane with a checkmark
+  beside each visible surface. Labels remain stable when toggled.
   `Space p s` hides the sidebar as one unit and restores the exact pane
   composition it hid. Showing a child while the sidebar is hidden opens that
   child alone. Hiding the last child remembers it as the next whole-sidebar
@@ -103,8 +112,8 @@ affect.
   mark-seen state. The bracket-pair navigation commands are intentionally not
   copied into these menus.
 - Menu order is stable. Unavailable actions remain present and dim. Checked
-  rows expose current state; toggle labels say what they will do where that
-  is clearer. Action labels are left-aligned in the normal menu face and
+  rows use stable state labels and expose current state only through the
+  checkmark. Action labels are left-aligned in the normal menu face and
   shortcut labels are right-aligned in the subdued info face. The widest
   pair determines the menu width with at least one cell between them, and
   menu shortcuts abbreviate `Space` as `Sp`. Destructive thread deletion

@@ -387,6 +387,7 @@ impl App {
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
             Action::CopyPath => return self.copy_tree_path(),
+            Action::CopyFullPath => return self.copy_tree_full_path(),
             Action::Top => self.with_tree(|tree, _| {
                 tree.goto_top();
                 None

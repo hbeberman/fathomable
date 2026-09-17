@@ -4,9 +4,10 @@
 //! show ignored files (`g`), working from any pane.
 //!
 //! The rules themselves are the tree's [`Shown`]; this module is the
-//! app's hands on them: the toggle, the live label a which-key or menu
-//! entry carries so it says what a press does now, the notice while the
-//! pane is hidden, and the words the pane's header names the state by.
+//! app's hands on them: the toggle, the live label a which-key entry
+//! carries so it says what a press does now, the checked state of the
+//! Files settings menu, the notice while the pane is hidden, and the
+//! words the pane's header names the state by.
 
 use fathomable_core::tree::{Rule, Shown, Tree};
 
@@ -85,15 +86,25 @@ impl App {
         }
     }
 
-    /// The label a toggle's entry reads now: the live one, else the
-    /// table's without the submenu word.
-    pub(crate) fn toggle_label(&self, action: Action) -> &'static str {
-        self.live_label(action).unwrap_or(match action {
+    /// The stable state label used by the Files settings menu.
+    pub(crate) fn files_setting_label(action: Action) -> &'static str {
+        match action {
             Action::FilesChanged => "only changed",
-            Action::FilesUntracked => "hide untracked",
+            Action::FilesUntracked => "show untracked",
             Action::FilesIgnored => "show ignored",
             _ => "",
-        })
+        }
+    }
+
+    /// Whether a Files setting is active and should carry a checkmark.
+    pub(crate) fn files_setting_checked(&self, action: Action) -> bool {
+        let shown = self.files_shown();
+        match action {
+            Action::FilesChanged => shown.changed_only(),
+            Action::FilesUntracked => shown.untracked(),
+            Action::FilesIgnored => shown.ignored(),
+            _ => false,
+        }
     }
 
     /// The which-key entries for the keys typed so far on `place`, each
@@ -331,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn the_files_title_opens_the_settings_with_live_labels() -> anyhow::Result<()> {
+    fn the_files_title_opens_checked_settings() -> anyhow::Result<()> {
         let dir = fixture("menu")?;
         let mut app = AppBuilder::new(&dir).build()?;
         app.show_tree();
@@ -348,24 +359,52 @@ mod tests {
             )
         };
         click_title(&mut app);
-        let labels = |app: &App| -> Vec<String> {
+        let settings = |app: &App| -> Vec<(String, Option<bool>)> {
             app.menu()
                 .map(|menu| {
                     menu.entries()
                         .iter()
-                        .map(|entry| entry.label().to_owned())
+                        .map(|entry| (entry.label().to_owned(), entry.checked()))
                         .collect()
                 })
                 .unwrap_or_default()
         };
-        let shown = labels(&app);
-        assert_eq!(shown, ["only changed", "hide untracked", "show ignored"]);
+        assert_eq!(
+            settings(&app),
+            [
+                ("only changed".to_owned(), Some(false)),
+                ("show untracked".to_owned(), Some(true)),
+                ("show ignored".to_owned(), Some(false)),
+            ]
+        );
+        assert!(
+            screen(&app)?
+                .iter()
+                .any(|row| row.contains("✓ show untracked")),
+            "the active setting draws its checkmark"
+        );
         app.close_popup();
         press(&mut app, " Fc");
         click_title(&mut app);
-        let shown = labels(&app);
-        assert_eq!(shown.last().map(String::as_str), Some("show ignored"));
-        assert!(shown.iter().any(|label| label == "all files"), "{shown:?}");
+        assert_eq!(
+            settings(&app),
+            [
+                ("only changed".to_owned(), Some(true)),
+                ("show untracked".to_owned(), Some(true)),
+                ("show ignored".to_owned(), Some(false)),
+            ]
+        );
+        app.close_popup();
+        press(&mut app, " Fu Fg");
+        click_title(&mut app);
+        assert_eq!(
+            settings(&app),
+            [
+                ("only changed".to_owned(), Some(true)),
+                ("show untracked".to_owned(), Some(false)),
+                ("show ignored".to_owned(), Some(true)),
+            ]
+        );
         app.close_popup();
 
         let row = app.pane_top();

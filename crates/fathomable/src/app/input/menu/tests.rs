@@ -667,13 +667,24 @@ fn the_tree_menu_opens_and_copies_the_path() -> anyhow::Result<()> {
     assert_eq!(app.focus(), Focus::Tree);
     assert_eq!(app.menu().map(Menu::title), Some("README.md"));
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, l)| l).collect();
-    assert_eq!(labels, ["open", "comment on file", "copy path"]);
+    assert_eq!(
+        labels,
+        ["open", "file comment", "copy path", "copy full path"]
+    );
     let (x, y) = entry_cell(&app, "copy path")?;
     assert_eq!(left(&mut app, x, y), Effect::Copy("README.md".to_owned()));
     assert_eq!(
         handle_key(&mut app, key('y')),
         Effect::Copy("README.md".to_owned())
     );
+    right(&mut app, 0, index + 1);
+    let full = testing::root(&dir)
+        .join("README.md")
+        .to_string_lossy()
+        .into_owned();
+    let (x, y) = entry_cell(&app, "copy full path")?;
+    assert_eq!(left(&mut app, x, y), Effect::Copy(full.clone()));
+    assert_eq!(handle_key(&mut app, key('Y')), Effect::Copy(full));
     Ok(())
 }
 
@@ -1002,8 +1013,11 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
         .context("README in the tree")?;
     right(&mut app, 2, readme_row + 1);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels, ["open", "comment on file", "copy path"]);
-    let cell = entry_cell(&app, "comment on file")?;
+    assert_eq!(
+        labels,
+        ["open", "file comment", "copy path", "copy full path"]
+    );
+    let cell = entry_cell(&app, "file comment")?;
     left(&mut app, cell.0, cell.1);
     assert!(matches!(
         app.popup(),
@@ -1020,7 +1034,13 @@ fn file_rows_and_the_files_pane_open_their_menus() -> anyhow::Result<()> {
         .context("docs in the tree")?;
     right(&mut app, 2, docs_row + 1);
     let labels: Vec<String> = entries(&app)?.into_iter().map(|(_, label)| label).collect();
-    assert_eq!(labels, ["expand", "copy path"]);
+    assert_eq!(labels, ["expand", "copy path", "copy full path"]);
+    let full = testing::root(&dir)
+        .join("docs")
+        .to_string_lossy()
+        .into_owned();
+    let cell = entry_cell(&app, "copy full path")?;
+    assert_eq!(left(&mut app, cell.0, cell.1), Effect::Copy(full));
     Ok(())
 }
 

@@ -127,7 +127,7 @@ continuations. These tables contain the main bindings.
 | --- | --- |
 | `c` | comment on selected/current lines; reply from thread rows |
 | `Space c c` | start a line comment |
-| `Space c f` | comment on the file |
+| `Space c f` | start a file comment |
 | `Space c r` | reply to the cursor thread |
 | `Space c e` | edit your newest message |
 | `Space c d` | delete the cursor thread |
@@ -164,6 +164,7 @@ continuations. These tables contain the main bindings.
 | `Space w w` | next pane |
 | `Space w f` | focus Files |
 | `Space w t` | focus Threads |
+| `y` `Y` | copy the relative or full path from Files |
 | `Enter` `Ctrl-Enter` | submit a draft; submit and enable auto-resolve |
 | `Alt-Enter` | newline in a draft |
 | `Alt-k` `Alt-Up` | scroll text above a draft upward |
@@ -187,12 +188,13 @@ Hovering over a picker row highlights it, clicking chooses it, and the mouse
 wheel moves the selection and list.
 
 The Files header reads `Files` at the left. That word takes the shared hover
-background under the pointer; clicking it opens the pane's **Only changed/All
-files**, **Hide/Show untracked**, and **Show/Hide ignored** settings.
+background under the pointer; clicking it opens **Only changed**, **Show
+untracked**, and **Show ignored**. A checkmark means the setting is on.
 Right-clicking the header does nothing.
 Active filter words appear passively before the `+n -m` comparison totals.
-Right-clicking a file offers **Open**, **Comment on file**, and **Copy path**.
-Right-clicking a directory offers **Expand/Collapse** and **Copy path**.
+Right-clicking a file offers **Open**, **File comment**, **Copy path** (`y`),
+and **Copy full path** (`Y`). Right-clicking a directory offers
+**Expand/Collapse** and both path-copy actions.
 Context and menu-bar popups put action labels at the left and their subdued
 shortcuts at the right, with at least one cell between them. Those menus use
 `Sp` as the compact spelling of `Space`.
@@ -387,7 +389,8 @@ the base or target label opens that endpoint's picker.
 resolved threads, Clear board, and contextual thread actions. **Diff**
 contains Comparison controls, base/target pickers, Save review point, and
 whitespace. **Start comparison at current HEAD** remains inside Comparison
-controls.
+controls. Under **☰ → Layout**, stable **Sidebar**, **Files pane**, and
+**Threads pane** labels carry a checkmark while each surface is shown.
 
 Configuration is KDL at
 `$XDG_CONFIG_HOME/fathomable/config.kdl` (normally

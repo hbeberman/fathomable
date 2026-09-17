@@ -119,6 +119,20 @@ impl App {
         Effect::Copy(path)
     }
 
+    /// `Y` in the tree: copy the highlighted row's absolute path.
+    pub(crate) fn copy_tree_full_path(&mut self) -> Effect {
+        let Some(path) = self
+            .tree()
+            .and_then(Tree::current)
+            .map(|row| self.workspace.root().join(row.path()))
+        else {
+            return Effect::None;
+        };
+        let path = path.to_string_lossy().into_owned();
+        self.notice(format!("copied {path}"));
+        Effect::Copy(path)
+    }
+
     pub(super) fn scroll_tree(&mut self) {
         // The threads pane (ADR 0027) takes rows from the tree.
         let rows = self.tree_rows().saturating_sub(1).max(1);

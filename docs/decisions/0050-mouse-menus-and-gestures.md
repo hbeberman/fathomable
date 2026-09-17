@@ -66,15 +66,19 @@ has a waiting-count action; its total thread count still focuses the
 threads pane.
 
 Amended 2026-09-17 by [0068](0068-what-the-files-pane-shows.md): a Files
-row's context menu is strictly item-local. Files offer open, comment on file,
-and copy path; directories offer expand/collapse and copy path. Pane filters
-move to a left-click menu on the `Files` title. Right-click on that header
-does nothing.
+row's context menu is strictly item-local. Files offer open, file comment,
+and path-copy actions; directories offer expand/collapse and path-copy
+actions. Pane filters move to a left-click menu on the `Files` title.
+Right-click on that header does nothing.
 
 Amended later 2026-09-17: context-menu rows put the action at the left in the
 normal menu face and its right-aligned shortcut in the subdued info face.
 The widest action/shortcut pair sets the box width with at least one cell
 between them. Menu shortcuts abbreviate `Space` as `Sp`.
+
+Amended later 2026-09-17: Files rows add `copy full path` (`Y`) after the
+relative `copy path` (`y`) for both files and directories, and the file
+action is labelled `file comment`.
 
 ## Context
 
@@ -128,11 +132,12 @@ same day; the choices are below.
     now copies the cursor line, so the entry has a key; it copied
     nothing before.
 
-  In the Files pane: a file offers `open` (`Enter`), `comment on file`
-  (`Space c f`), and `copy path` (`y`); a directory offers `expand` or
-  `collapse` (`Enter`) and `copy path`. The pointed row becomes the tree
-  cursor before the menu opens. Save review point stays in the global
-  **Diff** menu; review navigation and pane filters are not item actions.
+  In the Files pane: a file offers `open` (`Enter`), `file comment`
+  (`Space c f`), `copy path` (`y`), and `copy full path` (`Y`); a directory
+  offers `expand` or `collapse` (`Enter`) and the two path-copy actions.
+  The pointed row becomes the tree cursor before the menu opens. Save review
+  point stays in the global **Diff** menu; review navigation and pane filters
+  are not item actions.
   In the threads pane and the review list: `go to` (`Enter`), `reply`
   (`c`), `resolve` / `reopen` (`o`), `edit message` (`e`), `delete
   thread` (`dd`).

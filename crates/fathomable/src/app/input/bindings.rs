@@ -258,6 +258,7 @@ actions! {
     Yank,
     GotoFile,
     CopyPath,
+    CopyFullPath,
     Comment,
     NewThread,
     /// `Space c f`: a comment on the open file as a whole (ADR 0063).
@@ -852,7 +853,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('c'), c('f')]],
         A::FileComment,
         "Space menu",
-        "threads: comment on file",
+        "threads: file comment",
     ),
     bind(
         W::Any,
@@ -990,6 +991,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "goto bottom",
     ),
     bind(W::Tree, &[&[c('y')]], A::CopyPath, "Tree", "copy the path"),
+    bind(
+        W::Tree,
+        &[&[c('Y')]],
+        A::CopyFullPath,
+        "Tree",
+        "copy the full path",
+    ),
     bind(
         W::Tree,
         &[&[k(K::Esc)]],
@@ -1848,6 +1856,10 @@ mod tests {
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("c"));
         assert_eq!(hint(Where::Tree, Action::CopyPath).as_deref(), Some("y"));
+        assert_eq!(
+            hint(Where::Tree, Action::CopyFullPath).as_deref(),
+            Some("Y")
+        );
         assert_eq!(
             hint(Where::View, Action::Reply).as_deref(),
             Some("Space c r")

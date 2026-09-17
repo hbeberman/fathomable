@@ -29,6 +29,8 @@ pub(crate) struct Entry {
     /// What the entry runs. The key shown may belong to a sibling
     /// action: `dd` arms a delete, the entry deletes at once.
     action: Action,
+    /// `Some` for a persistent toggle row, active or inactive.
+    checked: Option<bool>,
 }
 
 impl Entry {
@@ -45,6 +47,11 @@ impl Entry {
     #[must_use]
     pub(crate) fn action(&self) -> Action {
         self.action
+    }
+
+    #[must_use]
+    pub(crate) fn checked(&self) -> Option<bool> {
+        self.checked
     }
 }
 
@@ -74,12 +81,28 @@ impl Menu {
     /// the table does not bind on this place adds nothing, so no entry
     /// is ever keyless.
     fn push(&mut self, shown: Action, run: Action, label: impl Into<String>) {
+        self.push_entry(shown, run, label, None);
+    }
+
+    /// Add a persistent toggle entry carrying its current checked state.
+    fn push_toggle(&mut self, shown: Action, run: Action, label: impl Into<String>, active: bool) {
+        self.push_entry(shown, run, label, Some(active));
+    }
+
+    fn push_entry(
+        &mut self,
+        shown: Action,
+        run: Action,
+        label: impl Into<String>,
+        checked: Option<bool>,
+    ) {
         if let Some(keys) = bindings::first_keys(self.place, shown) {
             self.entries.push(Entry {
                 key: bindings::menu_spell(keys),
                 keys,
                 label: label.into(),
                 action: run,
+                checked,
             });
         }
     }
@@ -128,7 +151,8 @@ impl Menu {
                 .iter()
                 .map(|entry| (entry.key.as_str(), entry.label.as_str())),
         );
-        let action_width = label_width + 1 + key_width;
+        let check_width = usize::from(self.entries.iter().any(|entry| entry.checked.is_some())) * 2;
+        let action_width = check_width + label_width + 1 + key_width;
         let box_width = (action_width + 2)
             .max(display_width(&self.title) + 4)
             .min(width);
@@ -451,7 +475,12 @@ impl App {
             Action::FilesUntracked,
             Action::FilesIgnored,
         ] {
-            menu.push(action, action, self.toggle_label(action));
+            menu.push_toggle(
+                action,
+                action,
+                Self::files_setting_label(action),
+                self.files_setting_checked(action),
+            );
         }
         self.open_menu(menu);
     }
@@ -478,9 +507,10 @@ impl App {
             );
         } else {
             menu.push(Action::Confirm, Action::Confirm, "open");
-            menu.push(Action::FileComment, Action::FileComment, "comment on file");
+            menu.push(Action::FileComment, Action::FileComment, "file comment");
         }
         menu.push(Action::CopyPath, Action::CopyPath, "copy path");
+        menu.push(Action::CopyFullPath, Action::CopyFullPath, "copy full path");
         self.open_menu(menu);
     }
 

@@ -21,10 +21,6 @@ tags:
 
 Status: accepted (2026-09-16)
 
-Amended 2026-09-17: temporal focus is removed because choosing a review
-point as the base already expresses the same point-to-working-tree delta.
-Review points remain explicit comparison endpoints.
-
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),

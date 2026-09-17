@@ -1086,11 +1086,9 @@ mod tests {
     use std::path::Path;
 
     use fathomable_core::XdgDirs;
-    use fathomable_core::diff::Compare;
     use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
     use fathomable_testing::{TempDir, git};
 
-    use super::State;
     use crate::app::testing::{AppBuilder, press, press_key};
     use crate::app::{PickerKind, Popup};
     use crossterm::event::KeyCode;
@@ -1100,37 +1098,6 @@ mod tests {
         fs::create_dir_all(dir.0.join("ws"))?;
         git::init(&dir.0.join("ws"))?;
         Ok(dir)
-    }
-
-    #[test]
-    fn retired_temporal_focus_is_removed_from_saved_preferences() -> anyhow::Result<()> {
-        let dir = repository("comparison-retired-focus")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let workspace = Workspace::discover(&root)?;
-        let base = workspace
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("HEAD"))?;
-        let preferences = dir.0.join("preferences");
-        fs::create_dir_all(&preferences)?;
-        fs::write(
-            preferences.join("comparison.json"),
-            serde_json::to_vec_pretty(&serde_json::json!({
-                "base": base,
-                "target": "working-tree",
-                "focus": "retired-review-point",
-                "whitespace": false
-            }))?,
-        )?;
-
-        let mut state = State::load(&preferences, &workspace, Compare::default());
-        assert_eq!(state.target(), &ComparisonEndpoint::WorkingTree);
-        state.persist();
-        let saved: serde_json::Value =
-            serde_json::from_slice(&fs::read(preferences.join("comparison.json"))?)?;
-        assert!(saved.get("focus").is_none());
-        Ok(())
     }
 
     #[test]

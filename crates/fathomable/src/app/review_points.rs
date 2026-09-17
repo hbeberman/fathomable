@@ -1,8 +1,7 @@
 // @okf-doc: /decisions/0087-global-comparisons-and-board-history.md
 //! Explicit workspace review points.
 //!
-//! The old per-file checkpoint timeline is intentionally gone.  These
-//! actions save a workspace-wide
+//! These actions save a workspace-wide
 //! [`ReviewPointStore`](fathomable_core::review_points::ReviewPointStore)
 //! capture and never change the selected comparison.
 

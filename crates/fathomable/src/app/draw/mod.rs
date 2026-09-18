@@ -549,8 +549,8 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             theme.popup_key.add_modifier(Modifier::BOLD),
         )),
         Line::raw(""),
-        Line::raw("Read-only terminal workspace viewer and annotation side-car"),
-        Line::raw("for agent-driven work."),
+        Line::raw("Read-only terminal workspace viewer and"),
+        Line::raw("annotation side-car for agent-driven work."),
         Line::raw(""),
         Line::from(vec![
             Span::styled("License  ", theme.info),
@@ -564,9 +564,53 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Line::raw(""),
         Line::from(Span::styled("Esc close", theme.info)),
     ];
+    let copy_width = lines.iter().map(Line::width).max().unwrap_or_default();
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+    draw_about_anchor(frame, inner, copy_width, theme);
+}
+
+const ABOUT_ANCHOR: [&str; 10] = [
+    "      (    ",
+    "       )   ",
+    "      (    ",
+    "     _|_   ",
+    "    ( o )  ",
+    "  ===`|'===",
+    "      |    ",
+    "  \\   |   /",
+    "  `-._|_.-'",
+    "      v    ",
+];
+const ABOUT_ANCHOR_WIDTH: u16 = 11;
+const ABOUT_ANCHOR_HEIGHT: u16 = 10;
+const ABOUT_ANCHOR_SHANK: u16 = 6;
+
+fn draw_about_anchor(frame: &mut Frame<'_>, inner: Rect, copy_width: usize, theme: &Theme) {
+    if inner.width < ABOUT_ANCHOR_WIDTH || inner.height < ABOUT_ANCHOR_HEIGHT {
+        return;
+    }
+    let anchor_x = inner.width - ABOUT_ANCHOR_WIDTH;
+    if usize::from(anchor_x) < copy_width {
+        return;
+    }
+    let area = Rect {
+        x: inner.x + anchor_x,
+        y: inner.y,
+        width: ABOUT_ANCHOR_WIDTH,
+        height: ABOUT_ANCHOR_HEIGHT,
+    };
+    let style = on_surface(theme.popup, theme.info);
+    let lines = ABOUT_ANCHOR
+        .iter()
+        .map(|row| Line::from(Span::styled(*row, style)))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(
+        Paragraph::new(Span::styled("(", style)),
+        Rect::new(area.x + ABOUT_ANCHOR_SHANK, inner.y - 1, 1, 1),
+    );
 }
 
 pub(crate) fn report_area(app: &App) -> Rect {
@@ -3009,17 +3053,152 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::layout::{Layout, display_width};
     use ratatui::style::{Color, Style};
 
+    use crate::app::Popup;
     use crate::app::testing;
     use crate::app::threads::list::Row;
+    use crate::app::view::Effect;
 
     use super::{
-        ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
-        picker_row_cells, status_message_style,
+        ABOUT_ANCHOR, ListRender, Theme, about_area, fit, fit_ellipsis, format_age,
+        format_age_short, format_time, list_row, picker_row_cells, status_message_style,
     };
+
+    #[test]
+    fn about_anchor_renders_exactly_in_the_subdued_info_style() -> anyhow::Result<()> {
+        let dir = testing::workspace("about-anchor", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.command("about");
+        let area = about_area(&app);
+        assert_eq!((area.width, area.height), (64, 12));
+        let buffer = testing::buffer(&app)?;
+        let actual = (area.y..area.y + 11)
+            .map(|y| {
+                (area.x..area.x + area.width)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let expected = [
+            "╭ About ──────────────────────────────────────────────────(────╮",
+            "│Fathomable 0.1.0                                         (    │",
+            "│                                                          )   │",
+            "│Read-only terminal workspace viewer and                  (    │",
+            "│annotation side-car for agent-driven work.              _|_   │",
+            "│                                                       ( o )  │",
+            "│License  MIT (Fathomable)                            ===`|'===│",
+            "│Source   https://github.com/hbeberman/fathomable         |    │",
+            "│Third-party notices: Help > Licenses or :licenses    \\   |   /│",
+            "│                                                     `-._|_.-'│",
+            "│Esc close                                                v    │",
+        ];
+        assert_eq!(actual, expected);
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let anchor_x = area.x + 1 + 51;
+        for (row, anchor) in ABOUT_ANCHOR.iter().enumerate() {
+            for (column, _ch) in anchor.chars().enumerate().filter(|(_, ch)| *ch != ' ') {
+                let cell = &buffer[(
+                    anchor_x + u16::try_from(column)?,
+                    area.y + 1 + u16::try_from(row)?,
+                )];
+                assert_eq!(Some(cell.fg), theme.info.fg);
+            }
+        }
+        assert_eq!(Some(buffer[(area.x + 58, area.y)].fg), theme.info.fg);
+        Ok(())
+    }
+
+    #[test]
+    fn about_source_opens_and_an_outside_click_dismisses() -> anyhow::Result<()> {
+        let dir = testing::workspace("about-mouse", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.command("about");
+        let area = about_area(&app);
+        let click = |column, row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(&mut app, click(area.x + 10, area.y + 7),),
+            Effect::Open("https://github.com/hbeberman/fathomable".to_owned())
+        );
+        assert!(app.popup().is_none());
+
+        app.command("about");
+        assert!(matches!(app.popup(), Some(Popup::About)));
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(&mut app, click(area.x - 1, area.y),),
+            Effect::None
+        );
+        assert!(app.popup().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_about_omits_anchor_without_covering_source_link() -> anyhow::Result<()> {
+        let dir = testing::workspace("about-anchor-narrow", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).width(56).build()?;
+        app.command("about");
+        let area = about_area(&app);
+        assert_eq!((area.width, area.height), (52, 12));
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(56, 30))?;
+        terminal.draw(|frame| super::draw(frame, &app, &theme))?;
+        let buffer = terminal.backend().buffer();
+        let actual = (area.y + 1..area.y + 11)
+            .map(|y| {
+                (area.x + 1..area.x + area.width - 1)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>();
+        let expected = [
+            "Fathomable 0.1.0",
+            "",
+            "Read-only terminal workspace viewer and",
+            "annotation side-car for agent-driven work.",
+            "",
+            "License  MIT (Fathomable)",
+            "Source   https://github.com/hbeberman/fathomable",
+            "Third-party notices: Help > Licenses or :licenses",
+            "",
+            "Esc close",
+        ];
+        assert_eq!(actual, expected);
+
+        let former_anchor_column = area.x + 46;
+        let source_row = area.y + 7;
+        assert_eq!(buffer[(former_anchor_column, source_row)].symbol(), "b");
+        assert_eq!(
+            Some(buffer[(former_anchor_column, source_row)].fg),
+            theme.link.fg
+        );
+        assert_eq!(buffer[(former_anchor_column, area.y)].symbol(), "─");
+
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: former_anchor_column,
+            row: source_row,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(&mut app, click),
+            Effect::Open("https://github.com/hbeberman/fathomable".to_owned())
+        );
+        Ok(())
+    }
 
     #[test]
     fn welcome_renders_the_complete_shortcut_block() -> anyhow::Result<()> {

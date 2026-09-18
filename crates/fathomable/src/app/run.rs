@@ -7,7 +7,7 @@
 //! app itself is tested without a terminal (ADR 0012).
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
@@ -17,13 +17,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use crossterm::cursor::SetCursorStyle;
+use crossterm::cursor::{Hide, SetCursorStyle, Show};
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode,
 };
 use fathomable_core::theme::Theme;
 use fathomable_core::workspace::Workspace;
@@ -38,6 +39,8 @@ use super::view::Effect;
 use super::{App, Options, clipboard, highlight, input, watch};
 
 mod draft;
+#[cfg(test)]
+mod terminal_tests;
 
 /// Run the app until the user quits, showing `open` first when given,
 /// else the tree (ADR 0012).
@@ -68,17 +71,63 @@ pub(crate) fn restore_terminal() {
     if !TERMINAL_ENTERED.swap(false, Ordering::SeqCst) {
         return;
     }
-    if KEYBOARD_ENHANCED.swap(false, Ordering::SeqCst) {
-        let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
-    }
-    let _ = crossterm::execute!(
-        io::stdout(),
-        SetCursorStyle::DefaultUserShape,
-        DisableBracketedPaste,
-        DisableMouseCapture,
-        LeaveAlternateScreen
-    );
+    let enhanced = KEYBOARD_ENHANCED.swap(false, Ordering::SeqCst);
+    let _ = write_terminal_restore(&mut io::stdout(), enhanced);
     let _ = disable_raw_mode();
+}
+
+fn write_terminal_restore(writer: &mut impl Write, keyboard_enhanced: bool) -> io::Result<()> {
+    let mut failure = None;
+    let end = crossterm::queue!(writer, EndSynchronizedUpdate).map(|()| ());
+    let retry_end = end.is_err();
+    record_restore_error(&mut failure, "ending synchronized update", end);
+    if retry_end {
+        record_restore_error(
+            &mut failure,
+            "retrying synchronized update end",
+            crossterm::queue!(writer, EndSynchronizedUpdate).map(|()| ()),
+        );
+    }
+    if keyboard_enhanced {
+        record_restore_error(
+            &mut failure,
+            "restoring keyboard mode",
+            crossterm::queue!(writer, PopKeyboardEnhancementFlags).map(|()| ()),
+        );
+    }
+    record_restore_error(
+        &mut failure,
+        "restoring shell terminal modes",
+        crossterm::queue!(
+            writer,
+            Show,
+            SetCursorStyle::DefaultUserShape,
+            DisableBracketedPaste,
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        )
+        .map(|()| ()),
+    );
+    record_restore_error(
+        &mut failure,
+        "flushing terminal restoration",
+        writer.flush(),
+    );
+    failure.map_or(Ok(()), Err)
+}
+
+fn record_restore_error(failure: &mut Option<io::Error>, operation: &str, result: io::Result<()>) {
+    let Err(error) = result else {
+        return;
+    };
+    let error = io::Error::new(error.kind(), format!("{operation}: {error}"));
+    *failure = Some(match failure.take() {
+        Some(first) => {
+            let kind = first.kind();
+            io::Error::new(kind, format!("{first}; {error}"))
+        }
+        None => error,
+    });
 }
 
 /// Restores the terminal on drop so a panic or error never leaves raw mode on.
@@ -86,8 +135,13 @@ struct TerminalGuard;
 
 impl TerminalGuard {
     fn enter() -> anyhow::Result<Self> {
-        Self::resume()?;
-        Ok(Self)
+        match Self::resume() {
+            Ok(()) => Ok(Self),
+            Err(error) => {
+                restore_terminal();
+                Err(error)
+            }
+        }
     }
 
     /// Raw mode, the alternate screen, mouse capture, bracketed paste, and
@@ -105,7 +159,8 @@ impl TerminalGuard {
             EnterAlternateScreen,
             EnableMouseCapture,
             EnableBracketedPaste,
-            SetCursorStyle::SteadyBlock
+            SetCursorStyle::SteadyBlock,
+            Hide
         )
         .context("cannot enter alternate screen")?;
         // Kitty-protocol disambiguation lets Ctrl-Enter differ from Enter in
@@ -450,10 +505,80 @@ fn draw(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
 ) -> anyhow::Result<()> {
     crash::observe(app.status_lines());
-    terminal
-        .draw(|frame| crate::app::draw::draw(frame, app, theme))
-        .context("draw failed")?;
-    Ok(())
+    synchronized_frame(&mut io::stdout(), || {
+        terminal
+            .draw(|frame| crate::app::draw::draw(frame, app, theme))
+            .context("draw failed")?;
+        Ok(())
+    })
+}
+
+fn synchronized_frame<W, T>(
+    writer: &mut W,
+    draw: impl FnOnce() -> anyhow::Result<T>,
+) -> anyhow::Result<T>
+where
+    W: Write,
+{
+    let mut update = FrameUpdate::new(writer);
+    if let Err(error) = update.begin() {
+        let error = anyhow::Error::new(error).context("cannot begin synchronized frame");
+        return update.finish(Err(error));
+    }
+    update.finish(draw())
+}
+
+struct FrameUpdate<'a, W: Write> {
+    writer: &'a mut W,
+    ended: bool,
+}
+
+impl<'a, W> FrameUpdate<'a, W>
+where
+    W: Write,
+{
+    const fn new(writer: &'a mut W) -> Self {
+        Self {
+            writer,
+            ended: false,
+        }
+    }
+
+    fn begin(&mut self) -> io::Result<()> {
+        // Ratatui re-emits the frame's final cursor visibility and position.
+        // Hiding first also keeps the cursor out of cell painting on terminals
+        // that ignore synchronized updates without suppressing the File cursor.
+        crossterm::execute!(self.writer, BeginSynchronizedUpdate, Hide)?;
+        Ok(())
+    }
+
+    fn end(&mut self) -> io::Result<()> {
+        crossterm::execute!(self.writer, EndSynchronizedUpdate)?;
+        self.ended = true;
+        Ok(())
+    }
+
+    fn finish<T>(mut self, result: anyhow::Result<T>) -> anyhow::Result<T> {
+        match (result, self.end()) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => Err(error),
+            (Ok(_), Err(cleanup)) => Err(cleanup).context("cannot end synchronized frame"),
+            (Err(error), Err(cleanup)) => {
+                Err(error.context(format!("ending synchronized frame also failed: {cleanup}")))
+            }
+        }
+    }
+}
+
+impl<W> Drop for FrameUpdate<'_, W>
+where
+    W: Write,
+{
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = crossterm::execute!(self.writer, EndSynchronizedUpdate);
+        }
+    }
 }
 
 /// Keep narrow coverage for every loaded file, including ignored ones.

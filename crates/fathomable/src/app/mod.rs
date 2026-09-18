@@ -2817,4 +2817,6 @@ impl Options {
 }
 
 #[cfg(test)]
+mod render_integrity_tests;
+#[cfg(test)]
 mod tests;

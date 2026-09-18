@@ -47,6 +47,9 @@ A panic hook, armed for the TUI only, prints one report and writes a copy:
   in process statics rather than in `TerminalGuard`, because the hook runs
   before the guard is dropped and cannot reach it; restoring twice is a
   no-op, so the hook and the guard can both call it.
+  Restoration ends any synchronized frame and restores a visible,
+  default-shape cursor before leaving the alternate screen
+  ([terminal presentation](0012-workspace-mode.md#terminal-presentation)).
 - The report carries the `:status` rows — the open document and its view
   mode, the terminal's size, the session, the workspace, the socket, and
   every state path — snapshotted once per frame so they describe the frame

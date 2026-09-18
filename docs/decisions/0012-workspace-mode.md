@@ -5,6 +5,7 @@ description: The tree sidebar, the space menu, the fuzzy file picker, open-file 
 resource: crates/fathomable/src/app/mod.rs
 related_resources:
   - crates/fathomable/src/app/draw/mod.rs
+  - crates/fathomable/src/app/run.rs
   - crates/fathomable-core/src/workspace.rs
   - crates/fathomable-core/src/tree.rs
   - crates/fathomable-core/src/picker.rs
@@ -17,7 +18,8 @@ tags:
 # 0012 Workspace mode
 
 Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
-amended 2026-09-14 (`l` / Right is directory navigation only).
+amended 2026-09-14 (`l` / Right is directory navigation only);
+amended 2026-09-18 (synchronized terminal frames).
 
 Amended 2026-09-15 by [0081](0081-the-menu-bar.md): one `layout` config
 sets the menu bar and sidebar startup state consistently for file and
@@ -47,6 +49,29 @@ that collides with zellij's default `Ctrl-g/p/t/n/h/s/o/q/b` locks. These
 choices were captured in a question round on 2026-08-26.
 
 ## Decision
+
+### Terminal presentation
+
+- A repaint brackets the complete Ratatui draw, including its final cursor
+  position, with synchronized-update commands. Supporting terminals present
+  the completed frame rather than intermediate cell writes and cursor moves.
+  The cursor is hidden before cell painting, including on terminals that
+  ignore synchronization commands.
+  The real cursor remains available at the intended File-view or input
+  position; synchronization does not replace it with a painted character.
+- Normal frames remain differential. Synchronization changes presentation,
+  not Ratatui's cell cache, and does not require periodic full repaints.
+  Resize handling and the full redraw after an external editor still
+  invalidate the cache where necessary.
+- Frame failures attempt to end synchronization before propagating the error.
+  Terminal restoration also ends synchronization and restores a visible
+  default-shape cursor before handing control back to the shell or editor.
+  Panic restoration follows [0022](0022-crash-reports.md).
+- Terminals or multiplexers that ignore synchronized updates do not provide
+  atomic frame presentation. Synchronization is not a guarantee against
+  arbitrary terminal-state loss, a broken output stream, or emulator defects.
+  Differential-versus-full-render regressions check cell consistency;
+  visual behavior over SSH still needs verification in the affected terminal.
 
 ### Workspace
 

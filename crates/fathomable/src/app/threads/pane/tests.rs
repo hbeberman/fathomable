@@ -63,6 +63,52 @@ fn sidebar_buffer(app: &App) -> anyhow::Result<(crate::app::draw::Theme, ratatui
     Ok((theme, buffer))
 }
 
+fn click_sidebar_archive(
+    app: &mut App,
+    archived: &fathomable_core::annotations::ThreadId,
+    survivor: &fathomable_core::annotations::ThreadId,
+) -> anyhow::Result<()> {
+    assert_eq!(app.thread_cursor().thread(), Some(archived));
+    let column = sidebar_column(app)?;
+    let bar = &column[app.pane_rows() - 1];
+    assert!(bar.contains("archive a"), "{bar:?}");
+    let footer = crate::app::draw::header::threads_pane_footer(app);
+    let inner = app.sidebar_width().saturating_sub(1);
+    let archive = (0..inner)
+        .find(|column| {
+            footer.action_at(inner, *column)
+                == Some(crate::app::input::bindings::Action::ArchiveThread)
+        })
+        .ok_or_else(|| anyhow::anyhow!("archive footer action"))?;
+    let footer_row = app.pane_rows() - 1;
+    crate::app::input::mouse::handle_mouse(
+        app,
+        MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: u16::try_from(archive)?,
+            row: u16::try_from(footer_row)?,
+            modifiers: KeyModifiers::NONE,
+        },
+    );
+    assert!(
+        app.thread(archived).is_some_and(Thread::is_archived),
+        "the sidebar footer archives its selected thread"
+    );
+    assert_eq!(app.thread_cursor().thread(), Some(survivor));
+    assert_eq!(app.threads_pane_selected(), Some(0));
+    let footer = crate::app::draw::header::threads_pane_footer(app);
+    assert!(
+        (0..inner).all(|column| {
+            footer.action_at(inner, column)
+                != Some(crate::app::input::bindings::Action::ArchiveThread)
+        }),
+        "the surviving active card owns the footer"
+    );
+    press(app, "a");
+    assert!(!app.thread(survivor).is_some_and(Thread::is_archived));
+    Ok(())
+}
+
 /// The paths of the pane's file rows, `▸` before a folded one.
 fn file_rows(app: &App) -> Vec<String> {
     app.threads_pane_rows()
@@ -180,8 +226,8 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     // With the keys, the bottom row is the key bar.
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("reply c") && bar.contains("reopen r"),
-        "{bar:?}"
+        !bar.contains("archive a"),
+        "a hidden resolved thread has no cleanup hint: {bar:?}"
     );
     assert!(
         !bar.contains("fold z"),
@@ -192,8 +238,45 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     assert_eq!(app.threads_pane_entries().len(), 2);
     assert_eq!(app.threads_pane_entries()[0].kind(), ThreadState::Resolved);
     assert_eq!(app.threads_pane_entries()[0].words().glyph(), "○");
+    let archived = app.threads_pane_entries()[0].id.clone();
+    let survivor = app.threads_pane_entries()[1].id.clone();
+    app.threads_pane_click(0);
+    assert_eq!(app.threads_pane_selected(), Some(0));
+    click_sidebar_archive(&mut app, &archived, &survivor)?;
     press(&mut app, "x");
     assert_eq!(app.threads_pane_entries().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn archived_review_cursor_restores_from_the_sidebar() -> anyhow::Result<()> {
+    let dir = fixture("archived-restore")?;
+    let mut app = source_app(&dir)?;
+    annotate(&mut app, 3, "resolved");
+    let id = app.file_threads()[0].clone();
+    app.goto_message(id.clone(), 0);
+    app.thread_toggle_resolved();
+    app.archive_thread(&id);
+    app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+
+    press(&mut app, " wt");
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(app.thread_cursor().thread(), Some(&id));
+    let column = sidebar_column(&app)?;
+    let bar = &column[app.pane_rows() - 1];
+    assert!(bar.contains("restore u"), "{bar:?}");
+    assert!(
+        !bar.contains("reopen")
+            && !bar.contains("resolve r")
+            && !bar.contains("reply")
+            && !bar.contains("archive"),
+        "archived cards expose only valid lifecycle actions: {bar:?}"
+    );
+
+    press(&mut app, "u");
+    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
+    assert_eq!(app.threads_pane_selected(), None);
+    assert_eq!(app.thread_cursor().thread(), None);
     Ok(())
 }
 
@@ -230,7 +313,7 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     );
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("reopen r") && bar.contains("fold z"),
+        bar.contains("fold z") && !bar.contains("archive a"),
         "{bar:?}"
     );
 

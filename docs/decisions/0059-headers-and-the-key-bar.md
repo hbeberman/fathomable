@@ -34,9 +34,11 @@ Amended 2026-09-16 by
 [0086](0086-one-thread-summary-and-its-actions.md): inline and review thread
 headers now use one summary layout. A later 2026-09-17 amendment keeps
 auto-resolve and resolve/reopen on the bottom bar at all times; headers show
-only passive dim `autoresolve` or `resolve proposed` status. Direct Archive
-and Restore cleanup controls remain row-specific. Every bar reads action
-then hotkey, and the hovered action-hotkey region composes
+only passive dim `autoresolve` or `resolve proposed` status. Amended
+2026-09-18: Archive and Restore cleanup controls follow the same rule, so
+thread headers are wholly factual and the focused pane's bottom bar targets
+its cursor thread. Every bar reads action then hotkey, and the hovered
+action-hotkey region composes
 `ui.header.patch(ui.list.hover)`. The older metadata-only entry-header and
 count wording remains below.
 

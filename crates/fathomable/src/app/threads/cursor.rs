@@ -169,6 +169,12 @@ impl App {
         self.pin_thread_cursor(ThreadCursor::new(id, message.min(last)));
     }
 
+    /// Clear a stored cursor after its pane entry disappears.
+    pub(crate) fn clear_thread_cursor(&mut self) {
+        self.thread_cursor = ThreadCursor::default();
+        self.thread_cursor_anchor = None;
+    }
+
     // ----- motions -----
 
     /// Where the cursor stands in `order`: `Ok(i)` on thread `i`, or

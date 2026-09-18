@@ -32,7 +32,7 @@ use crate::app::draw::author::{
 };
 use crate::app::draw::header::{
     Header, Tone, entry_header, expanded_header, file_header, files_pane_header, review_footer,
-    review_header, summary_line, summary_rehover,
+    review_header, summary_line,
 };
 use crate::app::draw::info::Info;
 use crate::app::draw::message::{MESSAGE_INDENT, expanded_lines, message_line};
@@ -1371,9 +1371,9 @@ fn text_lines<'a>(app: &'a App, theme: &Theme, gutter: usize, rows: usize) -> Ve
         if let Some((stub, index, _)) = app.stub_on_row(row) {
             if stub.expanded() {
                 let block = view.stub_slot_of_row(row).map_or(0, |(block, _)| block);
-                let body = expanded.entry(block).or_insert_with(|| {
-                    expanded_block_lines(app, theme, &stub, width - gutter, row - index)
-                });
+                let body = expanded
+                    .entry(block)
+                    .or_insert_with(|| expanded_block_lines(app, theme, &stub, width - gutter));
                 out.push(with_gutter(
                     app,
                     theme,
@@ -1483,33 +1483,14 @@ fn stub_line<'a>(
     let covered = app.threads_at_cursor().contains(thread.id());
     let marked = covered && app.thread_cursor().thread() == Some(thread.id());
     let content_width = width.saturating_sub(gutter);
-    let layout = expanded_header(app, thread, marked, false, content_width);
-    let screen_row = app.text_top() + row.saturating_sub(app.view().scroll());
-    let hover = summary_hover(
-        app.pointer(),
-        &layout,
-        screen_row,
-        app.sidebar_width() + gutter,
-    );
+    let layout = expanded_header(app, thread, false, content_width);
     let leading = vec![if marked {
         Span::styled(CURSOR_BAR, theme.header.patch(theme.thread_cursor))
     } else {
         Span::styled(" ", theme.header)
     }];
-    let line = summary_line(theme, &layout, leading, hover);
+    let line = summary_line(theme, &layout, leading);
     with_gutter(app, theme, line, row, digits)
-}
-
-fn summary_hover(
-    pointer: Option<(usize, usize)>,
-    layout: &crate::app::threads::summary::SummaryLayout,
-    screen_row: usize,
-    column_origin: usize,
-) -> Option<Action> {
-    pointer
-        .filter(|(_, row)| *row == screen_row)
-        .and_then(|(column, _)| column.checked_sub(column_origin))
-        .and_then(|column| layout.action_at(column))
 }
 
 /// The rows of `stub`'s block expanded in place (ADR 0049), at the text
@@ -1517,13 +1498,7 @@ fn summary_hover(
 /// the pane drew them,
 /// the draft in its place among them (ADR 0054); for a draft block, a
 /// header naming the lines and the draft.
-fn expanded_block_lines<'a>(
-    app: &App,
-    theme: &Theme,
-    stub: &Stub,
-    width: usize,
-    first_row: usize,
-) -> Vec<Line<'a>> {
+fn expanded_block_lines<'a>(app: &App, theme: &Theme, stub: &Stub, width: usize) -> Vec<Line<'a>> {
     let draft = app
         .draft()
         .map(|compose| draft_lines(app, theme, compose, width));
@@ -1558,20 +1533,13 @@ fn expanded_block_lines<'a>(
                 .expanded_row_message(app.view().cursor().row)
                 .filter(|(on, _)| on == id)
                 .map(|(_, message)| message);
-            let layout = expanded_header(app, thread, current, true, width);
-            let screen_row = app.text_top() + first_row.saturating_sub(app.view().scroll());
-            let hover = summary_hover(
-                app.pointer(),
-                &layout,
-                screen_row,
-                app.sidebar_width() + gutter_width(app.view()),
-            );
+            let layout = expanded_header(app, thread, true, width);
             let leading = vec![if current {
                 Span::styled(CURSOR_BAR, theme.header.patch(theme.thread_cursor))
             } else {
                 Span::styled(" ", theme.header)
             }];
-            let mut lines = vec![summary_line(theme, &layout, leading, hover)];
+            let mut lines = vec![summary_line(theme, &layout, leading)];
             let Some(body_layout) = app.expanded_layout(id) else {
                 tracing::error!(%id, "expanded thread has no prepared message layout");
                 return lines;
@@ -2778,15 +2746,12 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     let mut lines = vec![header.line_with_left_hover(theme, width, title_hovered)];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
-    for (offset, row) in all.iter().skip(scroll).take(body).enumerate() {
+    for row in all.iter().skip(scroll).take(body) {
         let context = ListRender {
             theme,
             now,
             width,
             navigation: Navigation::for_pane(app, Focus::Review),
-            screen_row: app.pane_top() + 1 + offset,
-            pointer: app.pointer(),
-            column_origin: app.sidebar_width(),
         };
         lines.push(list_row(&context, row));
     }
@@ -2809,9 +2774,6 @@ struct ListRender<'a> {
     now: u64,
     width: usize,
     navigation: Navigation,
-    screen_row: usize,
-    pointer: Option<(usize, usize)>,
-    column_origin: usize,
 }
 
 #[expect(
@@ -2823,9 +2785,6 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
     let now = context.now;
     let width = context.width;
     let navigation = context.navigation;
-    let screen_row = context.screen_row;
-    let pointer = context.pointer;
-    let column_origin = context.column_origin;
     match row {
         // A file's row over its threads (ADR 0066): the path in the
         // directory colour after `▾`, or `▸` when folded (ADR 0076), the
@@ -2864,17 +2823,9 @@ fn list_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
             summary, selected, ..
         } => {
             let selection = navigation.selection(*selected);
-            let layout = entry_header(summary, now, *selected, true, width);
-            let hover = summary_hover(pointer, &layout, screen_row, column_origin);
-            let line = summary_line(
-                theme,
-                &layout,
-                vec![selection.marker(theme), nest_span()],
-                hover,
-            );
-            let mut line = selection.paint(theme, line);
-            summary_rehover(theme, &layout, &mut line, 2, hover);
-            line
+            let layout = entry_header(summary, now, true, width);
+            let line = summary_line(theme, &layout, vec![selection.marker(theme), nest_span()]);
+            selection.paint(theme, line)
         }
         Row::Stub { .. } => stub_row(context, row),
         // A message's rows on its author's stripe, the name in the
@@ -2973,9 +2924,6 @@ fn stub_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
     let now = context.now;
     let width = context.width;
     let navigation = context.navigation;
-    let screen_row = context.screen_row;
-    let pointer = context.pointer;
-    let column_origin = context.column_origin;
     let Row::Stub {
         summary, selected, ..
     } = row
@@ -2983,17 +2931,9 @@ fn stub_row<'a>(context: &ListRender<'a>, row: &Row) -> Line<'a> {
         return Line::from("");
     };
     let selection = navigation.selection(*selected);
-    let layout = entry_header(summary, now, *selected, false, width);
-    let hover = summary_hover(pointer, &layout, screen_row, column_origin);
-    let line = summary_line(
-        theme,
-        &layout,
-        vec![selection.marker(theme), nest_span()],
-        hover,
-    );
-    let mut line = selection.paint(theme, line);
-    summary_rehover(theme, &layout, &mut line, 2, hover);
-    line
+    let layout = entry_header(summary, now, false, width);
+    let line = summary_line(theme, &layout, vec![selection.marker(theme), nest_span()]);
+    selection.paint(theme, line)
 }
 
 /// The arrow before a file row's path in the list and the threads pane
@@ -3473,9 +3413,6 @@ mod tests {
                 now: 0,
                 width: 30,
                 navigation: super::Navigation::Active,
-                screen_row: 0,
-                pointer: None,
-                column_origin: 0,
             };
             let line = list_row(&context, &row);
             let width: usize = line

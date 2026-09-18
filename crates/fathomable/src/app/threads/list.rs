@@ -969,19 +969,14 @@ impl App {
         }
     }
 
-    /// Whether the cursor thread's header or folded row is visible.
-    pub(crate) fn review_thread_header_visible(&self) -> bool {
+    /// Whether the review cursor rests on a thread rather than its file row.
+    pub(crate) fn review_cursor_on_thread(&self) -> bool {
         if !self.review_list.is_open() {
             return false;
         }
         let rows = self.review_rows(self.column_width());
-        let Some(index) = self.selected_index(&rows) else {
-            return false;
-        };
-        let Some(row) = rows.entry_row(index) else {
-            return false;
-        };
-        row >= self.review_list.scroll && row < self.review_list.scroll + self.list_rows()
+        self.selected_index(&rows)
+            .is_some_and(|index| matches!(self.cursor_stop(&rows, index), Stop::Entry(_)))
     }
 
     /// `l` / `h`: the next or previous message of the cursor's thread,

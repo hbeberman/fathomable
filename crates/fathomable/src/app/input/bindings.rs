@@ -557,6 +557,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::View,
+        &[&[c('a')]],
+        A::ArchiveThread,
+        "Threads",
+        "archive thread",
+    ),
+    bind(
+        W::View,
         &[&[c('d'), c('d')]],
         A::Delete,
         "Threads",
@@ -1072,6 +1079,20 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ToggleAutoResolve,
         "Threads pane",
         "toggle auto-resolve",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('a')]],
+        A::ArchiveThread,
+        "Threads pane",
+        "archive thread",
+    ),
+    bind(
+        W::ThreadsPane,
+        &[&[c('u')]],
+        A::RestoreThread,
+        "Threads pane",
+        "restore thread",
     ),
     bind(
         W::ThreadsPane,
@@ -1868,6 +1889,18 @@ mod tests {
         assert_eq!(
             lookup(Where::View, &[c('R')]),
             Match::Exact(Action::ToggleAutoResolve)
+        );
+        assert_eq!(
+            lookup(Where::View, &[c('a')]),
+            Match::Exact(Action::ArchiveThread)
+        );
+        assert_eq!(
+            lookup(Where::ThreadsPane, &[c('a')]),
+            Match::Exact(Action::ArchiveThread)
+        );
+        assert_eq!(
+            lookup(Where::ThreadsPane, &[c('u')]),
+            Match::Exact(Action::RestoreThread)
         );
         assert_eq!(lookup(Where::View, &[c('t')]), Match::Exact(Action::Review));
         assert_eq!(

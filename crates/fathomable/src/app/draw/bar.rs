@@ -36,7 +36,14 @@ pub(crate) fn text_bar(app: &App) -> Header {
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
         let expanded = app.is_expanded(id);
         let on_thread_row = app.cursor_on_thread_row(id);
-        hints.extend(thread_hints(app, place, words, expanded, on_thread_row));
+        hints.extend(thread_hints(
+            app,
+            place,
+            words,
+            thread.is_archived(),
+            expanded,
+            on_thread_row,
+        ));
     }
     let stubs = app.stubs();
     if !stubs.is_empty() {
@@ -61,6 +68,7 @@ fn thread_hints(
     app: &App,
     place: Where,
     words: Words,
+    archived: bool,
     expanded: bool,
     on_thread_row: bool,
 ) -> Vec<HintOf> {
@@ -84,6 +92,9 @@ fn thread_hints(
         ));
     }
     hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
+    if words.is_resolved() && !archived {
+        hints.push(HintOf::keyed(place, Action::ArchiveThread, "archive"));
+    }
     hints.push(HintOf::keyed(
         place,
         Action::Fold,
@@ -119,6 +130,48 @@ mod tests {
             .find(|&column| text_bar(app).action_at(width, column) == Some(action))
             .ok_or_else(|| anyhow::anyhow!("bar action {action:?}"))?;
         click(app, app.sidebar_width() + column, app.text_bar_row());
+        Ok(())
+    }
+
+    fn archive_resolved_cursor(
+        app: &mut crate::app::App,
+        id: &fathomable_core::annotations::ThreadId,
+    ) -> anyhow::Result<()> {
+        testing::press(app, "r");
+        assert_eq!(
+            bar(app)?.trim(),
+            "reply c · edit e · reopen r · archive a · fold z · fold all Z"
+        );
+        let rows = screen(app)?;
+        assert!(
+            rows.iter()
+                .all(|row| !row.contains("Archive") && !row.contains("Restore")),
+            "inline headers are factual: {rows:?}"
+        );
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = crate::app::draw::Theme::from_core(&core);
+        let narrow: String = text_bar(app)
+            .line(&theme, 50)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert!(narrow.contains("archive a"), "{narrow:?}");
+        assert!(!narrow.contains("fold all"), "{narrow:?}");
+        click_bar_action(app, Action::ArchiveThread)?;
+        assert!(
+            app.thread(id)
+                .is_some_and(fathomable_core::annotations::Thread::is_archived),
+            "the text footer archives its cursor thread"
+        );
+        app.restore_thread(id);
+        app.goto_message(id.clone(), 0);
+        testing::press(app, "a");
+        assert!(
+            app.thread(id)
+                .is_some_and(fathomable_core::annotations::Thread::is_archived),
+            "`a` archives the text cursor thread"
+        );
         Ok(())
     }
 
@@ -294,6 +347,8 @@ mod tests {
         assert!(app.draft().is_some(), "`reply c` on the bar starts a reply");
         press_key(&mut app, KeyCode::Esc);
         assert!(app.draft().is_none());
+
+        archive_resolved_cursor(&mut app, &mine)?;
 
         // The bar replaces the bottom text row; the text has as many rows
         // as it had with no bar (ADR 0067).

@@ -6,7 +6,6 @@ use std::ops::Range;
 use fathomable_core::annotations::{AutoResolve, Lifecycle, Placement, Thread, ThreadId};
 use fathomable_core::layout::{display_width, graphemes};
 
-use crate::app::input::bindings::Action;
 use crate::app::threads::author_label;
 
 /// Facts shared by inline headers, review headers, and sidebar cards.
@@ -15,7 +14,6 @@ pub(crate) struct ThreadSummary {
     id: ThreadId,
     lifecycle: Lifecycle,
     auto_resolve: AutoResolve,
-    archived: bool,
     location: String,
     context: Option<String>,
     author: String,
@@ -39,7 +37,6 @@ impl ThreadSummary {
             id: thread.id().clone(),
             lifecycle: thread.lifecycle(),
             auto_resolve: thread.auto_resolve(),
-            archived: thread.is_archived(),
             location: location(thread, placement),
             context: context.map(str::to_owned),
             author: author_label(author, user),
@@ -104,24 +101,6 @@ impl ThreadSummary {
             None
         }
     }
-
-    pub(crate) fn actions(&self) -> Vec<Action> {
-        if self.archived {
-            return vec![Action::RestoreThread];
-        }
-        match self.lifecycle {
-            Lifecycle::Active | Lifecycle::ResolutionProposed => Vec::new(),
-            Lifecycle::Resolved => vec![Action::ArchiveThread],
-        }
-    }
-
-    fn action_label(action: Action) -> &'static str {
-        match action {
-            Action::ArchiveThread => "Archive",
-            Action::RestoreThread => "Restore",
-            _ => "",
-        }
-    }
 }
 
 fn location(thread: &Thread, placement: Option<Placement>) -> String {
@@ -145,8 +124,6 @@ pub(crate) enum SummaryTone {
     Author { user: bool },
     Preview,
     Chevron,
-    Action,
-    ActionKey,
 }
 
 /// One styled run in a laid-out summary row.
@@ -154,7 +131,6 @@ pub(crate) enum SummaryTone {
 pub(crate) struct SummarySpan {
     pub(crate) text: String,
     pub(crate) tone: SummaryTone,
-    pub(crate) action: Option<Action>,
 }
 
 impl SummarySpan {
@@ -162,42 +138,18 @@ impl SummarySpan {
         Self {
             text: text.into(),
             tone,
-            action: None,
-        }
-    }
-
-    fn action(text: impl Into<String>, tone: SummaryTone, action: Action) -> Self {
-        Self {
-            text: text.into(),
-            tone,
-            action: Some(action),
         }
     }
 }
 
-/// Exact cells occupied by a summary control.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SummaryRegion {
-    pub(crate) cells: Range<usize>,
-    pub(crate) action: Action,
-}
-
-/// A complete one-row summary and its visible hit geometry.
+/// A complete one-row factual summary and its disclosure geometry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SummaryLayout {
     pub(crate) spans: Vec<SummarySpan>,
     disclosure: Range<usize>,
-    actions: Vec<SummaryRegion>,
 }
 
 impl SummaryLayout {
-    pub(crate) fn action_at(&self, column: usize) -> Option<Action> {
-        self.actions
-            .iter()
-            .find(|region| region.cells.contains(&column))
-            .map(|region| region.action)
-    }
-
     pub(crate) fn disclosure_at(&self, column: usize) -> bool {
         self.disclosure.contains(&column)
     }
@@ -209,7 +161,6 @@ pub(crate) struct SummaryLayoutOptions {
     pub(crate) width: usize,
     pub(crate) leading: usize,
     pub(crate) expanded: bool,
-    pub(crate) cursor: bool,
 }
 
 /// Lay out one inline or review header.
@@ -223,7 +174,6 @@ pub(crate) fn layout(
     now: u64,
 ) -> SummaryLayout {
     let mut spans = Vec::new();
-    let mut actions = Vec::new();
     let mut used = options.leading;
     let disclosure_start = used + 2;
 
@@ -233,8 +183,6 @@ pub(crate) fn layout(
         options.width,
         summary.glyph(),
         SummaryTone::Lifecycle(summary.lifecycle),
-        None,
-        &mut actions,
     );
     push_clipped(
         &mut spans,
@@ -242,8 +190,6 @@ pub(crate) fn layout(
         options.width,
         " ",
         SummaryTone::Surface,
-        None,
-        &mut actions,
     );
     push_clipped(
         &mut spans,
@@ -251,23 +197,8 @@ pub(crate) fn layout(
         options.width,
         if options.expanded { "▾   " } else { "▸   " },
         SummaryTone::Chevron,
-        None,
-        &mut actions,
     );
     let disclosure_end = (disclosure_start + 4).min(options.width);
-
-    let action_specs = (options.expanded || options.cursor).then(|| summary.actions());
-    let action_width = action_specs.as_ref().map_or(0, |items| {
-        items
-            .iter()
-            .enumerate()
-            .map(|(index, action)| {
-                usize::from(index > 0) * 2
-                    + display_width(ThreadSummary::action_label(*action))
-                    + if options.cursor { 3 } else { 0 }
-            })
-            .sum()
-    });
 
     let mut facts = Vec::with_capacity(5);
     if let Some(status) = summary.status() {
@@ -284,7 +215,7 @@ pub(crate) fn layout(
 
     let prefix_used = used;
     let mut shown = facts;
-    while fixed_width(prefix_used, action_width, &shown) > options.width {
+    while fixed_width(prefix_used, &shown) > options.width {
         let remove = [Fact::Context, Fact::Replies, Fact::Modified, Fact::Location]
             .into_iter()
             .find(|fact| shown.iter().any(|(candidate, _)| candidate == fact));
@@ -296,71 +227,17 @@ pub(crate) fn layout(
 
     let tail_width = facts_width(&shown);
     let separators = usize::from(tail_width > 0) * 2;
-    let preview_action_gap = usize::from(!options.expanded && action_width > 0) * 2;
     let available_preview = options
         .width
-        .saturating_sub(prefix_used + action_width + tail_width + separators + preview_action_gap);
+        .saturating_sub(prefix_used + tail_width + separators);
     if !options.expanded {
-        let before = used;
         push_preview(
             summary,
             available_preview,
             &mut spans,
             &mut used,
             options.width,
-            &mut actions,
         );
-        if used > before && action_width > 0 {
-            push_clipped(
-                &mut spans,
-                &mut used,
-                options.width,
-                "  ",
-                SummaryTone::Surface,
-                None,
-                &mut actions,
-            );
-        }
-    }
-
-    if let Some(action_specs) = action_specs {
-        for (index, action) in action_specs.into_iter().enumerate() {
-            if index > 0 {
-                push_clipped(
-                    &mut spans,
-                    &mut used,
-                    options.width,
-                    "  ",
-                    SummaryTone::Surface,
-                    None,
-                    &mut actions,
-                );
-            }
-            push_clipped(
-                &mut spans,
-                &mut used,
-                options.width,
-                ThreadSummary::action_label(action),
-                SummaryTone::Action,
-                Some(action),
-                &mut actions,
-            );
-            if options.cursor {
-                push_clipped(
-                    &mut spans,
-                    &mut used,
-                    options.width,
-                    match action {
-                        Action::ArchiveThread => "  a",
-                        Action::RestoreThread => "  u",
-                        _ => "",
-                    },
-                    SummaryTone::ActionKey,
-                    Some(action),
-                    &mut actions,
-                );
-            }
-        }
     }
 
     if tail_width > 0 && used < options.width {
@@ -373,8 +250,6 @@ pub(crate) fn layout(
                 options.width,
                 &" ".repeat(padding),
                 SummaryTone::Surface,
-                None,
-                &mut actions,
             );
         }
         for (index, (fact, text)) in shown.iter().enumerate() {
@@ -385,8 +260,6 @@ pub(crate) fn layout(
                     options.width,
                     "  ",
                     SummaryTone::Surface,
-                    None,
-                    &mut actions,
                 );
             }
             push_clipped(
@@ -399,8 +272,6 @@ pub(crate) fn layout(
                 } else {
                     SummaryTone::Info
                 },
-                None,
-                &mut actions,
             );
         }
     }
@@ -413,7 +284,6 @@ pub(crate) fn layout(
     SummaryLayout {
         spans,
         disclosure: disclosure_start..disclosure_end,
-        actions,
     }
 }
 
@@ -434,9 +304,9 @@ fn facts_width(facts: &[(Fact, String)]) -> usize {
         + 2 * facts.len().saturating_sub(1)
 }
 
-fn fixed_width(prefix: usize, actions: usize, facts: &[(Fact, String)]) -> usize {
+fn fixed_width(prefix: usize, facts: &[(Fact, String)]) -> usize {
     let tail = facts_width(facts);
-    prefix + actions + tail + usize::from(tail > 0) * 2
+    prefix + tail + usize::from(tail > 0) * 2
 }
 
 fn push_preview(
@@ -445,7 +315,6 @@ fn push_preview(
     spans: &mut Vec<SummarySpan>,
     used: &mut usize,
     total: usize,
-    actions: &mut Vec<SummaryRegion>,
 ) {
     let author_width = display_width(summary.author());
     if width <= author_width + 1 {
@@ -459,20 +328,10 @@ fn push_preview(
         SummaryTone::Author {
             user: summary.author_is_user(),
         },
-        None,
-        actions,
     );
-    push_clipped(spans, used, total, " ", SummaryTone::Surface, None, actions);
+    push_clipped(spans, used, total, " ", SummaryTone::Surface);
     let preview = ellipsize(summary.preview(), width - author_width - 1);
-    push_clipped(
-        spans,
-        used,
-        total,
-        &preview,
-        SummaryTone::Preview,
-        None,
-        actions,
-    );
+    push_clipped(spans, used, total, &preview, SummaryTone::Preview);
 }
 
 fn push_clipped(
@@ -481,8 +340,6 @@ fn push_clipped(
     width: usize,
     text: &str,
     tone: SummaryTone,
-    action: Option<Action>,
-    regions: &mut Vec<SummaryRegion>,
 ) {
     let available = width.saturating_sub(*used);
     if available == 0 {
@@ -493,25 +350,8 @@ fn push_clipped(
     if cells == 0 {
         return;
     }
-    let start = *used;
-    spans.push(match action {
-        Some(action) => SummarySpan::action(clipped, tone, action),
-        None => SummarySpan::new(clipped, tone),
-    });
+    spans.push(SummarySpan::new(clipped, tone));
     *used += cells;
-    if let Some(action) = action {
-        if let Some(last) = regions
-            .last_mut()
-            .filter(|region| region.action == action && region.cells.end == start)
-        {
-            last.cells.end = *used;
-        } else {
-            regions.push(SummaryRegion {
-                cells: start..*used,
-                action,
-            });
-        }
-    }
 }
 
 fn clip(text: &str, width: usize) -> String {
@@ -621,7 +461,6 @@ mod tests {
                 width: 60,
                 leading: 0,
                 expanded: false,
-                cursor: false,
             },
             301,
         );
@@ -635,7 +474,7 @@ mod tests {
 
     #[test]
     fn headers_show_passive_lifecycle_status() -> anyhow::Result<()> {
-        let (_dir, mut store, id) = fixture("summary-actions", Author::User)?;
+        let (_dir, mut store, id) = fixture("summary-lifecycle-status", Author::User)?;
         store.reply_user(&id, 2, "reply", UserSubmit::EnableAutoResolve)?;
         let summary = ThreadSummary::new(
             store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
@@ -649,7 +488,6 @@ mod tests {
                 width: 80,
                 leading: 1,
                 expanded: true,
-                cursor: true,
             },
             2,
         );
@@ -663,7 +501,6 @@ mod tests {
         assert!(!rendered.contains("Auto-resolve"), "{rendered}");
         assert!(!rendered.contains("Resolve"), "{rendered}");
         assert!(!rendered.contains("User reply"), "{rendered}");
-        assert!(row.actions.is_empty(), "{:?}", row.actions);
         assert!(row.disclosure_at(3));
         assert!(row.disclosure_at(6));
         assert!(!row.disclosure_at(7));
@@ -688,7 +525,6 @@ mod tests {
                 width: 80,
                 leading: 1,
                 expanded: true,
-                cursor: true,
             },
             2,
         );
@@ -698,74 +534,40 @@ mod tests {
                 span.text == "resolve proposed" && span.tone == SummaryTone::Status
             })
         );
-        assert!(proposed.actions.is_empty());
-
         Ok(())
     }
 
     #[test]
-    fn resolved_headers_offer_direct_archive_cleanup() -> anyhow::Result<()> {
+    fn resolved_headers_are_factual_at_wide_and_narrow_widths() -> anyhow::Result<()> {
         let (_dir, mut store, id) = fixture("summary-actions", Author::User)?;
         store.resolve(&id, None, 3)?;
-        let resolved = ThreadSummary::new(
+        let summary = ThreadSummary::new(
             store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
             Some(Placement::Anchored(LineRange::new(42, 46))),
             "User",
             None,
         );
-        let resolved = layout(
-            &resolved,
-            SummaryLayoutOptions {
-                width: 50,
-                leading: 0,
-                expanded: true,
-                cursor: true,
-            },
-            3,
-        );
-        let rendered = text(&resolved);
-        assert!(rendered.contains("Archive  a"), "{rendered}");
-        assert!(!rendered.contains("Reopen"), "{rendered}");
-        assert!(!rendered.contains("Resolve"), "{rendered}");
-        let archive = resolved
-            .actions
-            .iter()
-            .find(|region| region.action == Action::ArchiveThread)
-            .ok_or_else(|| anyhow::anyhow!("archive action"))?;
-        assert_eq!(
-            resolved.action_at(archive.cells.start.saturating_sub(1)),
-            None,
-            "the separator is inert"
-        );
-
-        let non_cursor = layout(
-            &ThreadSummary::new(
-                store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
-                Some(Placement::Anchored(LineRange::new(42, 46))),
-                "User",
-                None,
-            ),
-            SummaryLayoutOptions {
-                width: 50,
-                leading: 0,
-                expanded: true,
-                cursor: false,
-            },
-            3,
-        );
-        assert!(text(&non_cursor).contains("Archive"));
-        assert!(
-            non_cursor
-                .spans
-                .iter()
-                .all(|span| span.tone != SummaryTone::ActionKey)
-        );
+        for (width, expanded) in [(50, true), (18, false)] {
+            let rendered = text(&layout(
+                &summary,
+                SummaryLayoutOptions {
+                    width,
+                    leading: 0,
+                    expanded,
+                },
+                3,
+            ));
+            assert!(!rendered.contains("Archive"), "{rendered}");
+            assert!(!rendered.contains("Restore"), "{rendered}");
+            assert!(!rendered.contains(" a"), "{rendered}");
+            assert!(!rendered.contains(" u"), "{rendered}");
+        }
 
         Ok(())
     }
 
     #[test]
-    fn archived_headers_offer_restore_only() -> anyhow::Result<()> {
+    fn archived_headers_are_factual() -> anyhow::Result<()> {
         let (_dir, mut store, id) = fixture("summary-archived-actions", Author::User)?;
         store.resolve(&id, None, 3)?;
         store.archive(&id, 4)?;
@@ -781,12 +583,11 @@ mod tests {
                 width: 50,
                 leading: 0,
                 expanded: true,
-                cursor: true,
             },
             4,
         );
         let rendered = text(&row);
-        assert!(rendered.contains("Restore  u"), "{rendered}");
+        assert!(!rendered.contains("Restore"), "{rendered}");
         assert!(!rendered.contains("Reopen"), "{rendered}");
         assert!(!rendered.contains("Archive"), "{rendered}");
         Ok(())
@@ -808,7 +609,6 @@ mod tests {
                 width: 50,
                 leading: 0,
                 expanded: false,
-                cursor: false,
             },
             122,
         );
@@ -821,7 +621,6 @@ mod tests {
                 width: 14,
                 leading: 0,
                 expanded: false,
-                cursor: false,
             },
             122,
         );

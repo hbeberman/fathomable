@@ -456,15 +456,7 @@ fn lifecycle_actions_live_in_the_footer_and_disclosure_keeps_exact_cells() -> an
     let origin = app.sidebar_width() + gutter;
     let width = app.column_width().saturating_sub(gutter);
     let thread = app.thread(&first).context("first thread")?;
-    let layout = header::expanded_header(&app, thread, false, true, width);
-
-    assert!(
-        (0..width).all(|column| !matches!(
-            layout.action_at(column),
-            Some(Action::ToggleAutoResolve | Action::ToggleResolved)
-        )),
-        "the header has no lifecycle controls"
-    );
+    let layout = header::expanded_header(&app, thread, true, width);
 
     let footer = draw::bar::text_bar(&app);
     let footer_width = app.column_width();
@@ -488,34 +480,6 @@ fn lifecycle_actions_live_in_the_footer_and_disclosure_keeps_exact_cells() -> an
         .context("disclosure padding")?;
     left(&mut app, origin + padded_disclosure, screen_row);
     assert!(!app.is_expanded(&first), "the disclosure padding folds");
-    Ok(())
-}
-
-#[test]
-fn a_collapsed_header_has_no_invisible_actions_away_from_the_thread() -> anyhow::Result<()> {
-    let dir = fixture("collapsed-header-actions")?;
-    let mut app = app(&dir)?;
-    app.resize(100, 30);
-    annotate(&mut app)?;
-    let id = app.file_threads()[0].clone();
-    if app.is_expanded(&id) {
-        app.fold_thread(&id);
-    }
-    handle_key(&mut app, key('G'));
-    assert_eq!(app.thread_cursor().thread(), Some(&id));
-    assert!(!app.threads_at_cursor().contains(&id));
-
-    let gutter = draw::gutter_width(app.view());
-    let width = app.column_width().saturating_sub(gutter);
-    let thread = app.thread(&id).context("thread")?;
-    let hypothetical = header::expanded_header(&app, thread, true, false, width);
-    assert!(
-        (0..width).all(|column| !matches!(
-            hypothetical.action_at(column),
-            Some(Action::ToggleAutoResolve | Action::ToggleResolved)
-        )),
-        "a selected collapsed header has no lifecycle controls"
-    );
     Ok(())
 }
 
@@ -575,9 +539,7 @@ fn footer_hover_patches_only_the_visible_action_cells() -> anyhow::Result<()> {
 }
 
 #[test]
-fn review_cleanup_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
-    use fathomable_core::annotations::Lifecycle;
-
+fn review_cleanup_footer_targets_only_the_cursor_thread() -> anyhow::Result<()> {
     let dir = fixture("review-header-action")?;
     let mut app = app(&dir)?;
     app.resize(100, 30);
@@ -591,35 +553,68 @@ fn review_cleanup_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
     app.goto_message(first.clone(), 0);
     app.thread_toggle_resolved();
     app.goto_message(second.clone(), 0);
+    app.thread_toggle_resolved();
     app.open_review();
     app.review_toggle_resolved();
 
     let width = app.column_width();
     let rows = app.review_rows(width);
-    let (model_row, summary, selected) = rows
+    let (model_row, selected) = rows
         .rows
         .iter()
         .enumerate()
         .find_map(|(row, item)| match item {
             crate::app::threads::list::Row::Header {
                 summary, selected, ..
-            } if summary.id() == &first => Some((row, summary, *selected)),
+            } if summary.id() == &first => Some((row, *selected)),
             _ => None,
         })
         .context("first review header")?;
     assert!(!selected);
-    let layout = header::entry_header(summary, fathomable_core::clock::now(), false, true, width);
-    let action = (0..width)
-        .find(|column| layout.action_at(*column) == Some(Action::ArchiveThread))
-        .context("archive action")?;
     let screen_row = app.pane_top() + 1 + model_row - app.review_list().scroll();
-    let column = app.sidebar_width() + action;
-    left(&mut app, column, screen_row);
-    assert!(app.thread(&first).context("first")?.is_archived());
-    assert_eq!(
-        app.thread(&second).context("second")?.lifecycle(),
-        Lifecycle::Active
+    let rendered = testing::screen(&app)?;
+    assert!(
+        rendered
+            .iter()
+            .all(|row| !row.contains("Archive") && !row.contains("Restore")),
+        "thread rows are factual: {rendered:?}"
     );
+    assert!(
+        rendered.iter().any(|row| row.contains("archive a")),
+        "the selected resolved thread owns the footer action: {rendered:?}"
+    );
+
+    let sidebar = app.sidebar_width();
+    left(&mut app, sidebar + width.saturating_sub(4), screen_row);
+    assert!(!app.thread(&first).context("first")?.is_archived());
+    assert_eq!(app.thread_cursor().thread(), Some(&first));
+
+    let rows = app.review_rows(width);
+    let footer = header::review_footer(&app, &rows.entries);
+    let archive = (0..width)
+        .find(|column| footer.action_at(width, *column) == Some(Action::ArchiveThread))
+        .context("archive footer action")?;
+    let footer_row = app.pane_rows() - 1;
+    left(&mut app, sidebar + archive, footer_row);
+    assert!(app.thread(&first).context("first")?.is_archived());
+    assert!(!app.thread(&second).context("second")?.is_archived());
+
+    app.open_review_view(crate::app::threads::list::ReviewView::Archived);
+    app.resize(60, 30);
+    let width = app.column_width();
+    let rendered = testing::screen(&app)?;
+    assert!(
+        rendered.iter().any(|row| row.contains("restore u")),
+        "restore remains in the narrow archived footer: {rendered:?}"
+    );
+    let rows = app.review_rows(width);
+    let footer = header::review_footer(&app, &rows.entries);
+    assert!(
+        (0..width).any(|column| { footer.action_at(width, column) == Some(Action::RestoreThread) }),
+        "archived cursor offers restore"
+    );
+    handle_key(&mut app, key('u'));
+    assert!(!app.thread(&first).context("first")?.is_archived());
     Ok(())
 }
 

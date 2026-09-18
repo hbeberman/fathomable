@@ -10,8 +10,8 @@
 //! live on a bar along a pane's bottom row,
 //! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
 //! text's in [`super::bar`] (ADR 0067). Thread rows use the summary
-//! engine from `app::threads::summary`, including direct cleanup actions
-//! and exact hit regions (ADR 0086). Every header row draws on `ui.header`.
+//! engine from `app::threads::summary` and remain factual (ADR 0086).
+//! Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
 //! and cursor as they are, runs the action it names (ADR 0064): a bar
@@ -552,7 +552,6 @@ fn hints_width(hints: &[HintOf], tail: &[HintOf], sep: usize, form: Form) -> usi
 pub(crate) fn expanded_header(
     app: &App,
     thread: &fathomable_core::annotations::Thread,
-    marked: bool,
     expanded: bool,
     width: usize,
 ) -> SummaryLayout {
@@ -569,7 +568,6 @@ pub(crate) fn expanded_header(
             width,
             leading: 1,
             expanded,
-            cursor: marked,
         },
         fathomable_core::clock::now(),
     )
@@ -579,7 +577,6 @@ pub(crate) fn expanded_header(
 pub(crate) fn entry_header(
     summary: &ThreadSummary,
     now: u64,
-    cursor: bool,
     expanded: bool,
     width: usize,
 ) -> SummaryLayout {
@@ -589,7 +586,6 @@ pub(crate) fn entry_header(
             width,
             leading: 1 + NEST,
             expanded,
-            cursor,
         },
         now,
     )
@@ -600,82 +596,39 @@ pub(crate) fn summary_line<'a>(
     theme: &Theme,
     layout: &SummaryLayout,
     mut leading: Vec<Span<'a>>,
-    hovered: Option<Action>,
 ) -> Line<'a> {
     let on = |surface: ratatui::style::Style, accent: ratatui::style::Style| {
         let mut style = surface.patch(accent);
         style.bg = surface.bg;
         style
     };
-    leading.extend(
-        layout
-            .spans
-            .iter()
-            .map(|SummarySpan { text, tone, action }| {
-                let surface = if action.is_some_and(|action| Some(action) == hovered) {
-                    theme.header.patch(theme.list_hover)
-                } else {
-                    theme.header
-                };
-                let style = match tone {
-                    SummaryTone::Surface | SummaryTone::Action => surface,
-                    SummaryTone::Info | SummaryTone::ActionKey => on(surface, theme.info),
-                    SummaryTone::Status => on(surface, theme.info.add_modifier(Modifier::DIM)),
-                    SummaryTone::Lifecycle(lifecycle) => on(
-                        surface,
-                        mark_style(
-                            theme,
-                            match lifecycle {
-                                fathomable_core::annotations::Lifecycle::Active => {
-                                    ThreadState::Active
-                                }
-                                fathomable_core::annotations::Lifecycle::ResolutionProposed => {
-                                    ThreadState::Proposed
-                                }
-                                fathomable_core::annotations::Lifecycle::Resolved => {
-                                    ThreadState::Resolved
-                                }
-                            },
-                        ),
-                    ),
-                    SummaryTone::Author { user: true } => on(surface, theme.thread_user),
-                    SummaryTone::Author { user: false } => on(surface, theme.thread_agent),
-                    SummaryTone::Preview => on(surface, theme.text),
-                    SummaryTone::Chevron => on(surface, theme.info).add_modifier(Modifier::BOLD),
-                };
-                Span::styled(text.clone(), style)
-            }),
-    );
+    leading.extend(layout.spans.iter().map(|SummarySpan { text, tone }| {
+        let surface = theme.header;
+        let style = match tone {
+            SummaryTone::Surface => surface,
+            SummaryTone::Info => on(surface, theme.info),
+            SummaryTone::Status => on(surface, theme.info.add_modifier(Modifier::DIM)),
+            SummaryTone::Lifecycle(lifecycle) => on(
+                surface,
+                mark_style(
+                    theme,
+                    match lifecycle {
+                        fathomable_core::annotations::Lifecycle::Active => ThreadState::Active,
+                        fathomable_core::annotations::Lifecycle::ResolutionProposed => {
+                            ThreadState::Proposed
+                        }
+                        fathomable_core::annotations::Lifecycle::Resolved => ThreadState::Resolved,
+                    },
+                ),
+            ),
+            SummaryTone::Author { user: true } => on(surface, theme.thread_user),
+            SummaryTone::Author { user: false } => on(surface, theme.thread_agent),
+            SummaryTone::Preview => on(surface, theme.text),
+            SummaryTone::Chevron => on(surface, theme.info).add_modifier(Modifier::BOLD),
+        };
+        Span::styled(text.clone(), style)
+    }));
     Line::from(leading).style(theme.header)
-}
-
-/// Restore the exact hovered action after a surface applies row selection.
-pub(crate) fn summary_rehover(
-    theme: &Theme,
-    layout: &SummaryLayout,
-    line: &mut Line<'_>,
-    leading_spans: usize,
-    hovered: Option<Action>,
-) {
-    let Some(hovered) = hovered else {
-        return;
-    };
-    let surface = theme.header.patch(theme.list_hover);
-    for (span, semantic) in line.spans[leading_spans..]
-        .iter_mut()
-        .zip(layout.spans.iter())
-    {
-        if semantic.action == Some(hovered) {
-            span.style = match semantic.tone {
-                SummaryTone::ActionKey => {
-                    let mut style = surface.patch(theme.info);
-                    style.bg = surface.bg;
-                    style
-                }
-                _ => surface,
-            };
-        }
-    }
 }
 
 /// The review list's header (ADR 0025, ADR 0066, ADR 0075).
@@ -750,14 +703,11 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
             }
         }
+        let cursor_thread = app.thread_cursor().thread().and_then(|id| app.thread(id));
+        let resolved = cursor_thread.is_some_and(|thread| {
+            thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
+        });
         if view != ReviewView::Archived {
-            let resolved = app
-                .thread_cursor()
-                .thread()
-                .and_then(|id| app.thread(id))
-                .is_some_and(|thread| {
-                    thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
-                });
             if !resolved {
                 hints.push(HintOf::keyed(
                     place,
@@ -771,17 +721,10 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 if resolved { "reopen" } else { "resolve" },
             ));
         }
-        let resolved = app
-            .thread_cursor()
-            .thread()
-            .and_then(|id| app.thread(id))
-            .is_some_and(|thread| {
-                thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
-            });
-        if !app.review_thread_header_visible() {
-            if view == ReviewView::Archived {
+        if app.review_cursor_on_thread() {
+            if cursor_thread.is_some_and(fathomable_core::annotations::Thread::is_archived) {
                 hints.push(HintOf::keyed(place, Action::RestoreThread, "restore"));
-            } else if view == ReviewView::RecentlyResolved || resolved {
+            } else if resolved {
                 hints.push(HintOf::keyed(place, Action::ArchiveThread, "archive"));
             }
         }
@@ -866,21 +809,25 @@ pub(crate) fn files_pane_header(app: &App) -> Header {
 pub(crate) fn threads_pane_footer(app: &App) -> Header {
     let place = Where::ThreadsPane;
     let mut hints = Vec::new();
-    if let Some(thread) = app.thread_cursor().thread().and_then(|id| app.thread(id)) {
-        hints.push(HintOf::keyed(place, Action::Reply, "reply"));
+    if let Some(thread) = app.threads_pane_cursor_thread() {
         let resolved = thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved;
-        if !resolved {
+        if thread.is_archived() {
+            hints.push(HintOf::keyed(place, Action::RestoreThread, "restore"));
+        } else if resolved {
+            hints.push(HintOf::keyed(place, Action::ToggleResolved, "reopen"));
+            if !thread.is_archived() {
+                hints.push(HintOf::keyed(place, Action::ArchiveThread, "archive"));
+            }
+            hints.push(HintOf::keyed(place, Action::Reply, "reply"));
+        } else {
+            hints.push(HintOf::keyed(place, Action::Reply, "reply"));
             hints.push(HintOf::keyed(
                 place,
                 Action::ToggleAutoResolve,
                 "auto-resolve",
             ));
+            hints.push(HintOf::keyed(place, Action::ToggleResolved, "resolve"));
         }
-        hints.push(HintOf::keyed(
-            place,
-            Action::ToggleResolved,
-            if resolved { "reopen" } else { "resolve" },
-        ));
     }
     if app.sidebar_scope() == crate::app::threads::pane::PaneScope::Workspace {
         hints.push(HintOf::keyed(place, Action::Fold, "fold"));
@@ -1080,7 +1027,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_cleanup_action_keys_trail_words_in_the_subdued_style() -> anyhow::Result<()> {
+    fn thread_headers_show_facts_without_cleanup_controls() -> anyhow::Result<()> {
         use crate::app::draw::author::CURSOR_BAR;
         use crate::app::testing::{self, source_app};
 
@@ -1094,28 +1041,16 @@ mod tests {
         app.goto_message(id.clone(), 0);
         app.thread_toggle_resolved();
         let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
-        let layout = expanded_header(&app, thread, true, true, 80);
+        let layout = expanded_header(&app, thread, true, 80);
         let theme = theme()?;
         let line = summary_line(
             &theme,
             &layout,
             vec![Span::styled(CURSOR_BAR, theme.thread_cursor)],
-            None,
         );
-        let action = line
-            .spans
-            .iter()
-            .position(|span| span.content == "Archive")
-            .ok_or_else(|| anyhow::anyhow!("action word"))?;
-        let key = line
-            .spans
-            .iter()
-            .position(|span| span.content == "  a")
-            .ok_or_else(|| anyhow::anyhow!("action key"))?;
-        assert!(action < key);
-        assert_eq!(line.spans[key].style.fg, theme.info.fg);
-        assert_eq!(line.spans[key].style.bg, theme.header.bg);
-        assert!(!text(&line).contains('['));
+        let rendered = text(&line);
+        assert!(!rendered.contains("Archive"), "{rendered}");
+        assert!(!rendered.contains("Restore"), "{rendered}");
         Ok(())
     }
 
@@ -1134,12 +1069,8 @@ mod tests {
         app.goto_message(id.clone(), 0);
         app.thread_toggle_auto_resolve();
         let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
-        let layout = expanded_header(&app, thread, true, true, 80);
-        assert!(
-            (0..80).all(|column| layout.action_at(column).is_none()),
-            "status text is not interactive"
-        );
-        let line = summary_line(&theme()?, &layout, vec![Span::raw(CURSOR_BAR)], None);
+        let layout = expanded_header(&app, thread, true, 80);
+        let line = summary_line(&theme()?, &layout, vec![Span::raw(CURSOR_BAR)]);
         let status = line
             .spans
             .iter()

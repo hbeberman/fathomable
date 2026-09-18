@@ -212,8 +212,7 @@ impl App {
     /// The threads the pane lists, in its order, resolved ones only when
     /// the review shows them: this file's by line, or the workspace's by
     /// file and line (ADR 0066).
-    #[cfg(test)]
-    pub(crate) fn threads_pane_ids(&self) -> Vec<ThreadId> {
+    fn threads_pane_ids(&self) -> Vec<ThreadId> {
         self.review_entries(self.sidebar.scope == PaneScope::File)
             .into_iter()
             .map(|entry| entry.id().clone())
@@ -338,12 +337,40 @@ impl App {
 
     /// The highlighted entry: the thread cursor's thread among the listed
     /// ones (ADR 0046), `None` when it is not listed.
-    #[cfg(test)]
     pub(crate) fn threads_pane_selected(&self) -> Option<usize> {
         let order = self.threads_pane_ids();
         let cursor = self.thread_cursor();
         let id = cursor.thread()?;
         order.iter().position(|other| other == id)
+    }
+
+    /// The cursor thread while it is represented by the pane's current list.
+    pub(crate) fn threads_pane_cursor_thread(
+        &self,
+    ) -> Option<&fathomable_core::annotations::Thread> {
+        let cursor = self.thread_cursor();
+        let id = cursor.thread()?;
+        let file_only = self.sidebar.scope == PaneScope::File;
+        self.review_entries(file_only)
+            .iter()
+            .any(|entry| entry.id() == id)
+            .then(|| self.thread(id))
+            .flatten()
+    }
+
+    /// Re-select after a store change removes the pane's cursor entry.
+    pub(crate) fn threads_pane_reselect(&mut self, place: Option<usize>) {
+        let ids = self.threads_pane_ids();
+        let cursor = self.thread_cursor();
+        let index = cursor
+            .thread()
+            .and_then(|id| ids.iter().position(|other| other == id))
+            .or_else(|| place.map(|place| place.min(ids.len().saturating_sub(1))));
+        if let Some(index) = index.filter(|_| !ids.is_empty()) {
+            self.set_thread_cursor(ids[index].clone());
+        } else {
+            self.clear_thread_cursor();
+        }
     }
 
     /// The first screen row of `lines` drawn, chosen so the highlighted

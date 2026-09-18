@@ -48,7 +48,6 @@ use fathomable_core::status::State;
 use fathomable_core::workspace::Workspace;
 
 use crate::app::App;
-use crate::app::input::bindings::Action;
 use crate::app::threads::words::Words;
 
 /// A thread's status, which is its colour in the gutter, the file-threads
@@ -653,19 +652,6 @@ impl App {
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),
         }
-    }
-
-    /// Run a direct header action against the row's explicit thread.
-    pub(crate) fn thread_summary_action(&mut self, id: &ThreadId, action: Action) {
-        let place = self.review_selected_index();
-        match action {
-            Action::ToggleAutoResolve => self.toggle_auto_resolve(id),
-            Action::ToggleResolved => self.toggle_resolved(id),
-            Action::ArchiveThread => self.archive_thread(id),
-            Action::RestoreThread => self.restore_thread(id),
-            _ => {}
-        }
-        self.review_reselect(place);
     }
 }
 

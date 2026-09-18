@@ -191,35 +191,15 @@ fn review_mouse(
             let rows = app.review_rows(width);
             let at = app.review_list().scroll() + list_row;
             let summary_row = rows.rows.get(at).and_then(|row| match row {
-                Row::Header {
-                    entry,
-                    summary,
-                    selected,
-                    ..
-                } => Some((*entry, summary, *selected, true)),
-                Row::Stub {
-                    entry,
-                    summary,
-                    selected,
-                    ..
-                } => Some((*entry, summary, *selected, false)),
+                Row::Header { entry, summary, .. } | Row::Stub { entry, summary, .. } => {
+                    Some((*entry, summary))
+                }
                 _ => None,
             });
-            if let Some((_entry, summary, selected, expanded)) = summary_row {
+            if let Some((_entry, summary)) = summary_row {
                 let local = column.saturating_sub(app.sidebar_width());
-                let layout = header::entry_header(
-                    summary,
-                    fathomable_core::clock::now(),
-                    selected,
-                    expanded,
-                    width,
-                );
-                if let Some(action) = layout.action_at(local) {
-                    let id = summary.id().clone();
-                    app.thread_summary_action(&id, action);
-                    app.press = None;
-                    return Effect::None;
-                }
+                let layout =
+                    header::entry_header(summary, fathomable_core::clock::now(), false, width);
                 if layout.disclosure_at(local) || press(app, column, screen_row, false) == 2 {
                     let id = summary.id().clone();
                     app.review_click(list_row);
@@ -551,17 +531,10 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             let Some(thread) = app.thread(&id) else {
                 return Effect::None;
             };
-            let marked =
-                app.threads_at_cursor().contains(&id) && app.thread_cursor().thread() == Some(&id);
             let width = app
                 .column_width()
                 .saturating_sub(crate::app::draw::gutter_width(app.view()));
-            let layout = header::expanded_header(app, thread, marked, stub.expanded(), width);
-            if let Some(action) = layout.action_at(col) {
-                app.thread_summary_action(&id, action);
-                app.press = None;
-                return Effect::None;
-            }
+            let layout = header::expanded_header(app, thread, stub.expanded(), width);
             if (!in_gutter && layout.disclosure_at(col)) || press(app, column, row, in_gutter) == 2
             {
                 if stub.expanded() {

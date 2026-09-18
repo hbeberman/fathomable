@@ -101,6 +101,9 @@ impl App {
             self.notice("resolve the thread before archiving it");
             return;
         }
+        let pane_place = (self.focus() == crate::app::Focus::ThreadsPane)
+            .then(|| self.threads_pane_selected())
+            .flatten();
         let context = self.archive_context();
         let Some(store) = self.store_mut() else {
             return;
@@ -110,6 +113,9 @@ impl App {
             Ok(()) => {
                 self.refresh_all_marks();
                 self.reshow_review();
+                if self.focus() == crate::app::Focus::ThreadsPane {
+                    self.threads_pane_reselect(pane_place);
+                }
                 self.notice("thread archived");
             }
             Err(error) => self.notice(format!("cannot archive thread: {error}")),
@@ -118,6 +124,9 @@ impl App {
 
     /// Restore one archived thread without changing its lifecycle.
     pub(crate) fn restore_thread(&mut self, id: &ThreadId) {
+        let pane_place = (self.focus() == crate::app::Focus::ThreadsPane)
+            .then(|| self.threads_pane_selected())
+            .flatten();
         let context = self.archive_context();
         let Some(store) = self.store_mut() else {
             return;
@@ -127,6 +136,9 @@ impl App {
             Ok(()) => {
                 self.refresh_all_marks();
                 self.reshow_review();
+                if self.focus() == crate::app::Focus::ThreadsPane {
+                    self.threads_pane_reselect(pane_place);
+                }
                 self.notice("thread restored");
             }
             Err(error) => self.notice(format!("cannot restore thread: {error}")),

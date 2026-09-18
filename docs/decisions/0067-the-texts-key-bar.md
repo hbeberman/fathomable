@@ -42,6 +42,13 @@ thread headers. Every key bar reads action then hotkey and highlights the
 whole action-hotkey target on hover. Thread headers retain passive dim
 `autoresolve` or `resolve proposed` status.
 
+Amended 2026-09-18 by
+[0086](0086-one-thread-summary-and-its-actions.md): a resolved, unarchived
+cursor thread adds `archive a` immediately after `reopen r` on the text bar.
+Archive no longer appears in expanded or folded inline headers. The action,
+like the other bar actions, targets only the text cursor thread and drops
+with later hints as the bar narrows.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys
@@ -94,8 +101,9 @@ resolve. This record undoes both, the same day, for one rule.
     `reply c` when the cursor rests on the thread's stub or message
     rows, `edit e` when the cursor's message is the user's,
     `auto-resolve R` while unresolved, `resolve r` or `reopen r`, then
-    `fold z` on an expanded thread or `expand z` on a stub. The reply
-    hint is omitted while the cursor rests on source.
+    `archive a` for a resolved unarchived thread, then `fold z` on an
+    expanded thread or `expand z` on a stub. The reply hint is omitted
+    while the cursor rests on source.
   - Then `fold all Z` while any thread in the file is expanded, or
     `unfold all Z` while the file has stubs and none is; nothing when the
     file has no thread.

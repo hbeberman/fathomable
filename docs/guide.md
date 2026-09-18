@@ -54,6 +54,7 @@ the table below is a quick reference, not the full list.
 | `gf` | follow a file reference or URL |
 | `Space f` | file picker |
 | `Space v s` | source / rendered view |
+| `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
 | `f` `t` | File / Reviews |
 | `]f` `[f` | next / previous queued live change |

@@ -49,6 +49,11 @@ Checkpoint timelines superseded 2026-09-16 by
 sidebar, and jumplist remain; per-file marks, strips, and paging are replaced
 by explicit workspace review points and an optional Since-point focus.
 
+Shortcut amended 2026-09-18: the resolved-stub toggle that
+[0060](0060-one-diff-two-sides.md) moved to `Space v x` moves again to
+`Space v r`, with no compatibility alias. The key tables below retain the
+pre-0060 map they originally decided.
+
 - `dd` on an expanded thread's rows deletes the **thread**, not the
   message under the cursor: the store has no message-delete event
   ([0034](0034-deleting-threads.md) has only thread tombstones). `e` edits

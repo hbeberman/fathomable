@@ -28,6 +28,11 @@ leaves it open as `resolution_proposed`. The reach, past-history, and
 reopen rules below are unchanged; references to user-only resolution are
 historical.
 
+Shortcut amended 2026-09-18: `Space v r` now toggles resolved stubs;
+`Space v x` is unbound rather than retained as a compatibility alias.
+The older key named below records the binding in effect when this decision
+landed.
+
 ## Context
 
 A thread belongs to the commit it was written against and shows while
@@ -90,7 +95,7 @@ when that commit is one of its sides is left for a later milestone.
 - The marks of a document are the threads the reach shows here, so a
   resolved thread of an earlier commit has no gutter circle, no line
   tint, no stub, no detached row, and the thread cursor does not stop
-  on it. `Space v x` and `threads { stubs-resolved }` give a stub to
+  on it. `Space v r` and `threads { stubs-resolved }` give a stub to
   the resolved threads at `HEAD` alone.
 - The `threads` tool's `resolved` and `all`, the hooks, and a live
   viewer's answer to them list the same threads the file shows.

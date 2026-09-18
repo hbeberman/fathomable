@@ -875,7 +875,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('v'), c('x')]],
+        &[&[c(' '), c('v'), c('r')]],
         A::StubResolvedToggle,
         "Space menu",
         "view: toggle resolved stubs",
@@ -1745,7 +1745,7 @@ mod tests {
             keys(Where::View, &[c(' '), c('c')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
         );
-        assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "x"]);
+        assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
             ["d", "b", "t", "c", "w"]
@@ -1765,7 +1765,7 @@ mod tests {
     }
 
     /// A submenu's entries drop the word the breadcrumb already says:
-    /// `Space v x` reads "toggle resolved stubs", not
+    /// `Space v r` reads "toggle resolved stubs", not
     /// "view: toggle resolved stubs".
     #[test]
     fn a_submenu_entry_does_not_repeat_the_submenu_word() {
@@ -1789,8 +1789,35 @@ mod tests {
         let stub = menu(Where::View, &[c(' '), c('v')]);
         assert!(
             stub.iter()
-                .any(|(key, label)| key == "x" && label == "toggle resolved stubs"),
+                .any(|(key, label)| key == "r" && label == "toggle resolved stubs"),
             "{stub:?}"
+        );
+    }
+
+    /// The resolved-stub shortcut moved to `Space v r` without retaining
+    /// the old `Space v x` sequence.
+    #[test]
+    fn resolved_stub_shortcut_is_migrated_without_an_alias() {
+        for place in PANES {
+            assert_eq!(
+                lookup(place, &[c(' '), c('v'), c('r')]),
+                Match::Exact(Action::StubResolvedToggle),
+                "{place:?}"
+            );
+            assert_eq!(
+                lookup(place, &[c(' '), c('v'), c('x')]),
+                Match::Miss,
+                "{place:?}"
+            );
+        }
+        assert_eq!(
+            menu(Where::View, &[c(' '), c('v')]),
+            [
+                ("s", "source view"),
+                ("t", "toggle thread stubs"),
+                ("r", "toggle resolved stubs"),
+            ]
+            .map(|(key, label)| (key.to_owned(), label.to_owned()))
         );
     }
 

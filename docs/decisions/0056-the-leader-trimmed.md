@@ -38,6 +38,11 @@ the remembered sidebar as one unit and `Space p m` toggles the persistent
 menu bar. Prefix helpers use rounded borders with their breadcrumb in the
 border rather than in a body row.
 
+Shortcut amended 2026-09-18: `Space v r` now toggles resolved stubs,
+replacing `Space v x` with no compatibility alias. The map below records
+the pre-[0060](0060-one-diff-two-sides.md) state; this amendment supersedes
+0060's later `s` / `t` / `x` map.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) laid out the `Space` menu

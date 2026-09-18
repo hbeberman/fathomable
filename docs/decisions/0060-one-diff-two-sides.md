@@ -34,6 +34,11 @@ unified diff uses the same File surface header as any document; global
 menu-bar base and target buttons remain the authoritative mouse controls,
 and comparison actions stay on the text key bar and Diff menu.
 
+Shortcut amended 2026-09-18: the resolved-stubs toggle moves from
+`Space v x` to the unused `Space v r`, with no compatibility alias.
+The original table and decision text below retain the binding introduced
+by this record as history; the active `Space v` map is `s` / `t` / `r`.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) put seven entries under
@@ -127,7 +132,7 @@ Space d w         ignore whitespace
 Space d s         mark all files seen      (0069)
 Space v s         source view              gs
 Space v t         toggle thread stubs
-Space v x         toggle resolved stubs    (was Space c x)
+Space v r         toggle resolved stubs    (was Space v x; before that Space c x)
 ```
 
 - `Space d` is the **diff** submenu: what is compared, and the
@@ -143,8 +148,9 @@ Space v x         toggle resolved stubs    (was Space c x)
 - `Space v` is the **view** submenu: how the text is drawn in every
   display. `s` is the source view; `t` toggles thread stubs, the
   runtime switch for `threads { stubs }` that 0049 left config-only;
-  `x` toggles resolved stubs, which was `Space c x` and is not a thread
-  action. `Space c` keeps the five actions on the thread at the cursor.
+  `r` toggles resolved stubs, replacing this decision's original `x`
+  binding, which had moved from `Space c x`; it is not a thread action.
+  `Space c` keeps the five actions on the thread at the cursor.
 
 ### The `diff` config block
 
@@ -171,7 +177,7 @@ diff {
   d r` / `c` / `C` / `g`, and the checkpoint diff is the diff view with
   a checkpoint base; its leader map is superseded by 0056's, which this
   record amends.
-- 0056's map: `Space v` is `s` / `t` / `x`, `Space d` is new, `Space c`
+- 0056's map: `Space v` is `s` / `t` / `r`, `Space d` is new, `Space c`
   loses `x`; `SUBMENUS` gains `d` diff.
 - 0017's `gd` bullet: the badge reads `DIFF net`, and `DIFF seen` is
   the same family; 0010's badge list reads `SRC`, `DIFF <base>`, `AUTO`.
@@ -197,6 +203,7 @@ diff {
 - The binding table renames `CheckpointDiff` to `DiffCheckpoint`,
   `CheckpointCommit` to `DiffCommit`, `CheckpointBase` and
   `CheckpointTarget` to `DiffBase` and `DiffTarget`; it gains
-  `DiffWhitespace` and `StubsToggle`; `Space c x` moves to `Space v x`.
+  `DiffWhitespace` and `StubsToggle`; this record moved `Space c x` to
+  `Space v x`, and the 2026-09-18 amendment moves it again to `Space v r`.
 - The guide's key tables, its §5, and its config block are rewritten in
   the same change; the binding test that checks the guide's keys holds.

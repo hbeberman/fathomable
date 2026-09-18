@@ -35,7 +35,7 @@ use crate::app::view::StubBlock;
 const STUB_MESSAGES: usize = 1;
 
 /// Whether stubs are drawn at all (`threads { stubs }`, `Space v t`), and
-/// whether resolved threads get one (`Space v x`).
+/// whether resolved threads get one (`Space v r`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StubState {
     pub(crate) shown: bool,
@@ -220,7 +220,7 @@ impl App {
         self.stubs.shown
     }
 
-    /// Whether resolved threads get a stub (`Space v x`).
+    /// Whether resolved threads get a stub (`Space v r`).
     pub(crate) fn stubs_resolved(&self) -> bool {
         self.stubs.resolved
     }
@@ -455,7 +455,7 @@ impl App {
         });
     }
 
-    /// `Space v x`: give resolved threads a stub too, or not.
+    /// `Space v r`: give resolved threads a stub too, or not.
     pub(crate) fn toggle_resolved_stubs(&mut self) {
         self.stubs.resolved = !self.stubs.resolved;
         self.place_stub_rows();
@@ -721,7 +721,7 @@ mod tests {
     }
 
     /// `threads { stubs #false }` and `Space v t` draw no stubs; resolved
-    /// threads have none until `Space v x`.
+    /// threads have none until `Space v r`.
     #[test]
     fn the_toggles_hide_stubs_and_resolved_ones() -> anyhow::Result<()> {
         let dir = testing::workspace("stubs-toggles", testing::README)?;
@@ -734,9 +734,16 @@ mod tests {
         assert_eq!(app.view().layout().lines().len(), 9, "resolved: no stub");
         assert!(app.stubs().iter().all(|stub| stub.messages().len() == 1));
         press(&mut app, " vx");
+        assert_eq!(
+            app.view().layout().lines().len(),
+            9,
+            "the retired shortcut does nothing"
+        );
+        assert!(!app.stubs_resolved());
+        press(&mut app, " vr");
         assert_eq!(app.view().layout().lines().len(), 10);
         assert!(app.stubs_resolved());
-        press(&mut app, " vx");
+        press(&mut app, " vr");
         assert_eq!(app.view().layout().lines().len(), 9);
         press(&mut app, " vt");
         assert!(!app.stubs_shown());

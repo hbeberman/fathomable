@@ -290,34 +290,6 @@ impl fmt::Display for ComparisonEndpoint {
     }
 }
 
-/// A contiguous first-parent commit selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitBatch {
-    before: ComparisonEndpoint,
-    after: ComparisonEndpoint,
-    commits: Vec<CommitId>,
-}
-
-impl CommitBatch {
-    /// The endpoint immediately before the first selected commit.
-    #[must_use]
-    pub const fn before(&self) -> &ComparisonEndpoint {
-        &self.before
-    }
-
-    /// The last selected commit endpoint.
-    #[must_use]
-    pub const fn after(&self) -> &ComparisonEndpoint {
-        &self.after
-    }
-
-    /// Selected commits in chronological order.
-    #[must_use]
-    pub fn commits(&self) -> &[CommitId] {
-        &self.commits
-    }
-}
-
 /// Metadata for an endpoint path, shared with review-point capture.
 #[derive(Debug, Clone)]
 pub(crate) struct EndpointFile {
@@ -798,113 +770,6 @@ impl Workspace {
         Ok(commits)
     }
 
-    /// Compute the direct first-parent boundary for a contiguous commit batch.
-    ///
-    /// The returned pair is the tree before the first selected commit and the
-    /// last selected commit. No merge base or three-dot comparison is used.
-    /// If the first selected commit is a merge, the boundary is ambiguous and
-    /// an actionable error names its parents.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`WorkspaceError`] when either commit is unavailable, the
-    /// first is not an ancestor on the last commit's first-parent chain, or
-    /// the first commit has multiple possible parents.
-    pub fn contiguous_batch(
-        &self,
-        first: &CommitId,
-        last: &CommitId,
-    ) -> Result<CommitBatch, WorkspaceError> {
-        let Some(git) = self.ignore.as_ref() else {
-            return Err(WorkspaceError {
-                path: self.root.clone(),
-                message: "contiguous commit batches require a Git repository".to_owned(),
-            });
-        };
-        let first_id = ObjectId::from_hex(first.as_str().as_bytes()).map_err(|error| {
-            self.revision_error(first.as_str(), &format!("invalid first commit: {error}"))
-        })?;
-        let last_id = ObjectId::from_hex(last.as_str().as_bytes()).map_err(|error| {
-            self.revision_error(last.as_str(), &format!("invalid last commit: {error}"))
-        })?;
-        let mut chain = Vec::new();
-        let mut current = last_id;
-        loop {
-            let commit = git
-                .repo
-                .find_commit(current)
-                .map_err(|error| WorkspaceError {
-                    path: self.root.clone(),
-                    message: format!("cannot read commit {}: {error}", current.to_hex()),
-                })?;
-            let parents: Vec<ObjectId> = commit.parent_ids().map(gix::Id::detach).collect();
-            if parents.len() > 1 {
-                let listed = parents
-                    .iter()
-                    .map(|parent| parent.to_hex().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(WorkspaceError {
-                    path: self.root.clone(),
-                    message: format!(
-                        "commit {} is a merge; choose an explicit parent boundary ({listed})",
-                        current.to_hex()
-                    ),
-                });
-            }
-            chain.push(current);
-            if current == first_id {
-                break;
-            }
-            let Some(parent) = parents.first().copied() else {
-                return Err(WorkspaceError {
-                    path: self.root.clone(),
-                    message: format!(
-                        "commit {} is not an ancestor of {} on the first-parent chain",
-                        first.short(),
-                        last.short()
-                    ),
-                });
-            };
-            current = parent;
-        }
-        let first_commit = git
-            .repo
-            .find_commit(first_id)
-            .map_err(|error| WorkspaceError {
-                path: self.root.clone(),
-                message: format!("cannot read first commit {}: {error}", first.short()),
-            })?;
-        let parents: Vec<ObjectId> = first_commit.parent_ids().map(gix::Id::detach).collect();
-        let before = match parents.as_slice() {
-            [] => ComparisonEndpoint::EmptyTree,
-            [parent] => ComparisonEndpoint::Commit(CommitId(parent.to_hex().to_string())),
-            _ => {
-                let listed = parents
-                    .iter()
-                    .map(|parent| parent.to_hex().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(WorkspaceError {
-                    path: self.root.clone(),
-                    message: format!(
-                        "commit {} is a merge; choose an explicit parent boundary ({listed})",
-                        first.short()
-                    ),
-                });
-            }
-        };
-        chain.reverse();
-        Ok(CommitBatch {
-            before,
-            after: ComparisonEndpoint::Commit(last.clone()),
-            commits: chain
-                .into_iter()
-                .map(|id| CommitId(id.to_hex().to_string()))
-                .collect(),
-        })
-    }
-
     /// Compare two repository-wide endpoints directly.
     ///
     /// Commit endpoints read their pinned trees, `Index` reads the current
@@ -989,6 +854,45 @@ impl Workspace {
             }
         }
         Ok(Comparison::from_parts(base, target, target_paths, changes))
+    }
+
+    /// Enumerate every non-directory path present at one endpoint.
+    ///
+    /// This operation evaluates only `endpoint`; it does not require a Base
+    /// or validate a comparison pair. Review points are invalid Targets and
+    /// must be resolved by their owning store instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the selected endpoint cannot be
+    /// enumerated, including an unavailable commit or a review point.
+    pub fn endpoint_paths(
+        &mut self,
+        endpoint: &ComparisonEndpoint,
+    ) -> Result<Vec<PathBuf>, WorkspaceError> {
+        Ok(self
+            .endpoint_files(endpoint)?
+            .into_iter()
+            .filter_map(|(path, file)| (!file.info.mode().is_directory()).then_some(path))
+            .collect())
+    }
+
+    /// Report facts for one path at a selected endpoint without reading its
+    /// content.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when the selected endpoint cannot be
+    /// enumerated.
+    pub fn endpoint_path_info(
+        &mut self,
+        endpoint: &ComparisonEndpoint,
+        relative: &Path,
+    ) -> Result<Option<PathInfo>, WorkspaceError> {
+        Ok(self
+            .endpoint_files(endpoint)?
+            .remove(relative)
+            .map(|file| file.info))
     }
 
     /// Load endpoint bytes for one repository-relative path.
@@ -1362,38 +1266,16 @@ impl Workspace {
             .collect();
         if let Some(git) = self.ignore.as_ref() {
             // Tracked ignored paths stay eligible without descending ignored output.
-            match git.repo.index_or_empty() {
-                Ok(index) => paths.extend(
-                    index
-                        .entries()
-                        .iter()
-                        .map(|entry| gix::path::from_bstr(entry.path(&index)).into_owned()),
-                ),
-                Err(error) => tracing::debug!(
-                    %error,
-                    "cannot add index paths to working-tree comparison"
-                ),
-            }
-            match head_tree_of(&git.repo) {
-                Ok(Some(tree)) => {
-                    let mut head = BTreeMap::new();
-                    match collect_blobs(&tree, &mut BString::default(), &mut head) {
-                        Ok(()) => paths.extend(
-                            head.keys()
-                                .map(|path| gix::path::from_bstr(path.as_bstr()).into_owned()),
-                        ),
-                        Err(error) => tracing::debug!(
-                            %error,
-                            "cannot add HEAD paths to working-tree comparison"
-                        ),
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => tracing::debug!(
-                    %error,
-                    "cannot read HEAD paths for working-tree comparison"
-                ),
-            }
+            let index = git.repo.index_or_empty().map_err(|error| WorkspaceError {
+                path: self.root.clone(),
+                message: format!("cannot read index paths for working-tree endpoint: {error}"),
+            })?;
+            paths.extend(
+                index
+                    .entries()
+                    .iter()
+                    .map(|entry| gix::path::from_bstr(entry.path(&index)).into_owned()),
+            );
         }
         let mut files = BTreeMap::new();
         for relative in paths {
@@ -3057,8 +2939,7 @@ mod tests {
     }
 
     #[test]
-    fn recent_head_commits_and_batches_use_explicit_history()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn recent_head_commits_use_explicit_history() -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new("workspace-commit-picker")?;
         init(&dir.0)?;
         commit_and_stage(&dir.0, &[("a.md", "0\n")])?;
@@ -3078,10 +2959,88 @@ mod tests {
             workspace.commits_from_matching_prefix("HEAD", &last.as_str()[..8])?[0].id(),
             last
         );
-        let batch = workspace.contiguous_batch(&first, &last)?;
-        assert_eq!(batch.before(), &ComparisonEndpoint::EmptyTree);
-        assert_eq!(batch.after(), &ComparisonEndpoint::Commit(last));
-        assert_eq!(batch.commits().len(), 3);
+        Ok(())
+    }
+
+    #[test]
+    fn endpoint_paths_enumerate_target_without_a_base() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("workspace-endpoint-paths")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("committed.md", "committed\n")])?;
+        let commit = head(&dir.0)?;
+        stage(
+            &dir.0,
+            &[("committed.md", "committed\n"), ("indexed.md", "indexed\n")],
+        )?;
+        fs::write(dir.0.join("committed.md"), "committed\n")?;
+        fs::write(dir.0.join("indexed.md"), "indexed\n")?;
+        fs::write(dir.0.join("working.md"), "working\n")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+
+        assert_eq!(
+            workspace.endpoint_paths(&ComparisonEndpoint::EmptyTree)?,
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            workspace.endpoint_paths(&ComparisonEndpoint::Commit(commit.clone()))?,
+            [PathBuf::from("committed.md")]
+        );
+        assert_eq!(
+            workspace.endpoint_paths(&ComparisonEndpoint::Index)?,
+            [PathBuf::from("committed.md"), PathBuf::from("indexed.md")]
+        );
+        assert_eq!(
+            workspace.endpoint_paths(&ComparisonEndpoint::WorkingTree)?,
+            [
+                PathBuf::from("committed.md"),
+                PathBuf::from("indexed.md"),
+                PathBuf::from("working.md")
+            ]
+        );
+        assert_eq!(
+            workspace.endpoint_text(
+                &ComparisonEndpoint::Commit(commit),
+                Path::new("committed.md")
+            )?,
+            Some("committed\n".to_owned())
+        );
+
+        let unavailable = ComparisonEndpoint::Commit(CommitId::parse(
+            "0000000000000000000000000000000000000000",
+        )?);
+        assert!(
+            workspace
+                .endpoint_paths(&unavailable)
+                .is_err_and(|error| error.message().contains("cannot read commit"))
+        );
+        assert!(
+            workspace
+                .endpoint_paths(&ComparisonEndpoint::ReviewPoint("point-1".to_owned()))
+                .is_err_and(|error| error.message().contains("requires ReviewPointStore"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn working_tree_endpoint_does_not_read_head_objects() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("workspace-working-without-head-object")?;
+        init(&dir.0)?;
+        commit_and_stage(&dir.0, &[("tracked.md", "tracked\n")])?;
+        fs::write(dir.0.join("tracked.md"), "working\n")?;
+        fs::write(dir.0.join("untracked.md"), "untracked\n")?;
+        let mut workspace = Workspace::discover(&dir.0)?;
+
+        fs::write(dir.0.join(".git/HEAD"), format!("{}\n", "0".repeat(40)))?;
+
+        assert_eq!(
+            workspace.endpoint_paths(&ComparisonEndpoint::WorkingTree)?,
+            [PathBuf::from("tracked.md"), PathBuf::from("untracked.md")]
+        );
+        assert_eq!(
+            workspace.endpoint_text(&ComparisonEndpoint::WorkingTree, Path::new("tracked.md"))?,
+            Some("working\n".to_owned())
+        );
         Ok(())
     }
 

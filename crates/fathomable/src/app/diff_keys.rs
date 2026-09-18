@@ -14,6 +14,5 @@ pub(crate) fn diff_hints(app: &App) -> Vec<HintOf> {
         HintOf::keyed(Where::View, Action::ComparisonBase, "base"),
         HintOf::keyed(Where::View, Action::ComparisonTarget, "target"),
         HintOf::keyed(Where::View, Action::ComparisonWhitespace, "whitespace"),
-        HintOf::keyed(Where::View, Action::Escape, "close"),
     ]
 }

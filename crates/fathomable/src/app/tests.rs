@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fathomable_core::annotations::Store;
-use fathomable_core::config::{JumpConfig, MarkdownConfig, SidebarConfig, WatchConfig};
+use fathomable_core::config::{DiffMode, JumpConfig, MarkdownConfig, SidebarConfig, WatchConfig};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
@@ -399,7 +399,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
             0 => app.view_mut().toggle_source_view(),
             1 => {
                 app.view_mut().set_bases(None, Some(String::new()));
-                app.toggle_head_diff();
+                app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
             }
             _ => {}
         }
@@ -945,6 +945,41 @@ fn changed(app: &mut App, dir: &TempDir, relative: &str, text: &str) -> std::io:
     let absolute = dir.0.join(relative);
     fs::write(&absolute, text)?;
     app.on_changes(vec![absolute]);
+    Ok(())
+}
+
+#[test]
+fn off_hides_but_retains_live_change_queue_surfaces() -> anyhow::Result<()> {
+    let dir = fixture("live-queue-off")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("README.md"));
+    changed(
+        &mut app,
+        &dir,
+        "docs/live-queue-sentinel.md",
+        "# live queue sentinel\n",
+    )?;
+    assert_eq!(app.queue().len(), 1);
+    let active = crate::app::testing::screen(&app)?.join("\n");
+    assert!(active.contains("live-queue-sentinel"), "{active}");
+
+    app.select_diff_mode(DiffMode::Off);
+    assert_eq!(app.queue().len(), 1, "Off retains the queue internally");
+    let off = crate::app::testing::screen(&app)?.join("\n");
+    assert!(!off.contains("live-queue-sentinel"), "{off}");
+    assert!(
+        app.status_lines()
+            .iter()
+            .all(|(label, _)| label != "changes")
+    );
+
+    app.act(Action::ChangeNext);
+    assert_eq!(app.message(), Some("diff mode is off"));
+    assert_eq!(app.current_path(), Path::new("README.md"));
+
+    app.select_diff_mode(DiffMode::Standard);
+    let restored = crate::app::testing::screen(&app)?.join("\n");
+    assert!(restored.contains("live-queue-sentinel"), "{restored}");
     Ok(())
 }
 

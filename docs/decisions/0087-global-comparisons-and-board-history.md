@@ -27,6 +27,12 @@ are removed. MCP line relocation consistently uses the stored path in its
 bound checkout; ephemeral viewer-local rename projection remains a display
 concern, not an alternate write interpretation.
 
+Presentation amended 2026-09-18: one session-global, configuration-defaulted
+mode presents the selected endpoints as Standard, Unified, or Off. Off is
+Target-only source browsing, not history redaction. This amendment removes
+Comparison controls, Start comparison at current HEAD, typed commit batches,
+`Space d d`, and `:diff` without compatibility aliases.
+
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),
@@ -71,8 +77,12 @@ The desired model has three independent concepts:
 ### One comparison per checkout
 
 A running viewer owns one comparison for its active checkout. The selected
-base, target, and whitespace rule apply to every file. Opening another file
-does not choose another pair.
+Base, Target, whitespace rule, and session-global presentation mode apply to
+every file. Opening another file does not choose another pair or mode.
+`diff { mode "standard" }` chooses the startup mode; `standard`, `unified`,
+and `off` are the only accepted values. Runtime mode changes do not persist.
+Base, Target, and whitespace keep their existing persistence and session
+rules.
 
 The primary endpoints are:
 
@@ -85,15 +95,11 @@ The primary endpoints are:
 A fresh Git checkout pins the current `HEAD` commit once as its base and uses
 the working tree as target. An unborn repository uses the empty tree.
 Persisted checkout-local selection takes precedence. A later commit never
-advances an already selected commit endpoint. **Start comparison at current
-HEAD** in **Comparison controls...** is the explicit action that advances the
-base. It has no dedicated key or duplicate row in the **Diff** menu.
+advances an already selected commit endpoint. To advance Base, select the new
+commit explicitly.
 
 `A -> B` means the direct net delta between those endpoint trees. It never
-silently substitutes a merge base or three-dot comparison. A contiguous
-commit batch means the parent before its first commit through its last
-commit. A root begins at the empty tree; a merge boundary must be selected
-explicitly.
+silently substitutes a merge base or three-dot comparison.
 
 The endpoint picker is hierarchical. Its first rows distinguish the working
 tree (files on disk), index (the staged next-commit snapshot), and `HEAD`
@@ -117,15 +123,51 @@ Typing four or more hexadecimal characters searches older commit IDs without
 eagerly loading every old subject: the top-level picker walks commits reachable
 from local branches, remote-tracking branches, and tags, while a selected
 branch's commit picker remains within that branch. Longer prefixes refine the
-first result set in memory. Other typed local Git revisions and contiguous
-`first..last` batches remain available. Escape returns from a nested picker to
-its parent before closing the endpoint picker.
+first result set in memory. Other typed local Git revisions remain available;
+typed `first..last` batches do not. Escape returns from a nested picker to its
+parent before closing the endpoint picker.
 
 Picker motion lets the cursor move freely between three-row top and bottom
 margins. Crossing a margin scrolls the list while keeping the cursor at that
 margin. Once the list reaches its beginning or end, the cursor can move closer
 to that edge. Pointing at a row gives it the shared hover treatment, a left
 click chooses it, and the wheel moves through the visible choices.
+
+### One presentation mode per session
+
+The **Diff** menu begins with three mutually exclusive `▌` choices:
+
+- **Standard diff** (`Space d s`) shows Target content with comparison
+  gutters, counts, Files filtering, and hunk navigation.
+- **Unified diff** (`Space d u`) shows the selected Base-to-Target patch. It
+  follows file switches and remains selected when `Esc` closes transient
+  input or returns to File.
+- **Diff off** (`Space d o`) loads and enumerates Target without evaluating
+  Base. The File surface never falls back to Base bytes, and Files/pickers
+  omit Base-only paths. An already open Base-only path retains its label,
+  displays `not present in Target`, and has no Base body.
+
+Base, Target, Save review point, and Ignore whitespace follow those mode rows.
+Off retains Base, whitespace, the only-changed Files filter, and the last
+Standard/Unified mode. Changed-only and Ignore whitespace are dormant while
+Off: their marks are hidden, rows are disabled, and direct keys report `diff
+mode is off`. Selecting Target alone keeps Off active. Selecting Base attempts
+to restore the last active mode; if the pair cannot be read, both endpoints
+remain selected, the failure is reported, and mode remains Off. Entering Off
+clears retained Unified and deletion-backed source content before any fallible
+Target read.
+
+Off also gates comparison gutters, counts and hunk navigation; current Git
+`XY`, `[G`/`]G`; queued-live-change badges, hints, toasts, counts and
+`[f`/`]f`; and Go > Newest change / `Space j j`. Git status and live queues
+continue to be collected internally. `:status` and file/binary information
+report mode Off and Target facts only.
+
+Rendered/Source remains available in Standard and Off. Unified retains that
+choice but disables it through `Space v s`, menus, and `:source`. A pending
+new-line or new-file annotation draft, including a parked draft on a removed
+Unified row, blocks mode, Base, and Target changes until submit or cancel.
+Replies and message edits do not.
 
 The comparison owns:
 
@@ -139,13 +181,14 @@ The comparison owns:
 - unified diff content;
 - historical source loading and labels.
 
-The files pane and visible file picker follow the selected target. A working
-tree target lists the live checkout. A commit, index, or empty-tree target
-lists only that target snapshot, plus base-only paths deleted by the
-comparison so their removal remains navigable. Files added to the checkout
-after an immutable target do not leak into that historical view. Opening a
-listed path displays the selected target's content, or the base content for
-a comparison deletion.
+The files pane and visible file picker follow the selected Target. A working
+tree Target lists the live checkout. A commit, index, or empty-tree Target
+lists only that snapshot. Standard and Unified additionally include Base-only
+paths deleted by the comparison so their removal remains navigable. Off never
+includes those paths. Files added to the checkout after an immutable Target do
+not leak into that historical view. Opening a listed path displays Target
+content; Standard and Unified may display Base content for a comparison
+deletion, while Off never does.
 
 Current Git index/worktree status remains a separately labelled fact. It
 does not replace the selected comparison's changed set.
@@ -154,22 +197,32 @@ Working-tree endpoints mean final on-disk content. Staged and unstaged
 changes that cancel therefore produce no net change against the selected
 base, while the index remains an explicit endpoint.
 
-The selection is persisted outside the checkout under a checkout-derived
-comparison directory. Worktree navigation restores that checkout's choice
-or creates its pinned default. Each viewer owns its active selection; it is
-not a shared board control. The initial pinned default is persisted after its
-first successful comparison, before a later commit or restart can redefine it.
-Two viewers on the same checkout do not live-control one another; their
-last-used preference has explicit last-successful-writer behavior.
+The endpoint and whitespace selection is persisted outside the checkout under
+a checkout-derived comparison directory. Worktree navigation restores that
+checkout's choice or creates its pinned default; the session-global mode
+continues across the switch. Each viewer owns its active selection and mode;
+neither is a shared board control. The initial pinned default is persisted
+after its first successful comparison, before a later commit or restart can
+redefine it. Two viewers on the same checkout do not live-control one another;
+their last-used endpoint preference has explicit last-successful-writer
+behavior.
 
-The menu bar right-aligns a compact `base to target` label as its only
-right-side status. Commit endpoints use short IDs. Working tree, index, empty
-tree, and `HEAD` use those names; an explicitly selected tag uses `Tag name`.
-`HEAD` and tag names are presentation aliases beside the pinned commit ID,
-not mutable endpoints. They persist only while the name still resolves to
-that same ID, otherwise the menu falls back to the short commit ID. Both
-labels use the shared popup-key accent and menu hover background; clicking
-either one opens its endpoint picker.
+The menu bar right-aligns compact `base to target` controls in Standard and
+Unified. Off hides Base and shows only the bare clickable Target. Commit
+endpoints use short IDs. Working tree, index, empty tree, and `HEAD` use those
+names; an explicitly selected tag uses `Tag name`. `HEAD` and tag names are
+presentation aliases beside the pinned commit ID, not mutable endpoints. They
+persist only while the name still resolves to that same ID, otherwise the menu
+falls back to the short commit ID. Every displayed label uses the shared
+popup-key accent and menu hover background and opens its endpoint picker.
+
+The File header and every Reviews/history header end with a dim
+`Diff: standard`, `Diff: unified`, or `Diff: off` control. It outranks passive
+counts at narrow widths and opens an anchored, non-searchable, three-row
+choice popup. Normal `CMP ...` and unified-diff provenance is absent from the
+bottom line whenever endpoint controls actually render. Stale/error status
+remains. If the menu is hidden or too narrow to render the controls, the
+bottom line provides the mode-aware endpoint fallback.
 
 Mutable endpoints refresh after relevant Git and filesystem events.
 Immutable commit pairs retain their content. A failed refresh keeps the last
@@ -275,7 +328,9 @@ projectable; they do not hide history.
 Default board views still hide resolved threads until requested. File marks
 claim only trustworthy placement in the displayed checkout/version.
 Historical, off-branch, or detached entries remain in the full review with
-their complete messages and original evidence.
+their complete messages and original evidence. This labelled immutable origin
+evidence remains visible while diff mode is Off: Target-only applies to source
+browsing, not the repository's retained review record.
 
 MCP remains exactly three repository-bound tools:
 

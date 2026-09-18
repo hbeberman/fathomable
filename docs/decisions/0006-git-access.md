@@ -19,6 +19,12 @@ drives paths, content, gutters, counts, and navigation. The comparison retains
 the target's complete path set so historical file navigation cannot read past
 that endpoint. Last-seen is removed.
 
+Presentation amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): the historical `gd` /
+`:diff` toggle below is removed without an alias. Standard, Unified, and Off
+are explicit session-global modes; Off reads Target only. The milestone text
+below remains historical implementation context.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

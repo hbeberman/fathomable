@@ -226,7 +226,7 @@ mod tests {
         let dir = testing::workspace("eof-diff-bar", &text)?;
         let mut app = testing::source_app(&dir)?;
         app.view_mut().set_bases(None, Some("old\n".to_owned()));
-        app.show_comparison_diff();
+        app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
         for width in [80, 100] {
             app.resize(width, 30);
             testing::press(&mut app, "ge");

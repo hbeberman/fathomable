@@ -51,8 +51,8 @@ use fathomable_core::annotations::{
     self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, StoreError, ThreadId,
 };
 use fathomable_core::config::{
-    DiffConfig, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
-    WatchConfig,
+    DiffConfig, DiffMode, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
+    ViewerConfig, WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
@@ -159,8 +159,6 @@ pub(crate) enum PickerKind {
     AllFiles,
     /// Documents opened this session, most recent first.
     Recent,
-    /// The unified comparison control.
-    ComparisonControl,
     /// The base endpoint of the viewer-wide comparison.
     ComparisonBase,
     /// The target endpoint of the viewer-wide comparison.
@@ -426,6 +424,8 @@ pub(crate) enum Popup {
     About,
     /// The context menu a right-click opened (ADR 0050).
     Menu(input::menu::Menu),
+    /// The compact diff-mode chooser anchored to a pane header.
+    DiffMode(input::menu::ModeMenu),
     /// Guarded confirmation opened by bare `q`.
     ConfirmQuit,
     /// Confirmation for a repository-wide clear-board operation.
@@ -663,11 +663,14 @@ pub(crate) struct App {
     comparison: comparison::State,
     /// Cached path/count projection for the current comparison generation.
     comparison_status: Status,
-    /// Whether unified diff presentation follows file switches.
-    comparison_diff: bool,
-    /// How diffs are compared this session: the config's start, then
-    /// `Space d w` (ADR 0060).
-    compare: fathomable_core::diff::Compare,
+    /// The explicitly selected session-wide diff presentation.
+    diff_mode: DiffMode,
+    /// The active presentation restored when Base is selected while Off.
+    last_active_diff_mode: DiffMode,
+    /// Target-only path boundary while diff presentation is Off.
+    off_target_paths: Option<Vec<PathBuf>>,
+    /// The changed-only Files rule retained while Off does not apply it.
+    dormant_changed_filter: bool,
     /// Whether the recursive workspace watch is in place.
     watching_root: bool,
     /// Whether the dirty set missed a refresh, so the next one must
@@ -726,6 +729,11 @@ impl App {
         let (thread_store_path, store_backing) = store_backing(store.as_ref(), &dirs, &record);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
         let comparison = comparison::State::load(&dirs, &workspace, diff.compare());
+        let diff_mode = diff.mode;
+        let last_active_diff_mode = match diff_mode {
+            DiffMode::Unified => DiffMode::Unified,
+            DiffMode::Standard | DiffMode::Off => DiffMode::Standard,
+        };
         let mut app = Self {
             workspace,
             docs: Vec::new(),
@@ -788,8 +796,10 @@ impl App {
             review_points,
             comparison,
             comparison_status: Status::default(),
-            comparison_diff: false,
-            compare: diff.compare(),
+            diff_mode,
+            last_active_diff_mode,
+            off_target_paths: None,
+            dormant_changed_filter: false,
             watching_root: true,
             status_stale: false,
             walks: status_walk::Walks::new(),
@@ -1487,9 +1497,7 @@ impl App {
         self.queue.remove(from);
         self.remember_thread_moves(&moved);
         self.refresh_review_paths();
-        let tracks_working_tree = self
-            .comparison()
-            .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree);
+        let tracks_working_tree = self.displayed_target_is_working_tree();
         if !tracks_working_tree {
             tracing::info!(
                 from = %from.display(),
@@ -1625,18 +1633,22 @@ impl App {
                 self.status = status;
                 self.status_stale = false;
                 let root = self.workspace.root().to_path_buf();
-                let deleted_updates: Vec<(usize, Deleted, PathBuf)> = self
-                    .docs
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, doc)| {
-                        let missing = !root.join(&doc.relative).is_file();
-                        let source = missing
-                            .then(|| deleted_source(self.status.get(&doc.relative)))
-                            .flatten()?;
-                        Some((index, source, doc.relative.clone()))
-                    })
-                    .collect();
+                let deleted_updates: Vec<(usize, Deleted, PathBuf)> =
+                    if self.diff_mode == DiffMode::Off {
+                        Vec::new()
+                    } else {
+                        self.docs
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, doc)| {
+                                let missing = !root.join(&doc.relative).is_file();
+                                let source = missing
+                                    .then(|| deleted_source(self.status.get(&doc.relative)))
+                                    .flatten()?;
+                                Some((index, source, doc.relative.clone()))
+                            })
+                            .collect()
+                    };
                 let mut marks_to_refresh = Vec::new();
                 for (index, source, relative) in deleted_updates {
                     let current = self.docs[index].deleted;
@@ -2248,65 +2260,82 @@ impl App {
             };
             let selected_target_is_working =
                 self.comparison.target() == &ComparisonEndpoint::WorkingTree;
-            let comparison_target_missing = self
-                .comparison
-                .current()
-                .and_then(|comparison| {
-                    comparison
-                        .changes()
-                        .iter()
-                        .find(|change| change.path() == relative)
-                })
-                .is_some_and(|change| {
-                    matches!(change.target(), fathomable_core::diff::PathState::Absent)
-                });
-            let deleted = if comparison_target_missing {
+            let comparison_target_missing = self.diff_mode != DiffMode::Off
+                && self
+                    .comparison
+                    .current()
+                    .and_then(|comparison| {
+                        comparison
+                            .changes()
+                            .iter()
+                            .find(|change| change.path() == relative)
+                    })
+                    .is_some_and(|change| {
+                        matches!(change.target(), fathomable_core::diff::PathState::Absent)
+                    });
+            let deleted = if self.diff_mode == DiffMode::Off {
+                None
+            } else if comparison_target_missing {
                 Some(Deleted::ComparisonBase)
             } else {
                 (selected_target_is_working && matches!(absolute.try_exists(), Ok(false)))
                     .then(|| deleted_source(self.status.get(&relative)))
                     .flatten()
             };
-            let historical = (!selected_target_is_working || comparison_target_missing)
+            let historical = (self.diff_mode != DiffMode::Off
+                && (!selected_target_is_working || comparison_target_missing))
                 .then(|| self.comparison_display_text(&relative));
-            let document = match historical {
-                Some(Ok(Some(text))) => {
-                    Document::from_snapshot(&absolute, text.into_bytes(), policy)
-                        .map_err(|error| error.to_string())
-                }
-                Some(Ok(None)) => Ok(Document::missing(&absolute, policy)),
-                Some(Err(error)) => Err(error),
-                None => match deleted {
-                    Some(Deleted::Index) => self
-                        .workspace
-                        .index_bytes(&relative)
-                        .map_err(|error| error.to_string())
-                        .and_then(|bytes| {
-                            bytes
-                                .ok_or_else(|| "no index snapshot is available".to_owned())
-                                .and_then(|bytes| {
-                                    Document::from_snapshot(&absolute, bytes, policy)
-                                        .map_err(|error| error.to_string())
-                                })
-                        }),
-                    Some(Deleted::Head) => self
-                        .workspace
-                        .head_bytes(&relative)
-                        .map_err(|error| error.to_string())
-                        .and_then(|bytes| {
-                            bytes
-                                .ok_or_else(|| "no HEAD snapshot is available".to_owned())
-                                .and_then(|bytes| {
-                                    Document::from_snapshot(&absolute, bytes, policy)
-                                        .map_err(|error| error.to_string())
-                                })
-                        }),
-                    Some(Deleted::Loaded) => unreachable!("new documents have no loaded snapshot"),
-                    Some(Deleted::ComparisonBase) => {
-                        unreachable!("comparison-base content is handled above")
+            let mut target_absent = false;
+            let document = if self.diff_mode == DiffMode::Off {
+                self.off_target_document(&relative)
+                    .map(|(document, absent)| {
+                        target_absent = absent;
+                        document
+                    })
+            } else {
+                match historical {
+                    Some(Ok(Some(text))) => {
+                        Document::from_snapshot(&absolute, text.into_bytes(), policy)
+                            .map_err(|error| error.to_string())
                     }
-                    None => Document::load(&absolute, policy).map_err(|error| error.to_string()),
-                },
+                    Some(Ok(None)) => Ok(Document::missing(&absolute, policy)),
+                    Some(Err(error)) => Err(error),
+                    None => match deleted {
+                        Some(Deleted::Index) => self
+                            .workspace
+                            .index_bytes(&relative)
+                            .map_err(|error| error.to_string())
+                            .and_then(|bytes| {
+                                bytes
+                                    .ok_or_else(|| "no index snapshot is available".to_owned())
+                                    .and_then(|bytes| {
+                                        Document::from_snapshot(&absolute, bytes, policy)
+                                            .map_err(|error| error.to_string())
+                                    })
+                            }),
+                        Some(Deleted::Head) => self
+                            .workspace
+                            .head_bytes(&relative)
+                            .map_err(|error| error.to_string())
+                            .and_then(|bytes| {
+                                bytes
+                                    .ok_or_else(|| "no HEAD snapshot is available".to_owned())
+                                    .and_then(|bytes| {
+                                        Document::from_snapshot(&absolute, bytes, policy)
+                                            .map_err(|error| error.to_string())
+                                    })
+                            }),
+                        Some(Deleted::Loaded) => {
+                            unreachable!("new documents have no loaded snapshot")
+                        }
+                        Some(Deleted::ComparisonBase) => {
+                            unreachable!("comparison-base content is handled above")
+                        }
+                        None => {
+                            Document::load(&absolute, policy).map_err(|error| error.to_string())
+                        }
+                    },
+                }
             };
             match document {
                 Ok(document) => {
@@ -2320,13 +2349,16 @@ impl App {
                         self.pane_rows(),
                         self.syntax_for(&relative),
                     );
-                    view.set_compare(self.compare);
+                    view.set_compare(self.comparison.compare());
                     view.set_worktree_missing(deleted.is_some());
                     view.set_index_missing(
                         self.status
                             .get(&relative)
                             .is_some_and(|entry| entry.staged_state() == Some(State::Deleted)),
                     );
+                    if target_absent {
+                        view.set_worktree_missing(true);
+                    }
                     let id = self.highlights.next_document();
                     self.docs.push(Doc {
                         id,
@@ -2336,7 +2368,8 @@ impl App {
                         marks: Vec::new(),
                         draft: None,
                         deleted,
-                        comparison_notice: None,
+                        comparison_notice: target_absent
+                            .then(|| "not present in Target".to_owned()),
                     });
                     self.docs.len() - 1
                 }
@@ -2367,8 +2400,8 @@ impl App {
         self.focus = Focus::View;
         self.apply_comparison_projection(index);
         self.refresh_marks(index);
-        if self.comparison_diff {
-            self.show_comparison_diff();
+        if self.diff_mode == DiffMode::Unified {
+            self.show_unified_diff();
         }
         // The document's stubs follow the session's toggles (ADR 0049).
         self.place_stub_rows();
@@ -2448,9 +2481,7 @@ impl App {
             .text()
             .unwrap_or_default()
             .to_owned();
-        let tracks_working_tree = self
-            .comparison()
-            .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree);
+        let tracks_working_tree = self.displayed_target_is_working_tree();
         match self.docs[index].document.reload() {
             Ok(true) => {
                 let doc = &mut self.docs[index];
@@ -2616,7 +2647,6 @@ impl App {
             PickerKind::ComparisonBranchCommits(_) => Vec::new(),
             PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
             PickerKind::ComparisonAdvanced(_) => vec!["Empty tree".to_owned()],
-            PickerKind::ComparisonControl => self.comparison_control_choices(),
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
             PickerKind::Worktree => self.worktree_choices(),
         };
@@ -2645,14 +2675,16 @@ impl App {
             Filter::All => self.all_index.files(&mut self.workspace),
             Filter::Visible => self.file_index.files(&mut self.workspace),
         };
-        for path in self
-            .comparison()
-            .into_iter()
-            .flat_map(fathomable_core::diff::Comparison::changes)
-            .map(|change| change.path().to_string_lossy().into_owned())
-        {
-            if !files.contains(&path) {
-                files.push(path);
+        if self.diff_mode != DiffMode::Off {
+            for path in self
+                .comparison()
+                .into_iter()
+                .flat_map(fathomable_core::diff::Comparison::changes)
+                .map(|change| change.path().to_string_lossy().into_owned())
+            {
+                if !files.contains(&path) {
+                    files.push(path);
+                }
             }
         }
         files.sort();
@@ -2771,9 +2803,6 @@ impl App {
                 input,
             )) => {
                 self.choose_nested_comparison(kind, &item, &input);
-            }
-            Some((PickerKind::ComparisonControl, item, _)) => {
-                self.choose_comparison_control(&item);
             }
             Some((PickerKind::ReviewPointName, item, input)) => {
                 let name = if input.trim().is_empty() {

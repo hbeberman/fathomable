@@ -1059,7 +1059,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     app.view_mut().toggle_source_view();
     let parts = crate::app::draw::status_parts(&app);
     assert_eq!(parts.pill, "FILE");
-    assert_eq!(parts.badges, ["SRC"]);
+    assert_eq!(parts.badges, ["SRC", "CMP empty tree → working tree"]);
     assert!(
         parts.right_text().contains("1 threads"),
         "{}",
@@ -1074,7 +1074,11 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     app.focus_threads_pane();
     let parts = crate::app::draw::status_parts(&app);
     assert_eq!(parts.pill, "THREADS");
-    assert_eq!(parts.badges, ["SRC"], "the badge outlives the focus change");
+    assert_eq!(
+        parts.badges,
+        ["SRC", "CMP empty tree → working tree"],
+        "the badges outlive the focus change"
+    );
     Ok(())
 }
 

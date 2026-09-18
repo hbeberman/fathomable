@@ -36,8 +36,18 @@ and comparison actions stay on the text key bar and Diff menu.
 
 Shortcut amended 2026-09-18: the resolved-stubs toggle moves from
 `Space v x` to the unused `Space v r`, with no compatibility alias.
-The original table and decision text below retain the binding introduced
-by this record as history; the active `Space v` map is `s` / `t` / `r`.
+Diff presentation amended later 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): Standard, Unified, and
+Off are durable session-global modes selected by `Space d s/u/o` and
+defaulted by `diff { mode "standard" }`. Unified is not closed by Escape. Off
+is Target-only source browsing. The comparison popup, `Space d d`, `:diff`,
+and the duplicate `DIFF comparison`/`CMP` display are removed; status keeps
+mode-aware provenance only when app-bar endpoint controls do not render.
+
+The original decision, key table, config example, and consequences below are
+historical rationale. They describe removed last-seen/checkpoint behavior and
+must not be read as the current keymap or configuration contract. The active
+`Space v` map is `s` / `t` / `r`.
 
 ## Context
 

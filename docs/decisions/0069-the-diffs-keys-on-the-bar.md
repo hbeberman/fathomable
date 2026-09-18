@@ -32,6 +32,14 @@ open the base and target pickers. The diff's applicable actions remain on
 the text key bar. [0086](0086-one-thread-summary-and-its-actions.md) later
 standardizes every bar as action then hotkey with whole-button hover.
 
+Diff presentation amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): `D`, transient
+Escape-close diff behavior, comparison-control hints, and `Space d d` /
+`:diff` are removed. `Space d s/u/o` selects durable Standard, Unified, or Off
+mode; Off gates hunk navigation and related hints. The decision text and
+consequences below are retained as historical rationale, not the current
+keymap or bar contract.
+
 ## Context
 
 [0067](0067-the-texts-key-bar.md) set one rule for keys: a header is

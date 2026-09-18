@@ -65,11 +65,43 @@ impl Document {
         policy: Policy,
     ) -> Result<Self, LoadError> {
         let path = path.into();
-        let content = classify_bytes(&path, bytes, policy)?;
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let content = classify_snapshot(&path, bytes, size, policy)?;
         tracing::debug!(
             path = %path.display(),
             content = ?Summary(&content),
             "loaded snapshot document"
+        );
+        Ok(Self {
+            path,
+            policy,
+            content,
+        })
+    }
+
+    /// Retain a bounded prefix of snapshot content whose complete byte size is
+    /// `size`.
+    ///
+    /// A snapshot larger than `policy.max_bytes` is classified from `prefix`
+    /// without retaining or requesting the rest. At or below the limit,
+    /// `prefix` must contain the complete snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoadError`] when an in-limit snapshot is incomplete or text
+    /// bytes are not valid UTF-8.
+    pub fn from_snapshot_prefix(
+        path: impl Into<PathBuf>,
+        prefix: Vec<u8>,
+        size: u64,
+        policy: Policy,
+    ) -> Result<Self, LoadError> {
+        let path = path.into();
+        let content = classify_snapshot(&path, prefix, size, policy)?;
+        tracing::debug!(
+            path = %path.display(),
+            content = ?Summary(&content),
+            "loaded bounded snapshot document"
         );
         Ok(Self {
             path,
@@ -120,7 +152,8 @@ impl Document {
     ///
     /// Returns [`LoadError`] when text bytes are not valid UTF-8.
     pub fn replace_snapshot(&mut self, bytes: Vec<u8>) -> Result<bool, LoadError> {
-        let content = classify_bytes(&self.path, bytes, self.policy)?;
+        let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let content = classify_snapshot(&self.path, bytes, size, self.policy)?;
         let changed = content != self.content;
         self.content = content;
         Ok(changed)
@@ -209,12 +242,23 @@ fn read(path: &Path, policy: Policy) -> Result<Content, LoadError> {
         .map_err(|error| fail(io::Error::new(io::ErrorKind::InvalidData, error)))
 }
 
-fn classify_bytes(path: &Path, bytes: Vec<u8>, policy: Policy) -> Result<Content, LoadError> {
+fn classify_snapshot(
+    path: &Path,
+    bytes: Vec<u8>,
+    size: u64,
+    policy: Policy,
+) -> Result<Content, LoadError> {
     let fail = |source| LoadError {
         path: path.to_path_buf(),
         source,
     };
-    let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let retained = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if size <= policy.max_bytes && retained != size {
+        return Err(fail(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "snapshot prefix does not contain the complete in-limit file",
+        )));
+    }
     if policy.attr.decided() == Some(true) {
         return Ok(Content::Binary {
             size,

@@ -27,6 +27,12 @@ Amended later 2026-09-17: key bars read action then hotkey. Each visible
 hint's label, gap, and hotkey are one clickable region with the shared hover
 background; inter-action separators remain passive.
 
+Amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): Off gates comparison,
+Git-status, and live-change hints, and Unified is durable rather than exposing
+an Escape-close hint. The historical hint examples below are superseded; the
+rule that a visible hint must be actionable remains.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) gave an expanded thread a

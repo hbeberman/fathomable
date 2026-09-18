@@ -7,7 +7,7 @@
 //! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), the
 //! `layout` block (ADR 0081), and the `threads` block (ADR 0049) are
-//! understood.
+//! understood, along with the `diff` and `user` blocks.
 //!
 //! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
 //! with every setting explained, which is what `--config-show` prints,
@@ -63,10 +63,33 @@ impl Default for Config {
     }
 }
 
-/// The `diff { ... }` block (ADR 0060): how the diff view compares and
-/// lists two texts.
+/// How the workspace presents its selected diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DiffMode {
+    /// Show Target content with comparison gutters and navigation.
+    #[default]
+    Standard,
+    /// Show the selected comparison as a unified patch.
+    Unified,
+    /// Browse Target content without comparison presentation.
+    Off,
+}
+
+impl fmt::Display for DiffMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Standard => "standard",
+            Self::Unified => "unified",
+            Self::Off => "off",
+        })
+    }
+}
+
+/// The `diff { ... }` block: startup diff presentation and comparison rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffConfig {
+    /// The diff presentation used when the session starts.
+    pub mode: DiffMode,
     /// Unchanged lines shown around each hunk; three, as `git diff`.
     pub context: usize,
     /// Whether the session starts with whitespace ignored (`Space d w`).
@@ -76,6 +99,7 @@ pub struct DiffConfig {
 impl Default for DiffConfig {
     fn default() -> Self {
         Self {
+            mode: DiffMode::default(),
             context: crate::diff::DEFAULT_CONTEXT,
             ignore_whitespace: false,
         }
@@ -488,6 +512,22 @@ impl Config {
                     for child in children.nodes() {
                         let line = Some(line_of(child.span().offset()));
                         match child.name().value() {
+                            "mode" => {
+                                config.diff.mode = match one_string(child, line)? {
+                                    "standard" => DiffMode::Standard,
+                                    "unified" => DiffMode::Unified,
+                                    "off" => DiffMode::Off,
+                                    value => {
+                                        return Err(ConfigError {
+                                            path: None,
+                                            line,
+                                            message: format!(
+                                                "unknown diff mode `{value}`; expected `standard`, `unified`, or `off`"
+                                            ),
+                                        });
+                                    }
+                                };
+                            }
                             "context" => {
                                 config.diff.context = cells(child, line, "context")?;
                             }
@@ -703,6 +743,7 @@ threads {{
 }}
 
 diff {{
+    mode {mode} // Startup presentation: \"standard\", \"unified\", or \"off\".
     context {context} // Unchanged lines shown around each diff hunk.
     ignore-whitespace #{ignore_whitespace} // Default only; saved comparisons keep their whitespace rule.
 }}
@@ -726,6 +767,7 @@ user {{
             split = self.layout.sidebar.split,
             stubs = self.threads.stubs,
             stubs_resolved = self.threads.stubs_resolved,
+            mode = quoted(&self.diff.mode.to_string()),
             context = self.diff.context,
             ignore_whitespace = self.diff.ignore_whitespace,
             name = quoted(&self.user.name),
@@ -1034,11 +1076,13 @@ threads {
         Ok(())
     }
 
-    /// The `diff` block (ADR 0060) sets the context lines and whether the
-    /// session starts with whitespace ignored; anything else is a typo.
+    /// The `diff` block sets the startup mode and comparison defaults;
+    /// anything else is a typo.
     #[test]
-    fn diff_block_sets_context_and_whitespace() -> Result<(), ConfigError> {
-        let config = Config::parse("diff { context 5; ignore-whitespace #true }")?;
+    fn diff_block_sets_mode_context_and_whitespace() -> Result<(), ConfigError> {
+        let config =
+            Config::parse("diff { mode \"unified\"; context 5; ignore-whitespace #true }")?;
+        assert_eq!(config.diff().mode, DiffMode::Unified);
         assert_eq!(config.diff().context, 5);
         assert!(config.diff().ignore_whitespace);
         assert_eq!(
@@ -1052,9 +1096,22 @@ threads {
             Config::default().diff().compare(),
             crate::diff::Compare::default()
         );
+        assert_eq!(Config::default().diff().mode, DiffMode::Standard);
+        for (value, mode) in [
+            ("standard", DiffMode::Standard),
+            ("unified", DiffMode::Unified),
+            ("off", DiffMode::Off),
+        ] {
+            let config = Config::parse(&format!("diff {{ mode \"{value}\" }}"))?;
+            assert_eq!(config.diff().mode, mode);
+        }
         for (text, needle) in [
             ("diff { width 5 }", "unknown diff setting `width`"),
             ("diff { context #true }", "context"),
+            ("diff { mode \"side-by-side\" }", "unknown diff mode"),
+            ("diff { mode \"Standard\" }", "unknown diff mode"),
+            ("diff { mode #true }", "exactly one string"),
+            ("diff { mode \"off\" \"unified\" }", "exactly one string"),
             ("diff 1", "block"),
         ] {
             let error = Config::parse(text)

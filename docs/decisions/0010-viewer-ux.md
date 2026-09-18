@@ -37,6 +37,12 @@ Amended later 2026-09-17: the document status pill is `FILE` during both
 navigation and selection. Selection remains an interaction state, not a
 separate pane identity; command and search input still replace the status line.
 
+Amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): mode-aware endpoint
+controls replace generic comparison controls. Standard and Unified show Base
+to Target, Off shows Target only, and comparison provenance appears in the
+bottom status line only when those controls do not actually render.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

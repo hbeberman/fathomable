@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, comparison endpoints, help, diagnostics, and project information; it centers repository and worktree identity, keeps compact comparison controls on the right, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, diff modes and endpoints, help, diagnostics, and project information; it centers repository and worktree identity, keeps mode-aware endpoints on the right, and shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
@@ -21,10 +21,9 @@ The Auto-jump entry described below was removed by
 [0082](0082-three-tool-review-core.md); the rest of this decision remains
 current.
 
-Amended 2026-09-17: **Start comparison at current HEAD** remains available
-inside **Comparison controls...** but is no longer duplicated in the
-**Diff** menu. The redundant **All changes / Since...** temporal focus is
-removed entirely.
+The 2026-09-17 amendment that retained **Start comparison at current HEAD**
+inside **Comparison controls...** is superseded 2026-09-18 by the diff-mode
+amendment below. Both the popup and action are removed without aliases.
 
 Amended later 2026-09-17 by
 [0068](0068-what-the-files-pane-shows.md): repository and active-worktree
@@ -54,6 +53,13 @@ rows follow a separator. Bare `f` selects File view and bare `t` selects
 Reviews view. The centered identity no longer carries the filename, which
 moves into the File surface header. Compact mode keeps Layout under `☰`.
 
+Amended 2026-09-18: **Diff** begins with mutually exclusive **Standard
+diff**, **Unified diff**, and **Diff off** rows, then Base, Target, Save review
+point, and Ignore whitespace. File and every Reviews/history header gain a
+rightmost mode control. Active modes show the Base-to-Target pair in the app
+bar; Off shows only Target. Normal comparison provenance appears in the
+bottom status line only when those endpoint controls do not actually render.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -69,9 +75,9 @@ File/Edit/View menu taxonomy would also spend much of a narrow terminal on
 categories that do not fit a read-only reviewer.
 
 The user chose a compact hybrid application shell: stable workflow menus on
-the left, repository identity quietly centered, compact comparison controls
-on the right, and all cursor-specific actions left beside the content they
-affect.
+the left, repository identity quietly centered, mode-aware comparison
+endpoints on the right, and all cursor-specific actions left beside the
+content they affect.
 
 ## Decision
 
@@ -86,11 +92,12 @@ affect.
   it. The current filename belongs to the File surface header. If space is
   too narrow, repository identity truncates and then disappears before
   overlapping controls.
-- Its right side names only the active comparison. The base and target labels
-  are muted-blue `ui.popup.key` buttons: hovering patches `ui.list.hover`, and
-  clicking opens that endpoint's picker. Passive branch or worktree, full
-  path, and major-view identity are deliberately absent from this right-side
-  comparison pair.
+- Its right side names the selected endpoints. Standard and Unified show
+  `base to target`; Off hides Base and shows the bare Target label. Every
+  rendered endpoint label is a muted-blue `ui.popup.key` button: hovering
+  patches `ui.list.hover`, and clicking opens that endpoint's picker. Passive
+  branch or worktree, full path, mode, and major-view identity are deliberately
+  absent from this right-side endpoint area.
 - On narrow terminals the right-side comparison disappears first. When the
   five labels no longer fit, only `☰` remains and Layout, Go, Review, Diff,
   and Help become one-level children of that menu. The row never wraps or
@@ -122,12 +129,16 @@ affect.
   `fathomable --doctor`. Licenses displays the embedded first- and third-party
   notices offline. About (`:about`) is a compact project/version, license,
   and repository view with directions to the full notices.
-- **Go** contains the file pickers, jumplist Back/Forward, Newest change, and
-  Auto-jump. **Review** contains the review view and filters plus
+- **Go** contains the file pickers, jumplist Back/Forward, and Newest change.
+  **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
-  contains comparison selection, side pickers, whitespace, checkpoints, and
-  mark-seen state. The bracket-pair navigation commands are intentionally not
-  copied into these menus.
+  begins with bold-`▌`, mutually exclusive **Standard diff**, **Unified diff**,
+  and **Diff off** choices. Base, Target, Save review point, and Ignore
+  whitespace follow in that order. Ignore whitespace remains checked but dim
+  while Off. The removed Comparison controls popup, Start comparison at
+  current HEAD, typed commit batches, `Space d d`, and `:diff` have no menu
+  rows or compatibility aliases. The bracket-pair navigation commands are
+  intentionally not copied into these menus.
 - Menu order is stable. Unavailable actions remain present and dim. Checked
   rows use stable state labels and expose current state only through the
   checkmark. Action labels are left-aligned in the normal menu face and
@@ -141,9 +152,10 @@ affect.
 - Hover only changes colour. A click opens a menu; while one is open, moving
   over another title switches menus. Clicking the active title, clicking
   elsewhere, or `Esc` closes the stack.
-- The compact comparison labels behave like the menu titles: each receives
-  the shared accent and hover background, and a click opens its base or target
-  picker without opening a title menu.
+- The rendered endpoint labels behave like the menu titles: each receives the
+  shared accent and hover background, and a click opens its Base or Target
+  picker without opening a title menu. Off has no Base label or Base hit
+  region.
 - With several worktrees, the centered repository/worktree segment uses the
   same accent and hover background; clicking it opens the worktree picker.
   With one worktree the repository identity is subdued and inert.
@@ -160,6 +172,17 @@ affect.
   selection active.
 - The menu bar remains visible and clickable over every popup and input
   mode. Opening a title menu closes the transient popup or parks the draft.
+
+### Header mode control
+
+- The File header and the headers of Reviews, Recently resolved, and Archived
+  end with dim `Diff: standard`, `Diff: unified`, or `Diff: off`.
+- The control outranks passive counts and filters when width is constrained.
+  It disappears only when it cannot coexist with the surface title.
+- Clicking it opens an anchored, three-row, non-searchable choice popup with
+  the same framing, hover, cursor, and `▌` selection language as Layout.
+- The control changes the session-global mode. It is not a per-file or
+  per-history-view setting.
 
 ### Popup frame and configuration
 
@@ -191,6 +214,13 @@ affect.
   These are startup defaults only. Runtime toggles do not rewrite config.
   Both child booleans may be false, which implicitly means no sidebar.
 
+- The app bar and bottom status line use actual layout, not configured
+  visibility, to avoid duplicated comparison provenance. Normal `CMP ...` or
+  unified-diff provenance is omitted when endpoint controls render. Stale and
+  error status remains visible. When the menu bar is hidden or its endpoint
+  labels are too wide, the status line supplies the mode-aware fallback,
+  including `OFF Target ...`.
+
 ## Consequences
 
 - The default launch consistently shows the menu bar and both sidebar panes,
@@ -201,5 +231,7 @@ affect.
 - `app/doctor_view.rs` owns only scroll and wrapping over the report collected
   by `doctor.rs`; CLI and TUI diagnostics therefore cannot drift.
 - `layout.sidebar` owns both startup composition and geometry.
+- The File and Reviews/history headers own the session-global diff-mode
+  control; the app bar owns only endpoint selection.
 - `Space ?` is presented as **View keymap**. It remains the complete,
   searchable binding-table view.

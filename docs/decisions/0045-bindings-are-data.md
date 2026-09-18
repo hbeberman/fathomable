@@ -41,6 +41,12 @@ at current `HEAD`; that action remains in **Comparison controls...**.
 `Space d r` and the redundant temporal-focus model are removed; a review
 point can instead be selected directly as the comparison base.
 
+Amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): the preceding
+Comparison controls retention is superseded. The popup and Start at HEAD
+action are removed; `Space d s/u/o` selects Standard, Unified, or Off.
+`Space d d` and `:diff` have no compatibility aliases.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

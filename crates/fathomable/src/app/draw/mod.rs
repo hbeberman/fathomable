@@ -299,7 +299,10 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Licenses(licenses)) => draw_licenses(frame, app, theme, licenses),
         Some(Popup::About) => draw_about(frame, app, theme),
         Some(Popup::Menu(menu)) => {
-            draw_context_menu(frame, app, theme, menu);
+            draw_context_menu(frame, app, theme, menu, None);
+        }
+        Some(Popup::DiffMode(menu)) => {
+            draw_context_menu(frame, app, theme, menu.menu(), Some(menu.selected()));
         }
         Some(Popup::ConfirmQuit) => draw_quit_confirmation(frame, theme, app),
         Some(Popup::ConfirmBoard {
@@ -336,8 +339,12 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
-                let entries: Vec<(String, String)> = app
-                    .which_key(place)
+                let raw = app.which_key(place);
+                let enabled: Vec<bool> = raw
+                    .iter()
+                    .map(|(chord, _)| app.which_key_enabled(place, *chord))
+                    .collect();
+                let entries: Vec<(String, String)> = raw
                     .into_iter()
                     .map(|(chord, label)| (chord.to_string(), label))
                     .collect();
@@ -351,6 +358,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                     grid,
                     &bindings::menu_title(app.prefix()),
                     &entries,
+                    &enabled,
                     hover,
                 );
             }
@@ -388,17 +396,19 @@ fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     let tail = menu_bar::bar_tail(app, width);
     spans.push(Span::raw(" ".repeat(tail.padding)));
-    if let (Some(base), Some(target)) = (&tail.base, &tail.target) {
-        let button = |label: &menu_bar::BarLabel| {
-            let surface = if hovered.is_some_and(|column| label.contains(column)) {
-                theme.menu.patch(theme.list_hover)
-            } else {
-                theme.menu
-            };
-            on_surface(surface, theme.popup_key)
+    let button = |label: &menu_bar::BarLabel| {
+        let surface = if hovered.is_some_and(|column| label.contains(column)) {
+            theme.menu.patch(theme.list_hover)
+        } else {
+            theme.menu
         };
-        spans.push(Span::styled(base.text.clone(), button(base)));
-        spans.push(Span::styled(" to ", theme.menu.patch(theme.info)));
+        on_surface(surface, theme.popup_key)
+    };
+    if let Some(target) = &tail.target {
+        if let Some(base) = &tail.base {
+            spans.push(Span::styled(base.text.clone(), button(base)));
+            spans.push(Span::styled(" to ", theme.menu.patch(theme.info)));
+        }
         spans.push(Span::styled(target.text.clone(), button(target)));
     }
     frame.render_widget(
@@ -795,13 +805,15 @@ fn draw_file_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
     }
     let header = file_header(app);
     let width = usize::from(area.width);
-    let hovered = app.pointer().is_some_and(|(column, row)| {
-        row == usize::from(area.y)
-            && column >= usize::from(area.x)
-            && column - usize::from(area.x) < header.title_width()
+    let local_pointer = app.pointer().and_then(|(column, row)| {
+        (row == usize::from(area.y) && column >= usize::from(area.x))
+            .then(|| column - usize::from(area.x))
     });
+    let hovered = local_pointer.is_some_and(|column| column < header.title_width());
+    let control_hovered = local_pointer.and_then(|column| header.control_at(width, column));
     frame.render_widget(
-        Paragraph::new(header.line_with_left_hover(theme, width, hovered)).style(theme.info),
+        Paragraph::new(header.line_with_header_hovers(theme, width, hovered, control_hovered))
+            .style(theme.info),
         Rect { height: 1, ..area },
     );
     Rect {
@@ -942,7 +954,19 @@ fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
     if toasts.is_empty() || pane.height == 0 {
         return;
     }
-    let shown: Vec<&Toast> = toasts.iter().rev().take(MAX_TOASTS).rev().collect();
+    let mut shown: Vec<&Toast> = toasts
+        .iter()
+        .rev()
+        .filter(|toast| {
+            app.diff_mode() != fathomable_core::config::DiffMode::Off
+                || !matches!(toast.kind(), ToastKind::FileEdit { .. })
+        })
+        .take(MAX_TOASTS)
+        .collect();
+    shown.reverse();
+    if shown.is_empty() {
+        return;
+    }
     let width = shown
         .iter()
         .map(|toast| display_width(toast.text()).saturating_add(2))
@@ -1048,11 +1072,12 @@ fn tree_lines<'a>(
         let style = theme.sidebar.patch(style).patch(selection.style(theme));
         // A queued change marks its file, and its collapsed ancestors so it
         // shows however the tree is folded (ADR 0015).
-        let badge = if row.is_dir() {
-            !row.expanded() && app.has_change_under(row.path())
-        } else {
-            app.queue().contains(row.path())
-        };
+        let badge = app.diff_mode() != fathomable_core::config::DiffMode::Off
+            && if row.is_dir() {
+                !row.expanded() && app.has_change_under(row.path())
+            } else {
+                app.queue().contains(row.path())
+            };
         let (letters, mut tail) = tree_marks(app, row, theme, style, badge, &circles);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
@@ -1125,7 +1150,9 @@ fn tree_marks<'a>(
             binary: entry.is_binary(),
         })
     };
-    let git = if row.is_dir() {
+    let git = if app.diff_mode() == fathomable_core::config::DiffMode::Off {
+        None
+    } else if row.is_dir() {
         (!row.expanded())
             .then(|| app.status().summary_under(row.path()))
             .flatten()
@@ -1659,11 +1686,18 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     };
     let parts = status_parts(app);
     let hint = change_hint(app);
-    let badges: Vec<&String> = if app.menu_bar_shown() {
-        Vec::new()
-    } else {
-        parts.badges.iter().collect()
-    };
+    let endpoints_rendered =
+        app.menu_bar_shown() && menu_bar::bar_tail(app, width).endpoints_rendered();
+    let badges: Vec<&String> = parts
+        .badges
+        .iter()
+        .filter(|badge| {
+            !endpoints_rendered
+                || badge.as_str() == "SRC"
+                || badge.contains("stale")
+                || badge.contains("error")
+        })
+        .collect();
     // Keep the right-hand block visible by trimming identity from the left.
     let badges_width: usize = badges.iter().map(|badge| display_width(badge) + 2).sum();
     let identity_width = usize::from(!app.menu_bar_shown());
@@ -1678,7 +1712,10 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     if !app.menu_bar_shown() {
         let path = truncate_left(&path, width.saturating_sub(fixed));
         left.push(Span::raw(format!(" {path}")));
-        if directory.is_none() && view.changed() {
+        if directory.is_none()
+            && view.changed()
+            && app.diff_mode() != fathomable_core::config::DiffMode::Off
+        {
             left.push(Span::styled(" [+]", theme.info));
         }
     }
@@ -1811,15 +1848,15 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         } else if view.source_view() {
             badges.push("SRC".to_owned());
         }
-        if app.comparison_badge_visible() {
-            badges.push(app.comparison_badge());
-        }
+        badges.push(app.comparison_badge());
     }
     let mut right = Vec::new();
     if directory.is_none() {
         let (line, col) = view.source_position();
         let mut position = format!(" {line}:{col}  {}%", view.percent());
-        let counts = if view.diff_view() {
+        let counts = if app.diff_mode() == fathomable_core::config::DiffMode::Off {
+            None
+        } else if view.diff_view() {
             view.pair_counts()
         } else {
             view.diff_counts()
@@ -1853,6 +1890,9 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
 /// The newest queued change for the status line (ADR 0015), with its
 /// counts when it is the open file.
 fn change_hint(app: &App) -> Option<String> {
+    if app.diff_mode() == fathomable_core::config::DiffMode::Off {
+        return None;
+    }
     let change = app.queue().newest()?;
     let counts = if app.directory_path().is_none() && app.current_path() == change.path {
         app.view().diff_counts()
@@ -1905,6 +1945,7 @@ fn draw_menu(
     grid: Grid,
     title: &str,
     entries: &[(String, String)],
+    enabled: &[bool],
     hover: Option<usize>,
 ) {
     if grid.height < 2 || entries.is_empty() {
@@ -1925,13 +1966,23 @@ fn draw_menu(
             } else {
                 Style::default()
             };
+            let enabled = enabled.get(index).copied().unwrap_or(true);
+            let dim = if enabled {
+                Modifier::empty()
+            } else {
+                Modifier::DIM
+            };
             spans.push(Span::styled(
                 format!("{key:>key_width$}"),
-                theme.menu.patch(theme.info).patch(row_style),
+                theme
+                    .menu
+                    .patch(theme.info)
+                    .patch(row_style)
+                    .add_modifier(dim),
             ));
             spans.push(Span::styled(
                 format!("  {label:<label_width$}   "),
-                theme.menu.patch(row_style),
+                theme.menu.patch(row_style).add_modifier(dim),
             ));
         }
         lines.push(Line::from(spans));
@@ -1959,7 +2010,13 @@ fn grid_rect(grid: Grid) -> Rect {
 
 /// The context menu at the pointer (ADR 0050): its action labels at the
 /// left and compact, subdued shortcuts at the right.
-fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Menu) {
+fn draw_context_menu(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    menu: &Menu,
+    selected: Option<usize>,
+) {
     let (width, _) = app.size();
     let grid = menu.grid_in(width, app.pane_top(), app.pane_rows());
     let hover = app
@@ -1968,7 +2025,10 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
     if grid.height < 2 || menu.entries().is_empty() {
         return;
     }
-    let checkable = menu.entries().iter().any(|entry| entry.checked().is_some());
+    let checkable = menu
+        .entries()
+        .iter()
+        .any(|entry| entry.checked().is_some() || entry.active());
     let inner_width = grid.width.saturating_sub(2);
     let lines = menu
         .entries()
@@ -1982,13 +2042,15 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
                 ))
                 .style(theme.menu);
             }
-            let surface = if hover == Some(index) {
+            let surface = if hover == Some(index) || selected == Some(index) {
                 theme.menu.patch(theme.list_hover)
             } else {
                 theme.menu
             };
             let check = if checkable {
-                if entry.checked() == Some(true) {
+                if entry.active() {
+                    "▌ "
+                } else if entry.checked() == Some(true) {
                     "✓ "
                 } else {
                     "  "
@@ -2003,11 +2065,28 @@ fn draw_context_menu(frame: &mut Frame<'_>, app: &App, theme: &Theme, menu: &Men
                         + display_width(entry.key()),
                 )
                 .max(1);
+            let content = if entry.enabled() {
+                surface
+            } else {
+                surface.patch(theme.info).add_modifier(Modifier::DIM)
+            };
+            let mark = if entry.active() {
+                content.add_modifier(Modifier::BOLD)
+            } else {
+                content
+            };
             Line::from(vec![
-                Span::styled(check.to_owned(), surface),
-                Span::styled(entry.label().to_owned(), surface),
+                Span::styled(check.to_owned(), mark),
+                Span::styled(entry.label().to_owned(), content),
                 Span::styled(" ".repeat(gap), surface),
-                Span::styled(entry.key().to_owned(), on_surface(surface, theme.info)),
+                Span::styled(
+                    entry.key().to_owned(),
+                    on_surface(surface, theme.info).add_modifier(if entry.enabled() {
+                        Modifier::empty()
+                    } else {
+                        Modifier::DIM
+                    }),
+                ),
             ])
             .style(surface)
         })
@@ -2532,7 +2611,6 @@ fn draw_picker(
         super::PickerKind::Files => "files".to_owned(),
         super::PickerKind::AllFiles => "files (incl. ignored)".to_owned(),
         super::PickerKind::Recent => "recent".to_owned(),
-        super::PickerKind::ComparisonControl => "comparison".to_owned(),
         super::PickerKind::ComparisonBase => "comparison base".to_owned(),
         super::PickerKind::ComparisonTarget => "comparison target".to_owned(),
         super::PickerKind::ComparisonTags(side) => format!("{} tags", side.label()),
@@ -2859,7 +2937,13 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
                 && column >= app.sidebar_width()
                 && column - app.sidebar_width() < header.left_width()
         });
-    let mut lines = vec![header.line_with_left_hover(theme, width, title_hovered)];
+    let control_hovered = app.pointer().and_then(|(column, row)| {
+        (row == app.pane_top() && column >= app.sidebar_width())
+            .then(|| column - app.sidebar_width())
+            .and_then(|column| header.control_at(width, column))
+    });
+    let mut lines =
+        vec![header.line_with_header_hovers(theme, width, title_hovered, control_hovered)];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
@@ -3140,8 +3224,10 @@ mod tests {
     use std::path::PathBuf;
 
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use fathomable_core::config::DiffMode;
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::layout::{Layout, display_width};
+    use fathomable_testing::git;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Style};
@@ -3250,6 +3336,94 @@ mod tests {
 
         assert_eq!(buffer_row(&buffer, 0), "            ");
         assert_eq!(buffer_row(&buffer, 1), " very-long-f");
+        Ok(())
+    }
+
+    #[test]
+    fn off_hides_retained_file_edit_toasts_but_not_plain_notices() -> anyhow::Result<()> {
+        let dir = testing::workspace("file-toast-off", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.push_file_edit_toast(PathBuf::from("live-secret.rs"), (7, 4));
+        app.push_toast("ordinary notice".to_owned());
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+
+        app.select_diff_mode(DiffMode::Off);
+        let buffer = toast_buffer(&app, &theme, 40, 4)?;
+        let off = (0..4)
+            .map(|row| buffer_row(&buffer, row))
+            .collect::<String>();
+        assert!(off.contains("ordinary notice"), "{off:?}");
+        assert!(!off.contains("live-secret"), "{off:?}");
+
+        app.select_diff_mode(DiffMode::Standard);
+        let buffer = toast_buffer(&app, &theme, 40, 4)?;
+        let active = (0..4)
+            .map(|row| buffer_row(&buffer, row))
+            .collect::<String>();
+        assert!(active.contains("live-secret.rs"), "{active:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn status_provenance_follows_actual_endpoint_layout() -> anyhow::Result<()> {
+        let dir = testing::workspace("status-endpoint-layout", testing::README)?;
+        let root = testing::root(&dir);
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+        let long_tag =
+            "target-name-too-long-for-the-menu-bar-control-even-when-only-target-is-visible";
+        git::tag(&root, long_tag)?;
+        let mut app = testing::AppBuilder::new(&dir)
+            .options(|mut options| {
+                options.menu_bar = true;
+                options
+            })
+            .build()?;
+
+        let screen = testing::screen(&app)?;
+        assert!(!screen.last().unwrap_or(&String::new()).contains("CMP"));
+        app.view_mut().toggle_source_view();
+        let screen = testing::screen(&app)?;
+        assert!(screen.last().is_some_and(|row| row.contains("SRC")));
+        assert!(!screen.last().unwrap_or(&String::new()).contains("CMP"));
+        app.view_mut().toggle_source_view();
+
+        app.toggle_menu_bar();
+        let screen = testing::screen(&app)?;
+        assert!(
+            screen.last().is_some_and(|row| row.contains("CMP ")),
+            "{screen:?}"
+        );
+
+        app.toggle_menu_bar();
+        let target = app
+            .resolve_comparison_endpoint(&format!("refs/tags/{long_tag}"))
+            .map_err(anyhow::Error::msg)?;
+        app.set_comparison_target_aliased(
+            target,
+            Some(crate::app::comparison::EndpointAlias::Tag(
+                long_tag.to_owned(),
+            )),
+        );
+        assert!(
+            !crate::app::menu_bar::bar_tail(&app, app.size().0).endpoints_rendered(),
+            "the long endpoint must exercise the status fallback"
+        );
+        let screen = testing::screen(&app)?;
+        assert!(
+            screen.last().is_some_and(|row| row.contains("CMP ")),
+            "{screen:?}"
+        );
+
+        app.select_diff_mode(DiffMode::Off);
+        let screen = testing::screen(&app)?;
+        assert!(
+            screen
+                .last()
+                .is_some_and(|row| row.contains("OFF Target Tag")),
+            "{screen:?}"
+        );
         Ok(())
     }
 

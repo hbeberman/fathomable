@@ -264,7 +264,9 @@ actions! {
     /// `Space c f`: a comment on the open file as a whole (ADR 0063).
     FileComment,
     SourceView,
-    ComparisonControl,
+    DiffStandard,
+    DiffUnified,
+    DiffOff,
     ComparisonSave,
     ComparisonBase,
     ComparisonTarget,
@@ -900,10 +902,24 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('d'), c('d')]],
-        A::ComparisonControl,
+        &[&[c(' '), c('d'), c('s')]],
+        A::DiffStandard,
         "Space menu",
-        "diff: comparison control",
+        "diff: standard",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('u')]],
+        A::DiffUnified,
+        "Space menu",
+        "diff: unified",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('o')]],
+        A::DiffOff,
+        "Space menu",
+        "diff: off",
     ),
     bind(
         W::Any,
@@ -1620,12 +1636,14 @@ mod tests {
         for place in PANES {
             for (keys, action) in [
                 ([c(' '), c('v'), c('s')], Action::SourceView),
-                ([c(' '), c('d'), c('d')], Action::ComparisonControl),
+                ([c(' '), c('d'), c('s')], Action::DiffStandard),
+                ([c(' '), c('d'), c('u')], Action::DiffUnified),
+                ([c(' '), c('d'), c('o')], Action::DiffOff),
                 ([c(' '), c('d'), c('b')], Action::ComparisonBase),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
-            for suffix in ['r', 's'] {
+            for suffix in ['d', 'r'] {
                 assert_eq!(lookup(place, &[c(' '), c('d'), c(suffix)]), Match::Miss);
             }
         }
@@ -1766,7 +1784,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["d", "b", "t", "c", "w"]
+            ["s", "u", "o", "b", "t", "c", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

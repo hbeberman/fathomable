@@ -62,6 +62,7 @@ the table below is a quick reference, not the full list.
 | `Space f` | file picker |
 | `Space F c` `Space F o` | only changed / only reviews in Files |
 | `Space F u` `Space F g` | hide untracked / show ignored in Files |
+| `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
 | `Space v s` | source / rendered view |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
@@ -88,15 +89,50 @@ Files the editor is configured to write elsewhere are outside this protection.
 
 ### Compare versions
 
-The base and target at the right of the menu bar apply to every file.
-Click either label, or use `Space d b` / `Space d t`, to choose a commit,
-tag, branch commit, index (staged content), or working tree (files on disk).
-These choices never fetch, check out, or modify Git.
+One session-global diff mode applies to every file and review/history view.
+The rightmost control in each File or Reviews header reads **Diff: standard**,
+**Diff: unified**, or **Diff: off**. Click it for the three mode choices, or
+use `Space d s`, `Space d u`, and `Space d o`:
 
-A fresh Git workspace compares a pinned `HEAD` to the working tree.
-Committing does **not** advance that base: use **Diff > Comparison
-controls... > Start comparison at current HEAD** when ready. The Files pane,
-gutters, counts, and `:diff` all follow the selected comparison.
+- **Standard** shows Target content with comparison gutters, counts, Files
+  filtering, and hunk navigation.
+- **Unified** shows the selected Base-to-Target patch. It follows file
+  switches and remains active when you press `Esc`.
+- **Off** is Target-only source browsing. It shows no Base content or
+  Base-only paths and suppresses comparison, Git-status, and queued-live-change
+  marks, counts, navigation, and actions.
+
+Off retains the selected Base, the whitespace setting, the **only changed**
+Files filter, and the last active Standard/Unified mode so they return when
+diffs are enabled. Their controls are dormant while Off. Changing Target keeps
+Off active; choosing Base attempts to restore the last active mode. If that
+pair cannot be read, both endpoint choices remain selected and the viewer stays
+Off with an error. A Base-only file that was already open says **not present in
+Target** and shows no Base body. Reviews still show clearly labelled immutable
+origin excerpts and stored discussion history because those are review
+evidence, not source browsing.
+
+In Standard and Unified, the Base and Target at the right of the menu bar apply
+to every file. Off shows only the clickable Target. Click an endpoint, or use
+`Space d b` / `Space d t`, to choose a commit, tag, branch commit, index
+(staged content), or working tree (files on disk). Review points are Base-only.
+These choices never fetch, check out, or modify Git. A pending new-line or
+new-file comment must be submitted or cancelled before changing mode, Base, or
+Target.
+
+A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
+does **not** advance that Base; choose the new commit explicitly. The Diff menu
+begins with Standard, Unified, and Off, then Base, Target, Save review point,
+and Ignore whitespace. There is no comparison-control popup, **Start comparison
+at current HEAD**, `Space d d`, or `:diff`, and those removed routes have no
+compatibility aliases.
+
+Rendered/Source remains available in Standard and Off. Unified retains that
+choice but disables `Space v s`, its menu action, and `:source` until another
+mode is selected. `:status` and file information report Target only while Off.
+Normal comparison provenance moves out of the bottom status line when the
+menu-bar endpoint controls actually render; stale/error status remains, and
+provenance returns there when the controls are hidden or too narrow.
 
 `Space d c` saves an optionally named **review point** without changing Git.
 Choose it under the base picker's **Review points...** to see changes since
@@ -171,6 +207,7 @@ threads {
 }
 
 diff {
+    mode "standard" // Startup presentation: "standard", "unified", or "off".
     context 3 // Unchanged lines shown around each diff hunk.
     ignore-whitespace #false // Default only; saved comparisons keep their whitespace rule.
 }

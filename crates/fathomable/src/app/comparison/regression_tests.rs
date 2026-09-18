@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fathomable_core::annotations::{Author, Draft, LineRange, Store};
+use fathomable_core::config::DiffMode;
 use fathomable_testing::{TempDir, git};
 
 use crate::app::draw;
@@ -10,6 +12,8 @@ use crate::app::testing::{AppBuilder, buffer, screen};
 use crate::app::{ComparisonSide, Focus, PickerKind, Popup};
 use fathomable_core::theme::Theme as CoreTheme;
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
+
+use super::EndpointAlias;
 
 fn repository(name: &str) -> anyhow::Result<TempDir> {
     let dir = TempDir::new(name)?;
@@ -442,6 +446,36 @@ fn moved_tag_alias_falls_back_to_the_pinned_commit() -> anyhow::Result<()> {
 }
 
 #[test]
+fn moved_target_tag_alias_falls_back_while_off() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-moved-target-tag")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("no first commit"))?;
+    git::tag(&root, "v1")?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.select_diff_mode(DiffMode::Off);
+    app.set_comparison_target_aliased(
+        ComparisonEndpoint::Commit(CommitId::parse(&first)?),
+        Some(EndpointAlias::Tag("v1".to_owned())),
+    );
+    assert_eq!(app.comparison_menu_pair().1, "Tag v1");
+
+    git::commit_and_stage(&root, &[("a.txt", "two\n")])?;
+    git::retag(&root, "v1")?;
+    app.refresh_comparison();
+
+    assert_eq!(app.diff_mode(), DiffMode::Off);
+    assert_eq!(app.comparison_menu_pair().1, first[..7]);
+    assert_eq!(
+        app.comparison.target(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
+    );
+    Ok(())
+}
+
+#[test]
 fn four_hex_characters_search_beyond_loaded_commit_rows() -> anyhow::Result<()> {
     let dir = repository("comparison-picker-id-search")?;
     let root = dir.0.join("ws");
@@ -479,7 +513,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     fs::write(root.join("a.txt"), "two\n")?;
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("a.txt"));
-    app.show_comparison_diff();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     let before: Vec<String> = app
         .view()
         .layout()
@@ -511,8 +545,8 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     fs::write(&file, "three\n")?;
     let index = app.current.ok_or_else(|| anyhow::anyhow!("no document"))?;
     assert!(app.reload_doc(index).is_some());
-    app.leave_diff();
-    app.show_comparison_diff();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     assert_eq!(
         app.view()
             .layout()
@@ -523,7 +557,192 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
         before,
         "watcher reloads must not mix new bytes into a stale comparison"
     );
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+    assert_eq!(app.view().text(), "three\n");
+    assert!(!app.view().diff_view());
+    assert!(
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .all(|line| !matches!(line.text().as_str(), "one" | "two")),
+        "Off must discard stale unified and Base-derived text"
+    );
     Ok(())
+}
+
+#[test]
+fn off_clears_stale_unified_when_the_target_read_also_fails() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = repository("comparison-off-failed-target")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "BASE_SENTINEL\n")])?;
+    fs::write(root.join("a.txt"), "TARGET_SENTINEL\n")?;
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.open(Path::new("a.txt"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+
+    let file = root.join("a.txt");
+    let original_mode = fs::metadata(&file)?.permissions().mode();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o0))?;
+    app.refresh_comparison();
+    assert!(app.comparison.stale());
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    fs::set_permissions(&file, fs::Permissions::from_mode(original_mode))?;
+
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+    assert!(!app.view().diff_view());
+    assert_eq!(app.view().text(), "");
+    assert!(
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .all(|line| !line.text().contains("SENTINEL")),
+        "a failed Target read must not retain stale Base or Target diff rows"
+    );
+    Ok(())
+}
+
+#[test]
+fn off_uses_only_target_with_review_point_or_unavailable_base() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-independent-base")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.txt", "BASE_SENTINEL\n")])?;
+    fs::write(root.join("a.txt"), "REVIEW_POINT_SENTINEL\n")?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .review_points(dir.0.join("points"))
+        .build()?;
+    app.save_review_point(Some("captured"));
+    let point = app
+        .review_points
+        .as_ref()
+        .and_then(|store| store.list().into_iter().next())
+        .map(|point| point.id().to_owned())
+        .ok_or_else(|| anyhow::anyhow!("review point"))?;
+    fs::write(root.join("a.txt"), "TARGET_SENTINEL\n")?;
+    git::commit_and_stage(&root, &[("a.txt", "TARGET_SENTINEL\n")])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("target commit"))?;
+
+    app.open(Path::new("a.txt"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point));
+    assert_eq!(
+        app.diff_mode(),
+        fathomable_core::config::DiffMode::Off,
+        "a review-point Base cannot activate against a commit Target"
+    );
+    assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
+
+    let unavailable =
+        ComparisonEndpoint::Commit(CommitId::parse("0000000000000000000000000000000000000000")?);
+    app.set_comparison_base(unavailable);
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+    assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
+    assert!(!app.view().text().contains("BASE_SENTINEL"));
+    assert!(!app.view().text().contains("REVIEW_POINT_SENTINEL"));
+
+    app.set_comparison_base(ComparisonEndpoint::ReviewPoint("missing-point".to_owned()));
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+    assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
+
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    fs::write(root.join("a.txt"), "REFRESHED_TARGET_SENTINEL\n")?;
+    app.refresh_comparison();
+    assert_eq!(app.view().text(), "REFRESHED_TARGET_SENTINEL\n");
+    Ok(())
+}
+
+#[test]
+fn off_target_only_holds_across_recent_jumplist_and_review_jumps() -> anyhow::Result<()> {
+    let dir = repository("comparison-off-navigation")?;
+    let root = dir.0.join("ws");
+    fs::write(root.join("gone.md"), "BASE_ONLY_SENTINEL\n")?;
+    fs::write(root.join("stay.md"), "old\n")?;
+    git::commit_and_stage(
+        &root,
+        &[("gone.md", "BASE_ONLY_SENTINEL\n"), ("stay.md", "old\n")],
+    )?;
+    let base = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("base commit"))?;
+    fs::remove_file(root.join("gone.md"))?;
+    fs::write(root.join("stay.md"), "TARGET_ONLY_SENTINEL\n")?;
+    git::commit_and_stage(&root, &[("stay.md", "TARGET_ONLY_SENTINEL\n")])?;
+    let target = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("target commit"))?;
+    let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+    let thread = store.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("gone.md"),
+            LineRange::new(1, 1),
+            "historical evidence",
+        )
+        .at_commit(Some(base.clone())),
+        "BASE_ONLY_SENTINEL\n",
+        5,
+    )?;
+    let mut app = AppBuilder::at(&root)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&base)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.open(Path::new("gone.md"));
+    app.open(Path::new("stay.md"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+
+    app.open_picker(PickerKind::Recent);
+    app.picker_move(1);
+    app.picker_confirm();
+    assert_target_absent_without_base(&app);
+
+    app.open(Path::new("stay.md"));
+    app.record_jump(crate::app::jumplist::Position {
+        path: Path::new("gone.md").to_path_buf(),
+        line: 1,
+    });
+    app.jump_back();
+    assert_target_absent_without_base(&app);
+
+    app.open(Path::new("stay.md"));
+    assert!(!app.land_on_thread(thread));
+    assert_eq!(app.current_path(), Path::new("stay.md"));
+    assert_eq!(app.view().text(), "TARGET_ONLY_SENTINEL\n");
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("gone.md is deleted"))
+    );
+    assert_eq!(app.review_entries(false).len(), 1);
+    Ok(())
+}
+
+fn assert_target_absent_without_base(app: &crate::app::App) {
+    assert_eq!(app.current_path(), Path::new("gone.md"));
+    assert_eq!(app.view().text(), "");
+    assert_eq!(
+        app.current
+            .and_then(|index| app.docs[index].comparison_notice.as_deref()),
+        Some("not present in Target")
+    );
+    assert!(
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .all(|line| !line.text().contains("BASE_ONLY_SENTINEL"))
+    );
 }
 
 #[test]
@@ -535,14 +754,14 @@ fn deleting_an_open_untracked_file_clears_its_cached_diff() -> anyhow::Result<()
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("scratch.txt"));
-    app.show_comparison_diff();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     assert_eq!(app.view().pair_counts(), Some((1, 0)));
 
     fs::remove_file(root.join("scratch.txt"))?;
     app.on_removed(Path::new("scratch.txt"));
     app.refresh_comparison();
-    app.leave_diff();
-    app.show_comparison_diff();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
 
     assert!(!app.comparison.stale());
     assert_eq!(app.view().pair_counts(), Some((0, 0)));

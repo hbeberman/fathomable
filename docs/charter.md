@@ -28,10 +28,12 @@ the agent does the writing.
   snippet, the source range, a timestamp, and the user's comment. Annotations
   form threads. Agents reply into threads, so a document can carry a
   long-running local review conversation across many agent sessions.
-- A **diff lens**: one pinned, checkout-wide comparison drives the changed
-  paths, gutters, counts, navigation, historical source, and unified diff.
-  Explicit review points provide deliberate "since this workspace state"
-  comparisons.
+- A **diff lens**: one pinned, checkout-wide comparison and session-global
+  Standard, Unified, or Off presentation applies to every file. Standard
+  supplies comparison gutters and navigation, Unified is a durable patch view,
+  and Off is Target-only source browsing without comparison, Git-status, or
+  live-change presentation. Explicit review points provide deliberate
+  "since this workspace state" comparisons.
 - An **agent endpoint**: `fathomable --mcp [DIR]` is a repository-bound stdio
   MCP server that works without a viewer, so agents can read discussions,
   start threads, and reply to them.

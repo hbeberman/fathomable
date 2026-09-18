@@ -21,8 +21,8 @@ change hints, toasts, and manual change jumps remain; automatic reader
 snapshots, seen-idle, mark-all-seen, and last-seen diff routes are removed.
 
 Agent following and auto-jump superseded 2026-09-15 by
-[0082](0082-three-tool-review-core.md). Live reload, last-seen snapshots,
-change hints and toasts, the changed-file queue, and manual jump keys remain.
+[0082](0082-three-tool-review-core.md). Live reload, change hints and toasts,
+the changed-file queue, and manual jump keys remain.
 MCP `open`/`follow`, automatic movement, the `AUTO` badge, and the
 auto/debounce config keys are removed; `jump.toast` remains.
 

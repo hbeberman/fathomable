@@ -9,6 +9,7 @@
 //! line — takes the characters the table leaves alone.
 
 use crossterm::event::KeyEvent;
+use fathomable_core::config::DiffMode;
 use fathomable_core::editor::{Edit, Motion};
 use fathomable_core::tree::{Rule, Tree};
 
@@ -45,6 +46,7 @@ pub(crate) fn place(app: &App) -> Option<Where> {
             | Popup::Licenses(_)
             | Popup::About
             | Popup::Menu(_)
+            | Popup::DiffMode(_)
             | Popup::ConfirmQuit
             | Popup::ConfirmBoard { .. },
         ) => None,
@@ -86,6 +88,9 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
             app.close_popup();
         }
         return Effect::None;
+    }
+    if matches!(app.popup(), Some(Popup::DiffMode(_))) {
+        return app.mode_menu_key(key);
     }
     if matches!(app.popup(), Some(Popup::Help(_))) {
         return help::key(app, key);
@@ -189,6 +194,21 @@ fn is_far_move(action: Action) -> bool {
     )
 }
 
+fn unavailable_while_diff_is_off(action: Action) -> bool {
+    matches!(
+        action,
+        Action::ComparisonWhitespace
+            | Action::FilesChanged
+            | Action::HunkNext
+            | Action::HunkPrev
+            | Action::DirtyNext
+            | Action::DirtyPrev
+            | Action::ChangeNext
+            | Action::ChangePrev
+            | Action::JumpNewest
+    )
+}
+
 impl App {
     /// Run `action` as the focused surface means it, recording the
     /// position a far move leaves. A search moves the cursor as it is
@@ -226,6 +246,10 @@ impl App {
         let Some(place) = place(self) else {
             return Effect::None;
         };
+        if self.diff_mode() == DiffMode::Off && unavailable_while_diff_is_off(action) {
+            self.notice("diff mode is off");
+            return Effect::None;
+        }
         match action {
             Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
@@ -277,13 +301,10 @@ impl App {
             Action::EditNewestOwn => self.thread_edit_newest_own(),
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
             Action::DeleteThread => self.thread_delete_here(),
-            Action::SourceView => {
-                if self.comparison_diff {
-                    self.leave_diff();
-                }
-                self.view_mut().toggle_source_view();
-            }
-            Action::ComparisonControl => self.open_comparison_control(),
+            Action::SourceView => self.toggle_source_view(),
+            Action::DiffStandard => self.select_diff_mode(DiffMode::Standard),
+            Action::DiffUnified => self.select_diff_mode(DiffMode::Unified),
+            Action::DiffOff => self.select_diff_mode(DiffMode::Off),
             Action::ComparisonSave => self.request_review_point(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
@@ -557,6 +578,7 @@ mod tests {
 
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fathomable_core::annotations::{AutoResolve, MessageTarget};
+    use fathomable_core::config::DiffMode;
     use fathomable_testing::TempDir;
 
     use crate::app::testing::{self, press, source_app};
@@ -564,6 +586,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::handle_key;
+    use crate::app::input::bindings::Action;
     use crate::app::threads::{ComposeTarget, ThreadState};
     use crate::app::{App, Focus, Popup};
 
@@ -590,6 +613,30 @@ mod tests {
             app.current_path().to_string_lossy().into_owned(),
             app.view().cursor_source_line(),
         )
+    }
+
+    #[test]
+    fn off_rejects_comparison_git_and_live_change_actions_consistently() -> anyhow::Result<()> {
+        let dir = fixture("diff-off-actions")?;
+        let mut app = source_app(&dir)?;
+        app.select_diff_mode(DiffMode::Off);
+
+        for action in [
+            Action::ComparisonWhitespace,
+            Action::FilesChanged,
+            Action::HunkNext,
+            Action::HunkPrev,
+            Action::DirtyNext,
+            Action::DirtyPrev,
+            Action::ChangeNext,
+            Action::ChangePrev,
+            Action::JumpNewest,
+        ] {
+            app.act(action);
+            assert_eq!(app.message(), Some("diff mode is off"), "{action:?}");
+            assert!(app.popup().is_none(), "{action:?} must not open a popup");
+        }
+        Ok(())
     }
 
     fn compose_target(app: &App) -> Option<ComposeTarget> {
@@ -844,7 +891,7 @@ mod tests {
         app.focus = Focus::View;
         app.view_mut().clear_selection();
         app.view_mut().set_bases(None, Some("before\n".to_owned()));
-        app.toggle_head_diff();
+        app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
         press(&mut app, "  ");
         assert!(app.view().diff_view(), "cancel does not act as Escape");
         assert!(app.prefix().is_empty());

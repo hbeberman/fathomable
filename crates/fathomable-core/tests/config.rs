@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 
 use fathomable_core::XdgDirs;
-use fathomable_core::config::{Config, ConfigError};
+use fathomable_core::config::{Config, ConfigError, DiffMode};
 use fathomable_core::theme::DEFAULT_THEME;
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -153,11 +153,12 @@ layout {
     }
 }
 threads { stubs #false; stubs-resolved #true }
-diff { context 0; ignore-whitespace #true }
+diff { mode "off"; context 0; ignore-whitespace #true }
 user { name "O'Brien" }
 "#,
     )?;
     assert_ne!(full, default);
+    assert_eq!(full.diff().mode, DiffMode::Off);
     let text = full.to_string();
     assert_eq!(Config::parse(&text)?, full, "{text}");
     assert_eq!(keys(&text), keys(&default.to_string()));

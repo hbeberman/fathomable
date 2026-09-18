@@ -224,9 +224,7 @@ pub(super) fn message_target(message: usize) -> MessageTarget {
 impl App {
     /// The path where this viewer projects `thread` in its active checkout.
     pub(super) fn thread_path<'a>(&'a self, thread: &'a Thread) -> &'a Path {
-        if self.comparison().is_some_and(|comparison| {
-            comparison.target() == &fathomable_core::workspace::ComparisonEndpoint::WorkingTree
-        }) {
+        if self.displayed_target_is_working_tree() {
             self.local_thread_paths
                 .get(thread.id())
                 .map_or_else(|| thread.path(), PathBuf::as_path)
@@ -388,9 +386,7 @@ impl App {
             return;
         };
         let local_paths = &self.local_thread_paths;
-        let use_local_paths = self.comparison().is_some_and(|comparison| {
-            comparison.target() == &fathomable_core::workspace::ComparisonEndpoint::WorkingTree
-        });
+        let use_local_paths = self.displayed_target_is_working_tree();
         let Some(doc) = self.docs.get_mut(index) else {
             return;
         };

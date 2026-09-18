@@ -10,6 +10,9 @@
 
 use std::path::Path;
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use fathomable_core::config::DiffMode;
+
 use super::bindings::{self, Action, Chord, Keys, Match, Where};
 use crate::app::threads::pane::{PanePoint, PaneScope};
 use crate::app::threads::words::Words;
@@ -31,6 +34,8 @@ pub(crate) struct Entry {
     action: Option<Action>,
     /// `Some` for a persistent toggle row, active or inactive.
     checked: Option<bool>,
+    enabled: bool,
+    active: bool,
 }
 
 impl Entry {
@@ -58,6 +63,16 @@ impl Entry {
     pub(crate) fn checked(&self) -> Option<bool> {
         self.checked
     }
+
+    #[must_use]
+    pub(crate) const fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub(crate) const fn active(&self) -> bool {
+        self.active
+    }
 }
 
 /// A context menu: what it acts on, its entries, and the cell it opened
@@ -69,6 +84,7 @@ pub(crate) struct Menu {
     entries: Vec<Entry>,
     column: usize,
     row: usize,
+    right_aligned: bool,
 }
 
 impl Menu {
@@ -79,12 +95,19 @@ impl Menu {
             entries: Vec::new(),
             column,
             row,
+            right_aligned: false,
         }
     }
 
     /// A pane-title menu whose top border sits immediately below its header.
     fn below_header(title: impl Into<String>, place: Where, column: usize, row: usize) -> Self {
         Self::new(title, place, column, row.saturating_add(1))
+    }
+
+    fn under_right_edge(title: impl Into<String>, place: Where, right: usize, row: usize) -> Self {
+        let mut menu = Self::new(title, place, right, row.saturating_add(1));
+        menu.right_aligned = true;
+        menu
     }
 
     /// Add an entry showing `shown`'s key and running `run`; an action
@@ -97,6 +120,20 @@ impl Menu {
     /// Add a persistent toggle entry carrying its current checked state.
     fn push_toggle(&mut self, shown: Action, run: Action, label: impl Into<String>, active: bool) {
         self.push_entry(shown, run, label, Some(active));
+    }
+
+    fn push_toggle_enabled(
+        &mut self,
+        shown: Action,
+        run: Action,
+        label: impl Into<String>,
+        active: bool,
+        enabled: bool,
+    ) {
+        self.push_toggle(shown, run, label, active);
+        if let Some(entry) = self.entries.last_mut() {
+            entry.enabled = enabled;
+        }
     }
 
     fn push_entry(
@@ -113,6 +150,22 @@ impl Menu {
                 label: label.into(),
                 action: Some(run),
                 checked,
+                enabled: true,
+                active: false,
+            });
+        }
+    }
+
+    fn push_choice(&mut self, action: Action, label: impl Into<String>, active: bool) {
+        if let Some(keys) = bindings::first_keys(self.place, action) {
+            self.entries.push(Entry {
+                key: bindings::menu_spell(keys),
+                keys,
+                label: label.into(),
+                action: Some(action),
+                checked: None,
+                enabled: true,
+                active,
             });
         }
     }
@@ -125,6 +178,8 @@ impl Menu {
             label: String::new(),
             action: None,
             checked: None,
+            enabled: false,
+            active: false,
         });
     }
 
@@ -146,6 +201,7 @@ impl Menu {
         if let Some(action) = self
             .entries
             .iter()
+            .filter(|entry| entry.enabled)
             .find(|entry| entry.keys == typed)
             .and_then(Entry::action)
         {
@@ -177,14 +233,24 @@ impl Menu {
                 .iter()
                 .map(|entry| (entry.key.as_str(), entry.label.as_str())),
         );
-        let check_width = usize::from(self.entries.iter().any(|entry| entry.checked.is_some())) * 2;
-        let action_width = check_width + label_width + 1 + key_width;
+        let marker_width = usize::from(
+            self.entries
+                .iter()
+                .any(|entry| entry.checked.is_some() || entry.active),
+        ) * 2;
+        let action_width = marker_width + label_width + 1 + key_width;
         let box_width = (action_width + 2)
             .max(display_width(&self.title) + 4)
             .min(width);
         let box_height = (self.entries.len() + 2).min(height);
         Grid {
-            x: self.column.min(width.saturating_sub(box_width)),
+            x: if self.right_aligned {
+                self.column
+                    .saturating_sub(box_width)
+                    .min(width.saturating_sub(box_width))
+            } else {
+                self.column.min(width.saturating_sub(box_width))
+            },
             y: self
                 .row
                 .max(top)
@@ -197,6 +263,54 @@ impl Menu {
             label_width,
             count: self.entries.len(),
         }
+    }
+}
+
+/// The compact mode chooser anchored to a File or Reviews header control.
+#[derive(Debug)]
+pub(crate) struct ModeMenu {
+    menu: Menu,
+    selected: usize,
+}
+
+impl ModeMenu {
+    pub(crate) fn new(app: &App, right: usize, row: usize) -> Self {
+        let mut menu = Menu::under_right_edge("Diff", Where::Any, right, row);
+        let mode = app.diff_mode();
+        for (action, label, choice) in [
+            (Action::DiffStandard, "Standard diff", DiffMode::Standard),
+            (Action::DiffUnified, "Unified diff", DiffMode::Unified),
+            (Action::DiffOff, "Diff off", DiffMode::Off),
+        ] {
+            menu.push_choice(action, label, mode == choice);
+        }
+        let selected = match mode {
+            DiffMode::Standard => 0,
+            DiffMode::Unified => 1,
+            DiffMode::Off => 2,
+        };
+        Self { menu, selected }
+    }
+
+    #[must_use]
+    pub(crate) const fn menu(&self) -> &Menu {
+        &self.menu
+    }
+
+    #[must_use]
+    pub(crate) const fn selected(&self) -> usize {
+        self.selected
+    }
+
+    fn move_by(&mut self, delta: isize) {
+        self.selected = self
+            .selected
+            .saturating_add_signed(delta)
+            .min(self.menu.entries.len().saturating_sub(1));
+    }
+
+    fn selected_action(&self) -> Option<Action> {
+        self.menu.entries.get(self.selected).and_then(Entry::action)
     }
 }
 
@@ -345,6 +459,54 @@ impl App {
         self.popup = Some(Popup::Menu(menu));
     }
 
+    /// Open the compact mode chooser under a header control.
+    pub(crate) fn open_diff_mode_menu(&mut self, right: usize, row: usize) {
+        self.take_prefix();
+        self.cancel_delete();
+        self.park_draft();
+        self.popup = Some(Popup::DiffMode(ModeMenu::new(self, right, row)));
+    }
+
+    /// Handle navigation and selection in the compact mode chooser.
+    pub(super) fn mode_menu_key(&mut self, event: KeyEvent) -> Effect {
+        let plain = event.modifiers.is_empty() || event.modifiers == KeyModifiers::SHIFT;
+        match event.code {
+            KeyCode::Esc => self.close_popup(),
+            KeyCode::Down | KeyCode::Char('j') if plain => {
+                if let Some(Popup::DiffMode(menu)) = self.popup.as_mut() {
+                    menu.move_by(1);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') if plain => {
+                if let Some(Popup::DiffMode(menu)) = self.popup.as_mut() {
+                    menu.move_by(-1);
+                }
+            }
+            KeyCode::Enter => {
+                let action = match self.popup.as_ref() {
+                    Some(Popup::DiffMode(menu)) => menu.selected_action(),
+                    _ => None,
+                };
+                self.close_popup();
+                if let Some(action) = action {
+                    return self.act(action);
+                }
+            }
+            _ => {}
+        }
+        Effect::None
+    }
+
+    /// Select one row in the compact mode chooser.
+    pub(super) fn mode_menu_click(&mut self, index: usize) -> Effect {
+        let action = match self.popup.as_ref() {
+            Some(Popup::DiffMode(menu)) => menu.menu.entries.get(index).and_then(Entry::action),
+            _ => None,
+        };
+        self.close_popup();
+        action.map_or(Effect::None, |action| self.act(action))
+    }
+
     /// A key while the menu is open: an entry's key runs it, the start
     /// of one waits, anything else closes the menu and is swallowed.
     pub(super) fn menu_key(&mut self, chord: Chord) -> Effect {
@@ -374,6 +536,7 @@ impl App {
         let Some(action) = self
             .menu()
             .and_then(|menu| menu.entries.get(index))
+            .filter(|entry| entry.enabled)
             .and_then(Entry::action)
         else {
             return Effect::None;
@@ -502,11 +665,12 @@ impl App {
             Action::FilesUntracked,
             Action::FilesIgnored,
         ] {
-            menu.push_toggle(
+            menu.push_toggle_enabled(
                 action,
                 action,
                 Self::files_setting_label(action),
                 self.files_setting_checked(action),
+                action != Action::FilesChanged || self.diff_mode() != DiffMode::Off,
             );
         }
         self.open_menu(menu);

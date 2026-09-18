@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use fathomable_core::config::DiffMode;
 use fathomable_core::content::{self, Content};
 
 use crate::app::App;
@@ -59,13 +60,22 @@ impl App {
                 ],
             ),
         };
+        let off = self.diff_mode() == DiffMode::Off;
         let mut rows = vec![
             ("format".to_owned(), format_row),
             ("size".to_owned(), exact_size(size)),
-            ("mode".to_owned(), mode(doc.document.path())),
         ];
-        if let Some(modified) = modified(doc.document.path()) {
-            rows.push(("modified".to_owned(), modified));
+        if off {
+            rows.push(("target".to_owned(), self.comparison_target_label()));
+        }
+        if !off || self.displayed_target_is_working_tree() {
+            rows.push(("mode".to_owned(), mode(doc.document.path())));
+            if let Some(modified) = modified(doc.document.path()) {
+                rows.push(("modified".to_owned(), modified));
+            }
+        }
+        if off {
+            return Some(Info { rows, notice });
         }
         let head_size = self.workspace.head_size(&doc.relative).ok().flatten();
         let git = match (self.status.get(&doc.relative), head_size) {
@@ -153,6 +163,7 @@ fn modified(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testing;
 
     #[test]
     fn sizes_read_as_deltas() {
@@ -161,5 +172,36 @@ mod tests {
         assert_eq!(size_delta(1024, 1024), "1 KiB, unchanged");
         assert_eq!(size_delta(1024, 3072), "1 KiB → 3 KiB (+2 KiB)");
         assert_eq!(size_delta(3072, 1024), "3 KiB → 1 KiB (-2 KiB)");
+    }
+
+    #[test]
+    fn off_binary_info_keeps_target_facts_without_git_or_head() -> anyhow::Result<()> {
+        let dir = testing::workspace("binary-info-off", testing::README)?;
+        let root = testing::root(&dir);
+        std::fs::write(root.join("sentinel.bin"), b"\0TARGET_ONLY_SENTINEL")?;
+        let mut app = testing::AppBuilder::new(&dir).build()?;
+        app.open(Path::new("sentinel.bin"));
+
+        let active = app.info().ok_or_else(|| anyhow::anyhow!("binary info"))?;
+        assert!(active.rows.iter().any(|(label, _)| label == "git"));
+
+        app.select_diff_mode(DiffMode::Off);
+        let off = app
+            .info()
+            .ok_or_else(|| anyhow::anyhow!("off binary info"))?;
+        assert!(
+            off.rows
+                .iter()
+                .any(|(label, value)| label == "target" && value == "WorkingTree")
+        );
+        assert!(off.rows.iter().any(|(label, _)| label == "format"));
+        assert!(off.rows.iter().any(|(label, _)| label == "size"));
+        assert!(off.rows.iter().any(|(label, _)| label == "mode"));
+        assert!(
+            off.rows
+                .iter()
+                .all(|(label, _)| label != "git" && label != "HEAD")
+        );
+        Ok(())
     }
 }

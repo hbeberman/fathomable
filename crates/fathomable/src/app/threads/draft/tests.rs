@@ -167,7 +167,7 @@ fn duplicate_removed_lines_keep_the_selected_base_range_in_origin() -> anyhow::R
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
     app.open(Path::new("a.md"));
-    app.show_comparison_diff();
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     let row = app
         .view()
         .layout()
@@ -189,6 +189,66 @@ fn duplicate_removed_lines_keep_the_selected_base_range_in_origin() -> anyhow::R
     assert_eq!(thread.origin().range(), Some(LineRange::new(4, 4)));
     assert_eq!(thread.origin().snippet(), "remove");
     assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+    Ok(())
+}
+
+#[test]
+fn removed_unified_line_draft_blocks_mode_and_endpoint_changes_when_parked() -> anyhow::Result<()> {
+    let dir = TempDir::new("removed-line-draft-guard")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.md", "keep\nremove\n"), ("b.md", "other\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&dir.0, &[("a.md", "keep\n"), ("b.md", "other\n")])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    let base = ComparisonEndpoint::Commit(CommitId::parse(&first)?);
+    let target = ComparisonEndpoint::Commit(CommitId::parse(&second)?);
+    app.set_comparison_base(base.clone());
+    app.set_comparison_target(target.clone());
+    app.open(Path::new("a.md"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    let row = app
+        .view()
+        .layout()
+        .lines()
+        .iter()
+        .position(|line| line.diff_old_line() == Some(2) && line.diff_new_line().is_none())
+        .context("removed line")?;
+    app.view_mut().goto_row(row);
+    app.start_new_comment();
+    press(&mut app, "pending removed-line note");
+
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Unified);
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("submit or cancel"))
+    );
+
+    app.open(Path::new("b.md"));
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.set_comparison_base(target.clone());
+    app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Unified);
+    assert_eq!(app.comparison.base(), &base);
+    assert_eq!(app.comparison.target(), &target);
+    assert!(
+        app.docs
+            .iter()
+            .any(|doc| doc.relative == Path::new("a.md") && doc.draft.is_some())
+    );
     Ok(())
 }
 

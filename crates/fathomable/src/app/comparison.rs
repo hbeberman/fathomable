@@ -9,6 +9,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use fathomable_core::config::DiffMode;
 use fathomable_core::diff::{Compare, Comparison, PathChangeKind, PathState};
 use fathomable_core::review_points::{ReviewPoint, ReviewPointStore};
 use fathomable_core::status::{Changes, Entry, State as GitState, Status};
@@ -246,16 +247,6 @@ impl State {
         self.observed_head = workspace.head_commit();
     }
 
-    /// Change the base endpoint.
-    pub(crate) fn set_base(
-        &mut self,
-        base: ComparisonEndpoint,
-        workspace: &mut Workspace,
-        review_points: Option<&ReviewPointStore>,
-    ) {
-        self.set_base_aliased(base, None, workspace, review_points);
-    }
-
     pub(crate) fn set_base_aliased(
         &mut self,
         base: ComparisonEndpoint,
@@ -263,33 +254,10 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
-        let previous = (
-            self.base.clone(),
-            self.target.clone(),
-            self.base_alias.clone(),
-            self.target_alias.clone(),
-        );
-        let had_good = self.current.is_some();
         self.base = base;
         self.base_alias = alias;
         self.refresh(workspace, review_points);
-        if self.error.is_some() {
-            if had_good {
-                (self.base, self.target, self.base_alias, self.target_alias) = previous;
-            }
-            return;
-        }
         self.persist();
-    }
-
-    /// Change the target endpoint.
-    pub(crate) fn set_target(
-        &mut self,
-        target: ComparisonEndpoint,
-        workspace: &mut Workspace,
-        review_points: Option<&ReviewPointStore>,
-    ) {
-        self.set_target_aliased(target, None, workspace, review_points);
     }
 
     pub(crate) fn set_target_aliased(
@@ -299,33 +267,31 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
-        let previous = (
-            self.base.clone(),
-            self.target.clone(),
-            self.base_alias.clone(),
-            self.target_alias.clone(),
-        );
-        let had_good = self.current.is_some();
         self.target = target;
         self.target_alias = alias;
         self.refresh(workspace, review_points);
-        if self.error.is_some() {
-            if had_good {
-                (self.base, self.target, self.base_alias, self.target_alias) = previous;
-            }
-            return;
-        }
+        self.persist();
+    }
+
+    /// Retain a Target without evaluating it against Base.
+    pub(crate) fn select_target_aliased(
+        &mut self,
+        target: ComparisonEndpoint,
+        alias: Option<EndpointAlias>,
+    ) {
+        self.target = target;
+        self.target_alias = alias;
+        self.error = None;
         self.persist();
     }
 
     /// Toggle exact versus whitespace-insensitive line comparison.
-    pub(crate) fn toggle_whitespace(&mut self, workspace: &mut Workspace) {
+    pub(crate) fn toggle_whitespace(&mut self) {
         self.compare.whitespace = match self.compare.whitespace {
             fathomable_core::diff::Whitespace::Exact => fathomable_core::diff::Whitespace::Ignore,
             fathomable_core::diff::Whitespace::Ignore => fathomable_core::diff::Whitespace::Exact,
         };
         self.persist();
-        let _ = workspace;
     }
 
     /// Persist this viewer's preference outside the repository.
@@ -376,15 +342,26 @@ impl State {
             self.base_alias = None;
             changed = true;
         }
+        self.validate_target_alias(workspace) || changed
+    }
+
+    fn validate_target_alias(&mut self, workspace: &Workspace) -> bool {
         if self
             .target_alias
             .as_ref()
             .is_some_and(|alias| !alias_matches(alias, &self.target, workspace))
         {
             self.target_alias = None;
-            changed = true;
+            return true;
         }
-        changed
+        false
+    }
+
+    /// Drop a moved Target alias without resolving or evaluating Base.
+    pub(crate) fn refresh_target_alias(&mut self, workspace: &Workspace) {
+        if self.validate_target_alias(workspace) {
+            self.persist();
+        }
     }
 }
 
@@ -493,6 +470,17 @@ impl App {
         self.comparison.current()
     }
 
+    /// Whether the content currently projected follows the working tree.
+    pub(crate) fn displayed_target_is_working_tree(&self) -> bool {
+        if self.diff_mode == DiffMode::Off {
+            self.comparison.target() == &ComparisonEndpoint::WorkingTree
+        } else {
+            self.comparison
+                .current()
+                .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree)
+        }
+    }
+
     /// The current comparison preference label.
     pub(crate) fn comparison_label(&self) -> String {
         let state = &self.comparison;
@@ -509,6 +497,11 @@ impl App {
             self.comparison_menu_endpoint(self.comparison.base(), self.comparison.base_alias()),
             self.comparison_menu_endpoint(self.comparison.target(), self.comparison.target_alias()),
         )
+    }
+
+    /// Compact selected Target name for Target-only surfaces.
+    pub(crate) fn comparison_target_label(&self) -> String {
+        self.comparison_menu_endpoint(self.comparison.target(), self.comparison.target_alias())
     }
 
     /// Whether one picker row denotes the active base or target.
@@ -556,22 +549,22 @@ impl App {
     }
 
     /// Compact comparison provenance for the status line.
-    pub(crate) fn comparison_badge_visible(&self) -> bool {
-        self.workspace.is_git() || !self.plain_default_comparison()
-    }
-
-    /// Compact comparison provenance for the status line.
     pub(crate) fn comparison_badge(&self) -> String {
-        format!(
-            "CMP {} → {}",
-            self.comparison.base(),
-            self.comparison.target()
-        )
-    }
-
-    /// Open the unified comparison control.
-    pub(crate) fn open_comparison_control(&mut self) {
-        self.open_picker(super::PickerKind::ComparisonControl);
+        let mut badge = if self.diff_mode == DiffMode::Off {
+            format!("OFF Target {}", self.comparison_target_label())
+        } else {
+            format!(
+                "CMP {} → {}",
+                self.comparison.base(),
+                self.comparison.target()
+            )
+        };
+        if self.comparison.stale() {
+            badge.push_str(" · stale");
+        } else if self.comparison.error().is_some() {
+            badge.push_str(" · error");
+        }
+        badge
     }
 
     /// Save the selected comparison preference after a state change.
@@ -719,23 +712,6 @@ impl App {
         }
     }
 
-    /// The single control's actions.
-    pub(crate) fn comparison_control_choices(&self) -> Vec<String> {
-        vec![
-            "open unified diff".to_owned(),
-            format!("base: {}", self.comparison.base()),
-            format!("target: {}", self.comparison.target()),
-            "save review point".to_owned(),
-            "start comparison at current HEAD".to_owned(),
-            "select contiguous commit batch (type first..last)".to_owned(),
-            if self.comparison.compare().whitespace == fathomable_core::diff::Whitespace::Ignore {
-                "whitespace: ignored".to_owned()
-            } else {
-                "whitespace: exact".to_owned()
-            },
-        ]
-    }
-
     /// Resolve a picker entry or typed local Git revision.
     pub(crate) fn resolve_comparison_endpoint(
         &self,
@@ -798,6 +774,10 @@ impl App {
         endpoint: ComparisonEndpoint,
         alias: Option<EndpointAlias>,
     ) {
+        if self.annotation_draft_blocks("changing Base") {
+            return;
+        }
+        let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
         self.comparison.set_base_aliased(
             endpoint,
             alias,
@@ -806,6 +786,8 @@ impl App {
         );
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
+        } else if let Some(mode) = restore {
+            self.activate_diff_mode(mode);
         } else {
             self.apply_refreshed_comparison(false);
         }
@@ -822,6 +804,14 @@ impl App {
         endpoint: ComparisonEndpoint,
         alias: Option<EndpointAlias>,
     ) {
+        if self.annotation_draft_blocks("changing Target") {
+            return;
+        }
+        if self.diff_mode == DiffMode::Off {
+            self.comparison.select_target_aliased(endpoint, alias);
+            self.refresh_comparison();
+            return;
+        }
         self.comparison.set_target_aliased(
             endpoint,
             alias,
@@ -833,47 +823,6 @@ impl App {
         } else {
             self.apply_refreshed_comparison(false);
         }
-    }
-
-    /// Apply a control-list action.
-    pub(crate) fn choose_comparison_control(&mut self, item: &str) {
-        if item == "open unified diff" {
-            self.show_comparison_diff();
-        } else if item.starts_with("base:") {
-            self.pick_diff_side(false);
-        } else if item.starts_with("target:") {
-            self.pick_diff_side(true);
-        } else if item == "save review point" {
-            self.request_review_point();
-        } else if item == "start comparison at current HEAD" {
-            self.start_comparison_at_head();
-        } else if item.starts_with("select contiguous commit batch") {
-            self.pick_diff_side(false);
-        } else if item.starts_with("whitespace:") {
-            self.toggle_whitespace();
-        }
-    }
-
-    /// Pin the current HEAD as the comparison base and follow the working tree.
-    pub(crate) fn start_comparison_at_head(&mut self) {
-        let base = self
-            .workspace
-            .head_commit()
-            .and_then(|head| CommitId::parse(head).ok())
-            .map_or(ComparisonEndpoint::EmptyTree, ComparisonEndpoint::Commit);
-        self.comparison.set_base_aliased(
-            base,
-            Some(EndpointAlias::Head),
-            &mut self.workspace,
-            self.review_points.as_ref(),
-        );
-        self.comparison.set_target(
-            ComparisonEndpoint::WorkingTree,
-            &mut self.workspace,
-            self.review_points.as_ref(),
-        );
-        self.refresh_comparison();
-        self.notice("comparison started at current HEAD");
     }
 
     /// Cached selected-comparison facts for navigation and rendering.
@@ -934,6 +883,15 @@ impl App {
 
     /// Selected comparison paths absent from the active checkout.
     pub(crate) fn comparison_virtual_paths(&self) -> Vec<PathBuf> {
+        if self.diff_mode == DiffMode::Off {
+            return self
+                .off_target_paths
+                .iter()
+                .flatten()
+                .filter(|path| !self.workspace.root().join(path).is_file())
+                .cloned()
+                .collect();
+        }
         let Some(comparison) = self.comparison.current() else {
             return Vec::new();
         };
@@ -947,6 +905,10 @@ impl App {
 
     /// The selected non-working target's complete file boundary.
     pub(crate) fn comparison_snapshot_paths(&self) -> Option<Vec<PathBuf>> {
+        if self.diff_mode == DiffMode::Off {
+            return (self.comparison.target() != &ComparisonEndpoint::WorkingTree)
+                .then(|| self.off_target_paths.clone().unwrap_or_default());
+        }
         let comparison = self.comparison.current()?;
         if comparison.target() == &ComparisonEndpoint::WorkingTree {
             return None;
@@ -966,6 +928,9 @@ impl App {
 
     /// The selected comparison classification for a path.
     pub(crate) fn comparison_kind(&self, path: &Path) -> Option<PathChangeKind> {
+        if self.diff_mode == DiffMode::Off {
+            return None;
+        }
         self.comparison.current().and_then(|comparison| {
             comparison
                 .changes()
@@ -996,7 +961,17 @@ impl App {
     }
 
     /// Update a loaded view to the selected target and base.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "projection keeps each endpoint and content-state case in one ordered flow"
+    )]
     pub(crate) fn apply_comparison_projection(&mut self, index: usize) {
+        if self.diff_mode == DiffMode::Off {
+            if let Err(error) = self.apply_off_projection(index) {
+                self.notice(error);
+            }
+            return;
+        }
         if self.comparison.stale() {
             return;
         }
@@ -1094,6 +1069,11 @@ impl App {
         self.docs[index].view.set_bases(index_text, base.clone());
         self.docs[index].view.set_comparison_body(body);
         let changed = self.docs[index].view.reload(display);
+        if target_missing {
+            self.docs[index].deleted = Some(super::Deleted::ComparisonBase);
+        } else if self.docs[index].deleted == Some(super::Deleted::ComparisonBase) {
+            self.docs[index].deleted = None;
+        }
         self.docs[index].view.set_worktree_missing(target_missing);
         if changed {
             self.queue_highlight(index);
@@ -1108,563 +1088,7 @@ impl App {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::path::Path;
-
-    use fathomable_core::XdgDirs;
-    use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
-    use fathomable_testing::{TempDir, git};
-
-    use crate::app::testing::{AppBuilder, press, press_key};
-    use crate::app::{PickerKind, Popup};
-    use crossterm::event::KeyCode;
-
-    #[test]
-    fn persistent_outputs_are_private_under_permissive_umasks() -> anyhow::Result<()> {
-        for mask in ["000", "022"] {
-            let output = std::process::Command::new("sh")
-                .args([
-                    "-c",
-                    "umask \"$1\"; exec \"$2\" --exact app::comparison::tests::private_output_child --nocapture",
-                    "output-test",
-                    mask,
-                ])
-                .arg(std::env::current_exe()?)
-                .env("FATHOMABLE_PRIVATE_OUTPUT_CHILD", mask)
-                .output()?;
-            assert!(
-                output.status.success(),
-                "umask {mask}: {}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-                "the child must execute the permission assertions"
-            );
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn private_output_child() -> anyhow::Result<()> {
-        use fathomable_core::{private_state, session::Id};
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-        let Ok(mask) = std::env::var("FATHOMABLE_PRIVATE_OUTPUT_CHILD") else {
-            return Ok(());
-        };
-        let fixture = TempDir::new(&format!("private-output-{mask}"))?;
-        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
-        let root = fixture.0.join("source");
-        private_state::ensure_dir(&root)?;
-        private_state::write(root.join("private.md"), "synthetic private source\n")?;
-        let mut workspace = Workspace::discover(&root)?;
-        let dirs = XdgDirs::resolve(|name| {
-            (name == "XDG_STATE_HOME").then(|| fixture.0.join("state").into_os_string())
-        });
-        let report = crate::doctor::collect(&dirs, None, Some(&root), Some((90, 28)));
-        assert!(
-            report
-                .lines()
-                .iter()
-                .any(|line| line.text == "log directory is writable")
-        );
-        let id = Id::mint();
-        let _guard = crate::logging::init(&dirs, &id)?;
-        tracing::warn!("synthetic private diagnostic");
-        let crash = crate::logging::crash_path(&dirs, &id);
-        crate::crash::arm(crash.clone(), crate::logging::log_path(&dirs, &id));
-        crate::crash::observe(vec![(
-            "document".to_owned(),
-            "synthetic private source".to_owned(),
-        )]);
-        crate::crash::fatal(&anyhow::anyhow!("synthetic failure"));
-
-        let mut comparison = super::State::load(&dirs, &workspace, super::Compare::default());
-        comparison.toggle_whitespace(&mut workspace);
-        comparison.persist();
-        let restored = super::State::load(&dirs, &workspace, super::Compare::default());
-        assert_eq!(
-            restored.compare().whitespace,
-            comparison.compare().whitespace
-        );
-        for path in [
-            crate::logging::log_path(&dirs, &id),
-            crash.clone(),
-            comparison.preference.clone(),
-        ] {
-            assert_eq!(
-                fs::symlink_metadata(&path)?.mode() & 0o7777,
-                0o600,
-                "{}",
-                path.display()
-            );
-            assert!(!fs::read(&path)?.is_empty(), "{}", path.display());
-        }
-        assert_eq!(fs::metadata(dirs.log_dir())?.mode() & 0o7777, 0o700);
-        assert_eq!(
-            fs::metadata(dirs.comparison_dir(&root))?.mode() & 0o7777,
-            0o700
-        );
-        assert_eq!(fs::metadata(&fixture.0)?.mode() & 0o7777, 0o755);
-
-        refuse_output_links(&mut comparison, &dirs, &root, &crash)
-    }
-
-    fn refuse_output_links(
-        comparison: &mut super::State,
-        dirs: &XdgDirs,
-        root: &Path,
-        crash: &Path,
-    ) -> anyhow::Result<()> {
-        use fathomable_core::{private_state, session::Id};
-        use std::os::unix::fs::{MetadataExt, symlink};
-
-        let unrelated = root.join("unrelated");
-        private_state::write(&unrelated, "unchanged")?;
-        fs::remove_file(&comparison.preference)?;
-        symlink(&unrelated, &comparison.preference)?;
-        comparison.persist();
-        assert!(
-            fs::symlink_metadata(&comparison.preference)?
-                .file_type()
-                .is_symlink()
-        );
-        fs::remove_file(&comparison.preference)?;
-        let temporary = comparison
-            .preference
-            .with_extension(format!("{}.tmp", std::process::id()));
-        symlink(&unrelated, &temporary)?;
-        comparison.persist();
-        assert!(fs::symlink_metadata(&temporary)?.file_type().is_symlink());
-        assert!(!comparison.preference.exists());
-
-        fs::remove_file(crash)?;
-        symlink(&unrelated, crash)?;
-        crate::crash::fatal(&anyhow::anyhow!("second synthetic failure"));
-        assert!(fs::symlink_metadata(crash)?.file_type().is_symlink());
-        let bad_id: Id = "1-1".parse()?;
-        symlink(&unrelated, crate::logging::log_path(dirs, &bad_id))?;
-        let Err(error) = crate::logging::init(dirs, &bad_id) else {
-            return Err(anyhow::anyhow!("unsafe log path accepted"));
-        };
-        assert!(format!("{error:#}").contains("unsafe state path"));
-        let probe = dirs
-            .log_dir()
-            .join(format!(".doctor-probe-{}", std::process::id()));
-        symlink(&unrelated, &probe)?;
-        let report = crate::doctor::collect(dirs, None, Some(root), Some((90, 28)));
-        assert!(
-            report
-                .lines()
-                .iter()
-                .any(|line| line.text.contains("log directory is not writable"))
-        );
-        assert!(fs::symlink_metadata(&probe)?.file_type().is_symlink());
-        assert_eq!(fs::read_to_string(&unrelated)?, "unchanged");
-        assert_eq!(fs::metadata(&unrelated)?.mode() & 0o7777, 0o600);
-        Ok(())
-    }
-
-    fn repository(name: &str) -> anyhow::Result<TempDir> {
-        let dir = TempDir::new(name)?;
-        fs::create_dir_all(dir.0.join("ws"))?;
-        git::init(&dir.0.join("ws"))?;
-        Ok(dir)
-    }
-
-    #[test]
-    fn one_pair_survives_file_switches_and_loads_historical_paths() -> anyhow::Result<()> {
-        let dir = repository("comparison-global")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("gone.md"), "from A\n")?;
-        fs::write(root.join("stay.md"), "same\n")?;
-        git::commit_and_stage(&root, &[("gone.md", "from A\n"), ("stay.md", "same\n")])?;
-        let first = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("first commit missing"))?;
-        fs::remove_file(root.join("gone.md"))?;
-        fs::write(root.join("new.md"), "from B\n")?;
-        git::commit_and_stage(&root, &[("stay.md", "same\n"), ("new.md", "from B\n")])?;
-        let second = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("second commit missing"))?;
-        fs::remove_file(root.join("new.md"))?;
-
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
-        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
-        app.dirty_next();
-        assert_eq!(app.current_path(), Path::new("gone.md"));
-        app.dirty_next();
-        assert_eq!(app.current_path(), Path::new("new.md"));
-        app.show_tree();
-        assert!(
-            app.tree()
-                .is_some_and(|tree| tree.contains(Path::new("new.md")))
-        );
-        assert_eq!(
-            app.comparison_status()
-                .get(Path::new("new.md"))
-                .map(fathomable_core::status::Entry::state),
-            Some(fathomable_core::status::State::Added)
-        );
-        app.open(Path::new("gone.md"));
-        assert_eq!(app.view().text(), "from A\n");
-        app.show_comparison_diff();
-        assert!(app.view().diff_view());
-        assert_eq!(
-            app.comparison()
-                .map(|comparison| comparison.base().to_string()),
-            Some(CommitId::parse(&first)?.short().to_owned())
-        );
-        app.open(Path::new("new.md"));
-        assert_eq!(app.view().text(), "from B\n");
-        assert_eq!(app.comparison().map(|c| c.changes().len()), Some(2));
-        Ok(())
-    }
-
-    #[test]
-    fn commit_to_working_opens_a_clean_deleted_path_from_the_selected_base() -> anyhow::Result<()> {
-        let dir = repository("comparison-clean-deletion")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("gone.md"), "from A\n")?;
-        git::commit_and_stage(&root, &[("gone.md", "from A\n")])?;
-        let base = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("base commit missing"))?;
-        fs::remove_file(root.join("gone.md"))?;
-        git::commit_and_stage(&root, &[])?;
-
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&base)?));
-        app.set_comparison_target(ComparisonEndpoint::WorkingTree);
-        assert!(app.status().is_empty());
-        app.open(Path::new("gone.md"));
-        assert_eq!(app.view().text(), "from A\n");
-        assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
-        Ok(())
-    }
-
-    #[test]
-    fn comparison_controls_use_the_new_space_d_bindings() -> anyhow::Result<()> {
-        let dir = repository("comparison-bindings")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.open(Path::new("a.md"));
-
-        press(&mut app, " dd");
-        assert!(matches!(
-            app.popup(),
-            Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ComparisonControl
-        ));
-        press_key(&mut app, KeyCode::Enter);
-        assert!(app.view().diff_view());
-        app.leave_diff();
-        press(&mut app, " dc");
-        assert_eq!(
-            app.review_points
-                .as_ref()
-                .map(fathomable_core::review_points::ReviewPointStore::len),
-            None,
-            "test app has no review-point store unless explicitly configured"
-        );
-        assert!(
-            app.message()
-                .is_some_and(|message| message.contains("review point"))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn review_point_picker_accepts_an_optional_name() -> anyhow::Result<()> {
-        let dir = repository("comparison-point-name")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let mut app = AppBuilder::at(&root)
-            .unopened()
-            .review_points(dir.0.join("points"))
-            .build()?;
-
-        press(&mut app, " dcBefore fixes");
-        assert!(matches!(
-            app.popup(),
-            Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ReviewPointName
-        ));
-        press_key(&mut app, KeyCode::Enter);
-        let points = app
-            .review_points
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("review points"))?
-            .list();
-        assert_eq!(points.len(), 1);
-        assert_eq!(points[0].name(), Some("Before fixes"));
-        Ok(())
-    }
-
-    #[test]
-    fn review_point_picker_entry_compares_against_working() -> anyhow::Result<()> {
-        let dir = repository("comparison-point-endpoint")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        fs::write(root.join("a.md"), "point\n")?;
-        let mut app = AppBuilder::at(&root)
-            .unopened()
-            .review_points(dir.0.join("points"))
-            .build()?;
-        app.save_review_point(Some("P"));
-        let point = app
-            .review_points
-            .as_ref()
-            .and_then(|store| store.list().first().cloned())
-            .ok_or_else(|| anyhow::anyhow!("saved point"))?;
-        fs::write(root.join("a.md"), "working\n")?;
-        app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
-
-        assert_eq!(
-            app.comparison()
-                .map(fathomable_core::diff::Comparison::base),
-            Some(&ComparisonEndpoint::ReviewPoint(point.id().to_owned()))
-        );
-        assert_eq!(
-            app.comparison().map(fathomable_core::diff::Comparison::len),
-            Some(1)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn filtered_revision_picker_uses_the_highlighted_choice() -> anyhow::Result<()> {
-        let dir = repository("comparison-filtered-revision")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let feature = dir.0.join("feature");
-        git::worktree_add(&root, &feature, "feature")?;
-        let feature_head = Workspace::discover(&feature)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("feature head"))?;
-        fs::write(root.join("a.md"), "two\n")?;
-        git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-
-        app.open_picker(PickerKind::ComparisonBase);
-        press(&mut app, "feature");
-        press_key(&mut app, KeyCode::Enter);
-
-        assert_eq!(
-            app.comparison.base(),
-            &ComparisonEndpoint::Commit(CommitId::parse(feature_head)?)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn immutable_comparison_synthesizes_modified_paths_missing_from_checkout() -> anyhow::Result<()>
-    {
-        let dir = repository("comparison-virtual-modified")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let first = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("first"))?;
-        fs::write(root.join("a.md"), "two\n")?;
-        git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-        let second = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("second"))?;
-        fs::remove_file(root.join("a.md"))?;
-        git::commit_and_stage(&root, &[])?;
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(first)?));
-        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(second)?));
-        app.show_tree();
-
-        assert!(
-            app.tree()
-                .is_some_and(|tree| tree.contains(Path::new("a.md")))
-        );
-        assert_eq!(
-            app.comparison_status()
-                .get(Path::new("a.md"))
-                .map(fathomable_core::status::Entry::state),
-            Some(fathomable_core::status::State::Modified)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn historical_target_confines_the_tree_picker_and_file_view() -> anyhow::Result<()> {
-        let dir = repository("comparison-historical-tree")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("base-only.md"), "base\n")?;
-        fs::write(root.join("shared.md"), "first\n")?;
-        fs::write(root.join("unchanged.md"), "same\n")?;
-        git::commit_and_stage(
-            &root,
-            &[
-                ("base-only.md", "base\n"),
-                ("shared.md", "first\n"),
-                ("unchanged.md", "same\n"),
-            ],
-        )?;
-        let first = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("first"))?;
-        fs::remove_file(root.join("base-only.md"))?;
-        fs::write(root.join("shared.md"), "second\n")?;
-        fs::write(root.join("target-only.md"), "target\n")?;
-        git::commit_and_stage(
-            &root,
-            &[
-                ("shared.md", "second\n"),
-                ("target-only.md", "target\n"),
-                ("unchanged.md", "same\n"),
-            ],
-        )?;
-        let second = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("second"))?;
-        fs::write(root.join("current-only.md"), "current\n")?;
-        fs::write(root.join("shared.md"), "third\n")?;
-        git::commit_and_stage(
-            &root,
-            &[
-                ("current-only.md", "current\n"),
-                ("shared.md", "third\n"),
-                ("target-only.md", "target\n"),
-                ("unchanged.md", "same\n"),
-            ],
-        )?;
-
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(first)?));
-        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(second)?));
-        app.show_tree();
-
-        let tree_paths: Vec<_> = app
-            .tree()
-            .into_iter()
-            .flat_map(fathomable_core::tree::Tree::rows)
-            .map(|row| row.path().to_string_lossy().into_owned())
-            .collect();
-        let expected = [
-            "base-only.md",
-            "shared.md",
-            "target-only.md",
-            "unchanged.md",
-        ];
-        assert_eq!(tree_paths, expected);
-        assert_eq!(app.index(Filter::Visible), expected);
-        app.open(Path::new("shared.md"));
-        assert_eq!(app.view().text(), "second\n");
-
-        app.set_comparison_target(ComparisonEndpoint::WorkingTree);
-        assert!(
-            app.tree()
-                .is_some_and(|tree| tree.contains(Path::new("current-only.md")))
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn untouched_default_base_survives_restart_after_head_moves() -> anyhow::Result<()> {
-        let dir = repository("comparison-default-persistence")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.md"), "one\n")?;
-        git::commit_and_stage(&root, &[("a.md", "one\n")])?;
-        let first = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("first"))?;
-        let state = dir.0.join("state").into_os_string();
-        let dirs = XdgDirs::resolve(|name| (name == "XDG_STATE_HOME").then(|| state.clone()));
-        let first_dirs = dirs.clone();
-        let app = AppBuilder::at(&root)
-            .unopened()
-            .options(move |mut options| {
-                options.dirs = first_dirs;
-                options
-            })
-            .build()?;
-        assert_eq!(
-            app.comparison.base(),
-            &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
-        );
-        assert_eq!(
-            app.comparison_menu_pair(),
-            ("HEAD".to_owned(), "WorkingTree".to_owned())
-        );
-        drop(app);
-
-        fs::write(root.join("a.md"), "two\n")?;
-        git::commit_and_stage(&root, &[("a.md", "two\n")])?;
-        let app = AppBuilder::at(&root)
-            .unopened()
-            .options(move |mut options| {
-                options.dirs = dirs;
-                options
-            })
-            .build()?;
-        assert_eq!(
-            app.comparison.base(),
-            &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
-        );
-        assert_eq!(app.comparison_menu_pair().0, first[..7]);
-        Ok(())
-    }
-
-    #[test]
-    fn unified_presentation_rebuilds_across_files_and_comparisons() -> anyhow::Result<()> {
-        let dir = repository("comparison-global-unified")?;
-        let root = dir.0.join("ws");
-        fs::write(root.join("a.txt"), "a0\n")?;
-        fs::write(root.join("b.txt"), "b0\n")?;
-        git::commit_and_stage(&root, &[("a.txt", "a0\n"), ("b.txt", "b0\n")])?;
-        let first = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("first"))?;
-        fs::write(root.join("a.txt"), "a1\n")?;
-        fs::write(root.join("b.txt"), "b1\n")?;
-        git::commit_and_stage(&root, &[("a.txt", "a1\n"), ("b.txt", "b1\n")])?;
-        let second = Workspace::discover(&root)?
-            .head_commit()
-            .ok_or_else(|| anyhow::anyhow!("second"))?;
-        let mut app = AppBuilder::at(&root).unopened().build()?;
-        app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
-        app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
-        app.open(Path::new("a.txt"));
-        app.show_comparison_diff();
-        app.open(Path::new("b.txt"));
-        assert!(app.view().diff_view());
-        assert!(
-            app.view()
-                .layout()
-                .lines()
-                .iter()
-                .any(|line| line.text().contains("b1"))
-        );
-
-        fs::write(root.join("a.txt"), "working-a\n")?;
-        app.set_comparison_target(ComparisonEndpoint::WorkingTree);
-        app.open(Path::new("a.txt"));
-        assert!(app.view().diff_view());
-        assert!(
-            app.view()
-                .layout()
-                .lines()
-                .iter()
-                .any(|line| line.text().contains("working-a"))
-        );
-        Ok(())
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod regression_tests;

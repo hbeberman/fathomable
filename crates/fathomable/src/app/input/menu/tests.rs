@@ -3,6 +3,7 @@ use std::fs;
 use anyhow::Context as _;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fathomable_core::config::DiffMode;
 use fathomable_core::tree::Tree;
 use fathomable_testing::TempDir;
 
@@ -94,6 +95,14 @@ fn type_in(app: &mut App, text: &str) {
     }
 }
 
+fn mode_menu_grid(app: &App) -> anyhow::Result<super::Grid> {
+    let Popup::DiffMode(mode) = app.popup().context("a popup is open")? else {
+        anyhow::bail!("the diff mode menu is not open");
+    };
+    let (width, _) = app.size();
+    Ok(mode.menu().grid_in(width, app.pane_top(), app.pane_rows()))
+}
+
 /// A thread on the `alpha beta` line.
 fn annotate(app: &mut App) -> anyhow::Result<()> {
     let row = row_of(app, "alpha beta")?;
@@ -141,6 +150,103 @@ fn right_click_on_a_selection_keeps_it_and_the_menu_acts_on_it() -> anyhow::Resu
         matches!(app.popup(), Some(Popup::Compose(_))),
         "c comments on the selection"
     );
+    Ok(())
+}
+
+#[test]
+fn header_mode_menu_works_from_file_and_all_review_views() -> anyhow::Result<()> {
+    let dir = fixture("diff-mode-header")?;
+    let mut app = app(&dir)?;
+
+    let file = header::file_header(&app);
+    let (start, _) = file
+        .control_bounds(app.column_width(), header::Control::DiffMode)
+        .context("file Diff control")?;
+    let cell = (
+        app.sidebar_width() + start,
+        app.text_top().saturating_sub(1),
+    );
+    left(&mut app, cell.0, cell.1);
+    let screen = testing::screen(&app)?;
+    assert!(
+        screen.iter().any(|row| row.contains("▌ Standard diff")),
+        "{screen:?}"
+    );
+    handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+    handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.diff_mode(), DiffMode::Unified);
+    assert!(app.popup().is_none());
+
+    for view in [
+        crate::app::threads::list::ReviewView::Board,
+        crate::app::threads::list::ReviewView::RecentlyResolved,
+        crate::app::threads::list::ReviewView::Archived,
+    ] {
+        app.open_review_view(view);
+        let review = header::review_header(&app);
+        let (start, _) = review
+            .control_bounds(app.column_width(), header::Control::DiffMode)
+            .context("review Diff control")?;
+        let cell = (app.sidebar_width() + start, app.pane_top());
+        left(&mut app, cell.0, cell.1);
+        assert!(matches!(app.popup(), Some(Popup::DiffMode(_))), "{view:?}");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.popup().is_none());
+    }
+
+    app.open_file_view();
+    let file = header::file_header(&app);
+    let (start, _) = file
+        .control_bounds(app.column_width(), header::Control::DiffMode)
+        .context("file Diff control")?;
+    let cell = (
+        app.sidebar_width() + start,
+        app.text_top().saturating_sub(1),
+    );
+    left(&mut app, cell.0, cell.1);
+    let grid = mode_menu_grid(&app)?;
+    left(&mut app, grid.x + 1, grid.y + 3);
+    assert_eq!(app.diff_mode(), DiffMode::Off);
+    assert!(app.popup().is_none());
+
+    let file = header::file_header(&app);
+    let (start, _) = file
+        .control_bounds(app.column_width(), header::Control::DiffMode)
+        .context("file Diff control")?;
+    let cell = (
+        app.sidebar_width() + start,
+        app.text_top().saturating_sub(1),
+    );
+    left(&mut app, cell.0, cell.1);
+    let outside_row = app.pane_top();
+    left(&mut app, 0, outside_row);
+    assert!(app.popup().is_none(), "outside click closes the menu");
+    assert_eq!(app.diff_mode(), DiffMode::Off);
+    Ok(())
+}
+
+#[test]
+fn header_mode_menu_reflows_and_keeps_mouse_bounds_after_terminal_shrink() -> anyhow::Result<()> {
+    let dir = fixture("diff-mode-resize")?;
+    let mut app = app(&dir)?;
+    app.resize(100, 30);
+    let file = header::file_header(&app);
+    let (_, end) = file
+        .control_bounds(app.column_width(), header::Control::DiffMode)
+        .context("file Diff control")?;
+    app.open_diff_mode_menu(app.sidebar_width() + end, app.text_top().saturating_sub(1));
+
+    app.resize(32, 12);
+    let grid = mode_menu_grid(&app)?;
+    assert!(grid.x + grid.width <= app.size().0, "{grid:?}");
+    let screen = testing::screen(&app)?;
+    assert!(
+        screen.iter().any(|row| row.contains("▌ Standard diff")),
+        "{screen:?}"
+    );
+    left(&mut app, grid.x + 1, grid.y + 3);
+    assert_eq!(app.diff_mode(), DiffMode::Off);
+    assert!(app.popup().is_none());
     Ok(())
 }
 

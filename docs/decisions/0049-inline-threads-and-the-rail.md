@@ -47,7 +47,13 @@ amended 2026-09-04 as the work landed:
 Checkpoint timelines superseded 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md). Inline threads, the
 sidebar, and jumplist remain; per-file marks, strips, and paging are replaced
-by explicit workspace review points and an optional Since-point focus.
+by explicit workspace review points. The optional Since-point focus was later
+removed; review points are selected directly as Base.
+
+Diff presentation amended 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): the historical
+checkpoint and `Space d` bindings below are not current. `Space d s/u/o` now
+selects Standard, Unified, or Off without compatibility aliases.
 
 Shortcut amended 2026-09-18: the resolved-stub toggle that
 [0060](0060-one-diff-two-sides.md) moved to `Space v x` moves again to

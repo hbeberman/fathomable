@@ -27,6 +27,12 @@ status remains separately labelled, while the selected checkout-wide
 comparison owns the changed-file set, comparison marks and counts, gutters,
 and cross-file change navigation.
 
+Amended 2026-09-18 by [0087](0087-global-comparisons-and-board-history.md):
+the `Space d d` / `:diff` route described below is removed without an alias.
+Diff Off gates Git `XY`, `[G`/`]G`, comparison gutters, counts, and hunk
+navigation while leaving status collection intact. The sections below record
+the superseded Git-primary model.
+
 ## Context
 
 [0006](0006-git-access.md) gave the gutter and `]c`/`[c` a diff base, and

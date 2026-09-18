@@ -21,6 +21,9 @@ impl App {
     /// synthetic Markdown rows between matching non-deletion bars or
     /// between one such bar and the view's trailing `~` line.
     pub(super) fn git_on_row(&self, row: usize) -> Option<(LineStatus, bool)> {
+        if self.diff_mode() == fathomable_core::config::DiffMode::Off {
+            return None;
+        }
         let view = self.view();
         view.layout().lines().get(row)?;
         let status = |line| {
@@ -353,6 +356,19 @@ mod tests {
     }
 
     #[test]
+    fn off_hides_cached_git_bars() -> anyhow::Result<()> {
+        let dir = testing::workspace("git-gutter-off", "new\n")?;
+        let mut app = app(&dir, 100)?;
+        app.view_mut()
+            .set_bases(Some("old\n".to_owned()), Some("old\n".to_owned()));
+        assert!(app.git_on_row(0).is_some());
+
+        app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+        assert!((0..app.view().layout().lines().len()).all(|row| app.git_on_row(row).is_none()));
+        Ok(())
+    }
+
+    #[test]
     fn git_bars_leave_status_boundaries_and_deletion_ticks_separate() -> anyhow::Result<()> {
         let text = "first\n\nsecond\n";
         let dir = testing::workspace("git-gutter-boundaries", text)?;
@@ -501,7 +517,7 @@ mod tests {
         assert_eq!(app.view().source_line_of_row(1), Some(2));
         assert_eq!(git_cells(&app)?[1].content, " ");
 
-        app.toggle_head_diff();
+        app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
         let cells = git_cells(&app)?;
         let mut synthetic = 0;
         for (row, cell) in cells.iter().enumerate() {

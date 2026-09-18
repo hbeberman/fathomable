@@ -262,13 +262,14 @@ Milestones are ordered; each is usable on its own. Details live in the
     with the sort word at the right edge, where a click switches the
     sort; a stub's age reads in the info colour; the `proposed` wording
     stays ([0059](decisions/0059-headers-and-the-key-bar.md)).
-51. **One diff, two sides.** The `HEAD`, last-seen, and checkpoint diffs
+51. **One diff, two sides (superseded presentation).** The `HEAD`, last-seen, and checkpoint diffs
     are one diff view with a base and a target, each with the pair
     header and the `b` / `t` pickers; the badge reads `DIFF` and the
     base; `Space d` holds the comparisons, the checkpoint marks, and a
     whitespace toggle backed by `diff { context; ignore-whitespace }`;
     `Space v` is source view and the stub toggles
-    ([0060](decisions/0060-one-diff-two-sides.md)).
+    ([0060](decisions/0060-one-diff-two-sides.md)). Its historical keys,
+    badges, and config were replaced by milestone 78's global mode contract.
 52. **Agents start threads.** A seventh tool, `thread_start`, opens a
     thread on a line range of a file, one or several per call, signed
     and stamped with `HEAD` as a reply and a user's comment are; a
@@ -327,11 +328,12 @@ Milestones are ordered; each is usable on its own. Details live in the
     pane's header row moves onto `ui.header` and names the active
     filters after the repo's counts
     ([0068](decisions/0068-what-the-files-pane-shows.md)).
-60. **The diff's keys on the bar.** The diff header is its words and its
+60. **The diff's keys on the bar (superseded presentation).** The diff header is its words and its
     keys move to the text's key bar, `h/l page` drawn on a checkpoint
     base only; `D` steps the diff through `HEAD`, last seen, the newest
     checkpoint, and the file; `Space d s` marks every file seen
-    ([0069](decisions/0069-the-diffs-keys-on-the-bar.md)).
+    ([0069](decisions/0069-the-diffs-keys-on-the-bar.md)). Milestone 78
+    removed that cycle, mark-seen binding, and transient close behavior.
 61. **One workspace, many worktrees.** A git workspace is keyed by its
     common dir and every worktree of it shares one store; the viewer
     lists the worktrees itself, `]w` / `[w` page through them, the
@@ -403,8 +405,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     `☰  Layout  Go  Review  Diff` row
     makes layout and whole-viewer workflows mouse-discoverable without
     moving contextual actions out of their panes; repository/worktree
-    identity is subdued and centered, the right side carries the active
-    comparison controls, Layout switches File and Reviews views before its
+    identity is subdued and centered, the right side carries mode-aware
+    endpoint controls, Layout switches File and Reviews views before its
     independent sidebar toggles, Help gains Getting started, Doctor, and
     View keymap, and every popup uses a rounded titled border
     ([0081](decisions/0081-the-menu-bar.md)).
@@ -445,12 +447,16 @@ Milestones are ordered; each is usable on its own. Details live in the
     longer overlap, and `t`, `r`, and `R` form the direct review grammar
     ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).
 78. **Global comparisons and deliberate board history.** One pinned
-    checkout-wide comparison drives every file and change surface; explicit
+    checkout-wide comparison and a session-global Standard/Unified/Off mode
+    drive every file and change surface; Off is Target-only source browsing
+    while labelled historical review evidence remains; explicit
     content-addressed workspace review points replace last-seen and per-file
     timelines; immutable origins and qualified placement preserve historical
     comments; the repository board remains visible across histories and gains
     Recently resolved, deliberate archive/restore, and confirmed Clear board
-    actions
+    actions. File and history headers expose the mode, active app bars show
+    Base to Target, Off shows Target only, and removed comparison controls,
+    commit batches, `Space d d`, and `:diff` have no compatibility aliases
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
 79. **Bundled license notices.** Help > Licenses and `:licenses` display
     offline first- and third-party attribution embedded in the executable;

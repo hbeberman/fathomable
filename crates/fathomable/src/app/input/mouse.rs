@@ -162,7 +162,13 @@ fn review_mouse(
             app.focus_pane(Focus::Review);
             let local = column.saturating_sub(app.sidebar_width());
             let header = header::review_header(app);
-            if app.review().view == crate::app::threads::list::ReviewView::Board
+            if header.control_at(app.column_width(), local) == Some(header::Control::DiffMode) {
+                if let Some((_, end)) =
+                    header.control_bounds(app.column_width(), header::Control::DiffMode)
+                {
+                    app.open_diff_mode_menu(app.sidebar_width() + end, screen_row);
+                }
+            } else if app.review().view == crate::app::threads::list::ReviewView::Board
                 && local < header.left_width()
             {
                 app.open_reviews_settings_menu(screen_row);
@@ -267,6 +273,10 @@ fn press(app: &mut App, column: usize, row: usize, gutter: bool) -> u8 {
 /// The popups' share of the mouse: the context menu, the help, and the
 /// status overlay take a click; `None` when the event goes on to the
 /// panes (no popup, or a right-click that just closed the menu).
+#[expect(
+    clippy::too_many_lines,
+    reason = "popup mouse precedence stays explicit in one ordered dispatcher"
+)]
 fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -> Option<Effect> {
     let left = kind == MouseEventKind::Down(MouseButton::Left);
     let right = kind == MouseEventKind::Down(MouseButton::Right);
@@ -290,6 +300,22 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
         return None;
     }
     match app.popup() {
+        Some(Popup::DiffMode(mode)) => {
+            let (width, _) = app.size();
+            let grid = mode.menu().grid_in(width, app.pane_top(), app.pane_rows());
+            match kind {
+                MouseEventKind::Down(MouseButton::Left) if !grid.contains(column, row) => {
+                    app.close_popup();
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(index) = grid.entry_at(column, row) {
+                        return Some(app.mode_menu_click(index));
+                    }
+                }
+                _ => {}
+            }
+            Some(Effect::None)
+        }
         Some(Popup::Help(_)) => match kind {
             MouseEventKind::ScrollDown => Some(help::wheel(app, WHEEL_LINES)),
             MouseEventKind::ScrollUp => Some(help::wheel(app, -WHEEL_LINES)),
@@ -534,7 +560,14 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
             if left {
                 app.focus_pane(Focus::View);
                 let header = header::file_header(app);
-                if column.saturating_sub(sidebar) < header.title_width() {
+                let local = column.saturating_sub(sidebar);
+                if header.control_at(app.column_width(), local) == Some(header::Control::DiffMode) {
+                    if let Some((_, end)) =
+                        header.control_bounds(app.column_width(), header::Control::DiffMode)
+                    {
+                        app.open_diff_mode_menu(sidebar + end, row);
+                    }
+                } else if local < header.title_width() {
                     app.open_file_menu(row);
                 }
             }

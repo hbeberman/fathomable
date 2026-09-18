@@ -164,6 +164,8 @@ pub(crate) struct View {
     width: usize,
     height: usize,
     display: Display,
+    /// The rendered/source choice retained while Unified is displayed.
+    home_display: Display,
     /// The file as staged in the index (ADR 0017), `None` outside git.
     index: Option<String>,
     /// The file as committed at `HEAD` (ADR 0006), `None` outside git.
@@ -294,6 +296,7 @@ impl View {
             width,
             height: height.max(1),
             display,
+            home_display: display,
             index: None,
             head: None,
             missing: Missing::default(),
@@ -550,16 +553,9 @@ impl View {
         Layout::render_with(&self.text, self.width, &self.syntax.highlighter)
     }
 
-    /// The display the file returns to when a diff closes: rendered for
-    /// Markdown, source for anything else.
+    /// The retained rendered/source display the file returns to.
     fn home(&self) -> Display {
-        if self.missing.worktree {
-            Display::Source
-        } else if self.syntax.markdown {
-            Display::Rendered
-        } else {
-            Display::Source
-        }
+        self.home_display
     }
 
     /// The diff's sides while one is shown (ADR 0060).
@@ -611,12 +607,13 @@ impl View {
         self.relayout();
     }
 
-    /// Leave the diff for the file's home display.
-    pub(crate) fn leave_diff(&mut self) {
+    /// Clear unified presentation and return to the retained file display.
+    pub(crate) fn clear_diff(&mut self) {
         if self.display == Display::Diff {
             self.display = self.home();
-            self.relayout();
         }
+        self.diff_shown = None;
+        self.relayout();
     }
 
     /// Compare diffs as `compare` says from now on (ADR 0060); an open
@@ -645,6 +642,9 @@ impl View {
         let display_changed = missing && self.display == Display::Rendered;
         if missing && self.display != Display::Diff {
             self.display = Display::Source;
+        }
+        if missing {
+            self.home_display = Display::Source;
         }
         self.rediff();
         if display_changed || self.diff_view() {
@@ -861,6 +861,7 @@ impl View {
             Display::Source => Display::Rendered,
             _ => Display::Source,
         };
+        self.home_display = self.display;
         if self.display == Display::Source
             && matches!(self.source_highlights, SourceHighlights::Unprepared)
         {
@@ -1601,10 +1602,7 @@ impl View {
                 self.clear_highlight();
                 Effect::None
             }
-            "source" => {
-                self.toggle_source_view();
-                Effect::None
-            }
+            "source" => Effect::Command("source".to_owned()),
             "" => Effect::None,
             number if number.chars().all(|c| c.is_ascii_digit()) => {
                 if let Ok(line) = number.parse::<usize>() {
@@ -2124,7 +2122,7 @@ mod tests {
     }
 
     #[test]
-    fn commands_quit_goto_and_toggle_source() {
+    fn commands_quit_and_goto() {
         let mut v = view();
         v.move_down(2);
         v.move_right();
@@ -2144,14 +2142,6 @@ mod tests {
             }
             assert_eq!(v.confirm(), Effect::Quit, ":{command}");
         }
-        v.start_command();
-        for ch in "source".chars() {
-            v.input_char(ch);
-        }
-        v.confirm();
-        assert!(v.source_view());
-        assert_eq!(v.layout().lines()[0].text(), "# Title");
-        assert_eq!(v.source_position().0, 9, "toggle keeps the source line");
         v.move_right();
         v.goto_top();
         assert_eq!(v.cursor().col, 0, "gg lands on the first column");
@@ -2246,14 +2236,14 @@ mod tests {
         assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "-last word here"), "{texts:?}");
         v.start_command();
-        for ch in "diff".chars() {
+        for ch in "source".chars() {
             v.input_char(ch);
         }
         assert!(
-            matches!(v.confirm(), Effect::Command(c) if c == "diff"),
-            ":diff is the app's to run"
+            matches!(v.confirm(), Effect::Command(c) if c == "source"),
+            ":source is routed through the app"
         );
-        v.leave_diff();
+        v.clear_diff();
         assert!(!v.diff_view());
 
         // A reload against the same base re-diffs; an identical text is clean.
@@ -2282,11 +2272,6 @@ mod tests {
     #[test]
     fn app_commands_are_forwarded_and_activity_is_tracked() {
         let mut v = view();
-        v.start_command();
-        for ch in "diff".chars() {
-            v.input_char(ch);
-        }
-        assert!(matches!(v.confirm(), Effect::Command(c) if c == "diff"));
         v.start_command();
         for ch in "about".chars() {
             v.input_char(ch);

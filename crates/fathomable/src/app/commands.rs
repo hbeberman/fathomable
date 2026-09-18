@@ -2,10 +2,11 @@
 //! The `:` commands the view hands up to the app, and the `:status` overlay.
 //!
 //! `View::execute` keeps the commands that only touch the pane (`:q`,
-//! `:noh`, `:source`, `:N`); everything else arrives here as
+//! `:noh`, `:N`); everything else arrives here as
 //! [`Effect::Command`](crate::app::view::Effect::Command).
 
 use super::App;
+use fathomable_core::config::DiffMode;
 
 impl App {
     /// Run a `:` command the view did not handle itself.
@@ -17,7 +18,7 @@ impl App {
             (Some("doctor"), None, _) => self.open_doctor(),
             (Some("licenses"), None, _) => self.open_licenses(),
             (Some("about"), None, _) => self.open_about(),
-            (Some("diff"), None, _) => self.toggle_head_diff(),
+            (Some("source"), None, _) => self.toggle_source_view(),
             (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),
         }
@@ -84,11 +85,18 @@ impl App {
     pub(crate) fn status_lines(&self) -> Vec<(String, String)> {
         let view = self.view();
         let (line, column) = view.source_position();
-        let base = format!(", {}", self.comparison_label());
+        let provenance = if self.diff_mode() == DiffMode::Off {
+            format!(
+                ", diff mode off, Target only: {}",
+                self.comparison_target_label()
+            )
+        } else {
+            format!(", {}", self.comparison_label())
+        };
         let deleted = if self.deleted() { ", deleted" } else { "" };
         let document = if self.has_document() {
             format!(
-                "{} ({}{base}{deleted}) at {line}:{column}",
+                "{} ({}{provenance}{deleted}) at {line}:{column}",
                 self.current_path().display(),
                 if view.source_view() {
                     "source"
@@ -100,8 +108,9 @@ impl App {
             "none (the welcome screen)".to_owned()
         };
         let thread_counts = self.review_counts(false);
-        vec![
+        let mut lines = vec![
             ("document".to_owned(), document),
+            ("diff mode".to_owned(), self.diff_mode().to_string()),
             (
                 "terminal".to_owned(),
                 format!("{} columns x {} rows", self.width, self.height),
@@ -140,13 +149,50 @@ impl App {
                     "partial workspace coverage; retrying".to_owned()
                 },
             ),
-            ("changes".to_owned(), self.queue.len().to_string()),
             ("proposed".to_owned(), self.proposed_total().to_string()),
             (
                 "thread count".to_owned(),
                 (thread_counts.active + thread_counts.proposed + thread_counts.resolved)
                     .to_string(),
             ),
-        ]
+        ];
+        if self.diff_mode() != DiffMode::Off {
+            lines.insert(
+                lines.len().saturating_sub(2),
+                ("changes".to_owned(), self.queue.len().to_string()),
+            );
+        }
+        lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use fathomable_core::config::DiffMode;
+
+    use crate::app::testing;
+
+    #[test]
+    fn off_status_is_explicitly_target_only() -> anyhow::Result<()> {
+        let dir = testing::workspace("status-diff-off", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.select_diff_mode(DiffMode::Off);
+
+        let rows = app.status_lines();
+        let document = rows
+            .iter()
+            .find(|(label, _)| label == "document")
+            .map(|(_, value)| value)
+            .ok_or_else(|| anyhow::anyhow!("document status row"))?;
+        assert!(document.contains("diff mode off, Target only: WorkingTree"));
+        assert!(!document.contains("Compare:"));
+        assert_eq!(
+            rows.iter()
+                .find(|(label, _)| label == "diff mode")
+                .map(|(_, value)| value.as_str()),
+            Some("off")
+        );
+        assert!(rows.iter().all(|(label, _)| label != "changes"));
+        Ok(())
     }
 }

@@ -49,6 +49,12 @@ Archive no longer appears in expanded or folded inline headers. The action,
 like the other bar actions, targets only the text cursor thread and drops
 with later hints as the bar narrows.
 
+Amended later 2026-09-18 by
+[0087](0087-global-comparisons-and-board-history.md): Unified is a durable
+session mode, so the historical Escape-close comparison hint below is removed.
+Off gates comparison, Git-status, and live-change bar actions. Thread and draft
+bar behavior remains current.
+
 ## Context
 
 [0059](0059-headers-and-the-key-bar.md) moved the review list's keys

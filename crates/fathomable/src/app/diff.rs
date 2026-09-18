@@ -5,9 +5,15 @@
 //! existing layout-facing pair types and routes the input actions to that one
 //! selection.
 
+use std::fs;
+use std::io;
 use std::path::Path;
 
+use fathomable_core::Document;
+use fathomable_core::config::DiffMode;
+use fathomable_core::content::Policy;
 use fathomable_core::diff::Whitespace;
+use fathomable_core::workspace::ComparisonEndpoint;
 
 use super::{App, ComparisonSide, PickerKind};
 
@@ -43,25 +49,65 @@ pub(crate) struct DiffView {
 }
 
 impl App {
-    /// Open the unified comparison control.
-    pub(crate) fn toggle_head_diff(&mut self) {
-        self.show_comparison_diff();
+    /// The selected session-wide diff presentation.
+    pub(crate) const fn diff_mode(&self) -> DiffMode {
+        self.diff_mode
     }
 
-    /// Leave the unified diff display.
-    pub(crate) fn leave_diff(&mut self) {
-        self.comparison_diff = false;
-        for doc in &mut self.docs {
-            doc.view.leave_diff();
+    /// Select one session-wide diff presentation.
+    pub(crate) fn select_diff_mode(&mut self, mode: DiffMode) {
+        if mode == self.diff_mode {
+            return;
         }
-        self.relayout();
+        if self.annotation_draft_blocks("changing diff mode") {
+            return;
+        }
+        if mode == DiffMode::Off {
+            if self.diff_mode != DiffMode::Off {
+                self.last_active_diff_mode = self.diff_mode;
+            }
+            self.suspend_changed_filter();
+            self.diff_mode = DiffMode::Off;
+            self.refresh_off_target();
+            return;
+        }
+
+        if self.diff_mode == DiffMode::Off {
+            self.comparison
+                .refresh(&mut self.workspace, self.review_points.as_ref());
+            if let Some(error) = self.comparison.error().map(str::to_owned) {
+                self.notice(error);
+                return;
+            }
+            self.activate_diff_mode(mode);
+        } else {
+            self.diff_mode = mode;
+            self.last_active_diff_mode = mode;
+            match mode {
+                DiffMode::Unified => self.show_unified_diff(),
+                DiffMode::Standard => {
+                    for doc in &mut self.docs {
+                        doc.view.clear_diff();
+                    }
+                    self.relayout();
+                }
+                DiffMode::Off => unreachable!(),
+            }
+        }
     }
 
-    /// Escape the view's transient state, then leave the diff.
+    /// Escape only the view's transient selection, search, or input state.
     pub(crate) fn escape_view(&mut self) {
-        if !self.view_mut().escape() && self.view().diff_view() {
-            self.leave_diff();
+        self.view_mut().escape();
+    }
+
+    /// Toggle rendered/source display when the selected mode supports it.
+    pub(crate) fn toggle_source_view(&mut self) {
+        if self.diff_mode == DiffMode::Unified {
+            self.notice("source view is unavailable in unified diff mode");
+            return;
         }
+        self.view_mut().toggle_source_view();
     }
 
     /// Open the comparison base picker.
@@ -75,18 +121,26 @@ impl App {
 
     /// Toggle whitespace handling for all comparison surfaces.
     pub(crate) fn toggle_whitespace(&mut self) {
-        self.comparison.toggle_whitespace(&mut self.workspace);
+        if self.diff_mode == DiffMode::Off {
+            self.notice("diff mode is off");
+            return;
+        }
+        self.comparison.toggle_whitespace();
         let compare = self.comparison.compare();
-        self.compare = compare;
         for doc in &mut self.docs {
             doc.view.set_compare(compare);
         }
-        self.rebuild_comparison_status();
+        if self.diff_mode == DiffMode::Off {
+            self.comparison_status = fathomable_core::status::Status::default();
+        } else {
+            self.rebuild_comparison_status();
+            self.restore_changed_filter();
+        }
         self.sift_tree();
         self.refresh_all_marks();
         self.persist_comparison();
-        if self.comparison_diff {
-            self.show_comparison_diff();
+        if self.diff_mode == DiffMode::Unified {
+            self.show_unified_diff();
         }
         self.push_toast(match compare.whitespace {
             Whitespace::Ignore => "whitespace ignored".to_owned(),
@@ -125,41 +179,6 @@ impl App {
         } else {
             input.to_owned()
         };
-        if matches!(kind, PickerKind::ComparisonBase)
-            && let Some((first, last)) = value.split_once("..")
-        {
-            let first = match self.workspace.resolve_revision(first.trim()) {
-                Ok(commit) => commit.id(),
-                Err(error) => {
-                    self.notice(format!("cannot resolve batch start `{first}`: {error}"));
-                    return;
-                }
-            };
-            let last = match self.workspace.resolve_revision(last.trim()) {
-                Ok(commit) => commit.id(),
-                Err(error) => {
-                    self.notice(format!("cannot resolve batch end `{last}`: {error}"));
-                    return;
-                }
-            };
-            match self.workspace.contiguous_batch(&first, &last) {
-                Ok(batch) => {
-                    self.comparison.set_base(
-                        batch.before().clone(),
-                        &mut self.workspace,
-                        self.review_points.as_ref(),
-                    );
-                    self.comparison.set_target(
-                        batch.after().clone(),
-                        &mut self.workspace,
-                        self.review_points.as_ref(),
-                    );
-                    self.refresh_comparison();
-                }
-                Err(error) => self.notice(format!("cannot select commit batch: {error}")),
-            }
-            return;
-        }
         let endpoint = match self.resolve_comparison_endpoint(&value) {
             Ok(endpoint) => endpoint,
             Err(error) => {
@@ -183,12 +202,10 @@ impl App {
     }
 
     /// Show the selected comparison for the current path.
-    pub(crate) fn show_comparison_diff(&mut self) {
+    pub(super) fn show_unified_diff(&mut self) {
         let Some(index) = self.current else {
-            self.notice("no file open");
             return;
         };
-        self.comparison_diff = true;
         if self.comparison.stale() {
             if self.view().diff().is_some() {
                 self.view_mut().mark_diff_stale();
@@ -246,6 +263,10 @@ impl App {
 
     /// Kept for callers that need the active pair after a refresh.
     pub(crate) fn refresh_comparison(&mut self) {
+        if self.diff_mode == DiffMode::Off {
+            self.refresh_off_target();
+            return;
+        }
         let branch_changed = self.comparison.head_changed(&self.workspace);
         self.comparison
             .refresh(&mut self.workspace, self.review_points.as_ref());
@@ -253,7 +274,6 @@ impl App {
     }
 
     pub(super) fn apply_refreshed_comparison(&mut self, branch_changed: bool) {
-        self.compare = self.comparison.compare();
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             for doc in &mut self.docs {
                 doc.view.mark_diff_stale();
@@ -262,6 +282,7 @@ impl App {
             return;
         }
         self.rebuild_comparison_status();
+        self.restore_changed_filter();
         for index in 0..self.docs.len() {
             self.apply_comparison_projection(index);
         }
@@ -273,9 +294,148 @@ impl App {
         {
             self.notice("working tree changed; pinned comparison base retained");
         }
-        if self.comparison_diff {
-            self.show_comparison_diff();
+        match self.diff_mode {
+            DiffMode::Unified => self.show_unified_diff(),
+            DiffMode::Standard => {
+                for doc in &mut self.docs {
+                    doc.view.clear_diff();
+                }
+                self.relayout();
+            }
+            DiffMode::Off => unreachable!("Off refreshes Target without a comparison"),
         }
+    }
+
+    pub(super) fn activate_diff_mode(&mut self, mode: DiffMode) {
+        debug_assert_ne!(mode, DiffMode::Off);
+        self.diff_mode = mode;
+        self.last_active_diff_mode = mode;
+        self.off_target_paths = None;
+        self.apply_refreshed_comparison(false);
+    }
+
+    /// Refresh Target-only state without evaluating or reading Base.
+    fn refresh_off_target(&mut self) {
+        self.comparison.refresh_target_alias(&self.workspace);
+        self.comparison_status = fathomable_core::status::Status::default();
+        let target = self.comparison.target().clone();
+        let paths = match self.workspace.endpoint_paths(&target) {
+            Ok(paths) => paths,
+            Err(error) => {
+                let message = error.to_string();
+                for index in 0..self.docs.len() {
+                    self.clear_off_projection(index, Some(message.clone()));
+                }
+                self.off_target_paths = None;
+                self.sift_tree();
+                self.notice(message);
+                self.relayout();
+                return;
+            }
+        };
+        self.off_target_paths = Some(paths);
+        let mut first_error = None;
+        for index in 0..self.docs.len() {
+            if let Err(error) = self.apply_off_projection(index)
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        self.refresh_all_marks();
+        self.sift_tree();
+        if let Some(error) = first_error {
+            self.notice(error);
+        }
+        self.relayout();
+    }
+
+    fn clear_off_projection(&mut self, index: usize, notice: Option<String>) {
+        let doc = &mut self.docs[index];
+        doc.view.clear_diff();
+        doc.view.clear_comparison_body();
+        doc.view.set_bases(None, None);
+        let _ = doc.document.replace_snapshot(Vec::new());
+        doc.view.reload(String::new());
+        doc.view.set_worktree_missing(false);
+        doc.comparison_notice = notice;
+        doc.deleted = None;
+    }
+
+    pub(super) fn apply_off_projection(&mut self, index: usize) -> Result<(), String> {
+        let path = self.docs[index].relative.clone();
+        let (document, target_absent) = match self.off_target_document(&path) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                self.clear_off_projection(index, Some(error.clone()));
+                return Err(error);
+            }
+        };
+        let text = document.text().unwrap_or_default().to_owned();
+        let doc = &mut self.docs[index];
+        doc.view.clear_diff();
+        doc.view.clear_comparison_body();
+        doc.view.set_bases(None, None);
+        doc.view.reload(text);
+        doc.view.set_worktree_missing(target_absent);
+        doc.document = document;
+        doc.comparison_notice = target_absent.then(|| "not present in Target".to_owned());
+        doc.deleted = None;
+        self.queue_highlight(index);
+        Ok(())
+    }
+
+    /// Load one Off-mode Target document without reading Base or allocating an
+    /// over-limit immutable blob.
+    pub(crate) fn off_target_document(
+        &mut self,
+        relative: &Path,
+    ) -> Result<(Document, bool), String> {
+        let absolute = self.workspace.root().join(relative);
+        let policy = Policy {
+            attr: self.workspace.diff_attr(relative),
+            max_bytes: self.viewer.max_file_bytes(),
+        };
+        let target = self.comparison.target().clone();
+        if target == ComparisonEndpoint::WorkingTree {
+            match fs::symlink_metadata(&absolute) {
+                Ok(_) => {
+                    return Document::load(absolute, policy)
+                        .map(|document| (document, false))
+                        .map_err(|error| error.to_string());
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok((Document::missing(absolute, policy), true));
+                }
+                Err(error) => {
+                    return Err(format!("cannot inspect {}: {error}", absolute.display()));
+                }
+            }
+        }
+        let Some(info) = self
+            .workspace
+            .endpoint_path_info(&target, relative)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok((Document::missing(absolute, policy), true));
+        };
+        let size = info.size().ok_or_else(|| {
+            format!(
+                "{target:?} does not report a byte size for {}",
+                relative.display()
+            )
+        })?;
+        let bytes = if size > policy.max_bytes {
+            Vec::new()
+        } else {
+            self.workspace
+                .endpoint_bytes(&target, relative)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{} disappeared from {target:?}", relative.display()))?
+        };
+        Document::from_snapshot_prefix(absolute, bytes, size, policy)
+            .map(|document| (document, false))
+            .map_err(|error| error.to_string())
     }
 
     /// One selected endpoint's text, with explicit review-point reconstruction.

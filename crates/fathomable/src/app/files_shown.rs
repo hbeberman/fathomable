@@ -9,6 +9,7 @@
 //! Files settings menu, the notice while the pane is hidden, and the
 //! compact markers by which the pane's header names the state.
 
+use std::fs;
 use std::path::PathBuf;
 
 use fathomable_core::annotations::{Lifecycle, Store};
@@ -21,11 +22,15 @@ impl App {
     /// Flip a `Space F` rule on the files pane, shown or hidden, keeping the
     /// cursor's file where it is still listed.
     pub(crate) fn files_toggle(&mut self, rule: Rule) {
+        if rule == Rule::Changed && self.diff_mode() == fathomable_core::config::DiffMode::Off {
+            self.notice("diff mode is off");
+            return;
+        }
         if !self.ensure_tree() {
             return;
         }
         self.refresh_review_paths();
-        let status = self.comparison_status().clone();
+        let status = self.files_filter_status();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
         let Some(tree) = self.tree.as_mut() else {
@@ -57,7 +62,7 @@ impl App {
 
     /// A new status landed: the files pane lists by it.
     pub(super) fn sift_tree(&mut self) {
-        let status = self.comparison_status().clone();
+        let status = self.files_filter_status();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
         let review_paths = self.review_paths();
@@ -78,7 +83,7 @@ impl App {
         if self.tree.is_none() {
             return;
         }
-        let status = self.comparison_status().clone();
+        let status = self.files_filter_status();
         let review_paths = self.review_paths();
         if let Some(tree) = self.tree.as_mut() {
             tree.set_review_paths(&mut self.workspace, &status, review_paths);
@@ -102,9 +107,63 @@ impl App {
             .collect()
     }
 
+    fn files_filter_status(&self) -> fathomable_core::status::Status {
+        if self.diff_mode() == fathomable_core::config::DiffMode::Off
+            && self.displayed_target_is_working_tree()
+        {
+            fathomable_core::status::Status::from_entries(
+                self.status
+                    .entries()
+                    .iter()
+                    .filter(|entry| {
+                        fs::symlink_metadata(self.workspace.root().join(entry.path())).is_ok()
+                    })
+                    .cloned()
+                    .collect(),
+            )
+        } else {
+            self.comparison_status().clone()
+        }
+    }
+
     /// What the files pane lists, `Shown::all()` before the tree exists.
     fn files_shown(&self) -> Shown {
         self.tree.as_ref().map_or_else(Shown::all, Tree::shown)
+    }
+
+    /// Stop applying changed-only while retaining its checked state.
+    pub(super) fn suspend_changed_filter(&mut self) {
+        let shown = self.files_shown();
+        if self.dormant_changed_filter || !shown.changed_only() {
+            return;
+        }
+        let status = self.comparison_status().clone();
+        if let Some(tree) = self.tree.as_mut() {
+            if let Err(error) =
+                tree.set_shown(&mut self.workspace, &status, shown.toggled(Rule::Changed))
+            {
+                self.notice(error.to_string());
+                return;
+            }
+            self.dormant_changed_filter = true;
+        }
+    }
+
+    /// Reapply the retained changed-only rule after leaving Off.
+    pub(super) fn restore_changed_filter(&mut self) {
+        if !self.dormant_changed_filter {
+            return;
+        }
+        let shown = self.files_shown();
+        let status = self.comparison_status().clone();
+        if let Some(tree) = self.tree.as_mut()
+            && let Err(error) =
+                tree.set_shown(&mut self.workspace, &status, shown.toggled(Rule::Changed))
+        {
+            self.notice(error.to_string());
+            return;
+        }
+        self.dormant_changed_filter = false;
     }
 
     /// What pressing a toggle's key does now, when that differs from the
@@ -137,7 +196,7 @@ impl App {
     pub(crate) fn files_setting_checked(&self, action: Action) -> bool {
         let shown = self.files_shown();
         match action {
-            Action::FilesChanged => shown.changed_only(),
+            Action::FilesChanged => shown.changed_only() || self.dormant_changed_filter,
             Action::FilesReviews => shown.reviews_only(),
             Action::FilesUntracked => !shown.untracked(),
             Action::FilesIgnored => shown.ignored(),
@@ -151,11 +210,25 @@ impl App {
         bindings::menu_entries(place, self.prefix(), |action| self.live_label(action))
     }
 
+    /// Whether a visible which-key route is currently actionable.
+    pub(crate) fn which_key_enabled(&self, place: Where, chord: Chord) -> bool {
+        let mut keys = self.prefix().to_vec();
+        keys.push(chord);
+        let bindings::Match::Exact(action) = bindings::lookup(place, &keys) else {
+            return true;
+        };
+        self.diff_mode() != fathomable_core::config::DiffMode::Off
+            || !matches!(
+                action,
+                Action::ComparisonWhitespace | Action::FilesChanged | Action::JumpNewest
+            )
+    }
+
     /// The compact marker the files pane's header uses for active rules.
     pub(crate) fn files_shown_marker(&self) -> String {
         let shown = self.files_shown();
         let mut markers = Vec::new();
-        if shown.changed_only() {
+        if shown.changed_only() && self.diff_mode() != fathomable_core::config::DiffMode::Off {
             markers.push("c");
         }
         if shown.reviews_only() {
@@ -197,7 +270,9 @@ mod tests {
     use anyhow::Context as _;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use fathomable_core::annotations::{Author, Draft, LineRange, ResolutionOutcome, Store};
+    use fathomable_core::config::DiffMode;
     use fathomable_core::theme::Theme as CoreTheme;
+    use fathomable_core::tree::Rule;
     use fathomable_core::workspace::Workspace;
     use fathomable_testing::{TempDir, git};
 
@@ -322,6 +397,41 @@ mod tests {
             !header_row(&app)?.contains('·'),
             "no marker with no rule on"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_only_is_dormant_and_restored_around_off() -> anyhow::Result<()> {
+        let dir = fixture("changed-off")?;
+        let mut app = AppBuilder::new(&dir).build()?;
+        app.show_tree();
+        app.files_toggle(Rule::Changed);
+        assert_eq!(names(&app), ["notes.txt", "README.md"]);
+
+        app.select_diff_mode(DiffMode::Off);
+        assert!(names(&app).iter().any(|path| path == "src"));
+        assert!(app.files_setting_checked(crate::app::input::bindings::Action::FilesChanged));
+        assert!(!app.files_shown_marker().contains('c'));
+        let off_header = header_row(&app)?;
+        assert!(!off_header.contains("+2 -1"), "{off_header}");
+
+        press(&mut app, " F");
+        let changed = app
+            .which_key(Where::View)
+            .into_iter()
+            .find(|(chord, _)| chord.to_string() == "c")
+            .context("changed-only route")?
+            .0;
+        assert!(!app.which_key_enabled(Where::View, changed));
+        press(&mut app, "c");
+        assert_eq!(app.message(), Some("diff mode is off"));
+        assert!(app.files_setting_checked(crate::app::input::bindings::Action::FilesChanged));
+
+        app.select_diff_mode(DiffMode::Standard);
+        assert_eq!(names(&app), ["notes.txt", "README.md"]);
+        assert!(app.files_shown_marker().contains('c'));
+        let active_header = header_row(&app)?;
+        assert!(active_header.contains("+2 -1"), "{active_header}");
         Ok(())
     }
 

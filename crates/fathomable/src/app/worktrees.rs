@@ -203,6 +203,9 @@ impl App {
             ));
             return false;
         }
+        if self.annotation_draft_blocks("changing worktree") {
+            return false;
+        }
         let workspace = match Workspace::discover(&root) {
             Ok(workspace) => workspace,
             Err(error) => {
@@ -466,6 +469,44 @@ mod tests {
         assert_eq!(app.workspace().root(), main);
         app.act(Action::WorktreeNext);
         assert_eq!(app.current_path(), Path::new(""), "nothing open");
+        Ok(())
+    }
+
+    #[test]
+    fn off_keeps_target_only_source_when_switching_worktrees() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("off-target-only")?;
+        fs::write(main.join("a.md"), "MAIN_TARGET_SENTINEL\n")?;
+        fs::write(feature.join("a.md"), "FEATURE_TARGET_SENTINEL\n")?;
+        let mut app = app_on(&dir, &main)?;
+        app.open(Path::new("a.md"));
+        app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+        assert_eq!(app.view().text(), "MAIN_TARGET_SENTINEL\n");
+
+        assert!(app.activate_worktree(&feature));
+        assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+        assert_eq!(app.view().text(), "FEATURE_TARGET_SENTINEL\n");
+        assert!(!app.view().text().contains("MAIN_TARGET_SENTINEL"));
+        Ok(())
+    }
+
+    #[test]
+    fn pending_annotation_blocks_worktree_switch_before_state_is_cleared() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("pending-draft")?;
+        let mut app = app_on(&dir, &main)?;
+        app.open(Path::new("a.md"));
+        app.start_new_comment();
+        app.compose_insert("pending finding");
+        let document_count = app.docs.len();
+
+        assert!(!app.activate_worktree(&feature));
+        assert_eq!(app.workspace().root(), main);
+        assert_eq!(app.docs.len(), document_count);
+        assert_eq!(app.current_path(), Path::new("a.md"));
+        assert!(matches!(app.popup(), Some(Popup::Compose(_))));
+        assert!(
+            app.message()
+                .is_some_and(|message| message.contains("pending annotation"))
+        );
         Ok(())
     }
 

@@ -21,6 +21,7 @@
 
 use std::path::Path;
 
+use fathomable_core::config::DiffMode;
 use fathomable_core::layout::display_width;
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
@@ -60,6 +61,11 @@ pub(crate) enum Tone {
     Removed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Control {
+    DiffMode,
+}
+
 /// A header hint with what a click on it runs (ADR 0050): nothing for
 /// words alone, two actions for an `a/b` pair split at the slash. A
 /// count (ADR 0066) is a circle in a state's colour with its number
@@ -74,6 +80,7 @@ pub(crate) struct HintOf {
     /// The word after `what`, a space between; empty for most hints.
     word: String,
     actions: Vec<Action>,
+    control: Option<Control>,
     /// The key's colour when it is not the info colour.
     tone: Option<Tone>,
     /// The key reads dim: a count of what is hidden.
@@ -93,6 +100,7 @@ impl HintOf {
             what: what.into(),
             word: String::new(),
             actions: actions.to_vec(),
+            control: None,
             tone: None,
             faint: false,
             gap: true,
@@ -132,6 +140,7 @@ impl HintOf {
             what: n.to_string(),
             word: word.to_owned(),
             actions: actions.to_vec(),
+            control: None,
             tone: Some(Tone::Mark(state)),
             faint,
             gap: true,
@@ -148,6 +157,7 @@ impl HintOf {
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
+            control: None,
             tone: Some(tone),
             faint: false,
             gap: false,
@@ -163,7 +173,23 @@ impl HintOf {
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
+            control: None,
             tone: Some(tone),
+            faint: true,
+            gap: false,
+            number: false,
+        }
+    }
+
+    fn diff_mode(mode: DiffMode) -> Self {
+        Self {
+            key: format!("Diff: {mode}"),
+            compact: None,
+            what: String::new(),
+            word: String::new(),
+            actions: Vec::new(),
+            control: Some(Control::DiffMode),
+            tone: Some(Tone::Info),
             faint: true,
             gap: false,
             number: false,
@@ -226,6 +252,8 @@ const HINT_MARGIN: usize = 3;
 #[derive(Debug, Clone)]
 pub(crate) struct Header {
     left: Vec<(String, Tone)>,
+    /// Leading left spans that remain when passive left context must yield.
+    required_left: usize,
     hints: Vec<HintOf>,
     /// Hints retained after `hints` while optional hints are dropped.
     tail: Vec<HintOf>,
@@ -238,11 +266,15 @@ pub(crate) struct Header {
     left_pad: usize,
 }
 
+type Shown<'a> = (usize, usize, &'a [HintOf], &'a [HintOf], Form);
+
 impl Header {
     /// Words on the left, hints against the right edge.
     pub(super) fn new(left: Vec<(String, Tone)>, hints: Vec<HintOf>) -> Self {
+        let required_left = left.len();
         Self {
             left,
+            required_left,
             hints,
             tail: Vec::new(),
             align: Align::Right,
@@ -256,6 +288,7 @@ impl Header {
     pub(super) fn bar(hints: Vec<HintOf>) -> Self {
         Self {
             left: Vec::new(),
+            required_left: 0,
             hints,
             tail: Vec::new(),
             align: Align::Left,
@@ -265,11 +298,13 @@ impl Header {
         }
     }
 
-    /// Words, then counts against the right edge, a space apart (ADR
-    /// 0066).
+    /// Words, then counts against an edge, used by count layout tests.
+    #[cfg(test)]
     pub(super) fn counted(left: Vec<(String, Tone)>, counts: Vec<HintOf>, align: Align) -> Self {
+        let required_left = left.len();
         Self {
             left,
+            required_left,
             hints: counts,
             tail: Vec::new(),
             align,
@@ -281,8 +316,10 @@ impl Header {
 
     /// Words and optional state, then a required tail against the right edge.
     fn counted_with_tail(left: Vec<(String, Tone)>, hints: Vec<HintOf>, tail: Vec<HintOf>) -> Self {
+        let required_left = left.len();
         Self {
             left,
+            required_left,
             hints,
             tail,
             align: Align::Right,
@@ -297,6 +334,14 @@ impl Header {
         self.left.iter().map(|(text, _)| display_width(text)).sum()
     }
 
+    fn left_width_for(&self, count: usize) -> usize {
+        self.left
+            .iter()
+            .take(count)
+            .map(|(text, _)| display_width(text))
+            .sum()
+    }
+
     /// The cells occupied by the clickable title at the start of the row.
     pub(crate) fn title_width(&self) -> usize {
         self.left.first().map_or(0, |(text, _)| display_width(text))
@@ -307,8 +352,25 @@ impl Header {
     /// hint with its word when that fits, then without count words, then
     /// with responsive words shortened, dropping optional hints before the
     /// retained tail.
-    fn shown(&self, width: usize) -> Option<(usize, &[HintOf], &[HintOf], Form)> {
-        let used = self.left_width();
+    fn shown(&self, width: usize) -> Option<Shown<'_>> {
+        let full = self.shown_after(width, self.left_width());
+        if self.required_left < self.left.len()
+            && full
+                .as_ref()
+                .is_none_or(|(_, _, tail, _)| tail.len() < self.tail.len())
+            && let Some((start, hints, tail, form)) =
+                self.shown_after(width, self.left_width_for(self.required_left))
+        {
+            return Some((self.required_left, start, hints, tail, form));
+        }
+        full.map(|(start, hints, tail, form)| (self.left.len(), start, hints, tail, form))
+    }
+
+    fn shown_after(
+        &self,
+        width: usize,
+        used: usize,
+    ) -> Option<(usize, &[HintOf], &[HintOf], Form)> {
         let free = width.saturating_sub(used);
         let sep = display_width(self.sep);
         let margin = if self.left.is_empty() {
@@ -368,7 +430,7 @@ impl Header {
     /// The action a click at `column` on a `width`-cell header runs: the
     /// hint under the pointer, its left or right half for a pair.
     pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
-        let (mut at, hints, tail, form) = self.shown(width)?;
+        let (_, mut at, hints, tail, form) = self.shown(width)?;
         let sep = display_width(self.sep);
         for (i, hint) in hints.iter().chain(tail).enumerate() {
             if i > 0 {
@@ -404,11 +466,45 @@ impl Header {
         None
     }
 
+    /// The header control under `column`, when it was retained at `width`.
+    pub(crate) fn control_at(&self, width: usize, column: usize) -> Option<Control> {
+        let (_, mut at, hints, tail, form) = self.shown(width)?;
+        let sep = display_width(self.sep);
+        for (i, hint) in hints.iter().chain(tail).enumerate() {
+            if i > 0 {
+                at += sep;
+            }
+            let end = at + hint.width(form);
+            if column >= at && column < end {
+                return hint.control;
+            }
+            at = end;
+        }
+        None
+    }
+
+    /// The retained control's half-open column range.
+    pub(crate) fn control_bounds(&self, width: usize, control: Control) -> Option<(usize, usize)> {
+        let (_, mut at, hints, tail, form) = self.shown(width)?;
+        let sep = display_width(self.sep);
+        for (i, hint) in hints.iter().chain(tail).enumerate() {
+            if i > 0 {
+                at += sep;
+            }
+            let end = at + hint.width(form);
+            if hint.control == Some(control) {
+                return Some((at, end));
+            }
+            at = end;
+        }
+        None
+    }
+
     /// The header as one drawn row on `ui.header`: the words, then the
     /// hints joined by the separator, padded to `width` so the surface
     /// reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, None, theme.header)
+        self.line_with_hovers(theme, width, false, None, None, theme.header)
     }
 
     /// Draw the header with hover behind its clickable left label.
@@ -418,7 +514,25 @@ impl Header {
         width: usize,
         left_hovered: bool,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, left_hovered, None, theme.header)
+        self.line_with_hovers(theme, width, left_hovered, None, None, theme.header)
+    }
+
+    /// Draw the clickable title and mode control with shared hover treatment.
+    pub(super) fn line_with_header_hovers(
+        &self,
+        theme: &Theme,
+        width: usize,
+        left_hovered: bool,
+        control_hovered: Option<Control>,
+    ) -> Line<'static> {
+        self.line_with_hovers(
+            theme,
+            width,
+            left_hovered,
+            None,
+            control_hovered,
+            theme.header,
+        )
     }
 
     /// Draw a key bar with hover behind the action under the pointer.
@@ -428,7 +542,7 @@ impl Header {
         width: usize,
         hovered: Option<Action>,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, hovered, theme.header)
+        self.line_with_hovers(theme, width, false, hovered, None, theme.header)
     }
 
     fn line_with_hovers(
@@ -437,23 +551,16 @@ impl Header {
         width: usize,
         left_hovered: bool,
         hovered: Option<Action>,
+        control_hovered: Option<Control>,
         base: ratatui::style::Style,
     ) -> Line<'static> {
-        let mut spans: Vec<Span<'static>> = self
-            .left
-            .iter()
-            .enumerate()
-            .map(|(index, (text, tone))| {
-                let style = if left_hovered && index == 0 {
-                    tone_style(theme, *tone).patch(theme.list_hover)
-                } else {
-                    tone_style(theme, *tone)
-                };
-                Span::styled(text.clone(), style)
-            })
-            .collect();
-        let mut at = self.left_width();
-        if let Some((start, hints, tail, form)) = self.shown(width) {
+        let shown = self.shown(width);
+        let left_count = shown
+            .as_ref()
+            .map_or(self.required_left, |(left_count, _, _, _, _)| *left_count);
+        let mut spans = self.left_spans(theme, left_count, left_hovered);
+        let mut at = self.left_width_for(left_count);
+        if let Some((_, start, hints, tail, form)) = shown {
             spans.push(Span::raw(" ".repeat(start - at)));
             at = start;
             let faint = theme.info.add_modifier(Modifier::DIM);
@@ -463,7 +570,10 @@ impl Header {
                     spans.push(Span::styled(self.sep, faint));
                     at += sep;
                 }
-                let hint_hovered = hovered.is_some_and(|action| hint.actions.contains(&action));
+                let hint_hovered = hovered.is_some_and(|action| hint.actions.contains(&action))
+                    || hint
+                        .control
+                        .is_some_and(|control| Some(control) == control_hovered);
                 let surface = if hint_hovered {
                     base.patch(theme.list_hover)
                 } else {
@@ -535,6 +645,22 @@ impl Header {
         spans.push(Span::raw(" ".repeat(width.saturating_sub(at))));
         Line::from(spans).style(base)
     }
+
+    fn left_spans(&self, theme: &Theme, count: usize, hovered: bool) -> Vec<Span<'static>> {
+        self.left
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(index, (text, tone))| {
+                let style = if hovered && index == 0 {
+                    tone_style(theme, *tone).patch(theme.list_hover)
+                } else {
+                    tone_style(theme, *tone)
+                };
+                Span::styled(text.clone(), style)
+            })
+            .collect()
+    }
 }
 
 /// The shared action-first controls used by destructive confirmations.
@@ -567,7 +693,7 @@ impl ConfirmationControls {
         hovered: Option<Action>,
     ) -> Line<'static> {
         self.bar
-            .line_with_hovers(theme, width, false, hovered, theme.popup)
+            .line_with_hovers(theme, width, false, hovered, None, theme.popup)
     }
 }
 
@@ -683,7 +809,7 @@ pub(crate) fn summary_line<'a>(
 /// specific title and passive counts.
 pub(crate) fn review_header(app: &App) -> Header {
     let review = app.review();
-    let counts = passive_count_hints(
+    let mut counts = passive_count_hints(
         app.review_counts(review.file_only),
         review.view != ReviewView::Board || review.resolved,
     );
@@ -693,16 +819,17 @@ pub(crate) fn review_header(app: &App) -> Header {
         } else {
             ("workspace", "w")
         };
+        counts.insert(0, HintOf::responsive_word(scope, compact, Tone::Info));
         Header::counted_with_tail(
             vec![(" Reviews".to_owned(), Tone::Dir)],
-            vec![HintOf::responsive_word(scope, compact, Tone::Info)],
             counts,
+            vec![HintOf::diff_mode(app.diff_mode())],
         )
     } else {
-        Header::counted(
+        Header::counted_with_tail(
             vec![(format!(" {}", review.view.title()), Tone::Key)],
             counts,
-            Align::Right,
+            vec![HintOf::diff_mode(app.diff_mode())],
         )
     }
 }
@@ -725,14 +852,16 @@ pub(crate) fn file_header(app: &App) -> Header {
         || passive_count_hints(app.review_counts(true), app.stubs_resolved()),
         |_| Vec::new(),
     );
-    Header::counted(
+    let mut header = Header::counted_with_tail(
         vec![
             (" File".to_owned(), Tone::Dir),
             (format!("  {filename}"), Tone::Info),
         ],
         counts,
-        Align::Right,
-    )
+        vec![HintOf::diff_mode(app.diff_mode())],
+    );
+    header.required_left = 1;
+    header
 }
 
 /// The review list's key bar on its bottom row (ADR 0059, ADR 0066):
@@ -922,6 +1051,7 @@ pub(super) fn draft_hints(compose: &Compose) -> Vec<HintOf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::testing;
 
     fn theme() -> anyhow::Result<Theme> {
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
@@ -979,6 +1109,53 @@ mod tests {
             None,
             "a dropped hint is not there"
         );
+    }
+
+    #[test]
+    fn file_and_every_review_header_retain_the_mode_control_last() -> anyhow::Result<()> {
+        let dir = testing::workspace("header-diff-control", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        let theme = theme()?;
+
+        let mut file = file_header(&app);
+        file.left[1].0 = format!("  {}", "x".repeat(25));
+        let narrow = text(&file.line(&theme, 40));
+        assert!(narrow.contains("File"), "{narrow}");
+        assert!(narrow.contains("Diff: standard"), "{narrow}");
+        assert!(!narrow.contains("xxxxxxxx"), "{narrow}");
+        let minimum = file.title_width() + display_width("Diff: standard") + HINT_MARGIN;
+        assert!(file.control_bounds(minimum, Control::DiffMode).is_some());
+        assert!(
+            file.control_bounds(minimum.saturating_sub(1), Control::DiffMode)
+                .is_none()
+        );
+
+        let assert_control = |header: Header, title: &str| {
+            let wide = text(&header.line(&theme, 100));
+            assert!(wide.contains(title), "{wide}");
+            assert!(wide.contains("Diff: standard"), "{wide}");
+            let minimum = header.left_width() + display_width("Diff: standard") + HINT_MARGIN;
+            assert!(
+                header.control_bounds(minimum, Control::DiffMode).is_some(),
+                "{title} should retain Diff after optional state is dropped"
+            );
+            assert!(
+                header
+                    .control_bounds(minimum.saturating_sub(1), Control::DiffMode)
+                    .is_none(),
+                "{title} should drop Diff only when it cannot coexist with the title"
+            );
+        };
+
+        for (view, title) in [
+            (ReviewView::Board, "Reviews"),
+            (ReviewView::RecentlyResolved, "Recently resolved"),
+            (ReviewView::Archived, "Archived"),
+        ] {
+            app.open_review_view(view);
+            assert_control(review_header(&app), title);
+        }
+        Ok(())
     }
 
     /// A header row inside a thread block paints its gutter cells on

@@ -1,7 +1,8 @@
 // @okf-doc: /decisions/0081-the-menu-bar.md
-//! The persistent menu bar: its stable workflow menus, comparison controls,
+//! The persistent menu bar: its stable workflow menus, comparison endpoints,
 //! one-level fly-outs, geometry, and mouse/keyboard navigation.
 
+use fathomable_core::config::DiffMode;
 use fathomable_core::layout::display_width;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -321,6 +322,10 @@ impl BarTail {
             .find(|label| label.contains(column))
             .map(|label| label.picker)
     }
+
+    pub(crate) const fn endpoints_rendered(&self) -> bool {
+        self.target.is_some()
+    }
 }
 
 /// Lay out the right-aligned comparison buttons after the root labels.
@@ -333,21 +338,26 @@ pub(crate) fn bar_tail(app: &App, width: usize) -> BarTail {
     let (base, target) = app.comparison_menu_pair();
     let base_width = display_width(&base);
     let target_width = display_width(&target);
-    let pair_width = base_width + 4 + target_width;
-    let show_pair = pair_width + TAIL_GAP <= available;
-    let padding = available.saturating_sub(usize::from(show_pair) * pair_width);
-    let pair_x = used + padding;
+    let off = app.diff_mode() == DiffMode::Off;
+    let tail_width = if off {
+        target_width
+    } else {
+        base_width + 4 + target_width
+    };
+    let show_tail = tail_width + TAIL_GAP <= available;
+    let padding = available.saturating_sub(usize::from(show_tail) * tail_width);
+    let tail_x = used + padding;
     BarTail {
         padding,
-        base: show_pair.then_some(BarLabel {
+        base: (show_tail && !off).then_some(BarLabel {
             text: base,
-            x: pair_x,
+            x: tail_x,
             width: base_width,
             picker: PickerKind::ComparisonBase,
         }),
-        target: show_pair.then_some(BarLabel {
+        target: show_tail.then_some(BarLabel {
             text: target,
-            x: pair_x + base_width + 4,
+            x: if off { tail_x } else { tail_x + base_width + 4 },
             width: target_width,
             picker: PickerKind::ComparisonTarget,
         }),
@@ -360,7 +370,11 @@ pub(crate) fn bar_identity(app: &App, width: usize) -> Option<BarIdentity> {
         .last()
         .map_or(0, |label| label.x.saturating_add(label.width));
     let tail = bar_tail(app, width);
-    let right_start = tail.base.as_ref().map_or(width, |base| base.x);
+    let right_start = tail
+        .base
+        .as_ref()
+        .or(tail.target.as_ref())
+        .map_or(width, |label| label.x);
     identity_within(
         app,
         width,
@@ -615,11 +629,25 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::RestoreThread, "Restore thread")),
         ],
         Root::Diff => vec![
-            Row::Item(Item::action(
+            Row::Item(Item::choice(
                 app,
-                Action::ComparisonControl,
-                "Comparison controls…",
+                Action::DiffStandard,
+                "Standard diff",
+                app.diff_mode() == DiffMode::Standard,
             )),
+            Row::Item(Item::choice(
+                app,
+                Action::DiffUnified,
+                "Unified diff",
+                app.diff_mode() == DiffMode::Unified,
+            )),
+            Row::Item(Item::choice(
+                app,
+                Action::DiffOff,
+                "Diff off",
+                app.diff_mode() == DiffMode::Off,
+            )),
+            Row::Separator,
             Row::Item(Item::action(app, Action::ComparisonBase, "Pick base…")),
             Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
             Row::Item(Item::action(
@@ -673,7 +701,7 @@ fn action_available(app: &App, action: Action) -> bool {
     match action {
         Action::JumpBack => app.jumplist.can_back(),
         Action::JumpForward => app.jumplist.can_forward(),
-        Action::JumpNewest => !app.queue().is_empty(),
+        Action::JumpNewest => app.diff_mode() != DiffMode::Off && !app.queue().is_empty(),
         Action::NewThread | Action::FileComment => app.has_document() && !app.deleted(),
         Action::Reply | Action::ToggleResolved | Action::EditNewestOwn => {
             app.thread_cursor().thread().is_some()
@@ -686,6 +714,8 @@ fn action_available(app: &App, action: Action) -> bool {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
         Action::ComparisonSave => app.review_points.is_some(),
+        Action::ComparisonWhitespace | Action::FilesChanged => app.diff_mode() != DiffMode::Off,
+        Action::SourceView => app.diff_mode() != fathomable_core::config::DiffMode::Unified,
         Action::ArchiveThread => app
             .thread_cursor()
             .thread()
@@ -1309,7 +1339,7 @@ pub(crate) fn resize(app: &mut App) {
 mod tests {
     use anyhow::Context;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
-    use fathomable_core::config::SidebarConfig;
+    use fathomable_core::config::{DiffMode, SidebarConfig};
     use fathomable_core::layout::display_width;
     use fathomable_core::theme::Theme as CoreTheme;
     use ratatui::style::{Color, Modifier};
@@ -1336,7 +1366,7 @@ mod tests {
         assert_eq!(rows(&app, Root::Go).len(), 8);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
-        assert_eq!(diff_rows.len(), 6);
+        assert_eq!(diff_rows.len(), 9);
         let diff_labels = diff_rows
             .iter()
             .filter_map(super::Row::item)
@@ -1345,7 +1375,9 @@ mod tests {
         assert_eq!(
             diff_labels,
             [
-                "Comparison controls…",
+                "Standard diff",
+                "Unified diff",
+                "Diff off",
                 "Pick base…",
                 "Pick target…",
                 "Save review point",
@@ -1376,6 +1408,54 @@ mod tests {
                 .any(|item| item.target == super::Target::Action(super::Action::MenuBarToggle)),
             "the menu bar can only be hidden through Space p m"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn source_action_is_unavailable_in_unified_mode() -> anyhow::Result<()> {
+        let dir = testing::workspace("menu-source-diff-mode", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        assert!(super::action_available(&app, super::Action::SourceView));
+        app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+        assert!(!super::action_available(&app, super::Action::SourceView));
+        Ok(())
+    }
+
+    #[test]
+    fn diff_menu_choices_and_dormant_whitespace_are_exact() -> anyhow::Result<()> {
+        let mut app = shown_app("menu-diff-choices")?;
+        app.toggle_whitespace();
+        app.select_diff_mode(DiffMode::Off);
+
+        let rows = rows(&app, Root::Diff);
+        let items = rows.iter().filter_map(super::Row::item).collect::<Vec<_>>();
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.label.as_str(), item.active))
+                .collect::<Vec<_>>(),
+            [
+                ("Standard diff", false),
+                ("Unified diff", false),
+                ("Diff off", true),
+                ("Pick base…", false),
+                ("Pick target…", false),
+                ("Save review point", false),
+                ("Ignore whitespace", false),
+            ]
+        );
+        assert!(items[3].enabled, "Base is the intentional restore route");
+        assert!(items[6].checked, "the whitespace preference is retained");
+        assert!(!items[6].enabled, "but cannot run while Off");
+        app.open_title_menu(Root::Diff);
+        let screen = testing::screen(&app)?.join("\n");
+        assert!(screen.contains("▌ Diff off"), "{screen}");
+        assert!(screen.contains("Standard diff"), "{screen}");
+        assert!(screen.contains("Unified diff"), "{screen}");
+        assert!(screen.contains("Sp d s"), "{screen}");
+        assert!(screen.contains("Sp d u"), "{screen}");
+        assert!(screen.contains("Sp d o"), "{screen}");
+        assert!(!screen.contains("Comparison controls"), "{screen}");
         Ok(())
     }
 
@@ -1420,6 +1500,27 @@ mod tests {
             "the repository identity is dim with one worktree"
         );
         assert!(!screen[0].contains("SOURCE"), "{:?}", screen[0]);
+        Ok(())
+    }
+
+    #[test]
+    fn off_menu_bar_renders_only_the_clickable_target() -> anyhow::Result<()> {
+        let mut app = shown_app("menu-bar-off-target")?;
+        app.select_diff_mode(DiffMode::Off);
+        let tail = super::bar_tail(&app, app.size().0);
+        assert!(tail.base.is_none());
+        let target = tail.target.context("Target should fit")?;
+        assert_eq!(target.text, "WorkingTree");
+        assert_eq!(target.picker, crate::app::PickerKind::ComparisonTarget);
+
+        let screen = testing::screen(&app)?;
+        assert!(
+            screen[0].trim_end().ends_with("WorkingTree"),
+            "{:?}",
+            screen[0]
+        );
+        assert!(!screen[0].contains(" to "), "{:?}", screen[0]);
+        assert!(!screen[0].contains("EmptyTree"), "{:?}", screen[0]);
         Ok(())
     }
 

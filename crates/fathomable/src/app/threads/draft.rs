@@ -115,6 +115,32 @@ pub(crate) enum DraftRow {
 }
 
 impl App {
+    /// Block endpoint and mode changes while a new annotation is pending.
+    pub(in crate::app) fn annotation_draft_blocks(&mut self, action: &str) -> bool {
+        let is_new = |compose: &Compose| {
+            matches!(
+                compose.target(),
+                ComposeTarget::New(_) | ComposeTarget::OnFile
+            )
+        };
+        let active = match &self.popup {
+            Some(Popup::Compose(compose)) => is_new(compose),
+            _ => false,
+        };
+        let parked = self
+            .docs
+            .iter()
+            .filter_map(|doc| doc.draft.as_ref())
+            .any(is_new);
+        if active || parked {
+            self.notice(format!(
+                "submit or cancel the pending annotation before {action}"
+            ));
+            return true;
+        }
+        false
+    }
+
     /// `c`: reply from a thread row, else comment on the selection or line.
     pub(crate) fn start_comment(&mut self) {
         if self.view().selected_lines().is_none()
@@ -702,7 +728,9 @@ impl App {
         text: &str,
         side: OriginSide,
     ) -> Provenance {
-        let effective = self.comparison();
+        let effective = (self.diff_mode() != fathomable_core::config::DiffMode::Off)
+            .then(|| self.comparison())
+            .flatten();
         let endpoint = if side == OriginSide::Base {
             effective.map_or_else(
                 || self.comparison.base(),
@@ -774,6 +802,9 @@ impl App {
     }
 
     fn displayed_source_side(&self) -> OriginSide {
+        if self.diff_mode() == fathomable_core::config::DiffMode::Off {
+            return OriginSide::Target;
+        }
         let Some(comparison) = self.comparison() else {
             return OriginSide::Target;
         };

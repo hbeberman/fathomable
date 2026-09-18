@@ -435,9 +435,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     replay outcomes, and activity observation remain atomic
     ([0085](decisions/0085-thread-lifecycle-and-auto-resolve.md)).
 77. **One thread summary and its actions.** Inline and review headers share
-    one factual layout and direct hoverable actions, sidebar threads retain
-    two-row cards from the same facts, lifecycle counts no longer overlap,
-    and `t`, `r`, and `R` form the direct review grammar
+    one factual layout with dim lifecycle status and direct cleanup actions,
+    hoverable action-first footers own cursor lifecycle controls, sidebar
+    threads retain two-row cards from the same facts, lifecycle counts no
+    longer overlap, and `t`, `r`, and `R` form the direct review grammar
     ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).
 78. **Global comparisons and deliberate board history.** One pinned
     checkout-wide comparison drives every file and change surface; explicit

@@ -182,9 +182,11 @@ agents' green (amber and teal until 2026-09-09).
   **Only current file** and **Show resolved** settings. Scope and counts are
   display state, not click targets.
 - The keys leave the header. While the pane has the keys its bottom
-  row is a key bar on `ui.header`: `s scope · x resolved · z fold · Z
-  fold all`, dropping from the end when narrow; `z` and `Z` show only
-  in workspace scope, where they work ([0064](0064-hints-you-can-press.md)).
+  row is a key bar on `ui.header`: cursor-thread actions begin with
+  `reply c · auto-resolve R · resolve r` (or `reopen r`), followed in
+  workspace scope by `fold z · fold all Z`, then `scope s · resolved x`.
+  Hints drop from the end when narrow; `z` and `Z` show only where they
+  work ([0064](0064-hints-you-can-press.md)).
   The bar replaces the bottom row; the rows above it do not move, and
   when the pane loses the keys that row is an entry row again.
 - The cursor's entry draws both rows on `ui.picker.selected`, bold,
@@ -221,9 +223,11 @@ agents' green (amber and teal until 2026-09-09).
   `workspace`/`file` scope and lifecycle counts at the right. Count words
   drop together, scope shortens to `w`/`f`, and scope is omitted before the
   counts. The `Reviews` title opens checked **Only current file** and **Show
-  resolved** settings below the header. The key bar reads `x
-  resolved · f file · z fold · Z fold all · Enter open · c reply · e
-  edit · o resolve · k/j threads · l/h messages · Esc`.
+  resolved** settings below the header. Amended by
+  [0086](0086-one-thread-summary-and-its-actions.md), the key bar reads
+  action then hotkey, beginning `reply c · auto-resolve R · resolve r ·
+  fold z · fold all Z`; scope, traversal, open, and escape hints follow
+  where they fit.
 
 ### Mouse
 

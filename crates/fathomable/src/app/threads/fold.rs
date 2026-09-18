@@ -107,10 +107,10 @@ mod tests {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("the thread cursor"))?;
         // The bar names the key (ADR 0067).
-        assert!(screen(&app)?.iter().any(|row| row.contains("z expand")));
+        assert!(screen(&app)?.iter().any(|row| row.contains("expand z")));
         press(&mut app, "z");
         assert!(app.is_expanded(&first), "`z` on the stub's line expands it");
-        assert!(screen(&app)?.iter().any(|row| row.contains("z fold")));
+        assert!(screen(&app)?.iter().any(|row| row.contains("fold z")));
         press(&mut app, "z");
         assert!(!app.is_expanded(&first), "`z` on its rows folds it");
 

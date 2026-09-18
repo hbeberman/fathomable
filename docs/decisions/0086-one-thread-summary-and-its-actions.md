@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: One thread summary and its actions
-description: Inline and review headers share one factual summary layout and direct mouse actions, while the sidebar keeps two-row cards built from the same facts; lifecycle colours, counts, hover, and keys use one vocabulary.
+description: Inline and review headers share one factual summary layout and direct cleanup actions, while cursor lifecycle actions live in action-first hoverable footers and the sidebar keeps two-row cards built from the same facts.
 resource: crates/fathomable/src/app/threads/summary.rs
 tags:
   - annotations
@@ -27,6 +27,12 @@ to the document.
 Amended later 2026-09-17: bare `f` opens File view, and `s` owns
 file/workspace scope in Reviews. The two surface title menus expose the same
 mouse navigation as **Open Reviews** and **Open File**.
+
+Amended later 2026-09-17: auto-resolve and resolve/reopen leave thread
+headers for each pane's footer. Footer hints read action then hotkey and
+highlight their whole clickable region on hover. Headers retain dim
+`autoresolve` or `resolve proposed` status text; direct Archive and Restore
+cleanup actions remain on their specific rows.
 
 Builds on [0085](0085-thread-lifecycle-and-auto-resolve.md) and supersedes
 the state words and counts of [0032](0032-placement-and-state.md),
@@ -68,8 +74,8 @@ headers. Surface code adds only nesting, selection, and cursor decoration.
 The factual grammar is:
 
 ```text
-<glyph> <disclosure> [latest author + preview] [actions]
-    [context] <file|Lx-y|Lx-y?> [reply count] <modified>
+<glyph> <disclosure> [latest author + preview] [cleanup actions]
+    [status] [context] <file|Lx-y|Lx-y?> [reply count] <modified>
 ```
 
 Collapsed headers include latest author and an ellipsized first body line.
@@ -84,43 +90,40 @@ second carries the latest-message preview. It consumes the same summary but
 does not draw a thread disclosure control or expand messages inside the
 sidebar. Enter continues to open the selected conversation in the text.
 
-### Direct header actions
+### Header status and pane actions
 
-Every expanded inline or review header exposes mouse actions. A collapsed
-header exposes them only for the cursor thread. All actions target the
-header's thread directly.
+Inline and review headers carry facts, not lifecycle controls. When
+one-shot permission is enabled, the right-aligned factual tail includes dim
+`autoresolve`. Otherwise a thread with current completion intent includes
+dim `resolve proposed`. These labels are passive and have no hit region.
 
-An unresolved cursor header reads:
+Resolved and archived history rows retain direct **Archive** and
+**Restore** cleanup actions because those actions target that specific row,
+including a non-cursor row. Their displayed key follows the word on cursor
+rows. At rest they keep the header surface; hover patches only that cleanup
+action with `ui.list.hover`.
+
+The disclosure arrow and its three following cells remain one padded
+fold/unfold target. A cleanup action begins at its first visible character,
+separator cells belong to no action, and hidden or clipped text has no hit
+region. Cleanup hits take precedence over double-click folding.
+
+Auto-resolve and resolve/reopen always live on the focused pane's bottom
+key bar and target its cursor thread. Footer hints read action then hotkey:
 
 ```text
-● ▾   Auto-resolve  R  Resolve  r                     L42-46  ↩1  8m
+reply c · auto-resolve R · resolve r · fold z · fold all Z
 ```
 
-With permission enabled it reads `Disable auto-resolve  R`. A resolved
-header carries only `Reopen  r`. A non-cursor expanded header keeps the
-clickable words and omits trailing key labels, because `R` and `r` act only
-on the cursor thread.
-
-The displayed key follows the word and uses the subdued information style,
-as menu-bar options do. Controls have no bracket chrome. At rest they keep
-the header surface. Hover patches only the hovered action with
-`ui.list.hover`, exactly as the menu bar patches `ui.menu`; no new hover
-theme role is added.
-
-The disclosure arrow and its three following cells are one padded
-fold/unfold target. An action begins at its first visible character, and
-separator cells belong to no action. Action hits take precedence over
-double-click folding. Hidden or clipped text has no hit region.
+A resolved thread substitutes `reopen r` and omits auto-resolve. Each
+action's label, separating cell, and hotkey form one mouse target. Hover
+patches that whole target with `ui.list.hover`; separators between actions
+remain inert and unhighlighted. Hints still drop from the end when the pane
+is narrow.
 
 The factual tail is right-aligned. The preview is the first elastic field
 to disappear. At narrower widths optional context, reply count,
-modification time, and location may then drop so controls remain visible,
-as the user chose action access over preserving every fact. The layout
-returns only regions for what it actually drew.
-
-Header-owned auto-resolve and resolve actions leave the bottom key bar while
-their owning header is visible. If the header is off-screen, the bar may
-restore the hints. Reply, edit, and fold hints remain where applicable.
+modification time, and location drop before lifecycle status.
 
 ### Lifecycle colours and counts
 
@@ -161,7 +164,8 @@ total thread count.
 
 - A new summary/layout boundary replaces separate inline and review header
   formatters while the sidebar preserves its useful two-row form.
-- Mouse and keyboard dispatch share action identities and visibility rules.
+- Mouse and keyboard dispatch share footer action identities and visibility
+  rules.
 - Theme users replace `thread.open` and `thread.waiting` with
   `thread.active` and `thread.proposed`; exact-current configuration policy
   provides no aliases.

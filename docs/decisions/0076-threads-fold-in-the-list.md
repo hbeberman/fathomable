@@ -102,7 +102,7 @@ and in the text alike.
   no fold-all for files: the file menu loses `fold all` / `unfold
   all` in the list and keeps them in the threads pane, where `Z` still
   folds every file, there being no thread fold there.
-- **The key bar.** The list's bar reads `z fold · Z fold all` in file
+- **The key bar.** The list's bar reads `fold z · fold all Z` in file
   scope too, since both now work there.
 
 ### Mouse and menu

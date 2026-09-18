@@ -95,24 +95,28 @@ impl ThreadSummary {
         }
     }
 
+    fn status(&self) -> Option<&'static str> {
+        if self.auto_resolve.is_enabled() {
+            Some("autoresolve")
+        } else if self.lifecycle == Lifecycle::ResolutionProposed {
+            Some("resolve proposed")
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn actions(&self) -> Vec<Action> {
         if self.archived {
             return vec![Action::RestoreThread];
         }
         match self.lifecycle {
-            Lifecycle::Active | Lifecycle::ResolutionProposed => {
-                vec![Action::ToggleAutoResolve, Action::ToggleResolved]
-            }
-            Lifecycle::Resolved => vec![Action::ToggleResolved, Action::ArchiveThread],
+            Lifecycle::Active | Lifecycle::ResolutionProposed => Vec::new(),
+            Lifecycle::Resolved => vec![Action::ArchiveThread],
         }
     }
 
-    fn action_label(&self, action: Action) -> &'static str {
+    fn action_label(action: Action) -> &'static str {
         match action {
-            Action::ToggleAutoResolve if self.auto_resolve.is_enabled() => "Disable auto-resolve",
-            Action::ToggleAutoResolve => "Auto-resolve",
-            Action::ToggleResolved if self.lifecycle == Lifecycle::Resolved => "Reopen",
-            Action::ToggleResolved => "Resolve",
             Action::ArchiveThread => "Archive",
             Action::RestoreThread => "Restore",
             _ => "",
@@ -136,6 +140,7 @@ fn location(thread: &Thread, placement: Option<Placement>) -> String {
 pub(crate) enum SummaryTone {
     Surface,
     Info,
+    Status,
     Lifecycle(Lifecycle),
     Author { user: bool },
     Preview,
@@ -258,13 +263,16 @@ pub(crate) fn layout(
             .enumerate()
             .map(|(index, action)| {
                 usize::from(index > 0) * 2
-                    + display_width(summary.action_label(*action))
+                    + display_width(ThreadSummary::action_label(*action))
                     + if options.cursor { 3 } else { 0 }
             })
             .sum()
     });
 
-    let mut facts = Vec::with_capacity(4);
+    let mut facts = Vec::with_capacity(5);
+    if let Some(status) = summary.status() {
+        facts.push((Fact::Status, status.to_owned()));
+    }
     if let Some(context) = summary.context() {
         facts.push((Fact::Context, context.to_owned()));
     }
@@ -332,7 +340,7 @@ pub(crate) fn layout(
                 &mut spans,
                 &mut used,
                 options.width,
-                summary.action_label(action),
+                ThreadSummary::action_label(action),
                 SummaryTone::Action,
                 Some(action),
                 &mut actions,
@@ -343,8 +351,6 @@ pub(crate) fn layout(
                     &mut used,
                     options.width,
                     match action {
-                        Action::ToggleAutoResolve => "  R",
-                        Action::ToggleResolved => "  r",
                         Action::ArchiveThread => "  a",
                         Action::RestoreThread => "  u",
                         _ => "",
@@ -371,7 +377,7 @@ pub(crate) fn layout(
                 &mut actions,
             );
         }
-        for (index, (_, text)) in shown.iter().enumerate() {
+        for (index, (fact, text)) in shown.iter().enumerate() {
             if index > 0 {
                 push_clipped(
                     &mut spans,
@@ -388,7 +394,11 @@ pub(crate) fn layout(
                 &mut used,
                 options.width,
                 text,
-                SummaryTone::Info,
+                if *fact == Fact::Status {
+                    SummaryTone::Status
+                } else {
+                    SummaryTone::Info
+                },
                 None,
                 &mut actions,
             );
@@ -409,6 +419,7 @@ pub(crate) fn layout(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fact {
+    Status,
     Context,
     Location,
     Replies,
@@ -623,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn expanded_actions_put_words_before_subdued_keys() -> anyhow::Result<()> {
+    fn headers_show_passive_lifecycle_status() -> anyhow::Result<()> {
         let (_dir, mut store, id) = fixture("summary-actions", Author::User)?;
         store.reply_user(&id, 2, "reply", UserSubmit::EnableAutoResolve)?;
         let summary = ThreadSummary::new(
@@ -643,62 +654,58 @@ mod tests {
             2,
         );
         let rendered = text(&row);
+        assert!(rendered.contains("autoresolve"), "{rendered}");
         assert!(
-            rendered.contains("Disable auto-resolve  R  Resolve  r"),
-            "{rendered}"
+            row.spans
+                .iter()
+                .any(|span| { span.text == "autoresolve" && span.tone == SummaryTone::Status })
         );
+        assert!(!rendered.contains("Auto-resolve"), "{rendered}");
+        assert!(!rendered.contains("Resolve"), "{rendered}");
         assert!(!rendered.contains("User reply"), "{rendered}");
-        let resolve = row
-            .actions
-            .iter()
-            .find(|region| region.action == Action::ToggleResolved)
-            .ok_or_else(|| anyhow::anyhow!("resolve action"))?;
-        assert_eq!(
-            row.action_at(resolve.cells.start.saturating_sub(1)),
-            None,
-            "the separator is inert"
-        );
+        assert!(row.actions.is_empty(), "{:?}", row.actions);
         assert!(row.disclosure_at(3));
         assert!(row.disclosure_at(6));
         assert!(!row.disclosure_at(7));
 
-        let non_cursor = layout(
-            &summary,
+        let (_dir, mut proposed_store, proposed_id) =
+            fixture("summary-proposed-status", Author::User)?;
+        proposed_store.reply(
+            &proposed_id,
+            Reply::new(Author::agent("agent"), 2, "done").proposing_resolution(),
+        )?;
+        let proposed = ThreadSummary::new(
+            proposed_store
+                .thread(&proposed_id)
+                .ok_or_else(|| anyhow::anyhow!("thread"))?,
+            Some(Placement::Anchored(LineRange::new(42, 46))),
+            "User",
+            None,
+        );
+        let proposed = layout(
+            &proposed,
             SummaryLayoutOptions {
                 width: 80,
-                leading: 1,
-                expanded: true,
-                cursor: false,
-            },
-            2,
-        );
-        let non_cursor_text = text(&non_cursor);
-        assert!(
-            non_cursor_text.contains("Disable auto-resolve  Resolve"),
-            "{non_cursor_text}"
-        );
-        assert!(
-            non_cursor
-                .spans
-                .iter()
-                .all(|span| span.tone != SummaryTone::ActionKey)
-        );
-
-        let clipped = layout(
-            &summary,
-            SummaryLayoutOptions {
-                width: 18,
                 leading: 1,
                 expanded: true,
                 cursor: true,
             },
             2,
         );
+        assert!(text(&proposed).contains("resolve proposed"));
         assert!(
-            (0..18).all(|column| { clipped.action_at(column) != Some(Action::ToggleResolved) }),
-            "a fully hidden action has no hit region"
+            proposed.spans.iter().any(|span| {
+                span.text == "resolve proposed" && span.tone == SummaryTone::Status
+            })
         );
+        assert!(proposed.actions.is_empty());
 
+        Ok(())
+    }
+
+    #[test]
+    fn resolved_headers_offer_direct_archive_cleanup() -> anyhow::Result<()> {
+        let (_dir, mut store, id) = fixture("summary-actions", Author::User)?;
         store.resolve(&id, None, 3)?;
         let resolved = ThreadSummary::new(
             store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
@@ -717,9 +724,42 @@ mod tests {
             3,
         );
         let rendered = text(&resolved);
-        assert!(rendered.contains("Reopen  r"), "{rendered}");
         assert!(rendered.contains("Archive  a"), "{rendered}");
-        assert!(!rendered.contains("Auto-resolve"), "{rendered}");
+        assert!(!rendered.contains("Reopen"), "{rendered}");
+        assert!(!rendered.contains("Resolve"), "{rendered}");
+        let archive = resolved
+            .actions
+            .iter()
+            .find(|region| region.action == Action::ArchiveThread)
+            .ok_or_else(|| anyhow::anyhow!("archive action"))?;
+        assert_eq!(
+            resolved.action_at(archive.cells.start.saturating_sub(1)),
+            None,
+            "the separator is inert"
+        );
+
+        let non_cursor = layout(
+            &ThreadSummary::new(
+                store.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?,
+                Some(Placement::Anchored(LineRange::new(42, 46))),
+                "User",
+                None,
+            ),
+            SummaryLayoutOptions {
+                width: 50,
+                leading: 0,
+                expanded: true,
+                cursor: false,
+            },
+            3,
+        );
+        assert!(text(&non_cursor).contains("Archive"));
+        assert!(
+            non_cursor
+                .spans
+                .iter()
+                .all(|span| span.tone != SummaryTone::ActionKey)
+        );
 
         Ok(())
     }

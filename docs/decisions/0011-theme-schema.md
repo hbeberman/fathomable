@@ -41,7 +41,9 @@ Amended 2026-09-16 by
 `thread.proposed`, and `thread.resolved`, independently of message-author
 styles. A hovered direct header action composes
 `ui.header.patch(ui.list.hover)` only on that action; no new hover role is
-added. Exact-current loading means the retired keys are unknown.
+added. Amended 2026-09-17: bottom key-bar actions use the same composition
+over each whole action-hotkey target. Exact-current loading means the retired
+keys are unknown.
 
 ## Context
 
@@ -125,7 +127,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.list.active` | `bg` of the selected entry while its list owns the keys: files, threads pane (including file groups), review file/thread headers and folded rows, and every picker result ([0079](0079-list-focus-language.md)) |
 | `ui.list.inactive` | quieter `bg` of the remembered selected entry while its list does not own the keys, including under overlays, Compose, and pending key prefixes (0079) |
 | `ui.list.cursor` | `fg` of the active list selection's left-edge bar, including the selected review thread's header and message rows together without replacing message author stripes, and of the document's current source line number while it owns navigation; these cues ignore this role's `bg`; ancestor-file context bars stay muted (0079) |
-| `ui.list.hover` | subtle `bg` of hovered help and menu entries; no keyboard selection or cursor bar (0079). On inline/review thread headers it patches only the hovered direct action over `ui.header`, leaving adjacent actions and facts unchanged ([0086](0086-one-thread-summary-and-its-actions.md)) |
+| `ui.list.hover` | subtle `bg` of hovered help and menu entries; no keyboard selection or cursor bar (0079). On bottom key bars it patches the hovered action-hotkey target over `ui.header`, leaving separators and adjacent actions unchanged; direct Archive/Restore thread-header actions use the same treatment ([0086](0086-one-thread-summary-and-its-actions.md)) |
 | `ui.popup`, `ui.popup.key` | picker, help, and status popup surface, and key labels (0012); the space menu drew on `ui.popup` before [0056](0056-the-leader-trimmed.md) |
 | `ui.menu` | the `Space` menu and the right-click menu's surface; the built-ins share its visual ground with `ui.popup`, while a custom theme may set either independently; with no `bg` the terminal shows through ([0056](0056-the-leader-trimmed.md)) |
 | `ui.picker.match` | matched characters in pickers and help filtering (0012, [0078](0078-all-keys-stays-reachable.md)) |

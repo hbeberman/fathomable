@@ -180,11 +180,11 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
     // With the keys, the bottom row is the key bar.
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("c reply") && bar.contains("r reopen"),
+        bar.contains("reply c") && bar.contains("reopen r"),
         "{bar:?}"
     );
     assert!(
-        !bar.contains("z fold"),
+        !bar.contains("fold z"),
         "z does nothing in file scope: {bar:?}"
     );
     press(&mut app, "x");
@@ -230,7 +230,7 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     );
     let bar = &column[app.pane_rows() - 1];
     assert!(
-        bar.contains("r reopen") && bar.contains("z fold"),
+        bar.contains("reopen r") && bar.contains("fold z"),
         "{bar:?}"
     );
 

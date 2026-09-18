@@ -56,14 +56,15 @@ and its one-level drop-downs join mouse navigation.
 
 Amended 2026-09-16 by
 [0086](0086-one-thread-summary-and-its-actions.md): inline and review
-thread headers expose direct auto-resolve and resolve/reopen action words.
-Only the hovered action receives `ui.header.patch(ui.list.hover)`;
-non-cursor expanded headers omit key labels but remain clickable. The
-disclosure arrow plus three cells folds, action hits take precedence over
-double-click folding, separators and clipped text have no target, and
-right-click thread menus include auto-resolve. The status line no longer
-has a waiting-count action; its total thread count still focuses the
-threads pane.
+thread headers originally exposed direct auto-resolve and resolve/reopen
+action words. Amended later 2026-09-17: those lifecycle controls always live
+on each pane's footer; direct header actions are limited to row-specific
+Archive and Restore cleanup. Footer action-hotkey targets and direct cleanup
+actions receive `ui.header.patch(ui.list.hover)`. The disclosure arrow plus
+three cells folds, action hits take precedence over double-click folding,
+separators and clipped text have no target, and right-click thread menus
+include auto-resolve. The status line no longer has a waiting-count action;
+its total thread count still focuses the threads pane.
 
 Amended 2026-09-17 by [0068](0068-what-the-files-pane-shows.md): a Files
 row's context menu is strictly item-local. Files offer open, file comment,

@@ -9,8 +9,7 @@
 //! while another pane has the keys, it says how to focus the text, and
 //! a click on it does; with the keys it reads the draft's keys, else
 //! the diff's keys while a diff is open (ADR 0069), the thread cursor's
-//! reply/edit/fold keys, and direct lifecycle keys only when their header
-//! is outside the viewport, then `Z` for the file's threads.
+//! reply/edit/lifecycle/fold keys, then `Z` for the file's threads.
 
 use crate::app::draw::header::{Header, HintOf, draft_hints};
 use crate::app::input::bindings::{Action, Where};
@@ -37,7 +36,7 @@ pub(crate) fn text_bar(app: &App) -> Header {
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
         let expanded = app.is_expanded(id);
         let on_thread_row = app.cursor_on_thread_row(id);
-        hints.extend(thread_hints(app, id, place, words, expanded, on_thread_row));
+        hints.extend(thread_hints(app, place, words, expanded, on_thread_row));
     }
     let stubs = app.stubs();
     if !stubs.is_empty() {
@@ -60,7 +59,6 @@ pub(crate) fn text_bar(app: &App) -> Header {
 /// `z` to fold an expanded thread or expand a stub.
 fn thread_hints(
     app: &App,
-    id: &fathomable_core::annotations::ThreadId,
     place: Where,
     words: Words,
     expanded: bool,
@@ -78,16 +76,14 @@ fn thread_hints(
     if app.thread_message_editable() {
         hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
     }
-    if !app.inline_thread_header_visible(id) {
-        if !words.is_resolved() {
-            hints.push(HintOf::keyed(
-                place,
-                Action::ToggleAutoResolve,
-                "auto-resolve",
-            ));
-        }
-        hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
+    if !words.is_resolved() {
+        hints.push(HintOf::keyed(
+            place,
+            Action::ToggleAutoResolve,
+            "auto-resolve",
+        ));
     }
+    hints.push(HintOf::keyed(place, Action::ToggleResolved, resolve));
     hints.push(HintOf::keyed(
         place,
         Action::Fold,
@@ -106,7 +102,6 @@ mod tests {
 
     use super::text_bar;
     use crate::app::Focus;
-    use crate::app::draw::header::expanded_header;
     use crate::app::input::bindings::Action;
     use crate::app::testing::{self, click, press_key, screen};
 
@@ -194,8 +189,8 @@ mod tests {
     }
 
     /// The bar carries the thread cursor's keys and only those that work
-    /// (ADR 0064): `e edit` on the user's own message, `z expand` on a
-    /// stub and `z fold` on an expanded thread, `Z` for the file; the
+    /// (ADR 0064): `edit e` on the user's own message, `expand z` on a
+    /// stub and `fold z` on an expanded thread, `Z` for the file; the
     /// thread header is its words alone; another pane's focus leaves the
     /// focus tip.
     #[test]
@@ -218,7 +213,7 @@ mod tests {
         app.view_mut().goto_source_line(3);
         app.start_new_comment();
         assert!(
-            bar(&app)?.contains("Enter submit"),
+            bar(&app)?.contains("submit Enter"),
             "the draft's keys: {:?}",
             bar(&app)?
         );
@@ -243,46 +238,38 @@ mod tests {
 
         assert_eq!(
             bar(&app)?.trim(),
-            "c reply · z fold · Z fold all",
+            "reply c · auto-resolve R · resolve r · fold z · fold all Z",
             "the agent's thread: no edit"
         );
         let rows = screen(&app)?;
         assert!(
             !rows
                 .iter()
-                .any(|row| row.contains("waiting") && row.contains("z fold")),
+                .any(|row| row.contains("waiting") && row.contains("fold z")),
             "the header is words alone: {rows:?}"
         );
-        let mine_thread = app
-            .thread(&mine)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("mine"))?;
-        assert!(
-            (0..80)
-                .find(|column| {
-                    let layout = expanded_header(&app, &mine_thread, false, true, 80);
-                    layout.action_at(*column) == Some(Action::ToggleResolved)
-                })
-                .is_some(),
-            "a non-cursor expanded header exposes its resolve action"
+        // On the user's own message `edit e` joins the keys.
+        app.goto_message(mine.clone(), 0);
+        assert_eq!(
+            bar(&app)?.trim(),
+            "reply c · edit e · auto-resolve R · resolve r · fold z · fold all Z"
         );
 
-        // On the user's own message `e edit` joins the keys.
-        app.goto_message(mine.clone(), 0);
-        assert_eq!(bar(&app)?.trim(), "c reply · e edit · z fold · Z fold all");
-
-        // A stub reads `z expand`; with none expanded `Z` unfolds.
+        // A stub reads `expand z`; with none expanded `Z` unfolds.
         app.fold_thread(&mine);
         app.fold_thread(&theirs);
         app.view_mut().goto_source_line(3);
-        assert_eq!(bar(&app)?.trim(), "e edit · z expand · Z unfold all");
+        assert_eq!(
+            bar(&app)?.trim(),
+            "edit e · auto-resolve R · resolve r · expand z · unfold all Z"
+        );
         assert!(
             !screen(&app)?.iter().any(|row| row.contains("(z expand)")),
             "the stub carries no hint"
         );
         // A line no thread covers keeps `Z` alone.
         app.view_mut().goto_source_line(1);
-        assert_eq!(bar(&app)?.trim(), "Z unfold all");
+        assert_eq!(bar(&app)?.trim(), "unfold all Z");
 
         // Another pane's focus: the tip. A click on the tip focuses the
         // text, and one on a hint runs it.
@@ -306,7 +293,7 @@ mod tests {
         app.view_mut().goto_row(stub_row);
         assert_eq!(app.thread_cursor().thread(), Some(&mine));
         click_bar_action(&mut app, Action::Comment)?;
-        assert!(app.draft().is_some(), "`c reply` on the bar starts a reply");
+        assert!(app.draft().is_some(), "`reply c` on the bar starts a reply");
         press_key(&mut app, KeyCode::Esc);
         assert!(app.draft().is_none());
 

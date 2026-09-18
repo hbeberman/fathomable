@@ -428,7 +428,7 @@ fn the_chevron_and_a_double_click_fold_and_unfold_the_thread() -> anyhow::Result
 }
 
 #[test]
-fn header_actions_use_exact_cells_and_the_rows_explicit_thread() -> anyhow::Result<()> {
+fn lifecycle_actions_live_in_the_footer_and_disclosure_keeps_exact_cells() -> anyhow::Result<()> {
     let dir = fixture("header-actions")?;
     let mut app = app(&dir)?;
     app.resize(100, 30);
@@ -438,9 +438,9 @@ fn header_actions_use_exact_cells_and_the_rows_explicit_thread() -> anyhow::Resu
     app.start_new_comment();
     app.compose_insert("second");
     app.compose_submit();
-    let second = app.file_threads()[1].clone();
+    let _second = app.file_threads()[1].clone();
     app.expand_thread(first.clone());
-    app.goto_message(second.clone(), 0);
+    app.goto_message(first.clone(), 0);
 
     let stubs = app.stubs();
     let block = stubs
@@ -458,45 +458,28 @@ fn header_actions_use_exact_cells_and_the_rows_explicit_thread() -> anyhow::Resu
     let thread = app.thread(&first).context("first thread")?;
     let layout = header::expanded_header(&app, thread, false, true, width);
 
-    let auto = (0..width)
-        .find(|column| layout.action_at(*column) == Some(Action::ToggleAutoResolve))
-        .context("auto-resolve action")?;
-    left(&mut app, origin + auto, screen_row);
     assert!(
-        app.thread(&first)
-            .context("first thread")?
-            .auto_resolve()
-            .is_enabled()
+        (0..width).all(|column| !matches!(
+            layout.action_at(column),
+            Some(Action::ToggleAutoResolve | Action::ToggleResolved)
+        )),
+        "the header has no lifecycle controls"
     );
-    assert!(
-        !app.thread(&second)
-            .context("second thread")?
-            .auto_resolve()
-            .is_enabled(),
-        "the non-cursor row action targets its own thread"
-    );
-    left(&mut app, origin + auto, screen_row);
-    assert!(
-        app.is_expanded(&first),
-        "action clicks take precedence over double-click folding"
-    );
-    left(&mut app, origin + auto, screen_row);
 
-    let thread = app.thread(&first).context("first thread")?;
-    let enabled_layout = header::expanded_header(&app, thread, false, true, width);
-    let enabled_auto = (0..width)
-        .find(|column| enabled_layout.action_at(*column) == Some(Action::ToggleAutoResolve))
-        .context("enabled auto-resolve action")?;
-    let first_action_end = (enabled_auto..width)
-        .find(|column| enabled_layout.action_at(*column) != Some(Action::ToggleAutoResolve))
-        .context("separator after auto-resolve")?;
-    left(&mut app, origin + first_action_end, screen_row);
+    let footer = draw::bar::text_bar(&app);
+    let footer_width = app.column_width();
+    let auto = (0..footer_width)
+        .find(|column| footer.action_at(footer_width, *column) == Some(Action::ToggleAutoResolve))
+        .context("auto-resolve footer action")?;
+    let footer_column = app.sidebar_width() + auto;
+    let footer_row = app.text_bar_row();
+    left(&mut app, footer_column, footer_row);
     assert!(
         app.thread(&first)
             .context("first thread")?
             .auto_resolve()
             .is_enabled(),
-        "the separator is inert"
+        "the footer targets the cursor thread"
     );
 
     let padded_disclosure = (0..width)
@@ -522,38 +505,22 @@ fn a_collapsed_header_has_no_invisible_actions_away_from_the_thread() -> anyhow:
     assert_eq!(app.thread_cursor().thread(), Some(&id));
     assert!(!app.threads_at_cursor().contains(&id));
 
-    let stubs = app.stubs();
-    let block = stubs
-        .iter()
-        .position(|stub| stub.thread() == Some(&id))
-        .context("thread block")?;
-    let view_row = app
-        .view()
-        .row_of_stub_slot(block, 0)
-        .context("collapsed header row")?;
-    let screen_row = app.text_top() + view_row - app.view().scroll();
     let gutter = draw::gutter_width(app.view());
-    let origin = app.sidebar_width() + gutter;
     let width = app.column_width().saturating_sub(gutter);
     let thread = app.thread(&id).context("thread")?;
     let hypothetical = header::expanded_header(&app, thread, true, false, width);
-    let hidden_action = (0..width)
-        .find(|column| hypothetical.action_at(*column) == Some(Action::ToggleAutoResolve))
-        .context("action shown while the thread is selected")?;
-
-    left(&mut app, origin + hidden_action, screen_row);
     assert!(
-        !app.thread(&id)
-            .context("thread")?
-            .auto_resolve()
-            .is_enabled(),
-        "clicking preview text cannot run a hidden action"
+        (0..width).all(|column| !matches!(
+            hypothetical.action_at(column),
+            Some(Action::ToggleAutoResolve | Action::ToggleResolved)
+        )),
+        "a selected collapsed header has no lifecycle controls"
     );
     Ok(())
 }
 
 #[test]
-fn header_hover_patches_only_the_visible_action_cells() -> anyhow::Result<()> {
+fn footer_hover_patches_only_the_visible_action_cells() -> anyhow::Result<()> {
     use ratatui::style::{Color, Style};
 
     let dir = fixture("header-hover")?;
@@ -561,51 +528,54 @@ fn header_hover_patches_only_the_visible_action_cells() -> anyhow::Result<()> {
     app.resize(100, 30);
     annotate(&mut app)?;
     let id = app.file_threads()[0].clone();
-    let stubs = app.stubs();
-    let block = stubs
-        .iter()
-        .position(|stub| stub.thread() == Some(&id))
-        .context("thread block")?;
-    let view_row = app
-        .view()
-        .row_of_stub_slot(block, 0)
-        .context("header row")?;
-    let screen_row = app.text_top() + view_row - app.view().scroll();
-    let gutter = draw::gutter_width(app.view());
-    let origin = app.sidebar_width() + gutter;
-    let width = app.column_width().saturating_sub(gutter);
-    let thread = app.thread(&id).context("thread")?;
-    let layout = header::expanded_header(&app, thread, true, false, width);
-    let action = (0..width)
-        .find(|column| layout.action_at(*column) == Some(Action::ToggleAutoResolve))
-        .context("visible action")?;
-    mouse(&mut app, MouseEventKind::Moved, origin + action, screen_row);
+    app.goto_message(id, 0);
+    let width = app.column_width();
+    let bar = draw::bar::text_bar(&app);
+    let origin = app.sidebar_width();
+    let screen_row = app.text_bar_row();
 
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
     let mut theme = draw::Theme::from_core(&core);
     let hover = Color::Rgb(1, 2, 3);
     theme.list_hover = Style::default().bg(hover);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30))?;
+    for expected in [Action::ToggleAutoResolve, Action::ToggleResolved] {
+        let action = (0..width)
+            .find(|column| bar.action_at(width, *column) == Some(expected))
+            .with_context(|| format!("visible {expected:?} action"))?;
+        mouse(&mut app, MouseEventKind::Moved, origin + action, screen_row);
+        terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
+        assert_eq!(
+            terminal.backend().buffer()
+                [(u16::try_from(origin + action)?, u16::try_from(screen_row)?)]
+                .bg,
+            hover,
+            "{expected:?} reads as a button"
+        );
+    }
+    let auto = (0..width)
+        .find(|column| bar.action_at(width, *column) == Some(Action::ToggleAutoResolve))
+        .context("visible auto-resolve action")?;
+    let separator = (0..auto)
+        .rev()
+        .find(|column| bar.action_at(width, *column).is_none())
+        .context("separator before action")?;
+    mouse(&mut app, MouseEventKind::Moved, origin + auto, screen_row);
     terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
-    let buffer = terminal.backend().buffer();
-    assert_eq!(
-        buffer[(u16::try_from(origin + action)?, u16::try_from(screen_row)?)].bg,
-        hover
-    );
     assert_ne!(
-        buffer[(
-            u16::try_from(origin + action.saturating_sub(1))?,
+        terminal.backend().buffer()[(
+            u16::try_from(origin + separator)?,
             u16::try_from(screen_row)?,
         )]
             .bg,
         hover,
-        "hover does not bleed into disclosure padding"
+        "hover does not bleed into the separator"
     );
     Ok(())
 }
 
 #[test]
-fn review_header_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
+fn review_cleanup_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
     use fathomable_core::annotations::Lifecycle;
 
     let dir = fixture("review-header-action")?;
@@ -618,8 +588,11 @@ fn review_header_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
     app.compose_insert("second");
     app.compose_submit();
     let second = app.file_threads()[1].clone();
+    app.goto_message(first.clone(), 0);
+    app.thread_toggle_resolved();
     app.goto_message(second.clone(), 0);
     app.open_review();
+    app.review_toggle_resolved();
 
     let width = app.column_width();
     let rows = app.review_rows(width);
@@ -637,15 +610,12 @@ fn review_header_action_targets_a_non_cursor_thread() -> anyhow::Result<()> {
     assert!(!selected);
     let layout = header::entry_header(summary, fathomable_core::clock::now(), false, true, width);
     let action = (0..width)
-        .find(|column| layout.action_at(*column) == Some(Action::ToggleResolved))
-        .context("resolve action")?;
+        .find(|column| layout.action_at(*column) == Some(Action::ArchiveThread))
+        .context("archive action")?;
     let screen_row = app.pane_top() + 1 + model_row - app.review_list().scroll();
     let column = app.sidebar_width() + action;
     left(&mut app, column, screen_row);
-    assert_eq!(
-        app.thread(&first).context("first")?.lifecycle(),
-        Lifecycle::Resolved
-    );
+    assert!(app.thread(&first).context("first")?.is_archived());
     assert_eq!(
         app.thread(&second).context("second")?.lifecycle(),
         Lifecycle::Active

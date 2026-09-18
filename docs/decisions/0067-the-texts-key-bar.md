@@ -37,10 +37,10 @@ new comment there; standalone `r` is unbound.
 Amended later 2026-09-16 by
 [0086](0086-one-thread-summary-and-its-actions.md): bare `r` and `R` now
 resolve/reopen and toggle one-shot auto-resolve on the cursor thread.
-Their direct controls live in every expanded inline/review header and in
-the selected collapsed header. The text bar omits those two hints while the
-cursor header is visible, restores them when it is outside the viewport,
-and continues to own reply, edit, fold, draft, diff, and focus hints.
+Amended 2026-09-17: their controls always live on the text bar rather than
+thread headers. Every key bar reads action then hotkey and highlights the
+whole action-hotkey target on hover. Thread headers retain passive dim
+`autoresolve` or `resolve proposed` status.
 
 ## Context
 
@@ -86,26 +86,32 @@ resolve. This record undoes both, the same day, for one rule.
   keeps the row under the text; the bar sits on the text row above it.
 - **What it says** while the text has the keys, under 0064's rule that
   every hint drawn works now:
-  - With a draft open, the draft's keys: `Enter submit` (`save` for an
-    edit), `Alt-Enter newline`, `Alt-k/j scroll`, `Ctrl-e $EDITOR`,
+  - With a draft open, the draft's keys: `submit Enter` (`save Enter` for an
+    edit), `newline Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
     `Esc`; or `Esc again to discard · any key keeps the draft` after an
     Esc on a changed draft.
   - Else the thread cursor's keys when the cursor line has a thread:
-    `c reply` when the cursor rests on the thread's stub or message
-    rows, `e edit` when the cursor's message is the user's, `o resolve`
-    or `o reopen`, then `z fold` on an expanded thread or `z expand` on
-    a stub. The reply hint is omitted while the cursor rests on source.
-  - Then `Z fold all` while any thread in the file is expanded, or
-    `Z unfold all` while the file has stubs and none is; nothing when
-    the file has no thread.
+    `reply c` when the cursor rests on the thread's stub or message
+    rows, `edit e` when the cursor's message is the user's,
+    `auto-resolve R` while unresolved, `resolve r` or `reopen r`, then
+    `fold z` on an expanded thread or `expand z` on a stub. The reply
+    hint is omitted while the cursor rests on source.
+  - Then `fold all Z` while any thread in the file is expanded, or
+    `unfold all Z` while the file has stubs and none is; nothing when the
+    file has no thread.
   - Hints drop from the end when the column is narrow, as every bar's
     do.
+- **Action-first buttons.** Every key bar spells a hint as action then
+  hotkey. A hint's label, separating cell, and hotkey share one click target
+  and one `ui.list.hover` background under the pointer. The ` · ` separators
+  remain passive.
 - **The rows give up their keys.** An expanded thread's header row is
-  its words alone (and, since [0073](0073-the-chevron.md), a `▾` in
-  its gutter that folds on a click). A stub's last row ends with its text. The draft's
-  author row reads ` user  draft` and nothing more. The review list's
-  cursor entry header loses the keys 0066 gave it; the list's bar
-  already carries them.
+  facts alone, including passive dim `autoresolve` or `resolve proposed`
+  status where applicable (and, since [0073](0073-the-chevron.md), a `▾`
+  in its gutter that folds on a click). A stub's last row ends with its
+  text. The draft's author row reads ` user  draft` and nothing more. The
+  review list's cursor entry header loses the keys 0066 gave it; the list's
+  bar already carries them.
 - **The cursor's stub is marked bold.** With `(z expand)` gone, the
   thread cursor's stub reads bold, in the text colour it already took,
   whether or not the text has the keys, as the threads pane's cursor

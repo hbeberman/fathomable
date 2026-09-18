@@ -233,6 +233,14 @@ Paging or clicking file rows in the Files pane updates the current file
 without closing Reviews. This lets file-scoped Reviews follow the sidebar.
 An explicit **Open**, **Go to**, or `Enter` still enters File view.
 
+Expanded thread headers keep lifecycle controls out of the conversation
+card. They show dim `autoresolve` when one-shot permission is enabled, or
+dim `resolve proposed` for current completion intent. Auto-resolve and
+resolve/reopen live in the pane footer with reply and fold actions. Footer
+buttons read action then hotkey, such as
+`reply c · auto-resolve R · resolve r · fold z · fold all Z`; hovering the
+label or hotkey highlights that whole button, while separators stay passive.
+
 Context and menu-bar popups put action labels at the left and their subdued
 shortcuts at the right, with at least one cell between them. Those menus use
 `Sp` as the compact spelling of `Space`.

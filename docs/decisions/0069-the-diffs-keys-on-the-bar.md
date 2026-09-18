@@ -29,7 +29,8 @@ now controls the single global pair, review points, and whitespace.
 Presentation amended 2026-09-17: the pair-name header also retires. A diff
 uses the File surface header, while the global menu-bar endpoint buttons
 open the base and target pickers. The diff's applicable actions remain on
-the text key bar.
+the text key bar. [0086](0086-one-thread-summary-and-its-actions.md) later
+standardizes every bar as action then hotkey with whole-button hover.
 
 ## Context
 
@@ -72,8 +73,8 @@ the key and the shape of the cycle, and no menu entry for it.
 - **The diff's keys are on the text's bar.** A diff is something the
   bar has to say, so the bar replaces the bottom text row for every
   diff. While the text has the keys it reads, first, the diff's keys:
-  `h/l page` on a checkpoint base only, then `b base`, `t target`,
-  `D next diff`, `w whitespace`, `Esc close`. After them the thread
+  `page h/l` on a checkpoint base only, then `base b`, `target t`,
+  `next diff D`, `whitespace w`, `close Esc`. After them the thread
   cursor's keys and `Z` for the file as 0067 has them. The view's keys
   keep their place at the left edge while the cursor's come and go,
   and paging is the most pressed key in a checkpoint diff. On a
@@ -106,7 +107,7 @@ the key and the shape of the cycle, and no menu entry for it.
   then on shows only what came after. Without a snapshot store the key
   says so. The idle, switch-away, and quit snapshots of 0015 are
   unchanged; this is the workspace-wide form of the same mark.
-- **The whitespace hint stays `w whitespace`.** The header's words say
+- **The whitespace hint stays `whitespace w`.** The header's words say
   `· whitespace ignored` beside it while it is on; a live label would
   say the same thing twice.
 

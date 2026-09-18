@@ -32,13 +32,13 @@ retired `ui.picker.selected`. Message rows keep 0071's author stripes.
 
 Amended 2026-09-16 by
 [0086](0086-one-thread-summary-and-its-actions.md): inline and review thread
-headers now use one summary layout. Expanded headers expose direct
-auto-resolve and resolve/reopen actions; cursor headers append subdued `R`
-and `r` labels, while non-cursor expanded headers keep clickable words
-without keys. Only the hovered action composes
-`ui.header.patch(ui.list.hover)`. The bottom bar omits those lifecycle hints
-while their cursor header is visible and restores them when it is off-screen.
-The older metadata-only entry-header and count wording remains below.
+headers now use one summary layout. A later 2026-09-17 amendment keeps
+auto-resolve and resolve/reopen on the bottom bar at all times; headers show
+only passive dim `autoresolve` or `resolve proposed` status. Direct Archive
+and Restore cleanup controls remain row-specific. Every bar reads action
+then hotkey, and the hovered action-hotkey region composes
+`ui.header.patch(ui.list.hover)`. The older metadata-only entry-header and
+count wording remains below.
 
 Amended 2026-09-17: the normal review header is `Reviews` at the left, with
 subdued `workspace`/`file` scope and lifecycle counts at the right. Scope

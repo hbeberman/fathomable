@@ -127,15 +127,20 @@ mod tests {
         // The gutter carries no bracket for it: L1 shows no mark.
         assert_eq!(app.mark_in(LineRange::new(1, 1)), None);
 
-        // Expanded with the cursor on its comment, its header says `file`
-        // and the state; `c` replies, while `z` folds it.
+        // Expanded with the cursor on its comment, its header says `file`;
+        // the footer carries reply and lifecycle controls.
         app.goto_message(file_thread.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&file_thread));
         let shown = screen(&app)?;
         assert!(
-            shown[1].contains("file") && shown[1].contains("Resolve"),
+            shown[1].contains("file") && !shown[1].contains("Resolve"),
             "{:?}",
             &shown[..4]
+        );
+        assert!(
+            shown[app.text_bar_row()].contains("resolve r"),
+            "{:?}",
+            shown[app.text_bar_row()]
         );
         press(&mut app, "c");
         assert!(app.is_expanded(&file_thread));

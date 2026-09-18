@@ -97,7 +97,15 @@ pub(super) fn threads_pane_lines<'a>(
     }
     out.truncate(body_end);
     if focused && rows > 0 {
-        out.push(with_divider(threads_pane_footer(app).line(theme, inner)));
+        let footer = threads_pane_footer(app);
+        let footer_row = app.pane_top() + app.tree_rows() + rows - 1;
+        let hovered = app
+            .pointer()
+            .filter(|(_, row)| *row == footer_row)
+            .and_then(|(column, _)| footer.action_at(inner, column));
+        out.push(with_divider(
+            footer.line_with_action_hover(theme, inner, hovered),
+        ));
     }
     out
 }
@@ -431,7 +439,7 @@ mod tests {
 
         app.focus_threads_pane();
         let focused = sidebar_column(&app, 100)?;
-        assert!(focused[last].contains("c reply"), "{:?}", focused[last]);
+        assert!(focused[last].contains("reply c"), "{:?}", focused[last]);
         assert_eq!(
             focused[top + 2].chars().skip(1).collect::<String>(),
             column[top + 2].chars().skip(1).collect::<String>(),

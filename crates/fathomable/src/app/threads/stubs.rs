@@ -376,23 +376,6 @@ impl App {
                 && self.thread_cursor().thread() == Some(id))
     }
 
-    /// Whether `id`'s inline header row is currently visible.
-    pub(crate) fn inline_thread_header_visible(&self, id: &ThreadId) -> bool {
-        let Some((block, _)) = self
-            .stubs()
-            .iter()
-            .enumerate()
-            .find(|(_, stub)| stub.thread() == Some(id))
-        else {
-            return false;
-        };
-        let Some(row) = self.view().row_of_stub_slot(block, 0) else {
-            return false;
-        };
-        let visible = self.text_rows().saturating_sub(1);
-        row >= self.view().scroll() && row < self.view().scroll() + visible
-    }
-
     /// The thread and message an expanded row shows, `None` off the
     /// expanded rows.
     pub(crate) fn expanded_row_message(&self, row: usize) -> Option<(ThreadId, usize)> {
@@ -683,7 +666,7 @@ mod tests {
         // row carries the cursor bar, the outer's does not.
         assert_eq!(barred_rows(&app, &[6, 7])?, [7], "the inner thread's row");
         assert!(
-            shown[app.text_bar_row()].contains("z expand"),
+            shown[app.text_bar_row()].contains("expand z"),
             "{:?}",
             shown[app.text_bar_row()]
         );
@@ -843,12 +826,13 @@ mod tests {
         // Outer's collapsed stub, then inner's header, comment, reply.
         assert!(shown[6].contains("outer thread"), "{:?}", shown[6]);
         assert!(
-            shown[7].contains("● ▾") && shown[7].contains("Resolve"),
-            "the header carries direct actions: {:?}",
+            shown[7].contains("● ▾") && !shown[7].contains("Resolve"),
+            "the header carries facts but no lifecycle controls: {:?}",
             shown[7]
         );
         assert!(
-            shown[app.text_bar_row()].contains("z fold"),
+            shown[app.text_bar_row()].contains("resolve r")
+                && shown[app.text_bar_row()].contains("fold z"),
             "the bar names the key: {:?}",
             shown[app.text_bar_row()]
         );

@@ -463,11 +463,11 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
     let screen = rows.join("\n");
     assert!(
         rows.iter()
-            .any(|row| row.contains("◐ ▾") && row.contains("Resolve")),
-        "header carries lifecycle and actions:\n{screen}"
+            .any(|row| row.contains("◐ ▾") && row.contains("resolve proposed")),
+        "header carries dim lifecycle status:\n{screen}"
     );
     assert!(
-        rows[app.text_bar_row()].contains("z fold"),
+        rows[app.text_bar_row()].contains("auto-resolve R"),
         "the bar carries the keys:\n{screen}"
     );
     assert!(
@@ -503,7 +503,7 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         "the author row follows the last message, its keys on the bar (ADR 0067):\n{screen}"
     );
     assert!(
-        rows[app.text_bar_row()].contains("Enter submit"),
+        rows[app.text_bar_row()].contains("submit Enter"),
         "the bar carries the draft's keys:\n{screen}"
     );
     assert!(
@@ -1176,7 +1176,12 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
         .iter()
         .find(|row| after(row).starts_with("▎● ▾"))
         .with_context(|| format!("the expanded header: {rows:?}"))?;
-    assert!(header.contains("Resolve"), "{header:?}");
+    assert!(!header.contains("Resolve"), "{header:?}");
+    assert!(
+        rows[app.text_bar_row()].contains("resolve r"),
+        "{:?}",
+        rows[app.text_bar_row()]
+    );
     let follow = rows
         .iter()
         .find(|row| row.contains("user follow-up"))
@@ -2463,13 +2468,16 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
         "a proposal counts under its own circle (ADR 0075): {screen}"
     );
     assert!(
-        screen.contains("◐ ▾   Auto-resolve  R  Resolve  r") && screen.contains("L1  ↩1"),
+        screen.contains("◐ ▾") && screen.contains("resolve proposed") && screen.contains("L1  ↩1"),
         "{screen}"
     );
     assert!(!screen.contains("waiting"), "{screen}");
     // The keys are on the bar along the list's bottom row (ADR 0059).
     let bar = screen.lines().nth(app.pane_rows() - 1).unwrap_or_default();
-    assert!(bar.contains("c reply · z fold"), "{screen}");
+    assert!(
+        bar.contains("reply c") && bar.contains("auto-resolve R"),
+        "{screen}"
+    );
     app.close_review();
 
     // Only the newest reply is read: a plain reply withdraws the proposal.
@@ -2707,7 +2715,12 @@ fn the_bar_waits_for_the_text_cursor_to_enter_the_thread() -> anyhow::Result<()>
         .iter()
         .find(|row| row.chars().nth(gutter) == Some('▎'))
         .context("the barred row")?;
-    assert!(header.contains("Resolve"), "the header: {header:?}");
+    assert!(!header.contains("Resolve"), "the header: {header:?}");
+    assert!(
+        rows[app.text_bar_row()].contains("resolve r"),
+        "{:?}",
+        rows[app.text_bar_row()]
+    );
     for _ in 0..10 {
         if app
             .view()

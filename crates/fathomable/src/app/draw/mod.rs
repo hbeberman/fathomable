@@ -698,8 +698,15 @@ fn draw_text_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
         return;
     }
     let width = usize::from(area.width);
+    let bar = bar::text_bar(app);
+    let row = usize::from(area.y + area.height - 1);
+    let hovered = app
+        .pointer()
+        .filter(|(_, pointer_row)| *pointer_row == row)
+        .and_then(|(column, _)| column.checked_sub(usize::from(area.x)))
+        .and_then(|column| bar.action_at(width, column));
     frame.render_widget(
-        Paragraph::new(bar::text_bar(app).line(theme, width)).style(theme.info),
+        Paragraph::new(bar.line_with_action_hover(theme, width, hovered)).style(theme.info),
         Rect {
             y: area.y + area.height - 1,
             height: 1,
@@ -2686,7 +2693,14 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
     }
     if rows >= 2 {
         lines.resize_with(rows - 1, Line::default);
-        lines.push(review_footer(app, &entries).line(theme, width));
+        let footer = review_footer(app, &entries);
+        let footer_row = usize::from(area.y) + rows - 1;
+        let hovered = app
+            .pointer()
+            .filter(|(_, row)| *row == footer_row)
+            .and_then(|(column, _)| column.checked_sub(usize::from(area.x)))
+            .and_then(|column| footer.action_at(width, column));
+        lines.push(footer.line_with_action_hover(theme, width, hovered));
     }
     frame.render_widget(Paragraph::new(lines).style(theme.text), area);
 }

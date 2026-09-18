@@ -10,8 +10,8 @@
 //! live on a bar along a pane's bottom row,
 //! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
 //! text's in [`super::bar`] (ADR 0067). Thread rows use the summary
-//! engine from `app::threads::summary`, including direct actions and
-//! exact hit regions (ADR 0086). Every header row draws on `ui.header`.
+//! engine from `app::threads::summary`, including direct cleanup actions
+//! and exact hit regions (ADR 0086). Every header row draws on `ui.header`.
 //!
 //! A key hint is drawn only where pressing that key now, with the focus
 //! and cursor as they are, runs the action it names (ADR 0064): a bar
@@ -174,8 +174,8 @@ impl HintOf {
         }
     }
 
-    /// The columns the hint takes in `form`: key, action, the space
-    /// between when both are present, and the word when worded.
+    /// The columns the hint takes in `form`: key, action, their gap,
+    /// and the word when worded.
     fn width(&self, form: Form) -> usize {
         display_width(self.key_in(form))
             + display_width(&self.what)
@@ -228,6 +228,8 @@ pub(crate) struct Header {
     align: Align,
     /// What joins the hints: ` · ` for keys, a space for counts.
     sep: &'static str,
+    /// Key bars read as action then hotkey; headers keep key then fact.
+    action_first: bool,
 }
 
 impl Header {
@@ -239,10 +241,11 @@ impl Header {
             tail: Vec::new(),
             align: Align::Right,
             sep: " · ",
+            action_first: false,
         }
     }
 
-    /// A key bar: no words, the hints from the left edge (ADR 0059).
+    /// A key bar: no words, action then hotkey from the left edge.
     pub(super) fn bar(hints: Vec<HintOf>) -> Self {
         Self {
             left: Vec::new(),
@@ -250,6 +253,7 @@ impl Header {
             tail: Vec::new(),
             align: Align::Left,
             sep: " · ",
+            action_first: true,
         }
     }
 
@@ -262,6 +266,7 @@ impl Header {
             tail: Vec::new(),
             align,
             sep: " ",
+            action_first: false,
         }
     }
 
@@ -273,6 +278,7 @@ impl Header {
             tail,
             align: Align::Right,
             sep: " ",
+            action_first: false,
         }
     }
 
@@ -365,7 +371,20 @@ impl Header {
                 let slash = key.find('/').map(|byte| display_width(&key[..byte]));
                 return match (hint.actions.as_slice(), slash) {
                     ([first, second], Some(slash)) => {
-                        Some(if offset <= slash { *first } else { *second })
+                        let key_start = if self.action_first {
+                            display_width(&hint.what)
+                                + usize::from(
+                                    hint.gap && !hint.key.is_empty() && !hint.what.is_empty(),
+                                )
+                                + usize::from(form == Form::Worded) * hint.word_width()
+                        } else {
+                            0
+                        };
+                        Some(if offset < key_start || offset - key_start <= slash {
+                            *first
+                        } else {
+                            *second
+                        })
                     }
                     (actions, _) => actions.first().copied(),
                 };
@@ -376,10 +395,10 @@ impl Header {
     }
 
     /// The header as one drawn row on `ui.header`: the words, then the
-    /// hints joined by the separator, the key dim and its action dimmer
-    /// still, padded to `width` so the surface reaches the right edge.
+    /// hints joined by the separator, padded to `width` so the surface
+    /// reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
-        self.line_with_left_hover(theme, width, false)
+        self.line_with_hovers(theme, width, false, None)
     }
 
     /// Draw the header with hover behind its clickable left label.
@@ -389,23 +408,35 @@ impl Header {
         width: usize,
         left_hovered: bool,
     ) -> Line<'static> {
-        let tone_style = |tone: Tone| match tone {
-            Tone::Key => theme.popup_key,
-            Tone::Info => theme.info,
-            Tone::Dir => theme.sidebar_dir.add_modifier(Modifier::BOLD),
-            Tone::Mark(state) => mark_style(theme, state),
-            Tone::Added => theme.diff_plus,
-            Tone::Removed => theme.diff_minus,
-        };
+        self.line_with_hovers(theme, width, left_hovered, None)
+    }
+
+    /// Draw a key bar with hover behind the action under the pointer.
+    pub(super) fn line_with_action_hover(
+        &self,
+        theme: &Theme,
+        width: usize,
+        hovered: Option<Action>,
+    ) -> Line<'static> {
+        self.line_with_hovers(theme, width, false, hovered)
+    }
+
+    fn line_with_hovers(
+        &self,
+        theme: &Theme,
+        width: usize,
+        left_hovered: bool,
+        hovered: Option<Action>,
+    ) -> Line<'static> {
         let mut spans: Vec<Span<'static>> = self
             .left
             .iter()
             .enumerate()
             .map(|(index, (text, tone))| {
                 let style = if left_hovered && index == 0 {
-                    tone_style(*tone).patch(theme.list_hover)
+                    tone_style(theme, *tone).patch(theme.list_hover)
                 } else {
-                    tone_style(*tone)
+                    tone_style(theme, *tone)
                 };
                 Span::styled(text.clone(), style)
             })
@@ -421,18 +452,29 @@ impl Header {
                     spans.push(Span::styled(self.sep, faint));
                     at += sep;
                 }
+                let hint_hovered = hovered.is_some_and(|action| hint.actions.contains(&action));
+                let surface = if hint_hovered {
+                    theme.header.patch(theme.list_hover)
+                } else {
+                    theme.header
+                };
+                let on_surface = |accent: ratatui::style::Style| {
+                    if !hint_hovered {
+                        return accent;
+                    }
+                    let mut style = surface.patch(accent);
+                    style.bg = surface.bg;
+                    style
+                };
                 let key = hint.key_in(form);
-                if !key.is_empty() {
-                    let mut style = hint.tone.map_or(theme.info, tone_style);
+                let key_span = || {
+                    let mut style = hint.tone.map_or(theme.info, |tone| tone_style(theme, tone));
                     if hint.faint {
                         style = style.add_modifier(Modifier::DIM);
                     }
-                    spans.push(Span::styled(key.to_owned(), style));
-                }
-                if hint.gap && !key.is_empty() && !hint.what.is_empty() {
-                    spans.push(Span::styled(" ", faint));
-                }
-                if !hint.what.is_empty() {
+                    Span::styled(key.to_owned(), on_surface(style))
+                };
+                let what_span = || {
                     // A count's number reads in the text colour, dim
                     // only when the count is of what is hidden.
                     let style = match (hint.number, hint.faint) {
@@ -440,16 +482,58 @@ impl Header {
                         (true, true) => theme.text.add_modifier(Modifier::DIM),
                         (false, _) => faint,
                     };
-                    spans.push(Span::styled(hint.what.clone(), style));
-                }
-                if form == Form::Worded && !hint.word.is_empty() {
-                    spans.push(Span::styled(format!(" {}", hint.word), faint));
+                    Span::styled(hint.what.clone(), on_surface(style))
+                };
+                let gap = hint.gap && !key.is_empty() && !hint.what.is_empty();
+                if self.action_first {
+                    if !hint.what.is_empty() {
+                        spans.push(what_span());
+                    }
+                    if form == Form::Worded && !hint.word.is_empty() {
+                        spans.push(Span::styled(format!(" {}", hint.word), on_surface(faint)));
+                    }
+                    if gap {
+                        spans.push(Span::styled(
+                            " ",
+                            if hint_hovered { surface } else { faint },
+                        ));
+                    }
+                    if !key.is_empty() {
+                        spans.push(key_span());
+                    }
+                } else {
+                    if !key.is_empty() {
+                        spans.push(key_span());
+                    }
+                    if gap {
+                        spans.push(Span::styled(
+                            " ",
+                            if hint_hovered { surface } else { faint },
+                        ));
+                    }
+                    if !hint.what.is_empty() {
+                        spans.push(what_span());
+                    }
+                    if form == Form::Worded && !hint.word.is_empty() {
+                        spans.push(Span::styled(format!(" {}", hint.word), on_surface(faint)));
+                    }
                 }
                 at += hint.width(form);
             }
         }
         spans.push(Span::raw(" ".repeat(width.saturating_sub(at))));
         Line::from(spans).style(theme.header)
+    }
+}
+
+fn tone_style(theme: &Theme, tone: Tone) -> ratatui::style::Style {
+    match tone {
+        Tone::Key => theme.popup_key,
+        Tone::Info => theme.info,
+        Tone::Dir => theme.sidebar_dir.add_modifier(Modifier::BOLD),
+        Tone::Mark(state) => mark_style(theme, state),
+        Tone::Added => theme.diff_plus,
+        Tone::Removed => theme.diff_minus,
     }
 }
 
@@ -536,6 +620,7 @@ pub(crate) fn summary_line<'a>(
                 let style = match tone {
                     SummaryTone::Surface | SummaryTone::Action => surface,
                     SummaryTone::Info | SummaryTone::ActionKey => on(surface, theme.info),
+                    SummaryTone::Status => on(surface, theme.info.add_modifier(Modifier::DIM)),
                     SummaryTone::Lifecycle(lifecycle) => on(
                         surface,
                         mark_style(
@@ -665,7 +750,7 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                 hints.push(HintOf::keyed(place, Action::EditMessage, "edit"));
             }
         }
-        if view != ReviewView::Archived && !app.review_thread_header_visible() {
+        if view != ReviewView::Archived {
             let resolved = app
                 .thread_cursor()
                 .thread()
@@ -674,7 +759,11 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
                     thread.lifecycle() == fathomable_core::annotations::Lifecycle::Resolved
                 });
             if !resolved {
-                hints.push(HintOf::keyed(place, Action::ToggleAutoResolve, "auto"));
+                hints.push(HintOf::keyed(
+                    place,
+                    Action::ToggleAutoResolve,
+                    "auto-resolve",
+                ));
             }
             hints.push(HintOf::keyed(
                 place,
@@ -772,7 +861,7 @@ pub(crate) fn files_pane_header(app: &App) -> Header {
 }
 
 /// The threads pane's key bar on its bottom row while it has the keys
-/// (ADR 0066): `s scope · x resolved`, and the fold keys in workspace
+/// (ADR 0066): `scope s · resolved x`, and the fold keys in workspace
 /// scope, where they work (ADR 0064).
 pub(crate) fn threads_pane_footer(app: &App) -> Header {
     let place = Where::ThreadsPane;
@@ -867,7 +956,7 @@ mod tests {
         let line = bar().line(&theme()?, 40);
         let text = text(&line);
         assert_eq!(display_width(&text), 40);
-        assert_eq!(text.trim_end(), " s file · x resolved · k/j threads");
+        assert_eq!(text.trim_end(), " file s · resolved x · threads k/j");
         Ok(())
     }
 
@@ -875,7 +964,7 @@ mod tests {
     fn a_bar_drops_hints_from_the_end_when_narrow() -> anyhow::Result<()> {
         let theme = theme()?;
         let line = bar().line(&theme, 24);
-        assert_eq!(text(&line).trim_end(), " s file · x resolved");
+        assert_eq!(text(&line).trim_end(), " file s · resolved x");
         let line = bar().line(&theme, 4);
         assert_eq!(text(&line), "    ", "no hint fits");
         Ok(())
@@ -886,9 +975,12 @@ mod tests {
         let bar = bar();
         assert_eq!(bar.action_at(40, 1), Some(Action::FileOnly));
         assert_eq!(bar.action_at(40, 10), Some(Action::ReviewResolved));
-        let threads = display_width(" s file · x resolved · ");
+        let threads = display_width(" file s · resolved x · ");
         assert_eq!(bar.action_at(40, threads), Some(Action::ThreadPrev));
-        assert_eq!(bar.action_at(40, threads + 2), Some(Action::ThreadNext));
+        assert_eq!(
+            bar.action_at(40, threads + display_width("threads k/")),
+            Some(Action::ThreadNext)
+        );
         assert_eq!(bar.action_at(40, 0), None, "the margin runs nothing");
         assert_eq!(
             bar.action_at(24, threads),
@@ -963,7 +1055,32 @@ mod tests {
     }
 
     #[test]
-    fn thread_action_keys_trail_words_in_the_subdued_style() -> anyhow::Result<()> {
+    fn a_bar_action_reads_as_one_button_on_hover() -> anyhow::Result<()> {
+        use ratatui::style::{Color, Style};
+
+        let mut theme = theme()?;
+        let hover = Color::Rgb(1, 2, 3);
+        theme.list_hover = Style::default().bg(hover);
+        let line = bar().line_with_action_hover(&theme, 40, Some(Action::FileOnly));
+        for part in ["file", " ", "s"] {
+            assert!(
+                line.spans
+                    .iter()
+                    .any(|span| span.content == part && span.style.bg == Some(hover)),
+                "{part:?} is part of the hovered button: {line:?}"
+            );
+        }
+        let separator = line
+            .spans
+            .iter()
+            .find(|span| span.content == " · ")
+            .ok_or_else(|| anyhow::anyhow!("separator"))?;
+        assert_ne!(separator.style.bg, Some(hover));
+        Ok(())
+    }
+
+    #[test]
+    fn thread_cleanup_action_keys_trail_words_in_the_subdued_style() -> anyhow::Result<()> {
         use crate::app::draw::author::CURSOR_BAR;
         use crate::app::testing::{self, source_app};
 
@@ -974,6 +1091,8 @@ mod tests {
         app.compose_insert("mine");
         app.compose_submit();
         let id = app.file_threads()[0].clone();
+        app.goto_message(id.clone(), 0);
+        app.thread_toggle_resolved();
         let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
         let layout = expanded_header(&app, thread, true, true, 80);
         let theme = theme()?;
@@ -986,17 +1105,47 @@ mod tests {
         let action = line
             .spans
             .iter()
-            .position(|span| span.content == "Auto-resolve")
+            .position(|span| span.content == "Archive")
             .ok_or_else(|| anyhow::anyhow!("action word"))?;
         let key = line
             .spans
             .iter()
-            .position(|span| span.content == "  R")
+            .position(|span| span.content == "  a")
             .ok_or_else(|| anyhow::anyhow!("action key"))?;
         assert!(action < key);
         assert_eq!(line.spans[key].style.fg, theme.info.fg);
         assert_eq!(line.spans[key].style.bg, theme.header.bg);
         assert!(!text(&line).contains('['));
+        Ok(())
+    }
+
+    #[test]
+    fn thread_lifecycle_status_is_dim_and_passive() -> anyhow::Result<()> {
+        use crate::app::draw::author::CURSOR_BAR;
+        use crate::app::testing::{self, source_app};
+
+        let dir = testing::workspace("header-status-style", testing::README)?;
+        let mut app = source_app(&dir)?;
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("mine");
+        app.compose_submit();
+        let id = app.file_threads()[0].clone();
+        app.goto_message(id.clone(), 0);
+        app.thread_toggle_auto_resolve();
+        let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
+        let layout = expanded_header(&app, thread, true, true, 80);
+        assert!(
+            (0..80).all(|column| layout.action_at(column).is_none()),
+            "status text is not interactive"
+        );
+        let line = summary_line(&theme()?, &layout, vec![Span::raw(CURSOR_BAR)], None);
+        let status = line
+            .spans
+            .iter()
+            .find(|span| span.content == "autoresolve")
+            .ok_or_else(|| anyhow::anyhow!("autoresolve status"))?;
+        assert!(status.style.add_modifier.contains(Modifier::DIM));
         Ok(())
     }
 }

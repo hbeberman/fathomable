@@ -36,6 +36,13 @@ keeps the draft intact; the bar offers `Enter` to atomically reopen and
 submit with the original Ctrl-Enter intent, or `Esc` to keep editing while
 the thread remains resolved.
 
+Amended 2026-09-17 by
+[0086](0086-one-thread-summary-and-its-actions.md): every key bar reads
+action then hotkey and highlights each whole action-hotkey target on hover.
+Draft hints therefore read `submit Enter`, `submit + auto-resolve
+Ctrl-Enter`, `newline Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
+and `Esc`.
+
 ## Context
 
 [0013](0013-annotation-storage-and-ux.md) gave the viewer a comment box
@@ -100,12 +107,12 @@ the request left open; each took the recommended answer.
 ### The rows
 
 - The **author row** reads ` user  draft` as a message's author row
-  reads ` user  2m ago`, with the draft keys at the right edge in the
-  header style: `Enter submit` (`save` for an edit), `Alt-Enter
-  newline`, `Alt-k/j scroll`, `Ctrl-e $EDITOR`, `Esc`. After an Esc on a
-  changed draft the row's right edge asks `Esc again to discard · any
-  key keeps the draft` instead, as the box header did. A click on a
-  hint runs it ([0050](0050-mouse-menus-and-gestures.md)).
+  reads ` user  2m ago`; the draft keys live on the bottom bar in the
+  header style: `submit Enter` (`save Enter` for an edit), `newline
+  Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`, `Esc`. After an Esc
+  on a changed draft the bar asks `again to discard Esc · any key keeps
+  the draft` instead, as the box header did. A click on a hint runs it
+  ([0050](0050-mouse-menus-and-gestures.md)).
 - The **draft's rows** are the draft wrapped at the text width less the
   message indent, one row per wrapped row and at least one, indented as
   a message body is. The terminal cursor sits on the draft's cursor

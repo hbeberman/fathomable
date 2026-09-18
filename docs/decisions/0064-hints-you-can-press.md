@@ -23,6 +23,10 @@ Amended 2026-09-17: the local diff header retires in favor of the File
 surface header. Comparison hints remain governed by this rule on the text
 key bar.
 
+Amended later 2026-09-17: key bars read action then hotkey. Each visible
+hint's label, gap, and hotkey are one clickable region with the shared hover
+background; inter-action separators remain passive.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) gave an expanded thread a

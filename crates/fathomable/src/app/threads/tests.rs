@@ -1788,6 +1788,71 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
 }
 
 #[test]
+fn socket_starts_reject_symlink_escapes_and_nonrelative_paths() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = testing::workspace("socket-start-symlink-escape", testing::README)?;
+    let mut app = app(&dir)?;
+    let outside = dir.0.join("outside");
+    fs::create_dir(&outside)?;
+    fs::write(outside.join("a.md"), "synthetic outside-only evidence\n")?;
+    symlink("../outside/a.md", testing::root(&dir).join("escape.md"))?;
+    symlink("../outside", testing::root(&dir).join("linked-directory"))?;
+    for path in [
+        PathBuf::from("escape.md"),
+        PathBuf::from("linked-directory/a.md"),
+        PathBuf::from("../outside/a.md"),
+        outside.join("a.md"),
+    ] {
+        for range in [Some(LineRange::new(1, 1)), None] {
+            let response = app.handle_request(Request::ThreadStart {
+                path: path.clone(),
+                range,
+                author: Author::agent("reviewer"),
+                caller: "test:symlink-escape".to_owned(),
+                body: "must not capture outside text".to_owned(),
+                idempotency_key: None,
+            });
+            assert!(matches!(response, Response::Error(_)), "{response:?}");
+            assert!(!format!("{response:?}").contains("outside-only evidence"));
+            assert!(Store::open(testing::store_path(&dir))?.threads().is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn socket_replies_reject_symlink_replacement_without_mutating_the_thread() -> anyhow::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let dir = testing::workspace("socket-reply-symlink-escape", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "original review")?;
+    let id = app.marks()[0].id().clone();
+    let before = fs::read(testing::store_path(&dir))?;
+    fs::write(
+        dir.0.join("outside.txt"),
+        "synthetic outside-only evidence\nsecond private line\n",
+    )?;
+    fs::remove_file(testing::root(&dir).join("README.md"))?;
+    symlink("../outside.txt", testing::root(&dir).join("README.md"))?;
+
+    let response = app.handle_request(Request::ThreadReply {
+        thread: id,
+        author: Author::agent("reviewer"),
+        caller: "test:symlink-escape".to_owned(),
+        body: "must not relocate to outside text".to_owned(),
+        resolve: false,
+        lines: Some(LineRange::new(2, 2)),
+        idempotency_key: None,
+    });
+    assert!(matches!(response, Response::Error(_)), "{response:?}");
+    assert!(!format!("{response:?}").contains("outside-only evidence"));
+    assert_eq!(fs::read(testing::store_path(&dir))?, before);
+    Ok(())
+}
+
+#[test]
 fn socket_idempotent_start_replays_without_reading_or_toasting() -> anyhow::Result<()> {
     let dir = testing::workspace("threads-socket-idempotent-start", testing::README)?;
     let mut app = app(&dir)?;

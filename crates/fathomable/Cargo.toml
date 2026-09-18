@@ -19,6 +19,7 @@ workspace = true
 
 [dependencies]
 anyhow.workspace = true
+cap-std.workspace = true
 clap = { workspace = true, features = ["derive"] }
 crossterm.workspace = true
 fathomable-core.workspace = true

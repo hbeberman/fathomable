@@ -6,7 +6,6 @@
 //! `thread_start` lives in [`super::start`].
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
@@ -27,6 +26,8 @@ use rmcp::service::RequestContext;
 use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use crate::app::threads::read_checkout_text;
 
 use super::{Server, Target, call};
 /// `threads` arguments.
@@ -919,7 +920,7 @@ impl Tree {
     fn capture_text(&self, path: &Path) -> Result<Option<String>, String> {
         for attempt in 0..Self::MAX_PROJECTION_ATTEMPTS {
             let before = self.observed_head();
-            let text = match fs::read_to_string(self.root.join(path)) {
+            let text = match read_checkout_text(&self.root, path) {
                 Ok(text) => Some(text),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) if error.kind() == std::io::ErrorKind::InvalidData => None,
@@ -1541,8 +1542,7 @@ fn refusal(
     }
     let lines = structural_reply(item, thread)?;
     if let Some(range) = lines {
-        let path = root.join(thread.path());
-        let text = match fs::read_to_string(&path) {
+        let text = match read_checkout_text(root, thread.path()) {
             Ok(text) => text,
             Err(error) => {
                 return Err(format!(
@@ -1724,7 +1724,7 @@ fn headless_reply(
     }
     let outcome = store
         .agent_reply(thread, command, |path| {
-            fs::read_to_string(root.join(path)).map_err(|error| {
+            read_checkout_text(root, path).map_err(|error| {
                 fathomable_core::annotations::StoreError::message(format!(
                     "cannot read {}: {error}",
                     path.display()

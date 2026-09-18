@@ -32,8 +32,10 @@ pub(crate) mod words;
 pub(crate) use draft::{Compose, ComposeTarget};
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::{Component, Path, PathBuf};
 
+use cap_std::{ambient_authority, fs::Dir};
 use fathomable_core::annotations::{
     AgentReplyCommand, Author, ContentIdentity, Draft, Lifecycle, LineHashes, LineRange,
     MessageTarget, OriginVersion, Placement, PlacementContext, ResolutionContext,
@@ -130,6 +132,23 @@ pub(crate) fn author_label(author: &Author, user: &str) -> String {
     }
 }
 
+/// Read annotation text without allowing path resolution outside the checkout.
+pub(crate) fn read_checkout_text(root: &Path, path: &Path) -> io::Result<String> {
+    if path.as_os_str().is_empty()
+        || path
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "expected a repository-relative file path",
+        ));
+    }
+    // Capability-relative resolution also confines symlinks and directory swaps;
+    // canonicalizing and then reopening a pathname would leave a race.
+    Dir::open_ambient_dir(root, ambient_authority())?.read_to_string(path)
+}
+
 /// Capture an agent opening comment from the bound checkout.
 ///
 /// The observed `HEAD`, working-tree state, and content identity are
@@ -149,7 +168,7 @@ pub(crate) fn agent_start_draft(
         let status = workspace
             .status()
             .map_err(|error| format!("cannot capture {} provenance: {error}", path.display()))?;
-        let text = std::fs::read_to_string(workspace.root().join(path))
+        let text = read_checkout_text(workspace.root(), path)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         if workspace.head_commit() != observed_head {
             if attempt + 1 == MAX_CAPTURE_ATTEMPTS {
@@ -567,7 +586,7 @@ impl App {
                 return Err(self.thread_store_unavailable());
             };
             store.agent_reply(id, command, |_path| {
-                std::fs::read_to_string(root.join(&placement_path)).map_err(|error| {
+                read_checkout_text(&root, &placement_path).map_err(|error| {
                     fathomable_core::annotations::StoreError::message(format!(
                         "cannot read {}: {error}",
                         placement_path.display()

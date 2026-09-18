@@ -50,6 +50,21 @@ Approved core set:
 | `sha2` | RustCrypto org | content hashes for anchors ([0013](0013-annotation-storage-and-ux.md), added 2026-08-26) |
 | `regex` | rust-lang org (BurntSushi) | `/` and `?` search patterns ([0010](0010-viewer-ux.md)) |
 | `nucleo-matcher` | helix-editor org | fuzzy file picker matching ([0012](0012-workspace-mode.md), added 2026-08-26) |
+| `cap-std` | bytecodealliance org | race-resistant, checkout-confined annotation reads ([0061](0061-agents-start-threads.md#checkout-confined-reads), added 2026-09-17) |
+
+`cap-std` is explicitly approved for annotation reads. The standard library
+and existing dependencies do not provide a safe capability-relative file
+open that confines both symlink targets and concurrent path replacements.
+Checking a canonical path before an ordinary read would leave a
+check/open race; the application continues to forbid unsafe code.
+Its Windows-only transitive dependency `winx` **0.36.4** is explicitly
+approved under `Apache-2.0 WITH LLVM-exception`. The cargo-deny license
+exception is restricted to that package and version; the global allowlist
+is unchanged. Upstream gates `winx` with `cfg(windows)`, so GNU/Linux builds
+do not compile or link it. It remains in the all-platform lockfile and
+cargo-deny graph; `cap-std` has no feature that removes Windows dependencies.
+The bundled notice inventory remains GNU/Linux-only as
+specified by [0088](0088-bundled-licenses.md).
 
 Rules:
 

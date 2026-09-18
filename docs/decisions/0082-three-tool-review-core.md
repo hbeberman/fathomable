@@ -84,6 +84,11 @@ that handoff.
 does not change. It discovers the checkout directly without workspace-marker
 setup. Tools have no per-call workspace or viewer selector.
 
+Working-tree text used by these tools is
+[read within the checkout](0061-agents-start-threads.md#checkout-confined-reads),
+including during placement and relocation. A symlink escape is an explicit
+error, not permission to read another directory.
+
 The complete MCP surface is:
 
 - `threads`: read discussions.

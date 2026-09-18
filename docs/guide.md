@@ -202,6 +202,12 @@ and `params._meta.threadId`. Reads need no identity; unsupported writes fail
 explicitly. See [identity details](decisions/0080-automatic-chat-identity.md)
 and [tool contracts](decisions/0084-explicit-mcp-contracts.md).
 
+MCP source reads stay within the bound checkout, including when a viewer
+handles a write. Relative symlinks within that checkout work; absolute
+symlink targets and links escaping it (including directory links) fail
+explicitly. This also applies when an existing thread's file becomes an
+escaping symlink before a read or relocation.
+
 ## What gets saved where
 
 Product state lives under `$XDG_STATE_HOME/fathomable`

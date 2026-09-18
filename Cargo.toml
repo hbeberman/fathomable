@@ -27,6 +27,7 @@ publish = false
 fathomable-core = { path = "crates/fathomable-core", version = "0.1.0" }
 fathomable-testing = { path = "crates/fathomable-testing", version = "0.1.0" }
 anyhow = "1.0.104"
+cap-std = "4.0.3"
 clap = "4.6.6"
 crossterm = "0.29.0"
 gix = { version = "0.87", default-features = false }

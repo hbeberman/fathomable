@@ -88,6 +88,27 @@ recommended answer, and they are recorded below.
   followed by the unsubscribed nudge when there is no subscription.
 - It works without a viewer, through the store, as `thread_reply` does.
 
+### Checkout-confined reads
+
+Agent-start validation and origin capture read through one capability-relative
+reader rooted at the bound checkout. The same reader supplies MCP placement,
+reply validation, and headless or viewer-backed agent relocation. A
+repository-relative spelling is not sufficient: symlink targets and parent
+directories must also resolve within that checkout, even if they change
+between validation and the actual read.
+
+Relative symlinks that stay inside the checkout are supported. Absolute
+symlink targets, escaping relative targets, and escaping directory symlinks
+are refused with an explicit read error; no outside contents enter a new
+snippet, content identity, or relocation. The reader rejects absolute input
+paths and parent traversal independently of MCP validation, so direct viewer
+socket requests have the same protection. Normal missing-file and binary
+placement behavior is unchanged.
+
+This boundary protects agent-driven reads; it does not sandbox the human
+viewer, Git access, or the host agent. Existing stored excerpts are not
+rewritten by the fix.
+
 ### Who wrote the comment
 
 - A thread records the **author of its comment**. `Draft::new` takes

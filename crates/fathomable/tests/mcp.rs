@@ -1024,6 +1024,111 @@ fn reading_returns_every_open_conversation_without_mutating_state() -> Result<()
 }
 
 #[test]
+fn starts_reject_escaping_symlinks_without_writing_any_of_the_batch() -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("mcp-symlink-escape")?;
+    let outside = fixture.dir.0.join("outside");
+    fs::create_dir(&outside)?;
+    let private_text = "synthetic outside-only evidence\n";
+    fs::write(outside.join("evidence.txt"), private_text)?;
+    symlink(
+        outside.join("evidence.txt"),
+        fixture.root.join("absolute.md"),
+    )?;
+    symlink("../outside/evidence.txt", fixture.root.join("relative.md"))?;
+    symlink("../outside", fixture.root.join("linked-directory"))?;
+    symlink("relative.md", fixture.root.join("chain.md"))?;
+    let mut client = Mcp::copilot(&fixture, "symlink-escape")?;
+
+    for path in [
+        "absolute.md",
+        "relative.md",
+        "linked-directory/evidence.txt",
+        "chain.md",
+    ] {
+        for line in [Some(1), None] {
+            let result = client.call(
+                "thread_start",
+                json!({"comments": [
+                    {"path": "a.md", "line": 1, "body": "valid first item"},
+                    {"path": path, "line": line, "body": "must not capture outside text"}
+                ]}),
+            )?;
+            assert_eq!(result["isError"], true, "{path}: {result}");
+            assert_eq!(result["structuredContent"]["error_code"], "INVALID_BATCH");
+            assert_eq!(result["structuredContent"]["issues"][0]["item_index"], 1);
+            assert!(!result.to_string().contains(private_text.trim()));
+            assert!(fixture.store()?.threads().is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn starts_accept_relative_symlinks_confined_to_the_checkout() -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("mcp-symlink-confined")?;
+    fs::create_dir(fixture.root.join("nested"))?;
+    fs::write(fixture.root.join("nested/b.md"), "inside\n")?;
+    symlink("a.md", fixture.root.join("file-link.md"))?;
+    symlink("nested", fixture.root.join("directory-link"))?;
+    symlink("../a.md", fixture.root.join("nested/parent-link.md"))?;
+    let mut client = Mcp::copilot(&fixture, "symlink-confined")?;
+
+    for (path, snippet) in [
+        ("file-link.md", "one"),
+        ("directory-link/b.md", "inside"),
+        ("nested/parent-link.md", "one"),
+    ] {
+        let result = client.ok(
+            "thread_start",
+            json!({"comments": [{"path": path, "line": 1, "body": "inside review"}]}),
+        )?;
+        let thread = &result["structuredContent"]["threads"][0];
+        assert_eq!(thread["path"], path);
+        assert_eq!(thread["origin"]["snippet"], snippet);
+        assert_eq!(thread["placement"], "anchored");
+    }
+    assert_eq!(fixture.store()?.threads().len(), 3);
+    Ok(())
+}
+
+#[test]
+fn reads_and_replies_reject_files_replaced_by_escaping_symlinks() -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new("mcp-symlink-replacement")?;
+    let mut client = Mcp::copilot(&fixture, "symlink-replacement")?;
+    let started = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "line": 1, "body": "original review"}]}),
+    )?;
+    let id = started["structuredContent"]["threads"][0]["id"].clone();
+    let before = fs::read(fixture.threads_path()?)?;
+    let private_text = "synthetic outside-only evidence\nsecond private line\n";
+    fs::write(fixture.dir.0.join("outside.txt"), private_text)?;
+    fs::remove_file(fixture.root.join("a.md"))?;
+    symlink("../outside.txt", fixture.root.join("a.md"))?;
+
+    for (tool, arguments) in [
+        ("threads", json!({"ids": [id]})),
+        (
+            "thread_reply",
+            json!({"replies": [{"thread": id, "line": 2, "body": "move review"}]}),
+        ),
+    ] {
+        let result = client.call(tool, arguments)?;
+        assert_eq!(result["isError"], true, "{tool}: {result}");
+        assert!(!result.to_string().contains("outside-only evidence"));
+        assert!(!result.to_string().contains("second private line"));
+        assert_eq!(fs::read(fixture.threads_path()?)?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn agent_starts_capture_bound_checkout_working_tree_provenance() -> Result<()> {
     let fixture = Fixture::new("mcp-working-provenance")?;
     fathomable_testing::git::init(&fixture.root)?;

@@ -2,7 +2,6 @@
 //! Start one or more review discussions in the bound checkout.
 
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use fathomable_core::XdgDirs;
@@ -17,7 +16,7 @@ use rmcp::{RoleServer, schemars, tool, tool_router};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::app::threads::agent_start_draft;
+use crate::app::threads::{agent_start_draft, read_checkout_text};
 
 use super::tools::{
     BatchIssue, Shown, Tree, WriteOutput, check_path, failure, invalid_batch,
@@ -257,10 +256,13 @@ fn place(root: &Path, item: &StartItem) -> Result<Placed, String> {
     if full.is_dir() {
         return Err(format!("{shown} is a directory; pass a file"));
     }
-    let text = fs::read(&full)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(|| format!("{shown} is not a text file"))?;
+    let text = read_checkout_text(root, &path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            format!("{shown} is not a text file")
+        } else {
+            format!("cannot read {shown} within the repository: {error}")
+        }
+    })?;
     let (_, range) = structural_start(item)?;
     if item.body.len() > MAX_MESSAGE_BYTES {
         return Err(match item.line {
@@ -491,6 +493,43 @@ mod tests {
             elsewhere.err().as_deref(),
             Some("lib.rs is nothing in the repository; did you mean src/lib.rs?")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn headless_start_rejects_symlink_swaps_after_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        for replace_directory in [false, true] {
+            let dir = testing::bare("mcp-start-symlink-swap")?;
+            let dirs = dirs(&dir);
+            let root = dir.0.join("ws").canonicalize()?;
+            fs::create_dir(root.join("nested"))?;
+            fs::write(root.join("nested/a.md"), "inside\n")?;
+            let outside = dir.0.join("outside");
+            fs::create_dir(&outside)?;
+            fs::write(outside.join("a.md"), "synthetic outside-only evidence\n")?;
+            let placed = place(&root, &item("nested/a.md", Some(1), None, "review"))?;
+
+            if replace_directory {
+                fs::rename(root.join("nested"), root.join("old-nested"))?;
+                symlink(&outside, root.join("nested"))?;
+            } else {
+                fs::remove_file(root.join("nested/a.md"))?;
+                symlink(outside.join("a.md"), root.join("nested/a.md"))?;
+            }
+            let result = headless_start(
+                &dirs,
+                &root,
+                &root,
+                Author::agent("reviewer"),
+                "test:symlink-swap",
+                placed,
+            );
+            assert!(result.is_err(), "{result:?}");
+            assert!(Store::open(dirs.threads_file(&root))?.threads().is_empty());
+        }
         Ok(())
     }
 

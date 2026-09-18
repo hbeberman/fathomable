@@ -3,6 +3,8 @@ type: Decision
 title: The comment box is an editor
 description: A cursor-bearing text buffer in core, the keys that drive it, bracketed paste, mouse placement, a draggable box, and the $EDITOR escape hatch.
 resource: crates/fathomable-core/src/editor.rs
+related_resources:
+  - crates/fathomable/src/app/run/draft.rs
 tags:
   - decision
   - annotations
@@ -83,6 +85,15 @@ These choices were settled in a question round on 2026-08-27.
   cursor at the end. The comment is never submitted by the editor; the
   user still presses Enter. With neither variable set the key says so and
   does nothing.
+- Each editor invocation exclusively creates a fresh mode-0700 directory
+  under the system temporary directory and a mode-0600 `comment.md` within
+  it, independent of a permissive umask. Existing names, including symlinks,
+  are never reused. The enclosing directory also protects editor replacement
+  files and backups placed beside the draft. Both normal and error returns
+  remove that directory and its contents, with explicit cleanup errors and
+  a drop guard as a backstop. Abrupt process termination can leave private
+  scratch data behind; cleanup is not secure erasure. An editor configured
+  to save elsewhere remains outside Fathomable's control.
 - The same buffer edits existing messages (amended 2026-08-30): `e` in
   the thread pane or workspace thread list opens the selected
   user-authored message, seeded with its current body; Enter saves it as

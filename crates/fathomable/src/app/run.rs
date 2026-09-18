@@ -38,6 +38,8 @@ use crate::crash;
 use super::view::Effect;
 use super::{App, Options, clipboard, highlight, input, socket, watch};
 
+mod draft;
+
 /// Run the app until the user quits, showing `open` first when given,
 /// else the tree (ADR 0012).
 pub(crate) fn run(
@@ -213,8 +215,24 @@ async fn edit_draft(
         app.notice("set $VISUAL or $EDITOR to edit the comment there");
         return Ok(());
     };
-    let path = std::env::temp_dir().join(format!("fathomable-comment-{}.md", std::process::id()));
-    fs::write(&path, draft).with_context(|| format!("cannot write {}", path.display()))?;
+    let draft = draft::Draft::new(draft).context("cannot create private editor draft")?;
+    let result = edit_file(app, input, terminal, &editor, draft.path()).await;
+    match (result, draft.close()) {
+        (result, Ok(())) => result,
+        (Ok(()), Err(error)) => Err(error).context("cannot clean up private editor draft"),
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "private editor draft cleanup also failed: {cleanup}"
+        ))),
+    }
+}
+
+async fn edit_file(
+    app: &mut App,
+    input: &Input,
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    editor: &str,
+    path: &Path,
+) -> anyhow::Result<()> {
     input.pause().await;
     restore_terminal();
     tracing::info!(%editor, path = %path.display(), "editing the comment draft");
@@ -222,14 +240,14 @@ async fn edit_draft(
         .arg("-c")
         .arg(format!("{editor} \"$1\""))
         .arg("fathomable")
-        .arg(&path)
+        .arg(path)
         .status();
     TerminalGuard::resume()?;
     input.resume();
     terminal.clear().context("cannot redraw after the editor")?;
     match status {
         Ok(status) if status.success() => {
-            let text = fs::read_to_string(&path)
+            let text = fs::read_to_string(path)
                 .with_context(|| format!("cannot read {}", path.display()))?;
             app.set_compose_text(text.strip_suffix('\n').unwrap_or(&text));
             app.notice("draft loaded from the editor; Enter submits");
@@ -237,7 +255,6 @@ async fn edit_draft(
         Ok(status) => app.notice(format!("{editor} exited with {status}; draft kept")),
         Err(error) => app.notice(format!("cannot run {editor}: {error}")),
     }
-    let _ = fs::remove_file(&path);
     Ok(())
 }
 

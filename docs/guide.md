@@ -67,6 +67,12 @@ the table below is a quick reference, not the full list.
 | `Esc` | cancel transient input or return to File |
 | `Space ?` `:q` | keymap / quit |
 
+`Ctrl-e` uses a fresh owner-only temporary directory containing an owner-only
+draft file. Editor replacements and backups placed beside the draft stay
+private, and Fathomable removes this scratch directory on return, including
+error returns. A forced termination may leave private scratch files behind.
+Files the editor is configured to write elsewhere are outside this protection.
+
 ### Compare versions
 
 The base and target at the right of the menu bar apply to every file.

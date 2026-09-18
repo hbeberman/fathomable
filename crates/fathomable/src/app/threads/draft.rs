@@ -454,15 +454,9 @@ impl App {
                 if let Some(Popup::Compose(compose)) = self.popup.as_mut() {
                     compose.confirm_reopen = Some(submission);
                 }
-                self.refresh_after_thread_membership_change();
                 self.notice("thread was resolved while editing; Enter reopens and submits");
             }
-            Err(error) => {
-                // A failed write can still import events appended by another
-                // writer while acquiring the store lock.
-                self.refresh_after_thread_membership_change();
-                self.error(error);
-            }
+            Err(error) => self.error(error),
         }
     }
 
@@ -593,11 +587,10 @@ impl App {
             return Err(self.thread_store_unavailable());
         };
         let result = store.annotate_user(draft, &text, now(), submission);
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         match result {
             Ok(id) => {
                 tracing::info!(%id, path = %path.display(), %where_at, "thread started");
-                self.refresh_after_thread_membership_change();
                 self.view_mut().clear_selection();
                 self.notice(format!("commented on {where_at}"));
                 Ok(SubmitResult::Applied)
@@ -624,15 +617,10 @@ impl App {
         } else {
             store.reply_user_if_unresolved(id, now(), body, submission)
         };
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         match result {
             Ok(UserWriteOutcome::Applied) => {
                 tracing::info!(%id, "reply added");
-                if reopen {
-                    self.refresh_after_thread_membership_change();
-                } else {
-                    self.refresh_all_marks();
-                }
                 // The reply becomes the highlighted message, under the
                 // draft's rows it replaces (ADR 0049).
                 let newest = self.newest_message(id);
@@ -662,15 +650,10 @@ impl App {
         } else {
             store.edit_user_if_unresolved(id, target, body, now(), submission)
         };
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         match result {
             Ok(UserWriteOutcome::Applied) => {
                 tracing::info!(%id, ?target, "thread message edited");
-                if reopen {
-                    self.refresh_after_thread_membership_change();
-                } else {
-                    self.refresh_all_marks();
-                }
                 self.follow_cursor_message();
                 self.notice("message edited");
                 Ok(SubmitResult::Applied)

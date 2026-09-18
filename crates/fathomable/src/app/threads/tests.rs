@@ -92,6 +92,79 @@ fn board_history_views_archive_restore_and_recent_resolution() -> anyhow::Result
     Ok(())
 }
 
+fn three_resolved_threads(
+    dir: &TempDir,
+    archive: bool,
+) -> anyhow::Result<Vec<fathomable_core::annotations::ThreadId>> {
+    let mut store = Store::open(testing::store_path(dir))?;
+    let mut ids = Vec::new();
+    for (offset, comment) in ["A", "B", "C"].into_iter().enumerate() {
+        let id = store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(offset + 1, offset + 1),
+                comment,
+            ),
+            testing::README,
+            u64::try_from(offset + 1)?,
+        )?;
+        store.resolve(&id, None, u64::try_from(offset + 10)?)?;
+        if archive {
+            store.archive(&id, u64::try_from(offset + 20)?)?;
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+
+#[test]
+fn archive_and_restore_reseat_middle_sidebar_entry_before_open_reviews() -> anyhow::Result<()> {
+    let restore_dir = testing::workspace("sidebar-reseat-restore", testing::README)?;
+    let restore_ids = three_resolved_threads(&restore_dir, true)?;
+    let mut restore_app = testing::source_app(&restore_dir)?;
+    restore_app.open_review_view(ReviewView::Archived);
+    restore_app.show_threads_pane();
+    restore_app.window_threads();
+    restore_app.set_thread_cursor(restore_ids[1].clone());
+    assert_eq!(restore_app.review_selected_index(), Some(1));
+    assert_eq!(restore_app.threads_pane_selected(), Some(1));
+
+    restore_app.restore_thread(&restore_ids[1]);
+    assert!(restore_app.review_list().is_open());
+    assert_eq!(restore_app.focus(), Focus::ThreadsPane);
+    assert_eq!(
+        restore_app.thread_cursor().thread(),
+        Some(&restore_ids[2]),
+        "restoring the middle archived entry reseats to its next neighbor"
+    );
+    assert_eq!(restore_app.review_selected_index(), Some(1));
+    assert_eq!(restore_app.threads_pane_selected(), Some(1));
+
+    let archive_dir = testing::workspace("sidebar-reseat-archive", testing::README)?;
+    let archive_ids = three_resolved_threads(&archive_dir, false)?;
+    let mut archive_app = testing::source_app(&archive_dir)?;
+    archive_app.open_review_view(ReviewView::Board);
+    archive_app.review_toggle_resolved();
+    archive_app.show_threads_pane();
+    archive_app.window_threads();
+    archive_app.set_thread_cursor(archive_ids[1].clone());
+    assert_eq!(archive_app.review_selected_index(), Some(1));
+    assert_eq!(archive_app.threads_pane_selected(), Some(1));
+
+    archive_app.archive_thread(&archive_ids[1]);
+    assert!(archive_app.review_list().is_open());
+    assert_eq!(archive_app.focus(), Focus::ThreadsPane);
+    assert_eq!(
+        archive_app.thread_cursor().thread(),
+        Some(&archive_ids[2]),
+        "archiving the middle resolved entry reseats to its next neighbor"
+    );
+    assert_eq!(archive_app.review_selected_index(), Some(1));
+    assert_eq!(archive_app.threads_pane_selected(), Some(1));
+    Ok(())
+}
+
 #[test]
 fn clear_board_confirmation_cancels_without_archiving() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};

@@ -390,6 +390,132 @@ mod tests {
         Ok(())
     }
 
+    fn assert_user_message_write_imports_current_head_review(
+        name: &str,
+        edit: bool,
+    ) -> anyhow::Result<()> {
+        let dir = testing::workspace(name, testing::README)?;
+        let root = testing::root(&dir);
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+        let ancestor = Workspace::discover(&root)?
+            .head_commit()
+            .context("ancestor commit")?;
+        let existing = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "existing finding",
+            )
+            .at_commit(Some(ancestor)),
+            testing::README,
+            1,
+        )?;
+        fs::write(root.join("b.md"), "# B\n")?;
+        git::commit_and_stage(&root, &[("b.md", "# B\n")])?;
+        let head = Workspace::discover(&root)?
+            .head_commit()
+            .context("current HEAD")?;
+
+        let mut app = testing::source_app(&dir)?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert_eq!(names(&app), ["README.md"]);
+        Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("b.md"),
+                LineRange::new(1, 1),
+                "new at HEAD",
+            )
+            .at_commit(Some(head)),
+            "# B\n",
+            2,
+        )?;
+
+        app.set_thread_cursor_message(existing, 0);
+        if edit {
+            app.thread_edit_message();
+            app.set_compose_text("edited existing finding");
+        } else {
+            app.thread_reply();
+            app.compose_insert("ordinary reply");
+        }
+        app.compose_submit();
+
+        let rows = names(&app);
+        assert_eq!(rows.len(), 2, "write must refresh all review-bearing rows");
+        assert!(
+            rows.iter().any(|path| path == "b.md"),
+            "the imported current-HEAD review must appear: {rows:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_reply_and_edit_import_current_head_reviews() -> anyhow::Result<()> {
+        assert_user_message_write_imports_current_head_review("files-shown-reply-import", false)?;
+        assert_user_message_write_imports_current_head_review("files-shown-edit-import", true)
+    }
+
+    #[test]
+    fn rejected_clear_imports_external_resolution_into_files_rows() -> anyhow::Result<()> {
+        let dir = testing::workspace("files-shown-clear-rejection", testing::README)?;
+        let mut app = testing::source_app(&dir)?;
+        app.start_new_comment();
+        app.compose_insert("existing finding");
+        app.compose_submit();
+        let id = app.file_threads().first().cloned().context("thread")?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert_eq!(names(&app), ["README.md"]);
+
+        app.request_clear_board();
+        Store::open(testing::store_path(&dir))?.resolve(&id, None, 2)?;
+        app.confirm_clear_board();
+        assert!(
+            matches!(
+                app.popup(),
+                Some(crate::app::Popup::ConfirmBoard { changed: true, .. })
+            ),
+            "the stale clear slate is rejected"
+        );
+        assert!(
+            names(&app).is_empty(),
+            "the imported resolution removes the last Files row"
+        );
+        app.cancel_clear_board();
+        assert!(
+            names(&app).is_empty(),
+            "cancelling replacement confirmation keeps the refreshed projection"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn no_op_archive_imports_external_reopen_into_files_rows() -> anyhow::Result<()> {
+        let dir = testing::workspace("files-shown-archive-no-op", testing::README)?;
+        let mut app = testing::source_app(&dir)?;
+        app.start_new_comment();
+        app.compose_insert("existing finding");
+        app.compose_submit();
+        let id = app.file_threads().first().cloned().context("thread")?;
+        app.toggle_resolved(&id);
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert!(names(&app).is_empty());
+
+        Store::open(testing::store_path(&dir))?.reopen(&id, 3)?;
+        app.archive_resolved_threads();
+        assert_eq!(
+            names(&app),
+            ["README.md"],
+            "the no-op cleanup imports and projects the reopened review"
+        );
+        Ok(())
+    }
+
     #[test]
     fn only_reviews_reopens_a_thread_resolved_at_a_later_commit() -> anyhow::Result<()> {
         let dir = testing::workspace("files-shown-reopen-commit", testing::README)?;

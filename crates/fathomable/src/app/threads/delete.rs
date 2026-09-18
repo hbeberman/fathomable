@@ -68,13 +68,12 @@ impl App {
             return;
         };
         let result = store.delete(id, now());
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         if let Err(error) = result {
             self.notice(format!("cannot delete thread: {error}"));
             return;
         }
         tracing::info!(%id, "thread deleted");
-        self.refresh_after_thread_membership_change();
         // An expanded thread that is gone leaves its rows with it, and a
         // cursor pinned on it rides the text again (ADR 0046).
         self.expanded.remove(id);

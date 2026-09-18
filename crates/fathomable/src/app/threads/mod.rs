@@ -361,11 +361,13 @@ impl App {
                     .and_then(|(id, placement)| Some((id.clone(), placement.range()?)))
             })
             .collect();
+        let mut wrote = false;
         for (id, range) in stale {
             let target = match map_range(old, &text, range) {
                 Mapping::Edited(range) | Mapping::Moved(range) => range,
                 Mapping::Removed => continue,
             };
+            wrote = true;
             match store.relocate(&id, target, &text, placement.clone(), now()) {
                 Ok(()) => {
                     tracing::info!(%id, path = %path.display(), from = %range, to = %target, "thread re-anchored to edited lines");
@@ -373,8 +375,12 @@ impl App {
                 Err(error) => tracing::warn!(%id, %error, "cannot re-anchor thread"),
             }
         }
-        self.reconcile_agent_activity();
-        self.refresh_marks(index);
+        if wrote {
+            self.refresh_after_thread_store_change();
+        } else {
+            self.reconcile_agent_activity();
+            self.refresh_marks(index);
+        }
     }
 
     pub(super) fn refresh_marks(&mut self, index: usize) {
@@ -478,8 +484,8 @@ impl App {
         self.refresh_review_paths();
     }
 
-    /// Recompute commit membership once before rebuilding thread projections.
-    pub(super) fn refresh_after_thread_membership_change(&mut self) {
+    /// Recompute commit membership once after a store reload or viewer write.
+    pub(super) fn refresh_after_thread_store_change(&mut self) {
         self.recompute_reach();
         self.refresh_all_marks();
     }
@@ -622,11 +628,10 @@ impl App {
         } else {
             store.reopen(id, now())
         };
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         match result {
             Ok(()) => {
                 tracing::info!(%id, resolved = open, "thread status changed");
-                self.refresh_after_thread_membership_change();
                 self.notice(if open { "resolved" } else { "reopened" });
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),
@@ -646,11 +651,10 @@ impl App {
             return;
         };
         let result = store.toggle_auto_resolve(id, now());
-        self.reconcile_agent_activity();
+        self.refresh_after_thread_store_change();
         match result {
             Ok(value) => {
                 tracing::info!(%id, ?value, "thread auto-resolve changed");
-                self.refresh_all_marks();
                 self.notice(if value.is_enabled() {
                     "auto-resolve enabled"
                 } else {

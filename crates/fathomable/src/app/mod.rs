@@ -926,7 +926,7 @@ impl App {
                         healthy: true,
                     };
                 }
-                self.refresh_after_thread_membership_change();
+                self.refresh_after_thread_store_change();
                 StoreReload {
                     changed: true,
                     healthy: true,

@@ -21,10 +21,10 @@ impl App {
             return;
         };
         let result = store.archive_resolved_with_context(&context);
+        self.refresh_after_thread_store_change();
         match result {
             Ok(ids) if ids.is_empty() => self.notice("no resolved threads to archive"),
             Ok(ids) => {
-                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 self.notice(format!("archived {} resolved thread(s)", ids.len()));
             }
@@ -61,13 +61,16 @@ impl App {
             return;
         };
         let result = store.clear_board_with_context(&slate, &context);
+        self.refresh_after_thread_store_change();
         match result {
             Ok(ids) => {
-                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 self.notice(format!("cleared board; archived {} thread(s)", ids.len()));
             }
             Err(error) if error.is_slate_changed() => {
+                let Some(store) = self.store.as_ref() else {
+                    return;
+                };
                 let slate = store.board_slate();
                 if slate.entries().is_empty() {
                     self.notice("board changed and is now empty");
@@ -109,13 +112,13 @@ impl App {
             return;
         };
         let result = store.archive_with_context(id, context);
+        self.refresh_after_thread_store_change();
         match result {
             Ok(()) => {
-                self.refresh_after_thread_membership_change();
-                self.reshow_review();
                 if self.focus() == crate::app::Focus::ThreadsPane {
                     self.threads_pane_reselect(pane_place);
                 }
+                self.reshow_review();
                 self.notice("thread archived");
             }
             Err(error) => self.notice(format!("cannot archive thread: {error}")),
@@ -132,13 +135,13 @@ impl App {
             return;
         };
         let result = store.restore_with_context(id, context);
+        self.refresh_after_thread_store_change();
         match result {
             Ok(()) => {
-                self.refresh_after_thread_membership_change();
-                self.reshow_review();
                 if self.focus() == crate::app::Focus::ThreadsPane {
                     self.threads_pane_reselect(pane_place);
                 }
+                self.reshow_review();
                 self.notice("thread restored");
             }
             Err(error) => self.notice(format!("cannot restore thread: {error}")),

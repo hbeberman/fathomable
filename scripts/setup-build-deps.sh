@@ -18,8 +18,7 @@ need() {
 
 need rustup "installs the pinned and nightly toolchains"
 need cc "links every Rust binary; gcc or build-essential"
-need git "the gate snapshots the staged tree"
-need make "Makefile is the command source of truth"
+need git "prek checks staged changes and installs Git hooks"
 need rg "ripgrep drives the boundary and public API scripts"
 need python3 "OKF lint, public API discovery, perf metadata"
 need pkg-config "cargo-udeps and cargo-public-api locate OpenSSL and libcurl with it"

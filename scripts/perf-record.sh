@@ -13,11 +13,9 @@ Examples:
   scripts/perf-record.sh --bin <binary-name> -- <binary-args>
   scripts/perf-record.sh --bin fathomable -- README.md
 
-From Make:
-  PERF_PATH=README.md PERF_BIN=<binary-name> make perf
-
-The just recipe forwards the path:
+The just recipe forwards the path and optional binary name:
   just perf README.md
+  just perf README.md fathomable
 
 Pass binary arguments directly to this script after `--`. The profiled
 program keeps the terminal, so use its normal quit action to finish the run.

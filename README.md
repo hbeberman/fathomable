@@ -13,18 +13,18 @@ and lifecycle limits.
 
 ## Install
 
-Building needs a Rust toolchain, a C linker, git, and make. Install the
+Building needs a Rust toolchain, a C linker, and git. Install the
 system packages for your distribution, then rustup:
 
 ```sh
 # Fedora
-sudo dnf install gcc git make
+sudo dnf install gcc git
 
 # Azure Linux 3
 sudo tdnf install build-essential git ca-certificates
 
 # Azure Linux 4
-sudo tdnf install gcc git make tar ca-certificates
+sudo tdnf install gcc git tar ca-certificates
 
 # Ubuntu 24.04
 sudo apt install build-essential git curl
@@ -43,9 +43,12 @@ are pure Rust: no OpenSSL, libgit2, or other C headers are needed.
 ```sh
 git clone https://github.com/hbeberman/fathomable
 cd fathomable
-make install          # cargo install --path crates/fathomable --locked
+cargo install --path crates/fathomable --locked
 fathomable --version
 ```
+
+Installing the product does not install Git hooks. Contributor hooks are
+an explicit opt-in described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 At run time the viewer only shells out for two optional things: your
 `$VISUAL` or `$EDITOR` to draft a long comment, and `xdg-open` to follow

@@ -13,7 +13,8 @@ tools the commit gate runs. Two of the cargo tools compile native code:
 `cargo-udeps` links OpenSSL and libssh2 through the `cargo` crate, and
 `cargo-public-api` links libcurl, so `pkg-config` and the OpenSSL headers
 must be present before `cargo install` builds them. `perf` is only for
-`just perf`; `just` is a thin frontend over Make and optional.
+`just perf`; `just` is an optional command runner. Check recipes call prek
+directly, and other recipes run their substantive commands without Make.
 
 ```sh
 # Fedora
@@ -43,6 +44,7 @@ Then, with rustup already installed:
 ```sh
 scripts/setup-build-deps.sh   # nightly, cargo tools, lychee, prek 0.5.3
 just install-commit-hooks     # installs or migrates the prek commit-msg shim
+# Without just: scripts/install-commit-hooks.sh
 ```
 
 The setup script pins every tool version and installs PyYAML with
@@ -50,60 +52,91 @@ The setup script pins every tool version and installs PyYAML with
 refuses that under PEP 668, which is why the distro package is listed
 above.
 
-The installer replaces the recognized bootstrap hook without chaining it,
-refuses unknown hooks or an existing `core.hooksPath`, and refreshes an
-existing prek shim. Default hooks are shared across linked worktrees;
-installing from one affects the others. For an isolated trial before
-migration, see [Commit hooks and staged gates](docs/commit-hooks.md).
+Hook installation is explicit opt-in: building or installing the product
+does not install hooks. The installer replaces the recognized bootstrap
+hook without chaining it and refreshes a recognized prek shim. It refuses
+unknown, symlinked, or non-regular `commit-msg` hooks, any
+`commit-msg.legacy` entry, or an existing `core.hooksPath`; other hook types
+are untouched. Default hooks are shared across linked worktrees;
+installing from one affects the others, and a checkout missing `prek.toml`
+fails closed. For an isolated trial before migration, see
+[Commit hooks and staged gates](docs/commit-hooks.md).
 
 ## 2. The gate
 
-`scripts/gates.sh` is the canonical local gate. Prek first checks the
-commit message, then runs the entire gate against a snapshot of the staged
-tree, so a commit is refused until it passes. No checks are filtered by
-changed filenames, including on empty and merge commits. `make gates`
-checks the current checkout and `just gates` forwards to Make; set
-`FATHOMABLE_HOOK_VERBOSE=1` (or run `make gates-verbose`) to see the
-full command output. Do not bypass hooks with `--no-verify`, `SKIP`,
-`PREK_SKIP`, or `PREK_ALLOW_NO_CONFIG`.
+`prek.toml` is the single source of truth for all 13 checks, each a local
+system hook. Only `commit-msg` is installed: prek checks the message
+first, then runs every check once against staged tracked contents.
+Failures refuse the commit. No checks are filtered by changed filenames,
+including on empty, deletion-only, documentation-only, and merge commits.
+Hooks never automatically format, fix, or stage source files.
 
-To check exactly the staged tree without committing, run
-`prek run --config prek.toml --stage manual`. The snapshot excludes
-unstaged edits and untracked/ignored files; prek's temporary stashing
-alone does not provide that filesystem isolation. The existing message
-rules and all gate commands below remain in repository-owned scripts.
+```sh
+just gates                                # current checkout
+prek run --config prek.toml --all-files     # same, without just
+just gates-verbose                        # same, with native --verbose
+prek run --config prek.toml                # staged tracked contents
+prek run --config prek.toml --stage manual  # staged tracked contents
+```
 
-| Step | Command |
-| --- | --- |
-| hook regression tests | `python3 scripts/test-commit-hooks.py` |
-| formatting | `cargo fmt --check` |
-| linting | `cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code` |
-| tests | `cargo nextest run --all-targets --all-features` |
-| doctests | `scripts/test-doctests.sh` (all library targets) |
-| OKF documentation | `python3 scripts/okf-lint.py --repo-root . docs` |
-| documentation links | `lychee --offline` over `docs`, the root Markdown, and the OKF skill |
-| source boundaries | `scripts/check-boundaries.sh` |
-| rustdoc | `RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features` |
-| public API scan | `scripts/check-public-api.sh` |
-| dependency audit | `cargo audit` |
-| licenses and sources | `cargo deny check` |
-| unused dependencies | `cargo +nightly udeps --all-targets --all-features` |
+Native prek staged runs temporarily save and restore unstaged tracked
+edits; they do **not** create a clean filesystem snapshot. Untracked and
+ignored files remain visible to tools and can affect results. Do not edit
+the same worktree concurrently with a commit or staged check; use separate
+worktrees for parallel agents. Stage `prek.toml` when changing check
+definitions. `--stage manual` alone does not select checkout semantics:
+`--all-files` does, without stashing or mutating the checkout. Tools in
+that mode can also see any files present.
 
-`Makefile` is the command source of truth; `justfile` calls the matching
-Make target. Do not claim the full gate passed after running only one of
-its steps.
+The check order and individual checkout commands are:
+
+| Hook ID | Checkout command | Check |
+| --- | --- | --- |
+| `commit-hooks` | `just test-commit-hooks` | Hook installation and native prek regression tests |
+| `fmt` | `just fmt-check` | Formatting, without writing |
+| `clippy` | `just clippy` | All targets and features, warnings and unsafe code forbidden |
+| `nextest` | `just test` | All targets and features |
+| `doctest` | `just doctest` | All library doctests |
+| `okf` | `just okf` | Open Knowledge Format bundle |
+| `links` | `just links` | Maintained local documentation links and anchors, offline |
+| `boundaries` | `just boundaries` | Source boundaries |
+| `rustdoc` | `just doc` | Documentation build, warnings denied |
+| `public-api` | `just public-api` | Public API shape |
+| `audit` | `just audit` | Dependency vulnerabilities |
+| `deny` | `just deny` | Dependency licenses, sources, and bans |
+| `unused-dependencies` | `just udeps` | Unused dependencies, using nightly |
+
+Each individual check recipe calls `prek run --config prek.toml --all-files`
+with the corresponding hook ID; for example,
+`prek run --config prek.toml --all-files fmt`. `just docs-check` selects
+`okf` and `links` through prek. `just fmt` is deliberately different:
+it runs `cargo fmt` to format the checkout on explicit request.
+
+CI runs the same hooks in named steps in one main job, including unused
+dependencies. Its clean checkout catches missing committed files that
+local untracked files might mask.
+
+Do not claim the full gate passed after running only one check. Do not
+bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
+`PREK_ALLOW_NO_CONFIG`. See [Commit hooks and staged gates](docs/commit-hooks.md)
+for ordering, staged-content guarantees, and their limits.
 
 Heavier diagnostics that are not part of the gate:
 
 ```sh
-make mutants                        # mutation testing across the workspace
-make mutants-file FILE=path/to.rs   # one file
-just perf path/to/file.md           # profile the release binary until it exits
+just mutants                        # mutation testing across the workspace
+just mutants-file path/to.rs         # one file (positional path)
+just perf path/to/file.md            # profile the release binary until it exits
+just perf path/to/file.md fathomable # select a binary explicitly
 scripts/perf-record.sh --bin fathomable -- path/to/file.md
 ```
 
-Perf artifacts land under `target/perf/`; the script prints hints when
-the kernel refuses `perf_event_open`.
+`just perf` accepts positional `path` (default `.`) and `bin` (default
+empty, no binary override). Perf artifacts land under `target/perf/`;
+the script prints hints when the kernel refuses `perf_event_open`.
+
+`just install` runs `cargo install --path crates/fathomable --locked`;
+end users can run that Cargo command directly without installing `just`.
 
 ## 3. Working in the tree
 

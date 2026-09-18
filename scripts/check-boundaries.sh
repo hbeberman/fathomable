@@ -20,8 +20,8 @@ Checks:
   - no source file of 1000+ lines whose inline test module is 35% or
     more of it (such tests live in a sibling tests.rs)
   - no `env!("CARGO_MANIFEST_DIR")` outside fathomable-testing, whose
-    `repo_file` reads the variable at run time (the staged gate builds
-    into the shared target dir from a snapshot it deletes)
+    `repo_file` reads the variable at run time so reused test binaries
+    find files in the current checkout rather than their build location
   - fathomable-core does not depend on ratatui, crossterm, or rmcp
     (docs/decisions/0002-crate-layout.md)
 

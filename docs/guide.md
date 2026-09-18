@@ -20,16 +20,26 @@ repository pins the toolchain.
 ```sh
 git clone <this repository> fathomable
 cd fathomable
-make install
+cargo install --path crates/fathomable --locked
 fathomable --version
 ```
 
 Contributors should also install the tools in
-[CONTRIBUTING.md](../CONTRIBUTING.md), then run `just install-commit-hooks`
-to install or migrate the prek-managed `commit-msg` hook. The hook checks
-the commit message and runs `scripts/gates.sh` against the full staged
-tree. Run `scripts/gates.sh` directly to check the current checkout, or
-`prek run --config prek.toml --stage manual` to check the staged snapshot.
+[CONTRIBUTING.md](../CONTRIBUTING.md), including
+`scripts/setup-build-deps.sh`, then explicitly run
+`just install-commit-hooks` (or `scripts/install-commit-hooks.sh`) to install
+or migrate the prek-managed `commit-msg` hook. Building or installing the
+product never installs hooks automatically. The hook checks the commit
+message first, then all checks defined in `prek.toml`, once per commit.
+
+Run `just gates` (or `prek run --config prek.toml --all-files`) to check
+the current checkout without hiding unstaged changes; `just gates-verbose`
+adds native verbose output. Plain `prek run --config prek.toml` or
+`prek run --config prek.toml --stage manual` instead checks staged tracked
+contents by temporarily saving and restoring unstaged tracked edits.
+Untracked and ignored files remain visible in either mode. Do not edit
+the same worktree concurrently with a commit or staged check; use separate
+worktrees for parallel agents.
 See [Commit hooks and staged gates](commit-hooks.md) for migration safety,
 linked-worktree installation, and `just test-commit-hooks`.
 

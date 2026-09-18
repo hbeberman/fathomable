@@ -27,10 +27,9 @@ user, system, or repo policy.
 - Prefer behavior-level tests at public boundaries. Do not widen production
   visibility solely for tests.
 - A test that reads a tracked repository file locates it with
-  `fathomable_testing::repo_file`, never `env!("CARGO_MANIFEST_DIR")`: the
-  commit hook builds into the shared `target/` from a snapshot it deletes,
-  and Cargo reuses that binary in the repository. The `boundaries` gate
-  rejects the compile-time form.
+  `fathomable_testing::repo_file`, never `env!("CARGO_MANIFEST_DIR")`.
+  Runtime lookup stays robust across worktrees and cached build artifacts;
+  the `boundaries` gate rejects the compile-time form.
 - A source file of 1000+ lines keeps a test module that would be 35% or
   more of it in a sibling `tests.rs` (`#[cfg(test)] mod tests;`); the
   `boundaries` gate rejects the inline form.
@@ -70,21 +69,33 @@ user, system, or repo policy.
 ## Gates
 
 Install or migrate the prek-managed `commit-msg` hook with
-`just install-commit-hooks` after `scripts/setup-build-deps.sh`.
-It checks the message before running all gates against the staged tree.
+`just install-commit-hooks` (or `scripts/install-commit-hooks.sh`) after
+`scripts/setup-build-deps.sh`. Installation is explicit opt-in, never a
+side effect of building or installing the product. It checks the message
+before running all 13 checks against staged tracked contents, including
+empty, deletion-only, documentation-only, and merge commits.
 See [Commit hooks and staged gates](docs/commit-hooks.md); installation
 uses Git's shared hooks directory, including from linked worktrees.
 
 ```sh
-scripts/gates.sh
+just gates
+# Without just:
+prek run --config prek.toml --all-files
 ```
 
-`scripts/gates.sh` is the canonical local gate. `make gates` invokes it and
-`just gates` forwards to Make. Set `FATHOMABLE_HOOK_VERBOSE=1` when debugging
-a failing gate.
+`prek.toml` is the single source of truth for the checks. `just` calls prek
+directly; `just gates-verbose` adds native `--verbose` output. Hooks never
+automatically format, fix, or stage files.
 
-`prek run --config prek.toml --stage manual` checks the staged snapshot
-without committing. `just test-commit-hooks` runs the hook regression suite.
+Plain `prek run --config prek.toml` or
+`prek run --config prek.toml --stage manual` checks staged tracked contents
+without committing. Native prek temporarily saves and restores unstaged
+tracked edits, but untracked and ignored files remain visible. Do not edit
+the same worktree concurrently with a commit or staged check; use separate
+worktrees for parallel agents. Stage `prek.toml` when changing hook definitions.
+`--all-files` checks the current checkout without hiding unstaged changes
+or stashing the checkout; tools can still see any files present.
+`just test-commit-hooks` runs the hook regression suite.
 
 Do not bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
 `PREK_ALLOW_NO_CONFIG`.
@@ -92,7 +103,7 @@ Do not bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
 ## Committing
 
 - Treat each task request as implicit authorization to commit its completed
-  changes. Once the change is done and `scripts/gates.sh` passes, commit it
+  changes. Once the change is done and `just gates` passes, commit it
   automatically, without asking for approval. Do not leave completed work
   uncommitted unless the user explicitly asks you to.
 - Keep each commit to one task; do not batch unrelated tasks into a

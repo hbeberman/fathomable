@@ -1,79 +1,81 @@
+# @okf-doc: /commit-hooks.md
 set shell := ["bash", "-cu"]
 
 default:
-    make help
+    @just --list
 
+# Check the current checkout without hiding unstaged edits.
 gates:
-    make gates
+    prek run --config prek.toml --all-files
 
 gates-verbose:
-    make gates-verbose
+    prek run --config prek.toml --all-files --verbose
 
 fmt:
-    make fmt
+    cargo fmt
 
 fmt-check:
-    make fmt-check
+    prek run --config prek.toml --all-files fmt
 
 clippy:
-    make clippy
+    prek run --config prek.toml --all-files clippy
 
 test:
-    make test
+    prek run --config prek.toml --all-files nextest
 
 doctest:
-    make doctest
+    prek run --config prek.toml --all-files doctest
 
 doc:
-    make doc
-
+    prek run --config prek.toml --all-files rustdoc
 
 okf:
-    make okf
+    prek run --config prek.toml --all-files okf
 
 links:
-    make links
+    prek run --config prek.toml --all-files links
 
 docs-check:
-    make docs-check
+    prek run --config prek.toml --all-files okf links
+
 boundaries:
-    make boundaries
+    prek run --config prek.toml --all-files boundaries
 
 public-api:
-    make public-api
+    prek run --config prek.toml --all-files public-api
 
 audit:
-    make audit
+    prek run --config prek.toml --all-files audit
 
 deny:
-    make deny
+    prek run --config prek.toml --all-files deny
 
 udeps:
-    make udeps
+    prek run --config prek.toml --all-files unused-dependencies
 
 mutants:
-    make mutants
+    cargo mutants --workspace --all-features
 
-mutants-file:
-    make mutants-file
+mutants-file file:
+    cargo mutants --file {{quote(file)}} --all-features
 
-perf path=".":
-    make perf PERF_PATH="{{path}}"
+perf path="." bin="":
+    scripts/perf-record.sh {{if bin == "" { "" } else { "--bin " + quote(bin) }}} -- {{quote(path)}}
 
 demo *ARGS:
     scripts/demo-repo.sh {{ARGS}}
 
 install-commit-hooks:
-    make install-commit-hooks
+    scripts/install-commit-hooks.sh
 
 test-commit-hooks:
-    make test-commit-hooks
+    prek run --config prek.toml --all-files commit-hooks
 
 install:
-    make install
+    cargo install --path crates/fathomable --locked
 
 build-deps:
-    make build-deps
+    scripts/setup-build-deps.sh
 
 clean:
-    make clean
+    cargo clean

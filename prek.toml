@@ -1,8 +1,11 @@
 # @okf-doc: /commit-hooks.md
 minimum_prek_version = "0.5.3"
 default_install_hook_types = ["commit-msg"]
+default_stages = ["pre-commit", "commit-msg", "manual"]
 fail_fast = true
 
+# When crates gain features, restore cargo-hack powerset checks and the
+# default-feature nextest/doctest runs here and in CI.
 [[repos]]
 repo = "local"
 
@@ -16,13 +19,131 @@ always_run = true
 priority = 0
 
 [[repos.hooks]]
-id = "staged-gates"
-name = "Full staged-tree gates"
-entry = "scripts/run-staged-gates.sh"
+id = "commit-hooks"
+name = "Commit hook regressions"
+entry = "python3 scripts/test-commit-hooks.py"
 language = "system"
-stages = ["pre-commit", "commit-msg", "manual"]
 always_run = true
 pass_filenames = false
 require_serial = true
 priority = 1
-verbose = true
+
+[[repos.hooks]]
+id = "fmt"
+name = "Formatting"
+entry = "cargo fmt --check"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 2
+
+[[repos.hooks]]
+id = "clippy"
+name = "Clippy"
+entry = "cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 3
+
+[[repos.hooks]]
+id = "nextest"
+name = "Tests"
+entry = "cargo nextest run --all-targets --all-features"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 4
+
+[[repos.hooks]]
+id = "doctest"
+name = "Documentation tests"
+entry = "scripts/test-doctests.sh"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 5
+
+[[repos.hooks]]
+id = "okf"
+name = "Open Knowledge Format"
+entry = "python3 scripts/okf-lint.py --repo-root . docs"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 6
+
+[[repos.hooks]]
+id = "links"
+name = "Documentation links"
+entry = "lychee --offline --no-progress docs README.md CONTRIBUTING.md AGENTS.md .agents/skills/open-knowledge-format/SKILL.md"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 7
+
+[[repos.hooks]]
+id = "boundaries"
+name = "Source boundaries"
+entry = "scripts/check-boundaries.sh"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 8
+
+[[repos.hooks]]
+id = "rustdoc"
+name = "Rustdoc"
+entry = "env RUSTDOCFLAGS=-Dwarnings cargo doc --no-deps --all-features"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 9
+
+[[repos.hooks]]
+id = "public-api"
+name = "Public API"
+entry = "scripts/check-public-api.sh"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 10
+
+[[repos.hooks]]
+id = "audit"
+name = "Dependency audit"
+entry = "cargo audit"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 11
+
+[[repos.hooks]]
+id = "deny"
+name = "Dependency policy"
+entry = "cargo deny check"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 12
+
+[[repos.hooks]]
+id = "unused-dependencies"
+name = "Unused dependencies"
+entry = "cargo +nightly udeps --all-targets --all-features"
+language = "system"
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 13

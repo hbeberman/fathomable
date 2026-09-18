@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise installed commit hooks without Cargo or the source checkout's Git state."""
+"""Exercise real native prek hooks without Cargo or the source checkout's Git state."""
 
 import json
 import os
@@ -19,31 +19,96 @@ repo_root=$(git rev-parse --show-toplevel)
 "$repo_root/scripts/check-commit-message.sh" "$1"
 exec "$repo_root/scripts/run-staged-gates.sh"
 """
-FIXTURE_GATE = """#!/usr/bin/env bash
-set -euo pipefail
-exec python3 - "$@" <<'PY'
+GATE_COMMANDS = {
+    "commit-hooks": ["python3", "scripts/test-commit-hooks.py"],
+    "fmt": ["cargo", "fmt", "--check"],
+    "clippy": [
+        "cargo", "clippy", "--all-targets", "--all-features",
+        "--", "-D", "warnings", "-F", "unsafe-code",
+    ],
+    "nextest": ["cargo", "nextest", "run", "--all-targets", "--all-features"],
+    "doctest": ["scripts/test-doctests.sh"],
+    "okf": ["python3", "scripts/okf-lint.py", "--repo-root", ".", "docs"],
+    "links": [
+        "lychee", "--offline", "--no-progress", "docs", "README.md",
+        "CONTRIBUTING.md", "AGENTS.md",
+        ".agents/skills/open-knowledge-format/SKILL.md",
+    ],
+    "boundaries": ["scripts/check-boundaries.sh"],
+    "rustdoc": ["cargo", "doc", "--no-deps", "--all-features"],
+    "public-api": ["scripts/check-public-api.sh"],
+    "audit": ["cargo", "audit"],
+    "deny": ["cargo", "deny", "check"],
+    "unused-dependencies": [
+        "cargo", "+nightly", "udeps", "--all-targets", "--all-features",
+    ],
+}
+GATE_IDS = list(GATE_COMMANDS)
+FIXTURE_SCRIPTS = (
+    "scripts/test-commit-hooks.py", "scripts/test-doctests.sh",
+    "scripts/okf-lint.py", "scripts/check-boundaries.sh",
+    "scripts/check-public-api.sh",
+)
+# Keep the production config unchanged: only the programs it invokes are fixtures.
+FIXTURE_GATE = """#!/usr/bin/env python3
 import json
 import os
 from pathlib import Path
 import sys
 
-root = Path(os.environ["FATHOMABLE_GATE_ROOT"])
-files = {
-    str(path.relative_to(root)): path.read_text()
-    for path in sorted(root.rglob("*")) if path.is_file()
-}
+program = Path(sys.argv[0]).name
+if program == "cargo":
+    hook = {
+        "fmt": "fmt", "clippy": "clippy", "nextest": "nextest",
+        "doc": "rustdoc", "audit": "audit", "deny": "deny",
+        "+nightly": "unused-dependencies",
+    }[sys.argv[1]]
+    command = [program, *sys.argv[1:]]
+elif program == "lychee":
+    hook = "links"
+    command = [program, *sys.argv[1:]]
+else:
+    hook = {
+        "test-commit-hooks.py": "commit-hooks",
+        "test-doctests.sh": "doctest", "okf-lint.py": "okf",
+        "check-boundaries.sh": "boundaries",
+        "check-public-api.sh": "public-api",
+    }[program]
+    command = sys.argv[:]
+    if Path(command[0]).is_absolute():
+        command[0] = str(Path(command[0]).relative_to(Path.cwd()))
+    if program.endswith(".py"):
+        command = ["python3", *json.loads(os.environ["FATHOMABLE_TEST_PYTHON_ARGS"])]
+
+root = Path.cwd()
+files = {}
+for directory, children, names in os.walk(root):
+    children[:] = sorted(name for name in children if name != ".git")
+    for name in sorted(names):
+        path = Path(directory) / name
+        if name != ".git":
+            files[str(path.relative_to(root))] = path.read_text()
 event = {
-    "root": str(root), "files": files, "args": sys.argv[1:],
-    "target": os.environ["CARGO_TARGET_DIR"],
+    "hook": hook, "command": command, "root": str(root), "files": files,
+    "git": (root / ".git").exists(),
+    "target": os.environ.get("CARGO_TARGET_DIR"),
+    "rustdocflags": os.environ.get("RUSTDOCFLAGS"),
     "index": os.environ.get("GIT_INDEX_FILE"),
 }
 with open(os.environ["FATHOMABLE_TEST_EVENTS"], "a") as log:
     log.write(json.dumps(event) + "\\n")
-if files.get("payload.txt") == "invalid\\n":
-    print("fixture gate: rejected staged payload")
+if (os.environ.get("FATHOMABLE_TEST_FAIL_HOOK") == hook
+        or (hook == "commit-hooks" and files.get("payload.txt") == "invalid\\n")):
+    print("fixture gate: rejected " + hook)
     sys.exit(1)
-print("fixture gate: accepted staged snapshot")
-PY
+print("fixture gate: accepted " + hook)
+"""
+FIXTURE_PYTHON = """import json
+import os
+import sys
+
+os.environ["FATHOMABLE_TEST_PYTHON_ARGS"] = json.dumps(sys.argv[1:])
+os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
 """
 
 
@@ -83,7 +148,7 @@ class CommitHooks(unittest.TestCase):
         self.repo = self.base / "repo"
         self.repo.mkdir()
         self.log = self.base / "events.jsonl"
-        self.snapshots = self.base / "snapshots"
+        self.runtime = self.base / "runtime"
         self.env = {
             key: value for key, value in os.environ.items()
             if not key.startswith(("GIT_", "PREK_", "FATHOMABLE_"))
@@ -96,7 +161,7 @@ class CommitHooks(unittest.TestCase):
             "HOME": "home", "XDG_CONFIG_HOME": "config",
             "XDG_CACHE_HOME": "cache", "XDG_DATA_HOME": "data",
             "XDG_STATE_HOME": "state", "PREK_HOME": "prek",
-            "GIT_TEMPLATE_DIR": "templates", "TMPDIR": "snapshots",
+            "GIT_TEMPLATE_DIR": "templates", "TMPDIR": "runtime",
         }.items():
             directory = self.base / name
             directory.mkdir()
@@ -111,10 +176,19 @@ class CommitHooks(unittest.TestCase):
             "GIT_MERGE_AUTOEDIT": "no",
             "PREK_COLOR": "never",
             "FATHOMABLE_TEST_EVENTS": str(self.log),
-            "TMP": str(self.snapshots),
-            "TEMP": str(self.snapshots),
+            "TMP": str(self.runtime),
+            "TEMP": str(self.runtime),
+            "PYTHONDONTWRITEBYTECODE": "1",
             "LC_ALL": "C",
         })
+        binaries = self.base / "bin"
+        for name in ("cargo", "lychee"):
+            self.write(name, FIXTURE_GATE, executable=True, repo=binaries)
+        self.write(
+            "python3", "#!" + shutil.which("python3") + "\n" + FIXTURE_PYTHON,
+            executable=True, repo=binaries,
+        )
+        self.env["PATH"] = str(binaries) + os.pathsep + self.env["PATH"]
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.name", "Hook Test")
         self.git("config", "user.email", "hook-test@example.invalid")
@@ -122,13 +196,13 @@ class CommitHooks(unittest.TestCase):
         self.git("config", "core.autocrlf", "false")
         for name in (
             "install-commit-hooks.sh", "check-commit-message.sh",
-            "run-staged-gates.sh",
         ):
             destination = self.repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(SOURCE_ROOT / "scripts" / name, destination)
         shutil.copy2(SOURCE_ROOT / "prek.toml", self.repo / "prek.toml")
-        self.write("scripts/gates.sh", FIXTURE_GATE, executable=True)
+        for name in FIXTURE_SCRIPTS:
+            self.write(name, FIXTURE_GATE, executable=True)
         self.write("payload.txt", "valid\n")
         self.write("keep.txt", "baseline\n")
         self.write(".gitignore", "ignored.dat\n")
@@ -179,16 +253,23 @@ class CommitHooks(unittest.TestCase):
     def head(self, repo=None, env=None):
         return self.git("rev-parse", "HEAD", cwd=repo, env=env).stdout
 
-    def assert_clean_snapshots(self):
-        self.assertEqual(list(self.snapshots.iterdir()), [])
-        for event in self.events():
-            self.assertFalse(Path(event["root"]).exists())
-            self.assertEqual(Path(event["root"]).parent, self.snapshots)
-            self.assertEqual(event["args"], [])
-            self.assertNotIn(".git", event["files"])
+    def assert_gates(self, events, gates=None, repo=None, env=None):
+        expected = GATE_IDS if gates is None else gates
+        self.assertEqual([event["hook"] for event in events], expected)
+        environment = self.env if env is None else env
+        for event in events:
+            self.assertEqual(event["command"], GATE_COMMANDS[event["hook"]])
+            self.assertEqual(Path(event["root"]), repo or self.repo)
+            self.assertTrue(event["git"])
+            self.assertEqual(event["target"], environment.get("CARGO_TARGET_DIR"))
+            self.assertEqual(
+                event["rustdocflags"],
+                "-Dwarnings" if event["hook"] == "rustdoc"
+                else environment.get("RUSTDOCFLAGS"),
+            )
 
     def commit(self, message="test: exercise installed hooks", success=True,
-               gates=1, repo=None, env=None):
+               gates=None, repo=None, env=None):
         before = self.state(repo, env)
         head = self.head(repo, env)
         count = len(self.events())
@@ -201,8 +282,7 @@ class CommitHooks(unittest.TestCase):
             self.assertNotEqual(self.head(repo, env), head)
         else:
             self.assertEqual(self.head(repo, env), head)
-        self.assertEqual(len(self.events()) - count, gates, result.stdout)
-        self.assert_clean_snapshots()
+        self.assert_gates(self.events()[count:], gates, repo, env)
         return result
 
     def assert_install_refused(self):
@@ -225,6 +305,17 @@ class CommitHooks(unittest.TestCase):
         self.install()
         self.assertFalse((self.hooks / "commit-msg.legacy").exists())
         self.commit()
+
+    def test_other_hooks_are_untouched(self):
+        for name in ("pre-commit", "pre-push", "prepare-commit-msg"):
+            hook = self.hooks / name
+            hook.write_text("#!/bin/sh\n# user-owned hook\nexit 0\n")
+            hook.chmod(0o755)
+        before = inventory(self.hooks)
+        self.install()
+        after = inventory(self.hooks)
+        del after["commit-msg"]
+        self.assertEqual(after, before)
 
     def test_unknown_hook_is_preserved(self):
         self.hook.write_text("#!/bin/sh\n# a user's hook\nexit 0\n")
@@ -297,17 +388,23 @@ class CommitHooks(unittest.TestCase):
                     config.write_text(content)
                 self.assert_install_refused()
 
-    def test_valid_commit_runs_one_complete_snapshot_gate(self):
+    def test_valid_commit_runs_each_production_gate_once_in_order(self):
         self.install()
         self.write("payload.txt", "staged change\n")
         self.git("add", "payload.txt")
         expected = set(self.git("ls-files", "-z").stdout.rstrip("\0").split("\0"))
         self.commit("feat(hooks): accept staged change")
-        event = self.events()[0]
-        self.assertEqual(set(event["files"]), expected)
-        self.assertEqual(event["files"]["payload.txt"], "staged change\n")
-        self.assertEqual(event["target"], str(self.repo / "target"))
+        for event in self.events():
+            self.assertEqual(set(event["files"]), expected)
+            self.assertEqual(event["files"]["payload.txt"], "staged change\n")
         self.assertEqual(self.git("show", "HEAD:payload.txt").stdout, "staged change\n")
+
+    def test_native_gates_preserve_environment_except_rustdoc_flags(self):
+        self.install()
+        self.commit(env=self.env | {
+            "CARGO_TARGET_DIR": str(self.base / "custom-target"),
+            "RUSTDOCFLAGS": "--cfg fixture",
+        })
 
     def test_bad_messages_fail_before_expensive_gate(self):
         self.install()
@@ -325,7 +422,7 @@ class CommitHooks(unittest.TestCase):
         )
         for message in messages:
             with self.subTest(header=message.splitlines()[0]):
-                self.commit(message, success=False, gates=0)
+                self.commit(message, success=False, gates=[])
 
     def test_72_character_header_and_message_exemptions(self):
         self.install()
@@ -345,18 +442,28 @@ class CommitHooks(unittest.TestCase):
         self.install()
         self.write("payload.txt", "invalid\n")
         self.git("add", "payload.txt")
-        self.commit(success=False)
+        self.commit(success=False, gates=["commit-hooks"])
         self.assertEqual(self.events()[0]["files"]["payload.txt"], "invalid\n")
+
+    def test_every_gate_failure_stops_later_gates_and_blocks_commit(self):
+        self.install()
+        for position, hook in enumerate(GATE_IDS):
+            with self.subTest(hook=hook):
+                result = self.commit(
+                    success=False, gates=GATE_IDS[:position + 1],
+                    env=self.env | {"FATHOMABLE_TEST_FAIL_HOOK": hook},
+                )
+                self.assertIn("fixture gate: rejected " + hook, result.stdout)
 
     def test_unstaged_fix_cannot_rescue_invalid_staged_payload(self):
         self.install()
         self.write("payload.txt", "invalid\n")
         self.git("add", "payload.txt")
         self.write("payload.txt", "valid\n")
-        self.commit(success=False)
+        self.commit(success=False, gates=["commit-hooks"])
         self.assertEqual(self.events()[0]["files"]["payload.txt"], "invalid\n")
 
-    def test_unstaged_untracked_and_ignored_data_do_not_contaminate_snapshot(self):
+    def test_native_stash_hides_tracked_edits_but_not_untracked_or_ignored_files(self):
         self.install()
         self.write("payload.txt", "valid staged change\n")
         self.git("add", "payload.txt")
@@ -364,52 +471,80 @@ class CommitHooks(unittest.TestCase):
         self.write("untracked.dat", "invalid\n")
         self.write("ignored.dat", "invalid\n")
         self.commit()
-        files = self.events()[0]["files"]
-        self.assertEqual(files["payload.txt"], "valid staged change\n")
-        self.assertNotIn("untracked.dat", files)
-        self.assertNotIn("ignored.dat", files)
+        for event in self.events():
+            files = event["files"]
+            self.assertEqual(files["payload.txt"], "valid staged change\n")
+            self.assertEqual(files["untracked.dat"], "invalid\n")
+            self.assertEqual(files["ignored.dat"], "invalid\n")
 
     def test_staged_gate_script_wins_over_unstaged_script(self):
         self.install()
-        self.write("scripts/gates.sh", "#!/bin/sh\nexit 99\n", executable=True)
+        name = "scripts/test-commit-hooks.py"
+        staged = FIXTURE_GATE + "\n# staged fixture version\n"
+        self.write(name, staged, executable=True)
+        self.git("add", name)
+        self.write(name, "raise SystemExit(99)\n", executable=True)
         self.commit()
-        self.assertEqual(self.events()[0]["files"]["scripts/gates.sh"], FIXTURE_GATE)
+        for event in self.events():
+            self.assertEqual(event["files"][name], staged)
 
-    def test_empty_and_deletion_only_commits_run_full_gate(self):
+    def test_empty_deletion_and_docs_only_commits_run_every_gate(self):
         self.install()
         self.commit("chore: empty commit")
         self.git("rm", "-q", "keep.txt")
         self.commit("chore: delete only")
         self.assertNotIn("keep.txt", self.events()[-1]["files"])
+        self.write("docs/example.md", "# Documentation only\n")
+        self.git("add", "docs/example.md")
+        self.commit("docs: documentation only")
 
-    def test_missing_or_nonexecutable_staged_gate_fails_closed(self):
+    def test_missing_native_gate_script_fails_closed(self):
         self.install()
-        for missing in (True, False):
-            with self.subTest(missing=missing):
-                if missing:
-                    self.git("rm", "-q", "scripts/gates.sh")
-                else:
-                    self.write("scripts/gates.sh", FIXTURE_GATE)
-                    self.git("add", "scripts/gates.sh")
-                self.commit(success=False, gates=0)
+        name = "scripts/check-boundaries.sh"
+        self.git("rm", "-q", name)
+        self.commit(
+            success=False, gates=GATE_IDS[:GATE_IDS.index("boundaries")]
+        )
+
+    def test_native_prek_can_run_nonexecutable_script_using_its_shebang(self):
+        self.install()
+        name = "scripts/check-boundaries.sh"
+        self.write(name, FIXTURE_GATE)
+        self.git("add", name)
+        self.commit()
 
     def test_missing_commit_config_fails_closed(self):
         self.install()
         (self.repo / "prek.toml").unlink()
-        self.commit(success=False, gates=0)
+        self.write(".pre-commit-config.yaml", "repos: []\n")
+        self.commit(success=False, gates=[])
 
-    def test_unstaged_commit_config_fails_closed_until_staged(self):
+    def test_unstaged_config_is_refused_except_with_all_files(self):
         self.install()
         self.write("payload.txt", "valid staged change\n")
         self.git("add", "payload.txt")
         config = self.repo / "prek.toml"
         config.write_text(config.read_text() + "\n# Valid but initially unstaged.\n")
-        result = self.commit(success=False, gates=0)
+        result = self.commit(success=False, gates=[])
         self.assertIn("not staged", result.stdout.lower())
         self.assertIn("prek.toml", result.stdout)
+        for selection in ((), ("--stage", "manual")):
+            with self.subTest(selection=selection):
+                before = self.state()
+                result = self.run_command(
+                    "prek", "run", "--config", "prek.toml", *selection,
+                    success=False,
+                )
+                self.assertIn("not staged", result.stdout.lower())
+                self.assertEqual(self.state(), before)
+                self.assertEqual(self.events(), [])
+        before = self.state()
+        self.run_command("prek", "run", "--config", "prek.toml", "--all-files")
+        self.assertEqual(self.state(), before)
+        self.assert_gates(self.events())
+        self.assertEqual(self.events()[0]["files"]["prek.toml"], config.read_text())
         self.git("add", "prek.toml")
         self.commit()
-        self.assertEqual(self.events()[0]["files"]["prek.toml"], config.read_text())
 
     def test_linked_worktree_uses_shared_hook_and_own_index(self):
         self.install()
@@ -432,7 +567,6 @@ class CommitHooks(unittest.TestCase):
         self.commit(repo=linked)
         event = self.events()[0]
         self.assertEqual(event["files"]["payload.txt"], "valid linked change\n")
-        self.assertEqual(event["target"], str(linked / "target"))
         self.assertEqual(self.state(), main)
 
     def test_alternate_index_is_respected_and_default_index_preserved(self):
@@ -465,12 +599,11 @@ class CommitHooks(unittest.TestCase):
         self.assertNotEqual(self.head(), head)
         self.assertEqual(inventory(self.repo), before)
         self.assertEqual(self.git("ls-files", "--stage", "keep.txt").stdout, unrelated)
-        self.assertEqual(len(self.events()), 1)
+        self.assert_gates(self.events())
         event = self.events()[0]
         self.assertEqual(event["files"]["payload.txt"], "selected worktree change\n")
         self.assertEqual(event["files"]["keep.txt"], "baseline\n")
         self.assertEqual(self.git("show", "HEAD:keep.txt").stdout, "baseline\n")
-        self.assert_clean_snapshots()
 
     def test_non_fast_forward_merge_runs_gate(self):
         self.git("branch", "topic")
@@ -486,24 +619,56 @@ class CommitHooks(unittest.TestCase):
         self.git("merge", "--no-ff", "--no-edit", "topic")
         parents = self.git("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
         self.assertEqual(len(parents), 3)
-        self.assertEqual(len(self.events()), 1)
+        self.assert_gates(self.events())
         files = self.events()[0]["files"]
         self.assertEqual(files["main.txt"], "main side\n")
         self.assertEqual(files["topic.txt"], "topic side\n")
-        self.assert_clean_snapshots()
 
     def test_manual_stage_checks_index_without_autofixes(self):
-        self.assert_direct_run("--stage", "manual", "--all-files")
+        self.assert_direct_run("--stage", "manual")
 
     def test_default_run_checks_index_without_autofixes(self):
         self.assert_direct_run()
 
-    def assert_direct_run(self, *selection):
+    def test_explicit_pre_commit_stage_checks_index(self):
+        self.assert_direct_run("--stage", "pre-commit")
+
+    def test_all_files_checks_current_checkout_without_stashing(self):
+        self.assert_direct_run("--all-files", all_files=True)
+
+    def test_manual_all_files_checks_current_checkout_without_stashing(self):
+        self.assert_direct_run("--stage", "manual", "--all-files", all_files=True)
+
+    def test_each_native_gate_can_be_selected_independently(self):
         self.install()
-        for staged, unstaged, success in (
-            ("direct staged change\n", "invalid\n", True),
-            ("invalid\n", "valid\n", False),
+        for hook in GATE_IDS:
+            with self.subTest(hook=hook):
+                before, count = self.state(), len(self.events())
+                self.run_command(
+                    "prek", "run", "--config", "prek.toml", hook, "--all-files",
+                )
+                self.assertEqual(self.state(), before)
+                self.assert_gates(self.events()[count:], [hook])
+
+    def test_plain_and_manual_runs_without_staged_paths_still_run_every_gate(self):
+        self.install()
+        for selection in ((), ("--stage", "manual")):
+            with self.subTest(selection=selection):
+                before, count = self.state(), len(self.events())
+                self.run_command(
+                    "prek", "run", "--config", "prek.toml", *selection,
+                )
+                self.assertEqual(self.state(), before)
+                self.assert_gates(self.events()[count:])
+
+    def assert_direct_run(self, *selection, all_files=False):
+        self.install()
+        for staged, unstaged in (
+            ("direct staged change\n", "invalid\n"),
+            ("invalid\n", "valid\n"),
         ):
+            checked = unstaged if all_files else staged
+            success = checked != "invalid\n"
             with self.subTest(success=success):
                 self.write("payload.txt", staged)
                 self.git("add", "payload.txt")
@@ -515,9 +680,12 @@ class CommitHooks(unittest.TestCase):
                 )
                 self.assertEqual(self.state(), before)
                 self.assertEqual(self.head(), head)
-                self.assertEqual(len(self.events()), count + 1)
-                self.assertEqual(self.events()[-1]["files"]["payload.txt"], staged)
-                self.assert_clean_snapshots()
+                events = self.events()[count:]
+                self.assert_gates(
+                    events, GATE_IDS if success else ["commit-hooks"],
+                )
+                for event in events:
+                    self.assertEqual(event["files"]["payload.txt"], checked)
 
 
 if __name__ == "__main__":

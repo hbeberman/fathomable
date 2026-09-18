@@ -1,14 +1,14 @@
 ---
 type: Software
 title: Commit hooks and staged gates
-description: Prek manages commit hooks without weakening message policy or staged-tree validation.
+description: Native prek checks, staged tracked-content validation, and explicit commit-hook installation.
 resource: prek.toml
 related_resources:
   - scripts/install-commit-hooks.sh
   - scripts/check-commit-message.sh
-  - scripts/run-staged-gates.sh
-  - scripts/gates.sh
   - scripts/setup-build-deps.sh
+  - justfile
+  - .github/workflows/ci.yml
 tags:
   - git
   - onboarding
@@ -16,15 +16,19 @@ tags:
 
 # Commit hooks and staged gates
 
-[prek](https://github.com/j178/prek) manages the Git hook shim. The
-repository owns the checks. Setup and CI pin prek to **0.5.3**, and
-`prek.toml` requires at least that version. No remote hook repositories,
-managed hook environments, or additional Rust crate dependencies are used.
+[prek](https://github.com/j178/prek) manages the Git hook shim and runs
+the repository's checks directly. `prek.toml` is their single source of
+truth: each of the 13 checks is a local `language = "system"` hook.
+Setup and CI pin prek to **0.5.3**, and the config requires at least that
+version. No remote hook repositories, managed hook environments, or
+additional Rust crate dependencies are used.
 
 ## Installation and migration
 
 Install prerequisites with `scripts/setup-build-deps.sh`, then run
-`just install-commit-hooks` (or `make install-commit-hooks`). The installer
+`just install-commit-hooks` (or `scripts/install-commit-hooks.sh`).
+Installation is explicit opt-in: build, product installation, and tool
+setup commands do not install Git hooks automatically. The installer
 validates `prek.toml` and installs only the `commit-msg` shim, explicitly
 bound to that config. It replaces the recognized bootstrap hook rather
 than leaving it in prek's legacy chaining mode, which would run the full
@@ -56,68 +60,120 @@ change persistent Git configuration.
 
 ## Execution contract
 
-Both automatic checks stay at `commit-msg`, including for Git-created
-merge commits. A `pre-commit`-only gate would need separate merge handling
-and would run before the commit message can be rejected.
+Only the `commit-msg` shim is installed, including for Git-created merge
+commits. This runs the message policy first, then all checks exactly once
+per normal commit. A `pre-commit` shim would duplicate the checks and run
+before the message can be rejected; a `pre-commit`-only gate would need
+separate merge handling.
 
-| Order | Check | Guarantee |
+| Priority | Hook ID | Check |
 | --- | --- | --- |
-| 1 | `commit-message` | Existing Conventional Commits, 72-character header, and forbidden assistant-metadata rules, including existing merge/revert/autosquash exemptions. |
-| 2 | `staged-gates` | Every canonical gate against the entire staged tree, even for empty, deletion-only, and documentation-only commits. |
+| 0 | `commit-message` | Conventional Commits, 72-character header, and forbidden assistant metadata, with existing merge/revert/autosquash exemptions |
+| 1 | `commit-hooks` | Hook regression tests |
+| 2 | `fmt` | Formatting check |
+| 3 | `clippy` | Linting |
+| 4 | `nextest` | Tests |
+| 5 | `doctest` | Library doctests |
+| 6 | `okf` | Documentation bundle |
+| 7 | `links` | Local links and anchors |
+| 8 | `boundaries` | Source boundaries |
+| 9 | `rustdoc` | Documentation build |
+| 10 | `public-api` | Public API shape |
+| 11 | `audit` | Dependency vulnerabilities |
+| 12 | `deny` | Dependency licenses, sources, and bans |
+| 13 | `unused-dependencies` | Unused dependencies |
 
-Distinct priorities and `fail_fast` reject an invalid message before
-running expensive gates. Both hooks are `always_run`; there are no path
-or file-type restrictions. The message checker receives Git's message
-filename, while the staged gate receives no filenames and runs once.
-Successful gate output remains visible; failures preserve their details.
+Distinct priorities and `fail_fast` enforce this order and reject an
+invalid message before running expensive checks. All hooks are
+`always_run`, with no path or file-type restrictions. Every check is
+mandatory on every commit, even empty, deletion-only, documentation-only,
+and merge commits; a failure stops the run and refuses the commit.
+The message checker receives Git's message filename and runs only at
+`commit-msg`. The 13 check hooks use `pass_filenames = false` and declare
+`pre-commit`, `commit-msg`, and `manual` stages. Declaring those stages
+does not install extra Git shims.
 
-`scripts/run-staged-gates.sh` exports the active Git index to a temporary
-directory with `git checkout-index`. It runs **that index's**
-`scripts/gates.sh`, not an unstaged replacement. Git's `GIT_INDEX_FILE`
-remains effective, including the temporary index used by `git commit
---only`. Linked worktrees use their own index. Snapshots are removed on
-exit and builds reuse the current worktree's `target/`.
+Prek never replaces a check with a cheaper file-filtered equivalent or
+automatically formats, fixes, or stages source files. Native verbosity
+controls successful check output; failures retain their diagnostics.
 
-Prek's normal staged-file handling can temporarily hide unstaged tracked
-edits, but it is not a clean filesystem snapshot: untracked and ignored
-files remain in the checkout. The explicit snapshot is retained so those
-files cannot rescue a broken staged build or contaminate a passing one.
-This is filesystem isolation, not a sandbox: checks still use installed
-tools, environment variables, caches, and the network where required.
+## Staged contents and checkout safety
 
-Unlike the bootstrap shim, prek also temporarily saves and restores
-unstaged tracked edits while running hooks, and refuses an unstaged
-config change. Stage `prek.toml` when changing hook definitions, and do
-not edit the same checkout concurrently with a commit. The regression
-suite checks restoration after both successful and failed gates.
+Commits and staged checks use prek's native save/restore of unstaged
+tracked edits. Checks see staged tracked contents, not unstaged
+replacements of tracked source or scripts. `GIT_INDEX_FILE` remains
+effective, including alternate indexes and the temporary index used by
+`git commit --only`; linked worktrees use their own index.
+Stage `prek.toml` when changing hook definitions: staged runs refuse an
+unstaged config change.
 
-The canonical gate list remains in `scripts/gates.sh`, with commands
-listed in [Contributing](../CONTRIBUTING.md#2-the-gate). Prek does not
-replace any of its checks with a cheaper file-filtered equivalent or
-automatically format, fix, or stage source files.
+The old exported clean snapshot has deliberately been removed.
+**Untracked and ignored files remain visible to tools.** They can mask
+missing staged files or otherwise affect checks. Local checks are not
+clean-filesystem isolation or a sandbox: installed tools, environment
+variables, caches, and the network can also influence results. CI's clean
+checkout is the independent validation of committed files without local
+untracked substitutes.
+
+Native save/restore temporarily mutates the working tree. Do not edit the
+same worktree concurrently with a commit or staged check; use separate
+worktrees for parallel agents. The regression suite checks restoration
+after successful and failed checks. `--all-files` avoids the save/restore
+and does not mutate or stash the checkout, but tools can still see any
+files present.
+
+Checks run at a stable source root and preserve the checkout's `target/`.
+The former snapshot runner already shared that build directory; native
+execution retains build-cache reuse while keeping source paths stable.
 
 ## Running and verifying
 
-`make gates` / `just gates` checks the current checkout. To check the
-staged snapshot without committing:
+Check the **current checkout**, including unstaged tracked edits:
 
 ```sh
+just gates
+# Or, without just:
+prek run --config prek.toml --all-files
+# Native verbose output:
+just gates-verbose
+prek run --config prek.toml --all-files --verbose
+```
+
+Check **staged tracked contents** without committing:
+
+```sh
+prek run --config prek.toml
+# Or select the manual stage:
 prek run --config prek.toml --stage manual
 ```
 
-This command intentionally checks the **index**, not all working-tree
-files. The `manual` stage excludes the message checker; `git commit`
-checks both. Set `FATHOMABLE_HOOK_VERBOSE=1` for full gate output.
-`prek run --config prek.toml` also selects the staged gate at prek's
-default `pre-commit` stage; this does not install a second Git shim.
-Even `--all-files` does not change the gate's staged-snapshot semantics.
+Both commands exclude the message checker. The first selects prek's
+default `pre-commit` stage; the second selects `manual`. The stage alone
+does not choose staged versus checkout contents: `--all-files` selects
+checkout semantics. Add `--verbose` to either command for full output.
 
-`make test-commit-hooks` / `just test-commit-hooks` exercises real Git
-commits and prek shims in temporary repositories with cheap fixture gates.
+`justfile` directly invokes prek for check recipes; it does not duplicate
+the commands from `prek.toml`. Individual aliases, including
+`fmt-check` -> `fmt`, `test` -> `nextest`, `doc` -> `rustdoc`,
+`udeps` -> `unused-dependencies`, and `test-commit-hooks` -> `commit-hooks`,
+all use `--all-files`. Other individual check aliases use the same name
+as their hook ID. `just docs-check` runs `okf` and `links` through prek.
+`just fmt` is an explicit, non-hook `cargo fmt` operation. Other recipes
+run their substantive commands directly; see
+[Contributing](../CONTRIBUTING.md#2-the-gate).
+
+CI uses the same hooks with `--all-files`, retaining named steps in one
+main job that also includes the unused-dependencies check. It does not
+depend on a locally installed Git hook.
+
+`just test-commit-hooks` exercises real Git commits and prek shims in
+fixture repositories with cheap stand-in checks.
 It covers installation/migration safety, message rejection, failure
-propagation, staged isolation, empty/deletion/merge commits, alternate
-indexes, and linked worktrees. This suite runs in the canonical gate and
-CI; the actual Rust and documentation checks still run separately.
+propagation, native staged-content handling and its untracked-file limits,
+empty/deletion/documentation/merge commits, alternate indexes,
+`git commit --only`, and linked worktrees. This suite runs as a check in
+the gate and CI; the actual Rust and documentation checks still run
+separately.
 
 Hooks are local guardrails, not an authorization boundary. Do not bypass
 them with `--no-verify`, `SKIP`, `PREK_SKIP`, `PREK_ALLOW_NO_CONFIG`,

@@ -259,7 +259,7 @@ pub struct JumpConfig {
 impl Default for JumpConfig {
     fn default() -> Self {
         Self {
-            toast: Duration::from_secs(4),
+            toast: Duration::from_secs(5),
         }
     }
 }

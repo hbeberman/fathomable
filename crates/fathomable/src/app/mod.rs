@@ -85,12 +85,27 @@ const THREAD_WATCH_DEGRADED: &str =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Toast {
     text: String,
+    kind: ToastKind,
     until: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ToastKind {
+    Plain,
+    FileEdit {
+        path: PathBuf,
+        added: usize,
+        removed: usize,
+    },
 }
 
 impl Toast {
     pub(crate) fn text(&self) -> &str {
         &self.text
+    }
+
+    pub(crate) fn kind(&self) -> &ToastKind {
+        &self.kind
     }
 }
 
@@ -1846,15 +1861,7 @@ impl App {
 
     fn push_change(&mut self, change: Change, counts: (usize, usize)) {
         tracing::info!(path = %change.path.display(), line = change.target.line(), "change queued");
-        if self.jump.toast > Duration::ZERO {
-            let (added, removed) = counts;
-            let text = if added == 0 && removed == 0 {
-                change.path.display().to_string()
-            } else {
-                format!("{} +{added} -{removed}", change.path.display())
-            };
-            self.push_toast(text);
-        }
+        self.push_file_edit_toast(change.path.clone(), counts);
         self.queue.push(change);
     }
 
@@ -2162,11 +2169,34 @@ impl App {
 
     /// Raise a toast for `jump.toast`, dropping the oldest past the cap.
     pub(super) fn push_toast(&mut self, text: String) {
+        self.push_toast_kind(text, ToastKind::Plain);
+    }
+
+    fn push_file_edit_toast(&mut self, path: PathBuf, counts: (usize, usize)) {
+        let (added, removed) = counts;
+        let text = match (added, removed) {
+            (0, 0) => path.display().to_string(),
+            (0, removed) => format!("{}  -{removed}", path.display()),
+            (added, 0) => format!("{}  +{added}", path.display()),
+            (added, removed) => format!("{}  +{added}  -{removed}", path.display()),
+        };
+        self.push_toast_kind(
+            text,
+            ToastKind::FileEdit {
+                path,
+                added,
+                removed,
+            },
+        );
+    }
+
+    fn push_toast_kind(&mut self, text: String, kind: ToastKind) {
         if self.jump.toast == Duration::ZERO {
             return;
         }
         self.toasts.push(Toast {
             text,
+            kind,
             until: Instant::now() + self.jump.toast,
         });
         if self.toasts.len() > MAX_TOASTS {

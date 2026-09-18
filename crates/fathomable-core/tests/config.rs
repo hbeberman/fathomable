@@ -23,6 +23,14 @@ fn empty_config_is_default() -> TestResult {
 }
 
 #[test]
+fn default_toast_duration_is_five_seconds() {
+    assert_eq!(
+        Config::default().jump().toast,
+        std::time::Duration::from_secs(5)
+    );
+}
+
+#[test]
 fn theme_is_read() -> TestResult {
     assert_eq!(
         Config::parse("theme \"default-light\"")?.theme(),

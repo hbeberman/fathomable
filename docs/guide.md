@@ -123,7 +123,7 @@ semicolons. This is the complete default configuration:
 theme "default-dark" // Built-in theme or a custom theme name from themes/.
 
 jump {
-    toast 4000 // Toast duration in milliseconds; 0 disables toasts.
+    toast 5000 // Toast duration in milliseconds; 0 disables toasts.
 }
 
 watch {

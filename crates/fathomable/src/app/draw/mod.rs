@@ -51,7 +51,7 @@ use crate::app::input::help;
 use crate::app::input::keys::place;
 use crate::app::input::menu::{Grid, Menu};
 use crate::app::menu_bar::{self, Focused, MenuLayout, Row as MenuRow};
-use crate::app::{App, Focus, MAX_TOASTS, NoticeTone, PickerState, Popup};
+use crate::app::{App, Focus, MAX_TOASTS, NoticeTone, PickerState, Popup, Toast, ToastKind};
 
 /// Ratatui styles for the chrome and Markdown faces.
 ///
@@ -941,30 +941,58 @@ fn draw_toasts(frame: &mut Frame<'_>, app: &App, theme: &Theme, pane: Rect) {
     if toasts.is_empty() || pane.height == 0 {
         return;
     }
-    let shown = toasts.iter().rev().take(MAX_TOASTS).rev();
-    let lines: Vec<String> = shown.map(|t| format!(" {} ", t.text())).collect();
-    let width = lines
+    let shown: Vec<&Toast> = toasts.iter().rev().take(MAX_TOASTS).rev().collect();
+    let width = shown
         .iter()
-        .map(|l| display_width(l))
+        .map(|toast| display_width(toast.text()).saturating_add(2))
         .max()
         .unwrap_or(0)
         .min(usize::from(pane.width));
-    let height = u16_of(lines.len()).min(pane.height);
+    let height = u16_of(shown.len()).min(pane.height);
     let area = Rect {
         x: pane.x + pane.width - u16_of(width),
         y: pane.y + pane.height - height,
         width: u16_of(width),
         height,
     };
-    let text: Vec<Line<'_>> = lines
-        .iter()
+    let text: Vec<Line<'_>> = shown
+        .into_iter()
         .rev()
         .take(usize::from(height))
         .rev()
-        .map(|l| Line::from(Span::styled(fit(l, width), theme.popup)))
+        .map(|toast| toast_line(toast, theme))
         .collect();
     frame.render_widget(Clear, area);
     frame.render_widget(Paragraph::new(text).style(theme.popup), area);
+}
+
+fn toast_line(toast: &Toast, theme: &Theme) -> Line<'static> {
+    let ToastKind::FileEdit {
+        path,
+        added,
+        removed,
+    } = toast.kind()
+    else {
+        return Line::from(Span::styled(format!(" {} ", toast.text()), theme.popup));
+    };
+    let mut spans = vec![
+        Span::styled(" ".to_owned(), theme.popup),
+        Span::styled(path.display().to_string(), theme.popup),
+    ];
+    if *added > 0 {
+        spans.push(Span::styled(
+            format!("  +{added}"),
+            on_surface(theme.popup, theme.diff_plus),
+        ));
+    }
+    if *removed > 0 {
+        spans.push(Span::styled(
+            format!("  -{removed}"),
+            on_surface(theme.popup, theme.diff_minus),
+        ));
+    }
+    spans.push(Span::styled(" ".to_owned(), theme.popup));
+    Line::from(spans)
 }
 
 fn tree_lines<'a>(
@@ -3053,9 +3081,13 @@ fn centred(area: Rect, width: u16, height: u16) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use fathomable_core::highlight::Highlighter;
     use fathomable_core::layout::{Layout, display_width};
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
     use ratatui::style::{Color, Style};
 
     use crate::app::Popup;
@@ -3067,6 +3099,127 @@ mod tests {
         ABOUT_ANCHOR, ListRender, Theme, about_area, fit, fit_ellipsis, format_age,
         format_age_short, format_time, list_row, picker_row_cells, status_message_style,
     };
+
+    fn toast_buffer(
+        app: &crate::app::App,
+        theme: &Theme,
+        width: u16,
+        height: u16,
+    ) -> anyhow::Result<Buffer> {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height))?;
+        terminal.draw(|frame| {
+            super::draw_toasts(frame, app, theme, Rect::new(0, 0, width, height));
+        })?;
+        Ok(terminal.backend().buffer().clone())
+    }
+
+    fn buffer_row(buffer: &Buffer, row: u16) -> String {
+        (0..buffer.area.width)
+            .map(|column| buffer[(column, row)].symbol())
+            .collect()
+    }
+
+    #[test]
+    fn file_edit_toast_uses_popup_surface_and_diff_colours() -> anyhow::Result<()> {
+        let dir = testing::workspace("file-toast-style", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.push_file_edit_toast(PathBuf::from("README +9 -8.md"), (3, 1));
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let buffer = toast_buffer(&app, &theme, 30, 5)?;
+
+        assert_eq!(buffer_row(&buffer, 4), "      README +9 -8.md  +3  -1 ");
+        assert_eq!(Some(buffer[(6, 4)].fg), theme.popup.fg);
+        assert_eq!(
+            Some(buffer[(13, 4)].fg),
+            theme.popup.fg,
+            "count-like filename text stays part of the path"
+        );
+        assert_eq!(Some(buffer[(23, 4)].fg), theme.diff_plus.fg);
+        assert_eq!(Some(buffer[(27, 4)].fg), theme.diff_minus.fg);
+        for column in 5..30 {
+            assert_eq!(Some(buffer[(column, 4)].bg), theme.popup.bg);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn file_edit_toasts_omit_zero_counts() -> anyhow::Result<()> {
+        let dir = testing::workspace("file-toast-zero", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.push_file_edit_toast(PathBuf::from("README.md"), (0, 2));
+        app.push_file_edit_toast(PathBuf::from("README.md"), (4, 0));
+        app.push_file_edit_toast(PathBuf::from("README.md"), (0, 0));
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let buffer = toast_buffer(&app, &theme, 24, 3)?;
+        let rows: Vec<String> = (0..3)
+            .map(|row| buffer_row(&buffer, row).trim().to_owned())
+            .collect();
+
+        assert_eq!(rows, ["README.md  -2", "README.md  +4", "README.md"]);
+        assert!(
+            rows.iter()
+                .all(|row| !row.contains("+0") && !row.contains("-0"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn file_edit_toast_clips_to_the_pane_width() -> anyhow::Result<()> {
+        let dir = testing::workspace("file-toast-clip", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.push_file_edit_toast(PathBuf::from("very-long-file.rs"), (30, 12));
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let buffer = toast_buffer(&app, &theme, 12, 2)?;
+
+        assert_eq!(buffer_row(&buffer, 0), "            ");
+        assert_eq!(buffer_row(&buffer, 1), " very-long-f");
+        Ok(())
+    }
+
+    #[test]
+    fn generic_toast_stays_plain_even_when_it_looks_like_counts() -> anyhow::Result<()> {
+        let dir = testing::workspace("generic-toast", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.push_toast("settings +3 -1".to_owned());
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let buffer = toast_buffer(&app, &theme, 24, 2)?;
+
+        assert_eq!(buffer_row(&buffer, 1), "         settings +3 -1 ");
+        for column in 8..24 {
+            assert_eq!(Some(buffer[(column, 1)].fg), theme.popup.fg);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn toasts_stack_oldest_to_newest_and_keep_only_three() -> anyhow::Result<()> {
+        let dir = testing::workspace("toast-stack", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        for text in ["first", "second", "third", "fourth"] {
+            app.push_toast(text.to_owned());
+        }
+        assert_eq!(
+            app.toasts()
+                .iter()
+                .map(crate::app::Toast::text)
+                .collect::<Vec<_>>(),
+            ["second", "third", "fourth"]
+        );
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let buffer = toast_buffer(&app, &theme, 16, 5)?;
+        let rows: Vec<String> = (2..5)
+            .map(|row| buffer_row(&buffer, row).trim().to_owned())
+            .collect();
+
+        assert_eq!(rows, ["second", "third", "fourth"]);
+        Ok(())
+    }
 
     #[test]
     fn about_anchor_renders_exactly_in_the_subdued_info_style() -> anyhow::Result<()> {

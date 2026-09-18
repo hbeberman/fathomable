@@ -88,6 +88,13 @@ The installed hook keeps timestamped native traces and console/error logs
 under each worktree's ignored `.tmp/commit-hook-history/`. These measure
 hook attempts, not total agent work; do not commit or upload them.
 
+Agents should not run `just gates` or the equivalent full all-files gate
+immediately before committing. After targeted validation, stage and commit the
+completed change; the installed `commit-msg` hook runs the message policy and
+all 14 checks against the staged tracked contents. Use a standalone full gate
+only when the user explicitly requests preflight validation or when diagnosing
+gate behavior:
+
 ```sh
 just gates
 # Without just:
@@ -114,9 +121,11 @@ Do not bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
 ## Committing
 
 - Treat each task request as implicit authorization to commit its completed
-  changes. Once the change is done and `just gates` passes, commit it
-  automatically, without asking for approval. Do not leave completed work
-  uncommitted unless the user explicitly asks you to.
+  changes. Once the change is done and targeted checks pass, stage and commit
+  it automatically, without asking for approval. Do not run `just gates`
+  first: the commit itself runs the canonical gate and fails closed if any
+  check fails. Fix a failed hook and retry the commit. Do not leave completed
+  work uncommitted unless the user explicitly asks you to.
 - Keep each commit to one task; do not batch unrelated tasks into a
   single commit.
 

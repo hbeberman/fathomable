@@ -66,6 +66,9 @@ demo *ARGS:
 install-commit-hooks:
     make install-commit-hooks
 
+test-commit-hooks:
+    make test-commit-hooks
+
 install:
     make install
 

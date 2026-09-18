@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @okf-doc: /commit-hooks.md
 set -euo pipefail
 
 gate_root=${FATHOMABLE_GATE_ROOT:-}
@@ -38,6 +39,7 @@ run() {
     fi
 }
 
+run "commit-hooks"     python3 scripts/test-commit-hooks.py
 run "fmt"              cargo fmt --check
 run "clippy"           cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code
 run "nextest"          cargo nextest run --all-targets --all-features

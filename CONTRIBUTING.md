@@ -41,8 +41,8 @@ the setup script and the full gate.
 Then, with rustup already installed:
 
 ```sh
-scripts/setup-build-deps.sh   # nightly, cargo-{nextest,audit,deny,udeps,mutants,public-api}, lychee
-just install-commit-hooks     # writes .git/hooks/commit-msg
+scripts/setup-build-deps.sh   # nightly, cargo tools, lychee, prek 0.5.3
+just install-commit-hooks     # installs or migrates the prek commit-msg shim
 ```
 
 The setup script pins every tool version and installs PyYAML with
@@ -50,16 +50,32 @@ The setup script pins every tool version and installs PyYAML with
 refuses that under PEP 668, which is why the distro package is listed
 above.
 
+The installer replaces the recognized bootstrap hook without chaining it,
+refuses unknown hooks or an existing `core.hooksPath`, and refreshes an
+existing prek shim. Default hooks are shared across linked worktrees;
+installing from one affects the others. For an isolated trial before
+migration, see [Commit hooks and staged gates](docs/commit-hooks.md).
+
 ## 2. The gate
 
-`scripts/gates.sh` is the canonical local gate. The commit hook runs it
-against a snapshot of the staged tree, so a commit is refused until it
-passes. `make gates` invokes it and `just gates` forwards to Make; set
+`scripts/gates.sh` is the canonical local gate. Prek first checks the
+commit message, then runs the entire gate against a snapshot of the staged
+tree, so a commit is refused until it passes. No checks are filtered by
+changed filenames, including on empty and merge commits. `make gates`
+checks the current checkout and `just gates` forwards to Make; set
 `FATHOMABLE_HOOK_VERBOSE=1` (or run `make gates-verbose`) to see the
-command output of a failing step. Do not bypass hooks with `--no-verify`.
+full command output. Do not bypass hooks with `--no-verify`, `SKIP`,
+`PREK_SKIP`, or `PREK_ALLOW_NO_CONFIG`.
+
+To check exactly the staged tree without committing, run
+`prek run --config prek.toml --stage manual`. The snapshot excludes
+unstaged edits and untracked/ignored files; prek's temporary stashing
+alone does not provide that filesystem isolation. The existing message
+rules and all gate commands below remain in repository-owned scripts.
 
 | Step | Command |
 | --- | --- |
+| hook regression tests | `python3 scripts/test-commit-hooks.py` |
 | formatting | `cargo fmt --check` |
 | linting | `cargo clippy --all-targets --all-features -- -D warnings -F unsafe-code` |
 | tests | `cargo nextest run --all-targets --all-features` |

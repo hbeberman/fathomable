@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @okf-doc: /commit-hooks.md
 # Install the pinned cargo tooling the commit gate runs. The system
 # packages it needs are listed per distribution in CONTRIBUTING.md; this
 # script checks for them first so a missing header fails here, not
@@ -41,6 +42,7 @@ cargo install cargo-nextest --locked --version 0.9.138
 cargo install cargo-mutants --locked --version 27.1.0
 cargo +nightly install cargo-udeps --locked --version 0.1.61
 cargo install lychee --locked --version 0.24.2
+cargo install prek --locked --version 0.5.3
 
 # The OKF lint imports PyYAML. Distributions package it (python3-pyyaml,
 # python3-yaml); pip is the fallback, and Ubuntu refuses `pip --user`

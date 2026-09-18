@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @okf-doc: /commit-hooks.md
 set -euo pipefail
 
 msg_file=${1:-}

@@ -194,8 +194,10 @@ viewer, the layout engine, and later themes agree.
 
 - `Space v s` toggles between rendered Markdown and the raw source
   (`:source` does the same); the cursor keeps its source line across the
-  toggle. The original `gs` alias was removed on 2026-09-14 to reserve
-  `g` for navigation.
+  toggle. Only files accepted by the configured
+  [Markdown classifier](0016-syntax-highlighting.md#markdown-versus-source-files)
+  can toggle; other files stay in source view. The original `gs` alias was
+  removed on 2026-09-14 to reserve `g` for navigation.
 
 ### Width and wrapping
 

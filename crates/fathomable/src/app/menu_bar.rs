@@ -712,7 +712,7 @@ fn action_available(app: &App, action: Action) -> bool {
             }),
         Action::ComparisonSave => app.review_points.is_some(),
         Action::ComparisonWhitespace | Action::FilesChanged => app.diff_mode() != DiffMode::Off,
-        Action::SourceView => app.diff_mode() != fathomable_core::config::DiffMode::Unified,
+        Action::SourceView => app.source_view_available(),
         Action::ArchiveThread => app
             .thread_cursor()
             .thread()
@@ -1414,10 +1414,16 @@ mod tests {
     }
 
     #[test]
-    fn source_action_is_unavailable_in_unified_mode() -> anyhow::Result<()> {
+    fn source_action_follows_file_eligibility_and_unified_mode() -> anyhow::Result<()> {
         let dir = testing::workspace("menu-source-diff-mode", testing::README)?;
-        let mut app = testing::app(&dir)?;
+        std::fs::write(dir.0.join("ws/main.rs"), "fn main() {}\n")?;
+        let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+        assert!(!super::action_available(&app, super::Action::SourceView));
+        app.open(std::path::Path::new("README.md"));
         assert!(super::action_available(&app, super::Action::SourceView));
+        app.open(std::path::Path::new("main.rs"));
+        assert!(!super::action_available(&app, super::Action::SourceView));
+        app.open(std::path::Path::new("README.md"));
         app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
         assert!(!super::action_available(&app, super::Action::SourceView));
         Ok(())

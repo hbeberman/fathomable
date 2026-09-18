@@ -719,11 +719,12 @@ impl App {
         let mut menu = Menu::below_header("File", Where::View, self.sidebar_width(), row);
         menu.push(Action::Review, Action::Review, "open reviews");
         menu.separator();
-        menu.push_toggle(
+        menu.push_toggle_enabled(
             Action::SourceView,
             Action::SourceView,
             "rendered view",
             !self.view().source_view() && !self.view().diff_view(),
+            self.source_view_available(),
         );
         menu.push_toggle(
             Action::StubsToggle,

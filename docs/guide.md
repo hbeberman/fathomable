@@ -63,7 +63,7 @@ the table below is a quick reference, not the full list.
 | `Space F c` `Space F o` | only changed / only reviews in Files |
 | `Space F u` `Space F g` | hide untracked / show ignored in Files |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
-| `Space v s` | source / rendered view |
+| `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
 | `f` `t` | File / Reviews |
@@ -126,9 +126,14 @@ and Ignore whitespace. There is no comparison-control popup, **Start comparison
 at current HEAD**, `Space d d`, or `:diff`, and those removed routes have no
 compatibility aliases.
 
-Rendered/Source remains available in Standard and Off. Unified retains that
-choice but disables `Space v s`, its menu action, and `:source` until another
-mode is selected. `:status` and file information report Target only while Off.
+Rendered/Source is available in Standard and Off only for files matched by
+`markdown.extensions` or `markdown.names`, including custom extensions and
+extensionless names. Other files stay in source view: the menu action is
+greyed out, and `Space v s` or `:source` explains why it is unavailable without
+changing the view. Each Markdown file retains its own source/rendered choice
+when switching files. Unified retains that choice but disables the toggle
+until another mode is selected. `:status` and file information report Target
+only while Off.
 Normal comparison provenance moves out of the bottom status line when the
 menu-bar endpoint controls actually render; stale/error status remains, and
 provenance returns there when the controls are hidden or too narrow.

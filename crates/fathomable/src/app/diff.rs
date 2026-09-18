@@ -103,11 +103,27 @@ impl App {
 
     /// Toggle rendered/source display when the selected mode supports it.
     pub(crate) fn toggle_source_view(&mut self) {
+        if !self.has_document() {
+            self.notice("no file open");
+            return;
+        }
         if self.diff_mode == DiffMode::Unified {
             self.notice("source view is unavailable in unified diff mode");
             return;
         }
-        self.view_mut().toggle_source_view();
+        if !self.view().source_view_available() {
+            self.notice("rendered view is unavailable for this file");
+            return;
+        }
+        let changed = self.view_mut().toggle_source_view();
+        debug_assert!(changed, "source-view availability changed during dispatch");
+    }
+
+    /// Whether the current action can switch rendered/source display.
+    pub(crate) fn source_view_available(&self) -> bool {
+        self.has_document()
+            && self.diff_mode != DiffMode::Unified
+            && self.view().source_view_available()
     }
 
     /// Open the comparison base picker.

@@ -14,7 +14,8 @@ tags:
 # 0016 Syntax highlighting and source files
 
 Status: accepted (2026-08-26), amended 2026-08-27 (the extensionless rule),
-amended 2026-09-17 (asynchronous source highlighting)
+amended 2026-09-17 (asynchronous source highlighting),
+amended 2026-09-18 (rendered-view eligibility)
 
 ## Context
 
@@ -82,8 +83,9 @@ settled in a question round on 2026-08-26.
 ### Markdown versus source files
 
 - `config.kdl` gains a `markdown` block naming which files render as
-  Markdown. Every other file opens in the source layout, highlighted by its
-  extension, and the existing source toggle (`gs`) still flips either kind.
+  Markdown. Every other file stays in the source layout, highlighted by its
+  extension. The source/rendered toggle (`Space v s` or `:source`) is
+  available only for files matched by this configuration.
 
   ```kdl
   markdown {
@@ -107,6 +109,15 @@ settled in a question round on 2026-08-26.
   short, well-known set; build files without extensions are open-ended,
   so the allow-list replaced the switch. `extensionless` is no longer a
   key and is rejected as unknown.
+
+  *Amendment (2026-09-18).* The same classifier governs both initial
+  display and permission to enter rendered view; it is not merely a default.
+  Custom extensions and extensionless names remain eligible, while excluded
+  files cannot enter the Markdown renderer through a menu, keyboard, command,
+  or direct view toggle. Ineligible menu actions are disabled; direct actions
+  report the restriction without changing layout or highlighting. Eligible
+  files retain their own source/rendered choice across file switches.
+  Unified diffs continue to disable this toggle while retaining that choice.
 - The source layout's language hint is the extension, or for a file with
   none its file name, so syntect's own file-name matches (`Makefile`,
   `GNUmakefile`, `Rakefile`) apply; `justfile` is mapped to the make

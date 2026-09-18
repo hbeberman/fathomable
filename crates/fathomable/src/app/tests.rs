@@ -1,6 +1,6 @@
 use fathomable_testing::{TempDir, git};
 
-use crate::app::testing::{AppBuilder, complete_highlights};
+use crate::app::testing::{AppBuilder, complete_highlights, press};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -146,9 +146,48 @@ fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result
         .iter()
         .any(|span| span.style().fg.is_some());
     assert!(coloured, "the source layout is highlighted by extension");
+    assert!(
+        !app.view_mut().toggle_source_view(),
+        "a direct view call cannot render ordinary source"
+    );
+    press(&mut app, " vs");
+    assert!(
+        app.view().source_view(),
+        "the key binding cannot bypass eligibility"
+    );
+    assert_eq!(
+        app.message(),
+        Some("rendered view is unavailable for this file")
+    );
+    app.command("source");
+    assert!(
+        app.view().source_view(),
+        "the command cannot bypass eligibility"
+    );
+    assert!(
+        app.view().layout().lines()[0]
+            .spans()
+            .iter()
+            .any(|span| span.style().fg.is_some()),
+        "failed render attempts retain source highlighting"
+    );
+
     app.open(Path::new("README.md"));
     assert!(!app.view().source_view(), "Markdown opens rendered");
     assert_eq!(app.view().layout().lines()[0].text(), "Readme");
+    app.open(Path::new("docs/guide.md"));
+    app.command("source");
+    assert!(app.view().source_view());
+    app.open(Path::new("README.md"));
+    assert!(
+        !app.view().source_view(),
+        "each eligible file retains its own display choice"
+    );
+    app.open(Path::new("docs/guide.md"));
+    assert!(
+        app.view().source_view(),
+        "the source choice returns with its document"
+    );
     app.open(Path::new("LICENSE"));
     assert!(
         !app.view().source_view(),
@@ -160,21 +199,71 @@ fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result
         "unlisted extensionless files open as source"
     );
 
-    // A narrower list flips both.
+    Ok(())
+}
+
+#[test]
+fn custom_markdown_eligibility_replaces_defaults_and_ignores_path_case() -> anyhow::Result<()> {
+    let dir = fixture("custom-markdown")?;
+    fs::write(dir.0.join("NOTES.RST"), "# Notes\n")?;
+    fs::write(dir.0.join("GUIDE"), "# Guide\n")?;
     let mut app = AppBuilder::at(&dir.0)
         .unopened()
         .options(|o| Options {
             markdown: MarkdownConfig {
-                extensions: vec!["rs".to_owned()],
-                names: Vec::new(),
+                extensions: vec!["rst".to_owned()],
+                names: vec!["guide".to_owned()],
             },
             ..o
         })
         .build()?;
-    app.open(Path::new("LICENSE"));
-    assert!(app.view().source_view());
-    app.open(Path::new("main.rs"));
+    app.open(Path::new("README.md"));
+    assert!(
+        app.view().source_view(),
+        "custom configuration excludes default Markdown extensions"
+    );
+    app.open(Path::new("NOTES.RST"));
+    assert!(
+        !app.view().source_view(),
+        "custom extensions match path case-insensitively"
+    );
+    app.open(Path::new("GUIDE"));
+    assert!(
+        !app.view().source_view(),
+        "custom extensionless names match path case-insensitively"
+    );
+    Ok(())
+}
+
+#[test]
+fn source_actions_require_an_open_document() -> anyhow::Result<()> {
+    let dir = fixture("source-unopened")?;
+    let mut app = AppBuilder::at(&dir.0).unopened().build()?;
+    let welcome = app
+        .view()
+        .layout()
+        .lines()
+        .iter()
+        .map(fathomable_core::layout::Line::text)
+        .collect::<Vec<_>>();
+
+    assert!(!app.source_view_available());
+    press(&mut app, " vs");
+    assert_eq!(app.message(), Some("no file open"));
     assert!(!app.view().source_view());
+    app.command("source");
+    assert_eq!(app.message(), Some("no file open"));
+    assert!(!app.view().source_view());
+    assert_eq!(
+        app.view()
+            .layout()
+            .lines()
+            .iter()
+            .map(fathomable_core::layout::Line::text)
+            .collect::<Vec<_>>(),
+        welcome,
+        "unavailable actions do not relayout the welcome placeholder"
+    );
     Ok(())
 }
 
@@ -396,7 +485,9 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
             "display {display} contains an overlong line"
         );
         match display {
-            0 => app.view_mut().toggle_source_view(),
+            0 => {
+                app.view_mut().toggle_source_view();
+            }
             1 => {
                 app.view_mut().set_bases(None, Some(String::new()));
                 app.select_diff_mode(fathomable_core::config::DiffMode::Unified);

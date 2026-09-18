@@ -719,6 +719,11 @@ impl View {
         self.display == Display::Source
     }
 
+    /// Whether this file can switch between rendered Markdown and source.
+    pub(crate) fn source_view_available(&self) -> bool {
+        self.syntax.markdown && !self.diff_view()
+    }
+
     pub(crate) fn diff_view(&self) -> bool {
         self.display == Display::Diff
     }
@@ -846,8 +851,11 @@ impl View {
         }
     }
 
-    /// Switch between rendered Markdown and the raw source.
-    pub(crate) fn toggle_source_view(&mut self) {
+    /// Switch between rendered Markdown and the raw source when supported.
+    pub(crate) fn toggle_source_view(&mut self) -> bool {
+        if !self.source_view_available() {
+            return false;
+        }
         self.display = match self.display {
             Display::Source => Display::Rendered,
             _ => Display::Source,
@@ -863,6 +871,7 @@ impl View {
             );
         }
         self.relayout();
+        true
     }
 
     /// `]g` within the file: the cursor to the next hunk against `HEAD`.
@@ -1842,6 +1851,38 @@ mod tests {
         view.set_worktree_missing(true);
         assert!(view.source_view());
         assert_eq!(view.layout().lines()[0].text(), "# Title");
+    }
+
+    #[test]
+    fn non_markdown_syntax_cannot_enter_rendered_or_leave_diff_directly() {
+        let mut source = View::with_syntax(
+            "# Not prose\n".to_owned(),
+            40,
+            5,
+            Syntax {
+                highlighter: Arc::new(Highlighter::plain()),
+                hint: "rs".to_owned(),
+                markdown: false,
+            },
+        );
+        assert!(source.source_view());
+        assert!(!source.source_view_available());
+        assert!(!source.toggle_source_view());
+        assert_eq!(source.layout().lines()[0].text(), "# Not prose");
+
+        let mut rendered = view();
+        rendered.show_diff(DiffView {
+            base: Side::ComparisonBase,
+            target: Side::ComparisonTarget,
+            badge: "DIFF comparison".to_owned(),
+            body: DiffBody::Diff {
+                base: Text::Owned("old\n".to_owned()),
+                target: Text::Owned("new\n".to_owned()),
+            },
+        });
+        assert!(!rendered.source_view_available());
+        assert!(!rendered.toggle_source_view());
+        assert!(rendered.diff_view());
     }
 
     #[test]

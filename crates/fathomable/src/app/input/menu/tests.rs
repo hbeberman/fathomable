@@ -1296,6 +1296,32 @@ fn the_file_title_opens_navigation_and_display_settings() -> anyhow::Result<()> 
 }
 
 #[test]
+fn the_file_title_disables_rendering_for_ordinary_source() -> anyhow::Result<()> {
+    let dir = fixture("file-title-source")?;
+    fs::write(dir.0.join("ws/main.rs"), "fn main() {}\n")?;
+    let mut app = app(&dir)?;
+    app.open(std::path::Path::new("main.rs"));
+    let header_row = app.text_top() - 1;
+    let sidebar = app.sidebar_width();
+
+    left(&mut app, sidebar + 1, header_row);
+    let entry = app
+        .menu()
+        .context("the File menu")?
+        .entries()
+        .iter()
+        .find(|entry| entry.label() == "rendered view")
+        .context("rendered view entry")?;
+    assert!(!entry.enabled(), "the unavailable entry is dimmed");
+
+    let cell = entry_cell(&app, "rendered view")?;
+    assert_eq!(left(&mut app, cell.0, cell.1), Effect::None);
+    assert!(app.view().source_view());
+    assert!(app.menu().is_some(), "a disabled click does not dispatch");
+    Ok(())
+}
+
+#[test]
 fn the_context_menu_draws() -> anyhow::Result<()> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

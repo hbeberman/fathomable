@@ -309,8 +309,13 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
     let dir = repository("comparison-source-modes")?;
     let root = dir.0.join("ws");
     fs::write(root.join("README.md"), "# old\n")?;
-    git::commit_and_stage(&root, &[("README.md", "# old\n")])?;
+    fs::write(root.join("main.rs"), "fn old() {}\n")?;
+    git::commit_and_stage(
+        &root,
+        &[("README.md", "# old\n"), ("main.rs", "fn old() {}\n")],
+    )?;
     fs::write(root.join("README.md"), "# new\n")?;
+    fs::write(root.join("main.rs"), "fn new() {}\n")?;
     let mut app = AppBuilder::at(&root).build()?;
 
     press(&mut app, " vs");
@@ -336,6 +341,32 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
     assert!(app.view().source_view());
     app.command("source");
     assert!(!app.view().source_view(), "Off still permits rendered view");
+
+    app.open(Path::new("main.rs"));
+    assert!(app.view().source_view());
+    app.command("source");
+    assert!(app.view().source_view(), "ordinary source cannot render");
+    assert_eq!(
+        app.message(),
+        Some("rendered view is unavailable for this file")
+    );
+    app.select_diff_mode(DiffMode::Unified);
+    assert!(app.view().diff_view());
+    app.open(Path::new("README.md"));
+    assert!(
+        app.view().diff_view(),
+        "file switches keep unified presentation"
+    );
+    app.select_diff_mode(DiffMode::Standard);
+    assert!(
+        !app.view().source_view(),
+        "the eligible document restores its rendered choice"
+    );
+    app.open(Path::new("main.rs"));
+    assert!(
+        app.view().source_view(),
+        "the ineligible document restores only source"
+    );
     Ok(())
 }
 

@@ -130,9 +130,11 @@ content they affect.
   [0088](0088-bundled-licenses.md)). Getting started reuses the first-workspace
   page in the text column and preserves the document behind it. Doctor is a fresh,
   scrollable in-app rendering of the same structured report as
-  `fathomable --doctor`. Licenses displays the embedded first- and third-party
-  notices offline. About (`:about`) is a compact project/version, license,
-  and repository view with directions to the full notices.
+  `fathomable --doctor`. Warnings use a distinct face and do not make the
+  report fail; `r` rebuilds the report so corrected permissions clear
+  immediately. Licenses displays the embedded first- and third-party notices
+  offline. About (`:about`) is a compact project/version, license, and
+  repository view with directions to the full notices.
 - **Go** contains the file pickers and jumplist Back/Forward.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**

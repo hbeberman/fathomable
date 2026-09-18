@@ -80,6 +80,12 @@ them:
   not follow links into unrelated files, chmod shared XDG/home ancestors, or
   discard user state. Filesystem permissions are not encryption or secure
   erasure, and do not protect against the trusted OS or same-UID processes.
+- Group-writable external state ancestors are an accepted, diagnosed risk:
+  group members can rename entries and interfere with availability or path
+  integrity even though application directories and files remain owner-only.
+  The application warns without treating group names or numeric UID/GID
+  equality as evidence of exclusive access. Non-sticky world-writable
+  ancestors remain outside the accepted boundary and are refused.
 - Untrusted text remains data when rendered or returned. Examine terminal
   control sequences, link handling, external commands, and prompt-injection
   content without assuming that rendering libraries or agent hosts solve it.

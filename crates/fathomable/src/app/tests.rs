@@ -1754,6 +1754,47 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
 }
 
 #[test]
+fn startup_shared_state_warning_survives_opening_the_requested_file() -> anyhow::Result<()> {
+    let dir = fixture("shared-state-startup")?;
+    let mut app = AppBuilder::at(&dir.0)
+        .options(|mut options| {
+            options.shared_state_ancestor_count = 2;
+            options
+        })
+        .build()?;
+    assert_eq!(
+        app.message(),
+        Some("2 group-writable state ancestors; run :doctor for details")
+    );
+    assert_eq!(app.message_tone(), NoticeTone::Warning);
+    assert!(app.tick_in().is_some());
+    if let Some(notice) = app.message.as_mut() {
+        notice.until = Some(std::time::Instant::now());
+    }
+    app.tick();
+    assert_eq!(app.message(), None);
+
+    let clean = AppBuilder::at(&dir.0).build()?;
+    assert_eq!(clean.message(), None);
+
+    let mut failed = AppBuilder::at(&dir.0)
+        .options(|mut options| {
+            options.shared_state_ancestor_count = 1;
+            options
+        })
+        .build()?;
+    if let Some(notice) = failed.message.as_mut() {
+        notice.until = Some(std::time::Instant::now());
+    }
+    failed.error("cannot open requested file");
+    assert_eq!(failed.tick_in(), None);
+    failed.tick();
+    assert_eq!(failed.message_tone(), NoticeTone::Error);
+    assert_eq!(failed.message(), Some("cannot open requested file"));
+    Ok(())
+}
+
+#[test]
 fn file_edit_toasts_never_move_the_reader() -> anyhow::Result<()> {
     let dir = fixture("change-toast-no-navigation")?;
     let mut app = app(&dir)?;

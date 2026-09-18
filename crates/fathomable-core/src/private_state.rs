@@ -5,8 +5,10 @@
 //! Existing application directories must be 0700; files must be singly
 //! linked, regular, 0600, and owned by the effective UID. Symlinks are refused.
 //! Ancestors outside the application may be readable, but must be owned by
-//! root or this UID and not writable by other users (except sticky directories).
-//! This protects against other local UIDs, not root or same-UID processes.
+//! root or this UID. Group-writable external ancestors are accepted with a
+//! discoverable warning; non-sticky world-writable ancestors are refused.
+//! Group members can interfere with shared ancestor entries, while root and
+//! same-UID processes remain outside this protection.
 
 use std::fs::{self, DirBuilder, File, Metadata, OpenOptions};
 use std::io::{self, Read, Write};
@@ -55,6 +57,19 @@ fn absolute(path: &Path) -> io::Result<PathBuf> {
     Ok(path)
 }
 
+fn ancestor_access(path: &Path, owner: u32, mode: u32, uid: u32) -> io::Result<()> {
+    if owner != uid && owner != 0 {
+        return Err(denied(path, "ancestor is owned by another UID"));
+    }
+    if mode & 0o002 != 0 && mode & 0o1000 == 0 {
+        return Err(denied(
+            path,
+            "ancestor is world-writable without the sticky bit",
+        ));
+    }
+    Ok(())
+}
+
 fn ancestor(path: &Path, metadata: &Metadata, uid: u32) -> io::Result<()> {
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(denied(
@@ -62,16 +77,7 @@ fn ancestor(path: &Path, metadata: &Metadata, uid: u32) -> io::Result<()> {
             "expected a directory, not a link or special file",
         ));
     }
-    if metadata.uid() != uid && metadata.uid() != 0 {
-        return Err(denied(path, "ancestor is owned by another UID"));
-    }
-    if metadata.mode() & 0o022 != 0 && metadata.mode() & 0o1000 == 0 {
-        return Err(denied(
-            path,
-            "ancestor is writable by other users without the sticky bit",
-        ));
-    }
-    Ok(())
+    ancestor_access(path, metadata.uid(), metadata.mode(), uid)
 }
 
 fn parents(path: &Path, uid: u32, create: bool) -> io::Result<()> {
@@ -93,6 +99,26 @@ fn parents(path: &Path, uid: u32, create: bool) -> io::Result<()> {
         ancestor(&current, &metadata, uid)?;
     }
     Ok(())
+}
+
+pub(crate) fn shared_ancestors(path: impl AsRef<Path>) -> io::Result<Vec<PathBuf>> {
+    let path = absolute(path.as_ref())?;
+    let uid = effective_uid()?;
+    let mut shared = Vec::new();
+    let mut current = PathBuf::new();
+    for part in path.components() {
+        current.push(part);
+        let metadata = match fs::symlink_metadata(&current) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+        };
+        ancestor(&current, &metadata, uid)?;
+        if metadata.mode() & 0o020 != 0 && metadata.mode() & 0o1000 == 0 {
+            shared.push(current.clone());
+        }
+    }
+    Ok(shared)
 }
 
 /// Create or validate a private application-owned directory.
@@ -177,8 +203,9 @@ fn open(path: &Path, access: Access) -> io::Result<File> {
             }
             Err(error) => return Err(error),
         };
-        // Validated ancestors prevent other UIDs replacing an existing owned
-        // file. Claim missing names exclusively, never opening a raced-in object.
+        // Claim missing names exclusively and revalidate the opened handle.
+        // Group-shared ancestors can still redirect an otherwise-valid owned
+        // tree; callers report that accepted risk separately.
         let mut options = OpenOptions::new();
         match access {
             Access::Read => options.read(true),
@@ -255,4 +282,53 @@ pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<(
     let mut file = open(path.as_ref(), Access::Write)?;
     file.set_len(0)?;
     file.write_all(contents.as_ref())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ancestor_access;
+    use std::io;
+    use std::path::Path;
+
+    const UID: u32 = 1000;
+    const OTHER_UID: u32 = 1001;
+
+    fn refused(result: io::Result<()>) -> io::Result<()> {
+        let Err(error) = result else {
+            return Err(io::Error::other("unsafe ancestor accepted"));
+        };
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        Ok(())
+    }
+
+    #[test]
+    fn group_writable_ancestors_are_allowed() -> io::Result<()> {
+        ancestor_access(Path::new("/synthetic/group-writable"), UID, 0o770, UID)?;
+        ancestor_access(Path::new("/synthetic/group-readable"), UID, 0o775, UID)
+    }
+
+    #[test]
+    fn non_sticky_world_writable_ancestor_is_refused() -> io::Result<()> {
+        refused(ancestor_access(
+            Path::new("/synthetic/world-writable"),
+            UID,
+            0o777,
+            UID,
+        ))
+    }
+
+    #[test]
+    fn group_sharing_does_not_relax_ownership() -> io::Result<()> {
+        refused(ancestor_access(
+            Path::new("/synthetic/foreign"),
+            OTHER_UID,
+            0o770,
+            UID,
+        ))
+    }
+
+    #[test]
+    fn sticky_world_writable_ancestor_is_allowed() -> io::Result<()> {
+        ancestor_access(Path::new("/synthetic/sticky"), 0, 0o1777, UID)
+    }
 }

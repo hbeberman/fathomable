@@ -225,27 +225,32 @@ fn private_state_child() -> Result {
 
 #[test]
 fn xdg_refuses_insecure_owned_directories_without_repair() -> Result {
-    for relative in ["", "workspaces", "workspaces/key"] {
-        let fixture = TempDir::new(&format!("private-bad-dir-{}", relative.replace('/', "-")))?;
-        let dirs = dirs(&fixture.0);
-        let target = dirs.state_dir().join(relative);
-        private_state::ensure_dir(&target)?;
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o755))?;
-        let sentinel = target.join("old-data");
-        fs::write(&sentinel, "preserve old state")?;
-        let Err(error) = dirs.prepare_state_dir(target.join("child")) else {
-            return Err("unsafe directory accepted".into());
-        };
-        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
-        assert!(
-            error
-                .to_string()
-                .contains(target.display().to_string().trim_end_matches('/')),
-            "{error}"
-        );
-        assert_eq!(mode(&target)?, 0o755);
-        assert_eq!(fs::read_to_string(sentinel)?, "preserve old state");
-        assert!(!target.join("child").exists());
+    for permissions in [0o755, 0o775] {
+        for relative in ["", "workspaces", "workspaces/key"] {
+            let fixture = TempDir::new(&format!(
+                "private-bad-dir-{permissions:o}-{}",
+                relative.replace('/', "-")
+            ))?;
+            let dirs = dirs(&fixture.0);
+            let target = dirs.state_dir().join(relative);
+            private_state::ensure_dir(&target)?;
+            fs::set_permissions(&target, fs::Permissions::from_mode(permissions))?;
+            let sentinel = target.join("old-data");
+            fs::write(&sentinel, "preserve old state")?;
+            let Err(error) = dirs.prepare_state_dir(target.join("child")) else {
+                return Err("unsafe directory accepted".into());
+            };
+            assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+            assert!(
+                error
+                    .to_string()
+                    .contains(target.display().to_string().trim_end_matches('/')),
+                "{error}"
+            );
+            assert_eq!(mode(&target)?, permissions);
+            assert_eq!(fs::read_to_string(sentinel)?, "preserve old state");
+            assert!(!target.join("child").exists());
+        }
     }
     Ok(())
 }
@@ -296,15 +301,107 @@ fn state_links_hardlinks_and_insecure_files_are_refused_unchanged() -> Result {
 #[test]
 fn unsafe_ancestors_and_special_files_are_refused() -> Result {
     let fixture = TempDir::new("private-state-ancestor")?;
-    let shared = fixture.0.join("shared");
+    fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+    let shared = fixture.0.join("world-writable");
     fs::create_dir(&shared)?;
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o777))?;
-    refused(private_state::write(shared.join("secret"), "secret"))?;
+    let secret = shared.join("secret");
+    refused(private_state::write(&secret, "secret"))?;
+    assert!(!secret.exists());
     assert_eq!(mode(&shared)?, 0o777);
-    assert!(fs::read_dir(&shared)?.next().is_none());
+
     let fifo = fixture.0.join("fifo");
     assert!(Command::new("mkfifo").arg(&fifo).status()?.success());
     refused(Store::open(fifo))?;
+    Ok(())
+}
+
+#[test]
+fn group_writable_external_state_ancestors_are_allowed_unchanged() -> Result {
+    for permissions in [0o770, 0o775] {
+        let fixture = TempDir::new(&format!("private-state-shared-{permissions:o}"))?;
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+        let external = fixture.0.join("external-state");
+        fs::DirBuilder::new().mode(permissions).create(&external)?;
+        fs::set_permissions(&external, fs::Permissions::from_mode(permissions))?;
+        let dirs = dirs(&external);
+        dirs.prepare_state_dir(dirs.log_dir())?;
+        let log = dirs.log_dir().join("viewer.log");
+        private_state::write(&log, "synthetic log\n")?;
+
+        assert_eq!(mode(&external)?, permissions);
+        assert_eq!(mode(&dirs.state_dir())?, 0o700);
+        assert_eq!(mode(&dirs.log_dir())?, 0o700);
+        assert_eq!(mode(&log)?, 0o600);
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_state_ancestor_discovery_is_read_only_ordered_and_bounded() -> Result {
+    let fixture = TempDir::new("private-state-discovery")?;
+    fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+    let shared_parent = fixture.0.join("shared-parent");
+    fs::create_dir(&shared_parent)?;
+    fs::set_permissions(&shared_parent, fs::Permissions::from_mode(0o770))?;
+    let state_home = shared_parent.join("state-home");
+    fs::create_dir(&state_home)?;
+    fs::set_permissions(&state_home, fs::Permissions::from_mode(0o775))?;
+    let state_dirs = dirs(&state_home);
+
+    let shared: Vec<_> = state_dirs
+        .shared_state_ancestors()?
+        .into_iter()
+        .filter(|path| path.starts_with(&fixture.0))
+        .collect();
+    assert_eq!(shared, [shared_parent.clone(), state_home.clone()]);
+    assert_eq!(mode(&shared_parent)?, 0o770);
+    assert_eq!(mode(&state_home)?, 0o775);
+    assert!(!state_dirs.state_dir().exists());
+
+    let missing = dirs(&fixture.0.join("missing").join("state-home"));
+    assert!(
+        missing
+            .shared_state_ancestors()?
+            .iter()
+            .all(|path| !path.starts_with(fixture.0.join("missing")))
+    );
+    assert!(!fixture.0.join("missing").exists());
+    Ok(())
+}
+
+#[test]
+fn safe_and_sticky_state_ancestors_do_not_warn() -> Result {
+    for permissions in [0o700, 0o755, 0o1770] {
+        let fixture = TempDir::new(&format!("private-state-safe-{permissions:o}"))?;
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+        let state_home = fixture.0.join("state-home");
+        fs::create_dir(&state_home)?;
+        fs::set_permissions(&state_home, fs::Permissions::from_mode(permissions))?;
+        assert!(
+            dirs(&state_home)
+                .shared_state_ancestors()?
+                .iter()
+                .all(|path| path != &state_home)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_state_discovery_refuses_links_and_world_writable_ancestors() -> Result {
+    let fixture = TempDir::new("private-state-discovery-refusal")?;
+    fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+    let target = fixture.0.join("target");
+    fs::create_dir(&target)?;
+    let linked = fixture.0.join("linked-state");
+    symlink(&target, &linked)?;
+    refused(dirs(&linked).shared_state_ancestors())?;
+
+    let world = fixture.0.join("world-state");
+    fs::create_dir(&world)?;
+    fs::set_permissions(&world, fs::Permissions::from_mode(0o777))?;
+    refused(dirs(&world).shared_state_ancestors())?;
     Ok(())
 }
 

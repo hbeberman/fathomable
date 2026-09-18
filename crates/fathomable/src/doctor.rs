@@ -19,6 +19,7 @@ pub(crate) enum Kind {
     Section,
     Info,
     Ok,
+    Warn,
     Fail,
 }
 
@@ -43,6 +44,10 @@ impl Report {
         self.ok
     }
 
+    pub(crate) fn has_warnings(&self) -> bool {
+        self.lines.iter().any(|line| line.kind == Kind::Warn)
+    }
+
     fn section(&mut self, text: impl Into<String>) {
         self.lines.push(Line {
             kind: Kind::Section,
@@ -53,6 +58,13 @@ impl Report {
     fn info(&mut self, text: impl Into<String>) {
         self.lines.push(Line {
             kind: Kind::Info,
+            text: text.into(),
+        });
+    }
+
+    fn warn(&mut self, text: impl Into<String>) {
+        self.lines.push(Line {
+            kind: Kind::Warn,
             text: text.into(),
         });
     }
@@ -96,6 +108,20 @@ pub(crate) fn collect(
     }
 
     report.section("checks");
+    match dirs.shared_state_ancestors() {
+        Ok(shared) if shared.is_empty() => {
+            report.check(true, "state directory ancestors are not group-writable");
+        }
+        Ok(shared) => {
+            for path in shared {
+                report.warn(format!(
+                    "state ancestor is group-writable: {}; remove group write (chmod g-w) or choose a private XDG_STATE_HOME",
+                    path.display()
+                ));
+            }
+        }
+        Err(error) => report.check(false, format!("state directory ancestors: {error}")),
+    }
     match log_dir_writable(dirs) {
         Ok(()) => report.check(true, "log directory is writable"),
         Err(error) => report.check(false, format!("log directory is not writable: {error}")),
@@ -176,6 +202,7 @@ pub(crate) fn run(dirs: &XdgDirs) -> ExitCode {
             }
             Kind::Info => println!("{}", line.text),
             Kind::Ok => println!("  ok    {}", line.text),
+            Kind::Warn => println!("  WARN  {}", line.text),
             Kind::Fail => println!("  FAIL  {}", line.text),
         }
         first = false;
@@ -393,6 +420,7 @@ fn log_dir_writable(dirs: &XdgDirs) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     use fathomable_core::XdgDirs;
     use fathomable_core::workspace::Workspace;
@@ -458,6 +486,40 @@ mod tests {
                         "recovery  delete {}, then restart Fathomable",
                         thread_file.display()
                     )
+        }));
+        Ok(())
+    }
+
+    #[test]
+    fn shared_state_warning_does_not_fail_and_clears_after_remediation() -> anyhow::Result<()> {
+        let dir = TempDir::new("doctor-shared-state")?;
+        fs::set_permissions(&dir.0, fs::Permissions::from_mode(0o755))?;
+        let root = dir.0.join("workspace");
+        fs::create_dir(&root)?;
+        fs::write(root.join("README.md"), "# test\n")?;
+        let state_home = dir.0.join("shared-state");
+        fs::create_dir(&state_home)?;
+        fs::set_permissions(&state_home, fs::Permissions::from_mode(0o775))?;
+        let dirs = XdgDirs::resolve(|name| {
+            (name == "XDG_STATE_HOME").then(|| state_home.clone().into_os_string())
+        });
+
+        let warned = collect(&dirs, None, Some(&root), Some((90, 28)));
+        assert!(warned.passed());
+        assert!(warned.has_warnings());
+        assert!(warned.lines().iter().any(|line| {
+            line.kind == Kind::Warn
+                && line.text.contains(&state_home.display().to_string())
+                && line.text.contains("chmod g-w")
+                && line.text.contains("private XDG_STATE_HOME")
+        }));
+
+        fs::set_permissions(&state_home, fs::Permissions::from_mode(0o755))?;
+        let remediated = collect(&dirs, None, Some(&root), Some((90, 28)));
+        assert!(remediated.passed());
+        assert!(!remediated.has_warnings());
+        assert!(remediated.lines().iter().any(|line| {
+            line.kind == Kind::Ok && line.text == "state directory ancestors are not group-writable"
         }));
         Ok(())
     }

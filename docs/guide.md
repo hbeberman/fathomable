@@ -342,10 +342,15 @@ files are created owner-only (0600), even with umask 000 or 022. Existing
 directories and files must have these modes and belong to the running user's
 effective UID. Symlinks, multiply linked or special files, unsafe ownership,
 and loose permissions are refused with an error, not repaired, migrated, or
-deleted. Fathomable does not chmod your HOME or XDG base directories; external
-ancestors must not allow other users to replace state paths (shared writable
-ancestors require the sticky bit). Read-only configuration is unaffected.
-Linux `/proc/self/status` must be readable to obtain the effective UID.
+deleted. Fathomable does not chmod your HOME or XDG base directories.
+Non-sticky world-writable ancestors are refused. Group-writable external
+ancestors are allowed, but members of that group can rename entries and
+interfere with state-path availability or integrity. Startup shows a status
+warning, and `fathomable --doctor` or `:doctor` lists the affected paths
+without reporting overall failure. Remove group write with `chmod g-w` on
+each listed directory, or choose a private `XDG_STATE_HOME`; mode 0700 is a
+more restrictive alternative. Read-only configuration is unaffected. Linux
+`/proc/self/status` must be readable to obtain the effective UID.
 
 These permissions protect against other local OS users, not root or programs
 running as your UID. Source excerpts, messages, saved blobs, paths, and crash

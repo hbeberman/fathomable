@@ -493,10 +493,12 @@ fn draw_doctor(
         theme,
         format!(
             " Doctor · {} · r rerun · j/k scroll · Esc close ",
-            if doctor.report().passed() {
-                "ok"
-            } else {
+            if !doctor.report().passed() {
                 "failures"
+            } else if doctor.report().has_warnings() {
+                "warnings"
+            } else {
+                "ok"
             }
         ),
         theme.popup,
@@ -512,6 +514,7 @@ fn draw_doctor(
                 crate::doctor::Kind::Section => theme.popup_key.add_modifier(Modifier::BOLD),
                 crate::doctor::Kind::Info => theme.popup,
                 crate::doctor::Kind::Ok => theme.diff_plus,
+                crate::doctor::Kind::Warn => theme.warning,
                 crate::doctor::Kind::Fail => theme.diff_minus.add_modifier(Modifier::BOLD),
             };
             Line::from(Span::styled(text, on_surface(theme.popup, style)))
@@ -1740,6 +1743,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
 fn status_message_style(app: &App, theme: &Theme) -> Style {
     match app.message_tone() {
         NoticeTone::Info => theme.info,
+        NoticeTone::Warning => theme.warning,
         NoticeTone::Error => theme.statusline_error,
     }
 }
@@ -3869,16 +3873,19 @@ mod tests {
     }
 
     #[test]
-    fn error_status_messages_use_the_foreground_only_error_face() -> anyhow::Result<()> {
+    fn status_messages_use_their_tone_faces() -> anyhow::Result<()> {
         let dir = testing::workspace("status-error", testing::README)?;
         let mut app = testing::app(&dir)?;
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let mut theme = Theme::from_core(&core);
         theme.info = Style::default().fg(Color::Blue);
+        theme.warning = Style::default().fg(Color::Yellow);
         theme.statusline_error = Style::default().fg(Color::Red);
 
         app.notice("ordinary");
         assert_eq!(status_message_style(&app, &theme), theme.info);
+        app.startup_warning("shared");
+        assert_eq!(status_message_style(&app, &theme), theme.warning);
         app.error("failed");
         assert_eq!(status_message_style(&app, &theme), theme.statusline_error);
         assert_eq!(status_message_style(&app, &theme).bg, None);

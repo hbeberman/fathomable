@@ -60,6 +60,20 @@ impl XdgDirs {
         self.state_home.join(APP_DIR)
     }
 
+    /// Existing non-sticky group-writable ancestors of the state home.
+    ///
+    /// The paths are returned root-to-leaf. Missing suffixes are omitted
+    /// because state preparation creates them privately. This inspection does
+    /// not create or modify filesystem objects.
+    ///
+    /// # Errors
+    ///
+    /// Refuses links, unsafe ownership, non-directories, and non-sticky
+    /// world-writable ancestors. Also returns filesystem and identity errors.
+    pub fn shared_state_ancestors(&self) -> io::Result<Vec<PathBuf>> {
+        crate::private_state::shared_ancestors(&self.state_home)
+    }
+
     /// Create or validate an application-owned directory beneath the state root.
     ///
     /// Every component from `fathomable` through `directory` must be owned by

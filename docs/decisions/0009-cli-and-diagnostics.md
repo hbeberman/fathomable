@@ -98,13 +98,23 @@ deleted as part of this validation.
 
 The shared `private_state` helpers use Linux metadata, exclusively claim new
 paths, and obtain the kernel's effective UID from `/proc/self/status`, not an
-environment UID. Existing files are opened only after their ownership and
-ancestors exclude replacement by another local UID; a concurrent creator
-requires fresh validation. No architecture-specific open flags are needed.
-Every existing ancestor must be a real directory owned by root or this UID,
-and cannot be writable by other users unless protected by the sticky bit.
-External ancestors such as HOME and the XDG base are not chmodded; missing
-parents are created privately. Read-only configuration is unchanged.
+environment UID. Existing files are validated before and after opening; a
+concurrent creator requires fresh validation. No architecture-specific open
+flags are needed. Every existing ancestor must be a real directory owned by
+root or this UID. Non-sticky world-writable ancestors are refused.
+Group-writable external ancestors are allowed without inferring trust from a
+group name, UID/GID numeric equality, or group-database membership.
+
+The accepted group sharing is reported after logging starts and as a
+non-failing warning in both `fathomable --doctor` and `:doctor`. The Doctor
+names each shared ancestor and recommends removing group write (`chmod g-w`)
+or choosing a private `XDG_STATE_HOME`; rerunning it reflects permission
+changes. The startup TUI briefly points to `:doctor`. Fathomable never chmods
+HOME or an XDG base. Group members can rename entries in a shared ancestor,
+interfering with availability or which otherwise-valid application tree a
+path selects, so this mode does not provide strict path integrity against
+those users. Missing parents are created privately. Read-only configuration
+is unchanged.
 
 `XdgDirs` path getters remain pure. `prepare_state_dir` validates every owned
 component from the application root through the requested directory.
@@ -120,8 +130,10 @@ missing parents privately without claiming an arbitrary existing directory
 as application-owned. `ReviewPointStore::open` owns and validates its supplied
 store and blobs directories.
 
-These are filesystem access controls against other local UIDs, not encryption,
-secure erasure, or a sandbox against root, the OS, or same-UID programs.
+These are filesystem access controls against other local UIDs, except for the
+documented path-integrity risk accepted at group-writable external ancestors.
+They are not encryption, secure erasure, or a sandbox against root, the OS, or
+same-UID programs.
 External editors and their temporary drafts have their own
 [contract](0018-comment-editor.md). Logs and reports can contain private paths
 and source-derived text; users must still review them before sharing.

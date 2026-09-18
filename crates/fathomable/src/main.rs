@@ -107,7 +107,7 @@ fn main() -> ExitCode {
         return config_show(&cli, &dirs);
     }
     let id = Id::mint();
-    let _guard = match logging::init(&dirs, &id) {
+    let guard = match logging::init(&dirs, &id) {
         Ok(guard) => guard,
         Err(error) => {
             eprintln!("fathomable: {error:#}");
@@ -132,7 +132,7 @@ fn main() -> ExitCode {
         logging::crash_path(&dirs, &id),
         logging::log_path(&dirs, &id),
     );
-    match run_tui(&cli, &dirs, id) {
+    match run_tui(&cli, &dirs, id, guard.shared_state_ancestor_count()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!(error = format!("{error:#}"), "failed");
@@ -142,7 +142,12 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
+fn run_tui(
+    cli: &Cli,
+    dirs: &XdgDirs,
+    id: Id,
+    shared_state_ancestor_count: usize,
+) -> anyhow::Result<()> {
     let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
     let theme = load_theme(cli, dirs)?;
     tracing::info!(theme = theme.name(), "theme loaded");
@@ -217,6 +222,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             diff: config.diff().clone(),
             user: config.user().clone(),
             config_path: config_path(cli, dirs),
+            shared_state_ancestor_count,
         },
         &theme,
         open.as_deref(),

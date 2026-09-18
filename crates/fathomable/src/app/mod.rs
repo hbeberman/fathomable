@@ -81,6 +81,9 @@ pub(crate) const MAX_TOASTS: usize = 3;
 const THREAD_WATCH_DEGRADED: &str =
     "cannot watch or reconcile the thread store; keeping the last loaded board";
 
+/// Long enough to read at startup without becoming steady status.
+const STARTUP_WARNING_DURATION: Duration = Duration::from_secs(8);
+
 /// A transient one-line notice about a change (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Toast {
@@ -113,6 +116,7 @@ impl Toast {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NoticeTone {
     Info,
+    Warning,
     Error,
 }
 
@@ -121,6 +125,7 @@ pub(crate) enum NoticeTone {
 struct Notice {
     text: String,
     tone: NoticeTone,
+    until: Option<Instant>,
 }
 
 /// Fewest text columns a drag leaves the view.
@@ -723,6 +728,7 @@ impl App {
             diff,
             user,
             config_path,
+            shared_state_ancestor_count,
         } = options;
         let toast_duration = watch.toast;
         let ignore = watch_ignore(&watch);
@@ -818,6 +824,16 @@ impl App {
         app.refresh_status();
         app.refresh_comparison();
         app.refresh_reach();
+        if shared_state_ancestor_count > 0 && app.message.is_none() {
+            app.startup_warning(format!(
+                "{shared_state_ancestor_count} group-writable state ancestor{}; run :doctor for details",
+                if shared_state_ancestor_count == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ));
+        }
         app
     }
 
@@ -1817,10 +1833,18 @@ impl App {
         Some(Diff::new(&base, &current).counts())
     }
 
-    /// Expire transient toasts.
+    /// Expire transient toasts and the startup warning.
     pub(crate) fn tick(&mut self) {
         let now = Instant::now();
         self.toasts.retain(|toast| toast.until > now);
+        if self
+            .message
+            .as_ref()
+            .and_then(|notice| notice.until)
+            .is_some_and(|until| until <= now)
+        {
+            self.message = None;
+        }
     }
 
     /// How long until [`App::tick`] has something to do, `None` when
@@ -1833,6 +1857,9 @@ impl App {
         };
         if let Some(toast) = self.toasts.first() {
             consider(toast.until.saturating_duration_since(now));
+        }
+        if let Some(until) = self.message.as_ref().and_then(|notice| notice.until) {
+            consider(until.saturating_duration_since(now));
         }
         next
     }
@@ -2144,6 +2171,17 @@ impl App {
         self.message = Some(Notice {
             text: message,
             tone: NoticeTone::Info,
+            until: None,
+        });
+    }
+
+    fn startup_warning(&mut self, message: impl Into<String>) {
+        let message = message.into();
+        tracing::warn!(message = %message, "status warning");
+        self.message = Some(Notice {
+            text: message,
+            tone: NoticeTone::Warning,
+            until: Some(Instant::now() + STARTUP_WARNING_DURATION),
         });
     }
 
@@ -2153,6 +2191,7 @@ impl App {
         self.message = Some(Notice {
             text: message,
             tone: NoticeTone::Error,
+            until: None,
         });
     }
 
@@ -2778,6 +2817,8 @@ pub(crate) struct Options {
     pub(crate) user: UserConfig,
     /// The config file in use, for the over-limit notice (ADR 0026).
     pub(crate) config_path: PathBuf,
+    /// Shared external state ancestors found once during startup.
+    pub(crate) shared_state_ancestor_count: usize,
 }
 
 #[cfg(test)]
@@ -2812,6 +2853,7 @@ impl Options {
             diff: DiffConfig::default(),
             user: UserConfig::default(),
             config_path: PathBuf::from("config.kdl"),
+            shared_state_ancestor_count: 0,
         }
     }
 }

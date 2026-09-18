@@ -84,6 +84,11 @@ were captured in a question round on 2026-08-26.
 
 ### Anchor
 
+- `LineRange` is always a positive, ordered, inclusive range. Its constructor
+  accepts either endpoint order and clamps zero to one; deserialization
+  instead rejects zero or reversed bounds as corrupt data. The serialized
+  `{start, end}` shape is unchanged, and a store reports invalid bounds with
+  the event's line number rather than silently repairing them.
 - `Anchor::capture` hashes each annotated line, plus the line above and the
   line below when they exist. The hash is the first 16 hex characters of
   SHA-256 over the line with trailing whitespace removed; `sha2`

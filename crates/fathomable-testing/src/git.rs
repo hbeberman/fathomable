@@ -1,13 +1,22 @@
+// @okf-doc: /decisions/0048-modules-by-concept.md
 //! Git repositories for tests: init, commit, stage, tag, and amend through
-//! `gix`, with the workspace's own open options so `GIT_*` overrides in
-//! the environment are ignored.
+//! `gix`, ignoring `GIT_*` overrides in the environment.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
-use fathomable_core::workspace::open_options;
+/// Open fixture repositories at the requested path, ignoring `GIT_*` overrides.
+///
+/// This matches the workspace's private policy without exposing `gix` in
+/// the production core API.
+#[must_use]
+pub fn open_options() -> gix::open::Options {
+    let mut permissions = gix::open::Permissions::default();
+    permissions.env.git_prefix = gix::sec::Permission::Deny;
+    gix::open::Options::default().permissions(permissions)
+}
 
 /// A git operation the fixture could not perform, with the cause's text.
 #[derive(Debug)]

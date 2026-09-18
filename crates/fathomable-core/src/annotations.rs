@@ -84,10 +84,40 @@ pub fn short_hash(bytes: &[u8]) -> String {
 }
 
 /// An inclusive range of 1-based source lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+///
+/// Deserialization rejects zero or reversed bounds instead of normalizing
+/// them as [`Self::new`] does. Serialized ranges must already be valid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub struct LineRange {
     start: usize,
     end: usize,
+}
+
+impl<'de> Deserialize<'de> for LineRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename = "LineRange")]
+        struct Bounds {
+            start: usize,
+            end: usize,
+        }
+
+        let Bounds { start, end } = Bounds::deserialize(deserializer)?;
+        if start == 0 {
+            return Err(serde::de::Error::custom(
+                "line range start must be at least 1",
+            ));
+        }
+        if end < start {
+            return Err(serde::de::Error::custom(
+                "line range end must not precede its start",
+            ));
+        }
+        Ok(Self { start, end })
+    }
 }
 
 impl LineRange {

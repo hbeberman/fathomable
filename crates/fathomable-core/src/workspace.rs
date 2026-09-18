@@ -2585,7 +2585,7 @@ pub fn walk_order(a: &str, b: &str) -> Ordering {
 /// workspace is the path the user gave, so a viewer started from a git
 /// hook (which exports those) still looks at that path's own repository.
 #[must_use]
-pub fn open_options() -> gix::open::Options {
+fn open_options() -> gix::open::Options {
     let mut permissions = gix::open::Permissions::default();
     permissions.env.git_prefix = gix::sec::Permission::Deny;
     gix::open::Options::default().permissions(permissions)

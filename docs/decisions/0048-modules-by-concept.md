@@ -10,6 +10,7 @@ related_resources:
   - crates/fathomable/src/app/input/mod.rs
   - scripts/okf-lint.py
   - crates/fathomable-testing/src/lib.rs
+  - crates/fathomable-testing/src/git.rs
   - crates/fathomable-testing/src/vocabulary.rs
 tags:
   - decision
@@ -70,6 +71,9 @@ an existing module, which is how the directory got that way.
   Its `vocabulary` module also holds the identifier parser and membership
   check used only by prose-contract tests; the production names and `ALL`
   table remain in `fathomable-core`.
+  Fixture-only Git types and open options live in this never-published
+  crate, not the core API. The options ignore `GIT_*` overrides just as the
+  workspace's private options do, including when tests run in a commit hook.
   The app crate's own scaffolding, an `App` builder on such a temp dir
   and key presses against it, is `app/testing.rs`, compiled for tests
   only; the fourteen per-module `fixture`/`app`/`press` copies it

@@ -67,7 +67,10 @@ choices were captured in a question round on 2026-08-26.
   2026-09-06); until then an edit to the root's `.gitignore` was never
   seen while the viewer ran, though a nested one was.
 - `fathomable-core` owns all of this in `workspace`, `tree`, and `picker`
-  and exposes none of `gix`'s types.
+  and exposes none of `gix`'s types. Repository-open options are private;
+  they ignore `GIT_*` overrides so a viewer launched from a Git hook still
+  reads the repository at the requested path. The never-published testing
+  crate owns its own fixture options with the same policy.
 
 ### Sidebar
 

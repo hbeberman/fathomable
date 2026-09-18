@@ -9,9 +9,9 @@ use std::fs;
 use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
 
-use fathomable_core::workspace::{Workspace, open_options};
+use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
-use fathomable_testing::git::{init, stage, write_tree};
+use fathomable_testing::git::{init, open_options, stage, write_tree};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
@@ -26,6 +26,53 @@ fn commit(root: &Path, files: &[(&str, &str)]) -> Result<(), Box<dyn Error>> {
     };
     let parent = repo.head_id().ok().map(gix::Id::detach);
     repo.commit_as(signature, signature, "HEAD", "commit", tree, parent)?;
+    Ok(())
+}
+
+#[test]
+fn git_overrides_do_not_redirect_fixtures_or_workspaces() -> TestResult {
+    const CHILD: &str = "FATHOMABLE_TEST_GIT_OVERRIDES";
+    if std::env::var_os(CHILD).is_none() {
+        let dir = TempDir::new("git-overrides")?;
+        let invalid = dir.0.join("not-a-repository");
+        let index = dir.0.join("foreign-index");
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "git_overrides_do_not_redirect_fixtures_or_workspaces",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .env("GIT_DIR", &invalid)
+            .env("GIT_WORK_TREE", &invalid)
+            .env("GIT_COMMON_DIR", &invalid)
+            .env("GIT_OBJECT_DIRECTORY", &invalid)
+            .env("GIT_INDEX_FILE", &index)
+            .output()?;
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!invalid.exists());
+        assert!(!index.exists());
+        return Ok(());
+    }
+
+    let dir = TempDir::new("git-overrides-child")?;
+    init(&dir.0)?;
+    let files = [("a.md", "own repository\n")];
+    commit(&dir.0, &files)?;
+    stage(&dir.0, &files)?;
+    fs::write(dir.0.join("a.md"), files[0].1)?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    assert!(workspace.is_git());
+    assert_eq!(
+        workspace.head_text(Path::new("a.md"))?.as_deref(),
+        Some(files[0].1)
+    );
+    assert!(workspace.status()?.is_empty());
     Ok(())
 }
 

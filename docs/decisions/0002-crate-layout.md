@@ -6,6 +6,7 @@ resource: crates/fathomable-core/src/lib.rs
 related_resources:
   - crates/fathomable-core/src/document.rs
   - scripts/check-boundaries.sh
+  - scripts/check-public-api.sh
 tags:
   - decision
   - architecture
@@ -48,6 +49,11 @@ from a snapshot of the index that it deletes afterwards, into the
 repository's own `target/`, and Cargo does not refingerprint on that
 variable, so a compile-time path points at the deleted snapshot on the
 next run in the repository. `repo_file` reads the variable at run time.
+
+The `public-api` gate rejects `gix` and its implementation crates in
+production library signatures. Only the never-published
+`fathomable-testing` crate may expose raw Git types for fixture construction;
+the existing general API tripwires still apply to it.
 
 ## Consequences
 

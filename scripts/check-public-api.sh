@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# @okf-doc: /decisions/0002-crate-layout.md
 set -euo pipefail
 
 verbose=0
@@ -15,6 +16,7 @@ Runs cargo-public-api for library crates, then applies repo API tripwires.
 
 API-surface tripwires inspect exported signatures:
   - common third-party implementation types leaked through public APIs
+  - gix implementation types leaked outside the test-support crate
   - smart pointer, interior mutability, or channel wrappers in public APIs
   - Deref/DerefMut impls that need public-surface review
   - public get_* functions that should follow Rust naming conventions
@@ -42,10 +44,11 @@ command -v python3 >/dev/null 2>&1 || {
 
 log=$(mktemp)
 api_output=$(mktemp)
+product_api_output=$(mktemp)
 matches=$(mktemp)
 metadata=$(mktemp)
 packages_file=$(mktemp)
-trap 'rm -f "$log" "$api_output" "$matches" "$metadata" "$packages_file"' EXIT
+trap 'rm -f "$log" "$api_output" "$product_api_output" "$matches" "$metadata" "$packages_file"' EXIT
 
 fail() {
     if [[ -s "$log" ]]; then
@@ -147,6 +150,12 @@ api_tripwire() {
 
 api_tripwire "common third-party implementation type leaked through public API" \
     '(^|[^[:alnum:]_:])(anyhow|eyre|miette|tokio|serde_json|serde_yaml|reqwest|hyper|axum|clap|uuid|time|chrono|regex)::'
+
+# The never-published fixture crate deliberately works with raw Git objects.
+awk '/^## / { fixture = ($2 == "fathomable-testing") } !fixture' \
+    "$api_output" >"$product_api_output"
+tripwire "production public API" "gix implementation type leaked through public API" \
+    -n '(^|[^[:alnum:]_:])gix(_[[:alnum:]_]+)?::' "$product_api_output"
 
 api_tripwire "smart pointer or channel wrapper leaked through public API" \
     '\b(std::sync::(Arc|Mutex|RwLock)|std::rc::Rc|std::cell::RefCell|tokio::sync::)'

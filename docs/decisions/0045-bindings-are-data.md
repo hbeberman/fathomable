@@ -45,7 +45,11 @@ Amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): the preceding
 Comparison controls retention is superseded. The popup and Start at HEAD
 action are removed; `Space d s/u/o` selects Standard, Unified, or Off.
-`Space d d` and `:diff` have no compatibility aliases.
+`:diff` has no compatibility alias.
+
+Amended later 2026-09-18: `Space d d` is restored with one direct meaning:
+pin the current `HEAD` as Base and select the working tree as Target. It does
+not toggle presentation or reopen the removed comparison controls.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

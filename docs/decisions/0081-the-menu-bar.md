@@ -25,6 +25,11 @@ The 2026-09-17 amendment that retained **Start comparison at current HEAD**
 inside **Comparison controls...** is superseded 2026-09-18 by the diff-mode
 amendment below. Both the popup and action are removed without aliases.
 
+Amended later 2026-09-18: the Diff menu places **Head to WorkingTree**
+immediately after Base and Target. It pins the current `HEAD` as Base and
+selects the working tree as Target through `Space d d`. A separator before
+**Save review point** keeps capture separate from endpoint selection.
+
 Amended later 2026-09-17 by
 [0068](0068-what-the-files-pane-shows.md): repository and active-worktree
 identity move from the Files header to the centered menu-bar label. The
@@ -139,12 +144,13 @@ content they affect.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
   begins with bold-`▌`, mutually exclusive **Standard diff**, **Unified diff**,
-  and **Diff off** choices. Base, Target, Save review point, and Ignore
-  whitespace follow in that order. Ignore whitespace remains checked but dim
-  while Off. The removed Comparison controls popup, Start comparison at
-  current HEAD, typed commit batches, `Space d d`, and `:diff` have no menu
-  rows or compatibility aliases. The bracket-pair navigation commands are
-  intentionally not copied into these menus.
+  and **Diff off** choices. Base, Target, and **Head to WorkingTree** follow,
+  then a separator and **Save review point**, then a separator and **Ignore
+  whitespace**. Ignore whitespace remains checked but dim while Off. The
+  removed Comparison controls popup, Start comparison at current HEAD, typed
+  commit batches, and `:diff` have no menu rows or compatibility aliases. The
+  bracket-pair navigation commands are intentionally not copied into these
+  menus.
 - Menu order is stable. Unavailable actions remain present and dim. Checked
   rows use stable state labels and expose current state only through the
   checkmark. Action labels are left-aligned in the normal menu face and

@@ -40,6 +40,10 @@ mode; Off gates hunk navigation and related hints. The decision text and
 consequences below are retained as historical rationale, not the current
 keymap or bar contract.
 
+Amended later 2026-09-18: `Space d d` returns only as the direct
+current-`HEAD`-to-working-tree selector. It does not restore `D`, `:diff`,
+comparison-control hints, or transient presentation.
+
 ## Context
 
 [0067](0067-the-texts-key-bar.md) set one rule for keys: a header is

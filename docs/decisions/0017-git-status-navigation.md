@@ -33,6 +33,10 @@ Diff Off gates Git `XY`, `[G`/`]G`, comparison gutters, counts, and hunk
 navigation while leaving status collection intact. The sections below record
 the superseded Git-primary model.
 
+Amended later 2026-09-18: `Space d d` returns only as the direct
+current-`HEAD`-to-working-tree selector. It does not toggle a diff view;
+`:diff` remains removed.
+
 ## Context
 
 [0006](0006-git-access.md) gave the gutter and `]c`/`[c` a diff base, and

@@ -457,7 +457,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     Recently resolved, deliberate archive/restore, and confirmed Clear board
     actions. File and history headers expose the mode, active app bars show
     Base to Target, Off shows Target only, and removed comparison controls,
-    commit batches, `Space d d`, and `:diff` have no compatibility aliases
+    commit batches, and `:diff` have no compatibility aliases. `Space d d`
+    directly reselects current HEAD to working tree
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
 79. **Bundled license notices.** Help > Licenses and `:licenses` display
     offline first- and third-party attribution embedded in the executable;

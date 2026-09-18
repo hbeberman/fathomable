@@ -44,6 +44,10 @@ is Target-only source browsing. The comparison popup, `Space d d`, `:diff`,
 and the duplicate `DIFF comparison`/`CMP` display are removed; status keeps
 mode-aware provenance only when app-bar endpoint controls do not render.
 
+A later 2026-09-18 amendment restores `Space d d` only as the direct
+current-`HEAD`-to-working-tree selector. It does not restore this decision's
+former diff toggle or comparison popup.
+
 The original decision, key table, config example, and consequences below are
 historical rationale. They describe removed last-seen/checkpoint behavior and
 must not be read as the current keymap or configuration contract. The active

@@ -65,6 +65,7 @@ the table below is a quick reference, not the full list.
 | `Space F c` `Space F o` | only changed / only reviews in Files |
 | `Space F u` `Space F g` | hide untracked / show ignored in Files |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
+| `Space d d` | compare the current HEAD to the working tree |
 | `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
@@ -123,10 +124,11 @@ Target.
 
 A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
 does **not** advance that Base; choose the new commit explicitly. The Diff menu
-begins with Standard, Unified, and Off, then Base, Target, Save review point,
-and Ignore whitespace. There is no comparison-control popup, **Start comparison
-at current HEAD**, `Space d d`, or `:diff`, and those removed routes have no
-compatibility aliases.
+begins with Standard, Unified, and Off, then Base, Target, and **Head to
+WorkingTree**. That action, or `Space d d`, pins the current `HEAD` as Base and
+selects the working tree as Target. Save review point follows a separator, and
+Ignore whitespace follows another. There is no comparison-control popup,
+**Start comparison at current HEAD**, or `:diff`.
 
 Rendered/Source is available in Standard and Off only for files matched by
 `markdown.extensions` or `markdown.names`, including custom extensions and

@@ -270,6 +270,7 @@ actions! {
     ComparisonSave,
     ComparisonBase,
     ComparisonTarget,
+    ComparisonHeadWorkingTree,
     /// `]w`: the next worktree (ADR 0070).
     WorktreeNext,
     /// `[w`: the previous worktree (ADR 0070).
@@ -917,6 +918,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ComparisonTarget,
         "Space menu",
         "diff: pick target…",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('d')]],
+        A::ComparisonHeadWorkingTree,
+        "Space menu",
+        "diff: Head to WorkingTree",
     ),
     bind(
         W::Any,
@@ -1616,12 +1624,11 @@ mod tests {
                 ([c(' '), c('d'), c('u')], Action::DiffUnified),
                 ([c(' '), c('d'), c('o')], Action::DiffOff),
                 ([c(' '), c('d'), c('b')], Action::ComparisonBase),
+                ([c(' '), c('d'), c('d')], Action::ComparisonHeadWorkingTree),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
-            for suffix in ['d', 'r'] {
-                assert_eq!(lookup(place, &[c(' '), c('d'), c(suffix)]), Match::Miss);
-            }
+            assert_eq!(lookup(place, &[c(' '), c('d'), c('r')]), Match::Miss);
         }
         assert_eq!(lookup(Where::View, &[c('b')]), Match::Miss);
     }
@@ -1761,7 +1768,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["s", "u", "o", "b", "t", "c", "w"]
+            ["s", "u", "o", "b", "t", "d", "c", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

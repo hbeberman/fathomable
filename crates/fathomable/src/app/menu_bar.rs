@@ -650,6 +650,12 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
             Row::Item(Item::action(
                 app,
+                Action::ComparisonHeadWorkingTree,
+                "Head to WorkingTree",
+            )),
+            Row::Separator,
+            Row::Item(Item::action(
+                app,
                 Action::ComparisonSave,
                 "Save review point",
             )),
@@ -1363,7 +1369,7 @@ mod tests {
         assert_eq!(rows(&app, Root::Go).len(), 6);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
-        assert_eq!(diff_rows.len(), 9);
+        assert_eq!(diff_rows.len(), 11);
         let diff_labels = diff_rows
             .iter()
             .filter_map(super::Row::item)
@@ -1377,6 +1383,7 @@ mod tests {
                 "Diff off",
                 "Pick base…",
                 "Pick target…",
+                "Head to WorkingTree",
                 "Save review point",
                 "Ignore whitespace",
             ]
@@ -1448,13 +1455,14 @@ mod tests {
                 ("Diff off", true),
                 ("Pick base…", false),
                 ("Pick target…", false),
+                ("Head to WorkingTree", false),
                 ("Save review point", false),
                 ("Ignore whitespace", false),
             ]
         );
         assert!(items[3].enabled, "Base is the intentional restore route");
-        assert!(items[6].checked, "the whitespace preference is retained");
-        assert!(!items[6].enabled, "but cannot run while Off");
+        assert!(items[7].checked, "the whitespace preference is retained");
+        assert!(!items[7].enabled, "but cannot run while Off");
         app.open_title_menu(Root::Diff);
         let screen = testing::screen(&app)?.join("\n");
         assert!(screen.contains("▌ Diff off"), "{screen}");
@@ -1463,6 +1471,7 @@ mod tests {
         assert!(screen.contains("Sp d s"), "{screen}");
         assert!(screen.contains("Sp d u"), "{screen}");
         assert!(screen.contains("Sp d o"), "{screen}");
+        assert!(screen.contains("Sp d d"), "{screen}");
         assert!(!screen.contains("Comparison controls"), "{screen}");
         Ok(())
     }

@@ -302,6 +302,7 @@ impl App {
             Action::ComparisonSave => self.request_review_point(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
+            Action::ComparisonHeadWorkingTree => self.select_head_working_tree(),
             Action::ComparisonWhitespace => self.toggle_whitespace(),
             Action::WorktreeNext => self.worktree_step(1),
             Action::WorktreePrev => self.worktree_step(-1),

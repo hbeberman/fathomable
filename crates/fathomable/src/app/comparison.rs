@@ -74,12 +74,7 @@ impl State {
     ) -> Self {
         let preference_dir = dirs.comparison_dir(workspace.root());
         let preference = preference_dir.join(PREFERENCE_FILE);
-        let default_base = workspace
-            .head_commit()
-            .and_then(|head| CommitId::parse(head).ok())
-            .map_or(ComparisonEndpoint::EmptyTree, ComparisonEndpoint::Commit);
-        let default_alias =
-            matches!(default_base, ComparisonEndpoint::Commit(_)).then_some(EndpointAlias::Head);
+        let (default_base, default_alias) = head_endpoint(workspace);
         let mut state = Self {
             dirs: dirs.clone(),
             base: default_base,
@@ -273,6 +268,24 @@ impl State {
         self.persist();
     }
 
+    /// Select both endpoints and refresh their comparison once.
+    pub(crate) fn set_endpoints_aliased(
+        &mut self,
+        base: ComparisonEndpoint,
+        base_alias: Option<EndpointAlias>,
+        target: ComparisonEndpoint,
+        target_alias: Option<EndpointAlias>,
+        workspace: &mut Workspace,
+        review_points: Option<&ReviewPointStore>,
+    ) {
+        self.base = base;
+        self.base_alias = base_alias;
+        self.target = target;
+        self.target_alias = target_alias;
+        self.refresh(workspace, review_points);
+        self.persist();
+    }
+
     /// Retain a Target without evaluating it against Base.
     pub(crate) fn select_target_aliased(
         &mut self,
@@ -402,6 +415,15 @@ fn parse_endpoint(value: &str) -> Option<ComparisonEndpoint> {
         )),
         value => CommitId::parse(value).ok().map(ComparisonEndpoint::Commit),
     }
+}
+
+fn head_endpoint(workspace: &Workspace) -> (ComparisonEndpoint, Option<EndpointAlias>) {
+    workspace
+        .head_commit()
+        .and_then(|head| CommitId::parse(head).ok())
+        .map_or((ComparisonEndpoint::EmptyTree, None), |id| {
+            (ComparisonEndpoint::Commit(id), Some(EndpointAlias::Head))
+        })
 }
 
 fn alias_matches(
@@ -820,6 +842,30 @@ impl App {
         );
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
+        } else {
+            self.apply_refreshed_comparison(false);
+        }
+    }
+
+    /// Pin Base to the current `HEAD` and select the working tree as Target.
+    pub(crate) fn select_head_working_tree(&mut self) {
+        if self.annotation_draft_blocks("changing comparison") {
+            return;
+        }
+        let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
+        let (base, alias) = head_endpoint(&self.workspace);
+        self.comparison.set_endpoints_aliased(
+            base,
+            alias,
+            ComparisonEndpoint::WorkingTree,
+            None,
+            &mut self.workspace,
+            self.review_points.as_ref(),
+        );
+        if let Some(error) = self.comparison.error().map(str::to_owned) {
+            self.notice(error);
+        } else if let Some(mode) = restore {
+            self.activate_diff_mode(mode);
         } else {
             self.apply_refreshed_comparison(false);
         }

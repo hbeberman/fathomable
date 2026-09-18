@@ -10,6 +10,7 @@ use fathomable_core::tree::Rule;
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Filter, Workspace};
 use fathomable_testing::{TempDir, git};
 
+use crate::app::input::bindings::Action;
 use crate::app::testing::{AppBuilder, press, press_key};
 use crate::app::{PickerKind, Popup};
 use crossterm::event::KeyCode;
@@ -890,6 +891,43 @@ fn untouched_default_base_survives_restart_after_head_moves() -> anyhow::Result<
         &ComparisonEndpoint::Commit(CommitId::parse(&first)?)
     );
     assert_eq!(app.comparison_menu_pair().0, first[..7]);
+    Ok(())
+}
+
+#[test]
+fn head_to_working_tree_reselects_the_current_head() -> anyhow::Result<()> {
+    let dir = repository("comparison-head-working-tree")?;
+    let root = dir.0.join("ws");
+    git::commit_and_stage(&root, &[("a.md", "one\n")])?;
+    let first = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("first"))?;
+    git::commit_and_stage(&root, &[("a.md", "two\n")])?;
+    let head = Workspace::discover(&root)?
+        .head_commit()
+        .ok_or_else(|| anyhow::anyhow!("head"))?;
+    fs::write(root.join("a.md"), "working\n")?;
+
+    let mut app = AppBuilder::at(&root).unopened().build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.select_diff_mode(DiffMode::Off);
+    app.act(Action::ComparisonHeadWorkingTree);
+
+    assert_eq!(
+        app.comparison.base(),
+        &ComparisonEndpoint::Commit(CommitId::parse(&head)?)
+    );
+    assert_eq!(app.comparison.target(), &ComparisonEndpoint::WorkingTree);
+    assert_eq!(
+        app.comparison.base_alias(),
+        Some(&super::EndpointAlias::Head)
+    );
+    assert_eq!(
+        app.comparison_menu_pair(),
+        ("HEAD".to_owned(), "WorkingTree".to_owned())
+    );
+    assert_eq!(app.diff_mode(), DiffMode::Standard);
     Ok(())
 }
 

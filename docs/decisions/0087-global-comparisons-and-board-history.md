@@ -33,6 +33,11 @@ Target-only source browsing, not history redaction. This amendment removes
 Comparison controls, Start comparison at current HEAD, typed commit batches,
 `Space d d`, and `:diff` without compatibility aliases.
 
+Presentation amended later 2026-09-18: `Space d d` returns as a direct
+current-`HEAD`-to-working-tree selector, not the removed presentation toggle.
+The Diff menu exposes it as **Head to WorkingTree** below Base and Target;
+**Save review point** begins a separate section.
+
 Presentation amended later 2026-09-18: queued live-change badges, hints,
 status counts, and navigation are removed rather than retained behind Off.
 Transient counted file-edit toasts remain; Off hides only those toasts while
@@ -152,7 +157,9 @@ The **Diff** menu begins with three mutually exclusive `▌` choices:
   omit Base-only paths. An already open Base-only path retains its label,
   displays `not present in Target`, and has no Base body.
 
-Base, Target, Save review point, and Ignore whitespace follow those mode rows.
+Base, Target, and **Head to WorkingTree** follow those mode rows. The direct
+action pins the current `HEAD` as Base and selects the working tree as Target.
+Save review point and Ignore whitespace each begin a separate section.
 Off retains Base, whitespace, the only-changed Files filter, and the last
 Standard/Unified mode. Changed-only and Ignore whitespace are dormant while
 Off: their marks are hidden, rows are disabled, and direct keys report `diff

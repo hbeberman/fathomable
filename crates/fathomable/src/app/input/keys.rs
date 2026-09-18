@@ -188,8 +188,6 @@ fn is_far_move(action: Action) -> bool {
             | Action::HunkPrev
             | Action::DirtyNext
             | Action::DirtyPrev
-            | Action::ChangeNext
-            | Action::ChangePrev
             | Action::GotoFile
     )
 }
@@ -203,9 +201,6 @@ fn unavailable_while_diff_is_off(action: Action) -> bool {
             | Action::HunkPrev
             | Action::DirtyNext
             | Action::DirtyPrev
-            | Action::ChangeNext
-            | Action::ChangePrev
-            | Action::JumpNewest
     )
 }
 
@@ -285,7 +280,6 @@ impl App {
             Action::WindowNext => self.window_next(),
             Action::WindowFiles => self.window_files(),
             Action::WindowThreads => self.window_threads(),
-            Action::JumpNewest => self.jump_newest(),
             Action::Wake => self.wake(),
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),
@@ -370,8 +364,6 @@ impl App {
             Action::HunkPrev => self.hunk_prev(),
             Action::DirtyNext => self.dirty_next(),
             Action::DirtyPrev => self.dirty_prev(),
-            Action::ChangeNext => self.jump_next(),
-            Action::ChangePrev => self.jump_prev(),
             _ => {
                 let view = self.view_mut();
                 match action {
@@ -616,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn off_rejects_comparison_git_and_live_change_actions_consistently() -> anyhow::Result<()> {
+    fn off_rejects_comparison_and_git_actions_consistently() -> anyhow::Result<()> {
         let dir = fixture("diff-off-actions")?;
         let mut app = source_app(&dir)?;
         app.select_diff_mode(DiffMode::Off);
@@ -628,9 +620,6 @@ mod tests {
             Action::HunkPrev,
             Action::DirtyNext,
             Action::DirtyPrev,
-            Action::ChangeNext,
-            Action::ChangePrev,
-            Action::JumpNewest,
         ] {
             app.act(action);
             assert_eq!(app.message(), Some("diff mode is off"), "{action:?}");

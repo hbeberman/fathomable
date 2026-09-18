@@ -232,7 +232,6 @@ impl App {
         self.jumplist = crate::app::jumplist::Jumplist::default();
         self.search_origin = None;
         self.thread_cursor_anchor = None;
-        self.queue = fathomable_core::follow::Queue::default();
         self.tree = None;
         self.file_index.clear();
         self.all_index.clear();
@@ -486,6 +485,28 @@ mod tests {
         assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
         assert_eq!(app.view().text(), "FEATURE_TARGET_SENTINEL\n");
         assert!(!app.view().text().contains("MAIN_TARGET_SENTINEL"));
+        Ok(())
+    }
+
+    #[test]
+    fn switching_worktrees_retains_toasts_and_uses_the_active_checkout() -> anyhow::Result<()> {
+        let (dir, main, feature) = repo("toast-counts")?;
+        let mut app = app_on(&dir, &main)?;
+        fs::write(main.join("a.md"), "one\nchanged\nthree\n")?;
+        app.on_changes(vec![main.join("a.md")]);
+        assert_eq!(
+            app.toasts().last().map(super::super::Toast::text),
+            Some("a.md  +1  -1")
+        );
+
+        assert!(app.activate_worktree(&feature));
+        assert_eq!(app.toasts().len(), 1, "existing toast survives the switch");
+        fs::write(feature.join("a.md"), "one\ntwo\nthree\nfour\n")?;
+        app.on_changes(vec![feature.join("a.md")]);
+        assert_eq!(
+            app.toasts().last().map(super::super::Toast::text),
+            Some("a.md  +1")
+        );
         Ok(())
     }
 

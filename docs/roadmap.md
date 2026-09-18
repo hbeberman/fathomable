@@ -414,9 +414,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     `threads`, `thread_start`, and `thread_reply`. Reads have no delivery
     side effects; writes are batch-only and automatically identified.
     Subscriptions, hooks, watches, pending delivery state, per-call routing,
-    MCP viewer control, and auto-jump retire. Live reload, manual change and
-    worktree navigation, shared thread storage, and human-only resolution
-    remain ([0082](decisions/0082-three-tool-review-core.md)).
+    MCP viewer control, and auto-jump retire. Live reload, transient counted
+    file-edit toasts, manual worktree navigation, shared thread storage, and
+    human-only resolution remain; queued change acknowledgement and navigation
+    have since retired ([0082](decisions/0082-three-tool-review-core.md)).
 74. **Single-user alpha clean slate.** The alpha advances the annotation
     store and socket to their exact current formats (2 and 5), retires
     root-key adoption, historical context backfill, subscription author

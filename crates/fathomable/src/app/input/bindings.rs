@@ -149,7 +149,7 @@ const fn k(key: Key) -> Chord {
 pub(crate) type Keys = &'static [Chord];
 
 /// How a sequence is written: bare characters run together (`gg`, `]c`),
-/// anything else is space-separated (`Space j j`, `Ctrl-d`).
+/// anything else is space-separated (`Space d s`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
     spell_with_space(keys, "Space")
@@ -288,9 +288,6 @@ actions! {
     HunkPrev,
     DirtyNext,
     DirtyPrev,
-    ChangeNext,
-    ChangePrev,
-    JumpNewest,
     JumpBack,
     JumpForward,
     /// `q`: open the guarded quit confirmation from any normal pane.
@@ -639,20 +636,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "previous uncommitted file",
     ),
     bind(
-        W::View,
-        &[&[c(']'), c('f')]],
-        A::ChangeNext,
-        "Changes",
-        "next changed file",
-    ),
-    bind(
-        W::View,
-        &[&[c('['), c('f')]],
-        A::ChangePrev,
-        "Changes",
-        "previous changed file",
-    ),
-    bind(
         W::Any,
         &[&[alt(K::Left)]],
         A::JumpBack,
@@ -962,13 +945,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::WorktreePrev,
         "Worktrees",
         "previous worktree",
-    ),
-    bind(
-        W::Any,
-        &[&[c(' '), c('j'), c('j')]],
-        A::JumpNewest,
-        "Space menu",
-        "jump: newest change",
     ),
     bind(
         W::Any,
@@ -1743,7 +1719,7 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `d`, `j`, and
+    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `d`, and
     /// `a` (ADR 0049, ADR 0056, ADR 0060).
     #[test]
     fn menus_come_from_the_table() {
@@ -1760,7 +1736,6 @@ mod tests {
             ("c", "threads…"),
             ("v", "view…"),
             ("d", "diff…"),
-            ("j", "jump…"),
             ("a", "agent…"),
         ] {
             let entries: Vec<&str> = space
@@ -1776,7 +1751,9 @@ mod tests {
                 .map(|(key, _)| key)
                 .collect::<Vec<_>>()
         };
-        assert_eq!(keys(Where::Tree, &[c(' '), c('j')]), ["j"]);
+        assert_eq!(lookup(Where::View, &[c(' '), c('j')]), Match::Miss);
+        assert_eq!(lookup(Where::View, &[c(']'), c('f')]), Match::Miss);
+        assert_eq!(lookup(Where::View, &[c('['), c('f')]), Match::Miss);
         assert_eq!(
             keys(Where::View, &[c(' '), c('c')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
@@ -1930,7 +1907,7 @@ mod tests {
     fn sequences_are_spelled_the_way_the_guide_writes_them() {
         assert_eq!(spell(&[c('g'), c('g')]), "gg");
         assert_eq!(spell(&[c(']'), c('c')]), "]c");
-        assert_eq!(spell(&[c(' '), c('j'), c('j')]), "Space j j");
+        assert_eq!(spell(&[c(' '), c('d'), c('s')]), "Space d s");
         assert_eq!(menu_spell(&[c(' '), c('j'), c('j')]), "Sp j j");
         assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");

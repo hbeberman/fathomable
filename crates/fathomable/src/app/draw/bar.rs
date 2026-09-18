@@ -185,7 +185,7 @@ mod tests {
         let mut app = testing::AppBuilder::new(&dir)
             .source_view()
             .options(|mut options| {
-                options.jump.toast = std::time::Duration::ZERO;
+                options.watch.toast = std::time::Duration::ZERO;
                 options
             })
             .build()?;
@@ -252,8 +252,9 @@ mod tests {
         let mut app = testing::AppBuilder::new(&dir)
             .source_view()
             .options(|o| crate::app::Options {
-                jump: fathomable_core::config::JumpConfig {
+                watch: fathomable_core::config::WatchConfig {
                     toast: std::time::Duration::ZERO,
+                    ..o.watch
                 },
                 ..o
             })

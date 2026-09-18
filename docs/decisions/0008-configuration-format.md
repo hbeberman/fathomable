@@ -29,6 +29,11 @@ Amended 2026-09-18 by [0089](0089-store-only-mcp.md): `watch.debounce`
 continues to group workspace and Git changes, while thread-store refresh
 bypasses that quiet period. No new setting is required.
 
+Amended later 2026-09-18: `jump` is retired. The shared five-second toast
+duration moves from `jump.toast` to `watch.toast`; zero still disables both
+file-edit and thread/activity toasts. The obsolete top-level node is an
+unknown-setting error with no compatibility alias or automatic rewrite.
+
 ## Context
 
 Fathomable needs user configuration (theme, follow behavior, later keymaps)

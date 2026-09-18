@@ -67,7 +67,6 @@ the table below is a quick reference, not the full list.
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
 | `f` `t` | File / Reviews |
-| `]f` `[f` | next / previous queued live change |
 | `]g` `[g` | next / previous comparison hunk |
 | `]w` `[w` | next / previous worktree |
 | `c` `Space c f` | line comment or reply / file comment |
@@ -99,8 +98,8 @@ use `Space d s`, `Space d u`, and `Space d o`:
 - **Unified** shows the selected Base-to-Target patch. It follows file
   switches and remains active when you press `Esc`.
 - **Off** is Target-only source browsing. It shows no Base content or
-  Base-only paths and suppresses comparison, Git-status, and queued-live-change
-  marks, counts, navigation, and actions.
+  Base-only paths and suppresses comparison, Git-status, and file-edit toasts
+  and counts. Plain activity notifications remain visible.
 
 Off retains the selected Base, the whitespace setting, the **only changed**
 Files filter, and the last active Standard/Unified mode so they return when
@@ -172,11 +171,8 @@ semicolons. This is the complete default configuration:
 ```kdl
 theme "default-dark" // Built-in theme or a custom theme name from themes/.
 
-jump {
-    toast 5000 // Toast duration in milliseconds; 0 disables toasts.
-}
-
 watch {
+    toast 5000 // Toast duration in milliseconds; 0 disables toasts.
     ignore // Extra root-relative globs excluded from live-change notifications.
     debounce 300 // Quiet period in milliseconds for workspace and Git changes, not threads.
 }
@@ -220,6 +216,10 @@ user {
 `fathomable --config-show` prints the effective configuration and its path.
 Custom themes live in `$XDG_CONFIG_HOME/fathomable/themes/`; `--theme NAME`
 overrides the theme for one run.
+
+When upgrading from a configuration with `jump { toast ... }`, move `toast`
+into the `watch` block and remove the obsolete `jump` block. `jump` is no
+longer accepted as a top-level node.
 
 ## Connect an agent
 

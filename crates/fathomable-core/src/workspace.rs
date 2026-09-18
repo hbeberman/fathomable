@@ -1408,6 +1408,71 @@ impl Workspace {
             })
     }
 
+    /// The text of `relative` at `HEAD` when its blob fits `max_bytes`.
+    ///
+    /// Returns `None` outside Git or when the blob exceeds the limit. An
+    /// unborn `HEAD` or absent path is an empty string. The object header is
+    /// checked before the immutable blob is loaded.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when `HEAD`, its tree, or the blob cannot be
+    /// read, or when the blob is not UTF-8 text.
+    pub fn head_text_bounded(
+        &self,
+        relative: &Path,
+        max_bytes: u64,
+    ) -> Result<Option<String>, WorkspaceError> {
+        let Some(git) = self.ignore.as_ref() else {
+            return Ok(None);
+        };
+        let fail = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        if git
+            .repo
+            .head()
+            .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
+            .is_unborn()
+        {
+            return Ok(Some(String::new()));
+        }
+        let tree = git
+            .repo
+            .head_tree()
+            .map_err(|error| fail(format!("cannot read HEAD tree: {error}")))?;
+        let Some(entry) = tree.lookup_entry_by_path(relative).map_err(|error| {
+            fail(format!(
+                "cannot look up {} in HEAD: {error}",
+                relative.display()
+            ))
+        })?
+        else {
+            return Ok(Some(String::new()));
+        };
+        if !entry.mode().is_blob_or_symlink() {
+            return Err(fail(
+                "HEAD has a directory or submodule at this path".to_owned(),
+            ));
+        }
+        let header = git
+            .repo
+            .find_header(entry.id())
+            .map_err(|error| fail(format!("cannot read blob header from HEAD: {error}")))?;
+        if header.size() > max_bytes {
+            return Ok(None);
+        }
+        let bytes = entry
+            .object()
+            .map_err(|error| fail(format!("cannot read blob from HEAD: {error}")))?
+            .detach()
+            .data;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|error| fail(format!("HEAD blob is not UTF-8 text: {error}")))
+    }
+
     /// The bytes of root-relative `relative` as committed in `HEAD`.
     ///
     /// Returns `None` outside Git, and an empty blob when `HEAD` has no

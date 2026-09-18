@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use fathomable_core::annotations::Store;
-use fathomable_core::config::{DiffMode, JumpConfig, MarkdownConfig, SidebarConfig, WatchConfig};
+use fathomable_core::config::{DiffMode, MarkdownConfig, SidebarConfig, ViewerConfig, WatchConfig};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::Workspace;
@@ -675,7 +675,7 @@ fn the_picker_index_follows_events() -> anyhow::Result<()> {
 }
 
 #[test]
-fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
+fn unchanged_loaded_content_emits_no_file_edit_toast() -> anyhow::Result<()> {
     let dir = fixture("touch")?;
     let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
@@ -683,7 +683,7 @@ fn unchanged_content_queues_nothing() -> anyhow::Result<()> {
     // A touch (or our own read, reported as a change) on an open file
     // whose text is identical must not hint.
     app.on_changes(vec![dir.0.join("README.md"), dir.0.join("README.md")]);
-    assert!(app.queue().is_empty());
+    assert!(app.toasts().is_empty());
     Ok(())
 }
 
@@ -949,37 +949,58 @@ fn changed(app: &mut App, dir: &TempDir, relative: &str, text: &str) -> std::io:
 }
 
 #[test]
-fn off_hides_but_retains_live_change_queue_surfaces() -> anyhow::Result<()> {
-    let dir = fixture("live-queue-off")?;
+fn shared_toast_cap_and_expiry_apply_to_file_and_plain_toasts() -> anyhow::Result<()> {
+    let dir = fixture("toast-cap-expiry")?;
+    let mut app = app(&dir)?;
+    app.push_toast("plain one".to_owned());
+    app.push_file_edit_toast(PathBuf::from("one.md"), (1, 0));
+    app.push_toast("plain two".to_owned());
+    app.push_file_edit_toast(PathBuf::from("two.md"), (0, 1));
+    assert_eq!(app.toasts().len(), super::MAX_TOASTS);
+    assert_eq!(
+        app.toasts().first().map(super::Toast::text),
+        Some("one.md  +1")
+    );
+
+    app.toasts[0].until = std::time::Instant::now();
+    app.tick();
+    assert_eq!(app.toasts().len(), 2);
+    assert_eq!(
+        app.toasts().first().map(super::Toast::text),
+        Some("plain two")
+    );
+    Ok(())
+}
+
+#[test]
+fn off_hides_file_edit_toasts_without_discarding_them() -> anyhow::Result<()> {
+    let dir = fixture("live-toast-off")?;
     let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
     changed(
         &mut app,
         &dir,
-        "docs/live-queue-sentinel.md",
-        "# live queue sentinel\n",
+        "docs/live-toast-sentinel.md",
+        "# live toast sentinel\n",
     )?;
-    assert_eq!(app.queue().len(), 1);
+    assert_eq!(app.toasts().len(), 1);
     let active = crate::app::testing::screen(&app)?.join("\n");
-    assert!(active.contains("live-queue-sentinel"), "{active}");
+    assert!(active.contains("live-toast-sentinel"), "{active}");
 
     app.select_diff_mode(DiffMode::Off);
-    assert_eq!(app.queue().len(), 1, "Off retains the queue internally");
+    assert_eq!(app.toasts().len(), 1, "Off retains timed toasts");
     let off = crate::app::testing::screen(&app)?.join("\n");
-    assert!(!off.contains("live-queue-sentinel"), "{off}");
-    assert!(
-        app.status_lines()
-            .iter()
-            .all(|(label, _)| label != "changes")
-    );
-
-    app.act(Action::ChangeNext);
-    assert_eq!(app.message(), Some("diff mode is off"));
+    assert!(!off.contains("live-toast-sentinel"), "{off}");
     assert_eq!(app.current_path(), Path::new("README.md"));
 
     app.select_diff_mode(DiffMode::Standard);
     let restored = crate::app::testing::screen(&app)?.join("\n");
-    assert!(restored.contains("live-queue-sentinel"), "{restored}");
+    assert!(restored.contains("live-toast-sentinel"), "{restored}");
+
+    app.select_diff_mode(DiffMode::Off);
+    app.toasts[0].until = std::time::Instant::now();
+    app.tick();
+    assert!(app.toasts().is_empty(), "hidden toast expires normally");
     Ok(())
 }
 
@@ -1120,45 +1141,173 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
 }
 
 #[test]
-fn workspace_changes_queue_newest_first_and_jump() -> anyhow::Result<()> {
-    let dir = fixture("changes")?;
+fn loaded_edit_toast_counts_each_reload_without_navigating() -> anyhow::Result<()> {
+    let dir = fixture("loaded-change-toast")?;
     let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
-    assert!(app.queue().is_empty());
-
-    changed(&mut app, &dir, "docs/guide.md", "# Guide\n\nmore\n")?;
-    changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
-    assert_eq!(app.queue().len(), 2);
+    changed(&mut app, &dir, "README.md", "# Readme\n\nchanged\nextra\n")?;
+    assert_eq!(app.current_path(), Path::new("README.md"));
+    assert_eq!(app.view().text(), "# Readme\n\nchanged\nextra\n");
     assert_eq!(
-        app.queue().newest().map(|c| c.path.clone()),
-        Some(PathBuf::from("docs/notes.md"))
+        app.toasts().last().map(super::Toast::text),
+        Some("README.md  +2  -1")
     );
-    assert!(app.has_change_under(Path::new("docs")));
-    assert!(!app.has_change_under(Path::new("README.md")));
-    assert_eq!(app.toasts().len(), 2);
 
-    app.jump_newest();
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-    assert_eq!(app.queue().len(), 1, "a visited change leaves the queue");
-    app.jump_next();
-    assert_eq!(app.current_path(), Path::new("docs/guide.md"));
-    assert!(app.queue().is_empty());
-    app.jump_next();
-    assert_eq!(app.message(), Some("no changes"));
+    changed(&mut app, &dir, "README.md", "# Readme\n\nagain\n")?;
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("README.md  +1  -2")
+    );
+    Ok(())
+}
 
-    // A change to the open file reloads it and lands on the first hunk.
-    changed(
-        &mut app,
-        &dir,
-        "docs/guide.md",
-        "# Guide\n\nmore\n\nagain\n",
+#[test]
+fn unloaded_git_toasts_use_bounded_head_relative_counts() -> anyhow::Result<()> {
+    let dir = fixture("unloaded-counts")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(
+        &dir.0,
+        &[
+            ("README.md", "# Readme\n\nhello\n"),
+            ("docs/guide.md", "# Guide\nold\n"),
+        ],
     )?;
-    assert!(app.view().text().contains("again"));
-    assert_eq!(app.queue().newest().map(|c| c.target.line()), Some(4));
-    app.jump_newest();
-    // The blank line 4 has no rendered row; the cursor lands on the
-    // next one, as `]c` does.
-    assert!((4..=5).contains(&app.view().source_position().0));
+    let mut app = app(&dir)?;
+    changed(&mut app, &dir, "docs/guide.md", "# Guide\nnew\nextra\n")?;
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("docs/guide.md  +2  -1")
+    );
+
+    changed(&mut app, &dir, "new.md", "one\ntwo\n")?;
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("new.md  +2")
+    );
+    Ok(())
+}
+
+#[test]
+fn unborn_git_counts_every_unloaded_line_as_added() -> anyhow::Result<()> {
+    let dir = fixture("unborn-counts")?;
+    git::init(&dir.0)?;
+    let mut app = app(&dir)?;
+    changed(&mut app, &dir, "new.md", "one\ntwo\nthree\n")?;
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("new.md  +3")
+    );
+    Ok(())
+}
+
+#[test]
+fn unavailable_unloaded_content_falls_back_to_path_only() -> anyhow::Result<()> {
+    let outside = fixture("outside-git-toast")?;
+    let mut outside_app = app(&outside)?;
+    changed(&mut outside_app, &outside, "plain.md", "readable\n")?;
+    assert_eq!(
+        outside_app.toasts().last().map(super::Toast::text),
+        Some("plain.md")
+    );
+
+    let binary = fixture("binary-toast")?;
+    git::init(&binary.0)?;
+    git::commit_and_stage(&binary.0, &[("README.md", "# Readme\n\nhello\n")])?;
+    let mut binary_app = app(&binary)?;
+    fs::write(binary.0.join("blob.bin"), b"abc\0def")?;
+    binary_app.on_changes(vec![binary.0.join("blob.bin")]);
+    assert_eq!(
+        binary_app.toasts().last().map(super::Toast::text),
+        Some("blob.bin")
+    );
+    fs::write(binary.0.join("invalid.txt"), b"\xff\xfe")?;
+    binary_app.on_changes(vec![binary.0.join("invalid.txt")]);
+    assert_eq!(
+        binary_app.toasts().last().map(super::Toast::text),
+        Some("invalid.txt")
+    );
+
+    let unavailable = fixture("unavailable-head-toast")?;
+    git::init(&unavailable.0)?;
+    git::commit_and_stage(
+        &unavailable.0,
+        &[
+            ("README.md", "# Readme\n\nhello\n"),
+            ("node/child", "old\n"),
+        ],
+    )?;
+    let mut unavailable_app = app(&unavailable)?;
+    changed(&mut unavailable_app, &unavailable, "node", "now a file\n")?;
+    assert_eq!(
+        unavailable_app.toasts().last().map(super::Toast::text),
+        Some("node")
+    );
+
+    let over_limit = fixture("over-limit-toast")?;
+    git::init(&over_limit.0)?;
+    git::commit_and_stage(
+        &over_limit.0,
+        &[("README.md", "# Readme\n\nhello\n"), ("large.md", "old\n")],
+    )?;
+    let mut over_limit_app = app_with(
+        &over_limit,
+        Options {
+            viewer: ViewerConfig {
+                max_file_size_mib: 0,
+            },
+            ..Options::for_test(over_limit.0.clone())
+        },
+    )?;
+    changed(&mut over_limit_app, &over_limit, "large.md", "new\n")?;
+    assert_eq!(
+        over_limit_app.toasts().last().map(super::Toast::text),
+        Some("large.md")
+    );
+
+    let large_head = fixture("over-limit-head-toast")?;
+    git::init(&large_head.0)?;
+    let committed = "old\n".repeat(300_000);
+    git::commit_and_stage(
+        &large_head.0,
+        &[
+            ("README.md", "# Readme\n\nhello\n"),
+            ("large.md", &committed),
+        ],
+    )?;
+    let mut large_head_app = app_with(
+        &large_head,
+        Options {
+            viewer: ViewerConfig {
+                max_file_size_mib: 1,
+            },
+            ..Options::for_test(large_head.0.clone())
+        },
+    )?;
+    changed(&mut large_head_app, &large_head, "large.md", "small\n")?;
+    assert_eq!(
+        large_head_app.toasts().last().map(super::Toast::text),
+        Some("large.md")
+    );
+    Ok(())
+}
+
+#[test]
+fn loaded_text_to_non_text_transition_keeps_empty_text_counts() -> anyhow::Result<()> {
+    let dir = fixture("loaded-binary-transition")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("README.md"));
+    fs::write(dir.0.join("README.md"), b"\0asm\x01\0\0\0")?;
+    app.on_changes(vec![dir.0.join("README.md")]);
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("README.md  -3")
+    );
+    fs::write(dir.0.join("README.md"), "back\n")?;
+    app.on_changes(vec![dir.0.join("README.md")]);
+    assert_eq!(
+        app.toasts().last().map(super::Toast::text),
+        Some("README.md  +1")
+    );
     Ok(())
 }
 
@@ -1422,36 +1571,32 @@ fn an_ignore_file_event_reloads_the_rules() -> anyhow::Result<()> {
 }
 
 #[test]
-fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
+fn ignore_rules_filter_toasts_but_not_reloads() -> anyhow::Result<()> {
     let dir = fixture("source")?;
     let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
     changed(&mut app, &dir, "README.md", "# Readme\n\nchanged\n")?;
-    assert_eq!(app.queue().len(), 1, "an edit to the open file hints");
+    assert_eq!(app.toasts().len(), 1, "an edit to the open file toasts");
     assert!(
         app.view().text().contains("changed"),
         "and the open file reloads"
     );
 
     let watch = WatchConfig {
+        toast: std::time::Duration::ZERO,
         ignore: vec!["docs/**".to_owned()],
         ..WatchConfig::default()
-    };
-    let jump = JumpConfig {
-        toast: std::time::Duration::ZERO,
     };
     let mut app = app_with(
         &dir,
         Options {
-            jump,
             watch,
             ..Options::for_test(dir.0.clone())
         },
     )?;
     changed(&mut app, &dir, "docs/guide.md", "# Guide\n\n3\n")?;
-    assert!(app.queue().is_empty(), "watch.ignore globs apply");
+    assert!(app.toasts().is_empty(), "watch.ignore globs apply");
     changed(&mut app, &dir, "README.md", "# Readme\n\nx\n")?;
-    assert_eq!(app.queue().len(), 1);
     assert!(app.toasts().is_empty(), "toast 0 disables toasts");
 
     app.command("status");
@@ -1518,8 +1663,8 @@ fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
 }
 
 #[test]
-fn changes_wait_for_manual_navigation() -> anyhow::Result<()> {
-    let dir = fixture("manual-change-jump")?;
+fn file_edit_toasts_never_move_the_reader() -> anyhow::Result<()> {
+    let dir = fixture("change-toast-no-navigation")?;
     let mut app = app(&dir)?;
     app.open(Path::new("README.md"));
     changed(&mut app, &dir, "docs/notes.md", "# Notes\n\nnew\n")?;
@@ -1530,10 +1675,23 @@ fn changes_wait_for_manual_navigation() -> anyhow::Result<()> {
         Path::new("README.md"),
         "background changes never move the reader"
     );
-    assert_eq!(app.queue().len(), 1, "the change remains available");
-    app.jump_newest();
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-    assert!(app.queue().is_empty());
+    assert_eq!(app.current_path(), Path::new("README.md"));
+    assert_eq!(app.toasts().len(), 1);
+    Ok(())
+}
+
+#[test]
+fn file_edits_do_not_mark_files_or_collapsed_directories() -> anyhow::Result<()> {
+    let dir = fixture("change-toast-no-tree-dot")?;
+    let mut app = app(&dir)?;
+    app.toggle_tree_focus();
+    changed(&mut app, &dir, "docs/notes.md", "# Notes\nnew\n")?;
+    let screen = crate::app::testing::screen(&app)?;
+    let docs = screen
+        .iter()
+        .find(|row| row.contains("docs/"))
+        .ok_or_else(|| anyhow::anyhow!("docs tree row"))?;
+    assert!(!docs.contains('●'), "{docs}");
     Ok(())
 }
 
@@ -1590,7 +1748,10 @@ fn binary_and_oversized_files_open_as_file_info() -> anyhow::Result<()> {
     assert_eq!(app.message(), Some("cannot annotate a file this large"));
 
     // Text files are unaffected and the jumplist spans both kinds.
-    app.record_jump_from_here();
+    let origin = app
+        .jump_origin()
+        .ok_or_else(|| anyhow::anyhow!("current jumplist position"))?;
+    app.record_jump(origin);
     app.open(Path::new("README.md"));
     assert!(app.info().is_none());
     app.jump_back();

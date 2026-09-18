@@ -218,10 +218,7 @@ impl App {
             return true;
         };
         self.diff_mode() != fathomable_core::config::DiffMode::Off
-            || !matches!(
-                action,
-                Action::ComparisonWhitespace | Action::FilesChanged | Action::JumpNewest
-            )
+            || !matches!(action, Action::ComparisonWhitespace | Action::FilesChanged)
     }
 
     /// The compact marker the files pane's header uses for active rules.

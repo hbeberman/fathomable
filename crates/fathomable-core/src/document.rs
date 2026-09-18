@@ -2,7 +2,7 @@
 //! The document model: a file's path and its content as last read.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::content::{Content, Format, Policy};
@@ -203,10 +203,27 @@ fn read(path: &Path, policy: Policy) -> Result<Content, LoadError> {
         path: path.to_path_buf(),
         source,
     };
-    let size = fs::metadata(path).map_err(fail)?.len();
+    let mut file = fs::File::open(path).map_err(fail)?;
+    let size = file.metadata().map_err(fail)?.len();
+    read_from(path, &mut file, size, policy)
+}
+
+fn read_from(
+    path: &Path,
+    mut reader: impl Read,
+    size: u64,
+    policy: Policy,
+) -> Result<Content, LoadError> {
+    let fail = |source| LoadError {
+        path: path.to_path_buf(),
+        source,
+    };
     if policy.attr.decided() == Some(true) {
-        let format = sniff(path).map_err(fail)?;
-        return Ok(Content::Binary { size, format });
+        let head = prefix(&mut reader).map_err(fail)?;
+        return Ok(Content::Binary {
+            size: size.max(u64::try_from(head.len()).unwrap_or(u64::MAX)),
+            format: Format::sniff(&head),
+        });
     }
     if size > policy.max_bytes && policy.attr.decided() == Some(false) {
         return Ok(Content::TooLarge {
@@ -217,7 +234,7 @@ fn read(path: &Path, policy: Policy) -> Result<Content, LoadError> {
     if size > policy.max_bytes {
         // The prefix says whether this is a large text or a binary; either
         // way the rest stays on disk.
-        let head = prefix(path).map_err(fail)?;
+        let head = prefix(&mut reader).map_err(fail)?;
         return Ok(if crate::content::is_binary(&head) {
             Content::Binary {
                 size,
@@ -230,16 +247,14 @@ fn read(path: &Path, policy: Policy) -> Result<Content, LoadError> {
             }
         });
     }
-    let bytes = fs::read(path).map_err(fail)?;
-    if policy.attr.classify(&bytes) == Some(true) {
-        return Ok(Content::Binary {
-            size,
-            format: Format::sniff(&bytes),
-        });
-    }
-    String::from_utf8(bytes)
-        .map(Content::Text)
-        .map_err(|error| fail(io::Error::new(io::ErrorKind::InvalidData, error)))
+    let bytes = bounded_bytes(&mut reader, policy.max_bytes).map_err(fail)?;
+    let retained = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let classified_size = if retained > policy.max_bytes {
+        size.max(retained)
+    } else {
+        retained
+    };
+    classify_snapshot(path, bytes, classified_size, policy)
 }
 
 fn classify_snapshot(
@@ -291,17 +306,47 @@ fn classify_snapshot(
         .map_err(|error| fail(io::Error::new(io::ErrorKind::InvalidData, error)))
 }
 
-/// The magic number of the file at `path`, without reading the rest.
-fn sniff(path: &Path) -> io::Result<Option<Format>> {
-    Ok(Format::sniff(&prefix(path)?))
+/// Read enough to retain in-limit text or classify an over-limit file.
+fn bounded_bytes(reader: impl Read, max_bytes: u64) -> io::Result<Vec<u8>> {
+    let sniff_bytes = u64::try_from(crate::content::SNIFF_BYTES).unwrap_or(u64::MAX);
+    let limit = max_bytes.saturating_add(1).max(sniff_bytes);
+    let mut bytes = Vec::new();
+    reader.take(limit).read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
-/// The first [`crate::content::SNIFF_BYTES`] of the file at `path`.
-fn prefix(path: &Path) -> io::Result<Vec<u8>> {
-    use std::io::Read;
+/// The first [`crate::content::SNIFF_BYTES`] from `reader`.
+fn prefix(reader: impl Read) -> io::Result<Vec<u8>> {
     let mut head = Vec::with_capacity(crate::content::SNIFF_BYTES);
-    fs::File::open(path)?
+    reader
         .take(u64::try_from(crate::content::SNIFF_BYTES).unwrap_or(u64::MAX))
         .read_to_end(&mut head)?;
     Ok(head)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+    use std::path::Path;
+
+    use crate::content::{Attr, Content, Policy};
+
+    use super::{LoadError, read_from};
+
+    #[test]
+    fn a_read_is_bounded_when_content_grows_past_observed_size() -> Result<(), LoadError> {
+        let policy = Policy {
+            attr: Attr::Text,
+            max_bytes: 4,
+        };
+        let content = read_from(Path::new("growing.txt"), Cursor::new(b"12345"), 4, policy)?;
+        assert_eq!(
+            content,
+            Content::TooLarge {
+                size: 5,
+                max_bytes: 4
+            }
+        );
+        Ok(())
+    }
 }

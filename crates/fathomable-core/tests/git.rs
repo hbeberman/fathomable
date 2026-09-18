@@ -83,6 +83,7 @@ fn plain_directory_has_no_diff_base() -> TestResult {
     let workspace = Workspace::discover(&dir.0)?;
     assert!(!workspace.is_git());
     assert_eq!(workspace.head_text(Path::new("a.md"))?, None);
+    assert_eq!(workspace.head_text_bounded(Path::new("a.md"), 1)?, None);
     Ok(())
 }
 
@@ -125,12 +126,26 @@ fn unborn_head_and_untracked_files_have_an_empty_base() -> TestResult {
         Some(String::new()),
         "unborn HEAD"
     );
+    assert_eq!(
+        workspace.head_text_bounded(Path::new("a.md"), 0)?,
+        Some(String::new()),
+        "an unborn HEAD needs no blob allocation"
+    );
     commit(&dir.0, &[("other.md", "o\n")])?;
     let workspace = Workspace::discover(&dir.0)?;
     assert_eq!(
         workspace.head_text(Path::new("a.md"))?,
         Some(String::new()),
         "not in HEAD"
+    );
+    assert_eq!(
+        workspace.head_text_bounded(Path::new("other.md"), 1)?,
+        None,
+        "an over-limit blob is unavailable without loading it"
+    );
+    assert_eq!(
+        workspace.head_text_bounded(Path::new("other.md"), 2)?,
+        Some("o\n".to_owned())
     );
     Ok(())
 }

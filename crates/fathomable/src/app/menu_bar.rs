@@ -569,8 +569,6 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Separator,
             Row::Item(Item::action(app, Action::JumpBack, "Back")),
             Row::Item(Item::action(app, Action::JumpForward, "Forward")),
-            Row::Separator,
-            Row::Item(Item::action(app, Action::JumpNewest, "Newest change")),
         ],
         Root::Review => vec![
             Row::Item(Item::action(app, Action::Review, "Reviews")),
@@ -701,7 +699,6 @@ fn action_available(app: &App, action: Action) -> bool {
     match action {
         Action::JumpBack => app.jumplist.can_back(),
         Action::JumpForward => app.jumplist.can_forward(),
-        Action::JumpNewest => app.diff_mode() != DiffMode::Off && !app.queue().is_empty(),
         Action::NewThread | Action::FileComment => app.has_document() && !app.deleted(),
         Action::Reply | Action::ToggleResolved | Action::EditNewestOwn => {
             app.thread_cursor().thread().is_some()
@@ -1363,7 +1360,7 @@ mod tests {
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 5);
         assert_eq!(rows(&app, Root::Layout).len(), 6);
-        assert_eq!(rows(&app, Root::Go).len(), 8);
+        assert_eq!(rows(&app, Root::Go).len(), 6);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
         assert_eq!(diff_rows.len(), 9);
@@ -1401,6 +1398,11 @@ mod tests {
         let go = rows(&app, Root::Go);
         assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f"));
         assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp F i"));
+        assert!(
+            go.iter()
+                .filter_map(super::Row::item)
+                .all(|item| item.label != "Newest change")
+        );
         assert!(
             !rows(&app, Root::App)
                 .iter()

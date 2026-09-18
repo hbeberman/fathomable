@@ -33,6 +33,11 @@ Target-only source browsing, not history redaction. This amendment removes
 Comparison controls, Start comparison at current HEAD, typed commit batches,
 `Space d d`, and `:diff` without compatibility aliases.
 
+Presentation amended later 2026-09-18: queued live-change badges, hints,
+status counts, and navigation are removed rather than retained behind Off.
+Transient counted file-edit toasts remain; Off hides only those toasts while
+their timers continue, and plain notifications remain visible.
+
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),
@@ -158,9 +163,10 @@ clears retained Unified and deletion-backed source content before any fallible
 Target read.
 
 Off also gates comparison gutters, counts and hunk navigation; current Git
-`XY`, `[G`/`]G`; queued-live-change badges, hints, toasts, counts and
-`[f`/`]f`; and Go > Newest change / `Space j j`. Git status and live queues
-continue to be collected internally. `:status` and file/binary information
+`XY` and `[G`/`]G`; and transient file-edit toasts, including their counts.
+Those toasts remain timed while hidden, and plain notifications remain
+visible. There is no live-change queue, badge, hint, status row, jump action,
+or internal acknowledgement state. `:status` and file/binary information
 report mode Off and Target facts only.
 
 Rendered/Source remains available in Standard and Off. Unified retains that

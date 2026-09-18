@@ -230,8 +230,9 @@ batch, or response duty.
 
 ### The viewer follows files, not agents
 
-Live reload still preserves reading position. Changed-file hints, manual
-changed-file jumps, the jumplist, and manual worktree navigation remain.
+Live reload still preserves reading position. Transient counted file-edit
+toasts, the jumplist, and manual worktree navigation remain. The changed-file
+queue, its hints and dots, and manual changed-file jumps are removed.
 MCP `open`, agent-followed paths, auto-jump, its `AUTO` badge, `:auto`, and
 `Space j a` are removed. `--name` still names a viewer window for the human;
 it is not an agent routing target.
@@ -245,7 +246,7 @@ or success path.
 Subscriptions, delivery ledgers, watches, reminders, nagging, and hook
 integration are removed. `fathomable pending`, the old Fathomable hook
 entries, the `agents` config node, and `jump.auto` / `jump.debounce` are no
-longer supported. `jump.toast` remains the duration of change toasts.
+longer supported. The toast duration later moved to `watch.toast`.
 
 The upgrade does not edit installed hook files or configuration and does not
 wipe legacy state. Users remove old `fathomable pending` and `fathomable

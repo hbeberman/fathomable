@@ -339,7 +339,6 @@ async fn run_async(
             watch_retry_at = schedule_retry(watch_retry_at, Instant::now());
         }
         if redraw {
-            app.settle();
             draw(&app, &theme, &mut terminal)?;
             redraw = false;
         }

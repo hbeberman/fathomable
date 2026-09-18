@@ -51,12 +51,12 @@ use fathomable_core::annotations::{
     self, ActivityCursor, MessageTarget, ResolutionOutcome, Store, StoreError, ThreadId,
 };
 use fathomable_core::config::{
-    DiffConfig, DiffMode, JumpConfig, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig,
-    ViewerConfig, WatchConfig,
+    DiffConfig, DiffMode, MarkdownConfig, SidebarConfig, ThreadsConfig, UserConfig, ViewerConfig,
+    WatchConfig,
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
-use fathomable_core::follow::{Change, Ignore, Queue, Target};
+use fathomable_core::follow::Ignore;
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::layout::LineIndex;
 use fathomable_core::picker::{Match, Picker};
@@ -643,7 +643,8 @@ pub(crate) struct App {
     reach: Reach,
     record: Record,
     dirs: XdgDirs,
-    jump: JumpConfig,
+    /// Shared lifetime of file-edit and activity toasts.
+    toast_duration: Duration,
     /// Code highlighting shared by every view (ADR 0016).
     highlighter: Arc<Highlighter>,
     /// Which files render as Markdown (ADR 0016).
@@ -655,7 +656,6 @@ pub(crate) struct App {
     /// The config file the over-limit notice names (ADR 0026).
     config_path: PathBuf,
     ignore: Ignore,
-    queue: Queue,
     toasts: Vec<Toast>,
     /// Explicit workspace review points.
     review_points: Option<fathomable_core::review_points::ReviewPointStore>,
@@ -712,7 +712,6 @@ impl App {
             dirs,
             store,
             thread_store_error,
-            jump,
             watch,
             review_points,
             highlighter,
@@ -725,6 +724,7 @@ impl App {
             user,
             config_path,
         } = options;
+        let toast_duration = watch.toast;
         let ignore = watch_ignore(&watch);
         let (thread_store_path, store_backing) = store_backing(store.as_ref(), &dirs, &record);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
@@ -784,14 +784,13 @@ impl App {
             reach: Reach::everything(),
             record,
             dirs,
-            jump,
+            toast_duration,
             highlighter,
             markdown,
             viewer,
             user,
             config_path,
             ignore,
-            queue: Queue::default(),
             toasts: Vec::new(),
             review_points,
             comparison,
@@ -1133,69 +1132,9 @@ impl App {
         true
     }
 
-    /// Changed files, newest first.
-    pub(crate) fn queue(&self) -> &Queue {
-        &self.queue
-    }
-
     /// Live toasts, oldest first.
     pub(crate) fn toasts(&self) -> &[Toast] {
         &self.toasts
-    }
-
-    /// Whether a queued change sits at or under the root-relative `path`.
-    pub(crate) fn has_change_under(&self, path: &Path) -> bool {
-        self.queue.iter().any(|c| c.path.starts_with(path))
-    }
-
-    /// `Space j j`: open the newest change.
-    pub(crate) fn jump_newest(&mut self) {
-        match self.queue.newest().cloned() {
-            Some(change) => self.jump_to(&change),
-            None => self.notice("no changes"),
-        }
-    }
-
-    /// `]f`: the next older change after the current file, wrapping.
-    pub(crate) fn jump_next(&mut self) {
-        let current = self.current.map(|i| self.docs[i].relative.clone());
-        match self.queue.after(current.as_deref()).cloned() {
-            Some(change) => self.jump_to(&change),
-            None => self.notice("no changes"),
-        }
-    }
-
-    /// `[f`: the next newer change before the current file, wrapping.
-    pub(crate) fn jump_prev(&mut self) {
-        let current = self.current.map(|i| self.docs[i].relative.clone());
-        match self.queue.before(current.as_deref()).cloned() {
-            Some(change) => self.jump_to(&change),
-            None => self.notice("no changes"),
-        }
-    }
-
-    fn jump_to(&mut self, change: &Change) {
-        self.close_popup();
-        self.focus = Focus::View;
-        self.record_jump_from_here();
-        self.open(&change.path);
-        if self.current_path() != change.path {
-            return;
-        }
-        let view = self.view_mut();
-        view.escape();
-        match change.target {
-            Target::Line(line) => view.goto_source_line(line),
-            Target::Range(start, end) => {
-                view.goto_source_line(start);
-                if end > start {
-                    view.select_lines();
-                    view.goto_source_line(end);
-                }
-            }
-        }
-        self.queue.remove(&change.path);
-        tracing::info!(path = %change.path.display(), "jumped to change");
     }
 
     /// Files the watcher reported, absolute: a change for each that
@@ -1219,7 +1158,7 @@ impl App {
     /// What one settled watcher batch did (ADR 0028). Loaded documents
     /// reload, follow their rename, or keep their content under a
     /// `deleted` banner; changes that pass the source and ignore rules
-    /// join the queue; the directories whose listings changed are
+    /// raise transient toasts; the directories whose listings changed are
     /// re-read in the tree. A platform event-loss notice reconciles the
     /// whole remembered workspace from disk.
     #[expect(
@@ -1454,9 +1393,6 @@ impl App {
     fn on_removed(&mut self, relative: &Path) {
         self.file_index.removed(relative);
         self.all_index.removed(relative);
-        if self.queue.remove(relative) {
-            tracing::info!(path = %relative.display(), "changed file went away");
-        }
         let root = self.workspace.root().to_path_buf();
         for index in 0..self.docs.len() {
             let doc = &mut self.docs[index];
@@ -1494,7 +1430,6 @@ impl App {
                 None
             }
         };
-        self.queue.remove(from);
         self.remember_thread_moves(&moved);
         self.refresh_review_paths();
         let tracks_working_tree = self.displayed_target_is_working_tree();
@@ -1820,9 +1755,6 @@ impl App {
             return;
         }
         if !absolute.is_file() {
-            if self.queue.remove(relative) {
-                tracing::info!(path = %relative.display(), "changed file went away");
-            }
             return;
         }
         // A deleted file that came back: the banner goes and the reload
@@ -1846,59 +1778,43 @@ impl App {
         {
             return;
         }
-        let (line, counts) = match (loaded, diff) {
-            (Some(index), Some(diff)) => (
-                diff.hunks()
-                    .first()
-                    .map(|hunk| hunk.target_line(diff.new_lines()))
-                    .or_else(|| self.docs[index].view.first_hunk_line()),
-                diff.counts(),
-            ),
-            _ => self.unloaded_change(relative, absolute),
+        let counts = match (loaded, diff) {
+            (Some(_), Some(diff)) => Some(diff.counts()),
+            _ => self.unloaded_change_counts(relative, absolute),
         };
-        let path = relative.to_path_buf();
-        self.push_change(Change::new(path, Target::Line(line.unwrap_or(1))), counts);
+        tracing::info!(path = %relative.display(), ?counts, "file edit observed");
+        self.push_file_edit_toast(relative.to_path_buf(), counts.unwrap_or_default());
     }
 
-    /// The first hunk and counts of a file that is not open against `HEAD`.
-    fn unloaded_change(&self, relative: &Path, absolute: &Path) -> (Option<usize>, (usize, usize)) {
-        let Ok(text) = fs::read_to_string(absolute) else {
-            return (None, (0, 0));
-        };
-        let base = self.workspace.head_text(relative).ok().flatten();
-        let Some(base) = base else {
-            return (None, (0, 0));
-        };
-        let diff = Diff::new(&base, &text);
-        let line = diff
-            .hunks()
-            .first()
-            .map(|hunk| hunk.target_line(diff.new_lines()));
-        (line, diff.counts())
-    }
-
-    fn push_change(&mut self, change: Change, counts: (usize, usize)) {
-        tracing::info!(path = %change.path.display(), line = change.target.line(), "change queued");
-        self.push_file_edit_toast(change.path.clone(), counts);
-        self.queue.push(change);
-    }
-
-    /// Drop the current file from the queue once its target is on screen.
-    pub(crate) fn settle(&mut self) {
-        let Some(index) = self.current else {
-            return;
-        };
-        let doc = &self.docs[index];
-        let target = self
-            .queue
-            .iter()
-            .find(|c| c.path == doc.relative)
-            .map(|c| c.target.line());
-        if let Some(line) = target
-            && doc.view.line_on_screen(line)
-        {
-            self.queue.remove(&doc.relative.clone());
+    /// Counts for an unopened file against `HEAD`, within the content policy.
+    fn unloaded_change_counts(
+        &mut self,
+        relative: &Path,
+        absolute: &Path,
+    ) -> Option<(usize, usize)> {
+        if !self.workspace.is_git() {
+            return None;
         }
+        let policy = Policy {
+            attr: self.workspace.diff_attr(relative),
+            max_bytes: self.viewer.max_file_bytes(),
+        };
+        let current = match Document::load(absolute, policy) {
+            Ok(document) => document.text().map(str::to_owned),
+            Err(error) => {
+                tracing::warn!(%error, "cannot count unopened file edit");
+                None
+            }
+        }?;
+        let base = match self.workspace.head_text_bounded(relative, policy.max_bytes) {
+            Ok(Some(text)) if policy.attr.classify(text.as_bytes()) == Some(false) => text,
+            Ok(Some(_) | None) => return None,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read HEAD for unopened file edit");
+                return None;
+            }
+        };
+        Some(Diff::new(&base, &current).counts())
     }
 
     /// Expire transient toasts.
@@ -2185,7 +2101,7 @@ impl App {
         self.message = None;
     }
 
-    /// Raise a toast for `jump.toast`, dropping the oldest past the cap.
+    /// Raise a toast for `watch.toast`, dropping the oldest past the cap.
     pub(super) fn push_toast(&mut self, text: String) {
         self.push_toast_kind(text, ToastKind::Plain);
     }
@@ -2209,13 +2125,13 @@ impl App {
     }
 
     fn push_toast_kind(&mut self, text: String, kind: ToastKind) {
-        if self.jump.toast == Duration::ZERO {
+        if self.toast_duration == Duration::ZERO {
             return;
         }
         self.toasts.push(Toast {
             text,
             kind,
-            until: Instant::now() + self.jump.toast,
+            until: Instant::now() + self.toast_duration,
         });
         if self.toasts.len() > MAX_TOASTS {
             self.toasts.remove(0);
@@ -2425,13 +2341,6 @@ impl App {
     /// A far move is leaving `from` (ADR 0049).
     pub(crate) fn record_jump(&mut self, from: jumplist::Position) {
         self.jumplist.record(from);
-    }
-
-    /// A far move outside key dispatch records where it started.
-    fn record_jump_from_here(&mut self) {
-        if let Some(from) = self.position() {
-            self.record_jump(from);
-        }
     }
 
     /// The position a far move would record now.
@@ -2847,8 +2756,6 @@ pub(crate) struct Options {
     pub(crate) store: Option<Store>,
     /// The thread-store startup failure shown when `store` is unavailable.
     pub(crate) thread_store_error: Option<StoreError>,
-    /// Change notification settings (ADR 0015).
-    pub(crate) jump: JumpConfig,
     /// File-watcher settings (ADR 0015).
     pub(crate) watch: WatchConfig,
     /// Explicit workspace review points, or `None` when storage is unavailable.
@@ -2891,7 +2798,6 @@ impl Options {
             }),
             store: None,
             thread_store_error: None,
-            jump: JumpConfig::default(),
             watch: WatchConfig::default(),
             review_points: None,
             highlighter: Arc::new(Highlighter::plain()),

@@ -4,7 +4,7 @@
 //! A missing file is valid and yields [`Config::default`]. Every node the
 //! file may contain is known; an unknown node is an error with a location
 //! rather than being ignored, so typos surface immediately. `theme`, the
-//! `jump` and `watch` blocks (ADR 0015, renamed by ADR 0047), the
+//! `watch` block (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), the
 //! `layout` block (ADR 0081), and the `threads` block (ADR 0049) are
 //! understood, along with the `diff` and `user` blocks.
@@ -37,7 +37,6 @@ use crate::XdgDirs;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     theme: String,
-    jump: JumpConfig,
     watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
@@ -51,7 +50,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: crate::theme::DEFAULT_THEME.to_owned(),
-            jump: JumpConfig::default(),
             watch: WatchConfig::default(),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
@@ -273,24 +271,11 @@ impl MarkdownConfig {
     }
 }
 
-/// The `jump { ... }` block (ADR 0015): how long transient toasts remain.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct JumpConfig {
-    /// How long a toast stays; zero disables toasts.
-    pub toast: Duration,
-}
-
-impl Default for JumpConfig {
-    fn default() -> Self {
-        Self {
-            toast: Duration::from_secs(5),
-        }
-    }
-}
-
 /// The `watch { ... }` block (ADR 0015): what the file watcher reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchConfig {
+    /// How long a toast stays; zero disables toasts.
+    pub toast: Duration,
     /// Extra ignore globs, root-relative, on top of the tree's rules.
     pub ignore: Vec<String>,
     /// Quiet period for workspace and Git changes; thread refresh bypasses it.
@@ -300,6 +285,7 @@ pub struct WatchConfig {
 impl Default for WatchConfig {
     fn default() -> Self {
         Self {
+            toast: Duration::from_secs(5),
             ignore: Vec::new(),
             debounce: Duration::from_millis(300),
         }
@@ -363,29 +349,6 @@ impl Config {
                 "theme" => {
                     one_string(node, line)?.clone_into(&mut config.theme);
                 }
-                "jump" => {
-                    let Some(children) = node.children() else {
-                        return Err(ConfigError {
-                            path: None,
-                            line,
-                            message: "`jump` takes a block of settings".to_owned(),
-                        });
-                    };
-                    for child in children.nodes() {
-                        let line = Some(line_of(child.span().offset()));
-                        let jump = &mut config.jump;
-                        match child.name().value() {
-                            "toast" => jump.toast = millis(child, line)?,
-                            other => {
-                                return Err(ConfigError {
-                                    path: None,
-                                    line,
-                                    message: format!("unknown jump setting `{other}`"),
-                                });
-                            }
-                        }
-                    }
-                }
                 "watch" => {
                     let Some(children) = node.children() else {
                         return Err(ConfigError {
@@ -398,6 +361,7 @@ impl Config {
                         let line = Some(line_of(child.span().offset()));
                         let watch = &mut config.watch;
                         match child.name().value() {
+                            "toast" => watch.toast = millis(child, line)?,
                             "ignore" => watch.ignore = strings(child, line, "ignore")?,
                             "debounce" => watch.debounce = millis(child, line)?,
                             other => {
@@ -649,13 +613,7 @@ impl Config {
         self.theme = name.into();
     }
 
-    /// Change-toast settings, the `jump` block (ADR 0015).
-    #[must_use]
-    pub fn jump(&self) -> &JumpConfig {
-        &self.jump
-    }
-
-    /// File-watcher settings, the `watch` block (ADR 0015).
+    /// File-watcher and toast settings, the `watch` block (ADR 0015).
     #[must_use]
     pub fn watch(&self) -> &WatchConfig {
         &self.watch
@@ -708,11 +666,8 @@ impl fmt::Display for Config {
             "\
 theme {theme} // Built-in theme or a custom theme name from themes/.
 
-jump {{
-    toast {toast} // Toast duration in milliseconds; 0 disables toasts.
-}}
-
 watch {{
+    toast {toast} // Toast duration in milliseconds; 0 disables toasts.
     ignore{ignore} // Extra root-relative globs excluded from live-change notifications.
     debounce {debounce} // Quiet period in milliseconds for workspace and Git changes, not threads.
 }}
@@ -753,7 +708,7 @@ user {{
 }}
 ",
             theme = quoted(&self.theme),
-            toast = self.jump.toast.as_millis(),
+            toast = self.watch.toast.as_millis(),
             ignore = words(&self.watch.ignore),
             debounce = self.watch.debounce.as_millis(),
             extensions = words(&self.markdown.extensions),
@@ -936,13 +891,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn jump_watch_and_viewer_blocks_parse_every_key() -> Result<(), ConfigError> {
+    fn watch_and_viewer_blocks_parse_every_key() -> Result<(), ConfigError> {
         let config = Config::parse(
             r#"
-jump {
-    toast 0
-}
 watch {
+    toast 0
     ignore "target/**" "*.lock"
     debounce 50
 }
@@ -962,7 +915,7 @@ threads {
 }
 "#,
         )?;
-        assert_eq!(config.jump().toast, Duration::ZERO);
+        assert_eq!(config.watch().toast, Duration::ZERO);
         assert_eq!(config.watch().ignore, ["target/**", "*.lock"]);
         assert_eq!(config.watch().debounce, Duration::from_millis(50));
         assert!(!config.layout().menu_bar);
@@ -1124,12 +1077,12 @@ threads {
     }
 
     #[test]
-    fn jump_and_watch_errors_name_the_line() {
+    fn watch_errors_name_the_line_and_jump_is_unknown() {
         let bad = [
-            ("jump { toast -1 }", "millisecond"),
-            ("jump { nope 1 }", "unknown jump setting"),
+            ("watch { toast -1 }", "millisecond"),
             ("watch { nope 1 }", "unknown watch setting"),
-            ("jump \"x\"", "block"),
+            ("watch \"x\"", "block"),
+            ("jump { toast 1 }", "unknown setting `jump`"),
         ];
         for (text, needle) in bad {
             let error = Config::parse(text)

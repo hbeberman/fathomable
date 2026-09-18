@@ -25,7 +25,7 @@ fn empty_config_is_default() -> TestResult {
 #[test]
 fn default_toast_duration_is_five_seconds() {
     assert_eq!(
-        Config::default().jump().toast,
+        Config::default().watch().toast,
         std::time::Duration::from_secs(5)
     );
 }
@@ -138,8 +138,7 @@ fn text_form_round_trips() -> TestResult {
     let full = Config::parse(
         r#"
 theme "mine \"quoted\" \\ back"
-jump { toast 0 }
-watch { ignore "target/**" "a b" "c\"d"; debounce 1 }
+watch { toast 0; ignore "target/**" "a b" "c\"d"; debounce 1 }
 markdown { extensions "txt"; names "notes" }
 viewer { max-file-size-mib 1 }
 layout {
@@ -151,6 +150,7 @@ layout {
         width 1
         split 2
     }
+
 }
 threads { stubs #false; stubs-resolved #true }
 diff { mode "off"; context 0; ignore-whitespace #true }
@@ -162,6 +162,16 @@ user { name "O'Brien" }
     let text = full.to_string();
     assert_eq!(Config::parse(&text)?, full, "{text}");
     assert_eq!(keys(&text), keys(&default.to_string()));
+    Ok(())
+}
+
+#[test]
+fn obsolete_jump_block_is_rejected() -> TestResult {
+    let error = must_fail("jump { toast 5000 }")?;
+    assert!(
+        error.to_string().contains("unknown setting `jump`"),
+        "{error}"
+    );
     Ok(())
 }
 

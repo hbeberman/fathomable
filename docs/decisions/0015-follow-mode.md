@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Follow mode and the last-seen diff base
-description: Change hints, sidebar badges, toasts, jump keys, debounced auto-jump, and the content-addressed snapshots that define "since I last looked".
+description: Historical follow-mode design and the surviving transient file-edit toast contract.
 resource: crates/fathomable-core/src/follow.rs
 tags:
   - decision
@@ -25,6 +25,18 @@ Agent following and auto-jump superseded 2026-09-15 by
 the changed-file queue, and manual jump keys remain.
 MCP `open`/`follow`, automatic movement, the `AUTO` badge, and the
 auto/debounce config keys are removed; `jump.toast` remains.
+
+Amended 2026-09-18: the changed-file queue, sidebar dots, bottom hint, status
+row, newest/next/previous change actions, and every acknowledgement-on-view
+rule are removed. File edits retain only transient, time-expiring toasts.
+Loaded text reloads compare consecutive loaded contents; unopened readable
+Git files compare with `HEAD`, treating an absent path or unborn `HEAD` as
+empty. Unavailable, non-text, outside-Git, and over-policy counts fall back
+to a path-only toast. Both working and `HEAD` inputs are size-bounded before
+complete allocation or diffing. Diff Off hides file-edit toasts while they
+expire normally, without hiding ordinary activity notifications. Worktree
+switches retain existing toasts; later counts use the active checkout.
+`watch.toast` replaces `jump.toast` without an alias.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

@@ -663,15 +663,6 @@ impl View {
         self.activity.elapsed()
     }
 
-    /// Whether 1-based source `line` is within the rows on screen.
-    pub(crate) fn line_on_screen(&self, line: usize) -> bool {
-        self.layout
-            .index()
-            .range_of(line)
-            .and_then(|range| self.layout.line_at_offset(range.start))
-            .is_some_and(|row| row >= self.scroll && row < self.scroll + self.height)
-    }
-
     /// The 1-based line of the first hunk against `HEAD`.
     pub(crate) fn first_hunk_line(&self) -> Option<usize> {
         let diff = self.diff.as_ref()?;
@@ -2277,8 +2268,6 @@ mod tests {
             v.input_char(ch);
         }
         assert!(matches!(v.confirm(), Effect::Command(c) if c == "about"));
-        assert!(v.line_on_screen(1));
-        assert!(!v.line_on_screen(usize::MAX));
         v.touch();
         assert!(v.idle() < Duration::from_secs(1));
     }

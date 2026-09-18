@@ -1070,15 +1070,7 @@ fn tree_lines<'a>(
         };
         let selection = navigation.selection(index == tree.cursor());
         let style = theme.sidebar.patch(style).patch(selection.style(theme));
-        // A queued change marks its file, and its collapsed ancestors so it
-        // shows however the tree is folded (ADR 0015).
-        let badge = app.diff_mode() != fathomable_core::config::DiffMode::Off
-            && if row.is_dir() {
-                !row.expanded() && app.has_change_under(row.path())
-            } else {
-                app.queue().contains(row.path())
-            };
-        let (letters, mut tail) = tree_marks(app, row, theme, style, badge, &circles);
+        let (letters, mut tail) = tree_marks(app, row, theme, style, &circles);
         // The marks follow the name directly, one space apart, and the
         // rest of the row is padded; a narrow sidebar drops the marks.
         let mut tail_width: usize = tail.iter().map(|span| span.content.chars().count()).sum();
@@ -1121,7 +1113,7 @@ pub(super) fn sidebar_divider_style(theme: &Theme) -> Style {
 }
 
 /// The marks around a files pane name: current Git XY status, selected
-/// comparison counts, the follow badge, and the thread circle.
+/// comparison counts, and the thread circle.
 #[expect(
     clippy::too_many_lines,
     reason = "the files row keeps Git status and comparison facts aligned"
@@ -1131,7 +1123,6 @@ fn tree_marks<'a>(
     row: &fathomable_core::tree::Row,
     theme: &Theme,
     style: Style,
-    badge: bool,
     circles: &[(std::path::PathBuf, Words)],
 ) -> (Vec<Span<'a>>, Vec<Span<'a>>) {
     // A collapsed directory folds what is beneath it.
@@ -1217,9 +1208,6 @@ fn tree_marks<'a>(
         if comparison.binary {
             tail.push(Span::styled(" bin", on_bg(theme.info)));
         }
-    }
-    if badge {
-        tail.push(Span::styled(" ●", on_bg(theme.diff_delta)));
     }
     // The most urgent circle of a file's listed threads, or of a folded
     // directory's (ADR 0066).
@@ -1685,7 +1673,6 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
         _ => theme.mode_input,
     };
     let parts = status_parts(app);
-    let hint = change_hint(app);
     let endpoints_rendered =
         app.menu_bar_shown() && menu_bar::bar_tail(app, width).endpoints_rendered();
     let badges: Vec<&String> = parts
@@ -1733,8 +1720,6 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
             format!("  {message}"),
             status_message_style(app, theme),
         ));
-    } else if let Some(hint) = hint {
-        left.push(Span::styled(format!("  {hint}"), theme.diff_delta));
     }
     let used: usize = left
         .iter()
@@ -1885,29 +1870,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         badges,
         right,
     }
-}
-
-/// The newest queued change for the status line (ADR 0015), with its
-/// counts when it is the open file.
-fn change_hint(app: &App) -> Option<String> {
-    if app.diff_mode() == fathomable_core::config::DiffMode::Off {
-        return None;
-    }
-    let change = app.queue().newest()?;
-    let counts = if app.directory_path().is_none() && app.current_path() == change.path {
-        app.view().diff_counts()
-    } else {
-        None
-    };
-    let counts = match counts {
-        Some((a, r)) if a + r > 0 => format!(" +{a} -{r}"),
-        _ => String::new(),
-    };
-    Some(format!(
-        "→ {}{counts} ({})",
-        change.path.display(),
-        app.queue().len()
-    ))
 }
 
 /// Drop leading characters so `text` fits `max` cells, marking the cut with `…`.

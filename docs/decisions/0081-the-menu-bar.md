@@ -60,6 +60,10 @@ rightmost mode control. Active modes show the Base-to-Target pair in the app
 bar; Off shows only Target. Normal comparison provenance appears in the
 bottom status line only when those endpoint controls do not actually render.
 
+Amended later 2026-09-18: the queued live-change feature is removed, so
+**Go** contains the three file pickers and jumplist Back/Forward only.
+**Newest change** and `Space j j` have no replacement or compatibility route.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -129,7 +133,7 @@ content they affect.
   `fathomable --doctor`. Licenses displays the embedded first- and third-party
   notices offline. About (`:about`) is a compact project/version, license,
   and repository view with directions to the full notices.
-- **Go** contains the file pickers, jumplist Back/Forward, and Newest change.
+- **Go** contains the file pickers and jumplist Back/Forward.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
   begins with bold-`▌`, mutually exclusive **Standard diff**, **Unified diff**,

@@ -21,13 +21,11 @@ mod tests {
         let dir = testing::workspace("wake-stub", testing::README)?;
         let mut app = testing::app(&dir)?;
         let path = app.current_path().to_path_buf();
-        let queue = app.queue().clone();
 
         app.wake();
 
         assert_eq!(app.message(), Some("Wake agent is not yet implemented"));
         assert_eq!(app.current_path(), path);
-        assert_eq!(app.queue(), &queue);
         assert!(app.popup().is_none());
         Ok(())
     }

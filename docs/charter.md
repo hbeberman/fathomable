@@ -22,8 +22,8 @@ the agent does the writing.
 - A **renderer**: pretty Markdown (tables, nested lists, task lists, footnotes,
   links) and syntax-highlighted code, with a source-view toggle for Markdown.
 - A **follower**: watched files re-render on change while preserving the
-  reader's position; changed-file hints and manual jumps help the reader move
-  through new work without an agent controlling the viewer.
+  reader's position; transient counted file-edit toasts report new work
+  without moving the reader or requiring acknowledgement.
 - A **reviewer**: line-range annotations on rendered content, captured with the
   snippet, the source range, a timestamp, and the user's comment. Annotations
   form threads. Agents reply into threads, so a document can carry a
@@ -32,7 +32,7 @@ the agent does the writing.
   Standard, Unified, or Off presentation applies to every file. Standard
   supplies comparison gutters and navigation, Unified is a durable patch view,
   and Off is Target-only source browsing without comparison, Git-status, or
-  live-change presentation. Explicit review points provide deliberate
+  file-edit toasts. Explicit review points provide deliberate
   "since this workspace state" comparisons.
 - An **agent endpoint**: `fathomable --mcp [DIR]` is a repository-bound stdio
   MCP server that works without a viewer, so agents can read discussions,
@@ -125,8 +125,8 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
 - **Placement context**: the checkout or historical endpoint in which bounded
   evidence can currently place a thread. It qualifies a location; it does not
   decide repository-board membership.
-- **Change**: a write the watcher queued for the reader, or a path in the
-  selected comparison.
+- **Change**: a filesystem edit observed by the watcher, or a path in the
+  selected comparison. An observed edit is not queued for acknowledgement.
 - **Sidebar**: the left column, holding the **files pane** and the
   **threads pane** as peers ([0049](decisions/0049-inline-threads-and-the-rail.md),
   named by [0057](decisions/0057-the-sidebar.md)).

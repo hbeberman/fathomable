@@ -108,7 +108,7 @@ impl App {
             "none (the welcome screen)".to_owned()
         };
         let thread_counts = self.review_counts(false);
-        let mut lines = vec![
+        let lines = vec![
             ("document".to_owned(), document),
             ("diff mode".to_owned(), self.diff_mode().to_string()),
             (
@@ -156,12 +156,6 @@ impl App {
                     .to_string(),
             ),
         ];
-        if self.diff_mode() != DiffMode::Off {
-            lines.insert(
-                lines.len().saturating_sub(2),
-                ("changes".to_owned(), self.queue.len().to_string()),
-            );
-        }
         lines
     }
 }
@@ -176,6 +170,11 @@ mod tests {
     fn off_status_is_explicitly_target_only() -> anyhow::Result<()> {
         let dir = testing::workspace("status-diff-off", testing::README)?;
         let mut app = testing::app(&dir)?;
+        assert!(
+            app.status_lines()
+                .iter()
+                .all(|(label, _)| label != "changes")
+        );
         app.select_diff_mode(DiffMode::Off);
 
         let rows = app.status_lines();

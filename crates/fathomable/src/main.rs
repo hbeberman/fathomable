@@ -206,7 +206,6 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             dirs: dirs.clone(),
             store,
             thread_store_error,
-            jump: config.jump().clone(),
             watch: config.watch().clone(),
             review_points,
             highlighter: Arc::new(highlighter),

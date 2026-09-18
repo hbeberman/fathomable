@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: What the files pane shows
-description: The Files pane filters changed, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
+description: The Files pane filters changed, review-bearing, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
 resource: crates/fathomable/src/app/files_shown.rs
 related_resources:
   - crates/fathomable-core/src/tree.rs
@@ -41,6 +41,12 @@ global menu bar into a separate File surface header. The Files pane continues
 to own repository filters and change totals; the File header owns the current
 path, current-file lifecycle counts, and document display settings.
 
+Amended 2026-09-18: **Only reviews** is a fourth session filter at
+`Space F o`. It admits paths with active or resolution-proposed, non-archived
+threads visible in the current workspace, intersects the other filters and
+selected-comparison scope, and refreshes as thread lifecycle, reach, or local
+rename projection changes.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a
@@ -76,10 +82,11 @@ pane's has.
 
 ## Decision
 
-### Three toggles
+### Four toggles
 
 ```
 Space F c    only changed      /  all files
+Space F o    only reviews      /  all files
 Space F u    hide untracked    /  show untracked
 Space F g    show ignored      /  hide ignored
 Space F i    open incl. ignored                      (unchanged)
@@ -91,6 +98,10 @@ Space F r    recent files                            (unchanged)
   files count as changed. Directories with nothing to show are not
   drawn, expanded or not. A file that becomes clean leaves the pane on
   the next status; one that changes appears.
+- **Only reviews** lists files with at least one active or
+  resolution-proposed thread in the current workspace. Resolved and archived
+  threads do not qualify. The app projects viewer-local working-tree renames
+  before supplying paths to the annotation-agnostic tree.
 - **Hide untracked** drops the `U` files. Under *only changed* it leaves
   the tracked changes; on its own it leaves everything git knows.
 - Deleted files and their missing parent directories remain listed under
@@ -101,10 +112,16 @@ Space F r    recent files                            (unchanged)
   tree reads, so the pane re-reads its listings when it flips. An
   ignored file is never a changed one, so *only changed* wins when both
   are on.
-- All three are **session toggles** starting off, with no config block.
+- All four are **session toggles** starting off, with no config block.
   They work from any pane, since they change what the pane shows, not
   what its cursor does. Toggling while the files pane is hidden changes
   the pane all the same and a status-line notice names the new state.
+- Rules compose by intersection. A review-bearing file must also satisfy
+  *only changed*, untracked, ignored, and selected-comparison snapshot rules
+  that are active. Directories appear only when they lead to an admitted file.
+  Store reloads, thread creation, lifecycle and archive changes, deletion,
+  local rename projection, and comparison or reach changes update the listing
+  immediately.
 - The **open file may drop out** of the pane. Nothing pins it; the pane
   highlights it again when it qualifies.
 - `]f`, `]g`, `]G`, the picker, `follow`, and every other walk of the
@@ -114,12 +131,14 @@ Space F r    recent files                            (unchanged)
 ### Entries say what a press does
 
 - A which-key entry may carry a **live label**: the binding table's
-  label is the static form (`only changed`, `hide untracked`, `show
-  ignored`, what `Space ?` lists), and while the toggle is on the popup
-  reads `all files`, `show untracked`, `hide ignored`. The label states
+  label is the static form (`only changed`, `only reviews`, `hide untracked`,
+  `show ignored`, what `Space ?` lists), and while a restrictive toggle is on
+  the popup reads `all files`; the others read `show untracked` or
+  `hide ignored`. The label states
   the outcome of pressing the key now, in the fewest words.
 - A left-click on the header's **`Files` title** opens a pane settings menu
-  with stable `only changed`, `show untracked`, and `show ignored` labels.
+  with stable `only changed`, `only reviews`, `show untracked`, and
+  `show ignored` labels.
   Each active setting carries a checkmark; inactive settings reserve the
   same space without one. The menu aligns to the sidebar's left edge and
   begins on the row below the header instead of at the pointer. The title is
@@ -136,8 +155,9 @@ Space F r    recent files                            (unchanged)
 - The files pane's header row is a `Header` on **`ui.header`**, as the
   threads pane's is (0066): `Files` is bold in the directory colour at the
   left. Against the right edge, the active filters name what is on screen:
-  `changed` while only changed files are listed, `tracked` while untracked
-  files are hidden, and `ignored` while ignored files are shown. The
+  `changed` while only changed files are listed, `reviews` while only files
+  with qualifying reviews are listed, `tracked` while untracked files are
+  hidden, and `ignored` while ignored files are shown. The
   comparison's `+n -m` totals (0017) follow those words, separated only by
   spaces.
 - `Files                         changed tracked +12 -3`. Filter words drop
@@ -151,24 +171,25 @@ Space F r    recent files                            (unchanged)
 - 0056's *Fewer entries*: the ignored toggle returns, as `Space F g`
   and a filter on the pane, not a key on it; the picker at `Space F i`
   stays.
-- 0056's map: `Space F` is `c` / `u` / `g` / `i` / `r`.
-- 0050's Files title opens the three pane settings. Row context menus stay
+- 0056's map: `Space F` is `c` / `o` / `u` / `g` / `i` / `r`.
+- 0050's Files title opens the four pane settings. Row context menus stay
   item-local, and right-click on the header remains inert.
 - 0017's tree bullet: the pane may list a subset; the letters, the
   counts, and the root totals are unchanged.
 - 0087's comparison model (amended 2026-09-17): with a non-working target,
   "all files" means the target snapshot plus base-only comparison deletions,
   not the current checkout. The visible file picker follows the same boundary.
-  The three rules remain filters over that source.
+  The four rules remain filters over that source.
 
 ## Consequences
 
-- `app/files_shown.rs`, which this record backs, holds the three
+- `app/files_shown.rs`, which this record backs, holds the four
   toggles' actions, the live labels, the notice while the pane is
   hidden, and the header's filter words.
-- `fathomable_core::tree` gains `Shown`, what the tree lists: three
-  rules with `Shown::all()` as the start, toggled by `Facet`. `Tree`
-  keeps a `Shown` and the paths it admits under the current `Status`;
+- `fathomable_core::tree` gains `Shown`, what the tree lists: four
+  rules with `Shown::all()` as the start, toggled by `Rule`. `Tree`
+  keeps a `Shown`, caller-supplied review paths, and the paths it admits under
+  the current `Status`;
   `Tree::set_shown` re-reads the listings when the ignored rule flips
   and `Tree::sift` re-applies the rules to a new status. The rows are
   filtered as they are built, so the cursor, clicks, and `reveal` see
@@ -177,9 +198,9 @@ Space F r    recent files                            (unchanged)
 - `bindings::menu_entries` and `bindings::menu` take a relabel
   function; `App::which_key` supplies the live labels, and the drawing
   and the mouse go through it. The binding table gains `FilesChanged`,
-  `FilesUntracked`, and `FilesIgnored` under `Space F`.
+  `FilesReviews`, `FilesUntracked`, and `FilesIgnored` under `Space F`.
 - `draw::tree_lines` builds the header through `Header`; `Tone` gains
   the diff colours for the counts. Header layout retains the totals while
   dropping filter words from the end.
 - The guide's key table, its files pane passage, and its mouse passage
-  name the three toggles and the header's words.
+  name the four toggles and the header's words.

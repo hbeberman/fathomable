@@ -24,7 +24,7 @@ impl App {
         match result {
             Ok(ids) if ids.is_empty() => self.notice("no resolved threads to archive"),
             Ok(ids) => {
-                self.refresh_all_marks();
+                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 self.notice(format!("archived {} resolved thread(s)", ids.len()));
             }
@@ -63,7 +63,7 @@ impl App {
         let result = store.clear_board_with_context(&slate, &context);
         match result {
             Ok(ids) => {
-                self.refresh_all_marks();
+                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 self.notice(format!("cleared board; archived {} thread(s)", ids.len()));
             }
@@ -111,7 +111,7 @@ impl App {
         let result = store.archive_with_context(id, context);
         match result {
             Ok(()) => {
-                self.refresh_all_marks();
+                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 if self.focus() == crate::app::Focus::ThreadsPane {
                     self.threads_pane_reselect(pane_place);
@@ -134,7 +134,7 @@ impl App {
         let result = store.restore_with_context(id, context);
         match result {
             Ok(()) => {
-                self.refresh_all_marks();
+                self.refresh_after_thread_membership_change();
                 self.reshow_review();
                 if self.focus() == crate::app::Focus::ThreadsPane {
                     self.threads_pane_reselect(pane_place);

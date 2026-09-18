@@ -817,6 +817,13 @@ impl App {
     /// stranded follow `HEAD` first (ADR 0035). Marks are refreshed when
     /// the answer changed.
     pub(super) fn refresh_reach(&mut self) {
+        if self.recompute_reach() {
+            self.refresh_all_marks();
+        }
+    }
+
+    /// Recompute reach without rebuilding document or tree projections.
+    fn recompute_reach(&mut self) -> bool {
         let head = self.workspace.head_commit();
         let active = match (self.store.as_mut(), head) {
             (Some(store), Some(head)) => self
@@ -831,14 +838,13 @@ impl App {
             Some((head, reachable)) => self.reach_with_others(head, reachable),
             None => Reach::everything(),
         };
-        if scope != self.reach {
+        let changed = scope != self.reach;
+        if changed {
             tracing::info!(head = ?self.workspace.head_commit(), "thread reach changed");
             self.reach = scope;
-            for index in 0..self.docs.len() {
-                self.refresh_marks(index);
-            }
         }
         self.refresh_elsewhere();
+        changed
     }
 
     /// Re-read the thread store after another writer appended to it: a
@@ -920,10 +926,7 @@ impl App {
                         healthy: true,
                     };
                 }
-                self.refresh_reach();
-                for index in 0..self.docs.len() {
-                    self.refresh_marks(index);
-                }
+                self.refresh_after_thread_membership_change();
                 StoreReload {
                     changed: true,
                     healthy: true,
@@ -1483,6 +1486,7 @@ impl App {
         };
         self.queue.remove(from);
         self.remember_thread_moves(&moved);
+        self.refresh_review_paths();
         let tracks_working_tree = self
             .comparison()
             .is_some_and(|comparison| comparison.target() == &ComparisonEndpoint::WorkingTree);
@@ -2492,6 +2496,7 @@ impl App {
                     tree.set_virtual_paths(&status, self.comparison_virtual_paths());
                 }
                 self.tree = Some(tree);
+                self.refresh_review_paths();
                 true
             }
             Err(error) => {

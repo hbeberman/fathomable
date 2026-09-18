@@ -292,6 +292,7 @@ impl App {
             Action::WorktreePrev => self.worktree_step(-1),
             Action::StubsToggle => self.toggle_stubs(),
             Action::FilesChanged => self.files_toggle(Rule::Changed),
+            Action::FilesReviews => self.files_toggle(Rule::Reviews),
             Action::FilesUntracked => self.files_toggle(Rule::Untracked),
             Action::FilesIgnored => self.files_toggle(Rule::Ignored),
             Action::CommandLine => {

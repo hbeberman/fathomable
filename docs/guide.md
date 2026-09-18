@@ -39,6 +39,13 @@ document. The main column switches between **File** (`f`) and **Reviews**
 actions, or use the top **Layout**, **Go**, **Review**, and **Diff** menus.
 The mouse wheel scrolls; dragging the sidebar divider resizes it.
 
+The **Files** title menu has four session filters: **only changed**,
+**only reviews**, **show untracked**, and **show ignored**. `Space F c`,
+`Space F o`, `Space F u`, and `Space F g` toggle them from any pane. Only
+reviews means files with an active or resolution-proposed, non-archived thread
+in the current workspace. Filters combine, and the Files header names active
+states as `changed`, `reviews`, `tracked`, and `ignored`.
+
 ### Essential keys
 
 `Space ?` opens the complete keymap. Key prefixes show their continuations;
@@ -53,6 +60,8 @@ the table below is a quick reference, not the full list.
 | `v` `V` `y` | select characters, select lines, copy |
 | `gf` | follow a file reference or URL |
 | `Space f` | file picker |
+| `Space F c` `Space F o` | only changed / only reviews in Files |
+| `Space F u` `Space F g` | hide untracked / show ignored in Files |
 | `Space v s` | source / rendered view |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |

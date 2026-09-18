@@ -319,9 +319,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     entry header give up their keys, the cursor's stub reads bold, the
     diff header alone keeps its keys, and `ui.hint` retires
     ([0067](decisions/0067-the-texts-key-bar.md)).
-59. **What the files pane shows.** Three session toggles under `Space F`
-    filter the files pane, only changed files (`c`), hide untracked
-    files (`u`), show ignored files (`g`), from any pane; the popup's
+59. **What the files pane shows.** Four session toggles under `Space F`
+    filter the files pane: only changed files (`c`), only files with open
+    reviews (`o`), hide untracked files (`u`), and show ignored files (`g`),
+    from any pane; the popup's
     entries and the right-click menu say what a press does now; the
     pane's header row moves onto `ui.header` and names the active
     filters after the repo's counts

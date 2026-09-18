@@ -371,6 +371,105 @@ fn snapshot_paths_exclude_the_live_workspace_and_keep_historical_files()
 }
 
 #[test]
+fn only_reviews_lists_supplied_files_and_intersects_other_rules()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("reviews")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    let status = dirty_status();
+    tree.set_snapshot_paths(
+        &status,
+        vec![
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("b.txt"),
+            PathBuf::from("historical.md"),
+        ],
+    );
+    tree.set_review_paths(
+        &mut workspace,
+        &status,
+        [
+            PathBuf::from("src/main.rs"),
+            PathBuf::from("b.txt"),
+            PathBuf::from("A.txt"),
+            PathBuf::from("historical.md"),
+        ],
+    );
+
+    tree.set_shown(&mut workspace, &status, Shown::all().toggled(Rule::Reviews))?;
+    assert!(tree.shown().reviews_only());
+    assert_eq!(names(&tree), ["src", "b.txt", "historical.md"]);
+    tree.expand(&mut workspace)?;
+    assert_eq!(names(&tree), ["src", "  main.rs", "b.txt", "historical.md"]);
+    assert!(
+        !tree.contains(Path::new("A.txt")),
+        "snapshot scope still applies"
+    );
+
+    tree.set_shown(&mut workspace, &status, tree.shown().toggled(Rule::Changed))?;
+    assert_eq!(names(&tree), ["src", "  main.rs", "b.txt"]);
+    tree.set_shown(
+        &mut workspace,
+        &status,
+        tree.shown().toggled(Rule::Untracked),
+    )?;
+    assert_eq!(names(&tree), ["src", "  main.rs"]);
+
+    tree.set_review_paths(&mut workspace, &status, Vec::new());
+    assert!(tree.rows().is_empty(), "no qualifying paths means no rows");
+
+    tree.set_review_paths(
+        &mut workspace,
+        &status,
+        [PathBuf::from("src/nested/deep.rs")],
+    );
+    assert!(
+        tree.rows().is_empty(),
+        "a shared directory is not enough when file rules do not intersect"
+    );
+    Ok(())
+}
+
+#[test]
+fn reviewed_ignored_files_require_the_ignored_listing_rule()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("reviewed-ignored")?;
+    init_git(&dir.0)?;
+    fs::write(dir.0.join(".gitignore"), "*.log\n")?;
+    fs::write(dir.0.join("src/review.log"), "review me\n")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    let status = Status::default();
+    tree.set_review_paths(&mut workspace, &status, [PathBuf::from("src/review.log")]);
+    tree.set_shown(&mut workspace, &status, Shown::all().toggled(Rule::Reviews))?;
+    assert!(tree.rows().is_empty());
+
+    tree.set_shown(&mut workspace, &status, tree.shown().toggled(Rule::Ignored))?;
+    assert_eq!(names(&tree), ["src"]);
+    tree.expand(&mut workspace)?;
+    assert_eq!(names(&tree), ["src", "  review.log"]);
+    Ok(())
+}
+
+#[test]
+fn review_ancestors_do_not_admit_unrelated_files() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("review-ancestor-file")?;
+    fs::remove_dir_all(dir.0.join("src"))?;
+    fs::write(dir.0.join("src"), "unrelated file\n")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    let status = Status::default();
+    tree.set_review_paths(&mut workspace, &status, [PathBuf::from("src/main.rs")]);
+    tree.set_shown(&mut workspace, &status, Shown::all().toggled(Rule::Reviews))?;
+
+    assert!(
+        tree.rows().is_empty(),
+        "a former directory now occupied by an unrelated file is not reviewed"
+    );
+    Ok(())
+}
+
+#[test]
 fn only_changed_lists_the_dirty_files_and_their_directories()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("changed")?;

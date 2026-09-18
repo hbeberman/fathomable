@@ -1,7 +1,7 @@
 // @okf-doc: /decisions/0068-what-the-files-pane-shows.md
-//! What the files pane shows (ADR 0068): three session toggles under
-//! `Space F`, only changed files (`c`), hide untracked files (`u`), and
-//! show ignored files (`g`), working from any pane.
+//! What the files pane shows (ADR 0068): four session toggles under
+//! `Space F`, only changed files (`c`), only files with reviews (`o`), hide
+//! untracked files (`u`), and show ignored files (`g`), working from any pane.
 //!
 //! The rules themselves are the tree's [`Shown`]; this module is the
 //! app's hands on them: the toggle, the live label a which-key entry
@@ -9,18 +9,22 @@
 //! Files settings menu, the notice while the pane is hidden, and the
 //! words the pane's header names the state by.
 
+use std::path::PathBuf;
+
+use fathomable_core::annotations::{Lifecycle, Store};
 use fathomable_core::tree::{Rule, Shown, Tree};
 
 use super::App;
 use super::input::bindings::{self, Action, Chord, Where};
 
 impl App {
-    /// `Space F c` / `u` / `g`: flip `rule` on the files pane, shown or
-    /// hidden, keeping the cursor's file where it is still listed.
+    /// Flip a `Space F` rule on the files pane, shown or hidden, keeping the
+    /// cursor's file where it is still listed.
     pub(crate) fn files_toggle(&mut self, rule: Rule) {
         if !self.ensure_tree() {
             return;
         }
+        self.refresh_review_paths();
         let status = self.comparison_status().clone();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
@@ -56,7 +60,9 @@ impl App {
         let status = self.comparison_status().clone();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
+        let review_paths = self.review_paths();
         if let Some(tree) = self.tree.as_mut() {
+            tree.set_review_paths(&mut self.workspace, &status, review_paths);
             if let Some(paths) = snapshot_paths {
                 tree.set_snapshot_paths(&status, paths);
             } else {
@@ -67,19 +73,49 @@ impl App {
         }
     }
 
+    /// Re-project qualifying current-workspace threads into tree paths.
+    pub(super) fn refresh_review_paths(&mut self) {
+        if self.tree.is_none() {
+            return;
+        }
+        let status = self.comparison_status().clone();
+        let review_paths = self.review_paths();
+        if let Some(tree) = self.tree.as_mut() {
+            tree.set_review_paths(&mut self.workspace, &status, review_paths);
+            self.scroll_tree();
+            self.refresh_directory_selection();
+        }
+    }
+
+    fn review_paths(&self) -> Vec<PathBuf> {
+        self.store
+            .iter()
+            .flat_map(Store::threads)
+            .filter(|thread| self.reach.here(thread))
+            .filter(|thread| {
+                matches!(
+                    thread.lifecycle(),
+                    Lifecycle::Active | Lifecycle::ResolutionProposed
+                )
+            })
+            .map(|thread| self.thread_path(thread).to_path_buf())
+            .collect()
+    }
+
     /// What the files pane lists, `Shown::all()` before the tree exists.
     fn files_shown(&self) -> Shown {
         self.tree.as_ref().map_or_else(Shown::all, Tree::shown)
     }
 
     /// What pressing a toggle's key does now, when that differs from the
-    /// table's label: `all files` while only changed files are listed,
-    /// `show untracked` while they are hidden, `hide ignored` while they
-    /// are shown.
+    /// table's label: `all files` while only changed or review-bearing files
+    /// are listed, `show untracked` while they are hidden, `hide ignored`
+    /// while they are shown.
     pub(crate) fn live_label(&self, action: Action) -> Option<&'static str> {
         let shown = self.files_shown();
         match action {
             Action::FilesChanged if shown.changed_only() => Some("all files"),
+            Action::FilesReviews if shown.reviews_only() => Some("all files"),
             Action::FilesUntracked if !shown.untracked() => Some("show untracked"),
             Action::FilesIgnored if shown.ignored() => Some("hide ignored"),
             _ => None,
@@ -90,6 +126,7 @@ impl App {
     pub(crate) fn files_setting_label(action: Action) -> &'static str {
         match action {
             Action::FilesChanged => "only changed",
+            Action::FilesReviews => "only reviews",
             Action::FilesUntracked => "show untracked",
             Action::FilesIgnored => "show ignored",
             _ => "",
@@ -101,6 +138,7 @@ impl App {
         let shown = self.files_shown();
         match action {
             Action::FilesChanged => shown.changed_only(),
+            Action::FilesReviews => shown.reviews_only(),
             Action::FilesUntracked => shown.untracked(),
             Action::FilesIgnored => shown.ignored(),
             _ => false,
@@ -113,19 +151,20 @@ impl App {
         bindings::menu_entries(place, self.prefix(), |action| self.live_label(action))
     }
 
-    /// The words the files pane's header names the active rules by,
-    /// each saying what is on screen: `changed`, `tracked`, `ignored`.
+    /// The words the files pane's header names the active rules by.
     pub(crate) fn files_shown_words(&self) -> Vec<&'static str> {
         shown_words(self.files_shown())
     }
 }
 
-/// `changed` while only changed files are listed, `tracked` while
-/// untracked files are hidden, `ignored` while ignored files are shown.
+/// Words saying what the active filters put on screen.
 fn shown_words(shown: Shown) -> Vec<&'static str> {
     let mut words = Vec::new();
     if shown.changed_only() {
         words.push("changed");
+    }
+    if shown.reviews_only() {
+        words.push("reviews");
     }
     if !shown.untracked() {
         words.push("tracked");
@@ -139,10 +178,13 @@ fn shown_words(shown: Shown) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
 
     use anyhow::Context as _;
     use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use fathomable_core::annotations::{Author, Draft, LineRange, ResolutionOutcome, Store};
     use fathomable_core::theme::Theme as CoreTheme;
+    use fathomable_core::workspace::Workspace;
     use fathomable_testing::{TempDir, git};
 
     use crate::app::draw::Theme;
@@ -215,6 +257,7 @@ mod tests {
         // `Space F` says what each press would do now.
         press(&mut app, " F");
         assert_eq!(label_of(&app, 'c')?, "only changed");
+        assert_eq!(label_of(&app, 'o')?, "only reviews");
         assert_eq!(label_of(&app, 'u')?, "hide untracked");
         assert_eq!(label_of(&app, 'g')?, "show ignored");
         press(&mut app, "c");
@@ -241,7 +284,22 @@ mod tests {
         let header = header_row(&app)?;
         assert!(header.contains("changed tracked +2 -1"), "{header}");
         assert!(!header.contains("ignored"), "{header}");
+        app.start_new_comment();
+        app.compose_insert("review the readme");
+        app.compose_submit();
+        press(&mut app, " Fo");
+        assert_eq!(names(&app), ["README.md"]);
+        app.resize(60, 30);
+        let narrow = header_row(&app)?;
+        assert!(narrow.contains("+2 -1"), "{narrow}");
+        assert!(
+            !narrow.contains("reviews"),
+            "filter words drop before totals: {narrow}"
+        );
+        app.resize(100, 30);
+        press(&mut app, " Fo");
         press(&mut app, " F");
+        assert_eq!(label_of(&app, 'o')?, "only reviews");
         assert_eq!(label_of(&app, 'u')?, "show untracked");
         assert_eq!(label_of(&app, 'g')?, "hide ignored");
 
@@ -251,6 +309,200 @@ mod tests {
         press(&mut app, " Fu Fg");
         assert_eq!(names(&app), ["src", ".gitignore", "notes.txt", "README.md"]);
         assert!(!header_row(&app)?.contains('·'), "no words with no rule on");
+        Ok(())
+    }
+
+    #[test]
+    fn only_reviews_follows_thread_lifecycle_and_external_reload() -> anyhow::Result<()> {
+        let dir = testing::workspace("files-shown-reviews", testing::README)?;
+        let mut app = testing::source_app(&dir)?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert!(names(&app).is_empty(), "no open reviews means no rows");
+        assert_eq!(
+            app.live_label(super::Action::FilesReviews),
+            Some("all files")
+        );
+        assert!(header_row(&app)?.contains("reviews"));
+
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("local finding");
+        app.compose_submit();
+        assert_eq!(names(&app), ["README.md"], "new thread appears immediately");
+        let id = app.file_threads().first().cloned().context("new thread")?;
+
+        assert_eq!(
+            testing::external_agent_reply(
+                &mut app,
+                &id,
+                Author::agent("reviewer"),
+                "fixed",
+                true,
+                None,
+            )?,
+            ResolutionOutcome::ResolutionProposed
+        );
+        assert_eq!(
+            names(&app),
+            ["README.md"],
+            "resolution-proposed remains open"
+        );
+        app.toggle_resolved(&id);
+        assert!(names(&app).is_empty(), "resolved final review disappears");
+        app.toggle_resolved(&id);
+        assert_eq!(names(&app), ["README.md"], "reopening restores the file");
+        app.delete_thread(&id);
+        assert!(
+            names(&app).is_empty(),
+            "deleting the final review removes it"
+        );
+
+        let external = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "external finding",
+            ),
+            testing::README,
+            10,
+        )?;
+        assert!(names(&app).is_empty(), "external write is not yet observed");
+        assert!(app.reload_store().changed);
+        assert_eq!(
+            names(&app),
+            ["README.md"],
+            "store reload refreshes review paths"
+        );
+
+        app.toggle_resolved(&external);
+        assert!(names(&app).is_empty(), "resolved-only files stay excluded");
+        app.archive_thread(&external);
+        assert!(names(&app).is_empty(), "archived threads stay excluded");
+        app.restore_thread(&external);
+        assert!(
+            names(&app).is_empty(),
+            "restoring does not reopen a resolved thread"
+        );
+        app.toggle_resolved(&external);
+        assert_eq!(names(&app), ["README.md"]);
+        Ok(())
+    }
+
+    #[test]
+    fn only_reviews_reopens_a_thread_resolved_at_a_later_commit() -> anyhow::Result<()> {
+        let dir = testing::workspace("files-shown-reopen-commit", testing::README)?;
+        let root = testing::root(&dir);
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+        let mut app = testing::source_app(&dir)?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        app.compose_insert("finding from commit A");
+        app.compose_submit();
+        let id = app.file_threads().first().cloned().context("new thread")?;
+        assert_eq!(names(&app), ["README.md"]);
+
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+        app.toggle_resolved(&id);
+        assert!(names(&app).is_empty(), "resolved reviews are excluded");
+        app.toggle_resolved(&id);
+        assert_eq!(
+            names(&app),
+            ["README.md"],
+            "reach includes the later resolution commit before reopening"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_reviews_restores_an_active_archived_thread_after_restart() -> anyhow::Result<()> {
+        let dir = testing::workspace("files-shown-restore-restart", testing::README)?;
+        let root = testing::root(&dir);
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+        let commit = Workspace::discover(&root)?
+            .head_commit()
+            .context("commit A")?;
+        let mut store = Store::open(testing::store_path(&dir))?;
+        let id = store.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "archived finding",
+            )
+            .at_commit(Some(commit)),
+            testing::README,
+            1,
+        )?;
+        store.archive(&id, 2)?;
+        git::commit_and_stage(&root, &[("README.md", testing::README)])?;
+
+        let mut app = AppBuilder::new(&dir).build()?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert!(
+            names(&app).is_empty(),
+            "archived commits are absent from startup reach"
+        );
+        app.restore_thread(&id);
+        assert_eq!(
+            names(&app),
+            ["README.md"],
+            "restoration refreshes reach before review paths"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_reviews_excludes_threads_outside_the_current_reach() -> anyhow::Result<()> {
+        let dir = fixture("review-reach")?;
+        Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(1, 1),
+                "other branch",
+            )
+            .at_commit(Some("0123456789abcdef0123456789abcdef01234567".to_owned())),
+            "different branch content\n",
+            1,
+        )?;
+        let mut app = AppBuilder::new(&dir).build()?;
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert!(
+            names(&app).is_empty(),
+            "an off-branch thread does not admit its path"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn only_reviews_follows_a_local_working_tree_rename() -> anyhow::Result<()> {
+        let dir = fixture("review-rename")?;
+        let root = testing::root(&dir);
+        let mut app = AppBuilder::new(&dir).source_view().build()?;
+        app.start_new_comment();
+        app.compose_insert("rename finding");
+        app.compose_submit();
+        app.show_tree();
+        press(&mut app, " Fo");
+        assert_eq!(names(&app), ["README.md"]);
+
+        let from = root.join("README.md");
+        let to = root.join("RENAMED.md");
+        fs::rename(&from, &to)?;
+        app.on_events(vec![crate::app::watch::Event::Renamed { from, to }]);
+        assert_eq!(
+            names(&app),
+            ["RENAMED.md"],
+            "viewer-local projection moves the admitted path"
+        );
         Ok(())
     }
 
@@ -265,6 +517,9 @@ mod tests {
         assert_eq!(app.message(), Some("files pane: changed tracked"));
         press(&mut app, " Fc Fu");
         assert_eq!(app.message(), Some("files pane: all files"));
+        press(&mut app, " Fo");
+        assert_eq!(app.message(), Some("files pane: reviews"));
+        press(&mut app, " Fo");
         // The rules were applied all along: showing the pane lists by them.
         press(&mut app, " Fc");
         app.show_tree();
@@ -379,6 +634,7 @@ mod tests {
             settings(&app),
             [
                 ("only changed".to_owned(), Some(false)),
+                ("only reviews".to_owned(), Some(false)),
                 ("show untracked".to_owned(), Some(true)),
                 ("show ignored".to_owned(), Some(false)),
             ]
@@ -389,6 +645,18 @@ mod tests {
                 .any(|row| row.contains("✓ show untracked")),
             "the active setting draws its checkmark"
         );
+        handle_mouse(
+            &mut app,
+            MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: u16::try_from(grid.x + 1)?,
+                row: u16::try_from(grid.y + 2)?,
+                modifiers: KeyModifiers::NONE,
+            },
+        );
+        assert!(app.menu().is_none(), "clicking the setting closes the menu");
+        assert!(names(&app).is_empty(), "the clicked reviews filter applied");
+        press(&mut app, " Fo");
         app.close_popup();
         press(&mut app, " Fc");
         click_title(&mut app);
@@ -396,6 +664,7 @@ mod tests {
             settings(&app),
             [
                 ("only changed".to_owned(), Some(true)),
+                ("only reviews".to_owned(), Some(false)),
                 ("show untracked".to_owned(), Some(true)),
                 ("show ignored".to_owned(), Some(false)),
             ]
@@ -407,6 +676,7 @@ mod tests {
             settings(&app),
             [
                 ("only changed".to_owned(), Some(true)),
+                ("only reviews".to_owned(), Some(false)),
                 ("show untracked".to_owned(), Some(false)),
                 ("show ignored".to_owned(), Some(true)),
             ]

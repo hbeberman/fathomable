@@ -8,22 +8,20 @@
 //! rules apply.
 //!
 //! What the tree lists is a [`Shown`] (ADR 0068): every file, or only the
-//! changed ones, without the untracked ones, with the ignored ones. The
-//! rows are filtered as they are built, so the cursor, clicks, and
-//! [`Tree::reveal`] see only the listed rows.
+//! changed ones, only externally identified review paths, without the
+//! untracked ones, with the ignored ones. The rows are filtered as they are
+//! built, so the cursor, clicks, and [`Tree::reveal`] see only the listed rows.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use crate::status::{State, Status};
-use crate::workspace::{Filter, Workspace, WorkspaceError, entry_order};
+use crate::workspace::{EntryKind, Filter, Workspace, WorkspaceError, entry_order};
 
-/// What the tree lists (ADR 0068): every file, or a subset by three rules.
+/// What the tree lists (ADR 0068): every file, or a subset by four rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Shown {
-    changed_only: bool,
-    untracked: bool,
-    ignored: bool,
+    rules: u8,
 }
 
 impl Default for Shown {
@@ -33,62 +31,58 @@ impl Default for Shown {
 }
 
 impl Shown {
+    const CHANGED: u8 = 1 << 0;
+    const REVIEWS: u8 = 1 << 1;
+    const HIDE_UNTRACKED: u8 = 1 << 2;
+    const IGNORED: u8 = 1 << 3;
+
     /// Every non-ignored file: no rule on.
     #[must_use]
     pub const fn all() -> Self {
-        Self {
-            changed_only: false,
-            untracked: true,
-            ignored: false,
-        }
+        Self { rules: 0 }
     }
 
     /// Whether no rule is on.
     #[must_use]
     pub const fn is_all(self) -> bool {
-        !self.changed_only && self.untracked && !self.ignored
+        self.rules == 0
     }
 
     /// Only the files that differ from `HEAD` are listed.
     #[must_use]
     pub const fn changed_only(self) -> bool {
-        self.changed_only
+        self.rules & Self::CHANGED != 0
+    }
+
+    /// Only files in the externally supplied review paths are listed.
+    #[must_use]
+    pub const fn reviews_only(self) -> bool {
+        self.rules & Self::REVIEWS != 0
     }
 
     /// Untracked files are listed.
     #[must_use]
     pub const fn untracked(self) -> bool {
-        self.untracked
+        self.rules & Self::HIDE_UNTRACKED == 0
     }
 
     /// Files git ignores are listed.
     #[must_use]
     pub const fn ignored(self) -> bool {
-        self.ignored
+        self.rules & Self::IGNORED != 0
     }
 
     /// The same rules with `rule` flipped.
     #[must_use]
     pub const fn toggled(self, rule: Rule) -> Self {
-        match rule {
-            Rule::Changed => Self {
-                changed_only: !self.changed_only,
-                ..self
-            },
-            Rule::Untracked => Self {
-                untracked: !self.untracked,
-                ..self
-            },
-            Rule::Ignored => Self {
-                ignored: !self.ignored,
-                ..self
-            },
+        Self {
+            rules: self.rules ^ rule.mask(),
         }
     }
 
     /// The workspace filter the tree reads its listings with.
     const fn filter(self) -> Filter {
-        if self.ignored {
+        if self.ignored() {
             Filter::All
         } else {
             Filter::Visible
@@ -96,46 +90,59 @@ impl Shown {
     }
 }
 
-/// One of the three rules a [`Shown`] toggles.
+/// One of the four rules a [`Shown`] toggles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Rule {
     /// Only changed files.
     Changed,
+    /// Only files with qualifying reviews.
+    Reviews,
     /// Untracked files.
     Untracked,
     /// Ignored files.
     Ignored,
 }
 
-/// The paths the rules admit under one status: the changed files and
-/// their directories while only changed files are listed, and the
-/// untracked files to drop while they are hidden.
+impl Rule {
+    const fn mask(self) -> u8 {
+        match self {
+            Self::Changed => Shown::CHANGED,
+            Self::Reviews => Shown::REVIEWS,
+            Self::Untracked => Shown::HIDE_UNTRACKED,
+            Self::Ignored => Shown::IGNORED,
+        }
+    }
+}
+
+/// The paths the rules admit under one status.
 #[derive(Debug, Clone, Default)]
 struct Admitted {
-    keep: Option<HashSet<PathBuf>>,
+    files: Option<HashSet<PathBuf>>,
+    directories: Option<HashSet<PathBuf>>,
     hide: HashSet<PathBuf>,
-    scope: Option<HashSet<PathBuf>>,
 }
 
 impl Admitted {
-    fn new(shown: Shown, status: &Status, snapshot_paths: Option<&[PathBuf]>) -> Self {
+    fn new(
+        shown: Shown,
+        status: &Status,
+        review_paths: &[PathBuf],
+        snapshot_paths: Option<&[PathBuf]>,
+    ) -> Self {
         let counted = status
             .entries()
             .iter()
-            .filter(|entry| shown.untracked || !entry.changes().is_only_untracked());
-        let keep = shown.changed_only.then(|| {
-            let mut keep = HashSet::new();
-            for entry in counted.clone() {
-                for ancestor in entry.path().ancestors() {
-                    if ancestor.as_os_str().is_empty() {
-                        break;
-                    }
-                    keep.insert(ancestor.to_path_buf());
-                }
-            }
-            keep
+            .filter(|entry| shown.untracked() || !entry.changes().is_only_untracked());
+        let changed = shown.changed_only().then(|| {
+            counted
+                .clone()
+                .map(|entry| entry.path().to_path_buf())
+                .collect()
         });
-        let hide = if shown.untracked {
+        let reviews = shown
+            .reviews_only()
+            .then(|| review_paths.iter().cloned().collect());
+        let hide = if shown.untracked() {
             HashSet::new()
         } else {
             status
@@ -145,21 +152,46 @@ impl Admitted {
                 .map(|entry| entry.path().to_path_buf())
                 .collect()
         };
-        let scope = snapshot_paths.map(|paths| {
-            paths
+        let scope = snapshot_paths.map(|paths| paths.iter().cloned().collect::<HashSet<PathBuf>>());
+        let mut files: Option<HashSet<PathBuf>> = None;
+        for candidates in [changed, reviews, scope].into_iter().flatten() {
+            files = Some(match files.take() {
+                None => candidates,
+                Some(mut files) => {
+                    files.retain(|path| candidates.contains(path));
+                    files
+                }
+            });
+        }
+        let files = files.map(|mut files| {
+            files.retain(|path| !hide.contains(path));
+            files
+        });
+        let directories = files.as_ref().map(|files| {
+            files
                 .iter()
-                .flat_map(|path| path.ancestors())
+                .flat_map(|path| path.ancestors().skip(1))
                 .filter(|path| !path.as_os_str().is_empty())
                 .map(Path::to_path_buf)
                 .collect()
         });
-        Self { keep, hide, scope }
+        Self {
+            files,
+            directories,
+            hide,
+        }
     }
 
-    fn admits(&self, path: &Path) -> bool {
-        self.keep.as_ref().is_none_or(|keep| keep.contains(path))
+    fn admits(&self, path: &Path, is_dir: bool) -> bool {
+        let selected = if is_dir {
+            &self.directories
+        } else {
+            &self.files
+        };
+        selected
+            .as_ref()
+            .is_none_or(|selected| selected.contains(path))
             && !self.hide.contains(path)
-            && self.scope.as_ref().is_none_or(|scope| scope.contains(path))
     }
 }
 
@@ -344,7 +376,10 @@ pub struct Tree {
     cursor: usize,
     shown: Shown,
     admitted: Admitted,
+    status: Status,
     deleted: Deleted,
+    review_paths: Vec<PathBuf>,
+    admitted_review_paths: Vec<PathBuf>,
     virtual_paths: Vec<PathBuf>,
     snapshot_paths: Option<Vec<PathBuf>>,
 }
@@ -368,7 +403,10 @@ impl Tree {
             cursor: 0,
             shown: Shown::all(),
             admitted: Admitted::default(),
+            status: Status::default(),
             deleted: Deleted::default(),
+            review_paths: Vec::new(),
+            admitted_review_paths: Vec::new(),
             virtual_paths: Vec::new(),
             snapshot_paths: None,
         };
@@ -397,6 +435,7 @@ impl Tree {
     ) -> Result<(), WorkspaceError> {
         let reread = shown.ignored() != self.shown.ignored();
         self.shown = shown;
+        self.sync_review_paths(workspace);
         if reread {
             self.refresh(workspace)?;
         }
@@ -408,12 +447,58 @@ impl Tree {
     /// leaves an only-changed listing, one that changed appears. Deleted
     /// files remain listed, together with any missing parent directories.
     pub fn sift(&mut self, status: &Status) {
-        self.admitted = Admitted::new(self.shown, status, self.snapshot_paths.as_deref());
+        self.status.clone_from(status);
+        self.admitted = Admitted::new(
+            self.shown,
+            &self.status,
+            &self.admitted_review_paths,
+            self.snapshot_paths.as_deref(),
+        );
         self.deleted = Deleted::new(status, &self.virtual_paths);
         let cursor_path = self.current().map(|row| row.path.clone());
         self.rebuild();
         if let Some(path) = cursor_path {
             self.select_path(&path);
+        }
+    }
+
+    /// Supply the file paths eligible for the reviews-only rule.
+    ///
+    /// Paths are root-relative values projected by the caller. Their
+    /// ancestors are retained as directories only while they lead to an
+    /// eligible file. Ignored paths qualify only while ignored files are
+    /// shown. Updating the paths re-applies admission when the rule is active
+    /// and otherwise defers work until it is enabled.
+    pub fn set_review_paths(
+        &mut self,
+        workspace: &mut Workspace,
+        status: &Status,
+        paths: impl IntoIterator<Item = PathBuf>,
+    ) {
+        let mut paths: Vec<_> = paths.into_iter().collect();
+        paths.sort();
+        paths.dedup();
+        let paths_changed = paths != self.review_paths;
+        self.review_paths = paths;
+        let admitted_before = self.admitted_review_paths.clone();
+        self.sync_review_paths(workspace);
+        if self.shown.reviews_only()
+            && (paths_changed || admitted_before != self.admitted_review_paths)
+        {
+            self.sift(status);
+        }
+    }
+
+    fn sync_review_paths(&mut self, workspace: &mut Workspace) {
+        if self.shown.ignored() {
+            self.admitted_review_paths.clone_from(&self.review_paths);
+            return;
+        }
+        self.admitted_review_paths.clear();
+        for path in &self.review_paths {
+            if !workspace.is_ignored(path, EntryKind::File) {
+                self.admitted_review_paths.push(path.clone());
+            }
         }
     }
 
@@ -491,7 +576,7 @@ impl Tree {
             .as_deref()
             .unwrap_or_default()
             .iter()
-            .filter(|child| self.admitted.admits(&path.join(&child.name)))
+            .filter(|child| self.admitted.admits(&path.join(&child.name), child.is_dir))
             .fold(DirectoryCounts::default(), |mut counts, child| {
                 if child.is_dir {
                     counts.subdirectories += 1;
@@ -512,6 +597,13 @@ impl Tree {
     /// directory that vanished is collapsed instead.
     pub fn refresh(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
         let cursor_path = self.current().map(|row| row.path.clone());
+        self.sync_review_paths(workspace);
+        self.admitted = Admitted::new(
+            self.shown,
+            &self.status,
+            &self.admitted_review_paths,
+            self.snapshot_paths.as_deref(),
+        );
         // From the nodes, not the rows: a directory the rules hide keeps
         // its expansion for when they list it again (ADR 0068).
         let mut expanded = Vec::new();
@@ -892,7 +984,7 @@ fn push_rows(node: &Node, path: &Path, depth: usize, admitted: &Admitted, rows: 
     };
     for child in children {
         let child_path = path.join(&child.name);
-        if !admitted.admits(&child_path) {
+        if !admitted.admits(&child_path, child.is_dir) {
             continue;
         }
         rows.push(Row {

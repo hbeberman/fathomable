@@ -475,6 +475,13 @@ impl App {
         for index in 0..self.docs.len() {
             self.refresh_marks(index);
         }
+        self.refresh_review_paths();
+    }
+
+    /// Recompute commit membership once before rebuilding thread projections.
+    pub(super) fn refresh_after_thread_membership_change(&mut self) {
+        self.recompute_reach();
+        self.refresh_all_marks();
     }
 
     /// The document's threads in line order: by first line, then the
@@ -619,7 +626,7 @@ impl App {
         match result {
             Ok(()) => {
                 tracing::info!(%id, resolved = open, "thread status changed");
-                self.refresh_all_marks();
+                self.refresh_after_thread_membership_change();
                 self.notice(if open { "resolved" } else { "reopened" });
             }
             Err(error) => self.notice(format!("cannot update thread: {error}")),

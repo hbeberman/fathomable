@@ -74,7 +74,7 @@ impl App {
             return;
         }
         tracing::info!(%id, "thread deleted");
-        self.refresh_all_marks();
+        self.refresh_after_thread_membership_change();
         // An expanded thread that is gone leaves its rows with it, and a
         // cursor pinned on it rides the text again (ADR 0046).
         self.expanded.remove(id);

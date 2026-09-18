@@ -276,6 +276,8 @@ actions! {
     StubsToggle,
     /// `Space F c`: only changed files in the files pane (ADR 0068).
     FilesChanged,
+    /// `Space F o`: only files with reviews in the files pane (ADR 0068).
+    FilesReviews,
     /// `Space F u`: hide untracked files in the files pane (ADR 0068).
     FilesUntracked,
     /// `Space F g`: show ignored files in the files pane (ADR 0068).
@@ -711,6 +713,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::FilesChanged,
         "Space menu",
         "files: only changed",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('F'), c('o')]],
+        A::FilesReviews,
+        "Space menu",
+        "files: only reviews",
     ),
     bind(
         W::Any,
@@ -1761,7 +1770,7 @@ mod tests {
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),
-            ["i", "r", "c", "u", "g"]
+            ["i", "r", "c", "o", "u", "g"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('w')]),

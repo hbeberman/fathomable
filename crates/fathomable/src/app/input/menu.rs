@@ -498,6 +498,7 @@ impl App {
         let mut menu = Menu::below_header("Files", Where::Tree, 0, row);
         for action in [
             Action::FilesChanged,
+            Action::FilesReviews,
             Action::FilesUntracked,
             Action::FilesIgnored,
         ] {

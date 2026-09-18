@@ -179,7 +179,9 @@ fi
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 out_dir="$target_dir/perf/$timestamp-$$"
-mkdir -p "$out_dir"
+umask 077
+mkdir -p "$target_dir/perf"
+mkdir -m 700 "$out_dir"
 
 perf_data="$out_dir/perf.data"
 terminal_log="$out_dir/terminal.log"

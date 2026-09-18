@@ -31,7 +31,7 @@ type. Every annotation write requires automatic identity, whether
 subscribed or not; only a live subscription records deliveries.
 Missing identity errors name the required harness channel rather than
 requesting an id. The original surface below is historical; the
-[guide](../guide.md#8-connect-an-agent) holds the current table.
+[guide](../guide.md#connect-an-agent) holds the current table.
 
 ## Context
 

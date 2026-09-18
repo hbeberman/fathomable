@@ -156,13 +156,28 @@ user { name "O'Brien" }
     Ok(())
 }
 
-/// The guide's example config names every setting the text form writes,
-/// and no other; the example itself parses and round-trips.
+#[test]
+fn text_form_explains_every_setting() {
+    let text = Config::default().to_string();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() || line.ends_with('{') || line == "}" {
+            continue;
+        }
+        assert!(
+            line.split_once("//")
+                .is_some_and(|(_, comment)| !comment.trim().is_empty()),
+            "setting has no usage comment: {line}"
+        );
+    }
+}
+
+/// The guide's example matches the default text form, including comments,
+/// and still parses and round-trips.
 #[test]
 fn guide_example_matches_the_text_form() -> TestResult {
     let guide = std::fs::read_to_string(fathomable_testing::repo_file("docs/guide.md"))?;
     let section = guide
-        .split("## 6. Menu bar and configuration")
+        .split("## Configuration")
         .nth(1)
         .ok_or("guide configuration section not found")?;
     let example = section
@@ -172,6 +187,6 @@ fn guide_example_matches_the_text_form() -> TestResult {
         .ok_or("guide config example not found")?;
     let config = Config::parse(example)?;
     assert_eq!(Config::parse(&config.to_string())?, config);
-    assert_eq!(keys(example), keys(&Config::default().to_string()));
+    assert_eq!(example, Config::default().to_string());
     Ok(())
 }

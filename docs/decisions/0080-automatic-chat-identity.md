@@ -188,5 +188,5 @@ native identifier, not Fathomable's namespace.
 - `caller.rs` owns harness selection and identity normalization;
   `mcp/identity.rs` adapts MCP request context to it. The historical
   bond record remains discoverable without owning the deleted module.
-  The [guide](../guide.md#8-connect-an-agent) describes the current
+  The [guide](../guide.md#connect-an-agent) describes the current
   setup, not the superseded bootstrap.

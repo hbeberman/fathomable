@@ -37,6 +37,9 @@ and the user prefers KDL.
   `$XDG_CONFIG_HOME/fathomable/themes/*.kdl`.
 - Missing config is valid; every setting has a default. Unknown nodes are
   errors with a location, not silently ignored.
+- `--config-show` prints every effective setting with a KDL usage comment,
+  including units and special values. The guide's default example matches
+  that text; comments do not change parsing or round-trip values.
 - XDG paths are resolved from environment variables with the standard library.
 
 ## Consequences

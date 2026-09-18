@@ -10,7 +10,7 @@
 //! understood.
 //!
 //! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
-//! with every setting spelled out, which is what `--config-show` prints,
+//! with every setting explained, which is what `--config-show` prints,
 //! and [`Config::parse`] reads that text to an equal value.
 //!
 //! # Examples
@@ -659,54 +659,77 @@ impl Config {
 }
 
 /// The configuration as KDL, one node per block in the order the guide
-/// lists them, every setting written out. [`Config::parse`] reads it back
-/// to an equal value.
+/// lists them, every setting written out with a usage comment.
+/// [`Config::parse`] reads it back to an equal value.
 impl fmt::Display for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "theme {}", quoted(&self.theme))?;
-        let jump = &self.jump;
-        writeln!(f, "\njump {{")?;
-        writeln!(f, "    toast {}", jump.toast.as_millis())?;
-        writeln!(f, "}}")?;
-        let watch = &self.watch;
-        writeln!(f, "\nwatch {{")?;
-        writeln!(f, "    ignore{}", words(&watch.ignore))?;
-        writeln!(f, "    debounce {}", watch.debounce.as_millis())?;
-        writeln!(f, "}}")?;
-        let markdown = &self.markdown;
-        writeln!(f, "\nmarkdown {{")?;
-        writeln!(f, "    extensions{}", words(&markdown.extensions))?;
-        writeln!(f, "    names{}", words(&markdown.names))?;
-        writeln!(f, "}}")?;
-        let viewer = &self.viewer;
-        writeln!(f, "\nviewer {{")?;
-        writeln!(f, "    max-file-size-mib {}", viewer.max_file_size_mib)?;
-        writeln!(f, "}}")?;
-        let layout = &self.layout;
-        let sidebar = &layout.sidebar;
-        writeln!(f, "\nlayout {{")?;
-        writeln!(f, "    menu-bar #{}", layout.menu_bar)?;
-        writeln!(f, "    sidebar {{")?;
-        writeln!(f, "        visible #{}", sidebar.visible)?;
-        writeln!(f, "        files #{}", sidebar.files)?;
-        writeln!(f, "        threads #{}", sidebar.threads)?;
-        writeln!(f, "        width {}", sidebar.width)?;
-        writeln!(f, "        split {}", sidebar.split)?;
-        writeln!(f, "    }}")?;
-        writeln!(f, "}}")?;
-        let threads = &self.threads;
-        writeln!(f, "\nthreads {{")?;
-        writeln!(f, "    stubs #{}", threads.stubs)?;
-        writeln!(f, "    stubs-resolved #{}", threads.stubs_resolved)?;
-        writeln!(f, "}}")?;
-        let diff = &self.diff;
-        writeln!(f, "\ndiff {{")?;
-        writeln!(f, "    context {}", diff.context)?;
-        writeln!(f, "    ignore-whitespace #{}", diff.ignore_whitespace)?;
-        writeln!(f, "}}")?;
-        writeln!(f, "\nuser {{")?;
-        writeln!(f, "    name {}", quoted(&self.user.name))?;
-        writeln!(f, "}}")
+        write!(
+            f,
+            "\
+theme {theme} // Built-in theme or a custom theme name from themes/.
+
+jump {{
+    toast {toast} // Toast duration in milliseconds; 0 disables toasts.
+}}
+
+watch {{
+    ignore{ignore} // Extra root-relative globs excluded from live-change notifications.
+    debounce {debounce} // Quiet period in milliseconds before grouping filesystem changes.
+}}
+
+markdown {{
+    extensions{extensions} // Markdown extensions, case-insensitive and without dots.
+    names{names} // Extensionless Markdown filenames, case-insensitive.
+}}
+
+viewer {{
+    max-file-size-mib {max_file_size_mib} // Largest text file to load, in MiB; larger files show file info.
+}}
+
+layout {{
+    menu-bar #{menu_bar} // Show the menu bar at startup.
+    sidebar {{
+        visible #{visible} // Show the sidebar at startup.
+        files #{files} // Include the Files pane in the sidebar.
+        threads #{threads} // Include the Threads pane in the sidebar.
+        width {width} // Sidebar columns, capped at one third of the terminal.
+        split {split} // Threads pane rows when both sidebar panes are shown.
+    }}
+}}
+
+threads {{
+    stubs #{stubs} // Show inline thread summaries.
+    stubs-resolved #{stubs_resolved} // Include resolved threads in inline summaries.
+}}
+
+diff {{
+    context {context} // Unchanged lines shown around each diff hunk.
+    ignore-whitespace #{ignore_whitespace} // Default only; saved comparisons keep their whitespace rule.
+}}
+
+user {{
+    name {name} // Your non-empty display name for review comments.
+}}
+",
+            theme = quoted(&self.theme),
+            toast = self.jump.toast.as_millis(),
+            ignore = words(&self.watch.ignore),
+            debounce = self.watch.debounce.as_millis(),
+            extensions = words(&self.markdown.extensions),
+            names = words(&self.markdown.names),
+            max_file_size_mib = self.viewer.max_file_size_mib,
+            menu_bar = self.layout.menu_bar,
+            visible = self.layout.sidebar.visible,
+            files = self.layout.sidebar.files,
+            threads = self.layout.sidebar.threads,
+            width = self.layout.sidebar.width,
+            split = self.layout.sidebar.split,
+            stubs = self.threads.stubs,
+            stubs_resolved = self.threads.stubs_resolved,
+            context = self.diff.context,
+            ignore_whitespace = self.diff.ignore_whitespace,
+            name = quoted(&self.user.name),
+        )
     }
 }
 

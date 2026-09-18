@@ -1596,7 +1596,7 @@ impl View {
 
     fn execute(&mut self, command: &str) -> Effect {
         match command {
-            "q" | "q!" | "quit" => Effect::Quit,
+            "q" | "q!" | "quit" | "quit!" => Effect::Quit,
             "noh" | "nohlsearch" => {
                 self.clear_highlight();
                 Effect::None
@@ -2137,9 +2137,13 @@ mod tests {
         assert_eq!(v.confirm(), Effect::None);
         assert_eq!(v.source_position().0, 9);
         assert_eq!(v.cursor().col, 0, ":N lands on the first column");
-        v.start_command();
-        v.input_char('q');
-        assert_eq!(v.confirm(), Effect::Quit);
+        for command in ["q", "quit", "q!", "quit!"] {
+            v.start_command();
+            for ch in command.chars() {
+                v.input_char(ch);
+            }
+            assert_eq!(v.confirm(), Effect::Quit, ":{command}");
+        }
         v.start_command();
         for ch in "source".chars() {
             v.input_char(ch);

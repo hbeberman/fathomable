@@ -426,6 +426,8 @@ pub(crate) enum Popup {
     About,
     /// The context menu a right-click opened (ADR 0050).
     Menu(input::menu::Menu),
+    /// Guarded confirmation opened by bare `q`.
+    ConfirmQuit,
     /// Confirmation for a repository-wide clear-board operation.
     ConfirmBoard {
         slate: annotations::BoardSlate,
@@ -2581,6 +2583,11 @@ impl App {
     pub(crate) fn open_status(&mut self) {
         self.park_draft();
         self.popup = Some(Popup::Status);
+    }
+
+    /// Open the confirmation required by bare `q`.
+    pub(crate) fn request_quit(&mut self) {
+        self.popup = Some(Popup::ConfirmQuit);
     }
 
     pub(crate) fn close_popup(&mut self) {

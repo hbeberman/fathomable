@@ -301,6 +301,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Some(Popup::Menu(menu)) => {
             draw_context_menu(frame, app, theme, menu);
         }
+        Some(Popup::ConfirmQuit) => draw_quit_confirmation(frame, theme, app),
         Some(Popup::ConfirmBoard {
             counts, changed, ..
         }) => {
@@ -2594,15 +2595,8 @@ fn draw_board_confirmation(
     counts: crate::app::threads::archive::BoardCounts,
     changed: bool,
 ) {
-    let area = Rect {
-        x: 0,
-        y: u16_of(app.pane_top()),
-        width: u16_of(app.size().0),
-        height: u16_of(app.pane_rows()),
-    };
-    let width = area.width.saturating_sub(4).clamp(42, 90);
-    let height = 7_u16.min(area.height.max(1));
-    let popup = centred(area, width, height);
+    let layout = board_confirmation_layout(app, changed);
+    let popup = layout.popup;
     let block = rounded_block(theme, " Clear board ", theme.popup);
     let inner = block.inner(popup);
     let mut lines = Vec::new();
@@ -2615,11 +2609,133 @@ fn draw_board_confirmation(
             "{} active/proposed · {} resolved",
             counts.open, counts.resolved
         )),
-        Line::from("Enter clear · Esc cancel"),
     ]);
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+    draw_confirmation_controls(frame, theme, app, &layout);
+}
+
+fn draw_quit_confirmation(frame: &mut Frame<'_>, theme: &Theme, app: &App) {
+    let layout = quit_confirmation_layout(app);
+    let block = rounded_block(theme, " Quit ", theme.popup);
+    let inner = block.inner(layout.popup);
+    frame.render_widget(Clear, layout.popup);
+    frame.render_widget(block, layout.popup);
+    frame.render_widget(
+        Paragraph::new(vec![Line::from("Quit Fathomable?"), Line::default()]).style(theme.popup),
+        inner,
+    );
+    draw_confirmation_controls(frame, theme, app, &layout);
+}
+
+fn draw_confirmation_controls(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    layout: &ConfirmationLayout,
+) {
+    if layout.controls.height == 0 {
+        return;
+    }
+    let hovered = app
+        .pointer()
+        .and_then(|(column, row)| layout.action_at(column, row));
+    frame.render_widget(
+        Paragraph::new(
+            layout
+                .spec
+                .line(theme, usize::from(layout.controls.width), hovered),
+        ),
+        layout.controls,
+    );
+}
+
+/// Geometry and shared hit logic for a compact confirmation.
+pub(crate) struct ConfirmationLayout {
+    pub(crate) popup: Rect,
+    controls: Rect,
+    spec: header::ConfirmationControls,
+}
+
+impl ConfirmationLayout {
+    /// Whether the pointer is within the popup, including its frame.
+    pub(crate) fn contains(&self, column: usize, row: usize) -> bool {
+        inside_rect(self.popup, column, row)
+    }
+
+    /// The visible confirmation control under the pointer.
+    pub(crate) fn action_at(&self, column: usize, row: usize) -> Option<Action> {
+        if !inside_rect(self.controls, column, row) {
+            return None;
+        }
+        self.spec.action_at(
+            usize::from(self.controls.width),
+            column - usize::from(self.controls.x),
+        )
+    }
+}
+
+/// Current compact Quit confirmation geometry.
+pub(crate) fn quit_confirmation_layout(app: &App) -> ConfirmationLayout {
+    confirmation_layout(app, 33, 5, 2, "quit")
+}
+
+/// Current Clear board confirmation geometry.
+pub(crate) fn board_confirmation_layout(app: &App, changed: bool) -> ConfirmationLayout {
+    let area = confirmation_area(app);
+    let width = area.width.saturating_sub(4).clamp(42, 90);
+    confirmation_layout(app, width, 7, usize::from(changed) + 2, "clear")
+}
+
+fn confirmation_layout(
+    app: &App,
+    width: u16,
+    height: u16,
+    controls_row: usize,
+    verb: &'static str,
+) -> ConfirmationLayout {
+    let popup = centred(confirmation_area(app), width, height);
+    let inner = Rect {
+        x: popup.x.saturating_add(1),
+        y: popup.y.saturating_add(1),
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+    let controls = if controls_row < usize::from(inner.height) {
+        Rect {
+            y: inner.y + u16_of(controls_row),
+            height: 1,
+            ..inner
+        }
+    } else {
+        Rect {
+            y: inner.y.saturating_add(inner.height),
+            height: 0,
+            ..inner
+        }
+    };
+    ConfirmationLayout {
+        popup,
+        controls,
+        spec: header::ConfirmationControls::new(verb),
+    }
+}
+
+fn confirmation_area(app: &App) -> Rect {
+    Rect {
+        x: 0,
+        y: u16_of(app.pane_top()),
+        width: u16_of(app.size().0),
+        height: u16_of(app.pane_rows()),
+    }
+}
+
+fn inside_rect(area: Rect, column: usize, row: usize) -> bool {
+    column >= usize::from(area.x)
+        && column < usize::from(area.x.saturating_add(area.width))
+        && row >= usize::from(area.y)
+        && row < usize::from(area.y.saturating_add(area.height))
 }
 
 /// The file-info pane (ADR 0026): the path as a header, the labelled
@@ -3031,13 +3147,15 @@ mod tests {
     use ratatui::style::{Color, Style};
 
     use crate::app::Popup;
+    use crate::app::input::bindings::Action;
     use crate::app::testing;
     use crate::app::threads::list::Row;
     use crate::app::view::Effect;
 
     use super::{
         ABOUT_ANCHOR, ListRender, Theme, about_area, fit, fit_ellipsis, format_age,
-        format_age_short, format_time, list_row, picker_row_cells, status_message_style,
+        format_age_short, format_time, list_row, picker_row_cells, quit_confirmation_layout,
+        status_message_style,
     };
 
     fn toast_buffer(
@@ -3058,6 +3176,21 @@ mod tests {
         (0..buffer.area.width)
             .map(|column| buffer[(column, row)].symbol())
             .collect()
+    }
+
+    fn confirmation_cells(
+        layout: &super::ConfirmationLayout,
+        action: Action,
+    ) -> Vec<(usize, usize)> {
+        let mut cells = Vec::new();
+        for row in usize::from(layout.popup.y)..usize::from(layout.popup.bottom()) {
+            for column in usize::from(layout.popup.x)..usize::from(layout.popup.right()) {
+                if layout.action_at(column, row) == Some(action) {
+                    cells.push((column, row));
+                }
+            }
+        }
+        cells
     }
 
     #[test]
@@ -3204,6 +3337,241 @@ mod tests {
             }
         }
         assert_eq!(Some(buffer[(area.x + 58, area.y)].fg), theme.info.fg);
+        Ok(())
+    }
+
+    #[test]
+    fn quit_confirmation_renders_and_updates_whole_control_hover() -> anyhow::Result<()> {
+        let dir = testing::workspace("quit-confirmation", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.request_quit();
+        let layout = quit_confirmation_layout(&app);
+        assert_eq!((layout.popup.width, layout.popup.height), (33, 5));
+        let buffer = testing::buffer(&app)?;
+        let actual = (layout.popup.y..layout.popup.bottom())
+            .map(|y| {
+                (layout.popup.x..layout.popup.right())
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            [
+                "╭ Quit ─────────────────────────╮",
+                "│Quit Fathomable?               │",
+                "│                               │",
+                "│quit Enter · cancel Esc        │",
+                "╰───────────────────────────────╯",
+            ]
+        );
+
+        let confirm = confirmation_cells(&layout, Action::Confirm);
+        let cancel = confirmation_cells(&layout, Action::Escape);
+        assert_eq!(confirm.len(), "quit Enter".len());
+        assert_eq!(cancel.len(), "cancel Esc".len());
+
+        let moved = |column: usize, row: usize| MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        };
+        crate::app::input::mouse::handle_mouse(&mut app, moved(confirm[0].0, confirm[0].1));
+        let hovered = testing::buffer(&app)?;
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        for &(column, row) in &confirm {
+            assert_eq!(
+                Some(hovered[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+                theme.list_hover.bg
+            );
+        }
+        for &(column, row) in &cancel {
+            assert_ne!(
+                Some(hovered[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+                theme.list_hover.bg
+            );
+        }
+        crate::app::input::mouse::handle_mouse(
+            &mut app,
+            moved(
+                usize::from(layout.popup.x) + 1,
+                usize::from(layout.popup.y) + 1,
+            ),
+        );
+        let cleared = testing::buffer(&app)?;
+        for &(column, row) in confirm.iter().chain(&cancel) {
+            assert_ne!(
+                Some(cleared[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+                theme.list_hover.bg
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quit_confirmation_controls_click_and_outside_click_is_consumed() -> anyhow::Result<()> {
+        let dir = testing::workspace("quit-confirmation-mouse", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.request_quit();
+        let layout = quit_confirmation_layout(&app);
+        let confirm = confirmation_cells(&layout, Action::Confirm);
+        let click = |column: usize, row: usize| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(&mut app, click(confirm[0].0, confirm[0].1)),
+            Effect::Quit
+        );
+
+        app.request_quit();
+        let layout = quit_confirmation_layout(&app);
+        let cancel = (usize::from(layout.popup.x)..usize::from(layout.popup.right()))
+            .find_map(|column| {
+                (usize::from(layout.popup.y)..usize::from(layout.popup.bottom()))
+                    .find(|&row| layout.action_at(column, row) == Some(Action::Escape))
+                    .map(|row| (column, row))
+            })
+            .ok_or_else(|| anyhow::anyhow!("visible cancel control"))?;
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(&mut app, click(cancel.0, cancel.1)),
+            Effect::None
+        );
+        assert!(app.popup().is_none());
+
+        app.window_files();
+        assert_eq!(app.focus(), crate::app::Focus::Tree);
+        app.request_quit();
+        let layout = quit_confirmation_layout(&app);
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(
+                &mut app,
+                click(
+                    usize::from(layout.popup.x) + 1,
+                    usize::from(layout.popup.y) + 1
+                )
+            ),
+            Effect::None
+        );
+        assert!(matches!(app.popup(), Some(Popup::ConfirmQuit)));
+        assert_eq!(
+            crate::app::input::mouse::handle_mouse(
+                &mut app,
+                click(
+                    usize::from(layout.popup.right()),
+                    usize::from(layout.popup.y)
+                )
+            ),
+            Effect::None
+        );
+        assert!(app.popup().is_none());
+        assert_eq!(
+            app.focus(),
+            crate::app::Focus::Tree,
+            "outside click is consumed"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clear_board_controls_share_action_first_hover_and_hit_regions() -> anyhow::Result<()> {
+        let dir = testing::workspace("clear-board-controls", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.start_new_comment();
+        app.compose_insert("thread");
+        app.compose_submit();
+        app.request_clear_board();
+        let layout = super::board_confirmation_layout(&app, false);
+        let confirm = confirmation_cells(&layout, Action::Confirm);
+        let cancel = confirmation_cells(&layout, Action::Escape);
+        assert_eq!(confirm.len(), "clear Enter".len());
+        assert_eq!(cancel.len(), "cancel Esc".len());
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let move_to = |(column, row): (usize, usize)| MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: u16::try_from(column).unwrap_or(u16::MAX),
+            row: u16::try_from(row).unwrap_or(u16::MAX),
+            modifiers: KeyModifiers::NONE,
+        };
+        for (hovered_action, cells, other) in [
+            (Action::Confirm, &confirm, &cancel),
+            (Action::Escape, &cancel, &confirm),
+        ] {
+            crate::app::input::mouse::handle_mouse(&mut app, move_to(cells[0]));
+            let buffer = testing::buffer(&app)?;
+            assert_eq!(
+                layout.action_at(cells[0].0, cells[0].1),
+                Some(hovered_action)
+            );
+            for &(column, row) in cells {
+                assert_eq!(
+                    Some(buffer[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+                    theme.list_hover.bg
+                );
+            }
+            for &(column, row) in other {
+                assert_ne!(
+                    Some(buffer[(u16::try_from(column)?, u16::try_from(row)?)].bg),
+                    theme.list_hover.bg
+                );
+            }
+        }
+
+        let buffer = testing::buffer(&app)?;
+        let row = (layout.popup.x..layout.popup.right())
+            .map(|column| buffer[(column, layout.popup.y + 3)].symbol().to_owned())
+            .collect::<String>();
+        assert!(row.starts_with("│clear Enter · cancel Esc"));
+        assert!(row.ends_with('│'));
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_confirmations_clip_without_phantom_hit_regions() -> anyhow::Result<()> {
+        let dir = testing::workspace("quit-confirmation-narrow", testing::README)?;
+        let mut seeded = testing::app(&dir)?;
+        seeded.start_new_comment();
+        seeded.compose_insert("thread");
+        seeded.compose_submit();
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        for width in [1_usize, 2, 10, 24, 26, 33] {
+            let mut app = testing::AppBuilder::new(&dir).width(width).build()?;
+            app.request_quit();
+            let layout = quit_confirmation_layout(&app);
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+                u16::try_from(width)?,
+                30,
+            ))?;
+            terminal.draw(|frame| super::draw(frame, &app, &theme))?;
+            for row in 0..30 {
+                for column in 0..width {
+                    if layout.action_at(column, row).is_some() {
+                        assert!(layout.contains(column, row));
+                    }
+                }
+            }
+            assert_eq!(layout.action_at(width, 0), None);
+
+            app.close_popup();
+            app.request_clear_board();
+            let layout = super::board_confirmation_layout(&app, false);
+            terminal.draw(|frame| super::draw(frame, &app, &theme))?;
+            for row in 0..30 {
+                for column in 0..width {
+                    if layout.action_at(column, row).is_some() {
+                        assert!(layout.contains(column, row));
+                    }
+                }
+            }
+            assert_eq!(layout.action_at(width, 0), None);
+        }
         Ok(())
     }
 

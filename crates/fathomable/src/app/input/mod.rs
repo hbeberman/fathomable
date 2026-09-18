@@ -11,3 +11,6 @@ pub(crate) mod help;
 pub(crate) mod keys;
 pub(crate) mod menu;
 pub(crate) mod mouse;
+
+#[cfg(test)]
+mod tests;

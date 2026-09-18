@@ -104,6 +104,12 @@ impl HintOf {
         Self::new(key_of(place, action), what, &[action])
     }
 
+    fn control(key: &'static str, what: &'static str, action: Action) -> Self {
+        let mut control = Self::new(key, what, &[action]);
+        control.tone = Some(Tone::Key);
+        control
+    }
+
     pub(crate) fn paired(place: Where, a: Action, b: Action, what: &'static str) -> Self {
         Self::new(pair(place, a, b), what, &[a, b])
     }
@@ -213,8 +219,6 @@ pub(super) enum Align {
 /// Cells kept clear around the hints: one before, one after, and one
 /// more so a full row never touches the words.
 const HINT_MARGIN: usize = 3;
-/// A bar has no words to keep clear of: one cell before and one after.
-const BAR_MARGIN: usize = 2;
 
 /// A pane header: the words on the left and the hints after them,
 /// built once so the drawing and the mouse agree on where each hint is
@@ -230,6 +234,8 @@ pub(crate) struct Header {
     sep: &'static str,
     /// Key bars read as action then hotkey; headers keep key then fact.
     action_first: bool,
+    /// Empty cells before left-aligned controls.
+    left_pad: usize,
 }
 
 impl Header {
@@ -242,6 +248,7 @@ impl Header {
             align: Align::Right,
             sep: " · ",
             action_first: false,
+            left_pad: 0,
         }
     }
 
@@ -254,6 +261,7 @@ impl Header {
             align: Align::Left,
             sep: " · ",
             action_first: true,
+            left_pad: 1,
         }
     }
 
@@ -267,6 +275,7 @@ impl Header {
             align,
             sep: " ",
             action_first: false,
+            left_pad: usize::from(align == Align::Left),
         }
     }
 
@@ -279,6 +288,7 @@ impl Header {
             align: Align::Right,
             sep: " ",
             action_first: false,
+            left_pad: 0,
         }
     }
 
@@ -302,7 +312,7 @@ impl Header {
         let free = width.saturating_sub(used);
         let sep = display_width(self.sep);
         let margin = if self.left.is_empty() {
-            BAR_MARGIN
+            self.left_pad + 1
         } else {
             HINT_MARGIN
         };
@@ -350,7 +360,7 @@ impl Header {
         };
         let start = match self.align {
             Align::Right => used + (free - hints_width(hints, tail, sep, form) - 1),
-            Align::Left => used + 1,
+            Align::Left => used + self.left_pad,
         };
         Some((start, hints, tail, form))
     }
@@ -398,7 +408,7 @@ impl Header {
     /// hints joined by the separator, padded to `width` so the surface
     /// reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, None)
+        self.line_with_hovers(theme, width, false, None, theme.header)
     }
 
     /// Draw the header with hover behind its clickable left label.
@@ -408,7 +418,7 @@ impl Header {
         width: usize,
         left_hovered: bool,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, left_hovered, None)
+        self.line_with_hovers(theme, width, left_hovered, None, theme.header)
     }
 
     /// Draw a key bar with hover behind the action under the pointer.
@@ -418,7 +428,7 @@ impl Header {
         width: usize,
         hovered: Option<Action>,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, hovered)
+        self.line_with_hovers(theme, width, false, hovered, theme.header)
     }
 
     fn line_with_hovers(
@@ -427,6 +437,7 @@ impl Header {
         width: usize,
         left_hovered: bool,
         hovered: Option<Action>,
+        base: ratatui::style::Style,
     ) -> Line<'static> {
         let mut spans: Vec<Span<'static>> = self
             .left
@@ -454,9 +465,9 @@ impl Header {
                 }
                 let hint_hovered = hovered.is_some_and(|action| hint.actions.contains(&action));
                 let surface = if hint_hovered {
-                    theme.header.patch(theme.list_hover)
+                    base.patch(theme.list_hover)
                 } else {
-                    theme.header
+                    base
                 };
                 let on_surface = |accent: ratatui::style::Style| {
                     if !hint_hovered {
@@ -522,7 +533,41 @@ impl Header {
             }
         }
         spans.push(Span::raw(" ".repeat(width.saturating_sub(at))));
-        Line::from(spans).style(theme.header)
+        Line::from(spans).style(base)
+    }
+}
+
+/// The shared action-first controls used by destructive confirmations.
+#[derive(Debug, Clone)]
+pub(crate) struct ConfirmationControls {
+    bar: Header,
+}
+
+impl ConfirmationControls {
+    /// Build affirmative-then-cancel controls for `verb`.
+    pub(crate) fn new(verb: &'static str) -> Self {
+        let mut bar = Header::bar(vec![
+            HintOf::control("Enter", verb, Action::Confirm),
+            HintOf::control("Esc", "cancel", Action::Escape),
+        ]);
+        bar.left_pad = 0;
+        Self { bar }
+    }
+
+    /// Return the control under `column`, if that control is visible.
+    pub(crate) fn action_at(&self, width: usize, column: usize) -> Option<Action> {
+        self.bar.action_at(width, column)
+    }
+
+    /// Draw controls on the popup surface with whole-control hover.
+    pub(crate) fn line(
+        &self,
+        theme: &Theme,
+        width: usize,
+        hovered: Option<Action>,
+    ) -> Line<'static> {
+        self.bar
+            .line_with_hovers(theme, width, false, hovered, theme.popup)
     }
 }
 

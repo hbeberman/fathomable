@@ -289,6 +289,8 @@ actions! {
     JumpNewest,
     JumpBack,
     JumpForward,
+    /// `q`: open the guarded quit confirmation from any normal pane.
+    ConfirmQuit,
     CommandLine,
     Escape,
     Confirm,
@@ -659,6 +661,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::JumpForward,
         "Jumplist",
         "forward again",
+    ),
+    bind(
+        W::Any,
+        &[&[c('q')]],
+        A::ConfirmQuit,
+        "Commands",
+        "quit with confirmation",
     ),
     bind(
         W::View,
@@ -1939,10 +1948,14 @@ mod tests {
             Match::Exact(Action::FileOnly)
         );
         for place in [Where::Draft, Where::Picker, Where::Input] {
+            assert_eq!(lookup(place, &[c('q')]), Match::Miss);
             assert_eq!(lookup(place, &[c('t')]), Match::Miss);
             assert_eq!(lookup(place, &[c('f')]), Match::Miss);
             assert_eq!(lookup(place, &[c('r')]), Match::Miss);
             assert_eq!(lookup(place, &[c('R')]), Match::Miss);
+        }
+        for place in PANES {
+            assert_eq!(lookup(place, &[c('q')]), Match::Exact(Action::ConfirmQuit));
         }
         assert_eq!(
             lookup(

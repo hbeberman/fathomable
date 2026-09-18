@@ -45,19 +45,23 @@ pub(crate) fn place(app: &App) -> Option<Where> {
             | Popup::Licenses(_)
             | Popup::About
             | Popup::Menu(_)
+            | Popup::ConfirmQuit
             | Popup::ConfirmBoard { .. },
         ) => None,
         Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
-        None => Some(match app.focus() {
-            Focus::View if matches!(app.view().mode(), Mode::Command | Mode::Search { .. }) => {
+        None => Some(
+            if matches!(app.view().mode(), Mode::Command | Mode::Search { .. }) {
                 Where::Input
-            }
-            Focus::View => Where::View,
-            Focus::Tree => Where::Tree,
-            Focus::Review => Where::Review,
-            Focus::ThreadsPane => Where::ThreadsPane,
-        }),
+            } else {
+                match app.focus() {
+                    Focus::View => Where::View,
+                    Focus::Tree => Where::Tree,
+                    Focus::Review => Where::Review,
+                    Focus::ThreadsPane => Where::ThreadsPane,
+                }
+            },
+        ),
     }
 }
 
@@ -65,8 +69,11 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     if app.title_menu_open() {
         return menu_bar::key(app, key);
     }
-    if matches!(app.popup(), Some(Popup::ConfirmBoard { .. })) {
-        return board_confirmation_key(app, key);
+    if matches!(
+        app.popup(),
+        Some(Popup::ConfirmQuit | Popup::ConfirmBoard { .. })
+    ) {
+        return confirmation_key(app, key);
     }
     if matches!(app.popup(), Some(Popup::Doctor(_))) {
         return doctor_view::key(app, key);
@@ -259,6 +266,7 @@ impl App {
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
+            Action::ConfirmQuit => self.request_quit(),
             // The threads, view, and diff submenus (ADR 0049, ADR 0060)
             // mean the same thing everywhere.
             Action::NewThread => self.start_new_comment(),
@@ -521,14 +529,21 @@ impl App {
     }
 }
 
-fn board_confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
+fn confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
     match key.code {
-        crossterm::event::KeyCode::Enter | crossterm::event::KeyCode::Char('y') => {
-            app.confirm_clear_board();
-        }
-        crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('n') => {
-            app.cancel_clear_board();
-        }
+        crossterm::event::KeyCode::Enter => match app.popup() {
+            Some(Popup::ConfirmQuit) => {
+                app.close_popup();
+                return Effect::Quit;
+            }
+            Some(Popup::ConfirmBoard { .. }) => app.confirm_clear_board(),
+            _ => {}
+        },
+        crossterm::event::KeyCode::Esc => match app.popup() {
+            Some(Popup::ConfirmQuit) => app.close_popup(),
+            Some(Popup::ConfirmBoard { .. }) => app.cancel_clear_board(),
+            _ => {}
+        },
         _ => {}
     }
     Effect::None

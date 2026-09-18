@@ -12,6 +12,11 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Amended 2026-09-18: bare `q` in a normal pane opens a compact confirmation;
+only `Enter` or its explicit control quits, while `Esc`, cancel, or an outside
+click dismisses it. Text-entry surfaces, menus, pickers, and existing popups
+retain precedence. `:q`, `:quit`, `:q!`, and `:quit!` remain immediate.
+
 Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the right button opens a context menu of the actions that apply under the pointer, the `Space` menu takes clicks, and the gutter, double- and triple-click, and Shift-click select.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
@@ -59,6 +64,11 @@ the mouse.
   picker moves on `Ctrl-j`/`Ctrl-k`.)
 - Keymap is fixed in v1; remapping through KDL config comes later.
 - Helix selection-first grammar is deferred and would be a config switch.
+- Bare `q` is guarded in normal panes: it opens a compact Quit confirmation
+  whose action-first `quit Enter` and `cancel Esc` controls share keyboard,
+  hover, and click targets. Outside left-click cancels and is consumed.
+  Confirmation popups take precedence over panes and accept no arbitrary
+  affirmative keys. Colon quit commands remain immediate.
 - Cursor model, gutter, status line, clipboard, search, and Esc/quit details
   are fixed in [0010](0010-viewer-ux.md) (2026-08-26): a real row/column
   cursor, mouse release copies the source Markdown via OSC 52, `/` is regex,

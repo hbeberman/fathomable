@@ -66,7 +66,9 @@ the table below is a quick reference, not the full list.
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
 | `Alt-Enter` `Ctrl-e` | draft newline / edit with `$VISUAL` or `$EDITOR` |
 | `Esc` | cancel transient input or return to File |
-| `Space ?` `:q` | keymap / quit |
+| `Space ?` | keymap |
+| `q` | quit after confirmation |
+| `:q` `:quit` `:q!` `:quit!` | quit immediately |
 
 `Ctrl-e` uses a fresh owner-only temporary directory containing an owner-only
 draft file. Editor replacements and backups placed beside the draft stay
@@ -107,8 +109,10 @@ review.
 The board is shared across the repository's worktrees and survives commits
 and branch changes. **Review** offers **Recently resolved**, **Archived
 threads**, and **Clear board...**. Clearing archives the shared board after
-confirmation; it does not delete history. Restore an archived entry with
-`u`. Nothing archives automatically.
+confirmation; the confirmation presents **clear** before **cancel**, accepts
+`Enter` or a click on **clear**, and cancels with `Esc`, a click on **cancel**,
+or a click outside. It does not delete history. Restore an archived entry
+with `u`. Nothing archives automatically.
 
 ## Configuration
 

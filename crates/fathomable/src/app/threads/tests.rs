@@ -94,6 +94,8 @@ fn board_history_views_archive_restore_and_recent_resolution() -> anyhow::Result
 
 #[test]
 fn clear_board_confirmation_cancels_without_archiving() -> anyhow::Result<()> {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     let dir = testing::workspace("clear-board-confirmation", testing::README)?;
     let mut app = app(&dir)?;
     annotate(&mut app, "keep the board")?;
@@ -101,11 +103,88 @@ fn clear_board_confirmation_cancels_without_archiving() -> anyhow::Result<()> {
 
     app.request_clear_board();
     assert!(matches!(app.popup(), Some(Popup::ConfirmBoard { .. })));
-    app.cancel_clear_board();
+    assert_eq!(
+        crate::app::input::keys::handle_key(&mut app, testing::key('y')),
+        crate::app::view::Effect::None
+    );
+    assert!(matches!(app.popup(), Some(Popup::ConfirmBoard { .. })));
+    crate::app::input::keys::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     assert!(!app.thread(&id).is_some_and(Thread::is_archived));
 
     app.request_clear_board();
-    app.confirm_clear_board();
+    crate::app::input::keys::handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+    );
+    assert!(app.thread(&id).is_some_and(Thread::is_archived));
+    Ok(())
+}
+
+#[test]
+fn clear_board_confirmation_mouse_controls_and_outside_cancel() -> anyhow::Result<()> {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    let dir = testing::workspace("clear-board-confirmation-mouse", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "keep the board")?;
+    let id = app.marks()[0].id().clone();
+    let mouse = |kind, column: usize, row: usize| MouseEvent {
+        kind,
+        column: u16::try_from(column).unwrap_or(u16::MAX),
+        row: u16::try_from(row).unwrap_or(u16::MAX),
+        modifiers: KeyModifiers::NONE,
+    };
+    let down = MouseEventKind::Down(MouseButton::Left);
+
+    app.request_clear_board();
+    let layout = crate::app::draw::board_confirmation_layout(&app, false);
+    let cancel = (usize::from(layout.popup.x)..usize::from(layout.popup.right()))
+        .find_map(|column| {
+            (usize::from(layout.popup.y)..usize::from(layout.popup.bottom()))
+                .find(|&row| {
+                    layout.action_at(column, row)
+                        == Some(crate::app::input::bindings::Action::Escape)
+                })
+                .map(|row| (column, row))
+        })
+        .ok_or_else(|| anyhow::anyhow!("visible cancel control"))?;
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, cancel.0, cancel.1));
+    assert!(app.popup().is_none());
+    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
+
+    app.request_clear_board();
+    let layout = crate::app::draw::board_confirmation_layout(&app, false);
+    let passive = (
+        usize::from(layout.popup.x) + 1,
+        usize::from(layout.popup.y) + 1,
+    );
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, passive.0, passive.1));
+    assert!(matches!(app.popup(), Some(Popup::ConfirmBoard { .. })));
+
+    app.window_files();
+    assert_eq!(app.focus(), Focus::Tree);
+    let outside = (
+        usize::from(layout.popup.right()),
+        usize::from(layout.popup.y),
+    );
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, outside.0, outside.1));
+    assert!(app.popup().is_none());
+    assert!(!app.thread(&id).is_some_and(Thread::is_archived));
+    assert_eq!(app.focus(), Focus::Tree, "outside click is consumed");
+
+    app.request_clear_board();
+    let layout = crate::app::draw::board_confirmation_layout(&app, false);
+    let confirm = (usize::from(layout.popup.x)..usize::from(layout.popup.right()))
+        .find_map(|column| {
+            (usize::from(layout.popup.y)..usize::from(layout.popup.bottom()))
+                .find(|&row| {
+                    layout.action_at(column, row)
+                        == Some(crate::app::input::bindings::Action::Confirm)
+                })
+                .map(|row| (column, row))
+        })
+        .ok_or_else(|| anyhow::anyhow!("visible clear control"))?;
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, confirm.0, confirm.1));
     assert!(app.thread(&id).is_some_and(Thread::is_archived));
     Ok(())
 }

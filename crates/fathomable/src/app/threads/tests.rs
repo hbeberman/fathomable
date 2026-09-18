@@ -10,7 +10,6 @@ use fathomable_core::annotations::{
 
 use fathomable_core::annotations::Author;
 use fathomable_core::highlight::Highlighter;
-use fathomable_core::session::{Request, Response};
 
 use anyhow::Context as _;
 
@@ -173,16 +172,14 @@ fn app_with_review_messages(
         .join("\n");
     annotate(&mut app, &opening)?;
     let id = app.marks()[0].id().clone();
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("reviewer"),
-        "agent answer".to_owned(),
-        "test:viewer".to_owned(),
+        "agent answer",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.expand_thread(id.clone());
     app.thread_reply();
     type_in(&mut app, "user follow-up");
@@ -425,20 +422,18 @@ fn an_expanded_thread_renders_header_authors_and_badge() -> anyhow::Result<()> {
         .map(|n| format!("line {n}"))
         .collect::<Vec<_>>()
         .join("\n");
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::Agent {
             name: "Copilot".to_owned(),
             client: Some("github-copilot-developer".to_owned()),
             id: None,
         },
-        long,
-        "test:viewer".to_owned(),
+        &long,
         true,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.expand_thread(id);
 
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
@@ -593,16 +588,14 @@ fn thread_keys_select_messages_and_edit_only_the_users() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     annotate(&mut app, "opening")?;
     let id = app.marks()[0].id().clone();
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("reviewer"),
-        "agent answer".to_owned(),
-        "test:viewer".to_owned(),
+        "agent answer",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.goto_message(id.clone(), 1);
     let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
 
@@ -1114,16 +1107,14 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     app.resize(100, 30);
     annotate(&mut app, "opening\nsecond line")?;
     let id = app.marks()[0].id().clone();
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("reviewer"),
-        "agent answer".to_owned(),
-        "test:viewer".to_owned(),
+        "agent answer",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.expand_thread(id.clone());
     app.thread_reply();
     type_in(&mut app, "user follow-up");
@@ -1401,16 +1392,14 @@ fn review_by_file(
     app.open(Path::new("README.md"));
     let top = app.file_threads()[0].clone();
     let bottom = app.file_threads()[1].clone();
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &bottom,
         Author::agent("reviewer"),
-        "answered".to_owned(),
-        "test:viewer".to_owned(),
+        "answered",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.open_review();
     Ok((dir, app, [guide, top, bottom]))
 }
@@ -1576,8 +1565,8 @@ fn the_review_folds_threads_and_shift_z_every_thread() -> anyhow::Result<()> {
 }
 
 #[test]
-fn socket_requests_reply() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-socket", testing::README)?;
+fn externally_written_reply_is_observed() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-external-reply", testing::README)?;
     fs::write(dir.0.join("ws/other.md"), "# Other\n\nline\n")?;
     let mut app = app(&dir)?;
     app.view_mut().move_down(2);
@@ -1592,27 +1581,16 @@ fn socket_requests_reply() -> anyhow::Result<()> {
         client: Some("claude-code".to_owned()),
         id: None,
     };
-    let reply = app.handle_request(Request::ThreadReply {
-        thread: id.clone(),
-        author: author.clone(),
-        caller: "test:viewer".to_owned(),
-        body: "fixed".to_owned(),
-        resolve: true,
-        lines: None,
-        idempotency_key: None,
-    });
-    // Answered with the thread as it now stands (ADR 0055).
-    let Response::ThreadReply(response) = reply else {
-        anyhow::bail!("reply answered {reply:?}");
-    };
-    let (answered, resolution, replayed) = response.into_parts();
+    let resolution =
+        testing::external_agent_reply(&mut app, &id, author.clone(), "fixed", true, None)?;
     assert_eq!(
         resolution,
         fathomable_core::annotations::ResolutionOutcome::ResolutionProposed
     );
-    assert!(!replayed);
-    assert_eq!(answered.id(), &id);
-    assert_eq!(answered.replies().len(), 1);
+    assert_eq!(
+        app.thread(&id).map(|thread| thread.replies().len()),
+        Some(1)
+    );
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
         Some("reviewer replied and proposed resolution on README.md:3")
@@ -1637,25 +1615,19 @@ fn socket_requests_reply() -> anyhow::Result<()> {
     assert_eq!(app.thread_counts(), (1, 1));
     assert_eq!(app.proposed_count(), 1);
 
-    let reply = app.handle_request(Request::ThreadReply {
-        thread: serde_json::from_str(r#""9-9-9""#)?,
-        author,
-        caller: "test:viewer".to_owned(),
-        body: "?".to_owned(),
-        resolve: false,
-        lines: None,
-        idempotency_key: None,
-    });
-    assert!(matches!(reply, Response::Error(message) if message.contains("unknown thread")));
+    let unknown = serde_json::from_str(r#""9-9-9""#)?;
+    testing::external_agent_reply(&mut app, &unknown, author, "?", false, None)
+        .err()
+        .context("unknown thread should fail")?;
     Ok(())
 }
 
 #[test]
-fn socket_reply_uses_atomic_resolution_with_current_head() -> anyhow::Result<()> {
+fn external_reply_consumes_auto_resolve_and_uses_current_head() -> anyhow::Result<()> {
     use fathomable_core::annotations::{AutoResolve, ResolutionOutcome};
     use fathomable_core::workspace::Workspace;
 
-    let dir = testing::workspace("threads-socket-resolve", testing::README)?;
+    let dir = testing::workspace("threads-external-resolve", testing::README)?;
     let root = testing::root(&dir);
     fathomable_testing::git::init(&root)?;
     fathomable_testing::git::commit_and_stage(&root, &[("README.md", testing::README)])?;
@@ -1669,74 +1641,81 @@ fn socket_reply_uses_atomic_resolution_with_current_head() -> anyhow::Result<()>
         .ok_or_else(|| anyhow::anyhow!("store"))?
         .set_auto_resolve(&id, AutoResolve::Enabled, 1)?;
 
-    let reply = app.handle_request(Request::ThreadReply {
-        thread: id.clone(),
-        author: Author::agent("reviewer"),
-        caller: "test:viewer".to_owned(),
-        body: "fixed".to_owned(),
-        resolve: true,
-        lines: None,
-        idempotency_key: Some("resolve-once".to_owned()),
-    });
-    let Response::ThreadReply(response) = reply else {
-        anyhow::bail!("resolve answered {reply:?}");
-    };
-    let (thread, resolution, replayed) = response.into_parts();
+    let resolution = testing::external_agent_reply(
+        &mut app,
+        &id,
+        Author::agent("reviewer"),
+        "fixed",
+        true,
+        None,
+    )?;
+    let thread = app.thread(&id).context("thread")?;
     assert_eq!(resolution, ResolutionOutcome::Resolved);
-    assert!(!replayed);
     assert_eq!(thread.status(), Status::Resolved);
+    assert_eq!(
+        thread.auto_resolve(),
+        fathomable_core::annotations::AutoResolve::Disabled
+    );
     assert_eq!(thread.commit(), Some(head.as_str()));
     assert_eq!(
         app.toasts().last().map(crate::app::Toast::text),
         Some("reviewer replied and resolved README.md:3")
     );
 
-    let replayed_reply = app.handle_request(Request::ThreadReply {
-        thread: id,
-        author: Author::agent("reviewer"),
-        caller: "test:viewer".to_owned(),
-        body: "fixed".to_owned(),
-        resolve: true,
-        lines: None,
-        idempotency_key: Some("resolve-once".to_owned()),
-    });
-    assert!(matches!(
-        replayed_reply,
-        Response::ThreadReply(ref response)
-            if response.resolution() == ResolutionOutcome::Resolved && response.replayed()
-    ));
     Ok(())
 }
 
-/// An agent starts a thread over the socket (ADR 0061): the comment is
-/// the agent's, so the thread waits on the user from birth, the viewer
-/// toasts it and names the agent on the comment, the user cannot edit
-/// that comment, and the cursor stays where it was. A bad path or range
-/// is refused.
 #[test]
-fn socket_requests_start_a_thread() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-socket-start", testing::README)?;
+fn external_plain_reply_consumes_one_shot_permission_without_resolving() -> anyhow::Result<()> {
+    use fathomable_core::annotations::AutoResolve;
+
+    let dir = testing::workspace("threads-external-consume", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "finish this")?;
+    let id = app.marks()[0].id().clone();
+    app.store_mut()
+        .ok_or_else(|| anyhow::anyhow!("store"))?
+        .set_auto_resolve(&id, AutoResolve::Enabled, 1)?;
+
+    testing::external_agent_reply(
+        &mut app,
+        &id,
+        Author::agent("reviewer"),
+        "work in progress",
+        false,
+        None,
+    )?;
+    let thread = app.thread(&id).context("thread")?;
+    assert_eq!(thread.status(), Status::Open);
+    assert_eq!(thread.auto_resolve(), AutoResolve::Disabled);
+    assert!(!thread.proposes_resolution());
+    Ok(())
+}
+
+/// An externally stored opening appears without disturbing local UI state.
+#[test]
+fn externally_written_start_is_observed() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-external-start", testing::README)?;
     let mut app = app(&dir)?;
     let before = app.view().cursor_source_line();
     let author = Author::agent("reviewer");
-    let reply = app.handle_request(Request::ThreadStart {
-        path: PathBuf::from("README.md"),
-        range: Some(LineRange::new(2, 3)),
-        author: author.clone(),
-        caller: "test:viewer".to_owned(),
-        body: "look here".to_owned(),
-        idempotency_key: None,
-    });
-    let Response::Threads(started) = reply else {
-        anyhow::bail!("start answered {reply:?}");
-    };
-    assert_eq!(started.len(), 1);
-    let id = started[0].id().clone();
-    assert_eq!(started[0].author(), &author);
-    assert_eq!(started[0].comment(), "look here");
-    assert_eq!(started[0].range(), Some(LineRange::new(2, 3)));
+    let id = Store::open(testing::store_path(&dir))?.annotate(
+        Draft::new(
+            author.clone(),
+            Path::new("README.md"),
+            LineRange::new(2, 3),
+            "look here",
+        ),
+        testing::README,
+        1,
+    )?;
+    app.reload_store();
+    let started = app.thread(&id).context("external thread")?;
+    assert_eq!(started.author(), &author);
+    assert_eq!(started.comment(), "look here");
+    assert_eq!(started.range(), Some(LineRange::new(2, 3)));
     assert_eq!(
-        started[0].lifecycle(),
+        started.lifecycle(),
         fathomable_core::annotations::Lifecycle::Active
     );
     assert_eq!(
@@ -1767,32 +1746,50 @@ fn socket_requests_start_a_thread() -> anyhow::Result<()> {
     assert_eq!(authors, ["reviewer", "User"], "{:?}", rows.rows);
     app.close_review();
 
-    for (path, range, wrong) in [
-        ("missing.md", LineRange::new(1, 1), "cannot read"),
-        ("README.md", LineRange::new(400, 401), "past the end"),
-    ] {
-        let reply = app.handle_request(Request::ThreadStart {
-            path: PathBuf::from(path),
-            range: Some(range),
-            author: author.clone(),
-            caller: "test:viewer".to_owned(),
-            body: "?".to_owned(),
-            idempotency_key: None,
-        });
-        assert!(
-            matches!(&reply, Response::Error(message) if message.contains(wrong)),
-            "{path}: {reply:?}"
-        );
-    }
     Ok(())
 }
 
 #[test]
-fn socket_starts_reject_symlink_escapes_and_nonrelative_paths() -> anyhow::Result<()> {
+fn external_reload_preserves_local_reading_and_draft_state() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-external-preserves-ui", testing::README)?;
+    let mut app = app(&dir)?;
+    annotate(&mut app, "question")?;
+    let id = app.file_threads()[0].clone();
+    app.expand_thread(id.clone());
+    app.view_mut().goto_source_line(4);
+    app.view_mut().select_lines();
+    app.thread_reply();
+    type_in(&mut app, "unfinished local draft");
+    let focus = app.focus();
+    let cursor = app.view().cursor();
+    let selection = app.view().selection();
+
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    writer.agent_reply(
+        &id,
+        AgentReplyCommand::new(Author::agent("reviewer"), 10, "external answer"),
+        |_| Ok(testing::README.to_owned()),
+    )?;
+    app.reload_store();
+
+    assert_eq!(app.compose_draft(), Some("unfinished local draft"));
+    assert_eq!(app.focus(), focus);
+    assert_eq!(app.view().cursor(), cursor);
+    assert_eq!(app.view().selection(), selection);
+    assert!(app.is_expanded(&id));
+    assert_eq!(
+        app.thread(&id).map(|thread| thread.replies().len()),
+        Some(1)
+    );
+    Ok(())
+}
+
+#[test]
+fn checkout_reads_reject_symlink_escapes_and_nonrelative_paths() -> anyhow::Result<()> {
     use std::os::unix::fs::symlink;
 
-    let dir = testing::workspace("socket-start-symlink-escape", testing::README)?;
-    let mut app = app(&dir)?;
+    let dir = testing::workspace("start-symlink-escape", testing::README)?;
+    let mut workspace = fathomable_core::workspace::Workspace::discover(testing::root(&dir))?;
     let outside = dir.0.join("outside");
     fs::create_dir(&outside)?;
     fs::write(outside.join("a.md"), "synthetic outside-only evidence\n")?;
@@ -1805,15 +1802,14 @@ fn socket_starts_reject_symlink_escapes_and_nonrelative_paths() -> anyhow::Resul
         outside.join("a.md"),
     ] {
         for range in [Some(LineRange::new(1, 1)), None] {
-            let response = app.handle_request(Request::ThreadStart {
-                path: path.clone(),
+            let response = super::agent_start_draft(
+                &mut workspace,
+                Author::agent("reviewer"),
+                &path,
                 range,
-                author: Author::agent("reviewer"),
-                caller: "test:symlink-escape".to_owned(),
-                body: "must not capture outside text".to_owned(),
-                idempotency_key: None,
-            });
-            assert!(matches!(response, Response::Error(_)), "{response:?}");
+                "must not capture outside text".to_owned(),
+            );
+            assert!(response.is_err(), "{response:?}");
             assert!(!format!("{response:?}").contains("outside-only evidence"));
             assert!(Store::open(testing::store_path(&dir))?.threads().is_empty());
         }
@@ -1822,10 +1818,10 @@ fn socket_starts_reject_symlink_escapes_and_nonrelative_paths() -> anyhow::Resul
 }
 
 #[test]
-fn socket_replies_reject_symlink_replacement_without_mutating_the_thread() -> anyhow::Result<()> {
+fn external_replies_reject_symlink_replacement_without_mutating_thread() -> anyhow::Result<()> {
     use std::os::unix::fs::symlink;
 
-    let dir = testing::workspace("socket-reply-symlink-escape", testing::README)?;
+    let dir = testing::workspace("reply-symlink-escape", testing::README)?;
     let mut app = app(&dir)?;
     annotate(&mut app, "original review")?;
     let id = app.marks()[0].id().clone();
@@ -1837,50 +1833,62 @@ fn socket_replies_reject_symlink_replacement_without_mutating_the_thread() -> an
     fs::remove_file(testing::root(&dir).join("README.md"))?;
     symlink("../outside.txt", testing::root(&dir).join("README.md"))?;
 
-    let response = app.handle_request(Request::ThreadReply {
-        thread: id,
-        author: Author::agent("reviewer"),
-        caller: "test:symlink-escape".to_owned(),
-        body: "must not relocate to outside text".to_owned(),
-        resolve: false,
-        lines: Some(LineRange::new(2, 2)),
-        idempotency_key: None,
-    });
-    assert!(matches!(response, Response::Error(_)), "{response:?}");
+    let response = testing::external_agent_reply(
+        &mut app,
+        &id,
+        Author::agent("reviewer"),
+        "must not relocate to outside text",
+        false,
+        Some(LineRange::new(2, 2)),
+    );
+    assert!(response.is_err(), "{response:?}");
     assert!(!format!("{response:?}").contains("outside-only evidence"));
     assert_eq!(fs::read(testing::store_path(&dir))?, before);
     Ok(())
 }
 
 #[test]
-fn socket_idempotent_start_replays_without_reading_or_toasting() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-socket-idempotent-start", testing::README)?;
+fn external_idempotent_start_replay_does_not_toast_twice() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-external-idempotent-start", testing::README)?;
     let mut app = app(&dir)?;
     let author = Author::Agent {
         name: "reviewer".to_owned(),
         client: Some("copilot-cli".to_owned()),
         id: Some("copilot:viewer-start".to_owned()),
     };
-    let request = Request::ThreadStart {
-        path: PathBuf::from("./README.md"),
-        range: Some(LineRange::new(3, 2)),
+    let draft = Draft::new(
         author,
-        caller: "test:viewer".to_owned(),
-        body: "same request".to_owned(),
-        idempotency_key: Some("start-once".to_owned()),
-    };
-    let Response::Threads(first) = app.handle_request(request.clone()) else {
-        anyhow::bail!("first start did not write");
-    };
-    let id = first[0].id().clone();
+        Path::new("README.md"),
+        LineRange::new(3, 2),
+        "same request",
+    );
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    let first = writer.annotate_idempotent_for_caller(
+        draft.clone(),
+        1,
+        "test:viewer",
+        "start-once",
+        |_| Ok(testing::README.to_owned()),
+    )?;
+    let id = first.into_value();
+    app.reload_store();
     let toast_count = app.toasts().len();
     std::fs::remove_file(dir.0.join("ws/README.md"))?;
 
-    let replay = app.handle_request(request);
-    let Response::Threads(second) = replay else {
-        anyhow::bail!("retry did not return the thread: {replay:?}");
-    };
-    assert_eq!(second[0].id(), &id);
+    let replay = Store::open(testing::store_path(&dir))?.annotate_idempotent_for_caller(
+        draft,
+        2,
+        "test:viewer",
+        "start-once",
+        |_| {
+            Err(fathomable_core::annotations::StoreError::message(
+                "replay must not read",
+            ))
+        },
+    )?;
+    assert!(replay.replayed());
+    assert_eq!(replay.value(), &id);
+    app.reload_store();
     assert_eq!(
         app.thread(&id)
             .map(fathomable_core::annotations::Thread::comment),
@@ -1891,8 +1899,8 @@ fn socket_idempotent_start_replays_without_reading_or_toasting() -> anyhow::Resu
 }
 
 #[test]
-fn socket_idempotent_reply_replays_without_relocating_or_toasting() -> anyhow::Result<()> {
-    let dir = testing::workspace("threads-socket-idempotent-reply", testing::README)?;
+fn external_idempotent_reply_replay_does_not_toast_twice() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-external-idempotent-reply", testing::README)?;
     let mut app = app(&dir)?;
     app.view_mut().goto_source_line(3);
     app.start_new_comment();
@@ -1904,40 +1912,23 @@ fn socket_idempotent_reply_replays_without_relocating_or_toasting() -> anyhow::R
         client: Some("copilot-cli".to_owned()),
         id: Some("copilot:viewer-reply".to_owned()),
     };
-    let request = Request::ThreadReply {
-        thread: id.clone(),
-        author,
-        caller: "test:viewer".to_owned(),
-        body: "answer".to_owned(),
-        resolve: false,
-        lines: Some(LineRange::new(3, 3)),
-        idempotency_key: Some("reply-once".to_owned()),
-    };
-    let first = app.handle_request(request.clone());
-    assert!(
-        matches!(
-            first,
-            Response::ThreadReply(ref response)
-                if response.resolution()
-                    == fathomable_core::annotations::ResolutionOutcome::NotRequested
-                    && !response.replayed()
-        ),
-        "{first:?}"
-    );
+    let command = AgentReplyCommand::new(author, 1, "answer")
+        .relocate(LineRange::new(3, 3))
+        .idempotent("test:viewer", "reply-once");
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    let first = writer.agent_reply(&id, command.clone(), |_| Ok(testing::README.to_owned()))?;
+    assert!(!first.replayed());
+    app.reload_store();
     let toast_count = app.toasts().len();
     std::fs::remove_file(dir.0.join("ws/README.md"))?;
 
-    let replay = app.handle_request(request);
-    assert!(
-        matches!(
-            replay,
-            Response::ThreadReply(ref response)
-                if response.resolution()
-                    == fathomable_core::annotations::ResolutionOutcome::NotRequested
-                    && response.replayed()
-        ),
-        "{replay:?}"
-    );
+    let replay = Store::open(testing::store_path(&dir))?.agent_reply(&id, command, |_| {
+        Err(fathomable_core::annotations::StoreError::message(
+            "replay must not read",
+        ))
+    })?;
+    assert!(replay.replayed());
+    app.reload_store();
     assert_eq!(
         app.thread(&id).map(|thread| thread.replies().len()),
         Some(1)
@@ -2149,11 +2140,45 @@ fn deleted_agent_activity_keeps_its_durable_place() -> anyhow::Result<()> {
 }
 
 #[test]
+fn deleted_agent_opening_still_requests_a_redraw_once() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-deleted-opening", testing::README)?;
+    let mut app = app(&dir)?;
+    let mut writer = Store::open(testing::store_path(&dir))?;
+    let id = writer.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(4, 5),
+            "transient finding",
+        ),
+        testing::README,
+        1,
+    )?;
+    writer.delete(&id, 2)?;
+
+    let reload = app.reload_store();
+    assert!(reload.healthy);
+    assert!(reload.changed, "the new activity toast needs a redraw");
+    assert!(app.thread(&id).is_none());
+    assert_eq!(
+        app.toasts().last().map(crate::app::Toast::text),
+        Some("reviewer started a thread on README.md:4")
+    );
+
+    let toast_count = app.toasts().len();
+    let duplicate = app.reload_store();
+    assert!(duplicate.healthy);
+    assert!(!duplicate.changed, "the same activity is not redrawn twice");
+    assert_eq!(app.toasts().len(), toast_count);
+    Ok(())
+}
+
+#[test]
 fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> anyhow::Result<()> {
     let dir = testing::workspace("activity-reset", testing::README)?;
-    let mut app = app(&dir)?;
-    let replacement = dir.0.join("state/replacement.jsonl");
-    Store::open(&replacement)?.annotate(
+    let path = testing::store_path(&dir);
+    let mut initial = Store::open(&path)?;
+    initial.annotate(
         Draft::new(
             Author::agent("historical"),
             Path::new("README.md"),
@@ -2163,12 +2188,9 @@ fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> a
         testing::README,
         1,
     )?;
-
-    app.store = Some(Store::open(&replacement)?);
-    app.reconcile_agent_activity();
-    assert!(app.toasts().is_empty(), "replacement seeds at its end");
-
-    Store::open(&replacement)?.annotate(
+    let mut app = app(&dir)?;
+    assert!(app.toasts().is_empty(), "startup seeds at the end");
+    Store::open(&path)?.annotate(
         Draft::new(
             Author::agent("reviewer"),
             Path::new("README.md"),
@@ -2181,13 +2203,271 @@ fn activity_store_replacement_and_cursor_regression_do_not_replay_history() -> a
     app.reload_store();
     assert_eq!(app.toasts().len(), 1);
 
-    fs::write(&replacement, "")?;
+    let replacement = dir.0.join("state/replacement.jsonl");
+    Store::open(&replacement)?.annotate(
+        Draft::new(
+            Author::agent("replacement-history"),
+            Path::new("README.md"),
+            LineRange::new(4, 4),
+            "replacement",
+        ),
+        testing::README,
+        3,
+    )?;
+    fs::rename(&replacement, &path)?;
     app.reload_store();
     assert_eq!(
         app.toasts().len(),
         1,
         "cursor regression reseeds instead of replaying"
     );
+    Ok(())
+}
+
+#[test]
+fn missing_or_invalid_backing_keeps_last_good_board_and_cursor() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-last-good", testing::README)?;
+    let path = testing::store_path(&dir);
+    let mut writer = Store::open(&path)?;
+    let id = writer.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "keep this",
+        ),
+        testing::README,
+        1,
+    )?;
+    let mut app = app(&dir)?;
+    let cursor = app.activity_cursor;
+
+    fs::remove_file(&path)?;
+    let missing = app.reload_store();
+    assert!(!missing.healthy);
+    assert!(missing.changed);
+    assert!(
+        !app.reload_store().changed,
+        "identical failure is suppressed"
+    );
+    assert!(app.thread(&id).is_some());
+    assert_eq!(app.activity_cursor, cursor);
+    assert!(!path.exists(), "reload must not recreate a missing store");
+    app.toggle_auto_resolve(&id);
+    assert!(
+        !path.exists(),
+        "local writes must not recreate a previously observed store"
+    );
+
+    fs::write(&path, "{not json}\n")?;
+    let corrupt = app.reload_store();
+    assert!(!corrupt.healthy);
+    assert!(app.thread(&id).is_some());
+    assert_eq!(app.activity_cursor, cursor);
+
+    fs::write(&path, "{\"v\":4}\n")?;
+    let mismatch = app.reload_store();
+    assert!(!mismatch.healthy);
+    assert!(app.thread(&id).is_some());
+    assert_eq!(app.activity_cursor, cursor);
+    Ok(())
+}
+
+#[test]
+fn first_write_removal_cannot_revert_to_bootstrap() -> anyhow::Result<()> {
+    enum Observe {
+        Reload,
+        Reconcile,
+        Write,
+    }
+
+    for observe in [Observe::Reload, Observe::Reconcile, Observe::Write] {
+        let dir = testing::workspace("activity-first-write-removal", testing::README)?;
+        let path = testing::store_path(&dir);
+        let mut app = app(&dir)?;
+        assert!(!path.exists());
+        let id = app.store_mut().context("initial store")?.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "keep first write",
+            ),
+            testing::README,
+            1,
+        )?;
+        fs::remove_file(&path)?;
+
+        match observe {
+            Observe::Reload => assert!(!app.reload_store().healthy),
+            Observe::Reconcile => assert!(!app.reconcile_agent_activity()),
+            Observe::Write => assert!(app.store_mut().is_none()),
+        }
+        let cursor = app.activity_cursor;
+        assert!(!app.reload_store().healthy);
+        assert!(app.thread(&id).is_some());
+        assert_eq!(app.activity_cursor, cursor);
+        assert!(app.store_mut().is_none());
+        app.reconcile_agent_activity();
+        assert!(app.store_mut().is_none());
+        assert!(
+            !path.exists(),
+            "observing a first write must not permit recreating a removed log"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn removal_between_store_open_and_app_creation_preserves_history() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-startup-removal", testing::README)?;
+    let path = testing::store_path(&dir);
+    let mut loaded = Store::open(&path)?;
+    let id = loaded.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(3, 3),
+            "keep this",
+        ),
+        testing::README,
+        1,
+    )?;
+    let cursor = loaded.activity_cursor();
+    fs::remove_file(&path)?;
+
+    let mut app = testing::AppBuilder::at(testing::root(&dir))
+        .options(move |options| crate::app::Options {
+            store: Some(loaded),
+            ..options
+        })
+        .build()?;
+    let reload = app.reload_store();
+    assert!(!reload.healthy);
+    assert!(app.thread(&id).is_some());
+    assert_eq!(app.activity_cursor, cursor);
+
+    app.toggle_auto_resolve(&id);
+    assert!(
+        !path.exists(),
+        "a local mutation must not recreate the removed backing"
+    );
+    Ok(())
+}
+
+#[test]
+fn removal_of_an_initially_empty_backing_is_not_bootstrap() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-empty-startup-removal", testing::README)?;
+    let path = testing::store_path(&dir);
+    fathomable_core::private_state::write(&path, "")?;
+    let loaded = Store::open(&path)?;
+    assert!(loaded.backing_file_observed());
+    fs::remove_file(&path)?;
+
+    let mut app = testing::AppBuilder::at(testing::root(&dir))
+        .options(move |options| crate::app::Options {
+            store: Some(loaded),
+            ..options
+        })
+        .build()?;
+    assert!(!app.reload_store().healthy);
+    assert!(!path.exists());
+    Ok(())
+}
+
+#[test]
+fn recovery_keeps_rejecting_unsafe_workspace_state_until_fixed() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use fathomable_core::XdgDirs;
+    use fathomable_core::session::{Id, Record};
+
+    let dir = testing::workspace("activity-private-recovery", testing::README)?;
+    let root = testing::root(&dir);
+    let key = root.clone();
+    let state_home = dir.0.join("xdg-state");
+    let dirs =
+        XdgDirs::resolve(|name| (name == "XDG_STATE_HOME").then(|| state_home.clone().into()));
+    let mut writer = Store::open_workspace(&dirs, &key)?;
+    let id = writer.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(2, 2),
+            "private finding",
+        ),
+        testing::README,
+        1,
+    )?;
+    let state_dir = dirs.state_dir();
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o755))?;
+    let startup_error = Store::open_workspace(&dirs, &key)
+        .err()
+        .context("unsafe application directory should be rejected")?;
+    let record = Record::new(Id::mint(), key, root.clone());
+
+    let mut app = testing::AppBuilder::at(root)
+        .options(move |options| crate::app::Options {
+            record,
+            dirs,
+            store: None,
+            thread_store_error: Some(startup_error),
+            ..options
+        })
+        .build()?;
+    let first = app.reload_store();
+    assert!(!first.healthy);
+    assert!(app.thread(&id).is_none());
+    assert_eq!(
+        fs::symlink_metadata(&state_dir)?.permissions().mode() & 0o7777,
+        0o755,
+        "recovery must not repair unsafe permissions"
+    );
+    assert!(!app.reload_store().healthy);
+
+    fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o700))?;
+    let recovered = app.reload_store();
+    assert!(recovered.healthy);
+    assert!(recovered.changed);
+    assert!(app.thread(&id).is_some());
+    Ok(())
+}
+
+#[test]
+fn recreated_backing_recovers_and_observes_external_activity() -> anyhow::Result<()> {
+    let dir = testing::workspace("activity-recreate", testing::README)?;
+    let path = testing::store_path(&dir);
+    let mut original = Store::open(&path)?;
+    original.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("README.md"),
+            LineRange::new(2, 2),
+            "question",
+        ),
+        testing::README,
+        1,
+    )?;
+    let mut app = app(&dir)?;
+    fs::remove_file(&path)?;
+    assert!(!app.reload_store().healthy);
+
+    let mut replacement = Store::open(&path)?;
+    let id = replacement.annotate(
+        Draft::new(
+            Author::agent("reviewer"),
+            Path::new("README.md"),
+            LineRange::new(4, 4),
+            "new finding",
+        ),
+        testing::README,
+        2,
+    )?;
+    let reload = app.reload_store();
+    assert!(reload.healthy);
+    assert!(reload.changed);
+    assert!(app.thread(&id).is_some());
+    assert_eq!(app.toasts().len(), 0, "cursor regression reseeds silently");
     Ok(())
 }
 
@@ -2396,23 +2676,22 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
     type_in(&mut app, "a question about this line");
     app.compose_submit();
     let id = app.marks()[0].id().clone();
-    app.agent_reply(
+    let long_reply = (1..=12)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::Agent {
             name: "Copilot".to_owned(),
             client: None,
             id: None,
         },
-        (1..=12)
-            .map(|n| format!("line {n}"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        "test:viewer".to_owned(),
+        &long_reply,
         true,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
 
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
     let theme = crate::app::draw::Theme::from_core(&core);
@@ -2461,10 +2740,6 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
 /// the entry header uses `◐`, a later plain reply
 /// withdraws it, and the user's `o` is what closes the thread.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "This lifecycle test covers proposal, supersession, and direct resolution in sequence."
-)]
 fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Result<()> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
@@ -2491,16 +2766,7 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
             .join("\n"))
     };
 
-    app.agent_reply(
-        &id,
-        Author::agent("bot"),
-        "done".to_owned(),
-        "test:viewer".to_owned(),
-        true,
-        None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    testing::external_agent_reply(&mut app, &id, Author::agent("bot"), "done", true, None)?;
     let thread = app.thread(&id).context("thread lost")?;
     assert_eq!(thread.status(), Status::Open, "an agent cannot resolve");
     assert!(thread.proposes_resolution());
@@ -2546,16 +2812,14 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
     app.close_review();
 
     // Only the newest reply is read: a plain reply withdraws the proposal.
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("bot"),
-        "one more thing".to_owned(),
-        "test:viewer".to_owned(),
+        "one more thing",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     assert_eq!(app.proposed_count(), 0);
     assert_eq!(
         app.review_counts(false),
@@ -2565,16 +2829,7 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
             resolved: 0,
         }
     );
-    app.agent_reply(
-        &id,
-        Author::agent("bot"),
-        "done now".to_owned(),
-        "test:viewer".to_owned(),
-        true,
-        None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    testing::external_agent_reply(&mut app, &id, Author::agent("bot"), "done now", true, None)?;
     assert_eq!(app.proposed_count(), 1);
 
     // The user's `o` accepts it.
@@ -2610,16 +2865,14 @@ fn a_stub_uses_the_header_surface_and_author_colour() -> anyhow::Result<()> {
     type_in(&mut app, "second");
     app.compose_submit();
     let id = app.file_threads()[1].clone();
-    app.agent_reply(
+    testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("reviewer"),
-        "agent answer".to_owned(),
-        "test:viewer".to_owned(),
+        "agent answer",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     app.view_mut().goto_top();
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
     let theme = crate::app::draw::Theme::from_core(&core);
@@ -2674,16 +2927,14 @@ fn a_stub_shows_the_newest_message_and_its_circle() -> anyhow::Result<()> {
     annotate(&mut app, "opening")?;
     let id = app.marks()[0].id().clone();
     for (body, proposed) in [("first answer", false), ("second answer", true)] {
-        app.agent_reply(
+        testing::external_agent_reply(
+            &mut app,
             &id,
             Author::agent("reviewer"),
-            body.to_owned(),
-            "test:viewer".to_owned(),
+            body,
             proposed,
             None,
-            None,
-        )
-        .map_err(anyhow::Error::msg)?;
+        )?;
     }
     app.view_mut().goto_top();
     let rows = testing::screen(&app)?;

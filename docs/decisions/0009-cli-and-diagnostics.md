@@ -18,6 +18,12 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Runtime transport retired 2026-09-18 by [0089](0089-store-only-mcp.md):
+`--viewers` retains viewer metadata but no socket column, `--doctor` drops
+runtime/socket checks, and XDG path discovery no longer needs a runtime
+directory. Viewer registrations, workspace markers, logging, and all
+persistent-state privacy checks remain.
+
 Agent-delivery CLI removed 2026-09-15 by
 [0082](0082-three-tool-review-core.md): `pending` and hook diagnostics no
 longer exist. The obsolete `--register` command is also removed because
@@ -102,6 +108,11 @@ parents are created privately. Read-only configuration is unchanged.
 
 `XdgDirs` path getters remain pure. `prepare_state_dir` validates every owned
 component from the application root through the requested directory.
+`validate_state_dir` performs the same checks on existing directories without
+creating missing components. Viewer recovery uses `Store::reload_workspace`
+with this validation rather than treating application-owned parents as
+arbitrary external directories; an initial privacy refusal remains a refusal
+until the state is safe.
 `Store::open_workspace` and `ReviewPointStore::open_workspace` apply that
 contract at XDG boundaries. The arbitrary-path `Store::open` instead treats
 existing caller-supplied parents as external: it protects its file and creates

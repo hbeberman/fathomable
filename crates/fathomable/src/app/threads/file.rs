@@ -43,11 +43,10 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
-    use fathomable_core::annotations::{Author, LineRange, Placement};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Placement, Store};
     use fathomable_core::layout::RowAnchor;
-    use fathomable_core::session::{Request, Response};
 
     use crate::app::testing::{self, press, screen, source_app};
     use crate::app::threads::list::Row;
@@ -180,21 +179,17 @@ mod tests {
         let dir = testing::workspace("file-comment-agent", testing::README)?;
         let mut app = testing::app(&dir)?;
         let author = Author::agent("reviewer");
-        let reply = app.handle_request(Request::ThreadStart {
-            path: PathBuf::from("README.md"),
-            range: None,
-            author: author.clone(),
-            caller: "test:viewer".to_owned(),
-            body: "rename this".to_owned(),
-            idempotency_key: None,
-        });
-        let Response::Threads(started) = reply else {
-            anyhow::bail!("start answered {reply:?}");
-        };
-        assert_eq!(started[0].range(), None);
-        assert_eq!(started[0].author(), &author);
+        let id = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::on_file(author.clone(), Path::new("README.md"), "rename this"),
+            testing::README,
+            1,
+        )?;
+        app.reload_store();
+        let started = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
+        assert_eq!(started.range(), None);
+        assert_eq!(started.author(), &author);
         assert_eq!(
-            started[0].lifecycle(),
+            started.lifecycle(),
             fathomable_core::annotations::Lifecycle::Active
         );
         assert_eq!(

@@ -13,6 +13,11 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Socket transport retired 2026-09-18 by [0089](0089-store-only-mcp.md).
+The annotation format stays **5**; socket versions and mismatch handling
+below are historical. This removal neither resets nor migrates state, and
+does not change the alpha upgrade policy or authorize mixed-build use.
+
 Audience and upgrade contract amended 2026-09-17: the alpha targets
 enthusiast adopters, not only its original user. Public alpha releases do
 not promise store persistence across upgrades or stable features. This

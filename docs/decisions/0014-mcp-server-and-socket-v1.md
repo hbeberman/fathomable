@@ -2,9 +2,6 @@
 type: Decision
 title: MCP server and socket protocol v1
 description: The stdio MCP server built on rmcp 3 against the 2026-07-28 spec, the v1 session socket operations it forwards, per-request agent identity, and session binding.
-resource: crates/fathomable/src/mcp/mod.rs
-related_resources:
-  - crates/fathomable/src/app/socket.rs
 tags:
   - decision
   - sessions
@@ -15,6 +12,12 @@ tags:
 # 0014 MCP server and socket protocol v1
 
 Status: accepted (2026-08-26)
+
+Remaining socket transport superseded 2026-09-18 by
+[0089](0089-store-only-mcp.md): MCP always reads and writes the bound shared
+store, and viewers observe it through filesystem notifications. Socket
+discovery, protocol versions, listeners, and runtime paths are removed.
+The original transport below remains historical.
 
 Tool surface and routing superseded 2026-09-15 by
 [0082](0082-three-tool-review-core.md): `fathomable --mcp [DIR]` binds one

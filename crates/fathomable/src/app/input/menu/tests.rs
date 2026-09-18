@@ -828,16 +828,14 @@ fn the_status_line_counts_take_clicks() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     annotate(&mut app)?;
     let id = app.file_threads()[0].clone();
-    app.agent_reply(
+    crate::app::testing::external_agent_reply(
+        &mut app,
         &id,
         Author::agent("reviewer"),
-        "done".to_owned(),
-        "test:viewer".to_owned(),
+        "done",
         false,
         None,
-        None,
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
     let parts = draw::status_parts(&app);
     let text = parts.right_text();
     assert!(!text.contains("waiting"), "{text}");

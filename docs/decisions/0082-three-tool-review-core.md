@@ -16,6 +16,12 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Remaining socket transport superseded 2026-09-18 by
+[0089](0089-store-only-mcp.md): all three tools access the shared store
+directly, regardless of viewer registrations. Thread observation bypasses
+workspace debounce, and no viewer socket or protocol remains. The tool
+surface, identity, checkout binding, and current lifecycle contracts remain.
+
 Board membership and provenance amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): the same three bound
 tools remain, while normal reads cover the non-archived repository board

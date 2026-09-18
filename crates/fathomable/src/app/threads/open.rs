@@ -32,7 +32,6 @@ mod tests {
     use std::fs;
 
     use fathomable_core::annotations::{Author, LineRange, Placement};
-    use fathomable_core::session::{Request, Response};
 
     use crate::app::testing::{self, source_app};
 
@@ -94,16 +93,14 @@ mod tests {
             client: None,
             id: None,
         };
-        let reply = app.handle_request(Request::ThreadReply {
-            thread: id.clone(),
-            author: author.clone(),
-            caller: "test:viewer".to_owned(),
-            body: "expanded".to_owned(),
-            resolve: false,
-            lines: Some(LineRange::new(3, 6)),
-            idempotency_key: None,
-        });
-        assert!(matches!(reply, Response::ThreadReply(_)), "{reply:?}");
+        testing::external_agent_reply(
+            &mut app,
+            &id,
+            author.clone(),
+            "expanded",
+            false,
+            Some(LineRange::new(3, 6)),
+        )?;
         assert_eq!(app.marks()[0].range(), Some(LineRange::new(3, 6)));
         assert!(app.marks()[0].placement().is_edited());
         app.threads_pane_open();
@@ -111,16 +108,15 @@ mod tests {
         assert!(!app.open_thread_in(line(7)));
 
         // A range past the end of the file is refused, reply and all.
-        let reply = app.handle_request(Request::ThreadReply {
-            thread: id.clone(),
+        let reply = testing::external_agent_reply(
+            &mut app,
+            &id,
             author,
-            caller: "test:viewer".to_owned(),
-            body: "?".to_owned(),
-            resolve: false,
-            lines: Some(LineRange::new(40, 41)),
-            idempotency_key: None,
-        });
-        assert!(matches!(reply, Response::Error(message) if message.contains("past the end")));
+            "?",
+            false,
+            Some(LineRange::new(40, 41)),
+        );
+        assert!(reply.is_err_and(|error| error.to_string().contains("past the end")));
         assert_eq!(app.thread(&id).map(|t| t.replies().len()), Some(1));
         Ok(())
     }
@@ -137,17 +133,14 @@ mod tests {
         app.compose_submit();
         let id = app.marks()[0].id().clone();
 
-        let reply = app.handle_request(Request::ThreadReply {
-            thread: id.clone(),
-            author: Author::agent("reviewer"),
-            caller: "test:viewer".to_owned(),
-            body: "still here".to_owned(),
-            resolve: false,
-            lines: Some(LineRange::new(3, 4)),
-            idempotency_key: None,
-        });
-
-        assert!(matches!(reply, Response::ThreadReply(_)), "{reply:?}");
+        testing::external_agent_reply(
+            &mut app,
+            &id,
+            Author::agent("reviewer"),
+            "still here",
+            false,
+            Some(LineRange::new(3, 4)),
+        )?;
         let thread = app.thread(&id).ok_or_else(|| anyhow::anyhow!("thread"))?;
         assert_eq!(
             thread.locate(testing::README),

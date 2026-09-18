@@ -28,7 +28,7 @@ with synthetic content under a permissive umask.
    content, and an explicitly user-selected external program.
 3. Read the nearest current contract and trace the relevant input to its read,
    write, display, response, or process boundary. Follow all equivalent paths:
-   viewer and headless, MCP and socket, fresh and existing state, success and
+   viewer and MCP store operations, fresh and existing state, success and
    failure, concurrent calls and retries.
 4. Check the applicable obligations below. Cite implementation evidence rather
    than inferring safety from Rust, a dependency, a path prefix, or a passing

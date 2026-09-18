@@ -3,20 +3,19 @@
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result, ensure};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{
-    AgentReplyCommand, Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, Reply,
-    Status, Store, ThreadId, UserSubmit,
+    Author, AutoResolve, Draft, Lifecycle, LineRange, MessageTarget, Reply, Status, Store,
+    ThreadId, UserSubmit,
 };
 use fathomable_core::clock::now;
-use fathomable_core::session::{Id, Record, Request, Response};
+use fathomable_core::session::{Id, Record};
 use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
 use serde_json::{Value, json};
@@ -320,120 +319,6 @@ fn assert_mcp_output_schemas(tools: &[Value]) -> Result<()> {
         &["pending_fathomable_user_review"]
     ));
     Ok(())
-}
-
-fn partial_reply_viewer(
-    fixture: &Fixture,
-) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
-    let socket = fixture.dir.0.join("v.sock");
-    let listener = UnixListener::bind(&socket)?;
-    listener.set_nonblocking(true)?;
-    Record::new(
-        Id::mint(),
-        fixture.root.clone(),
-        fixture.root.clone(),
-        Some(socket.clone()),
-    )
-    .write(&fixture.dirs)?;
-    let store_path = fixture.threads_path()?;
-    let handle = std::thread::spawn(move || serve_partial_replies(&listener, &store_path));
-    Ok((socket, handle))
-}
-
-fn serve_partial_replies(listener: &UnixListener, store_path: &Path) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut handled = 0;
-    while handled < 2 && Instant::now() < deadline {
-        let (mut stream, _) = match listener.accept() {
-            Ok(connection) => connection,
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let mut line = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut line)?;
-        let request: Request = line.trim_end().parse().map_err(anyhow::Error::msg)?;
-        let response = if handled == 0 {
-            apply_viewer_reply(store_path, request)?
-        } else {
-            Response::Error("injected later viewer failure".to_owned())
-        };
-        writeln!(stream, "{}", response.to_line())?;
-        handled += 1;
-    }
-    ensure!(handled == 2, "fake viewer handled only {handled} requests");
-    Ok(())
-}
-
-fn apply_viewer_reply(store_path: &Path, request: Request) -> Result<Response> {
-    let Request::ThreadReply {
-        thread,
-        author,
-        body,
-        resolve,
-        lines,
-        idempotency_key,
-        caller,
-    } = request
-    else {
-        return Err(anyhow!("expected a thread reply"));
-    };
-    ensure!(lines.is_none(), "test reply unexpectedly re-anchored");
-    let mut store = Store::open(store_path)?;
-    let mut command = AgentReplyCommand::new(author, now(), body);
-    if resolve {
-        command = command.resolve();
-    }
-    if let Some(key) = idempotency_key {
-        command = command.idempotent(caller, key);
-    }
-    let outcome = store.agent_reply(&thread, command, |_| {
-        Err(fathomable_core::annotations::StoreError::message(
-            "test reply has no relocation",
-        ))
-    })?;
-    let thread = store
-        .thread(&thread)
-        .context("first replied thread")?
-        .clone();
-    Ok(if outcome.replayed() {
-        Response::thread_reply_replayed(thread, *outcome.value())
-    } else {
-        Response::thread_reply_applied(thread, *outcome.value())
-    })
-}
-
-fn successful_reply_viewer(
-    fixture: &Fixture,
-) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
-    let socket = fixture.dir.0.join("v.sock");
-    let listener = UnixListener::bind(&socket)?;
-    Record::new(
-        Id::mint(),
-        fixture.root.clone(),
-        fixture.root.clone(),
-        Some(socket.clone()),
-    )
-    .write(&fixture.dirs)?;
-    let store_path = fixture.threads_path()?;
-    let handle = std::thread::spawn(move || {
-        let (mut stream, _) = listener.accept()?;
-        let mut line = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut line)?;
-        let request = line
-            .trim_end()
-            .parse::<Request>()
-            .map_err(anyhow::Error::msg)?;
-        writeln!(
-            stream,
-            "{}",
-            apply_viewer_reply(&store_path, request)?.to_line()
-        )?;
-        Ok(())
-    });
-    Ok((socket, handle))
 }
 
 #[test]
@@ -1129,6 +1014,91 @@ fn reads_and_replies_reject_files_replaced_by_escaping_symlinks() -> Result<()> 
 }
 
 #[test]
+fn replies_use_the_bound_checkout_stored_path_across_renames() -> Result<()> {
+    let fixture = Fixture::new("mcp-bound-rename")?;
+    let line_thread = fixture.user_thread("line review")?;
+    let keyed_thread = fixture.user_thread("keyed review")?;
+    let file_thread = Store::open(fixture.threads_path()?)?.annotate(
+        Draft::on_file(Author::User, Path::new("a.md"), "file review"),
+        "one\ntwo\n",
+        now(),
+    )?;
+    let mut client = Mcp::copilot(&fixture, "rename-chat")?;
+    let keyed_request = json!({"replies": [{
+        "thread": keyed_thread,
+        "line": 2,
+        "body": "keyed before rename",
+        "idempotency_key": "rename-retry"
+    }]});
+    client.ok("thread_reply", keyed_request.clone())?;
+
+    fs::rename(fixture.root.join("a.md"), fixture.root.join("renamed.md"))?;
+    let before_fresh = fs::read(fixture.threads_path()?)?;
+    let fresh = client.call(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": line_thread,
+            "line": 1,
+            "body": "fresh after rename"
+        }]}),
+    )?;
+    assert_eq!(fresh["isError"], true);
+    assert!(
+        fresh["content"][0]["text"]
+            .as_str()
+            .context("missing stored path error")?
+            .contains("cannot place in a.md")
+    );
+    assert_eq!(
+        fs::read(fixture.threads_path()?)?,
+        before_fresh,
+        "failed fresh line reply mutated the store"
+    );
+
+    let file_reply = client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": file_thread, "body": "file-wide after rename"}]}),
+    )?;
+    assert_eq!(
+        file_reply["structuredContent"]["results"][0]["thread"]["messages"][1]["body"],
+        "file-wide after rename"
+    );
+    let replay = client.ok("thread_reply", keyed_request)?;
+    assert_eq!(replay["structuredContent"]["results"][0]["replayed"], true);
+    assert_eq!(
+        replay["structuredContent"]["results"][0]["thread"]["messages"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let other = fixture.dir.0.join("viewer-checkout");
+    fs::create_dir(&other)?;
+    fs::write(other.join("a.md"), "viewer-only line\n")?;
+    Record::new("1700000001-1".parse::<Id>()?, fixture.key()?, other)
+        .with_name(Some("renamed-view".to_owned()))
+        .write(&fixture.dirs)?;
+    fs::write(fixture.root.join("a.md"), "bound first\nbound second\n")?;
+    let recreated = client.ok(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": line_thread,
+            "line": 2,
+            "body": "placed in recreated bound source"
+        }]}),
+    )?;
+    assert_eq!(
+        recreated["structuredContent"]["results"][0]["thread"]["range"],
+        json!({"start": 2, "end": 2})
+    );
+    assert_eq!(
+        recreated["structuredContent"]["results"][0]["thread"]["messages"][1]["body"],
+        "placed in recreated bound source"
+    );
+    Ok(())
+}
+
+#[test]
 fn agent_starts_capture_bound_checkout_working_tree_provenance() -> Result<()> {
     let fixture = Fixture::new("mcp-working-provenance")?;
     fathomable_testing::git::init(&fixture.root)?;
@@ -1726,53 +1696,70 @@ fn thread_messages_are_uniform_for_edited_and_agent_openings() -> Result<()> {
 }
 
 #[test]
-fn live_and_headless_replies_return_the_same_contract() -> Result<()> {
-    fn seeded_thread(fixture: &Fixture) -> Result<ThreadId> {
-        Ok(Store::open(fixture.threads_path()?)?.annotate(
-            Draft::new(
-                Author::User,
-                Path::new("a.md"),
-                LineRange::new(1, 1),
-                "question",
-            ),
-            "one\ntwo\n",
-            1,
-        )?)
-    }
+fn viewer_records_do_not_affect_bound_store_writes() -> Result<()> {
+    let fixture = Fixture::new("mcp-record-independent")?;
+    let mut client = Mcp::copilot(&fixture, "chat")?;
 
-    fn without_runtime_identity(mut result: Value) -> Value {
-        result["thread"]["id"] = Value::Null;
-        result["thread"]["modified"] = Value::Null;
-        result["thread"]["messages"][1]["created"] = Value::Null;
-        result["thread"]["messages"][1]["modified"] = Value::Null;
-        result
-    }
-
-    let live_fixture = Fixture::new("mcp-live")?;
-    let live_thread = seeded_thread(&live_fixture)?;
-    let (socket, viewer) = successful_reply_viewer(&live_fixture)?;
-    let mut live_client = Mcp::copilot(&live_fixture, "chat")?;
-    let live = live_client.ok(
-        "thread_reply",
-        json!({"replies": [{"thread": live_thread, "body": "answer"}]}),
+    let zero = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "body": "zero records"}]}),
     )?;
-    viewer
-        .join()
-        .map_err(|_panic| anyhow!("fake viewer thread panicked"))??;
-    fs::remove_file(socket)?;
-
-    let headless_fixture = Fixture::new("mcp-headless-parity")?;
-    let headless_thread = seeded_thread(&headless_fixture)?;
-    let mut headless_client = Mcp::copilot(&headless_fixture, "chat")?;
-    let headless = headless_client.ok(
-        "thread_reply",
-        json!({"replies": [{"thread": headless_thread, "body": "answer"}]}),
-    )?;
-
     assert_eq!(
-        without_runtime_identity(live["structuredContent"]["results"][0].clone()),
-        without_runtime_identity(headless["structuredContent"]["results"][0].clone())
+        zero["structuredContent"]["threads"][0]["messages"][0]["body"],
+        "zero records"
     );
+    let reply_target = zero["structuredContent"]["threads"][0]["id"].clone();
+
+    Record::new(
+        "1700000000-1".parse::<Id>()?,
+        fixture.key()?,
+        fixture.root.clone(),
+    )
+    .with_name(Some("bound".to_owned()))
+    .write(&fixture.dirs)?;
+    let one = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "body": "one record"}]}),
+    )?;
+    assert_eq!(
+        one["structuredContent"]["threads"][0]["messages"][0]["body"],
+        "one record"
+    );
+
+    let elsewhere = fixture.dir.0.join("elsewhere");
+    fs::create_dir(&elsewhere)?;
+    Record::new("1700000000-2".parse::<Id>()?, fixture.key()?, elsewhere)
+        .with_name(Some("other".to_owned()))
+        .write(&fixture.dirs)?;
+    let stale_dir = fixture.dirs.viewers_dir().join("1700000000-4000000");
+    fixture.dirs.prepare_state_dir(&stale_dir)?;
+    fathomable_core::private_state::write(
+        stale_dir.join("session.json"),
+        format!(
+            r#"{{"id":"1700000000-4000000","pid":4000000,"key":{},"root":{},"socket":"/stale/viewer.sock","started":1}}"#,
+            serde_json::to_string(&fixture.key()?)?,
+            serde_json::to_string(&fixture.root)?,
+        ),
+    )?;
+
+    let many = client.ok(
+        "thread_start",
+        json!({"comments": [{"path": "a.md", "body": "many and stale records"}]}),
+    )?;
+    assert_eq!(
+        many["structuredContent"]["threads"][0]["messages"][0]["body"],
+        "many and stale records"
+    );
+    let reply = client.ok(
+        "thread_reply",
+        json!({"replies": [{"thread": reply_target, "body": "records still ignored"}]}),
+    )?;
+    assert_eq!(
+        reply["structuredContent"]["results"][0]["thread"]["messages"][1]["body"],
+        "records still ignored"
+    );
+    assert_eq!(fixture.store()?.threads().len(), 3);
+    assert_eq!(Record::list(&fixture.dirs).len(), 3);
     Ok(())
 }
 
@@ -1898,81 +1885,6 @@ fn file_wide_range_override_invalidates_the_whole_reply_batch() -> Result<()> {
         store
             .thread(&file_thread)
             .context("file thread")?
-            .replies()
-            .is_empty()
-    );
-    Ok(())
-}
-
-#[test]
-fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
-    let fixture = Fixture::new("mcp-p")?;
-    let first = fixture.user_thread("first question")?;
-    let second = fixture.user_thread("second question")?;
-    let third = fixture.user_thread("third question")?;
-    let (socket, fake) = partial_reply_viewer(&fixture)?;
-
-    let mut client = Mcp::copilot(&fixture, "chat")?;
-    let result = client.call(
-        "thread_reply",
-        json!({"replies": [
-            {"thread": first, "body": "first answer"},
-            {"thread": second, "body": "second answer"},
-            {"thread": third, "body": "third answer"}
-        ]}),
-    )?;
-    assert_eq!(result["isError"], true);
-    let summary = result["content"][0]["text"]
-        .as_str()
-        .context("error summary")?;
-    let fallback: Value = serde_json::from_str(summary)?;
-    assert_eq!(fallback, result["structuredContent"]);
-    assert_eq!(fallback["error_code"], "PARTIAL_BATCH");
-    assert_eq!(fallback["completed"][0]["item_index"], 0);
-    assert_eq!(
-        fallback["completed"][0]["result"]["thread"]["id"],
-        first.to_string()
-    );
-    assert_eq!(
-        fallback["completed"][0]["result"]["resolution"]["outcome"],
-        "not_requested"
-    );
-    assert_eq!(fallback["failed"]["item_index"], 1);
-    assert_eq!(fallback["failed"]["item"]["thread"], second.to_string());
-    assert!(
-        fallback["failed"]["error"]
-            .as_str()
-            .context("failed error")?
-            .contains("injected later viewer failure")
-    );
-    assert_eq!(fallback["unattempted"][0]["item_index"], 2);
-    assert_eq!(
-        fallback["unattempted"][0]["item"]["thread"],
-        third.to_string()
-    );
-    fake.join()
-        .map_err(|_panic| anyhow!("fake viewer thread panicked"))??;
-    fs::remove_file(&socket)?;
-    let store = fixture.store()?;
-    assert_eq!(
-        store
-            .thread(&first)
-            .context("first thread")?
-            .replies()
-            .len(),
-        1
-    );
-    assert!(
-        store
-            .thread(&second)
-            .context("second thread")?
-            .replies()
-            .is_empty()
-    );
-    assert!(
-        store
-            .thread(&third)
-            .context("third thread")?
             .replies()
             .is_empty()
     );

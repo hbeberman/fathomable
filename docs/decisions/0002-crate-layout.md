@@ -20,6 +20,10 @@ tags:
 
 Status: accepted (2026-08-26)
 
+MCP access amended 2026-09-18 by [0089](0089-store-only-mcp.md):
+the binary's MCP mode uses the core store directly rather than talking to a
+viewer socket. Crate boundaries and the stdio MCP transport remain unchanged.
+
 Amended 2026-09-03 by [0048](0048-modules-by-concept.md): a third
 workspace member, `fathomable-testing`, holds the test scaffolding shared
 by the other crates' tests (a dev-dependency of both, permitted by Cargo

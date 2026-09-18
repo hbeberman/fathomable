@@ -128,7 +128,7 @@ jump {
 
 watch {
     ignore // Extra root-relative globs excluded from live-change notifications.
-    debounce 300 // Quiet period in milliseconds before grouping filesystem changes.
+    debounce 300 // Quiet period in milliseconds for workspace and Git changes, not threads.
 }
 
 markdown {
@@ -209,9 +209,17 @@ and `params._meta.threadId`. Reads need no identity; unsupported writes fail
 explicitly. See [identity details](decisions/0080-automatic-chat-identity.md)
 and [tool contracts](decisions/0084-explicit-mcp-contracts.md).
 
-MCP source reads stay within the bound checkout, including when a viewer
-handles a write. Relative symlinks within that checkout work; absolute
-symlink targets and links escaping it (including directory links) fail
+MCP always reads and writes the shared store directly, whether or not a viewer
+is running. A successful write reports persisted state, not a rendered frame.
+Viewers observe thread changes without waiting for `watch.debounce`; several
+agent updates may be grouped into one counted activity toast. Known watch
+failures or failed store refreshes report degraded thread updates and retry.
+A previously loaded board stays visible if its store disappears or cannot be
+read; refresh never recreates or overwrites the missing data.
+
+MCP source reads stay within the bound checkout. Relative symlinks within
+that checkout work; absolute symlink targets and links escaping it (including
+directory links) fail
 explicitly. This also applies when an existing thread's file becomes an
 escaping symlink before a read or relocation.
 
@@ -245,9 +253,12 @@ Review logs, reports, and backups before sharing them. See the
 [private-state contract](decisions/0009-cli-and-diagnostics.md#persistent-state-privacy)
 for the path and ownership checks.
 
-IPC sockets live separately under
-`$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`. External-editor
-drafts use `fathomable-comment-<pid>.md` in the system temporary directory
+There are no viewer IPC sockets or runtime-directory requirements.
+`--viewers` lists viewer metadata without socket paths; `--doctor` checks
+state and configuration without runtime socket checks. Old socket artifacts
+are unused and are not automatically removed.
+
+External-editor drafts use `fathomable-comment-<pid>.md` in the system temporary directory
 and are removed after returning from the editor.
 
 The Git common directory identifies the repository, so linked worktrees

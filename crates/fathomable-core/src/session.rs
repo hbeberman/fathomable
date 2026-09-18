@@ -1,29 +1,11 @@
 // @okf-doc: /decisions/0062-one-version-no-compatibility.md
-//! Viewer records, workspace markers, and the socket protocol.
+//! Viewer records and workspace markers.
 //!
 //! A workspace's annotation state is the workspace's; a running TUI is a
 //! *viewer* of it (ADR 0024, words per ADR 0047). Each viewer writes a
-//! [`Record`] under `$XDG_STATE_HOME/fathomable/viewers/<id>/` and listens on
-//! `$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`; the workspace
+//! [`Record`] under `$XDG_STATE_HOME/fathomable/viewers/<id>/`; the workspace
 //! itself is marked by a [`Marker`] beside its thread store for viewer and
-//! worktree diagnostics. The socket speaks line-delimited JSON: one
-//! [`Request`] per line, answered by one [`Response`] per line. Every
-//! request carries `"v"`; a mismatch is refused, and both ends are one
-//! binary upgraded together, so the number bumps on any wire change
-//! (ADR 0062). A mismatch requires restarting the matching viewer and MCP
-//! processes, not deleting annotation state. The binary owns the socket and
-//! the state behind every operation; this module owns the wire types.
-//!
-//! # Examples
-//!
-//! ```
-//! use fathomable_core::session::{Request, Response};
-//!
-//! let request: Request = r#"{"v":8,"op":"thread_start","path":"a.md","author":"user","body":"why?"}"#.parse()?;
-//! assert!(matches!(request, Request::ThreadStart { .. }));
-//! assert_eq!(Response::Threads(Vec::new()).to_line(), r#"{"ok":true,"threads":[]}"#);
-//! # Ok::<(), fathomable_core::session::ProtocolError>(())
-//! ```
+//! worktree diagnostics.
 
 use std::fmt;
 use std::fs;
@@ -34,11 +16,6 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::XdgDirs;
-use crate::annotations::{Author, LineRange, ResolutionOutcome, Thread, ThreadId};
-
-/// The protocol version this crate speaks; the only one it accepts.
-pub(crate) const PROTOCOL_VERSION: u32 = 8;
-
 /// File name of the record inside a session directory.
 pub(crate) const RECORD_FILE: &str = "session.json";
 
@@ -72,7 +49,7 @@ impl fmt::Display for Id {
 }
 
 impl FromStr for Id {
-    type Err = ProtocolError;
+    type Err = IdParseError;
 
     /// Accept `digits-digits` only, so an id can never name a path outside
     /// the sessions directory.
@@ -86,22 +63,32 @@ impl FromStr for Id {
         if valid {
             Ok(Self(s.to_owned()))
         } else {
-            Err(ProtocolError(format!("invalid session id `{s}`")))
+            Err(IdParseError(s.to_owned()))
         }
     }
 }
+
+/// An invalid viewer session identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdParseError(String);
+
+impl fmt::Display for IdParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid session id `{}`", self.0)
+    }
+}
+
+impl std::error::Error for IdParseError {}
 
 /// What a running viewer writes about itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Record {
     id: Id,
     pid: u32,
-    /// The workspace key (ADR 0070): what the state directory and the
-    /// socket are keyed by.
+    /// The workspace key (ADR 0070): what the state directory is keyed by.
     key: PathBuf,
     /// The worktree the viewer shows; the key itself outside git.
     root: PathBuf,
-    socket: PathBuf,
     started: u64,
     /// The user-set viewer name (ADR 0024 `--name`, `:name`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -110,16 +97,14 @@ pub struct Record {
 
 impl Record {
     /// Describe the current process as a viewer of the workspace keyed
-    /// by `key`, showing the worktree at `root`; `socket` is where it
-    /// will listen (or `None` when `XDG_RUNTIME_DIR` is unset).
+    /// by `key`, showing the worktree at `root`.
     #[must_use]
-    pub fn new(id: Id, key: PathBuf, root: PathBuf, socket: Option<PathBuf>) -> Self {
+    pub fn new(id: Id, key: PathBuf, root: PathBuf) -> Self {
         Self {
             id,
             pid: std::process::id(),
             key,
             root,
-            socket: socket.unwrap_or_default(),
             started: crate::clock::now(),
             name: None,
         }
@@ -173,16 +158,6 @@ impl Record {
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    /// Socket path, or `None` when the session has no socket.
-    #[must_use]
-    pub fn socket(&self) -> Option<&Path> {
-        if self.socket.as_os_str().is_empty() {
-            None
-        } else {
-            Some(&self.socket)
-        }
     }
 
     /// Start time in seconds since the Unix epoch.
@@ -301,9 +276,6 @@ impl Record {
             match record.remove(dirs) {
                 Ok(()) => {
                     removed += 1;
-                    if let Some(socket) = record.socket() {
-                        let _ = fs::remove_file(socket);
-                    }
                     tracing::info!(id = %record.id, pid = record.pid, "removed dead viewer");
                 }
                 Err(error) => tracing::warn!(%error, id = %record.id, "cannot remove viewer"),
@@ -409,263 +381,17 @@ impl Marker {
     }
 }
 
-/// A request over the session socket.
-///
-/// Paths are relative to the viewer's repository checkout.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "op", rename_all = "snake_case")]
-#[serde(deny_unknown_fields)]
-pub enum Request {
-    /// Append one atomic agent reply and its lifecycle effects.
-    ///
-    /// The answer carries the complete current thread, the original durable
-    /// resolution outcome, and whether this request replayed an earlier write.
-    ThreadReply {
-        /// The thread to reply to.
-        thread: ThreadId,
-        /// Who is replying.
-        author: Author,
-        /// Authenticated harness-qualified caller scope for keyed writes.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        caller: String,
-        /// The reply text.
-        body: String,
-        /// Whether this reply says the work is complete.
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        resolve: bool,
-        /// Where the thread's lines are now, if they moved.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        lines: Option<LineRange>,
-        /// Optional durable key for retrying this item without a second reply.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        idempotency_key: Option<String>,
-    },
-    /// Start a thread on `range` of `path` as `author` (ADR 0061), or on
-    /// the file as a whole when there is no range (ADR 0063); answered
-    /// with the new thread.
-    ThreadStart {
-        /// Repository-relative path of the file.
-        path: PathBuf,
-        /// The lines the comment is on; none for the file as a whole.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        range: Option<LineRange>,
-        /// Who is commenting.
-        author: Author,
-        /// Authenticated harness-qualified caller scope for keyed writes.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        caller: String,
-        /// The comment text.
-        body: String,
-        /// Optional durable key for retrying this item without a second thread.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        idempotency_key: Option<String>,
-    },
-}
-
-#[derive(Serialize, Deserialize)]
-struct RequestWire {
-    v: u32,
-    #[serde(flatten)]
-    request: Request,
-}
-
-#[derive(Deserialize)]
-struct VersionOnly {
-    v: u32,
-}
-
-impl Request {
-    /// The request as one JSON line without the newline.
-    #[must_use]
-    pub fn to_line(&self) -> String {
-        serde_json::to_string(&RequestWire {
-            v: PROTOCOL_VERSION,
-            request: self.clone(),
-        })
-        .unwrap_or_default()
-    }
-}
-
-impl FromStr for Request {
-    type Err = ProtocolError;
-
-    fn from_str(line: &str) -> Result<Self, Self::Err> {
-        let VersionOnly { v } = serde_json::from_str(line)
-            .map_err(|error| ProtocolError(format!("malformed request: {error}")))?;
-        if v != PROTOCOL_VERSION {
-            return Err(ProtocolError(format!(
-                "unsupported protocol version {v} (this session speaks {PROTOCOL_VERSION}); \
-                 restart the matching viewer and MCP processes"
-            )));
-        }
-        let wire: RequestWire = serde_json::from_str(line)
-            .map_err(|error| ProtocolError(format!("malformed request: {error}")))?;
-        Ok(wire.request)
-    }
-}
-
-/// A response over the session socket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Response {
-    /// Answer to a thread-start write.
-    Threads(Vec<Thread>),
-    /// Answer to an atomic agent reply.
-    ThreadReply(ThreadReplyResponse),
-    /// The request was refused; the text says why.
-    Error(String),
-}
-
-/// The complete durable answer to one atomic agent reply.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThreadReplyResponse {
-    thread: Box<Thread>,
-    resolution: ResolutionOutcome,
-    replayed: bool,
-}
-
-impl ThreadReplyResponse {
-    /// Borrow the complete current thread.
-    #[must_use]
-    pub fn thread(&self) -> &Thread {
-        &self.thread
-    }
-
-    /// Return the original durable resolution outcome.
-    #[must_use]
-    pub fn resolution(&self) -> ResolutionOutcome {
-        self.resolution
-    }
-
-    /// Whether the matching write was already completed.
-    #[must_use]
-    pub fn replayed(&self) -> bool {
-        self.replayed
-    }
-
-    /// Consume the response into its thread, outcome, and replay state.
-    #[must_use]
-    pub fn into_parts(self) -> (Thread, ResolutionOutcome, bool) {
-        (*self.thread, self.resolution, self.replayed)
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ResponseWire {
-    ok: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    threads: Option<Vec<Thread>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    thread: Option<Thread>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    resolution: Option<ResolutionOutcome>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    replayed: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-impl Response {
-    /// Construct a response for a newly applied atomic agent reply.
-    #[must_use]
-    pub fn thread_reply_applied(thread: Thread, resolution: ResolutionOutcome) -> Self {
-        Self::thread_reply(thread, resolution, false)
-    }
-
-    /// Construct a response for a replayed atomic agent reply.
-    #[must_use]
-    pub fn thread_reply_replayed(thread: Thread, resolution: ResolutionOutcome) -> Self {
-        Self::thread_reply(thread, resolution, true)
-    }
-
-    fn thread_reply(thread: Thread, resolution: ResolutionOutcome, replayed: bool) -> Self {
-        Self::ThreadReply(ThreadReplyResponse {
-            thread: Box::new(thread),
-            resolution,
-            replayed,
-        })
-    }
-
-    /// The response as one JSON line without the newline.
-    #[must_use]
-    pub fn to_line(&self) -> String {
-        let mut wire = ResponseWire {
-            ok: true,
-            threads: None,
-            thread: None,
-            resolution: None,
-            replayed: None,
-            error: None,
-        };
-        match self {
-            Self::Threads(threads) => wire.threads = Some(threads.clone()),
-            Self::ThreadReply(response) => {
-                wire.thread = Some(response.thread().clone());
-                wire.resolution = Some(response.resolution());
-                wire.replayed = Some(response.replayed());
-            }
-            Self::Error(message) => {
-                wire.ok = false;
-                wire.error = Some(message.clone());
-            }
-        }
-        serde_json::to_string(&wire).unwrap_or_default()
-    }
-}
-
-impl FromStr for Response {
-    type Err = ProtocolError;
-
-    fn from_str(line: &str) -> Result<Self, Self::Err> {
-        let wire: ResponseWire = serde_json::from_str(line)
-            .map_err(|error| ProtocolError(format!("malformed response: {error}")))?;
-        match (
-            wire.ok,
-            wire.threads,
-            wire.thread,
-            wire.resolution,
-            wire.replayed,
-            wire.error,
-        ) {
-            (false, None, None, None, None, error) => Ok(Self::Error(
-                error.unwrap_or_else(|| "unspecified error".to_owned()),
-            )),
-            (true, Some(threads), None, None, None, None) => Ok(Self::Threads(threads)),
-            (true, None, Some(thread), Some(resolution), Some(replayed), None) => {
-                Ok(Self::thread_reply(thread, resolution, replayed))
-            }
-            _ => Err(ProtocolError("malformed response shape".to_owned())),
-        }
-    }
-}
-
-/// A malformed line, id, or an unsupported protocol version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProtocolError(String);
-
-impl fmt::Display for ProtocolError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for ProtocolError {}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use fathomable_testing::TempDir;
-
-    use super::{Id, ProtocolError, Record, Request, Response};
-    use crate::annotations::{Author, Draft, LineRange, ResolutionOutcome, Store};
+    use super::{Id, IdParseError, Record};
 
     fn record() -> Record {
         Record::new(
             "1700000000-42".parse().unwrap_or_else(|_| Id::mint()),
             PathBuf::from("/work"),
             PathBuf::from("/work"),
-            Some(PathBuf::from("/run/fathomable/1700000000-42.sock")),
         )
     }
 
@@ -687,7 +413,8 @@ mod tests {
             (name == "XDG_STATE_HOME").then(|| OsString::from(&state))
         });
         // A pid no live process has: the record reads as dead.
-        let dead = r#"{"id":"1700000000-4000000","pid":4000000,"key":"/w","root":"/w","socket":"","started":1}"#;
+        let dead =
+            r#"{"id":"1700000000-4000000","pid":4000000,"key":"/w","root":"/w","started":1}"#;
         let record_dir = dirs.viewers_dir().join("1700000000-4000000");
         dirs.prepare_state_dir(&record_dir)?;
         crate::private_state::write(record_dir.join(super::RECORD_FILE), dead)?;
@@ -699,86 +426,16 @@ mod tests {
     }
 
     #[test]
-    fn ids_are_validated() -> Result<(), ProtocolError> {
+    fn ids_are_validated() -> Result<(), IdParseError> {
         let id: Id = "1700000000-42".parse()?;
         assert_eq!(id.to_string(), "1700000000-42");
-        assert_eq!("../etc".parse::<Id>().ok(), None);
+        assert_eq!(
+            "../etc".parse::<Id>().map_err(|error| error.to_string()),
+            Err("invalid session id `../etc`".to_owned())
+        );
         assert_eq!("12-".parse::<Id>().ok(), None);
         let minted = Id::mint();
         assert_eq!(minted.as_str().parse::<Id>().ok(), Some(minted.clone()));
-        Ok(())
-    }
-
-    #[test]
-    fn requests_round_trip() -> Result<(), ProtocolError> {
-        let requests = [
-            Request::ThreadReply {
-                thread: serde_json::from_str(r#""1-2-3""#)
-                    .map_err(|e| ProtocolError(e.to_string()))?,
-                author: Author::Agent {
-                    name: "reviewer".to_owned(),
-                    client: Some("claude-code".to_owned()),
-                    id: None,
-                },
-                caller: "claude:chat".to_owned(),
-                body: "done".to_owned(),
-                resolve: true,
-                lines: Some(LineRange::new(4, 6)),
-                idempotency_key: Some("reply-1".to_owned()),
-            },
-            Request::ThreadStart {
-                path: PathBuf::from("src/lib.rs"),
-                range: Some(LineRange::new(9, 11)),
-                author: Author::agent("reviewer"),
-                caller: "copilot:chat".to_owned(),
-                body: "look here".to_owned(),
-                idempotency_key: Some("start-1".to_owned()),
-            },
-        ];
-        for request in requests {
-            let line = request.to_line();
-            assert!(line.starts_with(r#"{"v":8,"op":""#), "{line}");
-            assert_eq!(line.parse::<Request>()?, request);
-        }
-        Ok(())
-    }
-
-    /// Every request needs the exact version this build speaks (ADR 0062).
-    #[test]
-    fn every_request_needs_the_current_version() -> Result<(), ProtocolError> {
-        let accepted = r#"{"v":8,"op":"thread_start","path":"a","author":"user","body":"x"}"#
-            .parse::<Request>();
-        accepted?;
-
-        let missing = r#"{"op":"thread_start","path":"a","author":"user","body":"x"}"#
-            .parse::<Request>()
-            .err();
-        assert!(missing.is_some_and(|e| e.to_string().contains("missing field `v`")));
-
-        let too_old = r#"{"v":7,"op":"thread_start","path":"a","author":"user","body":"x"}"#
-            .parse::<Request>()
-            .err();
-        assert!(too_old.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 7")
-                && e.to_string()
-                    .contains("restart the matching viewer and MCP processes")
-        }));
-        let too_new = r#"{"v":9,"op":"thread_start","path":"a","author":"user","body":"x"}"#
-            .parse::<Request>()
-            .err();
-        assert!(too_new.is_some_and(|e| {
-            e.to_string().contains("unsupported protocol version 9")
-                && e.to_string()
-                    .contains("restart the matching viewer and MCP processes")
-        }));
-        assert_eq!(r#"{"v":8,"op":"invented"}"#.parse::<Request>().ok(), None);
-        assert_eq!(
-            r#"{"v":8,"op":"thread_reply","thread":"1-2-3","author":{"name":"bot"},"body":"x","propose_resolve":true}"#
-                .parse::<Request>()
-                .ok(),
-            None
-        );
-        assert_eq!("not json".parse::<Request>().ok(), None);
         Ok(())
     }
 
@@ -792,50 +449,9 @@ mod tests {
         assert_eq!(record().with_name(Some("  ".to_owned())).name(), None);
         let json = serde_json::to_string(&named)?;
         assert!(json.contains(r#""name":"left""#), "{json}");
+        assert!(!json.contains("socket"), "{json}");
         assert!(!serde_json::to_string(&record())?.contains("name"));
         assert_eq!(serde_json::from_str::<Record>(&json)?, named);
-        Ok(())
-    }
-
-    #[test]
-    fn responses_round_trip() -> Result<(), ProtocolError> {
-        let dir =
-            TempDir::new("session-response").map_err(|error| ProtocolError(error.to_string()))?;
-        let state = dir.0.join("threads.jsonl");
-        let mut store = Store::open(&state).map_err(|error| ProtocolError(error.to_string()))?;
-        let id = store
-            .annotate(
-                Draft::on_file(Author::User, std::path::Path::new("a.md"), "question"),
-                "",
-                1,
-            )
-            .map_err(|error| ProtocolError(error.to_string()))?;
-        let thread = store
-            .thread(&id)
-            .cloned()
-            .ok_or_else(|| ProtocolError("missing fixture thread".to_owned()))?;
-        let responses = [
-            Response::Threads(Vec::new()),
-            Response::thread_reply_replayed(thread, ResolutionOutcome::ResolutionProposed),
-            Response::Error("nope".to_owned()),
-        ];
-        for response in responses {
-            assert_eq!(response.to_line().parse::<Response>()?, response);
-        }
-        assert!(
-            Response::Error("x".to_owned())
-                .to_line()
-                .starts_with(r#"{"ok":false"#)
-        );
-        assert_eq!(r#"{"ok":true}"#.parse::<Response>().ok(), None);
-        assert_eq!(
-            r#"{"ok":true,"threads":[],"replayed":false}"#.parse::<Response>().ok(),
-            None
-        );
-        assert_eq!(
-            record().socket(),
-            Some(std::path::Path::new("/run/fathomable/1700000000-42.sock"))
-        );
         Ok(())
     }
 }

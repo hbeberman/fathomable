@@ -269,7 +269,7 @@ impl Default for JumpConfig {
 pub struct WatchConfig {
     /// Extra ignore globs, root-relative, on top of the tree's rules.
     pub ignore: Vec<String>,
-    /// Quiet period before a burst of writes becomes one change.
+    /// Quiet period for workspace and Git changes; thread refresh bypasses it.
     pub debounce: Duration,
 }
 
@@ -674,7 +674,7 @@ jump {{
 
 watch {{
     ignore{ignore} // Extra root-relative globs excluded from live-change notifications.
-    debounce {debounce} // Quiet period in milliseconds before grouping filesystem changes.
+    debounce {debounce} // Quiet period in milliseconds for workspace and Git changes, not threads.
 }}
 
 markdown {{

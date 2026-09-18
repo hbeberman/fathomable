@@ -16,6 +16,12 @@ tags:
 
 Status: accepted (2026-08-27)
 
+Remaining socket routing superseded 2026-09-18 by
+[0089](0089-store-only-mcp.md): MCP always accesses the shared store,
+independently of live viewer records. Viewers retain names and registrations
+but no socket metadata, and observe thread changes outside workspace
+debounce. The routing and socket layout below are historical.
+
 Routing amended 2026-09-15 by
 [0080](0080-automatic-chat-identity.md): the default is anchored by
 `fathomable --mcp [DIR]` at startup, with per-call workspace overrides

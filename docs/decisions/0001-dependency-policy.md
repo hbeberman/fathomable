@@ -35,7 +35,7 @@ Approved core set:
 | Crate | Owner | Purpose |
 | --- | --- | --- |
 | `ratatui`, `crossterm` | ratatui org, crossterm-rs | terminal UI and input, including mouse |
-| `tokio` | Tokio org | async runtime for file watching, sockets, MCP stdio |
+| `tokio` | Tokio org | async runtime for file watching and MCP stdio |
 | `notify` | notify-rs org | filesystem change notification |
 | `pulldown-cmark` | pulldown-cmark org | CommonMark + GFM parsing with byte offsets |
 | `syntect` (`parsing`, `default-syntaxes`, `default-themes`, `regex-fancy`, `dump-load`; no `onig`) | trishume; used by bat, delta, zola | syntax highlighting, themes (added 2026-08-26, [0016](0016-syntax-highlighting.md)) |

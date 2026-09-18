@@ -17,7 +17,6 @@ use fathomable_core::annotations::{
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
-use fathomable_core::session::{Request, Response};
 use fathomable_core::vocabulary as vocab;
 use fathomable_core::workspace::{Filter, Workspace};
 use rmcp::handler::server::wrapper::Parameters;
@@ -29,7 +28,7 @@ use serde_json::{Value, json};
 
 use crate::app::threads::read_checkout_text;
 
-use super::{Server, Target, call};
+use super::{Server, Target};
 /// `threads` arguments.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1114,7 +1113,12 @@ impl Server {
             open_world_hint = false
         )
     )]
-    async fn thread_reply(
+    #[expect(
+        clippy::too_many_lines,
+        clippy::needless_pass_by_value,
+        reason = "The MCP macro supplies an owned request context, and the handler keeps batch validation together."
+    )]
+    fn thread_reply(
         &self,
         Parameters(p): Parameters<ReplyParams>,
         context: RequestContext<RoleServer>,
@@ -1174,7 +1178,7 @@ impl Server {
                 problems.push(BatchIssue::new(index, error));
                 continue;
             }
-            let replay = if let Some(key) = item.idempotency_key.as_deref() {
+            let is_replay = if let Some(key) = item.idempotency_key.as_deref() {
                 let reply = reply_probe(author.clone(), &item);
                 match probe_store.probe_reply_idempotency_for_caller(
                     &id,
@@ -1183,7 +1187,7 @@ impl Server {
                     &caller,
                     key,
                 ) {
-                    Ok(replay) => replay.is_some(),
+                    Ok(receipt) => receipt.is_some(),
                     Err(error) => {
                         problems.push(BatchIssue::new(index, format!("{}: {error}", item.thread)));
                         continue;
@@ -1192,7 +1196,7 @@ impl Server {
             } else {
                 false
             };
-            if replay {
+            if is_replay {
                 validated.push(ValidatedReply {
                     index,
                     item,
@@ -1219,7 +1223,7 @@ impl Server {
         let mut answered = Vec::with_capacity(validated.len());
         for position in 0..validated.len() {
             let item = &validated[position];
-            match self.reply_one(author.clone(), caller.clone(), item).await {
+            match self.reply_one(author.clone(), &caller, item) {
                 Ok(answer) => answered.push(answer),
                 Err(error) => {
                     return partial_reply_failure(
@@ -1268,60 +1272,33 @@ struct Answered {
 }
 
 impl Server {
-    async fn reply_one(
+    fn reply_one(
         &self,
         author: Author,
-        caller: String,
+        caller: &str,
         validated: &ValidatedReply,
     ) -> Result<Answered, String> {
         let item = &validated.item;
         let thread = thread_id(&item.thread)?;
         let lines = item_lines(item);
-        let request = Request::ThreadReply {
-            thread: thread.clone(),
-            author: author.clone(),
-            caller: caller.clone(),
-            body: item.body.clone(),
-            resolve: item.resolve,
+        let answer = headless_reply(
+            &self.dirs,
+            &self.target,
+            &validated.root,
+            &thread,
+            author,
+            caller,
+            item,
             lines,
-            idempotency_key: item.idempotency_key.clone(),
-        };
-        let outcome = match self.target.viewer(&self.dirs, &validated.root) {
-            Some(viewer) => call(&viewer, &request).await,
-            None => headless_reply(
-                &self.dirs,
-                &self.target,
-                &validated.root,
-                &thread,
-                author,
-                &caller,
-                item,
-                lines,
-            )
-            .map(|answer| {
-                if answer.replayed {
-                    Response::thread_reply_replayed(answer.thread, answer.resolution)
-                } else {
-                    Response::thread_reply_applied(answer.thread, answer.resolution)
-                }
-            }),
-        };
-        match outcome {
-            Ok(Response::ThreadReply(response)) => {
-                let (thread, resolution, replayed) = response.into_parts();
-                Ok(Answered {
-                    index: validated.index,
-                    thread,
-                    root: validated.root.clone(),
-                    resolution,
-                    replayed,
-                })
-            }
-            Ok(Response::Error(message)) | Err(message) => {
-                Err(format!("{}: {message}", item.thread))
-            }
-            Ok(other) => Err(format!("{}: unexpected reply {other:?}", item.thread)),
-        }
+        )
+        .map_err(|message| format!("{}: {message}", item.thread))?;
+        Ok(Answered {
+            index: validated.index,
+            thread: answer.thread,
+            root: validated.root.clone(),
+            resolution: answer.resolution,
+            replayed: answer.replayed,
+        })
     }
 }
 
@@ -1688,7 +1665,7 @@ fn repository_paths(root: &Path) -> Vec<PathBuf> {
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "Keep headless and viewer reply inputs aligned at the MCP boundary."
+    reason = "Keep the validated MCP reply inputs explicit at the store boundary."
 )]
 fn headless_reply(
     dirs: &XdgDirs,
@@ -1733,7 +1710,7 @@ fn headless_reply(
         .map_err(|error| error.to_string())?;
     let resolution = *outcome.value();
     let replayed = outcome.replayed();
-    tracing::info!(%thread, ?resolution, replayed, "agent reply added headlessly");
+    tracing::info!(%thread, ?resolution, replayed, "agent reply added");
     let thread = store
         .thread(thread)
         .cloned()
@@ -1887,7 +1864,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use fathomable_core::annotations::{
-        Author, Draft, LineRange, MAX_MESSAGE_BYTES, Reply, Status, Store, ThreadId,
+        Author, Draft, LineRange, MAX_MESSAGE_BYTES, Reply, ResolutionOutcome, Status, Store,
+        ThreadId,
     };
     use fathomable_core::clock::now;
     use fathomable_core::vocabulary::ALL;
@@ -1897,7 +1875,8 @@ mod tests {
     use crate::mcp::Server;
 
     use super::{
-        ReplyItem, Shown, ThreadsParams, Tree, check_path, refusal, select_exact, select_filtered,
+        Answered, ReplyItem, Shown, ThreadsParams, Tree, ValidatedReply, check_path,
+        partial_reply_failure, refusal, select_exact, select_filtered,
     };
 
     #[test]
@@ -2191,6 +2170,78 @@ mod tests {
             assert!(error.contains(needle), "{error}");
         }
         assert_eq!(all[0].status(), Status::Open);
+        Ok(())
+    }
+
+    #[test]
+    fn partial_reply_failure_preserves_execution_boundary_and_text_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("mcp-partial-reply")?;
+        fs::write(dir.0.join("a.md"), "one\n")?;
+        let mut store = Store::open(dir.0.join("threads.jsonl"))?;
+        let id = store.annotate(
+            Draft::new(
+                Author::User,
+                Path::new("a.md"),
+                LineRange::new(1, 1),
+                "first",
+            ),
+            "one\n",
+            1,
+        )?;
+        let thread = store.thread(&id).ok_or("thread")?.clone();
+        let item = |thread: &str, body: &str| ReplyItem {
+            thread: thread.to_owned(),
+            body: body.to_owned(),
+            resolve: false,
+            idempotency_key: None,
+            line: None,
+            end_line: None,
+        };
+        let answered = [Answered {
+            index: 0,
+            thread,
+            root: dir.0.clone(),
+            resolution: ResolutionOutcome::NotRequested,
+            replayed: false,
+        }];
+        let failed = ValidatedReply {
+            index: 1,
+            item: item("2-2-2", "second"),
+            root: dir.0.clone(),
+        };
+        let unattempted = [ValidatedReply {
+            index: 2,
+            item: item("3-3-3", "third"),
+            root: dir.0.clone(),
+        }];
+        let result = partial_reply_failure(
+            &answered,
+            &failed,
+            &unattempted,
+            "injected direct-store failure".to_owned(),
+            &dir.0,
+        );
+        let value = serde_json::to_value(result)?;
+        let structured = &value["structuredContent"];
+        assert_eq!(value["isError"], true);
+        assert_eq!(structured["error_code"], "PARTIAL_BATCH");
+        assert_eq!(structured["completed"][0]["item_index"], 0);
+        assert_eq!(
+            structured["completed"][0]["result"]["thread"]["id"],
+            id.to_string()
+        );
+        assert_eq!(structured["failed"]["item_index"], 1);
+        assert_eq!(structured["failed"]["item"]["thread"], "2-2-2");
+        assert_eq!(
+            structured["failed"]["error"],
+            "injected direct-store failure"
+        );
+        assert_eq!(structured["unattempted"][0]["item_index"], 2);
+        assert_eq!(structured["unattempted"][0]["item"]["thread"], "3-3-3");
+        let fallback: serde_json::Value =
+            serde_json::from_str(value["content"][0]["text"].as_str().ok_or("fallback")?)?;
+        assert_eq!(&fallback, structured);
         Ok(())
     }
 }

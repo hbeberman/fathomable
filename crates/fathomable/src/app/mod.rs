@@ -7,9 +7,8 @@
 //! holds the thread cursor, the panes, the list, and the store operations;
 //! `draw` renders; `input` binds and dispatches keys and the mouse; `agents`
 //! holds the human-invoked wake stub; `sidebar` is the column and
-//! `files_pane` its upper pane; `view`, `watch`, `socket`, `commands`, and
-//! `clipboard` are what their names say; and
-//! [`run`] owns the terminal, the file watcher, and the viewer socket.
+//! `files_pane` its upper pane; `view`, `watch`, `commands`, and `clipboard`
+//! are what their names say; and [`run`] owns the terminal and file watcher.
 
 pub(crate) mod agents;
 mod clipboard;
@@ -31,7 +30,6 @@ mod menu_bar;
 mod review_points;
 pub(crate) mod run;
 mod sidebar;
-mod socket;
 mod status_walk;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -43,6 +41,7 @@ mod worktrees;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -62,7 +61,7 @@ use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::layout::LineIndex;
 use fathomable_core::picker::{Match, Picker};
 use fathomable_core::reach::Reach;
-use fathomable_core::session::{Record, Request, Response};
+use fathomable_core::session::Record;
 use fathomable_core::status::{State, Status};
 use fathomable_core::tree::Tree;
 use fathomable_core::workspace::{
@@ -78,6 +77,9 @@ use watch::{Fingerprint, is_git_metadata};
 
 /// Toasts visible at once.
 pub(crate) const MAX_TOASTS: usize = 3;
+
+const THREAD_WATCH_DEGRADED: &str =
+    "cannot watch or reconcile the thread store; keeping the last loaded board";
 
 /// A transient one-line notice about a change (ADR 0015).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -475,6 +477,61 @@ fn activity_observation(store: Option<&Store>) -> (Option<PathBuf>, ActivityCurs
     )
 }
 
+/// Result of reconciling the in-memory board with its backing file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StoreReload {
+    pub(crate) changed: bool,
+    pub(crate) healthy: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreBacking {
+    InitiallyAbsent,
+    Observed,
+    Missing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThreadWatchCoverage {
+    Covered,
+    Degraded,
+}
+
+fn store_backing(
+    store: Option<&Store>,
+    dirs: &XdgDirs,
+    record: &Record,
+) -> (PathBuf, StoreBacking) {
+    let path = store.map_or_else(
+        || dirs.threads_file(record.key()),
+        |store| store.path().to_path_buf(),
+    );
+    let observed = store.map_or_else(
+        || fs::symlink_metadata(&path).is_ok(),
+        Store::backing_file_observed,
+    );
+    let backing = if observed {
+        StoreBacking::Observed
+    } else {
+        StoreBacking::InitiallyAbsent
+    };
+    (path, backing)
+}
+
+fn stable_store_reload(before: Option<&fs::Metadata>, store: &Store, path: &Path) -> bool {
+    match (
+        before,
+        store.backing_file_observed(),
+        fs::symlink_metadata(path),
+    ) {
+        (Some(before), true, Ok(after)) => {
+            before.dev() == after.dev() && before.ino() == after.ino()
+        }
+        (None, false, Err(error)) if error.kind() == std::io::ErrorKind::NotFound => true,
+        _ => false,
+    }
+}
+
 fn watch_ignore(watch: &WatchConfig) -> Ignore {
     Ignore::new(&watch.ignore).unwrap_or_else(|error| {
         tracing::warn!(%error, "ignoring watch.ignore");
@@ -550,8 +607,18 @@ pub(crate) struct App {
     height: usize,
     viewer_id: String,
     store: Option<Store>,
+    /// Stable path retained even while opening the store fails.
+    thread_store_path: PathBuf,
+    /// Whether a real backing file has ever been loaded successfully.
+    store_backing: StoreBacking,
     /// Why the thread store could not open, retained for user-facing diagnostics.
     thread_store_error: Option<StoreError>,
+    /// Current store reload failure, independently of watcher coverage.
+    thread_store_degraded: Option<String>,
+    /// Whether the exact store and its state-directory lifecycle are watched.
+    thread_watch_coverage: ThreadWatchCoverage,
+    /// Current live-update failure, suppressed until its wording changes.
+    thread_updates_degraded: Option<String>,
     /// Store identity and append-log position already reported as activity.
     activity_store: Option<PathBuf>,
     activity_cursor: ActivityCursor,
@@ -615,6 +682,10 @@ impl App {
     /// Start with no document open, for a terminal of `width` by `height`.
     ///
     /// Start the viewer with repository comparison and thread state loaded.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "App construction lists each independent viewer state field explicitly."
+    )]
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -635,6 +706,7 @@ impl App {
             config_path,
         } = options;
         let ignore = watch_ignore(&watch);
+        let (thread_store_path, store_backing) = store_backing(store.as_ref(), &dirs, &record);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
         let comparison = comparison::State::load(&dirs, &workspace, diff.compare());
         let mut app = Self {
@@ -676,7 +748,12 @@ impl App {
             height,
             viewer_id: record.id().to_string(),
             store,
+            thread_store_path,
+            store_backing,
             thread_store_error,
+            thread_store_degraded: None,
+            thread_watch_coverage: ThreadWatchCoverage::Covered,
+            thread_updates_degraded: None,
             activity_store,
             activity_cursor,
             reach: Reach::everything(),
@@ -750,39 +827,174 @@ impl App {
     /// Re-read the thread store after another writer appended to it: a
     /// second viewer, or a headless `--mcp` reply (ADR 0024). Marks and the
     /// expanded threads follow.
-    pub(crate) fn reload_store(&mut self) {
-        let Some(path) = self.store.as_ref().map(|store| store.path().to_path_buf()) else {
-            return;
+    pub(crate) fn reload_store(&mut self) -> StoreReload {
+        self.observe_store_backing();
+        let path = self.thread_store_path.clone();
+        let before = match fs::symlink_metadata(&path) {
+            Ok(metadata) => Some(metadata),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if self.store_backing != StoreBacking::InitiallyAbsent {
+                    self.store_backing = StoreBacking::Missing;
+                    let changed = self.set_thread_store_degraded(Some(format!(
+                        "{} disappeared; keeping the last loaded board",
+                        path.display()
+                    )));
+                    return StoreReload {
+                        changed,
+                        healthy: false,
+                    };
+                }
+                if self.store.is_some() {
+                    let changed = self.clear_store_degradation();
+                    return StoreReload {
+                        changed,
+                        healthy: true,
+                    };
+                }
+                None
+            }
+            Err(error) => {
+                let changed = self.set_thread_store_degraded(Some(format!(
+                    "cannot inspect {}: {error}; keeping the last loaded board",
+                    path.display()
+                )));
+                return StoreReload {
+                    changed,
+                    healthy: false,
+                };
+            }
         };
-        match Store::open(&path) {
+        let store = if path == self.dirs.threads_file(self.record.key()) {
+            Store::reload_workspace(&self.dirs, self.record.key())
+        } else {
+            Store::open(&path)
+        };
+        match store {
             Ok(store) => {
-                let changed = self
-                    .store
-                    .as_ref()
-                    .is_none_or(|old| old.threads() != store.threads());
+                if !stable_store_reload(before.as_ref(), &store, &path) {
+                    let changed = self.set_thread_store_degraded(Some(format!(
+                        "{} changed while it was loading; keeping the last loaded board",
+                        path.display()
+                    )));
+                    return StoreReload {
+                        changed,
+                        healthy: false,
+                    };
+                }
+                let changed = self.store.as_ref().is_none_or(|old| {
+                    old.threads() != store.threads()
+                        || old.archived_threads() != store.archived_threads()
+                });
                 if changed {
                     tracing::info!(threads = store.threads().len(), "thread store reloaded");
                 }
+                self.store_backing = if store.backing_file_observed() {
+                    StoreBacking::Observed
+                } else {
+                    StoreBacking::InitiallyAbsent
+                };
                 self.store = Some(store);
-                self.reconcile_agent_activity();
+                self.thread_store_error = None;
+                let notice_changed = self.clear_store_degradation();
+                let activity_changed = self.reconcile_agent_activity();
                 if !changed {
-                    return;
+                    return StoreReload {
+                        changed: notice_changed || activity_changed,
+                        healthy: true,
+                    };
                 }
                 self.refresh_reach();
                 for index in 0..self.docs.len() {
                     self.refresh_marks(index);
                 }
+                StoreReload {
+                    changed: true,
+                    healthy: true,
+                }
             }
-            Err(error) => tracing::warn!(%error, "cannot reload the thread store"),
+            Err(error) => {
+                tracing::warn!(%error, "cannot reload the thread store");
+                let changed = self.set_thread_store_degraded(Some(format!(
+                    "cannot reload {}: {error}; keeping the last loaded board",
+                    path.display()
+                )));
+                StoreReload {
+                    changed,
+                    healthy: false,
+                }
+            }
+        }
+    }
+
+    fn set_thread_updates_degraded(&mut self, reason: Option<String>) -> bool {
+        if self.thread_updates_degraded == reason {
+            return false;
+        }
+        let recovered = self.thread_updates_degraded.is_some() && reason.is_none();
+        self.thread_updates_degraded = reason;
+        if let Some(reason) = self.thread_updates_degraded.clone() {
+            self.error(format!("thread updates degraded: {reason}; retrying"));
+        } else if recovered {
+            self.notice("thread updates restored");
+        }
+        true
+    }
+
+    pub(super) fn set_thread_store_degraded(&mut self, reason: Option<String>) -> bool {
+        if self.thread_store_degraded == reason {
+            return false;
+        }
+        self.thread_store_degraded = reason;
+        let combined = self.thread_store_degraded.clone().or_else(|| {
+            (self.thread_watch_coverage == ThreadWatchCoverage::Degraded)
+                .then(|| THREAD_WATCH_DEGRADED.to_owned())
+        });
+        self.set_thread_updates_degraded(combined)
+    }
+
+    fn clear_store_degradation(&mut self) -> bool {
+        self.set_thread_store_degraded(None)
+    }
+
+    pub(crate) fn thread_updates_healthy(&self) -> bool {
+        self.thread_updates_degraded.is_none()
+    }
+
+    pub(crate) fn set_thread_watch_coverage(&mut self, covered: bool) -> bool {
+        let coverage = if covered {
+            ThreadWatchCoverage::Covered
+        } else {
+            ThreadWatchCoverage::Degraded
+        };
+        if self.thread_watch_coverage == coverage {
+            return false;
+        }
+        self.thread_watch_coverage = coverage;
+        let combined = self.thread_store_degraded.clone().or_else(|| {
+            (self.thread_watch_coverage == ThreadWatchCoverage::Degraded)
+                .then(|| THREAD_WATCH_DEGRADED.to_owned())
+        });
+        self.set_thread_updates_degraded(combined)
+    }
+
+    fn observe_store_backing(&mut self) {
+        if self.store_backing == StoreBacking::InitiallyAbsent
+            && self
+                .store
+                .as_ref()
+                .is_some_and(Store::backing_file_observed)
+        {
+            self.store_backing = StoreBacking::Observed;
         }
     }
 
     /// Report newly observed agent messages from the append-only store.
-    pub(super) fn reconcile_agent_activity(&mut self) {
+    pub(super) fn reconcile_agent_activity(&mut self) -> bool {
+        self.observe_store_backing();
         let Some(store) = self.store.as_ref() else {
             self.activity_store = None;
             self.activity_cursor = ActivityCursor::default();
-            return;
+            return false;
         };
         let path = store.path();
         let end = store.activity_cursor();
@@ -794,7 +1006,7 @@ impl App {
             );
             self.activity_store = Some(path.to_path_buf());
             self.activity_cursor = end;
-            return;
+            return false;
         }
         if end < self.activity_cursor {
             tracing::warn!(
@@ -804,7 +1016,7 @@ impl App {
                 "thread store activity cursor regressed; reseeding without replay"
             );
             self.activity_cursor = end;
-            return;
+            return false;
         }
 
         let activities = store
@@ -812,7 +1024,7 @@ impl App {
             .collect::<Vec<_>>();
         if activities.is_empty() {
             self.activity_cursor = end;
-            return;
+            return false;
         }
         let notification = if activities.len() == 1 {
             let activity = activities[0];
@@ -840,11 +1052,12 @@ impl App {
         };
         self.push_toast(notification);
         self.activity_cursor = end;
+        true
     }
 
     /// Where the thread store lives, for the watcher.
-    pub(crate) fn store_path(&self) -> Option<&Path> {
-        self.store.as_ref().map(Store::path)
+    pub(crate) fn store_path(&self) -> &Path {
+        &self.thread_store_path
     }
 
     /// `:name`: label this viewer window; empty clears the name.
@@ -885,9 +1098,7 @@ impl App {
         }
         self.watching_root = watching;
         if !watching {
-            self.notice(
-                "cannot watch every visible directory; live updates have partial coverage (--doctor counts the directories)",
-            );
+            self.notice("live updates degraded: workspace watch coverage is partial; retrying");
         }
         true
     }
@@ -1103,7 +1314,10 @@ impl App {
     fn reload_state_named_in(&mut self, events: &[watch::Event]) {
         // The thread store lives outside the root and arrives through the
         // state directory watch (ADR 0024).
-        if events.iter().any(|event| event.path() == self.store_path()) {
+        if events
+            .iter()
+            .any(|event| event.path() == Some(self.store_path()))
+        {
             self.reload_store();
         }
     }
@@ -2104,53 +2318,6 @@ impl App {
         self.show(index);
     }
 
-    /// Answer a socket request that needs app state (ADR 0014).
-    pub(crate) fn handle_request(&mut self, request: Request) -> Response {
-        let response = match request {
-            Request::ThreadReply {
-                thread,
-                author,
-                body,
-                resolve,
-                lines,
-                idempotency_key,
-                caller,
-            } => match self.agent_reply(
-                &thread,
-                author,
-                body,
-                caller,
-                resolve,
-                lines,
-                idempotency_key,
-            ) {
-                Ok((thread, resolution, replayed)) => {
-                    if replayed {
-                        Response::thread_reply_replayed(thread, resolution)
-                    } else {
-                        Response::thread_reply_applied(thread, resolution)
-                    }
-                }
-                Err(error) => Response::Error(error),
-            },
-            Request::ThreadStart {
-                path,
-                range,
-                author,
-                body,
-                idempotency_key,
-                caller,
-            } => match self.agent_start(&path, range, author, body, caller, idempotency_key) {
-                Ok((thread, _)) => Response::Threads(vec![thread]),
-                Err(error) => Response::Error(error),
-            },
-        };
-        if matches!(response, Response::Error(_)) {
-            self.refresh_all_marks();
-        }
-        response
-    }
-
     fn show(&mut self, index: usize) {
         self.directory = None;
         if let Some(previous) = self.current
@@ -2641,7 +2808,7 @@ impl Options {
     pub(crate) fn for_test(root: PathBuf) -> Self {
         use fathomable_core::session::Id;
         Self {
-            record: Record::new(Id::mint(), root.clone(), root, None),
+            record: Record::new(Id::mint(), root.clone(), root),
             // Isolate each test process from older runs' state and permissions.
             dirs: XdgDirs::resolve(|name| {
                 (name == "XDG_STATE_HOME").then(|| {

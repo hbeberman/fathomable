@@ -4,7 +4,7 @@
 //!
 //! [`Watcher`] owns one non-recursive watch per visible workspace
 //! directory, explicit watches along the open file's path, and the watches
-//! on thread, agent, and Git state (ADR 0015, 0024, 0070). Ignored build
+//! on thread and Git state (ADR 0015, 0024, 0070). Ignored build
 //! trees therefore consume neither inotify watches nor event-loop work.
 //! Raw events go into a [`Batch`], which waits out the hint debounce and
 //! then folds a burst into one [`Event`] per path: a plain
@@ -168,6 +168,12 @@ impl Raws {
     pub(crate) fn try_recv(&mut self) -> Option<Raw> {
         self.rx.try_recv().ok()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_channel() -> (mpsc::UnboundedSender<Raw>, Self) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (tx, Self { rx })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,6 +247,8 @@ pub(crate) struct Watcher {
     target_dirs: HashSet<PathBuf>,
     /// Directories holding exact state files.
     state_dirs: HashSet<PathBuf>,
+    /// Parents of state directories, watched for remove/recreate/replacement.
+    state_parent_dirs: HashSet<PathBuf>,
     /// The exact thread-state paths.
     state_files: HashSet<PathBuf>,
     /// Git metadata paths and whether each needs recursive coverage.
@@ -283,7 +291,10 @@ impl Watcher {
                             let _ = tx.send(raw);
                         }
                     }
-                    Err(error) => tracing::warn!(%error, "file watcher error"),
+                    Err(error) => {
+                        tracing::warn!(%error, "file watcher error");
+                        let _ = tx.send(Raw::Rescan);
+                    }
                 },
             )
             .context("cannot create file watcher")?;
@@ -294,6 +305,7 @@ impl Watcher {
                 root_dirs: HashSet::new(),
                 target_dirs: HashSet::new(),
                 state_dirs: HashSet::new(),
+                state_parent_dirs: HashSet::new(),
                 state_files: HashSet::new(),
                 extras: HashMap::new(),
                 watched: HashMap::new(),
@@ -446,8 +458,8 @@ impl Watcher {
     /// the root to the file's parent is covered rather than the file itself.
     pub(crate) fn follow<'a>(&mut self, targets: impl IntoIterator<Item = &'a Path>) -> bool {
         let targets: HashSet<PathBuf> = targets.into_iter().map(Path::to_path_buf).collect();
-        if targets == self.targets {
-            return self.coverage.surface_complete(Surface::Targets);
+        if targets == self.targets && self.coverage.surface_complete(Surface::Targets) {
+            return true;
         }
         let old = std::mem::take(&mut self.target_dirs);
         let mut complete = true;
@@ -497,6 +509,7 @@ impl Watcher {
     /// Whether an event on `path` is one this watcher was asked for.
     pub(crate) fn is_target(&self, path: &Path) -> bool {
         self.state_files.contains(path)
+            || self.state_dirs.contains(path)
             || self.targets.contains(path)
             || self.extras.keys().any(|dir| path.starts_with(dir))
             || path.parent().is_some_and(|parent| {
@@ -541,28 +554,116 @@ impl Watcher {
     /// Watch the directories holding exact state `files`.
     pub(crate) fn watch_state<'a>(&mut self, files: impl IntoIterator<Item = &'a Path>) -> bool {
         let old = std::mem::take(&mut self.state_dirs);
+        let old_parents = std::mem::take(&mut self.state_parent_dirs);
         self.state_files = files.into_iter().map(Path::to_path_buf).collect();
         self.state_dirs = self
             .state_files
             .iter()
             .filter_map(|path| path.parent().map(Path::to_path_buf))
             .collect();
+        self.state_parent_dirs = self
+            .state_dirs
+            .iter()
+            .filter_map(|path| path.parent().map(Path::to_path_buf))
+            .collect();
         let mut complete = true;
-        let wanted: Vec<PathBuf> = self.state_dirs.iter().cloned().collect();
+        let wanted: Vec<PathBuf> = self
+            .state_dirs
+            .iter()
+            .chain(&self.state_parent_dirs)
+            .cloned()
+            .collect();
         for dir in wanted {
+            if !dir.is_dir() {
+                self.forget_watch(&dir);
+                complete = false;
+                continue;
+            }
             if let Err(error) = self.reconcile(&dir) {
                 tracing::warn!(%error, dir = %dir.display(), "cannot watch workspace state");
-                self.state_dirs.remove(&dir);
+                complete = false;
+                continue;
+            }
+            if !dir.is_dir() {
+                self.forget_watch(&dir);
                 complete = false;
             }
         }
-        for stale in old {
-            if !self.state_dirs.contains(&stale) {
+        for stale in old.into_iter().chain(old_parents) {
+            if !self.state_dirs.contains(&stale) && !self.state_parent_dirs.contains(&stale) {
                 let _ = self.reconcile(&stale);
             }
         }
         self.coverage.set(Surface::State, complete);
         complete
+    }
+
+    /// Whether `raw` can change the exact thread store or its directory.
+    pub(crate) fn thread_state_dirty(&self, raw: &Raw) -> bool {
+        let exact = |path: &Path| {
+            self.state_files.contains(path)
+                || self.state_dirs.contains(path)
+                || self.state_parent_dirs.contains(path)
+        };
+        match raw {
+            Raw::Rescan => true,
+            Raw::Modify(path) => {
+                self.state_files.contains(path) || self.state_parent_dirs.contains(path)
+            }
+            Raw::Create(path) | Raw::Remove(path) | Raw::RenameFrom(path) | Raw::RenameTo(path) => {
+                exact(path)
+            }
+            Raw::Rename { from, to } => exact(from) || exact(to),
+        }
+    }
+
+    /// Drop cached state-watch installation after loss or replacement.
+    ///
+    /// `notify` may silently discard a watch when its directory is moved
+    /// or removed. Keeping the path in `watched` would then make a retry a
+    /// false success.
+    pub(crate) fn invalidate_state_watches(&mut self, raw: &Raw) -> bool {
+        let structural_path =
+            |path: &Path| self.state_dirs.contains(path) || self.state_parent_dirs.contains(path);
+        let parent_invalid = match raw {
+            Raw::Create(path) | Raw::Remove(path) | Raw::RenameFrom(path) | Raw::RenameTo(path) => {
+                self.state_parent_dirs.contains(path)
+            }
+            Raw::Rename { from, to } => {
+                self.state_parent_dirs.contains(from) || self.state_parent_dirs.contains(to)
+            }
+            Raw::Modify(path) => self.state_parent_dirs.contains(path),
+            Raw::Rescan => false,
+        };
+        let invalid = matches!(raw, Raw::Rescan)
+            || match raw {
+                Raw::Rescan => true,
+                Raw::Create(path)
+                | Raw::Remove(path)
+                | Raw::RenameFrom(path)
+                | Raw::RenameTo(path) => structural_path(path),
+                Raw::Rename { from, to } => structural_path(from) || structural_path(to),
+                Raw::Modify(path) => self.state_parent_dirs.contains(path),
+            };
+        if !invalid {
+            return false;
+        }
+        let paths: Vec<PathBuf> = if matches!(raw, Raw::Rescan) || parent_invalid {
+            self.state_dirs
+                .iter()
+                .chain(&self.state_parent_dirs)
+                .cloned()
+                .collect()
+        } else {
+            self.state_dirs.iter().cloned().collect()
+        };
+        for path in paths {
+            if self.watched.remove(&path).is_some() {
+                let _ = self.inner.unwatch(&path);
+            }
+        }
+        self.coverage.set(Surface::State, false);
+        true
     }
 
     /// Whether structural `events` can have changed the visible directory
@@ -582,7 +683,8 @@ impl Watcher {
         self.extras.get(path).copied().or_else(|| {
             (self.root_dirs.contains(path)
                 || self.target_dirs.contains(path)
-                || self.state_dirs.contains(path))
+                || self.state_dirs.contains(path)
+                || self.state_parent_dirs.contains(path))
             .then_some(WatchMode::NonRecursive)
         })
     }
@@ -603,6 +705,12 @@ impl Watcher {
         self.inner.watch(path, mode.notify())?;
         self.watched.insert(path.to_path_buf(), mode);
         Ok(())
+    }
+
+    fn forget_watch(&mut self, path: &Path) {
+        if self.watched.remove(path).is_some() {
+            let _ = self.inner.unwatch(path);
+        }
     }
 }
 
@@ -1020,11 +1128,159 @@ mod tests {
     }
 
     #[test]
+    fn failed_target_watch_retries_without_target_set_change() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-target-retry")?;
+        let target = dir.0.join("missing/nested/file.txt");
+        let (mut watcher, _) = Watcher::new()?;
+        assert!(!watcher.follow([target.as_path()]));
+        assert!(!watcher.coverage_complete());
+
+        fs::create_dir_all(dir.0.join("missing/nested"))?;
+        assert!(watcher.follow([target.as_path()]));
+        assert!(watcher.coverage_complete());
+        Ok(())
+    }
+
+    #[test]
     fn state_watch_failure_marks_coverage_partial() -> anyhow::Result<()> {
         let (mut watcher, _) = Watcher::new()?;
         let missing = PathBuf::from("/fathomable-test-missing/state/threads.jsonl");
         assert!(!watcher.watch_state([missing.as_path()]));
         assert!(!watcher.coverage_complete());
+        Ok(())
+    }
+
+    #[test]
+    fn state_directory_loss_invalidates_only_stale_installed_watches() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-state-loss")?;
+        let state = dir.0.join("state");
+        fs::create_dir(&state)?;
+        let file = state.join("threads.jsonl");
+        let (mut watcher, _) = Watcher::new()?;
+        assert!(watcher.watch_state([file.as_path()]));
+        assert!(watcher.watched.contains_key(&state));
+        assert!(watcher.watched.contains_key(&dir.0));
+        assert!(
+            !watcher.thread_state_dirty(&Raw::Modify(state.clone())),
+            "state-directory metadata does not trigger store reload"
+        );
+
+        let removed = Raw::Remove(state.clone());
+        assert!(watcher.thread_state_dirty(&removed));
+        assert!(watcher.invalidate_state_watches(&removed));
+        assert!(!watcher.watched.contains_key(&state));
+        assert!(
+            watcher.watched.contains_key(&dir.0),
+            "the parent remains able to observe recreation"
+        );
+        assert!(!watcher.coverage_complete());
+
+        fs::remove_dir(&state)?;
+        assert!(!watcher.watch_state([file.as_path()]));
+        fs::create_dir(&state)?;
+        assert!(watcher.watch_state([file.as_path()]));
+        assert!(watcher.watched.contains_key(&state));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn real_watcher_observes_store_lifecycle_without_access_feedback() -> anyhow::Result<()> {
+        async fn dirty(watcher: &mut Watcher, raws: &mut super::Raws) -> anyhow::Result<()> {
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    let raw = raws
+                        .recv()
+                        .await
+                        .ok_or_else(|| anyhow::anyhow!("watcher channel closed"))?;
+                    if watcher.thread_state_dirty(&raw) {
+                        watcher.invalidate_state_watches(&raw);
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                }
+            })
+            .await??;
+            Ok(())
+        }
+
+        let dir = TempDir::new("watch-state-smoke")?;
+        let state = dir.0.join("state");
+        fs::create_dir(&state)?;
+        let file = state.join("threads.jsonl");
+        let replacement = state.join("replacement");
+        let (mut watcher, mut raws) = Watcher::new()?;
+        assert!(watcher.watch_state([file.as_path()]));
+
+        fs::write(&file, "one\n")?;
+        dirty(&mut watcher, &mut raws).await?;
+        assert!(watcher.watch_state([file.as_path()]));
+
+        fs::write(&replacement, "two\n")?;
+        fs::rename(&replacement, &file)?;
+        dirty(&mut watcher, &mut raws).await?;
+
+        fs::remove_file(&file)?;
+        dirty(&mut watcher, &mut raws).await?;
+        fs::remove_dir(&state)?;
+        dirty(&mut watcher, &mut raws).await?;
+        assert!(!watcher.watch_state([file.as_path()]));
+
+        fs::create_dir(&state)?;
+        dirty(&mut watcher, &mut raws).await?;
+        assert!(watcher.watch_state([file.as_path()]));
+        fs::write(&file, "three\n")?;
+        dirty(&mut watcher, &mut raws).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn moved_state_parent_reinstalls_watches_on_recreated_tree() -> anyhow::Result<()> {
+        let dir = TempDir::new("watch-state-parent-move")?;
+        let parent = dir.0.join("workspaces");
+        let state = parent.join("workspace");
+        fs::create_dir_all(&state)?;
+        let file = state.join("threads.jsonl");
+        fs::write(&file, "old\n")?;
+        let moved = dir.0.join("moved-with-contents");
+        let (mut watcher, mut raws) = Watcher::new()?;
+        assert!(watcher.watch_state([file.as_path()]));
+
+        fs::rename(&parent, &moved)?;
+        let parent_event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let raw = raws
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("watcher channel closed"))?;
+                if raw.paths().any(|path| path == parent) && watcher.thread_state_dirty(&raw) {
+                    break Ok::<Raw, anyhow::Error>(raw);
+                }
+            }
+        })
+        .await??;
+        assert!(watcher.invalidate_state_watches(&parent_event));
+        assert!(!watcher.watched.contains_key(&parent));
+        assert!(!watcher.watched.contains_key(&state));
+        assert!(!watcher.coverage_complete());
+        assert_eq!(
+            fs::read_to_string(moved.join("workspace/threads.jsonl"))?,
+            "old\n"
+        );
+
+        fs::create_dir_all(&state)?;
+        assert!(watcher.watch_state([file.as_path()]));
+        fs::write(&file, "new\n")?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let raw = raws
+                    .recv()
+                    .await
+                    .ok_or_else(|| anyhow::anyhow!("watcher channel closed"))?;
+                if raw.paths().any(|path| path == file) && watcher.thread_state_dirty(&raw) {
+                    break Ok::<(), anyhow::Error>(());
+                }
+            }
+        })
+        .await??;
         Ok(())
     }
 

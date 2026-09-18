@@ -32,14 +32,14 @@ pub(crate) mod words;
 pub(crate) use draft::{Compose, ComposeTarget};
 
 use std::collections::HashSet;
-use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::{fs, io};
 
 use cap_std::{ambient_authority, fs::Dir};
 use fathomable_core::annotations::{
-    AgentReplyCommand, Author, ContentIdentity, Draft, Lifecycle, LineHashes, LineRange,
-    MessageTarget, OriginVersion, Placement, PlacementContext, ResolutionContext,
-    ResolutionOutcome, Status, Store, Thread, ThreadId, WorkingTreeFacts, WorkingTreeState,
+    Author, ContentIdentity, Draft, Lifecycle, LineHashes, LineRange, MessageTarget, OriginVersion,
+    Placement, PlacementContext, ResolutionContext, Status, Store, Thread, ThreadId,
+    WorkingTreeFacts, WorkingTreeState,
 };
 use fathomable_core::clock::now;
 use fathomable_core::context::map_context;
@@ -254,6 +254,21 @@ impl App {
 
     /// The store, or a status-line notice explaining why there is none.
     pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
+        self.observe_store_backing();
+        if self.store_backing == super::StoreBacking::Observed
+            && fs::symlink_metadata(&self.thread_store_path)
+                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+        {
+            self.store_backing = super::StoreBacking::Missing;
+            self.set_thread_store_degraded(Some(format!(
+                "{} disappeared; keeping the last loaded board",
+                self.thread_store_path.display()
+            )));
+        }
+        if self.store_backing == super::StoreBacking::Missing {
+            self.error("thread store disappeared; keeping the last loaded board read-only");
+            return None;
+        }
         if self.store.is_none() {
             self.error(self.thread_store_unavailable());
         }
@@ -329,7 +344,7 @@ impl App {
             .filter(|thread| self.thread_path(thread) == path)
             .map(|thread| thread.id().clone())
             .collect();
-        let Some(store) = self.store.as_mut() else {
+        let Some(store) = self.store_mut() else {
             return;
         };
         let stale: Vec<(ThreadId, LineRange)> = store
@@ -541,151 +556,6 @@ impl App {
             .filter(|mark| mark.covers(lines))
             .map(|mark| mark.id().clone())
             .collect()
-    }
-
-    /// Apply an agent reply and its lifecycle effects as one core operation.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Keep the socket request fields explicit at the viewer boundary."
-    )]
-    pub(super) fn agent_reply(
-        &mut self,
-        id: &ThreadId,
-        author: Author,
-        body: String,
-        caller: String,
-        resolve: bool,
-        lines: Option<LineRange>,
-        idempotency_key: Option<String>,
-    ) -> Result<(Thread, ResolutionOutcome, bool), String> {
-        let root = self.workspace.root().to_path_buf();
-        let placement_path = self
-            .thread(id)
-            .map(|thread| self.thread_path(thread).to_path_buf())
-            .unwrap_or_default();
-        let head = self.workspace.head_commit();
-        let when = now();
-        let mut command = AgentReplyCommand::new(author, when, body)
-            .at_head(head.clone())
-            .at_checkout(root.display().to_string())
-            .place_in(
-                PlacementContext::new(OriginVersion::working_tree(head))
-                    .at_checkout(root.display().to_string()),
-            );
-        if resolve {
-            command = command.resolve();
-        }
-        if let Some(lines) = lines {
-            command = command.relocate(lines);
-        }
-        if let Some(key) = idempotency_key {
-            command = command.idempotent(caller, key);
-        }
-        let outcome = {
-            let Some(store) = self.store.as_mut() else {
-                return Err(self.thread_store_unavailable());
-            };
-            store.agent_reply(id, command, |_path| {
-                read_checkout_text(&root, &placement_path).map_err(|error| {
-                    fathomable_core::annotations::StoreError::message(format!(
-                        "cannot read {}: {error}",
-                        placement_path.display()
-                    ))
-                })
-            })
-        };
-        self.reconcile_agent_activity();
-        let outcome = outcome.map_err(|error| error.to_string())?;
-        let resolution = *outcome.value();
-        let replayed = outcome.replayed();
-        tracing::info!(%id, ?resolution, replayed, "agent reply added");
-        for index in 0..self.docs.len() {
-            self.refresh_marks(index);
-        }
-        // Answered with the thread as it now stands (ADR 0055).
-        self.store
-            .as_ref()
-            .and_then(|store| store.thread(id))
-            .cloned()
-            .map(|thread| (thread, resolution, replayed))
-            .ok_or_else(|| format!("thread {id} vanished after the reply"))
-    }
-
-    /// An agent starts a thread on `range` of `path` (ADR 0061), or on
-    /// the file as a whole with no range (ADR 0063): the comment is
-    /// stamped with checkout provenance, the viewer toasts it and refreshes
-    /// its marks, without changing any reader-tracking state. Answers with
-    /// the thread as it stands.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "The caller scope follows the owned socket request into this handler."
-    )]
-    pub(super) fn agent_start(
-        &mut self,
-        path: &Path,
-        range: Option<LineRange>,
-        author: Author,
-        body: String,
-        caller: String,
-        idempotency_key: Option<String>,
-    ) -> Result<(Thread, bool), String> {
-        let label = author.to_string();
-        let place = match range {
-            Some(range) => format!("{}:{}", path.display(), range.start()),
-            None => path.display().to_string(),
-        };
-        let result = if let Some(key) = idempotency_key {
-            let probe = match range {
-                Some(range) => Draft::new(author.clone(), path, range, body.clone()),
-                None => Draft::on_file(author.clone(), path, body.clone()),
-            };
-            let replay = {
-                let Some(store) = self.store.as_mut() else {
-                    return Err(self.thread_store_unavailable());
-                };
-                store
-                    .probe_start_idempotency_for_caller(&probe, &caller, &key)
-                    .map_err(|error| error.to_string())?
-            };
-            if let Some(id) = replay {
-                Ok((id, true))
-            } else {
-                let (draft, text) =
-                    agent_start_draft(&mut self.workspace, author, path, range, body)?;
-                let Some(store) = self.store.as_mut() else {
-                    return Err(self.thread_store_unavailable());
-                };
-                store
-                    .annotate_idempotent_for_caller(draft, now(), &caller, &key, |_| {
-                        Ok(text.clone())
-                    })
-                    .map(|outcome| {
-                        let replayed = outcome.replayed();
-                        (outcome.into_value(), replayed)
-                    })
-                    .map_err(|error| error.to_string())
-            }
-        } else {
-            let (draft, text) = agent_start_draft(&mut self.workspace, author, path, range, body)?;
-            let Some(store) = self.store.as_mut() else {
-                return Err(self.thread_store_unavailable());
-            };
-            store
-                .annotate(draft, &text, now())
-                .map(|id| (id, false))
-                .map_err(|error| error.to_string())
-        };
-        self.reconcile_agent_activity();
-        let (id, replayed) = result?;
-        tracing::info!(%id, %place, %label, "agent thread started");
-        self.refresh_reach();
-        self.refresh_all_marks();
-        self.store
-            .as_ref()
-            .and_then(|store| store.thread(&id))
-            .cloned()
-            .map(|thread| (thread, replayed))
-            .ok_or_else(|| format!("thread {id} vanished after the comment"))
     }
 
     /// Move the cursor to the first line of `id`, when the document has it.

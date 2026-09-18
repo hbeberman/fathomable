@@ -12,6 +12,12 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
+all MCP writes use the store directly and viewers reconcile observed
+activity without a socket. Atomic reply authority, original retry outcomes,
+and silent startup/replay behavior remain; observed bursts may aggregate.
+The socket-format rules below are historical.
+
 Origin and resolution context amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): lifecycle and one-shot
 permission remain, while every resolution records its own actor, time,

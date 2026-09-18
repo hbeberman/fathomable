@@ -109,14 +109,26 @@ pub fn ensure_dir(path: impl AsRef<Path>) -> io::Result<()> {
     let path = absolute(path.as_ref())?;
     let uid = effective_uid()?;
     parents(&path, uid, true)?;
-    let metadata = fs::symlink_metadata(&path)?;
+    private_dir(&path, uid)
+}
+
+fn private_dir(path: &Path, uid: u32) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
     if metadata.uid() != uid || metadata.mode() & 0o7777 != 0o700 {
         return Err(denied(
-            &path,
+            path,
             "directory must be owned by the effective UID with mode 0700",
         ));
     }
     Ok(())
+}
+
+/// Validate an existing private application-owned directory without creating it.
+pub(crate) fn validate_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    let path = absolute(path.as_ref())?;
+    let uid = effective_uid()?;
+    parents(&path, uid, false)?;
+    private_dir(&path, uid)
 }
 
 /// Exclusively create a private directory beneath validated existing ancestors.

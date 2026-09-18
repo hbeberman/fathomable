@@ -264,7 +264,6 @@ mod tests {
     use std::path::Path;
 
     use fathomable_core::annotations::Author;
-    use fathomable_core::session::{Request, Response};
 
     use crate::app::testing::{self, source_app};
     use crate::app::{App, Focus};
@@ -295,16 +294,9 @@ mod tests {
                 app.compose_insert("answer");
                 app.compose_submit();
             } else {
-                let reply = app.handle_request(Request::ThreadReply {
-                    thread: id,
-                    author,
-                    caller: "test:viewer".to_owned(),
-                    body: "answer".to_owned(),
-                    resolve: false,
-                    lines: None,
-                    idempotency_key: None,
-                });
-                assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
+                crate::app::testing::external_agent_reply(
+                    &mut app, &id, author, "answer", false, None,
+                )?;
             }
             let entries = app.threads_pane_entries();
             let entry = &entries[0];
@@ -368,16 +360,14 @@ mod tests {
         app.compose_insert("a question long enough to be cut off at the pane's edge");
         app.compose_submit();
         let id = app.file_threads()[0].clone();
-        let reply = app.handle_request(Request::ThreadReply {
-            thread: id.clone(),
-            author: Author::agent("reviewer"),
-            caller: "test:viewer".to_owned(),
-            body: "done, I think, though the empty string still wants a test of its own".to_owned(),
-            resolve: true,
-            lines: None,
-            idempotency_key: None,
-        });
-        assert!(!matches!(reply, Response::Error(_)), "{reply:?}");
+        crate::app::testing::external_agent_reply(
+            &mut app,
+            &id,
+            Author::agent("reviewer"),
+            "done, I think, though the empty string still wants a test of its own",
+            true,
+            None,
+        )?;
         app.open(Path::new("README.md"));
         app.view_mut().goto_source_line(3);
 

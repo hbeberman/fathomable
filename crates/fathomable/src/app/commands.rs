@@ -119,13 +119,6 @@ impl App {
             ),
             ("worktrees".to_owned(), self.worktrees_row()),
             (
-                "socket".to_owned(),
-                self.record.socket().map_or_else(
-                    || "none (XDG_RUNTIME_DIR unset)".to_owned(),
-                    |p| p.display().to_string(),
-                ),
-            ),
-            (
                 "threads".to_owned(),
                 self.store.as_ref().map_or_else(
                     || "unavailable; run :doctor".to_owned(),
@@ -133,11 +126,18 @@ impl App {
                 ),
             ),
             (
+                "thread updates".to_owned(),
+                self.thread_updates_degraded.as_ref().map_or_else(
+                    || "watching exact store".to_owned(),
+                    |reason| format!("degraded: {reason}"),
+                ),
+            ),
+            (
                 "watching".to_owned(),
                 if self.watching_root {
                     "visible workspace files".to_owned()
                 } else {
-                    "partial coverage plus the open file".to_owned()
+                    "partial workspace coverage; retrying".to_owned()
                 },
             ),
             ("changes".to_owned(), self.queue.len().to_string()),

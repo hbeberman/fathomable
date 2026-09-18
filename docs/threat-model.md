@@ -19,7 +19,9 @@ does not become an implemented guarantee by appearing here.
 ## Scope and assets
 
 Fathomable is a Linux, local, read-only workspace viewer with an annotation
-side-car, a stdio MCP endpoint, and local viewer sockets. It is not a hosted
+side-car and a stdio MCP endpoint. MCP accesses the shared store directly;
+there is no viewer socket ([store-only MCP](decisions/0089-store-only-mcp.md)).
+It is not a hosted
 multi-tenant service, an agent sandbox, or an HTTP MCP service
 ([charter](charter.md), [MCP core](decisions/0082-three-tool-review-core.md)).
 A review of this checkout does not cover a separate Kyber product, deployment,
@@ -44,8 +46,7 @@ original checkout is private.
 The OS, administrator, and processes running as the same UID are not isolated
 from one another by Fathomable. Harness identity records provenance, not an
 authentication barrier against a hostile same-UID process
-([socket trust](decisions/0014-mcp-server-and-socket-v1.md),
-[identity](decisions/0080-automatic-chat-identity.md)).
+([identity](decisions/0080-automatic-chat-identity.md)).
 This does not waive the narrower promises made by the MCP API: supported
 callers must still encounter its checkout and user-authority restrictions.
 
@@ -61,7 +62,6 @@ that Fathomable confines these external programs.
 | Workspace to application | The viewed workspace is input; application state lives outside it ([charter](charter.md)). |
 | MCP to checkout source | Fresh agent-driven source reads stay within the bound checkout at the actual read, including symlink resolution. This is not a sandbox for the human viewer or Git ([confined reads](decisions/0061-agents-start-threads.md#checkout-confined-reads)). |
 | MCP to repository history | The server binds one repository and checkout. Linked worktrees intentionally share discussion history; stored history is not a fresh source read ([MCP core](decisions/0082-three-tool-review-core.md), [board history](decisions/0087-global-comparisons-and-board-history.md)). |
-| Local process to viewer socket | Runtime-directory protection and a peer-UID check restrict other OS users; there is no same-UID impersonation guarantee ([socket trust](decisions/0014-mcp-server-and-socket-v1.md)). |
 | Caller to annotation write | Anonymous reads are supported; writes require the supported harness identity channel. Identity does not choose the repository ([identity](decisions/0080-automatic-chat-identity.md), [MCP core](decisions/0082-three-tool-review-core.md)). |
 | Agent reply to user authority | Reading grants nothing. Auto-resolution requires a user-granted one-shot permission; consuming it and recording the result are atomic per item, including replay behavior ([lifecycle](decisions/0085-thread-lifecycle-and-auto-resolve.md)). |
 

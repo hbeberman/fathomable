@@ -10,7 +10,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use fathomable_core::annotations::Store;
+use fathomable_core::annotations::{
+    AgentReplyCommand, Author, LineRange, OriginVersion, PlacementContext, ResolutionOutcome,
+    Store, ThreadId,
+};
+use fathomable_core::clock::now;
 use fathomable_core::workspace::Workspace;
 use fathomable_testing::TempDir;
 
@@ -43,6 +47,49 @@ pub(crate) fn root(dir: &TempDir) -> PathBuf {
 /// The thread store's file inside a [`bare`] or [`workspace`] dir.
 pub(crate) fn store_path(dir: &TempDir) -> PathBuf {
     dir.0.join("state/threads.jsonl")
+}
+
+/// Append an agent reply through a separate store handle, then let the
+/// viewer observe it through its ordinary reload boundary.
+pub(crate) fn external_agent_reply(
+    app: &mut App,
+    id: &ThreadId,
+    author: Author,
+    body: &str,
+    resolve: bool,
+    lines: Option<LineRange>,
+) -> anyhow::Result<ResolutionOutcome> {
+    let root = app.workspace.root().to_path_buf();
+    let path = app
+        .thread(id)
+        .map(|thread| app.thread_path(thread).to_path_buf())
+        .ok_or_else(|| anyhow::anyhow!("thread {id}"))?;
+    let head = app.workspace.head_commit();
+    let mut command = AgentReplyCommand::new(author, now(), body)
+        .at_head(head.clone())
+        .at_checkout(root.display().to_string())
+        .place_in(
+            PlacementContext::new(OriginVersion::working_tree(head))
+                .at_checkout(root.display().to_string()),
+        );
+    if resolve {
+        command = command.resolve();
+    }
+    if let Some(lines) = lines {
+        command = command.relocate(lines);
+    }
+    let mut writer = Store::open(app.store_path())?;
+    let outcome = writer.agent_reply(id, command, |_| {
+        crate::app::threads::read_checkout_text(&root, &path).map_err(|error| {
+            fathomable_core::annotations::StoreError::message(format!(
+                "cannot read {}: {error}",
+                path.display()
+            ))
+        })
+    })?;
+    let resolution = *outcome.value();
+    app.reload_store();
+    Ok(resolution)
 }
 
 /// An `App` on the [`workspace`] in `dir`, 100 by 30, with a thread

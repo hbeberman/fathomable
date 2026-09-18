@@ -25,6 +25,10 @@ Amended 2026-09-15 by [0082](0082-three-tool-review-core.md): remove the
 `watch.debounce` remain. Removed settings are unknown-key errors; the
 upgrade never rewrites installed configuration.
 
+Amended 2026-09-18 by [0089](0089-store-only-mcp.md): `watch.debounce`
+continues to group workspace and Git changes, while thread-store refresh
+bypasses that quiet period. No new setting is required.
+
 ## Context
 
 Fathomable needs user configuration (theme, follow behavior, later keymaps)

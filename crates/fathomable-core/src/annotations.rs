@@ -2762,6 +2762,8 @@ impl Event {
 #[derive(Debug)]
 pub struct Store {
     path: PathBuf,
+    /// Whether this handle has observed its backing file.
+    backing_observed: bool,
     /// Non-archived repository-board threads, in creation order.
     threads: Vec<Thread>,
     /// Archived threads retained for exact-ID and history inspection.
@@ -2787,6 +2789,19 @@ impl Store {
         Self::open(dirs.threads_file(key))
     }
 
+    /// Reload a workspace store without creating missing state directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for missing or unsafe application-owned directories,
+    /// or the errors of [`Self::open`].
+    pub fn reload_workspace(dirs: &crate::XdgDirs, key: &Path) -> Result<Self, StoreError> {
+        let directory = dirs.workspace_dir(key);
+        dirs.validate_state_dir(&directory)
+            .map_err(|error| StoreError::io(&directory, error))?;
+        Self::open(dirs.threads_file(key))
+    }
+
     /// Load the store at `path`, or start empty when the file is missing.
     ///
     /// Existing files must be private, owned by the effective UID and not
@@ -2803,6 +2818,7 @@ impl Store {
         let path = path.into();
         let mut store = Self {
             path,
+            backing_observed: false,
             threads: Vec::new(),
             archived: Vec::new(),
             deleted: HashSet::new(),
@@ -2811,7 +2827,10 @@ impl Store {
             agent_activity: Vec::new(),
         };
         let mut file = match crate::private_state::open_read(&store.path) {
-            Ok(file) => file,
+            Ok(file) => {
+                store.backing_observed = true;
+                file
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(store),
             Err(error) => return Err(StoreError::io(&store.path, error)),
         };
@@ -2832,6 +2851,7 @@ impl Store {
             .map_err(|error| StoreError::io(&self.path, error))?;
         let mut loaded = Self {
             path: self.path.clone(),
+            backing_observed: self.backing_observed,
             threads: Vec::new(),
             archived: Vec::new(),
             deleted: HashSet::new(),
@@ -2867,6 +2887,7 @@ impl Store {
     fn lock_for_write(&mut self) -> Result<File, StoreError> {
         let mut file = crate::private_state::open_append(&self.path)
             .map_err(|error| StoreError::io(&self.path, error))?;
+        self.backing_observed = true;
         file.lock()
             .map_err(|error| StoreError::io(&self.path, error))?;
         if let Err(error) = self.load_locked(&mut file) {
@@ -2880,6 +2901,12 @@ impl Store {
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether this handle has observed its backing file.
+    #[must_use]
+    pub const fn backing_file_observed(&self) -> bool {
+        self.backing_observed
     }
 
     /// Every non-archived board thread, oldest first.

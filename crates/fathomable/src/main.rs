@@ -59,7 +59,7 @@ struct Cli {
     #[arg(long)]
     doctor: bool,
 
-    /// List known workspaces, their viewer records, and their sockets.
+    /// List known workspaces and their viewer records.
     #[arg(long)]
     viewers: bool,
 
@@ -163,10 +163,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     // The state is keyed by the git common dir, shared by every worktree
     // (ADR 0070).
     let key = workspace.key().to_path_buf();
-    // One socket per viewer, grouped under the workspace (ADR 0024).
-    let socket = dirs.viewer_socket(&key, std::process::id());
-    let record = Record::new(id, key.clone(), workspace.root().to_path_buf(), socket)
-        .with_name(cli.name.clone());
+    let record =
+        Record::new(id, key.clone(), workspace.root().to_path_buf()).with_name(cli.name.clone());
     record.write(dirs)?;
     tracing::info!(id = %record.id(), name = ?record.name(), root = %record.root().display(), "viewer recorded");
     let marker = Marker::new(key.clone(), worktree_roots(&workspace));
@@ -291,13 +289,10 @@ fn list_viewers(dirs: &XdgDirs) -> ExitCode {
                 String::new()
             };
             println!(
-                "  {}\t{}\t{}\t{}{on}",
+                "  {}\t{}\t{}{on}",
                 record.name().unwrap_or("-"),
                 record.id(),
                 if record.is_alive() { "live" } else { "dead" },
-                record
-                    .socket()
-                    .map_or_else(|| "(no socket)".to_owned(), |p| p.display().to_string()),
             );
         }
         if !any {

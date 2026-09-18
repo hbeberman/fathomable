@@ -92,3 +92,4 @@ supersede rather than edit history.
 - [0086 One thread summary and its actions](0086-one-thread-summary-and-its-actions.md)
 - [0087 Global comparisons and deliberate board history](0087-global-comparisons-and-board-history.md)
 - [0088 Bundled license notices](0088-bundled-licenses.md)
+- [0089 Store-only MCP and independent thread refresh](0089-store-only-mcp.md)

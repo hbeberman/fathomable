@@ -455,3 +455,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     offline first- and third-party attribution embedded in the executable;
     contributor tooling maintains the locked notice bundle
     ([0088](decisions/0088-bundled-licenses.md)).
+80. **Store-only MCP.** All three MCP tools use the bound repository store
+    without viewer routing or sockets. Thread notifications bypass workspace
+    debounce, known watch failures retry explicitly, and failed refreshes
+    retain the last-good board. Viewer metadata and annotation format 5 remain
+    ([0089](decisions/0089-store-only-mcp.md)).

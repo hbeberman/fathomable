@@ -7,7 +7,6 @@ use std::path::{Component, Path, PathBuf};
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{Author, Draft, LineRange, MAX_MESSAGE_BYTES, Store, Thread};
 use fathomable_core::clock::now;
-use fathomable_core::session::{Request, Response};
 use fathomable_core::workspace::Workspace;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::CallToolResult;
@@ -18,11 +17,11 @@ use serde_json::json;
 
 use crate::app::threads::{agent_start_draft, read_checkout_text};
 
+use super::Server;
 use super::tools::{
     BatchIssue, Shown, Tree, WriteOutput, check_path, failure, invalid_batch,
     require_line_for_end_line, shown_lines,
 };
-use super::{Server, call};
 
 /// One comment in a `thread_start` batch.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
@@ -89,7 +88,12 @@ impl Server {
             open_world_hint = false
         )
     )]
-    async fn thread_start(
+    #[expect(
+        clippy::too_many_lines,
+        clippy::needless_pass_by_value,
+        reason = "The MCP macro supplies an owned request context, and the handler keeps batch validation together."
+    )]
+    fn thread_start(
         &self,
         Parameters(p): Parameters<StartParams>,
         context: RequestContext<RoleServer>,
@@ -180,7 +184,7 @@ impl Server {
         let mut lines = Vec::new();
         let mut started = Vec::new();
         for (index, item) in placed {
-            match self.start_one(author.clone(), caller.clone(), item).await {
+            match self.start_one(author.clone(), &caller, item) {
                 Ok(thread) => started.push(thread),
                 Err(error) => {
                     lines.extend(shown_lines(&started, &mut tree, "started"));
@@ -205,42 +209,21 @@ impl Server {
 }
 
 impl Server {
-    /// Write one validated comment through a viewer or the store.
-    async fn start_one(
-        &self,
-        author: Author,
-        caller: String,
-        item: Placed,
-    ) -> Result<Thread, String> {
+    /// Write one validated comment to the shared store.
+    fn start_one(&self, author: Author, caller: &str, item: Placed) -> Result<Thread, String> {
         let place = match item.range {
             Some(range) => format!("{}:{}", item.path.display(), range.start()),
             None => item.path.display().to_string(),
         };
-        let request = Request::ThreadStart {
-            path: item.path.clone(),
-            range: item.range,
-            author: author.clone(),
-            caller: caller.clone(),
-            body: item.body.clone(),
-            idempotency_key: item.idempotency_key.clone(),
-        };
-        let outcome = match self.target.viewer(&self.dirs, &self.target.root) {
-            Some(viewer) => call(&viewer, &request).await,
-            None => headless_start(
-                &self.dirs,
-                &self.target.key,
-                &self.target.root,
-                author,
-                &caller,
-                item,
-            )
-            .map(|thread| Response::Threads(vec![thread])),
-        };
-        match outcome {
-            Ok(Response::Threads(mut threads)) if threads.len() == 1 => Ok(threads.remove(0)),
-            Ok(Response::Error(message)) | Err(message) => Err(format!("{place}: {message}")),
-            Ok(other) => Err(format!("{place}: unexpected reply {other:?}")),
-        }
+        headless_start(
+            &self.dirs,
+            &self.target.key,
+            &self.target.root,
+            author,
+            caller,
+            item,
+        )
+        .map_err(|message| format!("{place}: {message}"))
     }
 }
 
@@ -380,7 +363,7 @@ fn headless_start(
             .annotate(draft, &text, now())
             .map_err(|e| e.to_string())?
     };
-    tracing::info!(%id, path = %item.path.display(), "agent thread started headlessly");
+    tracing::info!(%id, path = %item.path.display(), "agent thread started");
     store
         .thread(&id)
         .cloned()

@@ -1,11 +1,10 @@
-// @okf-doc: /decisions/0014-mcp-server-and-socket-v1.md
+// @okf-doc: /decisions/0089-store-only-mcp.md
 //! The repository-bound stdio MCP review server.
 //!
 //! Startup binds one server to the checkout containing `--mcp DIR`, or
 //! the process working directory when `DIR` is omitted. Calls cannot route
 //! to another checkout. Reads use the shared non-archived board directly and
-//! project placement against the bound checkout; writes use a viewer already
-//! on that checkout when one is available, and otherwise write the shared
+//! project placement against the bound checkout; writes use the same shared
 //! store directly.
 
 mod identity;
@@ -18,8 +17,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{Author, Store, Thread};
-use fathomable_core::session::{Record, Request, Response};
 use fathomable_core::workspace::Workspace;
+use identity::Launch;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::model::{
     CacheScope, Implementation, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
@@ -27,10 +26,6 @@ use rmcp::model::{
 };
 use rmcp::service::RequestContext;
 use rmcp::{ErrorData, RoleServer, ServerHandler, ServiceExt, tool_handler};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
-
-use identity::Launch;
 
 /// Run the server on stdin/stdout until the client disconnects.
 pub(crate) fn run(dirs: &XdgDirs, root: Option<&Path>) -> anyhow::Result<()> {
@@ -95,13 +90,6 @@ impl Target {
         );
         Ok(target)
     }
-
-    /// A live viewer already showing `root`, when one exists.
-    fn viewer(&self, dirs: &XdgDirs, root: &Path) -> Option<Record> {
-        Record::live(dirs)
-            .into_iter()
-            .find(|viewer| viewer.key() == self.key && viewer.root() == root)
-    }
 }
 
 impl Server {
@@ -144,28 +132,6 @@ impl Server {
         let store = headless_store(&self.dirs, &self.target)?;
         Ok(store.all_threads().cloned().collect())
     }
-}
-
-/// One request-response exchange with a viewer's socket.
-async fn call(viewer: &Record, request: &Request) -> Result<Response, String> {
-    let socket = viewer
-        .socket()
-        .ok_or_else(|| format!("viewer {} has no socket", viewer.id()))?;
-    exchange(socket, &request.to_line())
-        .await
-        .map_err(|error| format!("viewer {}: {error}", viewer.id()))
-}
-
-async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
-    let stream = UnixStream::connect(socket).await?;
-    let (reader, mut writer) = stream.into_split();
-    writer.write_all(format!("{line}\n").as_bytes()).await?;
-    let mut reply = String::new();
-    BufReader::new(reader).read_line(&mut reply).await?;
-    reply
-        .trim_end()
-        .parse::<Response>()
-        .map_err(std::io::Error::other)
 }
 
 /// Open the shared store without persisting thread housekeeping.

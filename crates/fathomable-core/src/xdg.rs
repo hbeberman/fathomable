@@ -9,25 +9,11 @@ use std::path::{Path, PathBuf};
 /// The application subdirectory under each XDG base directory.
 pub(crate) const APP_DIR: &str = "fathomable";
 
-/// The longest path a Unix socket can be bound to on Linux: `sun_path`
-/// holds 108 bytes including the terminator, so binding a path of 108
-/// bytes or more fails with "path must be shorter than `SUN_LEN`".
-pub const SOCKET_PATH_MAX: usize = 107;
-
-/// Whether `path` is short enough to bind a Unix socket to
-/// ([`SOCKET_PATH_MAX`]). A viewer whose socket path is longer runs
-/// without a socket, and the tools fall back to the store.
-#[must_use]
-pub fn socket_path_fits(path: &Path) -> bool {
-    path.as_os_str().len() <= SOCKET_PATH_MAX
-}
-
 /// XDG base directories relevant to Fathomable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XdgDirs {
     config_home: PathBuf,
     state_home: PathBuf,
-    runtime_dir: Option<PathBuf>,
 }
 
 impl XdgDirs {
@@ -41,9 +27,8 @@ impl XdgDirs {
     ///
     /// `XDG_CONFIG_HOME` and `XDG_STATE_HOME` fall back to `$HOME/.config`
     /// and `$HOME/.local/state` per the XDG Base Directory specification.
-    /// `XDG_RUNTIME_DIR` has no fallback and is `None` when unset. Empty
-    /// values are treated as unset. When `HOME` is also unset the fallbacks
-    /// are relative paths.
+    /// Empty values are treated as unset. When `HOME` is also unset the
+    /// fallbacks are relative paths.
     pub fn resolve(lookup: impl Fn(&str) -> Option<OsString>) -> Self {
         let get = |name: &str| {
             lookup(name)
@@ -54,7 +39,6 @@ impl XdgDirs {
         Self {
             config_home: get("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config")),
             state_home: get("XDG_STATE_HOME").unwrap_or_else(|| home.join(".local/state")),
-            runtime_dir: get("XDG_RUNTIME_DIR"),
         }
     }
 
@@ -86,6 +70,18 @@ impl XdgDirs {
     /// Refuses paths outside this state root, links, unsafe ownership or modes,
     /// and filesystem errors. Existing state is never repaired or migrated.
     pub fn prepare_state_dir(&self, directory: impl AsRef<Path>) -> io::Result<()> {
+        self.visit_state_dirs(directory, |path| crate::private_state::ensure_dir(path))
+    }
+
+    pub(crate) fn validate_state_dir(&self, directory: impl AsRef<Path>) -> io::Result<()> {
+        self.visit_state_dirs(directory, |path| crate::private_state::validate_dir(path))
+    }
+
+    fn visit_state_dirs(
+        &self,
+        directory: impl AsRef<Path>,
+        mut visit: impl FnMut(&Path) -> io::Result<()>,
+    ) -> io::Result<()> {
         let root = self.state_dir();
         let relative = directory.as_ref().strip_prefix(&root).map_err(|_prefix| {
             io::Error::other("directory is outside the Fathomable state root")
@@ -96,11 +92,11 @@ impl XdgDirs {
         {
             return Err(io::Error::other("invalid Fathomable state directory"));
         }
-        crate::private_state::ensure_dir(&root)?;
+        visit(&root)?;
         let mut path = root;
         for part in relative.components() {
             path.push(part);
-            crate::private_state::ensure_dir(&path)?;
+            visit(&path)?;
         }
         Ok(())
     }
@@ -153,21 +149,5 @@ impl XdgDirs {
     #[must_use]
     pub fn comparison_dir(&self, key: &Path) -> PathBuf {
         self.workspace_dir(key).join("comparison")
-    }
-
-    /// `$XDG_RUNTIME_DIR/fathomable`, or `None` when the runtime dir is unset.
-    #[must_use]
-    pub fn runtime_dir(&self) -> Option<PathBuf> {
-        self.runtime_dir.as_ref().map(|dir| dir.join(APP_DIR))
-    }
-
-    /// `$XDG_RUNTIME_DIR/fathomable/<hash>/<pid>.sock`, one viewer's socket
-    /// under its workspace (ADR 0024); `None` when the runtime dir is unset.
-    /// A long runtime dir can push it past [`socket_path_fits`].
-    #[must_use]
-    pub fn viewer_socket(&self, key: &Path, pid: u32) -> Option<PathBuf> {
-        let hash = crate::annotations::short_hash(key.as_os_str().as_encoded_bytes());
-        self.runtime_dir()
-            .map(|dir| dir.join(hash).join(format!("{pid}.sock")))
     }
 }

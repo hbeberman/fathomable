@@ -6,7 +6,6 @@ resource: crates/fathomable-core/src/session.rs
 related_resources:
   - crates/fathomable-core/src/annotations.rs
   - crates/fathomable-core/src/config.rs
-  - crates/fathomable/src/app/socket.rs
   - crates/fathomable/src/app/mod.rs
   - scripts/demo-repo.sh
 tags:
@@ -19,6 +18,11 @@ tags:
 # 0062 One version, no compatibility before the first tag
 
 Status: accepted (2026-09-05)
+
+Socket rules superseded 2026-09-18 by [0089](0089-store-only-mcp.md):
+the internal transport and its version counter are removed. Annotation
+format 5, exact-format guards, and operator-only resets are unchanged.
+Viewer records remain without socket metadata.
 
 Viewer records and workspace markers follow the
 [private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy):

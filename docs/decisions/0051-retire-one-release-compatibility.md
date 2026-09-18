@@ -2,7 +2,6 @@
 type: Decision
 title: Retire the one-release compatibility
 description: The old spellings kept "for one release" by the vocabulary rename go before any release exists — the `annotation.*` and `ui.sidebar*` theme keys, the hidden `--sessions` flag, the sweep of the old `sessions/` directory, and the socket op `annotations_list`, which becomes `threads_list` to match the tool it serves.
-resource: crates/fathomable/src/app/socket.rs
 related_resources:
   - crates/fathomable-core/src/theme.rs
   - crates/fathomable-core/src/session.rs
@@ -19,6 +18,10 @@ tags:
 # 0051 Retire the one-release compatibility
 
 Status: accepted (2026-09-04)
+
+Socket surface retired 2026-09-18 by [0089](0089-store-only-mcp.md).
+There is no replacement socket protocol or compatibility reader. The other
+retirements in this record remain; the socket narrative below is historical.
 
 ## Context
 

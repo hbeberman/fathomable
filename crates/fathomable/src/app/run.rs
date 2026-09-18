@@ -1,6 +1,6 @@
 // @okf-doc: /decisions/0012-workspace-mode.md
 //! The viewer's main loop: the terminal, the tokio loop, the watcher and
-//! socket wiring, and the effects a key can ask the loop to perform.
+//! watcher wiring, and the effects a key can ask the loop to perform.
 //!
 //! [`run`] owns the terminal for the life of the viewer; everything the
 //! loop hands the app goes through [`App`] in the parent module, so the
@@ -14,7 +14,7 @@ use std::process::{Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use crossterm::cursor::SetCursorStyle;
@@ -25,7 +25,6 @@ use crossterm::event::{
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use fathomable_core::session::Record;
 use fathomable_core::theme::Theme;
 use fathomable_core::workspace::Workspace;
 use ratatui::Terminal;
@@ -36,7 +35,7 @@ use tokio::sync::mpsc;
 use crate::crash;
 
 use super::view::Effect;
-use super::{App, Options, clipboard, highlight, input, socket, watch};
+use super::{App, Options, clipboard, highlight, input, watch};
 
 mod draft;
 
@@ -197,7 +196,7 @@ fn spawn_input() -> anyhow::Result<Input> {
 
 /// `Ctrl-e` in the draft: hand it to `$VISUAL` or `$EDITOR`
 /// on a temporary file and load the result back (ADR 0018). The comment
-/// is not submitted; the socket and watcher wait while the editor runs.
+/// is not submitted; the event loop waits while the editor runs.
 async fn edit_draft(
     app: &mut App,
     input: &Input,
@@ -245,6 +244,9 @@ async fn edit_file(
     TerminalGuard::resume()?;
     input.resume();
     terminal.clear().context("cannot redraw after the editor")?;
+    // The editor blocks this current-thread loop. Reconcile durable writes
+    // before returning to the normal watcher turn.
+    app.reload_store();
     match status {
         Ok(status) if status.success() => {
             let text = fs::read_to_string(path)
@@ -258,36 +260,15 @@ async fn edit_file(
     Ok(())
 }
 
-/// Serve the viewer socket, or say why there is none: the message is
-/// shown in the viewer, since a socket that silently failed leaves the
-/// tools falling back to the store with nothing to tell the user.
-fn serve_socket(
-    record: &Record,
-    app: mpsc::Sender<socket::Envelope>,
-) -> Result<socket::Serving, String> {
-    let Some(path) = record.socket() else {
-        tracing::warn!("XDG_RUNTIME_DIR unset; no viewer socket");
-        return Err(
-            "no viewer socket: XDG_RUNTIME_DIR is unset; agents use the store only".to_owned(),
-        );
-    };
-    match socket::Listener::bind(path) {
-        Ok(listener) => Ok(listener.serve(app)),
-        Err(error) => {
-            tracing::warn!(%error, path = %path.display(), "cannot listen on the viewer socket");
-            Err(format!(
-                "no viewer socket ({error}; {}); agents use the store only",
-                path.display()
-            ))
-        }
-    }
-}
+/// Maximum raw notifications consumed in one loop turn.
+///
+/// This is large enough to coalesce ordinary editor bursts while ensuring a
+/// continuously refilled channel cannot monopolize terminal input or timers.
+const RAW_DRAIN_LIMIT: usize = 256;
 
-/// Hold the served socket for the viewer's lifetime, or show the user
-/// why there is none.
-fn keep_socket(app: &mut App, socket: Result<socket::Serving, String>) -> Option<socket::Serving> {
-    socket.map_err(|why| app.notice(why)).ok()
-}
+/// Fixed recovery cadence while watcher coverage or store reconciliation is
+/// degraded. Incoming events never move an already scheduled deadline.
+const WATCH_RETRY: Duration = Duration::from_secs(1);
 
 #[expect(
     clippy::too_many_lines,
@@ -299,10 +280,7 @@ async fn run_async(
     theme: &Theme,
     open: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let (mut doc_watcher, mut reload_rx) = watch::Watcher::new()?;
-    let (request_tx, mut request_rx) = mpsc::channel::<socket::Envelope>(16);
     let (opener_tx, mut opener_rx) = mpsc::channel::<Result<(), String>>(16);
-    let socket = serve_socket(&options.record, request_tx);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
 
@@ -321,11 +299,28 @@ async fn run_async(
         usize::from(size.height),
         options,
     );
-    start_watching(&mut app, &mut doc_watcher);
     app.start_on(open);
     let mut highlights =
         highlight::Worker::new().context("cannot start syntax highlight worker")?;
-    let _socket = keep_socket(&mut app, socket);
+    let (mut doc_watcher, mut reload_rx) = match install_watcher(&mut app) {
+        Ok((watcher, raws, healthy)) => {
+            if !healthy {
+                app.set_watching_root(false);
+            }
+            (Some(watcher), Some(raws))
+        }
+        Err(error) => {
+            tracing::warn!(%error, "cannot start file watcher");
+            app.set_watching_root(false);
+            app.set_thread_watch_coverage(false);
+            (None, None)
+        }
+    };
+    let mut watch_retry_at = if watch_health(&app, doc_watcher.as_ref()) {
+        None
+    } else {
+        schedule_retry(None, Instant::now())
+    };
 
     let mut batch = watch::Batch::default();
     let mut redraw = true;
@@ -333,9 +328,16 @@ async fn run_async(
         highlights
             .submit(app.take_highlight_jobs())
             .context("syntax highlight worker stopped")?;
-        redraw |= rewatch(&mut app, &mut doc_watcher);
-        sync_loaded_watches(&app, &mut doc_watcher);
-        redraw |= app.set_watching_root(doc_watcher.coverage_complete());
+        if let Some(watcher) = doc_watcher.as_mut() {
+            redraw |= rewatch(&mut app, watcher);
+            sync_loaded_watches(&app, watcher);
+            redraw |= app.set_watching_root(watcher.coverage_complete());
+        }
+        if watch_health(&app, doc_watcher.as_ref()) {
+            watch_retry_at = None;
+        } else if watch_retry_at.is_none() {
+            watch_retry_at = schedule_retry(watch_retry_at, Instant::now());
+        }
         if redraw {
             app.settle();
             draw(&app, &theme, &mut terminal)?;
@@ -347,23 +349,34 @@ async fn run_async(
                 Some(Err(error)) => return Err(error).context("reading terminal input"),
                 None => (Effect::Quit, false),
             },
-            notice = reload_rx.recv() => {
-                let changed = notice.is_some_and(|raw| {
-                    enqueue_raws(
+            notice = next_raw(&mut reload_rx) => {
+                let mut changed = false;
+                if let Some(raw) = notice
+                    && let Some(watcher) = doc_watcher.as_mut()
+                {
+                    let queued = enqueue_raws(
                         &mut app,
-                        &mut doc_watcher,
+                        watcher,
                         &mut reload_rx,
                         &mut batch,
                         raw,
                         hint_debounce,
-                    )
-                });
+                    );
+                    changed |= queued.changed;
+                    if queued.thread_dirty {
+                        let reconciled = reconcile_thread_updates(&mut app, watcher);
+                        changed |= reconciled.changed;
+                    }
+                }
                 // Raw notices only fill the debounce batch. They do not
                 // redraw a frame whose observable state has not changed.
                 (Effect::None, changed)
             }
             () = batch.settled() => {
-                (Effect::None, apply_batch(&mut app, &mut doc_watcher, &mut batch))
+                let changed = doc_watcher.as_mut().is_some_and(|watcher| {
+                    apply_batch(&mut app, watcher, &mut batch)
+                });
+                (Effect::None, changed)
             }
             () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
                 app.tick();
@@ -380,13 +393,6 @@ async fn run_async(
                 let changed = app.apply_highlight(highlighted);
                 (Effect::None, changed)
             }
-            envelope = request_rx.recv() => {
-                if let Some(socket::Envelope { request, reply }) = envelope {
-                    let response = app.handle_request(request);
-                    let _ = reply.send(response);
-                }
-                (Effect::None, true)
-            }
             result = opener_rx.recv() => {
                 let changed = if let Some(Err(why)) = result {
                     app.notice(why);
@@ -394,6 +400,29 @@ async fn run_async(
                 } else {
                     false
                 };
+                (Effect::None, changed)
+            }
+            () = retry_deadline(watch_retry_at) => {
+                watch_retry_at = None;
+                let changed = match doc_watcher.as_mut() {
+                    Some(watcher) => retry_watches(&mut app, watcher),
+                    None => match install_watcher(&mut app) {
+                        Ok((watcher, raws, _healthy)) => {
+                            doc_watcher = Some(watcher);
+                            reload_rx = Some(raws);
+                            true
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "cannot recover file watcher");
+                            app.set_watching_root(false);
+                            app.set_thread_watch_coverage(false);
+                            false
+                        }
+                    },
+                };
+                if !watch_health(&app, doc_watcher.as_ref()) {
+                    watch_retry_at = schedule_retry(watch_retry_at, Instant::now());
+                }
                 (Effect::None, changed)
             }
             _ = sigterm.recv() => {
@@ -434,6 +463,20 @@ fn sync_loaded_watches(app: &App, watcher: &mut watch::Watcher) {
     watcher.follow(loaded.iter().map(std::path::PathBuf::as_path));
 }
 
+async fn next_raw(raws: &mut Option<watch::Raws>) -> Option<watch::Raw> {
+    match raws {
+        Some(raws) => raws.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn retry_deadline(deadline: Option<Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// Apply one debounced watcher batch and repair structural watch changes.
 fn apply_batch(app: &mut App, watcher: &mut watch::Watcher, batch: &mut watch::Batch) -> bool {
     let mut events = batch.take(|path| app.loaded_fingerprint(path), app.max_file_bytes());
@@ -452,18 +495,19 @@ fn apply_batch(app: &mut App, watcher: &mut watch::Watcher, batch: &mut watch::B
 fn enqueue_raws(
     app: &mut App,
     watcher: &mut watch::Watcher,
-    incoming: &mut watch::Raws,
+    incoming: &mut Option<watch::Raws>,
     batch: &mut watch::Batch,
     first: watch::Raw,
     debounce: Duration,
-) -> bool {
-    let mut raws = vec![first];
-    while let Some(raw) = incoming.try_recv() {
-        raws.push(raw);
-    }
+) -> Enqueued {
+    let raws = drain_raws(incoming, first);
     let mut changed = false;
+    let mut thread_dirty = false;
     let mut synthetic = Vec::new();
     for raw in raws {
+        let state_dirty = watcher.thread_state_dirty(&raw);
+        thread_dirty |= state_dirty;
+        watcher.invalidate_state_watches(&raw);
         let arrived = match &raw {
             watch::Raw::Create(path)
             | watch::Raw::RenameTo(path)
@@ -477,7 +521,10 @@ fn enqueue_raws(
                 changed |= app.set_watching_root(false);
             }
         }
-        if watcher.accepts(&raw) && app.raw_is_relevant(&raw) {
+        if watcher.accepts(&raw)
+            && app.raw_is_relevant(&raw)
+            && (!state_dirty || matches!(raw, watch::Raw::Rescan))
+        {
             batch.push(raw, debounce);
         }
     }
@@ -486,22 +533,72 @@ fn enqueue_raws(
             batch.push(raw, debounce);
         }
     }
-    changed
+    Enqueued {
+        changed,
+        thread_dirty,
+    }
+}
+
+fn drain_raws(incoming: &mut Option<watch::Raws>, first: watch::Raw) -> Vec<watch::Raw> {
+    let mut raws = vec![first];
+    for _ in 1..RAW_DRAIN_LIMIT {
+        let Some(raw) = incoming.as_mut().and_then(watch::Raws::try_recv) else {
+            break;
+        };
+        raws.push(raw);
+    }
+    raws
+}
+
+fn schedule_retry(current: Option<Instant>, now: Instant) -> Option<Instant> {
+    current.or(Some(now + WATCH_RETRY))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Enqueued {
+    changed: bool,
+    thread_dirty: bool,
 }
 
 /// The watches a viewer starts with: visible workspace directories, the
 /// thread store, and worktree Git paths.
-fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) {
+fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) -> bool {
     let watching = app.sync_workspace_watches(doc_watcher);
-    let state: Vec<std::path::PathBuf> = app
-        .store_path()
-        .map(Path::to_path_buf)
-        .into_iter()
-        .collect();
-    doc_watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
+    let state = [app.store_path().to_path_buf()];
+    let state_covered = doc_watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
     app.take_rewatch();
     doc_watcher.watch_worktrees(app.worktree_watch_paths());
     app.set_watching_root(watching && doc_watcher.coverage_complete());
+    let reloaded = app.reload_store();
+    app.set_thread_watch_coverage(state_covered && reloaded.healthy);
+    state_covered && reloaded.healthy && doc_watcher.coverage_complete()
+}
+
+fn install_watcher(app: &mut App) -> anyhow::Result<(watch::Watcher, watch::Raws, bool)> {
+    let (mut watcher, raws) = watch::Watcher::new()?;
+    let healthy = start_watching(app, &mut watcher);
+    Ok((watcher, raws, healthy))
+}
+
+fn reconcile_thread_updates(app: &mut App, watcher: &mut watch::Watcher) -> super::StoreReload {
+    let state = [app.store_path().to_path_buf()];
+    let covered = watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
+    let mut reloaded = app.reload_store();
+    reloaded.changed |= app.set_thread_watch_coverage(covered && reloaded.healthy);
+    reloaded
+}
+
+fn retry_watches(app: &mut App, watcher: &mut watch::Watcher) -> bool {
+    let root = app.sync_workspace_watches(watcher);
+    watcher.watch_worktrees(app.worktree_watch_paths());
+    sync_loaded_watches(app, watcher);
+    app.set_watching_root(root && watcher.coverage_complete());
+    let reloaded = reconcile_thread_updates(app, watcher);
+    reloaded.changed
+}
+
+fn watch_health(app: &App, watcher: Option<&watch::Watcher>) -> bool {
+    app.thread_updates_healthy() && watcher.is_some_and(watch::Watcher::coverage_complete)
 }
 
 /// Move the watcher after the app re-rooted, or the worktree set
@@ -516,7 +613,8 @@ fn rewatch(app: &mut App, doc_watcher: &mut watch::Watcher) -> bool {
         changed |= app.set_watching_root(watching && doc_watcher.coverage_complete());
     }
     doc_watcher.watch_worktrees(&rewatch.extras);
-    changed
+    let reloaded = reconcile_thread_updates(app, doc_watcher);
+    changed || reloaded.changed
 }
 
 /// Do what a key asked of the loop; `Break` when the viewer is to quit.
@@ -631,9 +729,16 @@ fn handle_event(app: &mut App, event: &Event) -> Effect {
 mod tests {
     use std::io::Write;
     use std::os::unix::net::UnixStream;
+    use std::path::Path;
     use std::process::Stdio;
 
-    use super::{Command, Context, Duration, io, mpsc, opener_status, spawn_opener};
+    use super::{
+        Command, Context, Duration, Instant, RAW_DRAIN_LIMIT, drain_raws, io, mpsc, opener_status,
+        schedule_retry, spawn_opener,
+    };
+    use crate::app::watch::{Raw, Raws};
+    use crate::app::{testing, watch};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
 
     async fn opener_result(command: Command) -> anyhow::Result<Result<(), String>> {
         let (sender, mut receiver) = mpsc::channel(1);
@@ -721,6 +826,99 @@ mod tests {
             .context("opener closed without reporting its exit")?;
         let error = result.err().context("nonzero exit should fail")?;
         assert!(error.contains("exit status: 4"));
+        Ok(())
+    }
+
+    #[test]
+    fn raw_drain_is_bounded_under_continuous_refill() -> anyhow::Result<()> {
+        let (sender, raws) = Raws::test_channel();
+        for index in 0..(RAW_DRAIN_LIMIT * 2) {
+            sender
+                .send(Raw::Modify(format!("/workspace/{index}").into()))
+                .context("receiver unexpectedly closed")?;
+        }
+        let mut raws = Some(raws);
+        let first = raws
+            .as_mut()
+            .and_then(Raws::try_recv)
+            .context("first raw")?;
+        let drained = drain_raws(&mut raws, first);
+        assert_eq!(drained.len(), RAW_DRAIN_LIMIT);
+        assert!(
+            raws.as_mut().and_then(Raws::try_recv).is_some(),
+            "a later loop turn retains work"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn incoming_events_do_not_postpone_existing_retry_deadline() -> anyhow::Result<()> {
+        let now = Instant::now();
+        let first = schedule_retry(None, now).context("deadline")?;
+        let later = schedule_retry(Some(first), now + Duration::from_secs(30));
+        assert_eq!(later, Some(first));
+        Ok(())
+    }
+
+    #[test]
+    fn thread_dirtiness_bypasses_continuously_reset_general_debounce() -> anyhow::Result<()> {
+        let dir = testing::workspace("run-thread-priority", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        let (mut watcher, _) = watch::Watcher::new()?;
+        app.sync_workspace_watches(&mut watcher);
+        let state = testing::store_path(&dir);
+        assert!(watcher.watch_state([state.as_path()]));
+
+        let (sender, raws) = Raws::test_channel();
+        for _ in 0..(RAW_DRAIN_LIMIT * 2) {
+            sender
+                .send(Raw::Modify(testing::root(&dir).join("README.md")))
+                .context("receiver unexpectedly closed")?;
+        }
+        let mut raws = Some(raws);
+        let mut batch = watch::Batch::default();
+        let queued = super::enqueue_raws(
+            &mut app,
+            &mut watcher,
+            &mut raws,
+            &mut batch,
+            Raw::Modify(state),
+            Duration::from_secs(30),
+        );
+        assert!(
+            queued.thread_dirty,
+            "the exact store is ready in this loop turn"
+        );
+        assert!(
+            !batch.take(|_| None, u64::MAX).is_empty(),
+            "the mixed workspace side remains queued"
+        );
+        assert!(
+            raws.as_mut().and_then(Raws::try_recv).is_some(),
+            "continuous refill remains bounded"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn post_install_reconciliation_closes_store_open_watch_race() -> anyhow::Result<()> {
+        let dir = testing::workspace("run-watch-install-race", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        let id = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(3, 3),
+                "arrived before watch installation",
+            ),
+            testing::README,
+            1,
+        )?;
+
+        let (mut watcher, _) = watch::Watcher::new()?;
+        assert!(super::start_watching(&mut app, &mut watcher));
+        assert!(app.thread(&id).is_some());
+        assert_eq!(app.toasts().len(), 1);
         Ok(())
     }
 }

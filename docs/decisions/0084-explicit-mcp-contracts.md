@@ -12,6 +12,11 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
+MCP uses the shared store directly. Its schemas, returned projections, keyed
+retry semantics, and batch outcomes are unchanged; references to the
+internal socket representation and protocol upgrades below are historical.
+
 Provenance and archive reads amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): normal filters read the
 non-archived repository board independent of `HEAD`; exact IDs may return

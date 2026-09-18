@@ -15,6 +15,13 @@ tags:
 Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded
 watches); amended 2026-09-14 (searchable Git tombstones)
 
+Thread observation amended 2026-09-18 by
+[0089](0089-store-only-mcp.md): thread-store notifications are coalesced
+independently of the workspace/Git quiet period and may trigger immediate
+reconciliation and redraw. Known state-watch failures reattach and retry
+while degraded; failed refreshes preserve the last-good board. Socket
+requests no longer exist. Ordinary workspace/Git event batching remains.
+
 Thread rename placement amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): an exact live rename
 still carries the active viewer and its thread marks, but the path projection

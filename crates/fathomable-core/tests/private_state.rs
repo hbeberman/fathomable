@@ -98,6 +98,62 @@ fn concurrent_append_openers_share_one_private_file() -> Result {
 }
 
 #[test]
+fn workspace_reload_validates_existing_state_without_creating_it() -> Result {
+    let fixture = TempDir::new("private-state-reload")?;
+    let dirs = dirs(&fixture.0.join("xdg"));
+    let key = Path::new("workspace");
+    Store::reload_workspace(&dirs, key)
+        .err()
+        .ok_or("reload unexpectedly created missing state")?;
+    assert!(
+        !dirs.state_dir().exists(),
+        "reload must not bootstrap missing state"
+    );
+
+    let missing = Store::open_workspace(&dirs, key)?;
+    assert!(!missing.backing_file_observed());
+    let workspace_dir = dirs.workspace_dir(key);
+    fs::set_permissions(dirs.state_dir(), fs::Permissions::from_mode(0o755))?;
+    refused(Store::reload_workspace(&dirs, key))?;
+    assert_eq!(
+        mode(&dirs.state_dir())?,
+        0o755,
+        "reload must not chmod state"
+    );
+    assert!(workspace_dir.exists());
+
+    fs::set_permissions(dirs.state_dir(), fs::Permissions::from_mode(0o700))?;
+    let recovered = Store::reload_workspace(&dirs, key)?;
+    assert!(!recovered.backing_file_observed());
+    Ok(())
+}
+
+#[test]
+fn store_reports_backing_observation_from_the_open_handle() -> Result {
+    let fixture = TempDir::new("private-state-store-observation")?;
+    let path = fixture.0.join("threads.jsonl");
+    let mut missing = Store::open(&path)?;
+    assert!(!missing.backing_file_observed());
+    missing.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("source.rs"),
+            LineRange::new(1, 1),
+            "comment",
+        ),
+        "line\n",
+        1,
+    )?;
+    assert!(missing.backing_file_observed());
+    assert!(Store::open(&path)?.backing_file_observed());
+
+    let empty = fixture.0.join("empty.jsonl");
+    private_state::write(&empty, "")?;
+    assert!(Store::open(empty)?.backing_file_observed());
+    Ok(())
+}
+
+#[test]
 fn private_state_child() -> Result {
     let Ok(mask) = std::env::var("FATHOMABLE_PRIVATE_STATE_CHILD") else {
         return Ok(());
@@ -139,7 +195,7 @@ fn private_state_child() -> Result {
         Some(b"synthetic private source\n".to_vec())
     );
     let key = workspace.key().to_path_buf();
-    Record::new(Id::mint(), key.clone(), source.clone(), None).write(&dirs)?;
+    Record::new(Id::mint(), key.clone(), source.clone()).write(&dirs)?;
     Marker::new(key, vec![source.clone()]).write(&dirs)?;
     assert_eq!(Record::list(&dirs).len(), 1);
     assert_eq!(Marker::list(&dirs).len(), 1);
@@ -296,7 +352,7 @@ fn records_and_markers_refuse_links_without_cleanup_or_overwrite() -> Result {
     let fixture = TempDir::new("private-state-record-links")?;
     let dirs = dirs(&fixture.0);
     let key = fixture.0.join("workspace");
-    let record = Record::new(Id::mint(), key.clone(), key.clone(), None);
+    let record = Record::new(Id::mint(), key.clone(), key.clone());
     record.write(&dirs)?;
     let marker = Marker::new(key.clone(), vec![key.clone()]);
     marker.write(&dirs)?;

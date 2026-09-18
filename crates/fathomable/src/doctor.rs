@@ -85,10 +85,6 @@ pub(crate) fn collect(
     report.info(format!("log      {}", dirs.log_dir().display()));
     report.info(format!("themes   {}", dirs.themes_dir().display()));
     report.info(format!("viewers  {}", dirs.viewers_dir().display()));
-    match dirs.runtime_dir() {
-        Some(runtime) => report.info(format!("runtime  {}", runtime.display())),
-        None => report.info("runtime  unset (XDG_RUNTIME_DIR); the viewer socket needs it"),
-    }
 
     report.section("terminal");
     match terminal_size {
@@ -254,22 +250,6 @@ fn workspace_checks(
     if let Some(line) = worktrees_line(&workspace) {
         report.check(true, line);
     }
-    if let Some(socket) = dirs.viewer_socket(workspace.key(), std::process::id()) {
-        let bytes = socket.as_os_str().len();
-        if fathomable_core::socket_path_fits(&socket) {
-            report.check(true, format!("viewer socket path fits ({bytes} bytes)"));
-        } else {
-            report.check(
-                false,
-                format!(
-                    "viewer socket path is {bytes} bytes; a Unix socket path holds at most {} (shorten XDG_RUNTIME_DIR): {}",
-                    fathomable_core::SOCKET_PATH_MAX,
-                    socket.display()
-                ),
-            );
-        }
-    }
-
     let _threads = thread_store(report, dirs, workspace.key());
     let dir = dirs.review_points_dir(workspace.key());
     match fathomable_core::review_points::ReviewPointStore::open_workspace(dirs, workspace.key()) {

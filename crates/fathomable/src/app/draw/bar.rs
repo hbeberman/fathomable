@@ -97,8 +97,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use crossterm::event::KeyCode;
-    use fathomable_core::annotations::{Author, LineRange};
-    use fathomable_core::session::{Request, Response};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
 
     use super::text_bar;
     use crate::app::Focus;
@@ -219,19 +218,18 @@ mod tests {
         );
         app.compose_insert("mine");
         app.compose_submit();
-        let started = app.handle_request(Request::ThreadStart {
-            path: std::path::PathBuf::from("README.md"),
-            range: Some(LineRange::new(5, 5)),
-            author: Author::agent("reviewer"),
-            caller: "test:viewer".to_owned(),
-            body: "theirs".to_owned(),
-            idempotency_key: None,
-        });
-        let Response::Threads(started) = started else {
-            anyhow::bail!("{started:?}");
-        };
+        let theirs = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                std::path::Path::new("README.md"),
+                LineRange::new(5, 5),
+                "theirs",
+            ),
+            testing::README,
+            2,
+        )?;
+        app.reload_store();
         let mine = app.file_threads()[0].clone();
-        let theirs = started[0].id().clone();
         app.expand_thread(mine.clone());
         app.goto_message(theirs.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&theirs));

@@ -21,6 +21,12 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
+annotation format **5** remains, but socket protocol **8** and the transport
+are removed. MCP line relocation consistently uses the stored path in its
+bound checkout; ephemeral viewer-local rename projection remains a display
+concern, not an alternate write interpretation.
+
 Supersedes the last-seen and per-file checkpoint comparison model of
 [0015](0015-follow-mode.md), [0020](0020-reanchoring-across-restarts.md),
 [0049](0049-inline-threads-and-the-rail.md),

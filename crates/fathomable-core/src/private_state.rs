@@ -13,8 +13,16 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Component, Path, PathBuf};
 
-// Linux open(2): reject final symlinks and never block on a substituted FIFO.
-const NOFOLLOW_NONBLOCK: i32 = 0x2_0000 | 0x800;
+/// Bound retries if concurrent initializers keep claiming a missing filename.
+const OPEN_ATTEMPTS: usize = 16;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Access {
+    Read,
+    Append,
+    Write,
+    Create,
+}
 
 fn denied(path: &Path, reason: &str) -> io::Error {
     io::Error::new(
@@ -111,6 +119,20 @@ pub fn ensure_dir(path: impl AsRef<Path>) -> io::Result<()> {
     Ok(())
 }
 
+/// Exclusively create a private directory beneath validated existing ancestors.
+///
+/// # Errors
+///
+/// Refuses an existing path, unsafe ancestors, or filesystem and identity errors.
+pub fn create_dir(path: impl AsRef<Path>) -> io::Result<()> {
+    let path = absolute(path.as_ref())?;
+    let uid = effective_uid()?;
+    if let Some(parent) = path.parent() {
+        parents(parent, uid, false)?;
+    }
+    DirBuilder::new().mode(0o700).create(path)
+}
+
 fn private_file(path: &Path, metadata: &Metadata, uid: u32) -> io::Result<()> {
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
@@ -126,23 +148,49 @@ fn private_file(path: &Path, metadata: &Metadata, uid: u32) -> io::Result<()> {
     Ok(())
 }
 
-fn open(path: &Path, options: &mut OpenOptions, create: bool) -> io::Result<File> {
+fn open(path: &Path, access: Access) -> io::Result<File> {
     let path = absolute(path)?;
     let uid = effective_uid()?;
     if let Some(parent) = path.parent() {
-        parents(parent, uid, create)?;
+        parents(parent, uid, access != Access::Read)?;
     }
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) => private_file(&path, &metadata, uid)?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error),
+    for _ in 0..OPEN_ATTEMPTS {
+        let exists = match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                private_file(&path, &metadata, uid)?;
+                true
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound && access != Access::Read => {
+                false
+            }
+            Err(error) => return Err(error),
+        };
+        // Validated ancestors prevent other UIDs replacing an existing owned
+        // file. Claim missing names exclusively, never opening a raced-in object.
+        let mut options = OpenOptions::new();
+        match access {
+            Access::Read => options.read(true),
+            Access::Append => options.read(true).append(true),
+            Access::Write | Access::Create => options.write(true),
+        };
+        match options
+            .mode(0o600)
+            .create_new(!exists || access == Access::Create)
+            .open(&path)
+        {
+            Ok(file) => {
+                private_file(&path, &file.metadata()?, uid)?;
+                return Ok(file);
+            }
+            Err(error)
+                if error.kind() == io::ErrorKind::AlreadyExists && access != Access::Create => {}
+            Err(error) => return Err(error),
+        }
     }
-    let file = options
-        .mode(0o600)
-        .custom_flags(NOFOLLOW_NONBLOCK)
-        .open(&path)?;
-    private_file(&path, &file.metadata()?, uid)?;
-    Ok(file)
+    Err(io::Error::other(format!(
+        "state path {} kept changing during creation; retry",
+        path.display()
+    )))
 }
 
 /// Open an existing private file for reading, without creating any paths.
@@ -151,7 +199,7 @@ fn open(path: &Path, options: &mut OpenOptions, create: bool) -> io::Result<File
 ///
 /// Returns an error for missing files, unsafe paths, ownership, links, or modes.
 pub fn open_read(path: impl AsRef<Path>) -> io::Result<File> {
-    open(path.as_ref(), OpenOptions::new().read(true), false)
+    open(path.as_ref(), Access::Read)
 }
 
 /// Open or create a private appendable file, also readable for locked replay.
@@ -163,11 +211,7 @@ pub fn open_read(path: impl AsRef<Path>) -> io::Result<File> {
 ///
 /// Returns an error for unsafe paths, ownership, links, modes, or filesystem errors.
 pub fn open_append(path: impl AsRef<Path>) -> io::Result<File> {
-    open(
-        path.as_ref(),
-        OpenOptions::new().read(true).append(true).create(true),
-        true,
-    )
+    open(path.as_ref(), Access::Append)
 }
 
 /// Exclusively create a new private writable file.
@@ -176,11 +220,7 @@ pub fn open_append(path: impl AsRef<Path>) -> io::Result<File> {
 ///
 /// Returns an error if the path exists, its ancestors are unsafe, or creation fails.
 pub fn create_new(path: impl AsRef<Path>) -> io::Result<File> {
-    open(
-        path.as_ref(),
-        OpenOptions::new().write(true).create_new(true),
-        true,
-    )
+    open(path.as_ref(), Access::Create)
 }
 
 /// Read bytes from an existing private file.
@@ -200,11 +240,7 @@ pub fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
 ///
 /// Returns an error for unsafe paths, ownership, links, modes, or filesystem errors.
 pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
-    let mut file = open(
-        path.as_ref(),
-        OpenOptions::new().write(true).create(true),
-        true,
-    )?;
+    let mut file = open(path.as_ref(), Access::Write)?;
     file.set_len(0)?;
     file.write_all(contents.as_ref())
 }

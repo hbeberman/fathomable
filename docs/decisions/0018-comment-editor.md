@@ -88,9 +88,12 @@ These choices were settled in a question round on 2026-08-27.
 - Each editor invocation exclusively creates a fresh mode-0700 directory
   under the system temporary directory and a mode-0600 `comment.md` within
   it, independent of a permissive umask. Existing names, including symlinks,
-  are never reused. The enclosing directory also protects editor replacement
+  are never reused. Temporary ancestors must satisfy the
+  [private-state ownership rules](0009-cli-and-diagnostics.md#persistent-state-privacy);
+  foreign-owned, symlinked, or non-sticky shared writable parents are refused
+  before a draft is created. The enclosing directory also protects editor replacement
   files and backups placed beside the draft. Both normal and error returns
-  remove that directory and its contents, with explicit cleanup errors and
+  attempt to remove that directory and its contents, with explicit cleanup errors and
   a drop guard as a backstop. Abrupt process termination can leave private
   scratch data behind; cleanup is not secure erasure. An editor configured
   to save elsewhere remains outside Fathomable's control.

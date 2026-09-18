@@ -3,9 +3,10 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use fathomable_core::private_state;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -45,18 +46,14 @@ impl Draft {
 
     fn create(directory: PathBuf, text: &str) -> io::Result<Self> {
         // Exclusivity and permissions, not secrecy of the name, protect it.
-        fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        private_state::create_dir(&directory)?;
         let draft = Self {
             path: directory.join("comment.md"),
             directory,
             closed: false,
         };
-        fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&draft.path)?
-            .write_all(text.as_bytes())?;
+        private_state::ensure_dir(&draft.directory)?;
+        private_state::create_new(&draft.path)?.write_all(text.as_bytes())?;
         Ok(draft)
     }
 
@@ -124,6 +121,7 @@ mod tests {
             return Ok(());
         }
         let parent = TempDir::new("private-draft-modes")?;
+        fs::set_permissions(&parent.0, fs::Permissions::from_mode(0o755))?;
         let draft = Draft::in_directory(&parent.0, "synthetic private draft")?;
         assert_eq!(
             fs::metadata(&draft.directory)?.permissions().mode() & 0o777,
@@ -173,6 +171,28 @@ mod tests {
         assert_eq!(fs::read_to_string(second.path())?, "second draft");
         second.close()?;
         assert_eq!(fs::read_dir(&parent.0)?.count(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn unsafe_temporary_parent_is_refused_before_creating_a_draft() -> anyhow::Result<()> {
+        let parent = TempDir::new("private-draft-unsafe-parent")?;
+        fs::set_permissions(&parent.0, fs::Permissions::from_mode(0o777))?;
+        let error = Draft::in_directory(&parent.0, "synthetic private draft")
+            .err()
+            .context("a writable non-sticky parent must be refused")?;
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_dir(&parent.0)?.count(), 0);
+        let target = parent.0.join("target");
+        fs::create_dir(&target)?;
+        fs::set_permissions(&parent.0, fs::Permissions::from_mode(0o755))?;
+        let link = parent.0.join("link");
+        symlink(&target, &link)?;
+        let error = Draft::in_directory(&link, "synthetic private draft")
+            .err()
+            .context("a symlink parent must be refused")?;
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_dir(&target)?.count(), 0);
         Ok(())
     }
 

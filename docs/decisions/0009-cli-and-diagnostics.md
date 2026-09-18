@@ -90,8 +90,11 @@ creation prevents a stale probe or replacement path from being overwritten.
 No permissions are repaired, no stores migrated, and no old state reset or
 deleted as part of this validation.
 
-The shared `private_state` helpers use Linux metadata, no-follow opens, and
-the kernel's effective UID from `/proc/self/status`, not an environment UID.
+The shared `private_state` helpers use Linux metadata, exclusively claim new
+paths, and obtain the kernel's effective UID from `/proc/self/status`, not an
+environment UID. Existing files are opened only after their ownership and
+ancestors exclude replacement by another local UID; a concurrent creator
+requires fresh validation. No architecture-specific open flags are needed.
 Every existing ancestor must be a real directory owned by root or this UID,
 and cannot be writable by other users unless protected by the sticky bit.
 External ancestors such as HOME and the XDG base are not chmodded; missing

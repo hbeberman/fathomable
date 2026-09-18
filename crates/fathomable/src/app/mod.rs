@@ -2642,11 +2642,14 @@ impl Options {
         use fathomable_core::session::Id;
         Self {
             record: Record::new(Id::mint(), root.clone(), root, None),
-            // State a test app writes (a record, a marker) lands in the
-            // temp dir, never beside the sources.
+            // Isolate each test process from older runs' state and permissions.
             dirs: XdgDirs::resolve(|name| {
-                (name == "XDG_STATE_HOME")
-                    .then(|| std::env::temp_dir().join("fathomable-test-state").into())
+                (name == "XDG_STATE_HOME").then(|| {
+                    std::env::temp_dir()
+                        .join("fathomable-test-state")
+                        .join(std::process::id().to_string())
+                        .into()
+                })
             }),
             store: None,
             thread_store_error: None,

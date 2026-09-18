@@ -71,6 +71,7 @@ the table below is a quick reference, not the full list.
 draft file. Editor replacements and backups placed beside the draft stay
 private, and Fathomable removes this scratch directory on return, including
 error returns. A forced termination may leave private scratch files behind.
+Unsafe temporary-directory ancestors are refused before the draft is written.
 Files the editor is configured to write elsewhere are outside this protection.
 
 ### Compare versions
@@ -235,6 +236,7 @@ and loose permissions are refused with an error, not repaired, migrated, or
 deleted. Fathomable does not chmod your HOME or XDG base directories; external
 ancestors must not allow other users to replace state paths (shared writable
 ancestors require the sticky bit). Read-only configuration is unaffected.
+Linux `/proc/self/status` must be readable to obtain the effective UID.
 
 These permissions protect against other local OS users, not root or programs
 running as your UID. Source excerpts, messages, saved blobs, paths, and crash

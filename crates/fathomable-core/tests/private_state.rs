@@ -1,10 +1,11 @@
 //! Persistent private-state contracts at the public core APIs.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Barrier};
 
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{Author, Draft, LineRange, Store};
@@ -65,7 +66,34 @@ fn public_state_apis_ignore_permissive_umasks() -> Result {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the child must execute the permission assertions"
+        );
     }
+    Ok(())
+}
+
+#[test]
+fn concurrent_append_openers_share_one_private_file() -> Result {
+    let fixture = TempDir::new("private-state-concurrent")?;
+    let path = fixture.0.join("shared");
+    let barrier = Arc::new(Barrier::new(16));
+    let workers: Vec<_> = (0..16)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || -> io::Result<()> {
+                barrier.wait();
+                private_state::open_append(path)?.write_all(b"record\n")
+            })
+        })
+        .collect();
+    for worker in workers {
+        worker.join().map_err(|_panic| "append worker panicked")??;
+    }
+    assert_eq!(mode(&path)?, 0o600);
+    assert_eq!(fs::read_to_string(path)?.lines().count(), 16);
     Ok(())
 }
 

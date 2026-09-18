@@ -802,8 +802,8 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let root = app.workspace().root().display().to_string();
     let entries: [(&str, String); 6] = [
         ("Space f", "open a file".to_owned()),
-        ("Space w h", "browse the files".to_owned()),
-        ("t", "open reviews".to_owned()),
+        ("Space w f", "browse files".to_owned()),
+        ("t", "review threads".to_owned()),
         ("Space ?", "view the keymap".to_owned()),
         (":q", "quit".to_owned()),
         ("", String::new()),
@@ -3020,6 +3020,28 @@ mod tests {
         ListRender, Theme, fit, fit_ellipsis, format_age, format_age_short, format_time, list_row,
         picker_row_cells, status_message_style,
     };
+
+    #[test]
+    fn welcome_renders_the_complete_shortcut_block() -> anyhow::Result<()> {
+        let dir = testing::workspace("welcome-shortcuts", testing::README)?;
+        let app = testing::AppBuilder::new(&dir).unopened().build()?;
+        let rows = testing::screen(&app)?;
+        let rows: Vec<&str> = rows.iter().map(|row| row.trim_start()).collect();
+        let expected = [
+            "Space f    open a file",
+            "Space w f  browse files",
+            "t          review threads",
+            "Space ?    view the keymap",
+            ":q         quit",
+        ];
+        let start = rows
+            .iter()
+            .position(|row| *row == expected[0])
+            .ok_or_else(|| anyhow::anyhow!("welcome shortcut block was not rendered"))?;
+
+        assert_eq!(&rows[start..start + expected.len()], expected);
+        Ok(())
+    }
 
     #[test]
     fn fitting_keeps_whole_graphemes_and_exact_cell_width() {

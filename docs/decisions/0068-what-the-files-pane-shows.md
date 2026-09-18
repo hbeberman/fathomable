@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: What the files pane shows
-description: The Files pane filters changed, review-bearing, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header names active filters before the diff totals, while row menus remain item-local.
+description: The Files pane filters changed, review-bearing, untracked, and ignored paths through live-labelled keys under `Space F` and checked settings under its clickable title; the header marks active filters compactly before the diff totals, while row menus remain item-local.
 resource: crates/fathomable/src/app/files_shown.rs
 related_resources:
   - crates/fathomable-core/src/tree.rs
@@ -26,11 +26,10 @@ filter words move before the diff totals without a dot. Repository and
 worktree identity move to the global menu bar. Right-click on the header does
 nothing, and row context menus contain only actions on the pointed item.
 
-Amended later 2026-09-17: the title menu uses stable **Only changed**,
-**Show untracked**, and **Show ignored** labels with checkmarks for active
-settings instead of changing its action wording. Files and directories also
-offer relative and full-path copy actions; the file action is **File
-comment**.
+Amended later 2026-09-17: the title menu uses stable filter labels with
+checkmarks for active settings instead of changing its action wording. Files
+and directories also offer relative and full-path copy actions; the file
+action is **File comment**.
 
 Amended later 2026-09-17: the title menu unfolds from the pane chrome rather
 than from the pointer. Its left edge aligns with the sidebar and its top
@@ -46,6 +45,10 @@ Amended 2026-09-18: **Only reviews** is a fourth session filter at
 threads visible in the current workspace, intersects the other filters and
 selected-comparison scope, and refreshes as thread lifecycle, reach, or local
 rename projection changes.
+
+Amended later 2026-09-18: the header represents active filters only as the
+dim comma-list `c`, `r`, `u`, and `i`, where `u` means untracked files are
+hidden. The clickable **Files** title and the key chords carry the full labels.
 
 ## Context
 
@@ -137,7 +140,7 @@ Space F r    recent files                            (unchanged)
   `hide ignored`. The label states
   the outcome of pressing the key now, in the fewest words.
 - A left-click on the header's **`Files` title** opens a pane settings menu
-  with stable `only changed`, `only reviews`, `show untracked`, and
+  with stable `only changed`, `only reviews`, `hide untracked`, and
   `show ignored` labels.
   Each active setting carries a checkmark; inactive settings reserve the
   same space without one. The menu aligns to the sidebar's left edge and
@@ -154,14 +157,12 @@ Space F r    recent files                            (unchanged)
 
 - The files pane's header row is a `Header` on **`ui.header`**, as the
   threads pane's is (0066): `Files` is bold in the directory colour at the
-  left. Against the right edge, the active filters name what is on screen:
-  `changed` while only changed files are listed, `reviews` while only files
-  with qualifying reviews are listed, `tracked` while untracked files are
-  hidden, and `ignored` while ignored files are shown. The
-  comparison's `+n -m` totals (0017) follow those words, separated only by
-  spaces.
-- `Files                         changed tracked +12 -3`. Filter words drop
-  from their end as the column narrows, before either diff total is dropped.
+  left. Against the right edge, active filters appear in the same dim colour
+  as the former words, compacted into the comma-list `c,r,u,i`: changed-only,
+  reviews-only, untracked hidden, and ignored shown. The comparison's `+n -m`
+  totals (0017) follow the marker, separated by a space.
+- `Files                                  c,u +12 -3`. The compact marker is
+  retained while it fits; as before, it drops before either diff total.
   Repository and active-worktree identity live in the global menu bar under
   [0081](0081-the-menu-bar.md). Current-file identity lives in the File
   surface header.
@@ -201,6 +202,6 @@ Space F r    recent files                            (unchanged)
   `FilesReviews`, `FilesUntracked`, and `FilesIgnored` under `Space F`.
 - `draw::tree_lines` builds the header through `Header`; `Tone` gains
   the diff colours for the counts. Header layout retains the totals while
-  dropping filter words from the end.
+  dropping the compact filter marker first.
 - The guide's key table, its files pane passage, and its mouse passage
-  name the four toggles and the header's words.
+  name the four toggles.

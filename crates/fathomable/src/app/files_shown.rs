@@ -7,7 +7,7 @@
 //! app's hands on them: the toggle, the live label a which-key entry
 //! carries so it says what a press does now, the checked state of the
 //! Files settings menu, the notice while the pane is hidden, and the
-//! words the pane's header names the state by.
+//! compact markers by which the pane's header names the state.
 
 use std::path::PathBuf;
 
@@ -127,7 +127,7 @@ impl App {
         match action {
             Action::FilesChanged => "only changed",
             Action::FilesReviews => "only reviews",
-            Action::FilesUntracked => "show untracked",
+            Action::FilesUntracked => "hide untracked",
             Action::FilesIgnored => "show ignored",
             _ => "",
         }
@@ -139,7 +139,7 @@ impl App {
         match action {
             Action::FilesChanged => shown.changed_only(),
             Action::FilesReviews => shown.reviews_only(),
-            Action::FilesUntracked => shown.untracked(),
+            Action::FilesUntracked => !shown.untracked(),
             Action::FilesIgnored => shown.ignored(),
             _ => false,
         }
@@ -151,9 +151,23 @@ impl App {
         bindings::menu_entries(place, self.prefix(), |action| self.live_label(action))
     }
 
-    /// The words the files pane's header names the active rules by.
-    pub(crate) fn files_shown_words(&self) -> Vec<&'static str> {
-        shown_words(self.files_shown())
+    /// The compact marker the files pane's header uses for active rules.
+    pub(crate) fn files_shown_marker(&self) -> String {
+        let shown = self.files_shown();
+        let mut markers = Vec::new();
+        if shown.changed_only() {
+            markers.push("c");
+        }
+        if shown.reviews_only() {
+            markers.push("r");
+        }
+        if !shown.untracked() {
+            markers.push("u");
+        }
+        if shown.ignored() {
+            markers.push("i");
+        }
+        markers.join(",")
     }
 }
 
@@ -264,7 +278,7 @@ mod tests {
         assert_eq!(names(&app), ["notes.txt", "README.md"]);
         let header = header_row(&app)?;
         assert!(header.starts_with(" Files"), "{header}");
-        assert!(header.contains("changed +2 -1"), "{header}");
+        assert!(header.contains("c +2 -1"), "{header}");
         assert!(!header.contains('·'), "{header}");
 
         press(&mut app, " F");
@@ -275,15 +289,14 @@ mod tests {
             ["README.md"],
             "untracked dropped from the changed list"
         );
-        assert!(header_row(&app)?.contains("changed tracked +2 -1"));
+        assert!(header_row(&app)?.contains("c,u +2 -1"));
 
         // Ignored files are never changed ones: only changed wins.
         press(&mut app, " Fg");
         assert_eq!(names(&app), ["README.md"]);
-        // Filter words drop before the counts as the header narrows.
+        // Compact filter state remains readable before the counts.
         let header = header_row(&app)?;
-        assert!(header.contains("changed tracked +2 -1"), "{header}");
-        assert!(!header.contains("ignored"), "{header}");
+        assert!(header.contains("c,u,i +2 -1"), "{header}");
         app.start_new_comment();
         app.compose_insert("review the readme");
         app.compose_submit();
@@ -292,10 +305,7 @@ mod tests {
         app.resize(60, 30);
         let narrow = header_row(&app)?;
         assert!(narrow.contains("+2 -1"), "{narrow}");
-        assert!(
-            !narrow.contains("reviews"),
-            "filter words drop before totals: {narrow}"
-        );
+        assert!(!narrow.contains("c,r,u,i"), "{narrow}");
         app.resize(100, 30);
         press(&mut app, " Fo");
         press(&mut app, " F");
@@ -308,7 +318,10 @@ mod tests {
         assert_eq!(names(&app), ["src", ".gitignore", "build.log", "README.md"]);
         press(&mut app, " Fu Fg");
         assert_eq!(names(&app), ["src", ".gitignore", "notes.txt", "README.md"]);
-        assert!(!header_row(&app)?.contains('·'), "no words with no rule on");
+        assert!(
+            !header_row(&app)?.contains('·'),
+            "no marker with no rule on"
+        );
         Ok(())
     }
 
@@ -323,7 +336,7 @@ mod tests {
             app.live_label(super::Action::FilesReviews),
             Some("all files")
         );
-        assert!(header_row(&app)?.contains("reviews"));
+        assert!(header_row(&app)?.contains(" r"));
 
         app.view_mut().goto_source_line(3);
         app.start_new_comment();
@@ -761,15 +774,9 @@ mod tests {
             [
                 ("only changed".to_owned(), Some(false)),
                 ("only reviews".to_owned(), Some(false)),
-                ("show untracked".to_owned(), Some(true)),
+                ("hide untracked".to_owned(), Some(false)),
                 ("show ignored".to_owned(), Some(false)),
             ]
-        );
-        assert!(
-            screen(&app)?
-                .iter()
-                .any(|row| row.contains("✓ show untracked")),
-            "the active setting draws its checkmark"
         );
         handle_mouse(
             &mut app,
@@ -791,7 +798,7 @@ mod tests {
             [
                 ("only changed".to_owned(), Some(true)),
                 ("only reviews".to_owned(), Some(false)),
-                ("show untracked".to_owned(), Some(true)),
+                ("hide untracked".to_owned(), Some(false)),
                 ("show ignored".to_owned(), Some(false)),
             ]
         );
@@ -803,9 +810,15 @@ mod tests {
             [
                 ("only changed".to_owned(), Some(true)),
                 ("only reviews".to_owned(), Some(false)),
-                ("show untracked".to_owned(), Some(false)),
+                ("hide untracked".to_owned(), Some(true)),
                 ("show ignored".to_owned(), Some(true)),
             ]
+        );
+        assert!(
+            screen(&app)?
+                .iter()
+                .any(|row| row.contains("✓ hide untracked")),
+            "the active filter draws its checkmark"
         );
         app.close_popup();
 

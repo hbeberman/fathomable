@@ -573,20 +573,20 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
 }
 
 const ABOUT_ANCHOR: [&str; 10] = [
-    "      (    ",
-    "       )   ",
-    "      (    ",
-    "     _|_   ",
-    "    ( o )  ",
-    "  ===`|'===",
-    "      |    ",
-    "  \\   |   /",
-    "  `-._|_.-'",
-    "      v    ",
+    "      (",
+    "       )",
+    "      (",
+    "     _|_",
+    "    (   )",
+    " ====`|'====",
+    "      |",
+    " |\\   |   /|",
+    " \\'-._|_.-'/",
+    "   `-\\|/-'",
 ];
-const ABOUT_ANCHOR_WIDTH: u16 = 11;
+const ABOUT_ANCHOR_WIDTH: u16 = 12;
 const ABOUT_ANCHOR_HEIGHT: u16 = 10;
-const ABOUT_ANCHOR_SHANK: u16 = 6;
+const ABOUT_ANCHOR_STEAM_COLUMN: u16 = 7;
 
 fn draw_about_anchor(frame: &mut Frame<'_>, inner: Rect, copy_width: usize, theme: &Theme) {
     if inner.width < ABOUT_ANCHOR_WIDTH || inner.height < ABOUT_ANCHOR_HEIGHT {
@@ -609,8 +609,8 @@ fn draw_about_anchor(frame: &mut Frame<'_>, inner: Rect, copy_width: usize, them
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), area);
     frame.render_widget(
-        Paragraph::new(Span::styled("(", style)),
-        Rect::new(area.x + ABOUT_ANCHOR_SHANK, inner.y - 1, 1, 1),
+        Paragraph::new(Span::styled(")", style)),
+        Rect::new(area.x + ABOUT_ANCHOR_STEAM_COLUMN, inner.y - 1, 1, 1),
     );
 }
 
@@ -3310,23 +3310,23 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let expected = [
-            "╭ About ──────────────────────────────────────────────────(────╮",
-            "│Fathomable 0.1.0                                         (    │",
-            "│                                                          )   │",
-            "│Read-only terminal workspace viewer and                  (    │",
-            "│annotation side-car for agent-driven work.              _|_   │",
-            "│                                                       ( o )  │",
-            "│License  MIT (Fathomable)                            ===`|'===│",
-            "│Source   https://github.com/hbeberman/fathomable         |    │",
-            "│Third-party notices: Help > Licenses or :licenses    \\   |   /│",
-            "│                                                     `-._|_.-'│",
-            "│Esc close                                                v    │",
+            "╭ About ──────────────────────────────────────────────────)────╮",
+            "│Fathomable 0.1.0                                        (     │",
+            "│                                                         )    │",
+            "│Read-only terminal workspace viewer and                 (     │",
+            "│annotation side-car for agent-driven work.             _|_    │",
+            "│                                                      (   )   │",
+            "│License  MIT (Fathomable)                          ====`|'====│",
+            "│Source   https://github.com/hbeberman/fathomable        |     │",
+            "│Third-party notices: Help > Licenses or :licenses  |\\   |   /|│",
+            "│                                                   \\'-._|_.-'/│",
+            "│Esc close                                            `-\\|/-'  │",
         ];
         assert_eq!(actual, expected);
 
         let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
         let theme = Theme::from_core(&core);
-        let anchor_x = area.x + 1 + 51;
+        let anchor_x = area.x + 1 + 50;
         for (row, anchor) in ABOUT_ANCHOR.iter().enumerate() {
             for (column, _ch) in anchor.chars().enumerate().filter(|(_, ch)| *ch != ' ') {
                 let cell = &buffer[(

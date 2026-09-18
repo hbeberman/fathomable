@@ -40,11 +40,11 @@ actions, or use the top **Layout**, **Go**, **Review**, and **Diff** menus.
 The mouse wheel scrolls; dragging the sidebar divider resizes it.
 
 The **Files** title menu has four session filters: **only changed**,
-**only reviews**, **show untracked**, and **show ignored**. `Space F c`,
+**only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
 `Space F o`, `Space F u`, and `Space F g` toggle them from any pane. Only
 reviews means files with an active or resolution-proposed, non-archived thread
 in the current workspace. Filters combine, and the Files header names active
-states as `changed`, `reviews`, `tracked`, and `ignored`.
+filters compactly as `c`, `r`, `u`, and `i`.
 
 ### Essential keys
 

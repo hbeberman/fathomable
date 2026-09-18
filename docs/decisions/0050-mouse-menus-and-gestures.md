@@ -246,9 +246,9 @@ same day; the choices are below.
   checked settings at the text column's left edge. Its scope and lifecycle
   counts are passive; clicking them only focuses Reviews.
 - A click on the `Files` title opens that pane's checked **Only changed**,
-  **Show untracked**, and **Show ignored** settings. The filter-state words
-  and diff totals are passive, and right-click anywhere on the Files header
-  does nothing.
+  **Only reviews**, **Hide untracked**, and **Show ignored** settings. The
+  compact filter-state marker and diff totals are passive, and right-click
+  anywhere on the Files header does nothing.
 - In the checkpoint header a click on the base name opens the base
   picker and a click on the target name the target picker, as `b` and
   `t` do. (Amended 2026-09-06 by

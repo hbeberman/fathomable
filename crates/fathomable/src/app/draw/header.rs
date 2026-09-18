@@ -139,8 +139,8 @@ impl HintOf {
         }
     }
 
-    /// A word in `tone` with nothing after it and no click: a count or a
-    /// state word on the files pane's header (ADR 0068).
+    /// Text in `tone` with nothing after it and no click: a count or a
+    /// compact state marker on the files pane's header (ADR 0068).
     fn word(text: String, tone: Tone) -> Self {
         Self {
             key: text,
@@ -827,14 +827,14 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
 }
 
 /// The files pane's header (ADR 0017, ADR 0068): `Files` at the left,
-/// then the active filter words before the `+n -m` totals at the right.
-/// Filter words drop before the totals as the pane narrows.
+/// then the compact active-filter marker before the `+n -m` totals.
 pub(crate) fn files_pane_header(app: &App) -> Header {
-    let filters = app
-        .files_shown_words()
-        .into_iter()
-        .map(|word| HintOf::word(word.to_owned(), Tone::Info))
-        .collect();
+    let marker = app.files_shown_marker();
+    let filters = if marker.is_empty() {
+        Vec::new()
+    } else {
+        vec![HintOf::word(marker, Tone::Info)]
+    };
     let mut counts = Vec::new();
     let comparison_status = app.comparison_status();
     if let Some(total) = comparison_status.summary_under(Path::new("")) {

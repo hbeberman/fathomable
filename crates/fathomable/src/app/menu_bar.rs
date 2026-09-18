@@ -550,11 +550,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
         Root::Layout => submenu_rows(app, Submenu::Layout),
         Root::Go => vec![
             Row::Item(Item::action(app, Action::PickFile, "Open file…")),
-            Row::Item(Item::action(
-                app,
-                Action::PickAnyFile,
-                "Open incl. ignored…",
-            )),
+            Row::Item(Item::action(app, Action::PickAnyFile, "Open w/ ignored…")),
             Row::Item(Item::action(app, Action::PickRecent, "Recent files…")),
             Row::Separator,
             Row::Item(Item::action(app, Action::JumpBack, "Back")),

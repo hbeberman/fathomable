@@ -42,6 +42,26 @@ At run time the viewer only shells out for two optional things: your
 `$VISUAL` or `$EDITOR` to draft a long comment, and `xdg-open` to follow
 a link.
 
+## MCP setup
+
+**Copilot CLI:** register once, then launch Copilot from the checkout you
+want to review:
+
+```sh
+copilot mcp add fathomable -- fathomable --mcp
+```
+
+**VS Code:** register for your user profile, using the open workspace:
+
+```sh
+code --add-mcp '{"name":"fathomable","type":"stdio","command":"fathomable","args":["--mcp","${workspaceFolder}"]}'
+```
+
+Fathomable must be on `PATH` in the Linux environment where the server runs.
+Approve the server when prompted; the viewer need not be running.
+See the [setup guide](docs/guide.md#connect-an-agent) for configuration and
+remote-workspace details.
+
 ## Using it
 
 ```sh

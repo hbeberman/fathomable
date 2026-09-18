@@ -233,11 +233,15 @@ It binds to the launch workspace; add `/path/to/checkout` to bind explicitly.
 It can run without a viewer and never follows the viewer to another worktree.
 
 ```sh
+copilot mcp add fathomable -- fathomable --mcp
 claude mcp add --scope user fathomable -- fathomable --mcp
 codex mcp add fathomable -- fathomable --mcp
 ```
 
-For Copilot CLI, add this server to its MCP configuration:
+For Copilot CLI, the command adds the server to
+`~/.copilot/mcp-config.json`. Launch Copilot from the checkout you want to
+review. To configure it manually, merge this entry into the existing
+`mcpServers` object rather than replacing other servers:
 
 ```json
 {
@@ -251,6 +255,45 @@ For Copilot CLI, add this server to its MCP configuration:
   }
 }
 ```
+
+### VS Code
+
+Register the server in your user profile:
+
+```sh
+code --add-mcp '{"name":"fathomable","type":"stdio","command":"fathomable","args":["--mcp","${workspaceFolder}"]}'
+```
+
+Open the checkout as a workspace and approve the server when prompted.
+`${workspaceFolder}` explicitly binds Fathomable to that workspace. Use
+**MCP: List Servers** to check its status. Fathomable must be on the server's
+`PATH`; use the executable's full path if the editor cannot find it.
+
+For workspace-scoped setup instead, merge this into `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "fathomable": {
+      "type": "stdio",
+      "command": "fathomable",
+      "args": ["--mcp", "${workspaceFolder}"]
+    }
+  }
+}
+```
+
+For Remote SSH or containers, install Fathomable in that Linux environment
+and configure it through **MCP: Open Remote User Configuration** or the
+workspace's `.vscode/mcp.json`, rather than a local user-profile server.
+Run the viewer in the same environment and OS user account so it shares the
+server's state directory.
+
+See the upstream [Copilot CLI setup](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers)
+and [VS Code setup](https://code.visualstudio.com/docs/agent-customization/mcp-servers)
+for host-specific options.
+
+### Tools and identity
 
 | Tool | Purpose |
 | --- | --- |

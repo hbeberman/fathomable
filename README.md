@@ -17,7 +17,7 @@ Building needs a Rust toolchain, a C linker, and Git. Run the package commands
 for your distribution, then install Rust and Fathomable:
 
 ```sh
-# Fedora
+# Azure Linux 4 / Fedora
 sudo dnf install gcc git curl ca-certificates tar
 
 # Azure Linux 3
@@ -34,6 +34,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 git clone https://github.com/hbeberman/fathomable
 cd fathomable
 cargo install --path crates/fathomable --locked
+# Ensure ~/.cargo/bin is in PATH
 fathomable --version
 ```
 
@@ -53,10 +54,12 @@ state, and connecting an agent over MCP.
 
 ## Contribute
 
-Product installation does not install contributor tools or Git hooks. See
-[CONTRIBUTING.md](CONTRIBUTING.md) for that explicit setup, the commit gate,
-dependency monitoring, and the documentation bundle. Durable project
-knowledge lives under [`docs/`](docs/index.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build environment setup,
+including the commit gate, dependency monitoring, and maintaining the doc
+bundle. Durable project knowledge lives under [`docs/`](docs/index.md).
+
+## AI Notice
+This project is developed via LLM coding agents.
 
 ## License
 

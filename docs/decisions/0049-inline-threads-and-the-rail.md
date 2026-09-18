@@ -207,10 +207,10 @@ result.
   message while expanded stays expanded, and its newest message becomes
   the thread cursor's message when the reply is the user's, as 0046.
 - The app retains the ordered `Stub` values that it gives the view instead
-  of reconstructing every expanded thread during each row lookup. Expanded
-  Markdown layouts are retained by thread revision and pane width, so
-  placement and drawing reuse one parse while navigation stays a row-index
-  lookup.
+  of reconstructing every expanded thread during each row lookup. Message
+  Markdown layouts are retained by thread revision and effective body width
+  in the cache shared with Reviews; expanded placement adds its row stops.
+  Drawing reuses one parse while navigation stays a row-index lookup.
 - **Removal.** The thread pane (`Focus::Thread`, `Space a`, its
   `h`/`l`/`H`/`L`, `Esc` back to the text) goes. `]c`/`[c`, `]C`/`[C`,
   `]r`/`[r` stay in the text; `]r` expands the thread it lands on, since

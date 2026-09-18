@@ -19,13 +19,14 @@
 //! at the bottom of its thread's block, an edit's in place of the
 //! message it edits, and a new comment's in a draft block of its own.
 
+use std::sync::Arc;
+
 use fathomable_core::annotations::{LineRange, Placement, Thread, ThreadId};
 use fathomable_core::config::ThreadsConfig;
-use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::RowAnchor;
 
 use crate::app::App;
-use crate::app::draw::message::ExpandedLayout;
+use crate::app::draw::message::{ExpandedLayout, MESSAGE_INDENT, MessageLayouts};
 use crate::app::threads::{ComposeTarget, Mark, ThreadState};
 use crate::app::view::StubBlock;
 
@@ -176,7 +177,7 @@ fn take_layout(
     id: &ThreadId,
     thread: &Thread,
     width: usize,
-    highlighter: &Highlighter,
+    bodies: Arc<MessageLayouts>,
 ) -> ExpandedLayout {
     cached
         .iter()
@@ -184,7 +185,7 @@ fn take_layout(
         .map(|index| cached.swap_remove(index))
         .map(|(_, layout)| layout)
         .filter(|layout| layout.matches(thread, width))
-        .unwrap_or_else(|| ExpandedLayout::new(thread, width, highlighter))
+        .unwrap_or_else(|| ExpandedLayout::new(width, bodies))
 }
 
 /// Fit the active reply or edit draft into an expanded thread's rows.
@@ -283,13 +284,12 @@ impl App {
                 let count = thread.replies().len() + 1;
                 let expanded = self.expanded.contains(mark.id());
                 let (messages, rows, stops, slot) = if expanded {
-                    let layout = take_layout(
-                        &mut cached_layouts,
-                        mark.id(),
+                    let bodies = self.message_layout_cache.layout(
                         thread,
-                        width,
+                        width.saturating_sub(MESSAGE_INDENT).max(1),
                         self.highlighter(),
                     );
+                    let layout = take_layout(&mut cached_layouts, mark.id(), thread, width, bodies);
                     let mut rows = layout.rows();
                     let mut stops = layout.stops().to_vec();
                     expanded_layouts.push((mark.id().clone(), layout));

@@ -144,9 +144,13 @@ round on 2026-08-27; the choices are recorded below.
   mouse routing branch on it. The list's state includes the selected
   thread and message; its state and row model live in
   `app/threads/list.rs`, which this record backs, and `ui` draws the rows.
-- The list's rows are computed from the store on every draw and key, not
-  cached, so there is no list state to invalidate on reload. The cost is
-  one pass over the store's threads, which the picker already paid.
+- The list's row model is computed from the store on every draw and key, so
+  placement, lifecycle, folds, and selection need no list invalidation.
+  Rendered message bodies are different: Markdown parsing and fenced-code
+  highlighting are retained by thread revision and effective body width in
+  the shared message-layout cache also used by inline threads. Rebuilding
+  rows clones those prepared lines instead of highlighting every message
+  again.
 - 0013's "`Space A` opens the picker over the file's threads" is
   superseded; 0012's picker section loses its threads variant.
 - `docs/guide.md` gains the list keys and loses the picker line in the

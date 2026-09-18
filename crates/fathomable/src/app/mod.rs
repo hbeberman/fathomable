@@ -507,6 +507,8 @@ pub(crate) struct App {
     inline_stubs: Vec<threads::stubs::Stub>,
     /// Expanded message layouts retained across draws and file switches.
     expanded_layout_cache: Vec<(ThreadId, draw::message::ExpandedLayout)>,
+    /// Rendered thread bodies shared by the File and Reviews surfaces.
+    message_layout_cache: draw::message::MessageLayoutCache,
     /// The threads expanded in place this session (ADR 0049).
     expanded: HashSet<ThreadId>,
     /// What the review shows, shared by the list and the threads pane.
@@ -656,6 +658,7 @@ impl App {
             stubs: threads::stubs::StubState::from_config(&threads),
             inline_stubs: Vec::new(),
             expanded_layout_cache: Vec::new(),
+            message_layout_cache: draw::message::MessageLayoutCache::default(),
             expanded: HashSet::new(),
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,

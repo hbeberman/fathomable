@@ -1,11 +1,15 @@
 use std::fs;
+use std::hint::black_box;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use fathomable_core::annotations::{
     AgentReplyCommand, Draft, LineRange, MessageTarget, Status, Store, Thread,
 };
 
 use fathomable_core::annotations::Author;
+use fathomable_core::highlight::Highlighter;
 use fathomable_core::session::{Request, Response};
 
 use anyhow::Context as _;
@@ -20,7 +24,7 @@ use fathomable_core::editor::{Cursor, Edit, Motion};
 use super::{ComposeTarget, ThreadState};
 use crate::app::draw::message::MESSAGE_INDENT;
 use crate::app::threads::draft::DraftRow;
-use crate::app::threads::list::{ReviewView, Row};
+use crate::app::threads::list::{BODY_INDENT, ReviewView, Row};
 use crate::app::threads::stubs::Subject;
 use crate::app::{App, Popup};
 use fathomable_core::layout::{Face, Line};
@@ -1216,6 +1220,64 @@ fn the_review_list_renders_bodies_as_markdown() -> anyhow::Result<()> {
             .iter()
             .any(|span| span.text() == "code" && span.style().face == Face::Code),
         "{bodies:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn review_navigation_reuses_shared_message_layouts() -> anyhow::Result<()> {
+    let dir = testing::workspace("threads-list-layout-cache", testing::README)?;
+    let mut app = app(&dir)?;
+    app.highlighter = Arc::new(Highlighter::new("base16-ocean.dark")?);
+    let markdown = format!(
+        "```markdown\n{}\n```",
+        "[reference](https://example.com/path) **strong** `inline-code` ".repeat(10)
+    );
+    for _ in 0..8 {
+        app.view_mut().goto_source_line(3);
+        app.start_comment();
+        app.compose_insert(&markdown);
+        app.compose_submit();
+    }
+
+    app.open_review();
+    let rendered = app.message_layout_cache.renders();
+    assert_eq!(rendered, 8, "each thread is initially rendered once");
+    let started = Instant::now();
+    for _ in 0..20 {
+        black_box(app.review_rows(app.column_width()));
+    }
+    assert_eq!(
+        app.message_layout_cache.renders(),
+        rendered,
+        "review row rebuilds reuse prepared Markdown"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "cached review row rebuilds took {:?}",
+        started.elapsed()
+    );
+
+    let id = app.marks()[0].id().clone();
+    app.close_review();
+    app.expand_thread(id);
+    let after_file = app.message_layout_cache.renders();
+    let other_threads = app.marks()[1..]
+        .iter()
+        .map(|mark| mark.id().clone())
+        .collect::<Vec<_>>();
+    app.review_list.folded_threads.extend(other_threads);
+    let inline_body_width = app
+        .view()
+        .layout()
+        .width()
+        .saturating_sub(MESSAGE_INDENT)
+        .max(1);
+    black_box(app.review_rows(inline_body_width + BODY_INDENT));
+    assert_eq!(
+        app.message_layout_cache.renders(),
+        after_file,
+        "File and Reviews share a matching effective body width"
     );
     Ok(())
 }

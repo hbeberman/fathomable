@@ -830,49 +830,43 @@ impl App {
         });
         let selected_message =
             selected.then(|| self.thread_cursor().message().min(thread.replies().len()));
+        let layouts = self
+            .message_layout_cache
+            .layout(thread, body_width, self.highlighter());
         // Every author as `author_label` names them (ADR 0058, ADR
         // 0061): the configured name for the user, `name (type)` for an
         // agent, the comment's the same as a reply's.
-        let mut message = |message: usize,
-                           author: &Author,
-                           created: u64,
-                           body: &str,
-                           badge: Option<&'static str>| {
-            let message_selected = selected_message == Some(message);
-            out.rows.push(Row::Message {
-                entry: index,
-                message,
-                user: author.is_user(),
-                author: author_label(author, user),
-                created,
-                badge,
-                dim,
-                selected: message_selected,
-            });
-            // The body as the expanded thread in the file draws it (ADR
-            // 0037): Markdown, a newline kept as a line break, fences
-            // coloured by the app's highlighter.
-            for line in Layout::render_message(body, body_width, self.highlighter()).lines() {
-                out.rows.push(Row::Body {
+        let mut message =
+            |message: usize, author: &Author, created: u64, badge: Option<&'static str>| {
+                let message_selected = selected_message == Some(message);
+                out.rows.push(Row::Message {
                     entry: index,
                     message,
                     user: author.is_user(),
-                    line: line.clone(),
+                    author: author_label(author, user),
+                    created,
+                    badge,
                     dim,
                     selected: message_selected,
                 });
-            }
-        };
-        message(0, thread.author(), thread.created(), thread.comment(), None);
+                // The body as the expanded thread in the file draws it (ADR
+                // 0037): Markdown, a newline kept as a line break, fences
+                // coloured by the app's highlighter.
+                for line in layouts.body(message).lines() {
+                    out.rows.push(Row::Body {
+                        entry: index,
+                        message,
+                        user: author.is_user(),
+                        line: line.clone(),
+                        dim,
+                        selected: message_selected,
+                    });
+                }
+            };
+        message(0, thread.author(), thread.created(), None);
         for (reply_index, reply) in thread.replies().iter().enumerate() {
             let badge = reply.proposes_resolution().then_some("proposes resolving");
-            message(
-                reply_index + 1,
-                reply.author(),
-                reply.created(),
-                reply.body(),
-                badge,
-            );
+            message(reply_index + 1, reply.author(), reply.created(), badge);
         }
         if let Some(evidence) = &entry.evidence {
             for line in Layout::render_message(evidence, body_width, self.highlighter()).lines() {

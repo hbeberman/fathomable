@@ -4,11 +4,18 @@
 //!
 //! A comment or reply body goes through the same renderer as a Markdown
 //! file, wrapped to the text width less the message indent, with fenced
-//! code coloured by its language. The row count the view lays out is
-//! taken from the same retained rendering, so the two cannot disagree
-//! and drawing does not parse or highlight the body again.
+//! code coloured by its language. File and Reviews surfaces share retained
+//! body layouts; inline row counts and drawing use those same layouts, so
+//! navigation and drawing do not parse or highlight a body again.
 
-use fathomable_core::annotations::{Author, Thread};
+use std::cell::RefCell;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
+
+#[cfg(test)]
+use std::cell::Cell;
+
+use fathomable_core::annotations::{Author, Thread, ThreadId};
 use fathomable_core::highlight::Highlighter;
 use fathomable_core::layout::{Layout, display_width};
 use ratatui::style::Style;
@@ -21,6 +28,7 @@ use crate::app::threads::author_label;
 /// Cells a message body sits in from the block's left edge: the
 /// thread's own gutter (ADR 0071) and two more.
 pub(crate) const MESSAGE_INDENT: usize = THREAD_GUTTER + 2;
+const CACHED_WIDTHS_PER_THREAD: usize = 2;
 
 /// One message of a thread: the comment or a reply.
 struct Message<'a> {
@@ -30,36 +38,108 @@ struct Message<'a> {
     badge: Option<&'a str>,
 }
 
-/// The immutable body layouts for one expanded thread revision and width.
+/// Rendered bodies shared by every thread surface at one effective width.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ExpandedLayout {
+pub(crate) struct MessageLayouts {
     revision: u64,
     width: usize,
     bodies: Vec<Layout>,
+}
+
+impl MessageLayouts {
+    fn new(thread: &Thread, width: usize, highlighter: &Highlighter) -> Self {
+        let bodies = std::iter::once(thread.comment())
+            .chain(
+                thread
+                    .replies()
+                    .iter()
+                    .map(fathomable_core::annotations::Reply::body),
+            )
+            .map(|body| Layout::render_message(body, width.max(1), highlighter))
+            .collect();
+        Self {
+            revision: thread.revision(),
+            width,
+            bodies,
+        }
+    }
+
+    fn matches(&self, thread: &Thread, width: usize) -> bool {
+        self.revision == thread.revision() && self.width == width
+    }
+
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "construction stores exactly one body for every message index"
+    )]
+    pub(crate) fn body(&self, message: usize) -> &Layout {
+        &self.bodies[message]
+    }
+}
+
+/// Retains the two most recent message widths for every rendered thread.
+#[derive(Debug, Default)]
+pub(crate) struct MessageLayoutCache {
+    entries: RefCell<HashMap<ThreadId, VecDeque<Arc<MessageLayouts>>>>,
+    #[cfg(test)]
+    renders: Cell<usize>,
+}
+
+impl MessageLayoutCache {
+    /// Reuse a matching thread revision and effective body width.
+    pub(crate) fn layout(
+        &self,
+        thread: &Thread,
+        width: usize,
+        highlighter: &Highlighter,
+    ) -> Arc<MessageLayouts> {
+        let mut entries = self.entries.borrow_mut();
+        let variants = entries.entry(thread.id().clone()).or_default();
+        variants.retain(|layout| layout.revision == thread.revision());
+        if let Some(at) = variants
+            .iter()
+            .position(|layout| layout.matches(thread, width))
+            && let Some(layout) = variants.remove(at)
+        {
+            variants.push_back(Arc::clone(&layout));
+            return layout;
+        }
+
+        let layout = Arc::new(MessageLayouts::new(thread, width, highlighter));
+        if variants.len() >= CACHED_WIDTHS_PER_THREAD {
+            variants.pop_front();
+        }
+        variants.push_back(Arc::clone(&layout));
+        #[cfg(test)]
+        self.renders.set(self.renders.get() + 1);
+        layout
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renders(&self) -> usize {
+        self.renders.get()
+    }
+}
+
+/// Placement metadata for one expanded thread at its outer width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExpandedLayout {
+    width: usize,
+    bodies: Arc<MessageLayouts>,
     rows: usize,
     stops: Vec<usize>,
 }
 
 impl ExpandedLayout {
-    /// Lay out every message body once for row placement and drawing.
-    pub(crate) fn new(thread: &Thread, width: usize, highlighter: &Highlighter) -> Self {
-        let count = thread.replies().len() + 1;
-        let mut bodies = Vec::with_capacity(count);
-        let mut stops = Vec::with_capacity(count);
+    /// Derive row placement from retained message bodies.
+    pub(crate) fn new(width: usize, bodies: Arc<MessageLayouts>) -> Self {
+        let mut stops = Vec::with_capacity(bodies.bodies.len());
         let mut rows = 0;
-        for body in std::iter::once(thread.comment()).chain(
-            thread
-                .replies()
-                .iter()
-                .map(fathomable_core::annotations::Reply::body),
-        ) {
+        for body in &bodies.bodies {
             stops.push(rows);
-            let layout = body_layout(body, width, highlighter);
-            rows += 1 + layout.lines().len();
-            bodies.push(layout);
+            rows += 1 + body.lines().len();
         }
         Self {
-            revision: thread.revision(),
             width,
             bodies,
             rows,
@@ -69,7 +149,10 @@ impl ExpandedLayout {
 
     /// Whether this layout still describes `thread` at `width`.
     pub(crate) fn matches(&self, thread: &Thread, width: usize) -> bool {
-        self.revision == thread.revision() && self.width == width
+        self.width == width
+            && self
+                .bodies
+                .matches(thread, width.saturating_sub(MESSAGE_INDENT).max(1))
     }
 
     /// Width this layout was built for.
@@ -87,12 +170,8 @@ impl ExpandedLayout {
         &self.stops
     }
 
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "construction stores exactly one body for every message index"
-    )]
     fn body(&self, message: usize) -> &Layout {
-        &self.bodies[message]
+        self.bodies.body(message)
     }
 }
 
@@ -209,6 +288,7 @@ pub(crate) fn expanded_lines<'a>(
 /// The body laid out as Markdown in the cells left of `width` after the
 /// indent, a newline kept as a line break, fenced code coloured by
 /// `highlighter`.
+#[cfg(test)]
 fn body_layout(body: &str, width: usize, highlighter: &Highlighter) -> Layout {
     Layout::render_message(
         body,

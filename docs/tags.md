@@ -17,6 +17,7 @@ tag_definitions:
   onboarding: Human-facing setup and usage walkthroughs.
   rendering: Markdown and code layout and highlighting.
   review-points: Explicit saved workspace states used as temporal comparison bases.
+  security: Threat models, trust boundaries, customer-data protection, and responsible disclosure.
   sessions: Running-instance discovery and the MCP endpoint.
 ---
 

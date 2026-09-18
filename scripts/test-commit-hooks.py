@@ -35,6 +35,7 @@ GATE_COMMANDS = {
         "lychee", "--offline", "--no-progress", "docs", "README.md",
         "CONTRIBUTING.md", "AGENTS.md",
         ".agents/skills/open-knowledge-format/SKILL.md",
+        ".agents/skills/fathomable-threatmodel/SKILL.md",
     ],
     "boundaries": ["scripts/check-boundaries.sh"],
     "rustdoc": ["cargo", "doc", "--no-deps", "--all-features"],

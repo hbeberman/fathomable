@@ -13,6 +13,14 @@ user, system, or repo policy.
 - Provide those skills globally or through user-managed, Git-excluded local
   links. Do not commit copies or machine-specific links to this repository.
 
+## Security guidance
+
+- Invoke the repository-local `fathomable-threatmodel` skill before security
+  audits, threat modeling, or security-sensitive design, changes, and reviews.
+- Use [the threat model](docs/threat-model.md) to identify assets, attacker
+  prerequisites, and trust boundaries; verify protections in code rather than
+  treating documented goals as implemented guarantees.
+
 ## Workspace policy
 
 - Product code lives under `crates/` in an edition 2024 Cargo workspace.

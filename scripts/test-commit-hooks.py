@@ -42,12 +42,13 @@ GATE_COMMANDS = {
     "unused-dependencies": [
         "cargo", "+nightly", "udeps", "--all-targets", "--all-features",
     ],
+    "licenses": ["scripts/check-licenses.sh"],
 }
 GATE_IDS = list(GATE_COMMANDS)
 FIXTURE_SCRIPTS = (
     "scripts/test-commit-hooks.py", "scripts/test-doctests.sh",
     "scripts/okf-lint.py", "scripts/check-boundaries.sh",
-    "scripts/check-public-api.sh",
+    "scripts/check-public-api.sh", "scripts/check-licenses.sh",
 )
 # Keep the production config unchanged: only the programs it invokes are fixtures.
 FIXTURE_GATE = """#!/usr/bin/env python3
@@ -73,6 +74,7 @@ else:
         "test-doctests.sh": "doctest", "okf-lint.py": "okf",
         "check-boundaries.sh": "boundaries",
         "check-public-api.sh": "public-api",
+        "check-licenses.sh": "licenses",
     }[program]
     command = sys.argv[:]
     if Path(command[0]).is_absolute():

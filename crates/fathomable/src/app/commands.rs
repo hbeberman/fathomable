@@ -15,6 +15,7 @@ impl App {
             (Some("status"), None, _) => self.open_status(),
             (Some("help"), None, _) => self.open_getting_started(),
             (Some("doctor"), None, _) => self.open_doctor(),
+            (Some("licenses"), None, _) => self.open_licenses(),
             (Some("about"), None, _) => self.open_about(),
             (Some("diff"), None, _) => self.toggle_head_diff(),
             (Some("name"), name, None) => self.set_name(name),

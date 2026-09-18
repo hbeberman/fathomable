@@ -72,7 +72,7 @@ Install or migrate the prek-managed `commit-msg` hook with
 `just install-commit-hooks` (or `scripts/install-commit-hooks.sh`) after
 `scripts/setup-build-deps.sh`. Installation is explicit opt-in, never a
 side effect of building or installing the product. It checks the message
-before running all 13 checks against staged tracked contents, including
+before running all 14 checks against staged tracked contents, including
 empty, deletion-only, documentation-only, and merge commits.
 See [Commit hooks and staged gates](docs/commit-hooks.md); installation
 uses Git's shared hooks directory, including from linked worktrees.

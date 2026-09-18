@@ -1,0 +1,80 @@
+---
+type: Decision
+title: Bundled license notices
+description: Offline first- and third-party license notices travel with the executable and are readable from Help or the command line.
+resource: crates/fathomable/src/app/licenses.rs
+related_resources:
+  - about.toml
+  - scripts/generate_licenses.py
+  - scripts/check-licenses.sh
+tags:
+  - decision
+  - dependencies
+  - input
+---
+
+# 0088 Bundled license notices
+
+Status: accepted (2026-09-17)
+
+## Decision
+
+Fathomable's own source remains MIT-licensed. Third-party code and embedded
+syntax/theme data retain their respective licenses and copyright notices;
+the application's license does not replace those terms.
+
+**Help > Licenses** and `:licenses` open the same read-only, scrollable pane.
+The executable embeds the complete notice bundle at compile time, so
+reading it needs neither a checkout nor network access. Opening the pane
+preserves the current document and parks any draft. `Esc` or a click outside
+closes it; the menu bar remains reachable.
+
+The pane displays notice text verbatim, wrapping long lines to the terminal
+width without Markdown interpretation. Arrow keys or `j`/`k` scroll, the
+wheel scrolls, `PgUp`/`PgDn` page, `Ctrl-u`/`Ctrl-d` half-page, and
+`Home`/`End` or `g`/`G` reach the beginning/end. Resizing preserves the source
+location at the top where possible and clamps the viewport. Wrapped layout
+is reused between frames.
+
+The committed bundle is generated from the locked dependency inventory and
+reviewed supplementary asset notices. It includes actual license texts,
+copyright and NOTICE content, package versions and source references, and
+source-availability information for MPL-covered code. Package-level SPDX
+metadata alone is not sufficient for syntect's embedded grammar/theme data.
+
+`cargo-about` **0.9.2** inventories the x86_64 GNU/Linux normal/build
+dependency graph and gathers license texts from cached crate sources.
+`about.toml` selects accepted licenses, excludes dev/private workspace
+crates, and records hash-checked clarifications for combined or unrecognized
+license files. For dual licenses it prefers MIT when available; `cargo deny`
+remains the independent dependency-policy gate.
+
+`scripts/generate_licenses.py` invokes `cargo about generate --frozen --fail`
+and formats its JSON report as plain text, preserving package versions,
+exact source links and copyright text without HTML escaping. It adds the
+first-party license, separate package NOTICE/COPYRIGHT files, and reviewed
+supplements from `licenses/manifest.json`. Missing-file SPDX templates are
+rejected unless a matching pinned upstream notice supplies the actual terms.
+The Rust standard-library/runtime inventory and syntect embedded-asset
+notices remain supplemental: cargo-about does not supply them automatically.
+Toolchain identities and asset hashes must match their reviewed records.
+Line endings and trailing horizontal whitespace are normalized.
+
+This is not a byte-for-byte binary inventory. System linker/startup objects
+and dynamic OS libraries are outside the bundle's scope. A new target,
+toolchain, native input, or static-linking policy requires reviewing that
+scope, not merely regenerating existing records.
+
+Generation is contributor tooling, not a build step or runtime dependency.
+Dependency changes require refreshing the notices, including those proposed
+by Dependabot. A gate rejects stale output rather than silently updating it.
+`scripts/check-licenses.sh` runs generator tests and the read-only `--check`.
+Normal product installation compiles the committed bundle without installing
+the notice-generation machinery.
+
+## Related contracts
+
+- [Dependency policy](0001-dependency-policy.md)
+- [The menu bar](0081-the-menu-bar.md)
+- [Dependency monitoring](../dependency-monitoring.md)
+- [Contributor setup](../../CONTRIBUTING.md)

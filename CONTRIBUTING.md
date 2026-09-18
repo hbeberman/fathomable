@@ -18,39 +18,42 @@ directly, and other recipes run their substantive commands without Make.
 
 ```sh
 # Fedora
-sudo dnf install gcc git make ripgrep python3 python3-pyyaml \
-    pkgconf-pkg-config openssl-devel perf just
+sudo dnf install gcc git curl ca-certificates tar make ripgrep \
+    python3 python3-pyyaml pkgconf-pkg-config openssl-devel
 
 # Azure Linux 3 (no ripgrep, perf, or just package)
-sudo tdnf install build-essential git python3 python3-pyyaml \
-    pkgconf-pkg-config openssl-devel ca-certificates
+sudo tdnf install build-essential git curl ca-certificates tar python3 \
+    python3-pyyaml pkgconf-pkg-config openssl-devel
 cargo install ripgrep --locked
 
 # Azure Linux 4 (no just package)
-sudo tdnf install gcc git make tar ripgrep python3 python3-pyyaml \
-    pkgconf-pkg-config openssl-devel perf ca-certificates
+sudo tdnf install gcc git curl ca-certificates make tar ripgrep \
+    python3 python3-pyyaml pkgconf-pkg-config openssl-devel
 
 # Ubuntu 24.04
-sudo apt install build-essential git curl make ripgrep python3 python3-yaml \
-    pkg-config libssl-dev linux-tools-$(uname -r) just
+sudo apt-get update
+sudo apt-get install build-essential git curl ca-certificates tar make \
+    ripgrep python3 python3-yaml pkg-config libssl-dev
 ```
 
-`just` is `cargo install just --locked` where it is not packaged. Each
-line was run in the distribution's official container image, followed by
-the setup script and the full gate.
+`perf` is optional and its package must match the running kernel; install it
+separately only for `just perf`. `just` is also optional: Fedora and Ubuntu
+package it, while `cargo install just --locked` works where it is not
+packaged. Neither is needed to run the gate.
 
 Then, with rustup already installed:
 
 ```sh
+. "$HOME/.cargo/env"
 scripts/setup-build-deps.sh   # nightly, cargo tools, lychee, prek 0.5.3
-just install-commit-hooks     # installs or migrates the prek commit-msg shim
-# Without just: scripts/install-commit-hooks.sh
+scripts/install-commit-hooks.sh
+# With just: just install-commit-hooks
 ```
 
-The setup script pins every tool version and installs PyYAML with
-`pip --user` only when the `yaml` module is missing; on Ubuntu pip
-refuses that under PEP 668, which is why the distro package is listed
-above.
+The setup script pins the Cargo tool versions it installs and requests the
+current stable and nightly Rust toolchains. It installs PyYAML with
+`pip --user` only when the `yaml` module is missing; on Ubuntu pip refuses
+that under PEP 668, which is why the distro package is listed above.
 
 Hook installation is explicit opt-in: building or installing the product
 does not install hooks. The installer replaces the recognized bootstrap
@@ -64,7 +67,7 @@ fails closed. For an isolated trial before migration, see
 
 ## 2. The gate
 
-`prek.toml` is the single source of truth for all 13 checks, each a local
+`prek.toml` is the single source of truth for all 14 checks, each a local
 system hook. Only `commit-msg` is installed: prek checks the message
 first, then runs every check once against staged tracked contents.
 Failures refuse the commit. No checks are filtered by changed filenames,
@@ -105,6 +108,7 @@ The check order and individual checkout commands are:
 | `audit` | `just audit` | Dependency vulnerabilities |
 | `deny` | `just deny` | Dependency licenses, sources, and bans |
 | `unused-dependencies` | `just udeps` | Unused dependencies, using nightly |
+| `licenses` | `just licenses` | Bundled notice freshness and generator tests |
 
 Each individual check recipe calls `prek run --config prek.toml --all-files`
 with the corresponding hook ID; for example,
@@ -115,6 +119,55 @@ it runs `cargo fmt` to format the checkout on explicit request.
 CI runs the same hooks in named steps in one main job, including unused
 dependencies. Its clean checkout catches missing committed files that
 local untracked files might mask.
+
+### Dependency monitoring
+
+[Dependency monitoring](docs/dependency-monitoring.md) documents the
+checked-in weekly version-update configuration, the independent daily
+RustSec audit, and the repository and notification settings maintainers must
+enable separately.
+
+### Bundled license notices
+
+The executable embeds `crates/fathomable/assets/licenses.txt`, displayed by
+**Help > Licenses** or `:licenses`. Installing the product does not run its
+generator or need Python. Contributors need Python 3.11 or newer and
+`cargo-about` 0.9.2, installed by `scripts/setup-build-deps.sh`:
+
+```sh
+cargo install cargo-about --locked --version 0.9.2 --features cli
+```
+
+After changing dependencies, `Cargo.lock`, the first-party license, or the
+pinned Rust toolchain, refresh the committed bundle:
+
+```sh
+cargo fetch --locked
+python3 scripts/generate_licenses.py
+just licenses
+# Without just: scripts/check-licenses.sh
+```
+
+Generation uses `cargo-about` with `--frozen --fail` and cached package
+sources. `about.toml` holds license preferences, target selection, and
+hash-checked clarifications. Cargo-about handles the dependency graph,
+license recognition and deduplication; the Python adapter adds the
+first-party license and supplemental attribution. Missing-file SPDX
+templates are rejected without a reviewed, pinned replacement; obtain the
+actual upstream license and copyright notices rather than accepting a
+generic template. Separate package NOTICE/COPYRIGHT files are retained.
+`licenses/manifest.json` pins supplemental notices, syntect's embedded
+syntax/theme provenance, and the Rust standard-library inventory. Review and
+update those records when their owners or the toolchain change; regenerating
+alone is not a legal review of new dependencies. Update `about.toml`
+clarification hashes only after reviewing the changed upstream terms.
+
+The bundle covers the x86_64 GNU/Linux normal/build graph and Rust runtime
+inventory, not system linker/startup objects or dynamic OS libraries. Review
+additional obligations when distributing binaries, changing targets, or
+statically linking native components. Keep the embedded notices and MPL
+source-availability references in redistributions. See
+[Bundled license notices](docs/decisions/0088-bundled-licenses.md).
 
 Do not claim the full gate passed after running only one check. Do not
 bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or

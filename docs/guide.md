@@ -14,34 +14,13 @@ under XDG state directories.
 
 ## 1. Install
 
-Fathomable currently supports Linux and requires Rust 1.97 or newer. The
-repository pins the toolchain.
+Fathomable currently supports Linux. Follow the canonical
+[README installation steps](../README.md#install) to install the system
+packages, rustup, and the product. The repository pins Rust 1.97.0, and
+installing the product does not install contributor tools or Git hooks.
 
-```sh
-git clone <this repository> fathomable
-cd fathomable
-cargo install --path crates/fathomable --locked
-fathomable --version
-```
-
-Contributors should also install the tools in
-[CONTRIBUTING.md](../CONTRIBUTING.md), including
-`scripts/setup-build-deps.sh`, then explicitly run
-`just install-commit-hooks` (or `scripts/install-commit-hooks.sh`) to install
-or migrate the prek-managed `commit-msg` hook. Building or installing the
-product never installs hooks automatically. The hook checks the commit
-message first, then all checks defined in `prek.toml`, once per commit.
-
-Run `just gates` (or `prek run --config prek.toml --all-files`) to check
-the current checkout without hiding unstaged changes; `just gates-verbose`
-adds native verbose output. Plain `prek run --config prek.toml` or
-`prek run --config prek.toml --stage manual` instead checks staged tracked
-contents by temporarily saving and restoring unstaged tracked edits.
-Untracked and ignored files remain visible in either mode. Do not edit
-the same worktree concurrently with a commit or staged check; use separate
-worktrees for parallel agents.
-See [Commit hooks and staged gates](commit-hooks.md) for migration safety,
-linked-worktree installation, and `just test-commit-hooks`.
+Contributor setup, hooks, and gates are separate and documented in
+[CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 2. Launch and state compatibility
 
@@ -263,7 +242,14 @@ The wheel steps one row and previews it, while dragging the sidebar divider
 resizes the sidebar.
 
 Commands are `:q`, `:source`, `:noh`, `:N`, `:diff`, `:status`,
-`:name NAME`, `:help`, `:doctor`, and `:about`.
+`:name NAME`, `:help`, `:doctor`, `:about`, and `:licenses`.
+
+**Help > Licenses** in the application menu, or `:licenses`, opens the
+bundled license and copyright notices. They are available offline even
+without the source checkout. Scroll with `j`/`k`, arrow keys, or the wheel;
+page with `PgUp`/`PgDn` or half-page with `Ctrl-u`/`Ctrl-d`; use `Home`/`End`
+or `g`/`G` for the beginning/end. `Esc` or a click outside closes the pane
+without replacing the document you were reading.
 
 ## 4. Global comparisons and review points
 

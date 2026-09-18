@@ -26,6 +26,7 @@ mod goto_file;
 mod highlight;
 pub(crate) mod input;
 mod jumplist;
+mod licenses;
 mod menu_bar;
 mod review_points;
 pub(crate) mod run;
@@ -402,6 +403,8 @@ pub(crate) enum Popup {
     Status,
     /// Shared CLI diagnostics in a scrollable in-app view.
     Doctor(doctor_view::Doctor),
+    /// Bundled first- and third-party license notices.
+    Licenses(licenses::Licenses),
     /// Project identity and repository link.
     About,
     /// The context menu a right-click opened (ADR 0050).
@@ -1907,6 +1910,7 @@ impl App {
         self.relayout();
         input::help::resize(self);
         doctor_view::resize(self);
+        licenses::resize(self);
         menu_bar::resize(self);
     }
 

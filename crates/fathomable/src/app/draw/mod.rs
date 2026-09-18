@@ -296,6 +296,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             draw_table(frame, theme, grid, STATUS_TITLE, &rows, None);
         }
         Some(Popup::Doctor(doctor)) => draw_doctor(frame, app, theme, doctor),
+        Some(Popup::Licenses(licenses)) => draw_licenses(frame, app, theme, licenses),
         Some(Popup::About) => draw_about(frame, app, theme),
         Some(Popup::Menu(menu)) => {
             draw_context_menu(frame, app, theme, menu);
@@ -473,7 +474,7 @@ fn draw_doctor(
     theme: &Theme,
     doctor: &crate::app::doctor_view::Doctor,
 ) {
-    let area = doctor_area(app);
+    let area = report_area(app);
     if area.width < 2 || area.height < 2 {
         return;
     }
@@ -510,6 +511,31 @@ fn draw_doctor(
     frame.render_widget(Paragraph::new(shown).style(theme.popup), inner);
 }
 
+fn draw_licenses(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    licenses: &crate::app::licenses::Licenses,
+) {
+    let area = report_area(app);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let block = rounded_block(
+        theme,
+        " Licenses · j/k scroll · PgUp/PgDn page · Esc close ",
+        theme.popup,
+    );
+    let inner = block.inner(area);
+    let lines = licenses
+        .visible_lines(usize::from(inner.height))
+        .map(|line| Line::raw(line.text()))
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+}
+
 fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     let area = about_area(app);
     if area.width < 2 || area.height < 2 {
@@ -528,12 +554,13 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         Line::raw(""),
         Line::from(vec![
             Span::styled("License  ", theme.info),
-            Span::raw("MIT"),
+            Span::raw("MIT (Fathomable)"),
         ]),
         Line::from(vec![
             Span::styled("Source   ", theme.info),
             Span::styled("https://github.com/hbeberman/fathomable", theme.link),
         ]),
+        Line::raw("Third-party notices: Help > Licenses or :licenses"),
         Line::raw(""),
         Line::from(Span::styled("Esc close", theme.info)),
     ];
@@ -542,7 +569,7 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
-pub(crate) fn doctor_area(app: &App) -> Rect {
+pub(crate) fn report_area(app: &App) -> Rect {
     Rect {
         x: 1,
         y: u16_of(app.pane_top()),
@@ -554,7 +581,7 @@ pub(crate) fn doctor_area(app: &App) -> Rect {
 pub(crate) fn about_area(app: &App) -> Rect {
     let (width, _) = app.size();
     let popup_width = width.saturating_sub(4).clamp(2, 64);
-    let popup_height = app.pane_rows().clamp(2, 11);
+    let popup_height = app.pane_rows().clamp(2, 12);
     Rect {
         x: u16_of((width.saturating_sub(popup_width)) / 2),
         y: u16_of(app.pane_top() + app.pane_rows().saturating_sub(popup_height) / 3),

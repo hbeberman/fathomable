@@ -91,3 +91,4 @@ supersede rather than edit history.
 - [0085 Thread lifecycle and one-shot auto-resolve](0085-thread-lifecycle-and-auto-resolve.md)
 - [0086 One thread summary and its actions](0086-one-thread-summary-and-its-actions.md)
 - [0087 Global comparisons and deliberate board history](0087-global-comparisons-and-board-history.md)
+- [0088 Bundled license notices](0088-bundled-licenses.md)

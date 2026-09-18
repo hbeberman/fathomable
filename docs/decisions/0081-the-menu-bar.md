@@ -114,12 +114,14 @@ affect.
   restore. A configured empty composition means no sidebar; `Space p s`
   reports that there is no pane to show until a pane-specific toggle
   establishes one.
-- **Help** contains Getting started (`:help`), Doctor (`:doctor`), and View
-  keymap (`Space ?`). Getting started reuses the first-workspace page in the
-  text column and preserves the document behind it. Doctor is a fresh,
+- **Help** contains Getting started (`:help`), Doctor (`:doctor`), View
+  keymap (`Space ?`), and Licenses (`:licenses`,
+  [0088](0088-bundled-licenses.md)). Getting started reuses the first-workspace
+  page in the text column and preserves the document behind it. Doctor is a fresh,
   scrollable in-app rendering of the same structured report as
-  `fathomable --doctor`. About (`:about`) is a compact project/version,
-  license, and repository view.
+  `fathomable --doctor`. Licenses displays the embedded first- and third-party
+  notices offline. About (`:about`) is a compact project/version, license,
+  and repository view with directions to the full notices.
 - **Go** contains the file pickers, jumplist Back/Forward, Newest change, and
   Auto-jump. **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**

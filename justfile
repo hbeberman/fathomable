@@ -53,6 +53,9 @@ deny:
 udeps:
     prek run --config prek.toml --all-files unused-dependencies
 
+licenses:
+    prek run --config prek.toml --all-files licenses
+
 mutants:
     cargo mutants --workspace --all-features
 

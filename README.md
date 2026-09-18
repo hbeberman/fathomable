@@ -13,29 +13,28 @@ and lifecycle limits.
 
 ## Install
 
-Building needs a Rust toolchain, a C linker, and git. Install the
-system packages for your distribution, then rustup:
+Building needs a Rust toolchain, a C linker, and Git. Install the source-build
+packages for your distribution first:
 
 ```sh
 # Fedora
-sudo dnf install gcc git
+sudo dnf install gcc git curl ca-certificates tar
 
 # Azure Linux 3
-sudo tdnf install build-essential git ca-certificates
-
-# Azure Linux 4
-sudo tdnf install gcc git tar ca-certificates
+sudo tdnf install build-essential git curl ca-certificates tar
 
 # Ubuntu 24.04
-sudo apt install build-essential git curl
-
-# any of the above
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+sudo apt-get update
+sudo apt-get install build-essential git curl ca-certificates tar
 ```
 
-Each line was run in that distribution's official container image
-(`fedora:latest`, `mcr.microsoft.com/azurelinux/base/core:3.0`,
-`mcr.microsoft.com/azurelinux-beta/base/core:4.0`, `ubuntu:24.04`).
+Then install rustup and load Cargo into the current shell:
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+```
+
 `rust-toolchain.toml` pins the compiler, so the first `cargo` command in
 the checkout installs the right version on its own. The product crates
 are pure Rust: no OpenSSL, libgit2, or other C headers are needed.
@@ -46,9 +45,6 @@ cd fathomable
 cargo install --path crates/fathomable --locked
 fathomable --version
 ```
-
-Installing the product does not install Git hooks. Contributor hooks are
-an explicit opt-in described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 At run time the viewer only shells out for two optional things: your
 `$VISUAL` or `$EDITOR` to draft a long comment, and `xdg-open` to follow
@@ -66,10 +62,15 @@ and connecting an agent over MCP.
 
 ## Contribute
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the build tooling, the commit
-gate, and the documentation bundle. Durable project knowledge lives under
-[`docs/`](docs/index.md).
+Product installation does not install contributor tools or Git hooks. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for that explicit setup, the commit gate,
+dependency monitoring, and the documentation bundle. Durable project
+knowledge lives under [`docs/`](docs/index.md).
 
 ## License
 
 [MIT](LICENSE).
+
+Third-party components retain their own licenses. Open **Help > Licenses**
+or `:licenses` in the viewer for bundled license texts, copyright notices,
+and source references.

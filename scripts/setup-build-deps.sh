@@ -36,6 +36,7 @@ rustup toolchain install nightly --profile minimal
 
 cargo install cargo-public-api --locked --version 0.51.0
 cargo install cargo-audit --locked --version 0.22.1
+cargo install cargo-about --locked --version 0.9.2 --features cli
 cargo install cargo-deny --locked --version 0.19.9
 cargo install cargo-nextest --locked --version 0.9.138
 cargo install cargo-mutants --locked --version 27.1.0

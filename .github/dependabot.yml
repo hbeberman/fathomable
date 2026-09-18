@@ -1,0 +1,50 @@
+# @okf-doc: /dependency-monitoring.md
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    groups:
+      routine-cargo:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    groups:
+      routine-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:30"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    groups:
+      routine-python:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

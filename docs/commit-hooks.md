@@ -18,7 +18,7 @@ tags:
 
 [prek](https://github.com/j178/prek) manages the Git hook shim and runs
 the repository's checks directly. `prek.toml` is their single source of
-truth: each of the 13 checks is a local `language = "system"` hook.
+truth: each of the 14 checks is a local `language = "system"` hook.
 Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
@@ -82,6 +82,7 @@ separate merge handling.
 | 11 | `audit` | Dependency vulnerabilities |
 | 12 | `deny` | Dependency licenses, sources, and bans |
 | 13 | `unused-dependencies` | Unused dependencies |
+| 14 | `licenses` | Bundled notice freshness and generator tests |
 
 Distinct priorities and `fail_fast` enforce this order and reject an
 invalid message before running expensive checks. All hooks are
@@ -89,7 +90,7 @@ invalid message before running expensive checks. All hooks are
 mandatory on every commit, even empty, deletion-only, documentation-only,
 and merge commits; a failure stops the run and refuses the commit.
 The message checker receives Git's message filename and runs only at
-`commit-msg`. The 13 check hooks use `pass_filenames = false` and declare
+`commit-msg`. The 14 check hooks use `pass_filenames = false` and declare
 `pre-commit`, `commit-msg`, and `manual` stages. Declaring those stages
 does not install extra Git shims.
 

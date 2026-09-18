@@ -22,7 +22,7 @@ use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
 use crate::app::threads::list::Row;
 use crate::app::view::Effect;
-use crate::app::{doctor_view, menu_bar};
+use crate::app::{doctor_view, licenses, menu_bar};
 
 /// Presses on one cell closer together than this are one gesture.
 const MULTI_CLICK: Duration = Duration::from_millis(400);
@@ -344,7 +344,18 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             MouseEventKind::ScrollDown => Some(doctor_view::wheel(app, WHEEL_LINES)),
             MouseEventKind::ScrollUp => Some(doctor_view::wheel(app, -WHEEL_LINES)),
             _ if left => {
-                if !inside(draw::doctor_area(app), column, row) {
+                if !inside(draw::report_area(app), column, row) {
+                    app.close_popup();
+                }
+                Some(Effect::None)
+            }
+            _ => Some(Effect::None),
+        },
+        Some(Popup::Licenses(_)) => match kind {
+            MouseEventKind::ScrollDown => Some(licenses::wheel(app, WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(licenses::wheel(app, -WHEEL_LINES)),
+            _ if left => {
+                if !inside(draw::report_area(app), column, row) {
                     app.close_popup();
                 }
                 Some(Effect::None)

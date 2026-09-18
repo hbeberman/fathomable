@@ -8,7 +8,6 @@
 
 use std::backtrace::Backtrace;
 use std::fmt::Write as _;
-use std::fs;
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -233,9 +232,9 @@ fn build() -> String {
 
 fn write_report(path: &Path, report: &str) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        fathomable_core::private_state::ensure_dir(parent)?;
     }
-    fs::write(path, report)
+    fathomable_core::private_state::write(path, report)
 }
 
 #[cfg(test)]

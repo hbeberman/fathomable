@@ -2,7 +2,6 @@
 //! Structured file logging to `$XDG_STATE_HOME/fathomable/log/<session-id>.log`.
 
 use std::fmt;
-use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -38,13 +37,10 @@ impl fmt::Debug for Guard {
 /// Install the global JSON-lines subscriber writing to the session log file.
 pub(crate) fn init(dirs: &XdgDirs, id: &Id) -> anyhow::Result<Guard> {
     let log_dir = dirs.log_dir();
-    fs::create_dir_all(&log_dir)
+    dirs.prepare_state_dir(&log_dir)
         .with_context(|| format!("cannot create log directory {}", log_dir.display()))?;
     let path = log_path(dirs, id);
-    let file = fs::File::options()
-        .create_new(true)
-        .append(true)
-        .open(&path)
+    let file = fathomable_core::private_state::create_new(&path)
         .with_context(|| format!("cannot create log file {}", path.display()))?;
     let filter = EnvFilter::try_from_env(LOG_ENV).unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt()

@@ -26,7 +26,7 @@
 //! use std::path::Path;
 //! use fathomable_core::annotations::{Author, Draft, LineRange, Store};
 //!
-//! let mut store = Store::open("/tmp/threads.jsonl")?;
+//! let mut store = Store::open("private-state/threads.jsonl")?;
 //! let text = "# Title\n\nalpha\nbeta\n";
 //! let draft = Draft::new(Author::User, Path::new("README.md"), LineRange::new(3, 4), "rename these");
 //! let id = store.annotate(draft, text, 1_700_000_000)?;
@@ -36,7 +36,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
@@ -2775,7 +2775,24 @@ pub struct Store {
 }
 
 impl Store {
+    /// Open the workspace's XDG store, validating its private directory hierarchy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] for unsafe existing state or the errors of [`Self::open`].
+    pub fn open_workspace(dirs: &crate::XdgDirs, key: &Path) -> Result<Self, StoreError> {
+        let directory = dirs.workspace_dir(key);
+        dirs.prepare_state_dir(&directory)
+            .map_err(|error| StoreError::io(&directory, error))?;
+        Self::open(dirs.threads_file(key))
+    }
+
     /// Load the store at `path`, or start empty when the file is missing.
+    ///
+    /// Existing files must be private, owned by the effective UID and not
+    /// linked. Missing parents are created privately on the first write;
+    /// existing caller-owned parents need not be private. Use
+    /// [`Self::open_workspace`] to also validate the application-owned XDG tree.
     ///
     /// # Errors
     ///
@@ -2793,7 +2810,7 @@ impl Store {
             cursor: ActivityCursor::default(),
             agent_activity: Vec::new(),
         };
-        let mut file = match OpenOptions::new().read(true).open(&store.path) {
+        let mut file = match crate::private_state::open_read(&store.path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(store),
             Err(error) => return Err(StoreError::io(&store.path, error)),
@@ -2848,14 +2865,7 @@ impl Store {
     }
 
     fn lock_for_write(&mut self) -> Result<File, StoreError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| StoreError::io(parent, error))?;
-        }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .append(true)
-            .open(&self.path)
+        let mut file = crate::private_state::open_append(&self.path)
             .map_err(|error| StoreError::io(&self.path, error))?;
         file.lock()
             .map_err(|error| StoreError::io(&self.path, error))?;

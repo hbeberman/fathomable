@@ -8,6 +8,7 @@ related_resources:
   - crates/fathomable/src/logging.rs
   - crates/fathomable/src/seed.rs
   - crates/fathomable-core/src/xdg.rs
+  - crates/fathomable-core/src/private_state.rs
 tags:
   - decision
   - diagnostics
@@ -70,6 +71,46 @@ Logging:
   always; level from `FATHOMABLE_LOG` or config, default `info`.
 - Log lines are structured (JSON) so an agent can grep and parse them; the
   session id appears in the TUI status so the user can name it.
+
+### Persistent-state privacy
+
+Application-owned persistent state directories, starting at
+`$XDG_STATE_HOME/fathomable`, are created with mode **0700**. Sensitive files
+are created with mode **0600**, before any content is written, independently
+of permissive umasks such as 000 or 022. This includes annotation logs (also
+their locking inode), review-point manifests and blobs, viewer records,
+workspace markers, comparison preferences and replacement files, logs, crash
+reports, and diagnostic probes.
+
+Existing owned directories must be 0700 and owned by the effective UID.
+Existing files must be regular, singly linked, 0600, and owned by that UID.
+Symlinks, unsafe ownership, loose permissions, and special files are refused
+with a path-specific error; files are validated before truncation. Exclusive
+creation prevents a stale probe or replacement path from being overwritten.
+No permissions are repaired, no stores migrated, and no old state reset or
+deleted as part of this validation.
+
+The shared `private_state` helpers use Linux metadata, no-follow opens, and
+the kernel's effective UID from `/proc/self/status`, not an environment UID.
+Every existing ancestor must be a real directory owned by root or this UID,
+and cannot be writable by other users unless protected by the sticky bit.
+External ancestors such as HOME and the XDG base are not chmodded; missing
+parents are created privately. Read-only configuration is unchanged.
+
+`XdgDirs` path getters remain pure. `prepare_state_dir` validates every owned
+component from the application root through the requested directory.
+`Store::open_workspace` and `ReviewPointStore::open_workspace` apply that
+contract at XDG boundaries. The arbitrary-path `Store::open` instead treats
+existing caller-supplied parents as external: it protects its file and creates
+missing parents privately without claiming an arbitrary existing directory
+as application-owned. `ReviewPointStore::open` owns and validates its supplied
+store and blobs directories.
+
+These are filesystem access controls against other local UIDs, not encryption,
+secure erasure, or a sandbox against root, the OS, or same-UID programs.
+External editors and their temporary drafts have their own
+[contract](0018-comment-editor.md). Logs and reports can contain private paths
+and source-derived text; users must still review them before sharing.
 
 Note (2026-08-29): `--register [PATH]` writes the workspace marker of
 [0024](0024-workspace-sessions.md) for the root around `PATH` without

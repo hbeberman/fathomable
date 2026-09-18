@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -252,20 +252,32 @@ pub struct ReviewPointStore {
 }
 
 impl ReviewPointStore {
+    /// Open the workspace's review points in a validated private XDG hierarchy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsafe existing state or the errors of [`Self::open`].
+    pub fn open_workspace(dirs: &crate::XdgDirs, key: &Path) -> Result<Self, ReviewPointError> {
+        let directory = dirs.review_points_dir(key);
+        dirs.prepare_state_dir(&directory)?;
+        Self::open(directory)
+    }
+
     /// Open or create a review-point store.
+    ///
+    /// The store directory and its blobs directory must be owned by the
+    /// effective UID with mode 0700. Existing files must be singly linked
+    /// regular files with mode 0600. Unsafe paths are refused, not repaired.
     ///
     /// # Errors
     ///
     /// Returns an I/O or format error when the store cannot be opened.
     pub fn open(dir: impl AsRef<Path>) -> Result<Self, ReviewPointError> {
         let dir = dir.as_ref().to_path_buf();
-        fs::create_dir_all(dir.join(BLOB_DIR))?;
+        crate::private_state::ensure_dir(&dir)?;
+        crate::private_state::ensure_dir(dir.join(BLOB_DIR))?;
         let log_path = dir.join(INDEX_FILE);
-        let mut log = OpenOptions::new()
-            .append(true)
-            .read(true)
-            .create(true)
-            .open(&log_path)?;
+        let mut log = crate::private_state::open_append(&log_path)?;
         let mut lock = FileLock::shared(&mut log)?;
         let result = replay_log(lock.file_mut());
         let unlock = lock.unlock();
@@ -669,7 +681,7 @@ impl ReviewPointStore {
         point: &ReviewPoint,
         path: &Path,
     ) -> Result<Vec<u8>, ReviewPointError> {
-        fs::read(self.dir.join(BLOB_DIR).join(blob)).map_err(|error| {
+        crate::private_state::read(self.dir.join(BLOB_DIR).join(blob)).map_err(|error| {
             ReviewPointError::MissingBacking {
                 point: point.id.clone(),
                 path: path.to_path_buf(),
@@ -1162,20 +1174,24 @@ fn publish_locked(
 fn ensure_blob(dir: &Path, blob: &str, bytes: &[u8]) -> io::Result<()> {
     let directory = dir.join(BLOB_DIR);
     let target = directory.join(blob);
-    if target.is_file() {
-        return Ok(());
+    match crate::private_state::open_read(&target) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     let temporary = directory.join(format!(".{blob}.{}.tmp", nonce()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    file.write_all(bytes)?;
-    file.flush()?;
-    file.sync_all()?;
-    fs::rename(&temporary, &target)?;
-    sync_directory(&directory)?;
-    Ok(())
+    let mut file = crate::private_state::create_new(&temporary)?;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        fs::rename(&temporary, &target)?;
+        sync_directory(&directory)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn sync_directory(path: &Path) -> io::Result<()> {

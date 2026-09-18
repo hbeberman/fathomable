@@ -128,7 +128,7 @@ fn seed(dirs: &XdgDirs, workspace: &Path, file: &Path) -> anyhow::Result<Vec<(St
     let commit = workspace.head_commit();
     let when = now();
 
-    let mut store = Store::open(dirs.threads_file(key))?;
+    let mut store = Store::open_workspace(dirs, key)?;
     let mut made: Vec<(String, ThreadId)> = Vec::with_capacity(declared.threads.len());
     for (n, thread) in declared.threads.iter().enumerate() {
         let n = u64::try_from(n).unwrap_or(u64::MAX);

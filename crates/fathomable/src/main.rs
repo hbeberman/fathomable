@@ -175,7 +175,7 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
     }
 
     let config = Config::load(dirs, cli.config.as_deref())?;
-    let (store, thread_store_error) = match Store::open(dirs.threads_file(&key)) {
+    let (store, thread_store_error) = match Store::open_workspace(dirs, &key) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
             (Some(store), None)
@@ -185,8 +185,8 @@ fn run_tui(cli: &Cli, dirs: &XdgDirs, id: Id) -> anyhow::Result<()> {
             (None, Some(error))
         }
     };
-    let review_points = match fathomable_core::review_points::ReviewPointStore::open(
-        dirs.review_points_dir(&key),
+    let review_points = match fathomable_core::review_points::ReviewPointStore::open_workspace(
+        dirs, &key,
     ) {
         Ok(review_points) => {
             tracing::info!(

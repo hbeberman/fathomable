@@ -170,7 +170,7 @@ async fn exchange(socket: &Path, line: &str) -> std::io::Result<Response> {
 
 /// Open the shared store without persisting thread housekeeping.
 fn headless_store(dirs: &XdgDirs, target: &Target) -> Result<Store, String> {
-    Store::open(dirs.threads_file(&target.key)).map_err(|error| error.to_string())
+    Store::open_workspace(dirs, &target.key).map_err(|error| error.to_string())
 }
 
 /// Every non-archived thread on the repository discussion board.

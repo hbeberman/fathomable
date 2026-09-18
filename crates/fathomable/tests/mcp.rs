@@ -325,7 +325,7 @@ fn assert_mcp_output_schemas(tools: &[Value]) -> Result<()> {
 fn partial_reply_viewer(
     fixture: &Fixture,
 ) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
-    let socket = fixture.dir.0.join("viewer.sock");
+    let socket = fixture.dir.0.join("v.sock");
     let listener = UnixListener::bind(&socket)?;
     listener.set_nonblocking(true)?;
     Record::new(
@@ -408,7 +408,7 @@ fn apply_viewer_reply(store_path: &Path, request: Request) -> Result<Response> {
 fn successful_reply_viewer(
     fixture: &Fixture,
 ) -> Result<(PathBuf, std::thread::JoinHandle<Result<()>>)> {
-    let socket = fixture.dir.0.join("successful-viewer.sock");
+    let socket = fixture.dir.0.join("v.sock");
     let listener = UnixListener::bind(&socket)?;
     Record::new(
         Id::mint(),
@@ -1748,7 +1748,7 @@ fn live_and_headless_replies_return_the_same_contract() -> Result<()> {
         result
     }
 
-    let live_fixture = Fixture::new("mcp-live-parity")?;
+    let live_fixture = Fixture::new("mcp-live")?;
     let live_thread = seeded_thread(&live_fixture)?;
     let (socket, viewer) = successful_reply_viewer(&live_fixture)?;
     let mut live_client = Mcp::copilot(&live_fixture, "chat")?;
@@ -1906,7 +1906,7 @@ fn file_wide_range_override_invalidates_the_whole_reply_batch() -> Result<()> {
 
 #[test]
 fn later_runtime_failure_reports_replies_already_written() -> Result<()> {
-    let fixture = Fixture::new("mcp-partial-reply")?;
+    let fixture = Fixture::new("mcp-p")?;
     let first = fixture.user_thread("first question")?;
     let second = fixture.user_thread("second question")?;
     let third = fixture.user_thread("third question")?;

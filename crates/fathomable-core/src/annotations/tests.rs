@@ -910,7 +910,8 @@ fn store_rejects_bad_ranges_unknown_threads_and_bad_lines() -> Result<(), StoreE
     if let Some(parent) = file.0.parent() {
         fs::create_dir_all(parent).map_err(|e| StoreError::io(parent, e))?;
     }
-    fs::write(&file.0, "{\"event\":\"dance\"}\n").map_err(|e| StoreError::io(&file.0, e))?;
+    crate::private_state::write(&file.0, "{\"event\":\"dance\"}\n")
+        .map_err(|e| StoreError::io(&file.0, e))?;
     let Err(error) = Store::open(&file.0) else {
         return Err(StoreError::parse(0, "accepted garbage".into()));
     };

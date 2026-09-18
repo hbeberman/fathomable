@@ -20,6 +20,12 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Viewer records and workspace markers follow the
+[private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy):
+their owned directory hierarchy is 0700 and JSON files are 0600. Writes and
+record cleanup refuse unsafe existing paths rather than repairing or
+migrating them. The on-disk and wire formats are unchanged.
+
 Alpha release scope amended 2026-09-17 by
 [0083](0083-single-user-alpha-clean-slate.md#enthusiast-alpha-contract):
 enthusiast adopters accept no cross-upgrade store persistence or feature

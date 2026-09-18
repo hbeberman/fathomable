@@ -1441,7 +1441,7 @@ fn ignore_rules_filter_hints_but_not_reloads() -> anyhow::Result<()> {
 fn unavailable_thread_store_points_to_doctor() -> anyhow::Result<()> {
     let dir = fixture("threads-unavailable")?;
     let thread_file = dir.0.join("threads.jsonl");
-    fs::write(&thread_file, "{\"v\":3}\n")?;
+    fathomable_core::private_state::write(&thread_file, "{\"v\":3}\n")?;
     let Err(error) = Store::open(thread_file) else {
         return Err(anyhow::anyhow!("stale thread store unexpectedly opened"));
     };

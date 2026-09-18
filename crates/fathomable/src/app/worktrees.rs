@@ -237,11 +237,8 @@ impl App {
         self.status_stale = false;
         self.local_thread_paths.clear();
         self.workspace = workspace;
-        self.comparison = super::comparison::State::load(
-            self.dirs.comparison_dir(self.workspace.root()),
-            &self.workspace,
-            self.comparison.compare(),
-        );
+        self.comparison =
+            super::comparison::State::load(&self.dirs, &self.workspace, self.comparison.compare());
         self.rewatch = Some(Rewatch {
             root: Some(root.clone()),
             extras: self.worktree_paths.clone(),

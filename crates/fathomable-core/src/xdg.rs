@@ -3,6 +3,7 @@
 //! library only (ADR 0001 and 0008).
 
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// The application subdirectory under each XDG base directory.
@@ -73,6 +74,35 @@ impl XdgDirs {
     #[must_use]
     pub fn state_dir(&self) -> PathBuf {
         self.state_home.join(APP_DIR)
+    }
+
+    /// Create or validate an application-owned directory beneath the state root.
+    ///
+    /// Every component from `fathomable` through `directory` must be owned by
+    /// the effective UID with mode 0700. External ancestors are not modified.
+    ///
+    /// # Errors
+    ///
+    /// Refuses paths outside this state root, links, unsafe ownership or modes,
+    /// and filesystem errors. Existing state is never repaired or migrated.
+    pub fn prepare_state_dir(&self, directory: impl AsRef<Path>) -> io::Result<()> {
+        let root = self.state_dir();
+        let relative = directory.as_ref().strip_prefix(&root).map_err(|_prefix| {
+            io::Error::other("directory is outside the Fathomable state root")
+        })?;
+        if relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+        {
+            return Err(io::Error::other("invalid Fathomable state directory"));
+        }
+        crate::private_state::ensure_dir(&root)?;
+        let mut path = root;
+        for part in relative.components() {
+            path.push(part);
+            crate::private_state::ensure_dir(&path)?;
+        }
+        Ok(())
     }
 
     /// `$XDG_STATE_HOME/fathomable/log`, where per-session logs are written.

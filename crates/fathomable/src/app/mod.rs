@@ -615,10 +615,6 @@ impl App {
     /// Start with no document open, for a terminal of `width` by `height`.
     ///
     /// Start the viewer with repository comparison and thread state loaded.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "construction keeps every application state field explicit in one place"
-    )]
     pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
         let Options {
             record,
@@ -640,11 +636,7 @@ impl App {
         } = options;
         let ignore = watch_ignore(&watch);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
-        let comparison = comparison::State::load(
-            dirs.comparison_dir(workspace.root()),
-            &workspace,
-            diff.compare(),
-        );
+        let comparison = comparison::State::load(&dirs, &workspace, diff.compare());
         let mut app = Self {
             workspace,
             docs: Vec::new(),

@@ -37,6 +37,11 @@ vanish needs one block to paste, not a file to go hunting for.
 
 A panic hook, armed for the TUI only, prints one report and writes a copy:
 
+- The saved copy follows the
+  [private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy):
+  a 0600 file in a 0700 application directory, with links and unsafe existing
+  files refused before writing. Reports still appear on stderr, and should
+  be reviewed for private data before sharing.
 - The hook **hands the terminal back before it writes**, so the report lands
   on the screen the user keeps. The alternate-screen and raw-mode state lives
   in process statics rather than in `TerminalGuard`, because the hook runs

@@ -225,7 +225,23 @@ Product state lives under `$XDG_STATE_HOME/fathomable`
 | `workspaces/<repository-hash>/review-points/` | Explicitly saved manifests and content blobs. |
 | `workspaces/<checkout-hash>/comparison/comparison.json` | Last-used comparison preference for that checkout. |
 | `viewers/` | Viewer registrations. |
-| `log/` | Diagnostic logs. |
+| `log/` | Diagnostic logs and crash reports. |
+
+Application-owned state directories are created private (0700), and sensitive
+files are created owner-only (0600), even with umask 000 or 022. Existing
+directories and files must have these modes and belong to the running user's
+effective UID. Symlinks, multiply linked or special files, unsafe ownership,
+and loose permissions are refused with an error, not repaired, migrated, or
+deleted. Fathomable does not chmod your HOME or XDG base directories; external
+ancestors must not allow other users to replace state paths (shared writable
+ancestors require the sticky bit). Read-only configuration is unaffected.
+
+These permissions protect against other local OS users, not root or programs
+running as your UID. Source excerpts, messages, saved blobs, paths, and crash
+details remain sensitive after the original checkout changes or disappears.
+Review logs, reports, and backups before sharing them. See the
+[private-state contract](decisions/0009-cli-and-diagnostics.md#persistent-state-privacy)
+for the path and ownership checks.
 
 IPC sockets live separately under
 `$XDG_RUNTIME_DIR/fathomable/<workspace-hash>/<pid>.sock`. External-editor

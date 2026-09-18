@@ -210,9 +210,9 @@ impl Record {
     /// Returns the I/O error when the directory or file cannot be written.
     pub fn write(&self, dirs: &XdgDirs) -> io::Result<()> {
         let dir = self.dir(dirs);
-        fs::create_dir_all(&dir)?;
+        dirs.prepare_state_dir(&dir)?;
         let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(dir.join(RECORD_FILE), json)
+        crate::private_state::write(dir.join(RECORD_FILE), json)
     }
 
     /// Remove the record directory; missing is not an error.
@@ -221,6 +221,17 @@ impl Record {
     ///
     /// Returns the I/O error when the directory exists but cannot be removed.
     pub fn remove(&self, dirs: &XdgDirs) -> io::Result<()> {
+        match fs::symlink_metadata(self.dir(dirs)) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => {}
+        }
+        dirs.prepare_state_dir(self.dir(dirs))?;
+        match crate::private_state::open_read(self.dir(dirs).join(RECORD_FILE)) {
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
         match fs::remove_dir_all(self.dir(dirs)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
             _ => Ok(()),
@@ -233,25 +244,34 @@ impl Record {
     ///
     /// Returns the I/O error when the file cannot be read or is not a record.
     pub fn read(path: &Path) -> io::Result<Self> {
-        let text = fs::read_to_string(path)?;
-        serde_json::from_str(&text).map_err(io::Error::other)
+        let bytes = crate::private_state::read(path)?;
+        serde_json::from_slice(&bytes).map_err(io::Error::other)
     }
 
     /// Every record on disk, oldest first; unreadable ones are skipped with
     /// a log line. A missing viewers directory yields an empty list.
     #[must_use]
     pub fn list(dirs: &XdgDirs) -> Vec<Self> {
-        let mut records = Self::list_in(&dirs.viewers_dir());
+        let mut records = Self::list_in(dirs);
         records.sort_by_key(|record| record.started);
         records
     }
 
-    fn list_in(dir: &Path) -> Vec<Self> {
+    fn list_in(dirs: &XdgDirs) -> Vec<Self> {
         let mut records = Vec::new();
-        let Ok(entries) = fs::read_dir(dir) else {
+        let dir = dirs.viewers_dir();
+        let Ok(entries) = fs::read_dir(&dir) else {
             return records;
         };
+        if let Err(error) = dirs.prepare_state_dir(&dir) {
+            tracing::warn!(%error, "cannot read viewer directory");
+            return records;
+        }
         for entry in entries.flatten() {
+            if let Err(error) = dirs.prepare_state_dir(entry.path()) {
+                tracing::warn!(%error, "cannot read viewer record directory");
+                continue;
+            }
             let path = entry.path().join(RECORD_FILE);
             match Self::read(&path) {
                 Ok(record) => records.push(record),
@@ -273,13 +293,12 @@ impl Record {
     /// Remove records whose process is gone from the viewers directory.
     /// Returns how many were removed.
     pub fn sweep_dead(dirs: &XdgDirs) -> usize {
-        let dir = dirs.viewers_dir();
         let mut removed = 0;
-        for record in Self::list_in(&dir) {
+        for record in Self::list_in(dirs) {
             if record.is_alive() {
                 continue;
             }
-            match fs::remove_dir_all(dir.join(record.id.as_str())) {
+            match record.remove(dirs) {
                 Ok(()) => {
                     removed += 1;
                     if let Some(socket) = record.socket() {
@@ -346,10 +365,10 @@ impl Marker {
     pub fn write(&self, dirs: &XdgDirs) -> io::Result<()> {
         let path = dirs.workspace_file(&self.key);
         if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
+            dirs.prepare_state_dir(dir)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, json)
+        crate::private_state::write(path, json)
     }
 
     /// Every known workspace, most recently seen first; unreadable markers
@@ -360,9 +379,17 @@ impl Marker {
         let Ok(entries) = fs::read_dir(dirs.state_dir().join("workspaces")) else {
             return markers;
         };
+        if let Err(error) = dirs.prepare_state_dir(dirs.state_dir().join("workspaces")) {
+            tracing::warn!(%error, "cannot read workspace directory");
+            return markers;
+        }
         for entry in entries.flatten() {
+            if let Err(error) = dirs.prepare_state_dir(entry.path()) {
+                tracing::warn!(%error, "cannot read workspace marker directory");
+                continue;
+            }
             let path = entry.path().join(WORKSPACE_FILE);
-            let text = match fs::read_to_string(&path) {
+            let text = match crate::private_state::read(&path) {
                 Ok(text) => text,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
                 Err(error) => {
@@ -370,7 +397,7 @@ impl Marker {
                     continue;
                 }
             };
-            match serde_json::from_str::<Self>(&text) {
+            match serde_json::from_slice::<Self>(&text) {
                 Ok(marker) => markers.push(marker),
                 Err(error) => {
                     tracing::warn!(%error, path = %path.display(), "bad workspace marker");
@@ -662,8 +689,8 @@ mod tests {
         // A pid no live process has: the record reads as dead.
         let dead = r#"{"id":"1700000000-4000000","pid":4000000,"key":"/w","root":"/w","socket":"","started":1}"#;
         let record_dir = dirs.viewers_dir().join("1700000000-4000000");
-        fs::create_dir_all(&record_dir)?;
-        fs::write(record_dir.join(super::RECORD_FILE), dead)?;
+        dirs.prepare_state_dir(&record_dir)?;
+        crate::private_state::write(record_dir.join(super::RECORD_FILE), dead)?;
         record().write(&dirs)?;
         assert_eq!(Record::sweep_dead(&dirs), 1);
         assert!(!dirs.viewers_dir().join("1700000000-4000000").exists());

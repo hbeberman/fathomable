@@ -108,7 +108,7 @@ impl Server {
         let mut placed = Vec::with_capacity(p.comments.len());
         let mut problems = Vec::new();
         let probe_store = if p.comments.iter().any(|item| item.idempotency_key.is_some()) {
-            match Store::open(self.dirs.threads_file(&self.target.key)) {
+            match Store::open_workspace(&self.dirs, &self.target.key) {
                 Ok(store) => Some(store),
                 Err(error) => return failure(error.to_string()),
             }
@@ -350,7 +350,7 @@ fn headless_start(
     caller: &str,
     item: Placed,
 ) -> Result<Thread, String> {
-    let mut store = Store::open(dirs.threads_file(key)).map_err(|e| e.to_string())?;
+    let mut store = Store::open_workspace(dirs, key).map_err(|e| e.to_string())?;
     let id = if let Some(idempotency_key) = item.idempotency_key.as_deref() {
         let probe = match item.range {
             Some(range) => Draft::new(author.clone(), &item.path, range, item.body.clone()),

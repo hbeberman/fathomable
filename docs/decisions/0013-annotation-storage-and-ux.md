@@ -49,6 +49,10 @@ were captured in a question round on 2026-08-26.
 
 ### Store
 
+- Persistent directories and files follow the
+  [private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy):
+  0700 application directories and 0600 annotation logs, including the inode
+  used for reader/writer locking. Unsafe existing paths are refused unchanged.
 - One file per workspace:
   `$XDG_STATE_HOME/fathomable/workspaces/<hash>/threads.jsonl`, where
   `hash` is the first 16 hex characters of the SHA-256 of the workspace

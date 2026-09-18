@@ -1130,7 +1130,7 @@ impl Server {
             Ok(all) => all,
             Err(error) => return failure(error),
         };
-        let probe_store = match Store::open(self.dirs.threads_file(&self.target.key)) {
+        let probe_store = match Store::open_workspace(&self.dirs, &self.target.key) {
             Ok(store) => store,
             Err(error) => return failure(error.to_string()),
         };
@@ -1700,8 +1700,7 @@ fn headless_reply(
     item: &ReplyItem,
     lines: Option<LineRange>,
 ) -> Result<HeadlessAnswer, String> {
-    let mut store =
-        Store::open(dirs.threads_file(&target.key)).map_err(|error| error.to_string())?;
+    let mut store = Store::open_workspace(dirs, &target.key).map_err(|error| error.to_string())?;
     let when = now();
     let head = Workspace::discover(root)
         .map_err(|error| error.to_string())?

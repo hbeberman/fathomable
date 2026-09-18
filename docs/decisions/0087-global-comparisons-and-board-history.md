@@ -195,6 +195,13 @@ missing required objects prevent publication. Known ignore-policy exclusions
 are recorded on an otherwise selectable point. Capture does not write the
 checkout, index, refs, or Git object database.
 
+Review-point directories and all manifest/blob files follow the
+[private-state contract](0009-cli-and-diagnostics.md#persistent-state-privacy),
+including reused blobs and temporary replacements. Comparison preferences
+use the same 0700/0600 hierarchy, validate existing files before replacement,
+and refuse pre-existing temporary paths. Unsafe state is reported without
+repairing permissions, migrating, or discarding it.
+
 Workspace traversal is fallible for capture: an unreadable directory aborts
 the point rather than turning every unseen child into a deletion tombstone.
 

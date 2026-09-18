@@ -100,7 +100,7 @@ pub(crate) fn collect(
     }
 
     report.section("checks");
-    match log_dir_writable(&dirs.log_dir()) {
+    match log_dir_writable(dirs) {
         Ok(()) => report.check(true, "log directory is writable"),
         Err(error) => report.check(false, format!("log directory is not writable: {error}")),
     }
@@ -272,7 +272,7 @@ fn workspace_checks(
 
     let _threads = thread_store(report, dirs, workspace.key());
     let dir = dirs.review_points_dir(workspace.key());
-    match fathomable_core::review_points::ReviewPointStore::open(&dir) {
+    match fathomable_core::review_points::ReviewPointStore::open_workspace(dirs, workspace.key()) {
         Ok(points) => report.check(
             true,
             format!(
@@ -289,7 +289,7 @@ fn workspace_checks(
 
 fn thread_store(report: &mut Report, dirs: &XdgDirs, key: &Path) -> Option<Store> {
     let path = dirs.threads_file(key);
-    match Store::open(&path) {
+    match Store::open_workspace(dirs, key) {
         Ok(store) => {
             let count = store.threads().len();
             report.check(
@@ -402,10 +402,11 @@ fn crash_reports(log_dir: &Path) -> usize {
         .count()
 }
 
-fn log_dir_writable(log_dir: &Path) -> io::Result<()> {
-    fs::create_dir_all(log_dir)?;
+fn log_dir_writable(dirs: &XdgDirs) -> io::Result<()> {
+    let log_dir = dirs.log_dir();
+    dirs.prepare_state_dir(&log_dir)?;
     let probe = log_dir.join(format!(".doctor-probe-{}", std::process::id()));
-    fs::write(&probe, b"")?;
+    fathomable_core::private_state::create_new(&probe)?;
     fs::remove_file(&probe)
 }
 
@@ -456,12 +457,12 @@ mod tests {
         let dirs = XdgDirs::resolve(|name| Some(xdg.join(name).into_os_string()));
         let workspace = Workspace::discover(&root)?;
         let thread_file = dirs.threads_file(workspace.key());
-        fs::create_dir_all(
+        dirs.prepare_state_dir(
             thread_file
                 .parent()
                 .ok_or_else(|| anyhow::anyhow!("thread store path has no parent"))?,
         )?;
-        fs::write(&thread_file, "{\"v\":3}\n")?;
+        fathomable_core::private_state::write(&thread_file, "{\"v\":3}\n")?;
 
         let report = collect(&dirs, None, Some(&root), Some((90, 28)));
 

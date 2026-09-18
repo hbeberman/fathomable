@@ -39,6 +39,7 @@ pub(crate) struct EndpointRoles {
 /// One app-owned comparison selection and its last successful result.
 #[derive(Debug)]
 pub(crate) struct State {
+    dirs: fathomable_core::XdgDirs,
     base: ComparisonEndpoint,
     target: ComparisonEndpoint,
     base_alias: Option<EndpointAlias>,
@@ -66,11 +67,11 @@ struct Preference {
 impl State {
     /// Create the default selection, preferring a persisted checkout choice.
     pub(crate) fn load(
-        preference_dir: impl AsRef<Path>,
+        dirs: &fathomable_core::XdgDirs,
         workspace: &Workspace,
         compare: Compare,
     ) -> Self {
-        let preference_dir = preference_dir.as_ref().to_path_buf();
+        let preference_dir = dirs.comparison_dir(workspace.root());
         let preference = preference_dir.join(PREFERENCE_FILE);
         let default_base = workspace
             .head_commit()
@@ -79,6 +80,7 @@ impl State {
         let default_alias =
             matches!(default_base, ComparisonEndpoint::Commit(_)).then_some(EndpointAlias::Head);
         let mut state = Self {
+            dirs: dirs.clone(),
             base: default_base,
             target: ComparisonEndpoint::WorkingTree,
             base_alias: default_alias,
@@ -91,7 +93,21 @@ impl State {
             current: None,
             error: None,
         };
-        if let Ok(bytes) = fs::read(&state.preference)
+        if let Err(error) = dirs.prepare_state_dir(&preference_dir) {
+            state.error = Some(format!("comparison preference unavailable: {error}"));
+            tracing::warn!(%error, "cannot open comparison preference directory");
+            return state;
+        }
+        let bytes = match fathomable_core::private_state::read(&state.preference) {
+            Ok(bytes) => Some(bytes),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => {
+                state.error = Some(format!("comparison preference unavailable: {error}"));
+                tracing::warn!(%error, "cannot read comparison preference");
+                None
+            }
+        };
+        if let Some(bytes) = bytes
             && let Ok(saved) = serde_json::from_slice::<Preference>(&bytes)
         {
             state.persisted = true;
@@ -328,7 +344,7 @@ impl State {
             return;
         };
         if let Some(parent) = self.preference.parent()
-            && let Err(error) = fs::create_dir_all(parent)
+            && let Err(error) = self.dirs.prepare_state_dir(parent)
         {
             tracing::warn!(%error, path = %parent.display(), "cannot create comparison preference directory");
             return;
@@ -373,9 +389,20 @@ impl State {
 }
 
 fn write_atomic(temporary: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
-    fs::write(temporary, bytes)?;
-    fs::rename(temporary, target)?;
-    Ok(())
+    use std::io::Write as _;
+    match fathomable_core::private_state::open_read(target) {
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut file = fathomable_core::private_state::create_new(temporary)?;
+    let result = file
+        .write_all(bytes)
+        .and_then(|()| fs::rename(temporary, target));
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
 fn endpoint_string(endpoint: &ComparisonEndpoint) -> String {
@@ -1092,6 +1119,150 @@ mod tests {
     use crate::app::testing::{AppBuilder, press, press_key};
     use crate::app::{PickerKind, Popup};
     use crossterm::event::KeyCode;
+
+    #[test]
+    fn persistent_outputs_are_private_under_permissive_umasks() -> anyhow::Result<()> {
+        for mask in ["000", "022"] {
+            let output = std::process::Command::new("sh")
+                .args([
+                    "-c",
+                    "umask \"$1\"; exec \"$2\" --exact app::comparison::tests::private_output_child --nocapture",
+                    "output-test",
+                    mask,
+                ])
+                .arg(std::env::current_exe()?)
+                .env("FATHOMABLE_PRIVATE_OUTPUT_CHILD", mask)
+                .output()?;
+            assert!(
+                output.status.success(),
+                "umask {mask}: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn private_output_child() -> anyhow::Result<()> {
+        use fathomable_core::{private_state, session::Id};
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let Ok(mask) = std::env::var("FATHOMABLE_PRIVATE_OUTPUT_CHILD") else {
+            return Ok(());
+        };
+        let fixture = TempDir::new(&format!("private-output-{mask}"))?;
+        fs::set_permissions(&fixture.0, fs::Permissions::from_mode(0o755))?;
+        let root = fixture.0.join("source");
+        private_state::ensure_dir(&root)?;
+        private_state::write(root.join("private.md"), "synthetic private source\n")?;
+        let mut workspace = Workspace::discover(&root)?;
+        let dirs = XdgDirs::resolve(|name| {
+            (name == "XDG_STATE_HOME").then(|| fixture.0.join("state").into_os_string())
+        });
+        let report = crate::doctor::collect(&dirs, None, Some(&root), Some((90, 28)));
+        assert!(
+            report
+                .lines()
+                .iter()
+                .any(|line| line.text == "log directory is writable")
+        );
+        let id = Id::mint();
+        let _guard = crate::logging::init(&dirs, &id)?;
+        tracing::warn!("synthetic private diagnostic");
+        let crash = crate::logging::crash_path(&dirs, &id);
+        crate::crash::arm(crash.clone(), crate::logging::log_path(&dirs, &id));
+        crate::crash::observe(vec![(
+            "document".to_owned(),
+            "synthetic private source".to_owned(),
+        )]);
+        crate::crash::fatal(&anyhow::anyhow!("synthetic failure"));
+
+        let mut comparison = super::State::load(&dirs, &workspace, super::Compare::default());
+        comparison.toggle_whitespace(&mut workspace);
+        comparison.persist();
+        let restored = super::State::load(&dirs, &workspace, super::Compare::default());
+        assert_eq!(
+            restored.compare().whitespace,
+            comparison.compare().whitespace
+        );
+        for path in [
+            crate::logging::log_path(&dirs, &id),
+            crash.clone(),
+            comparison.preference.clone(),
+        ] {
+            assert_eq!(
+                fs::symlink_metadata(&path)?.mode() & 0o7777,
+                0o600,
+                "{}",
+                path.display()
+            );
+            assert!(!fs::read(&path)?.is_empty(), "{}", path.display());
+        }
+        assert_eq!(fs::metadata(dirs.log_dir())?.mode() & 0o7777, 0o700);
+        assert_eq!(
+            fs::metadata(dirs.comparison_dir(&root))?.mode() & 0o7777,
+            0o700
+        );
+        assert_eq!(fs::metadata(&fixture.0)?.mode() & 0o7777, 0o755);
+
+        refuse_output_links(&mut comparison, &dirs, &root, &crash)
+    }
+
+    fn refuse_output_links(
+        comparison: &mut super::State,
+        dirs: &XdgDirs,
+        root: &Path,
+        crash: &Path,
+    ) -> anyhow::Result<()> {
+        use fathomable_core::{private_state, session::Id};
+        use std::os::unix::fs::{MetadataExt, symlink};
+
+        let unrelated = root.join("unrelated");
+        private_state::write(&unrelated, "unchanged")?;
+        fs::remove_file(&comparison.preference)?;
+        symlink(&unrelated, &comparison.preference)?;
+        comparison.persist();
+        assert!(
+            fs::symlink_metadata(&comparison.preference)?
+                .file_type()
+                .is_symlink()
+        );
+        fs::remove_file(&comparison.preference)?;
+        let temporary = comparison
+            .preference
+            .with_extension(format!("{}.tmp", std::process::id()));
+        symlink(&unrelated, &temporary)?;
+        comparison.persist();
+        assert!(fs::symlink_metadata(&temporary)?.file_type().is_symlink());
+        assert!(!comparison.preference.exists());
+
+        fs::remove_file(crash)?;
+        symlink(&unrelated, crash)?;
+        crate::crash::fatal(&anyhow::anyhow!("second synthetic failure"));
+        assert!(fs::symlink_metadata(crash)?.file_type().is_symlink());
+        let bad_id: Id = "1-1".parse()?;
+        symlink(&unrelated, crate::logging::log_path(dirs, &bad_id))?;
+        let Err(error) = crate::logging::init(dirs, &bad_id) else {
+            return Err(anyhow::anyhow!("unsafe log path accepted"));
+        };
+        assert!(format!("{error:#}").contains("unsafe state path"));
+        let probe = dirs
+            .log_dir()
+            .join(format!(".doctor-probe-{}", std::process::id()));
+        symlink(&unrelated, &probe)?;
+        let report = crate::doctor::collect(dirs, None, Some(root), Some((90, 28)));
+        assert!(
+            report
+                .lines()
+                .iter()
+                .any(|line| line.text.contains("log directory is not writable"))
+        );
+        assert!(fs::symlink_metadata(&probe)?.file_type().is_symlink());
+        assert_eq!(fs::read_to_string(&unrelated)?, "unchanged");
+        assert_eq!(fs::metadata(&unrelated)?.mode() & 0o7777, 0o600);
+        Ok(())
+    }
 
     fn repository(name: &str) -> anyhow::Result<TempDir> {
         let dir = TempDir::new(name)?;

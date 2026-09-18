@@ -189,11 +189,51 @@ just mutants-file path/to.rs         # one file (positional path)
 just perf path/to/file.md            # profile the release binary until it exits
 just perf path/to/file.md fathomable # select a binary explicitly
 scripts/perf-record.sh --bin fathomable -- path/to/file.md
+python3 scripts/test-perf-record.py       # helper command/quoting regression test
 ```
 
 `just perf` accepts positional `path` (default `.`) and `bin` (default
-empty, no binary override). Perf artifacts land under `target/perf/`;
-the script prints hints when the kernel refuses `perf_event_open`.
+empty, no binary override). It makes an optimized release build in
+`target/perf-build/`, appending `-Cforce-frame-pointers=yes` to either
+`RUSTFLAGS` or `CARGO_ENCODED_RUSTFLAGS` without discarding caller settings,
+then records `--call-graph fp`. This separate Cargo target does not replace the
+normal `target/release/` binary.
+
+Each private `target/perf/<timestamp>-<pid>/` directory contains `perf.data`,
+the Cargo JSON log, terminal transcript, generated reports, and an exact copy
+of the executable that perf sampled. Keep that executable with `perf.data`:
+later builds cannot reconstruct missing stacks and may no longer match the
+recorded build ID. The terminal transcript and reports can contain source
+paths or displayed workspace content; review them before sharing. The script
+prints hints when the kernel refuses `perf_event_open`.
+
+Frame pointers make Rust caller recovery reliable without the 8 KiB user-stack
+snapshot limit of perf's default DWARF mode, but they slightly change the
+profiled build and do not undo compiler inlining. An 8 KiB sample that fills
+the configured snapshot only proves that perf captured the requested bytes; it
+does not by itself prove that unwinding a particular sample was truncated.
+The controlled fixture can compare both capture methods against the same
+optimized, frame-pointer-enabled binary:
+
+```sh
+proof=.tmp/perf-unwind-proof
+mkdir -p "$proof"
+rustc scripts/fixtures/perf-deep-stack.rs -Copt-level=3 \
+    -Cdebuginfo=line-tables-only -Cforce-frame-pointers=yes \
+    -o "$proof/perf-deep-stack"
+perf record -q -F 997 --call-graph dwarf,8192 \
+    -o "$proof/dwarf-8k.data" -- "$proof/perf-deep-stack"
+perf record -q -F 997 --call-graph fp \
+    -o "$proof/fp.data" -- "$proof/perf-deep-stack"
+perf script --no-inline -i "$proof/dwarf-8k.data" >"$proof/dwarf-8k.script"
+perf script --no-inline -i "$proof/fp.data" >"$proof/fp.script"
+```
+
+The leaf workload has 13 non-inlined `descend` frames, each retaining a 4 KiB
+stack array. A chain can still stop in a native or system library built without
+frame pointers, at perf's configured maximum depth, or where symbols are
+unavailable. This CPU profile does not add kernel symbols or measure off-CPU
+waiting.
 
 `just install` runs `cargo install --path crates/fathomable --locked`;
 end users can run that Cargo command directly without installing `just`.

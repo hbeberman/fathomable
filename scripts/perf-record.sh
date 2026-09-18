@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
+# @okf-doc: /guide.md
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
 Usage: perf-record.sh [--bin <binary-name>] -- <binary-args>
 
-Build a release binary and profile it interactively with Linux perf until the
-binary exits. Artifacts are written under Cargo's target directory in
-perf/<timestamp>-<pid>/ and printed on exit.
+Build an optimized, frame-pointer-enabled binary and profile it interactively
+with Linux perf until the binary exits. Artifacts are written under Cargo's
+target directory in perf/<timestamp>-<pid>/ and printed on exit.
 
 Examples:
   scripts/perf-record.sh --bin <binary-name> -- <binary-args>
@@ -19,6 +20,7 @@ The just recipe forwards the path and optional binary name:
 
 Pass binary arguments directly to this script after `--`. The profiled
 program keeps the terminal, so use its normal quit action to finish the run.
+The exact profiled executable is preserved beside perf.data for later analysis.
 
 The helper discovers workspace binary targets; pass `--bin` when there is more
 than one.
@@ -53,6 +55,7 @@ out_dir=""
 perf_data=""
 terminal_log=""
 build_log=""
+profiled_executable=""
 perf_script=""
 perf_report=""
 folded=""
@@ -64,7 +67,7 @@ print_outputs() {
     if [[ -n ${out_dir:-} ]]; then
         printf '\nPerf artifacts:\n'
         printf '  directory: %s\n' "$out_dir"
-        for path in "$perf_data" "$terminal_log" "$build_log" "$perf_report" "$perf_script" "$folded" "$flamegraph"; do
+        for path in "$profiled_executable" "$perf_data" "$terminal_log" "$build_log" "$perf_report" "$perf_script" "$folded" "$flamegraph"; do
             if [[ -n ${path:-} && -e $path ]]; then
                 printf '  %s\n' "$path"
             fi
@@ -182,17 +185,39 @@ out_dir="$target_dir/perf/$timestamp-$$"
 umask 077
 mkdir -p "$target_dir/perf"
 mkdir -m 700 "$out_dir"
+profile_target_dir="$target_dir/perf-build"
 
 perf_data="$out_dir/perf.data"
 terminal_log="$out_dir/terminal.log"
 build_log="$out_dir/cargo-build.jsonl"
+profiled_executable="$out_dir/$selected_bin"
 perf_script="$out_dir/perf.script"
 perf_report="$out_dir/perf-report.txt"
 folded="$out_dir/perf.folded"
 flamegraph="$out_dir/flamegraph.svg"
 
-printf 'Building release binary `%s`...\n' "$selected_bin"
-if ! cargo build --release --bin "$selected_bin" --message-format=json-render-diagnostics >"$build_log"; then
+build_profile_binary() {
+    local flags
+
+    if [[ -v CARGO_ENCODED_RUSTFLAGS ]]; then
+        flags=$CARGO_ENCODED_RUSTFLAGS
+        [[ -z $flags ]] || flags+=$'\x1f'
+        flags+='-Cforce-frame-pointers=yes'
+        CARGO_TARGET_DIR="$profile_target_dir" CARGO_ENCODED_RUSTFLAGS="$flags" \
+            cargo build --release --bin "$selected_bin" \
+            --message-format=json-render-diagnostics
+    else
+        flags=${RUSTFLAGS-}
+        [[ -z $flags ]] || flags+=" "
+        flags+='-Cforce-frame-pointers=yes'
+        CARGO_TARGET_DIR="$profile_target_dir" RUSTFLAGS="$flags" \
+            cargo build --release --bin "$selected_bin" \
+            --message-format=json-render-diagnostics
+    fi
+}
+
+printf 'Building optimized frame-pointer binary `%s`...\n' "$selected_bin"
+if ! build_profile_binary >"$build_log"; then
     fail "cargo build failed; see $build_log"
 fi
 
@@ -220,8 +245,10 @@ PY
 
 [[ -n $executable ]] || fail "could not locate release executable for '$selected_bin'; see $build_log"
 [[ -x $executable ]] || fail "release executable is not runnable: $executable"
+cp -- "$executable" "$profiled_executable"
+[[ -x $profiled_executable ]] || fail "preserved executable is not runnable: $profiled_executable"
 
-printf 'Recording with perf until the program exits: %s\n' "$executable"
+printf 'Recording with perf until the program exits: %s\n' "$profiled_executable"
 if [[ ${#binary_args[@]} -gt 0 ]]; then
     printf 'Binary args:'
     printf ' %q' "${binary_args[@]}"
@@ -231,8 +258,8 @@ printf 'Quit the program normally to finalize the perf data.\n'
 
 set +e
 script -q -e -f -O "$terminal_log" -- \
-    perf record -F 997 --call-graph dwarf -o "$perf_data" -- \
-    "$executable" "${binary_args[@]}"
+    perf record -F 997 --call-graph fp -o "$perf_data" -- \
+    "$profiled_executable" "${binary_args[@]}"
 record_status=$?
 set -e
 

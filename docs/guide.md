@@ -2,6 +2,8 @@
 type: Guide
 title: Setup guide
 description: Everyday UX, KDL configuration, agent setup, and where Fathomable saves state.
+related_resources:
+  - scripts/perf-record.sh
 tags:
   - onboarding
 ---
@@ -382,3 +384,12 @@ default, but obsolete settings may need manual changes.
 
 For paths and connection diagnostics, run
 `fathomable --doctor`; `fathomable --viewers` lists running viewers.
+
+## Contributor performance profiles
+
+`just perf path/to/file.md` runs the local Linux CPU profiler described in
+[CONTRIBUTING.md](../CONTRIBUTING.md#2-the-gate). It uses a separate optimized
+frame-pointer build and keeps the exact sampled executable with owner-only
+artifacts under Cargo's `target/perf/` directory. These artifacts can contain
+source paths and terminal content; inspect them before sharing. Caller stacks
+from an older capture cannot be repaired after recording.

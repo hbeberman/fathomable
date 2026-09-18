@@ -420,7 +420,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     profiles, and bare-agent wire values, and makes the app-state reset an
     explicit operator action; ordinary startup never deletes state and
     unrelated stores gain no format machinery
-    ([0083](decisions/0083-single-user-alpha-clean-slate.md)).
+    ([0083](decisions/0083-single-user-alpha-clean-slate.md)). Amended
+    2026-09-17 for enthusiast adopters: public alpha releases retain no
+    cross-upgrade store persistence or feature stability promise; resets
+    remain explicit operator actions.
 75. **Explicit MCP contracts.** Review tools advertise constrained inputs
     and typed results, use author objects, return complete JSON in both MCP
     result channels, expose location relative to the stored anchor

@@ -86,7 +86,7 @@ supersede rather than edit history.
 - [0080 Automatic chat identity](0080-automatic-chat-identity.md)
 - [0081 The persistent menu bar](0081-the-menu-bar.md)
 - [0082 Three-tool review core](0082-three-tool-review-core.md)
-- [0083 Single-user alpha clean slate](0083-single-user-alpha-clean-slate.md)
+- [0083 Enthusiast alpha and clean-slate upgrades](0083-single-user-alpha-clean-slate.md)
 - [0084 Explicit MCP contracts](0084-explicit-mcp-contracts.md) — reply contract amended by 0085
 - [0085 Thread lifecycle and one-shot auto-resolve](0085-thread-lifecycle-and-auto-resolve.md)
 - [0086 One thread summary and its actions](0086-one-thread-summary-and-its-actions.md)

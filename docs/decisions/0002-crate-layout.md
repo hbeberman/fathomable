@@ -4,6 +4,10 @@ title: Crate layout
 description: Split Fathomable into a terminal-free core crate and a single binary crate.
 resource: crates/fathomable-core/src/lib.rs
 related_resources:
+  - Cargo.toml
+  - crates/fathomable/Cargo.toml
+  - crates/fathomable-core/Cargo.toml
+  - crates/fathomable-testing/Cargo.toml
   - crates/fathomable-core/src/document.rs
   - scripts/check-boundaries.sh
   - scripts/check-public-api.sh
@@ -54,6 +58,22 @@ The `public-api` gate rejects `gix` and its implementation crates in
 production library signatures. Only the never-published
 `fathomable-testing` crate may expose raw Git types for fixture construction;
 the existing general API tripwires still apply to it.
+
+### Package metadata
+
+All three crates inherit the shared repository URL
+(`https://github.com/hbeberman/fathomable`) and license metadata from
+`[workspace.package]`. `repository.workspace = true` is required in each
+member; a workspace value alone does not populate package metadata.
+
+The MIT SPDX identifier remains in `license`, while `license-file` points
+to the root `LICENSE`. Members inherit both so Cargo includes that same
+copyright and permission notice as `LICENSE` in each package without
+maintaining duplicate source files. The binary separately embeds the
+[third-party notice bundle](0088-bundled-licenses.md).
+
+These metadata declarations do not enable publication. All crates remain
+`publish = false` until a deliberate release change.
 
 ## Consequences
 

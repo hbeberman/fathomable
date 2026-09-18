@@ -20,6 +20,13 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Alpha release scope amended 2026-09-17 by
+[0083](0083-single-user-alpha-clean-slate.md#enthusiast-alpha-contract):
+enthusiast adopters accept no cross-upgrade store persistence or feature
+stability guarantee, including after the first public tag. Its explicit
+alpha policy supersedes the post-first-tag reader requirement below;
+exact-current guards and operator-only resets remain.
+
 Current formats amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): annotation format **5**
 stores immutable origin, qualified placement, resolution history, and

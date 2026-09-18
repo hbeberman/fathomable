@@ -1,3 +1,4 @@
+# @okf-doc: /decisions/0002-crate-layout.md
 [package]
 name = "fathomable-testing"
 version.workspace = true
@@ -5,7 +6,9 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+license-file.workspace = true
 readme.workspace = true
+repository.workspace = true
 description = "Test scaffolding shared by the Fathomable crates: temporary workspaces and git fixtures"
 keywords.workspace = true
 categories.workspace = true

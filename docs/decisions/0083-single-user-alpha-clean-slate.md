@@ -1,7 +1,7 @@
 ---
 type: Decision
-title: Single-user alpha clean slate
-description: The single-user alpha uses exact current annotation and socket formats, removes historical compatibility exceptions, and makes its one-time state reset an operator action.
+title: Enthusiast alpha and clean-slate upgrades
+description: Enthusiast adopters accept disposable cross-upgrade stores and changing features; exact-current formats and operator-only resets remain.
 tags:
   - annotations
   - configuration
@@ -9,9 +9,15 @@ tags:
   - sessions
 ---
 
-# 0083 Single-user alpha clean slate
+# 0083 Enthusiast alpha and clean-slate upgrades
 
 Status: accepted (2026-09-15)
+
+Audience and upgrade contract amended 2026-09-17: the alpha targets
+enthusiast adopters, not only its original user. Public alpha releases do
+not promise store persistence across upgrades or stable features. This
+extends the current-only policy beyond the first public tag without
+authorizing automatic deletion of anyone's state.
 
 Current format boundary amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): immutable origin,
@@ -36,7 +42,8 @@ earlier clean-slate boundary.
 
 ## Context
 
-Fathomable is a single-user alpha that has not reached a release boundary.
+At the original decision, Fathomable was a single-user alpha that had not
+reached a release boundary.
 The current-only policy of [0062](0062-one-version-no-compatibility.md)
 already rejects an unexpected store or socket version, but later decisions
 left a few deliberate exceptions: adopting a root-keyed state directory,
@@ -51,6 +58,34 @@ child must still be restarted from matching builds when the internal socket
 rejects the other version.
 
 ## Decision
+
+### Enthusiast alpha contract
+
+The alpha is for enthusiast adopters who want to try a changing tool and
+accept disruption between builds. Fathomable stores are not a durable
+cross-upgrade record: users must treat annotations, review points, and
+other app-owned state as disposable when upgrading. No migration or
+continued readability is promised, including between public alpha
+releases. Keep important review conclusions outside Fathomable.
+
+Features may appear, change, or disappear at any time during the alpha.
+CLI flags, MCP contracts, configuration, and library APIs are not stable
+interfaces. Publishing on GitHub or crates.io does not end this policy;
+a later explicit decision must establish a stronger compatibility promise.
+This supersedes [0062](0062-one-version-no-compatibility.md)'s requirement
+for a post-first-tag shape change to provide an older reader.
+
+State still persists across ordinary restarts of a compatible build. The
+policy does not mean every upgrade deletes it or must change its format.
+Incompatible annotation formats fail explicitly. Adopters decide whether
+to retain an older build, back up its state for use with that build, or
+perform a reviewed reset of incompatible app-owned state. A backup does
+not imply a newer build can read it. Stop affected processes before a
+backup or reset; restart viewers and MCP processes from matching builds.
+
+The original one-time reset authorization below is historical, not
+standing permission for an installer, application, or agent to delete
+an adopter's data. Future resets remain explicit operator actions.
 
 ### One current boundary
 
@@ -125,6 +160,9 @@ reviews the actual XDG paths before starting a matching build.
 
 ## Consequences
 
+- The README and setup guide state the enthusiast-alpha contract before
+  adoption: stores are disposable across upgrades and features may change
+  or disappear. Public availability is not a persistence guarantee.
 - State written by an older annotation or socket shape is refused rather
   than interpreted. The authorized operator reset is the path to a fresh
   alpha state; ordinary startup remains non-destructive.

@@ -21,6 +21,11 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Navigation amended 2026-09-18 by
+[0090](0090-direct-workspace-navigation.md): `J`/`K` traverse the selected
+comparison in Standard or Unified mode, including hunkless changed paths.
+Off still gates traversal and its footer hint.
+
 Transport amended 2026-09-18 by [0089](0089-store-only-mcp.md):
 annotation format **5** remains, but socket protocol **8** and the transport
 are removed. MCP line relocation consistently uses the stored path in its

@@ -70,7 +70,8 @@ the table below is a quick reference, not the full list.
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
 | `f` `t` | File / Reviews |
-| `]g` `[g` | next / previous comparison hunk |
+| `J` `K` | next / previous comparison change across the workspace |
+| `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
 | `]w` `[w` | next / previous worktree |
 | `c` `Space c f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
@@ -147,6 +148,11 @@ Choose it under the base picker's **Review points...** to see changes since
 that save. Saving a point does not select it automatically. See
 [comparison and review-point details](decisions/0087-global-comparisons-and-board-history.md).
 
+Use `J` and `K` to cycle every comparison change across the workspace.
+Text hunks are individual stops; a changed path with no text hunk, such as a
+binary or mode-only change, is one stop. The cycle follows the selected
+comparison and is unavailable in Off mode.
+
 ### Review discussions
 
 Select lines and press `c`, or use `Space c f` for a file-wide comment.
@@ -158,6 +164,17 @@ The lifecycle marks are **● active**, **◐ resolution proposed**, and
 agent one chance to resolve: its next reply consumes that permission.
 Without permission, an agent's completion request is a proposal for you to
 review.
+
+Use `Tab` and `Shift-Tab` from any normal pane to cycle active and
+resolution-proposed threads across the workspace. Resolved and archived
+threads are skipped. Source opens when it can be displayed; otherwise
+Fathomable selects the expanded Reviews entry and its stored evidence.
+This navigation never switches worktrees: use `]w` and `[w` explicitly.
+
+The File footer keeps the core loop visible as
+`comment c · diffs K/J · threads Shift-Tab/Tab`, omitting unavailable
+actions. On a thread row, `comment c` becomes `reply c`; where both fold
+actions apply, the footer uses `folding z/Z`.
 
 The board is shared across the repository's worktrees and survives commits
 and branch changes. **Review** offers **Recently resolved**, **Archived

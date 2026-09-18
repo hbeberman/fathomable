@@ -469,3 +469,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     debounce, known watch failures retry explicitly, and failed refreshes
     retain the last-good board. Viewer metadata and annotation format 5 remain
     ([0089](decisions/0089-store-only-mcp.md)).
+81. **Direct workspace navigation.** `J`/`K` cycle exact comparison changes
+    and changed paths; `Tab`/`Shift-Tab` cycle open review threads with
+    Reviews fallback and no implicit worktree switch; the persistent File
+    footer teaches `comment c · diffs K/J · threads Shift-Tab/Tab` and
+    compacts thread folds to `folding z/Z`
+    ([0090](decisions/0090-direct-workspace-navigation.md)).

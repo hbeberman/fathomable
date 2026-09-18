@@ -709,20 +709,24 @@ fn off_target_only_holds_across_recent_jumplist_and_review_jumps() -> anyhow::Re
     assert_target_absent_without_base(&app);
 
     app.open(Path::new("stay.md"));
-    app.record_jump(crate::app::jumplist::Position {
+    app.record_jump(crate::app::jumplist::Position::File {
         path: Path::new("gone.md").to_path_buf(),
         line: 1,
+        thread: None,
     });
     app.jump_back();
     assert_target_absent_without_base(&app);
 
     app.open(Path::new("stay.md"));
-    assert!(!app.land_on_thread(thread));
+    assert_eq!(
+        app.land_on_thread(thread),
+        Some(crate::app::threads::cursor::ThreadLanding::Review)
+    );
     assert_eq!(app.current_path(), Path::new("stay.md"));
     assert_eq!(app.view().text(), "TARGET_ONLY_SENTINEL\n");
     assert!(
-        app.message()
-            .is_some_and(|message| message.contains("gone.md is deleted"))
+        app.review_list().is_open(),
+        "deleted source falls back to Reviews"
     );
     assert_eq!(app.review_entries(false).len(), 1);
     Ok(())

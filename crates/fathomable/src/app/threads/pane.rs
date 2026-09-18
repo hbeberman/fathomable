@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{LineRange, ThreadId};
 
+use crate::app::threads::cursor::ThreadLanding;
 use crate::app::threads::summary::ThreadSummary;
 use crate::app::threads::words::Words;
 use crate::app::threads::{Mark, ThreadState};
@@ -541,7 +542,7 @@ impl App {
         let Some(id) = self.thread_cursor().thread().cloned() else {
             return;
         };
-        if self.land_on_thread(id.clone()) {
+        if self.land_on_thread(id.clone()) == Some(ThreadLanding::Source) {
             let newest = self.newest_message(&id);
             self.goto_message(id, newest);
             self.focus = Focus::View;
@@ -556,7 +557,7 @@ impl App {
     /// Land the cursor on `id` from the pane: the file opens if it is
     /// elsewhere and the keys stay with the pane.
     fn land_in_pane(&mut self, id: ThreadId) {
-        if self.land_on_thread(id) && self.sidebar.threads {
+        if self.land_on_thread(id) == Some(ThreadLanding::Source) && self.sidebar.threads {
             self.focus = Focus::ThreadsPane;
         }
     }

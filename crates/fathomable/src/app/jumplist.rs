@@ -10,11 +10,19 @@
 
 use std::path::PathBuf;
 
-/// A place in the workspace: a file and a source line.
+use fathomable_core::annotations::ThreadId;
+
+/// A source line or exact Reviews entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Position {
-    pub(crate) path: PathBuf,
-    pub(crate) line: usize,
+pub(crate) enum Position {
+    File {
+        path: PathBuf,
+        line: usize,
+        thread: Option<ThreadId>,
+    },
+    Review {
+        thread: ThreadId,
+    },
 }
 
 /// Positions kept at most.
@@ -99,9 +107,10 @@ mod tests {
     use super::{CAP, Jumplist, Position};
 
     fn at(path: &str, line: usize) -> Position {
-        Position {
+        Position::File {
             path: Path::new(path).to_path_buf(),
             line,
+            thread: None,
         }
     }
 

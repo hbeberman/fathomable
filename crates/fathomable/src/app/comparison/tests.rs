@@ -191,9 +191,9 @@ fn one_pair_survives_file_switches_and_loads_historical_paths() -> anyhow::Resul
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
-    app.dirty_next();
+    app.hunk_next();
     assert_eq!(app.current_path(), Path::new("gone.md"));
-    app.dirty_next();
+    app.hunk_next();
     assert_eq!(app.current_path(), Path::new("new.md"));
     app.show_tree();
     assert!(

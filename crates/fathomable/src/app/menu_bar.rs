@@ -567,6 +567,27 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::PickAnyFile, "Open w/ ignored…")),
             Row::Item(Item::action(app, Action::PickRecent, "Recent files…")),
             Row::Separator,
+            Row::Item(Item::action(
+                app,
+                Action::ChangeNext,
+                "Next comparison change",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::ChangePrev,
+                "Previous comparison change",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::OpenThreadNext,
+                "Next open review thread",
+            )),
+            Row::Item(Item::action(
+                app,
+                Action::OpenThreadPrev,
+                "Previous open review thread",
+            )),
+            Row::Separator,
             Row::Item(Item::action(app, Action::JumpBack, "Back")),
             Row::Item(Item::action(app, Action::JumpForward, "Forward")),
         ],
@@ -705,6 +726,8 @@ fn action_available(app: &App, action: Action) -> bool {
     match action {
         Action::JumpBack => app.jumplist.can_back(),
         Action::JumpForward => app.jumplist.can_forward(),
+        Action::ChangeNext | Action::ChangePrev => app.has_change_stops(),
+        Action::OpenThreadNext | Action::OpenThreadPrev => app.has_open_threads(),
         Action::NewThread | Action::FileComment => app.has_document() && !app.deleted(),
         Action::Reply | Action::ToggleResolved | Action::EditNewestOwn => {
             app.thread_cursor().thread().is_some()
@@ -1366,7 +1389,7 @@ mod tests {
         let app = testing::app(&dir)?;
         assert_eq!(rows(&app, Root::App).len(), 5);
         assert_eq!(rows(&app, Root::Layout).len(), 6);
-        assert_eq!(rows(&app, Root::Go).len(), 6);
+        assert_eq!(rows(&app, Root::Go).len(), 11);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
         assert_eq!(diff_rows.len(), 11);

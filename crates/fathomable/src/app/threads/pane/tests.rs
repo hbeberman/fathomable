@@ -579,12 +579,12 @@ fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
     app.view_mut().goto_source_line(1);
     assert_eq!(app.thread_cursor().thread(), Some(&ids[0]));
 
-    // The text: `]c` steps, the threads pane's highlight follows.
+    // The text: `Tab` steps, the threads pane's highlight follows.
     app.focus_pane(Focus::View);
     app.view_mut().goto_source_line(2);
     app.expand_at_cursor();
     assert_eq!(app.focus(), Focus::View);
-    press(&mut app, "]c");
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(app.thread_cursor().thread(), Some(&ids[1]));
     assert_eq!(app.threads_pane_selected(), Some(1));
     assert_eq!(app.thread_position(), Some((2, 3)));

@@ -249,6 +249,19 @@ impl App {
             )
     }
 
+    /// Whether a new comment can currently be persisted.
+    pub(crate) fn commenting_available(&self) -> bool {
+        self.store.is_some() && self.store_backing != super::StoreBacking::Missing
+    }
+
+    /// Whether at least one open thread is available for direct traversal.
+    pub(crate) fn has_open_threads(&self) -> bool {
+        self.store
+            .iter()
+            .flat_map(Store::threads)
+            .any(|thread| thread.status() == Status::Open)
+    }
+
     /// The store, or a status-line notice explaining why there is none.
     pub(super) fn store_mut(&mut self) -> Option<&mut Store> {
         self.observe_store_backing();
@@ -487,8 +500,7 @@ impl App {
     }
 
     /// The document's threads in line order: by first line, then the
-    /// order the store holds them (ADR 0027). This is the order `]c` / `[c`
-    /// in the text and `j` / `k` in the threads pane walk.
+    /// order the store holds them (ADR 0027).
     pub(crate) fn file_threads(&self) -> Vec<ThreadId> {
         let mut marks: Vec<&Mark> = self.marks().iter().collect();
         // A thread on the file as a whole has no start and comes first.
@@ -496,33 +508,21 @@ impl App {
         marks.into_iter().map(|mark| mark.id().clone()).collect()
     }
 
-    /// Every thread on the work in the order `L` / `H` walk: files by
-    /// path, threads by line. The open file contributes its marks, so
-    /// re-anchored ranges keep their place.
+    /// Every open thread in workspace order: path, file-wide threads,
+    /// projected line, then stable thread id.
     pub(super) fn workspace_threads(&self) -> Vec<ThreadId> {
-        let current = self.current.map(|i| self.docs[i].relative.as_path());
-        let mut others: Vec<(&Path, Option<usize>, ThreadId)> = self
+        let mut order: Vec<ThreadId> = self
             .store
             .iter()
             .flat_map(Store::threads)
-            .filter(|thread| Some(self.thread_path(thread)) != current)
-            .map(|thread| {
-                let start = thread.range().map(|range| range.start());
-                (self.thread_path(thread), start, thread.id().clone())
-            })
+            .filter(|thread| thread.status() == Status::Open)
+            .map(|thread| thread.id().clone())
             .collect();
-        others.sort();
-        let mut order = Vec::with_capacity(others.len() + self.marks().len());
-        let mut here = Some(self.file_threads());
-        for (path, _, id) in others {
-            if current.is_some_and(|cur| path > cur)
-                && let Some(here) = here.take()
-            {
-                order.extend(here);
-            }
-            order.push(id);
-        }
-        order.extend(here.into_iter().flatten());
+        order.sort_by(|left, right| {
+            self.thread_start(left)
+                .cmp(&self.thread_start(right))
+                .then_with(|| left.cmp(right))
+        });
         order
     }
 

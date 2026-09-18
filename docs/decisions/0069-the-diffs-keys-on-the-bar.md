@@ -44,6 +44,11 @@ Amended later 2026-09-18: `Space d d` returns only as the direct
 current-`HEAD`-to-working-tree selector. It does not restore `D`, `:diff`,
 comparison-control hints, or transient presentation.
 
+Amended again 2026-09-18 by
+[0090](0090-direct-workspace-navigation.md): both Standard and Unified
+show the conditional `diffs K/J` traversal hint. Endpoint and whitespace
+controls remain in the Diff menu rather than the File footer.
+
 ## Context
 
 [0067](0067-the-texts-key-bar.md) set one rule for keys: a header is

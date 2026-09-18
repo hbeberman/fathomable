@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use fathomable_core::annotations::{
-    Author, LineRange, OriginVersion, Placement, Store, Thread, ThreadId,
+    Author, LineRange, OriginVersion, Placement, Status, Store, Thread, ThreadId,
 };
 use fathomable_core::layout::{Layout, Line};
 
@@ -119,6 +119,8 @@ pub(crate) struct ReviewList {
     /// The cursor rests on its thread's file row (ADR 0076), the stop
     /// over the file's threads; the thread cursor is the file's first.
     pub(super) on_file: bool,
+    /// A navigation fallback that must show immutable origin evidence.
+    evidence: Option<ThreadId>,
 }
 
 impl ReviewList {
@@ -453,11 +455,16 @@ impl App {
 
     /// Open an explicit board history view in place of the document.
     pub(crate) fn open_review_view(&mut self, view: ReviewView) {
+        self.open_review_view_with_evidence(view, None);
+    }
+
+    fn open_review_view_with_evidence(&mut self, view: ReviewView, evidence: Option<ThreadId>) {
         self.getting_started = None;
         if self.store.is_none() {
             self.store_mut();
             return;
         }
+        self.review_list.evidence = evidence;
         // The cursor the text was on becomes the list's.
         let cursor = self.thread_cursor();
         if let Some(id) = cursor.thread().cloned() {
@@ -476,6 +483,34 @@ impl App {
             self.select_entry(&rows, index);
         }
         self.relayout();
+    }
+
+    /// Show the exact thread in Reviews with its containing rows expanded.
+    pub(crate) fn show_thread_in_review(&mut self, id: &ThreadId) -> bool {
+        let Some((path, archived, resolved)) = self.thread(id).map(|thread| {
+            (
+                self.thread_path(thread).to_path_buf(),
+                thread.is_archived(),
+                thread.status() == Status::Resolved,
+            )
+        }) else {
+            return false;
+        };
+        let view = if archived {
+            ReviewView::Archived
+        } else {
+            ReviewView::Board
+        };
+        self.review.view = view;
+        self.review.resolved = resolved;
+        self.review.file_only = false;
+        self.review_list.folded.remove(&path);
+        self.review_list.folded_threads.remove(id);
+        self.review_list.on_file = false;
+        self.set_thread_cursor(id.clone());
+        self.open_review_view_with_evidence(view, Some(id.clone()));
+        self.review_follow_cursor();
+        true
     }
 
     fn empty_review_notice(&self) -> &'static str {
@@ -553,7 +588,8 @@ impl App {
                 let evidence = (view != ReviewView::Board
                     || worktree.is_some()
                     || commit.is_some()
-                    || placement.is_detached())
+                    || placement.is_detached()
+                    || self.review_list.evidence.as_ref() == Some(thread.id()))
                 .then(|| origin_evidence(thread));
                 Some(Entry {
                     id: thread.id().clone(),

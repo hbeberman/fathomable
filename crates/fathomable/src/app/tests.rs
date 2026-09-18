@@ -1137,7 +1137,7 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
         Some((State::Untracked, 3, 0))
     );
 
-    // `]g` walks README's two hunks, then crosses into the next dirty
+    // `J` walks README's two hunks, then crosses into the next changed
     // files, then wraps.
     app.open(Path::new("README.md"));
     assert_eq!(app.view().diff_counts(), Some((4, 0)));
@@ -1157,8 +1157,8 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
     assert_eq!(app.view().source_position().0, 3);
     assert_eq!(app.message(), Some("wrapped to first change"));
 
-    // `[g` from README's first hunk lands on the last hunk of the last
-    // dirty file.
+    // `K` from README's first hunk lands on the last hunk of the last
+    // changed file.
     app.hunk_prev();
     assert_eq!(app.current_path(), Path::new("docs/notes.md"));
     assert_eq!(app.view().source_position().0, 3);
@@ -1171,16 +1171,6 @@ fn hunks_cross_uncommitted_files_in_path_order() -> anyhow::Result<()> {
         app.view().source_position().0 >= 6,
         "backwards lands on the last hunk"
     );
-
-    // `]G` / `[G` step by file, always to the first hunk.
-    app.dirty_next();
-    assert_eq!(app.current_path(), Path::new("docs/new.md"));
-    app.dirty_prev();
-    assert_eq!(app.current_path(), Path::new("README.md"));
-    assert_eq!(app.view().source_position().0, 3);
-    app.dirty_prev();
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
-    assert_eq!(app.message(), Some("wrapped to last change"));
 
     // A clean file that is open steps into the next dirty one in
     // path order.

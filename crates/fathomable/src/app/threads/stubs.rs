@@ -666,7 +666,7 @@ mod tests {
         // row carries the cursor bar, the outer's does not.
         assert_eq!(barred_rows(&app, &[6, 7])?, [7], "the inner thread's row");
         assert!(
-            shown[app.text_bar_row()].contains("expand z"),
+            shown[app.text_bar_row()].contains("folding z/Z"),
             "{:?}",
             shown[app.text_bar_row()]
         );
@@ -839,8 +839,8 @@ mod tests {
         );
         assert!(
             shown[app.text_bar_row()].contains("resolve r")
-                && shown[app.text_bar_row()].contains("fold z"),
-            "the bar names the key: {:?}",
+                && shown[app.text_bar_row()].contains("folding z/Z"),
+            "the bar names the keys: {:?}",
             shown[app.text_bar_row()]
         );
         assert!(

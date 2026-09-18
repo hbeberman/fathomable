@@ -23,6 +23,12 @@ tags:
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
 
+Thread landing amended 2026-09-18 by
+[0090](0090-direct-workspace-navigation.md): direct thread traversal never
+activates another worktree. It shows projected source in the current
+worktree when available and otherwise shows the exact Reviews evidence.
+Only the explicit `]w`/`[w` cycle and worktree picker switch worktrees.
+
 Amended 2026-09-17: repository and active-worktree identity move from the
 Files header to the global menu bar beside the current filename. Clicking
 that identity opens the worktree picker when the repository has several.

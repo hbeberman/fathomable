@@ -14,11 +14,9 @@
 //! any surface is a step from the same place, and two threads folded
 //! into one rendered row are still told apart.
 //!
-//! The motions come in two sizes: [`App::thread_step_in_file`] walks the
-//! open file's threads in line order, [`App::thread_step_across`] walks
-//! the workspace's, files in path order, opening the file it lands in.
-//! Both wrap. The actions — reply, edit, resolve, delete, open — act on
-//! the cursor wherever the keys came from.
+//! The direct workspace motion [`App::thread_step_across`] walks open
+//! threads in path order. File-local stepping remains the sidebar's
+//! internal movement. Both wrap.
 
 use std::path::PathBuf;
 
@@ -33,6 +31,13 @@ use crate::app::threads::{ComposeTarget, message_target};
 pub(crate) struct ThreadCursor {
     thread: Option<ThreadId>,
     message: usize,
+}
+
+/// Where thread navigation displayed its destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThreadLanding {
+    Source,
+    Review,
 }
 
 impl ThreadCursor {
@@ -208,7 +213,7 @@ impl App {
     /// `(path, first line)` of `id`: from the loaded document's mark when
     /// its file is open, else as stored; no line for a thread on the
     /// file as a whole, which sorts before the file's others (ADR 0063).
-    fn thread_start(&self, id: &ThreadId) -> Option<(PathBuf, Option<usize>)> {
+    pub(super) fn thread_start(&self, id: &ThreadId) -> Option<(PathBuf, Option<usize>)> {
         let thread = self.thread(id)?;
         let range = self
             .docs
@@ -243,8 +248,7 @@ impl App {
         Some(order[from.rem_euclid(len).cast_unsigned()].clone())
     }
 
-    /// `]c` / `[c` in the text, `l` / `h` in the pane: the next or
-    /// previous thread of this file.
+    #[cfg(test)]
     pub(crate) fn thread_step_in_file(&mut self, delta: isize) {
         let order = self.file_threads();
         if order.is_empty() {
@@ -256,12 +260,15 @@ impl App {
         }
     }
 
-    /// `]C` / `[C` in the text, `L` / `H` in the pane: the next or
-    /// previous thread across the workspace, opening its file.
+    /// `Tab` / `Shift-Tab`: move through open threads across the workspace.
     pub(crate) fn thread_step_across(&mut self, delta: isize) {
+        if self.store.is_none() {
+            self.store_mut();
+            return;
+        }
         let order = self.workspace_threads();
         if order.is_empty() {
-            self.notice("no threads in the workspace");
+            self.notice("no open threads in the workspace");
             return;
         }
         if let Some(id) = self.step_in(&order, delta) {
@@ -269,43 +276,46 @@ impl App {
         }
     }
 
-    /// Go to `id`: its file opened when it is elsewhere, the text cursor
-    /// on its first line, and the cursor on it. A deleted file is
-    /// reported instead.
-    pub(crate) fn land_on_thread(&mut self, id: ThreadId) -> bool {
-        let Some(path) = self
+    /// Go to `id` in source, or show its immutable Review evidence.
+    pub(crate) fn land_on_thread(&mut self, id: ThreadId) -> Option<ThreadLanding> {
+        let path = self
             .thread(&id)
-            .map(|thread| self.thread_path(thread).to_path_buf())
-        else {
-            return false;
-        };
-        if self.thread(&id).is_some_and(Thread::is_archived) {
-            self.notice("original evidence remains available in the review entry");
-            return false;
-        }
-        // A thread another worktree shows is the way into it (ADR 0070).
-        if let Some(root) = self
-            .thread(&id)
-            .and_then(|thread| self.reach.elsewhere(thread))
-            .map(std::path::Path::to_path_buf)
-            && !self.activate_worktree(&root)
-        {
-            return false;
-        }
-        // Showing another file keeps the keys where they were.
-        let focus = self.focus;
+            .map(|thread| self.thread_path(thread).to_path_buf())?;
+        let previous = (
+            self.current_path().to_path_buf(),
+            self.view().cursor_source_line().unwrap_or(1),
+        );
+        self.close_popup();
+        self.open_file_view();
         if path != self.current_path() {
-            if !self.workspace.root().join(&path).is_file() {
-                self.notice(format!("{} is deleted", path.display()));
-                return false;
-            }
-            self.close_popup();
             self.open(&path);
         }
-        self.goto_thread(&id);
-        self.set_thread_cursor(id);
-        self.focus = focus;
-        true
+        if self.thread_source_is_displayable(&id) {
+            self.goto_thread(&id);
+            self.set_thread_cursor(id);
+            self.focus = crate::app::Focus::View;
+            return Some(ThreadLanding::Source);
+        }
+        if !previous.0.as_os_str().is_empty() && previous.0 != self.current_path() {
+            self.open(&previous.0);
+            if previous.0 == self.current_path() {
+                self.view_mut().goto_source_line(previous.1);
+            }
+        }
+        self.show_thread_in_review(&id)
+            .then_some(ThreadLanding::Review)
+    }
+
+    /// Whether `id` can host an inline reply or edit in the current File.
+    pub(crate) fn thread_source_is_displayable(&self, id: &ThreadId) -> bool {
+        self.thread(id)
+            .is_some_and(|thread| self.thread_path(thread) == self.current_path())
+            && self.info().is_none()
+            && self.current.is_some_and(|index| {
+                self.docs[index].deleted.is_none()
+                    || self.docs[index].deleted == Some(crate::app::Deleted::ComparisonBase)
+            })
+            && self.marks().iter().any(|mark| mark.id() == id)
     }
 
     /// `j` / `k` in the pane and the list: the next or previous message
@@ -432,7 +442,7 @@ impl App {
             return;
         }
         self.close_review();
-        if self.land_on_thread(id.clone()) {
+        if self.land_on_thread(id.clone()) == Some(ThreadLanding::Source) {
             self.goto_message(id, cursor.message());
         }
     }

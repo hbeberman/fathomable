@@ -269,11 +269,15 @@ impl App {
         // The draft is written in the thread's rows, so the thread shows
         // expanded with the cursor on the message it answers or edits.
         if let Some(id) = target.thread().cloned() {
-            let elsewhere = self
-                .thread(&id)
-                .is_some_and(|thread| self.thread_path(thread) != self.current_path());
-            if elsewhere && !self.land_on_thread(id.clone()) {
-                return;
+            if !self.thread_source_is_displayable(&id) {
+                match self.land_on_thread(id.clone()) {
+                    Some(crate::app::threads::cursor::ThreadLanding::Source) => {}
+                    Some(crate::app::threads::cursor::ThreadLanding::Review) => {
+                        self.notice("source is unavailable; reply cannot be placed inline");
+                        return;
+                    }
+                    None => return,
+                }
             }
             let message = target
                 .edited_message()

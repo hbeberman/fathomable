@@ -51,15 +51,28 @@ fn historical_deleted_source_comments_keep_base_origin() -> anyhow::Result<()> {
     press(&mut app, "historical finding");
     app.compose_submit();
 
-    let thread = app
-        .store
-        .as_ref()
-        .and_then(|store| store.threads().first())
-        .context("historical thread")?;
-    assert_eq!(thread.origin_side(), OriginSide::Base);
-    assert_eq!(thread.origin().range(), Some(LineRange::new(1, 1)));
-    assert_eq!(thread.origin().snippet(), "original line");
-    assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+    let id = {
+        let thread = app
+            .store
+            .as_ref()
+            .and_then(|store| store.threads().first())
+            .context("historical thread")?;
+        assert_eq!(thread.origin_side(), OriginSide::Base);
+        assert_eq!(thread.origin().range(), Some(LineRange::new(1, 1)));
+        assert_eq!(thread.origin().snippet(), "original line");
+        assert_eq!(thread.origin_version(), &OriginVersion::commit(first));
+        thread.id().clone()
+    };
+
+    app.goto_message(id.clone(), 0);
+    app.thread_reply();
+    assert!(matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    press(&mut app, "historical reply");
+    app.compose_submit();
+
+    app.goto_message(id, 0);
+    app.thread_edit_message();
+    assert!(matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
     Ok(())
 }
 

@@ -13,6 +13,12 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Amended 2026-09-18 by
+[0090](0090-direct-workspace-navigation.md): `J`/`K` and
+`Tab`/`Shift-Tab` are the four direct normal-pane traversal actions.
+The bracket-prefixed comparison and thread traversal sequences retire
+without aliases, and shifted `Tab` events normalize to `Shift-Tab`.
+
 Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the which-key menu and `Space ?` take clicks and hover, pane-header hints carry their action and take clicks, and `gx`, `gy`, and the tree's `y` are new rows.
 
 Amended 2026-09-14 by

@@ -608,9 +608,16 @@ mod tests {
             "the active checkout must not claim the feature-only line"
         );
 
-        assert!(app.land_on_thread(id));
-        assert_eq!(app.workspace().root(), feature, "the thread is the way in");
-        assert_eq!(app.review_entries(false)[0].worktree(), None);
+        assert_eq!(
+            app.land_on_thread(id),
+            Some(crate::app::threads::cursor::ThreadLanding::Source)
+        );
+        assert_eq!(
+            app.workspace().root(),
+            main,
+            "thread navigation never switches worktrees"
+        );
+        assert_eq!(app.review_entries(false)[0].worktree(), Some("feature"));
         Ok(())
     }
 

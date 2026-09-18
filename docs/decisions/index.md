@@ -93,3 +93,4 @@ supersede rather than edit history.
 - [0087 Global comparisons and deliberate board history](0087-global-comparisons-and-board-history.md)
 - [0088 Bundled license notices](0088-bundled-licenses.md)
 - [0089 Store-only MCP and independent thread refresh](0089-store-only-mcp.md)
+- [0090 Direct workspace navigation](0090-direct-workspace-navigation.md)

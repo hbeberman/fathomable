@@ -106,20 +106,6 @@ pub(crate) enum Effect {
     EditDraft,
 }
 
-/// What `]g` / `[g` did (ADR 0017), so the app can cross into the next
-/// dirty file when the hunks of this one run out.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HunkStep {
-    /// The cursor moved to another hunk in this file.
-    Moved,
-    /// The only next hunk is back at the other end of the file.
-    Wrapped,
-    /// The file has no hunks against `HEAD`.
-    Clean,
-    /// Not in a git repository.
-    NoBase,
-}
-
 /// How a view colours and initially displays its text (ADR 0016).
 #[derive(Debug, Clone)]
 pub(crate) struct Syntax {
@@ -178,7 +164,7 @@ pub(crate) struct View {
     diff_shown: Option<DiffView>,
     /// How diffs are compared and listed (ADR 0060).
     compare: Compare,
-    /// The working tree against `HEAD`: the gutter, `]g`, and the counts.
+    /// The working tree against `HEAD`: the gutter, `J`/`K`, and the counts.
     diff: Option<Diff>,
     /// The working tree against the index: which hunks are not yet staged.
     unstaged: Option<Diff>,
@@ -663,20 +649,17 @@ impl View {
         self.activity.elapsed()
     }
 
-    /// The 1-based line of the first hunk against `HEAD`.
-    pub(crate) fn first_hunk_line(&self) -> Option<usize> {
-        let diff = self.diff.as_ref()?;
-        diff.hunks()
-            .first()
-            .map(|hunk| hunk.target_line(diff.new_lines()))
-    }
-
-    /// The 1-based line of the last hunk against `HEAD`.
-    pub(crate) fn last_hunk_line(&self) -> Option<usize> {
-        let diff = self.diff.as_ref()?;
-        diff.hunks()
-            .last()
-            .map(|hunk| hunk.target_line(diff.new_lines()))
+    /// Every hunk's 1-based target line, preserving comparison order.
+    pub(crate) fn hunk_target_lines(&self) -> Vec<usize> {
+        self.diff
+            .as_ref()
+            .map(|diff| {
+                diff.hunks()
+                    .iter()
+                    .map(|hunk| hunk.target_line(diff.new_lines()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn index(&self) -> &LineIndex {
@@ -872,48 +855,6 @@ impl View {
         }
         self.relayout();
         true
-    }
-
-    /// `]g` within the file: the cursor to the next hunk against `HEAD`.
-    /// Reports a wrap instead of taking it, so the app can cross into the
-    /// next dirty file (ADR 0017).
-    pub(crate) fn next_hunk(&mut self) -> HunkStep {
-        self.step_hunk(true)
-    }
-
-    /// `[g` within the file: the cursor to the previous hunk.
-    pub(crate) fn prev_hunk(&mut self) -> HunkStep {
-        self.step_hunk(false)
-    }
-
-    fn step_hunk(&mut self, forward: bool) -> HunkStep {
-        let Some(diff) = &self.diff else {
-            return HunkStep::NoBase;
-        };
-        if diff.hunks().is_empty() {
-            return HunkStep::Clean;
-        }
-        // Compare rendered rows, not source lines: a hunk on a blank line
-        // has no row of its own in the rendered view, so the cursor sits
-        // on the row after it and a line comparison would find the same
-        // hunk forever.
-        let current = self.cursor.row;
-        let rows = diff
-            .hunks()
-            .iter()
-            .filter_map(|hunk| self.row_of_source_line(hunk.target_line(diff.new_lines())));
-        let found = if forward {
-            rows.filter(|row| *row > current).min()
-        } else {
-            rows.filter(|row| *row < current).max()
-        };
-        match found {
-            Some(row) => {
-                self.jump_to_row(row);
-                HunkStep::Moved
-            }
-            None => HunkStep::Wrapped,
-        }
     }
 
     /// The rendered row 1-based source `line` starts on.
@@ -1786,7 +1727,7 @@ mod tests {
     use fathomable_core::annotations::LineRange;
     use fathomable_core::highlight::Highlighter;
 
-    use super::{Cursor, DiffBody, DiffView, Effect, HunkStep, Mode, Syntax, Text, View};
+    use super::{Cursor, DiffBody, DiffView, Effect, Mode, Syntax, Text, View};
     use crate::app::diff::Side;
 
     const DOC: &str = "# Title\n\nalpha beta\n\n- one\n- two\n- three\n\nlast *word* here\n";
@@ -2220,7 +2161,7 @@ mod tests {
         let mut v = view();
         assert_eq!(v.diff_counts(), None);
         assert_eq!(v.line_status(1), None);
-        assert_eq!(v.next_hunk(), HunkStep::NoBase);
+        assert!(v.hunk_target_lines().is_empty());
 
         // The committed text lacked "- two" and had a different last line;
         // the index already holds "- two", so that hunk is staged.
@@ -2233,18 +2174,7 @@ mod tests {
         assert!(!v.line_staged(9), "the last line is not staged");
         assert_eq!(v.line_status(1), None);
         assert_eq!(v.diff_counts(), Some((2, 1)));
-        assert_eq!(v.first_hunk_line(), Some(6));
-        assert_eq!(v.last_hunk_line(), Some(9));
-
-        assert_eq!(v.next_hunk(), HunkStep::Moved);
-        assert_eq!(v.source_position().0, 6);
-        assert_eq!(v.next_hunk(), HunkStep::Moved);
-        assert_eq!(v.source_position().0, 9);
-        assert_eq!(v.next_hunk(), HunkStep::Wrapped);
-        assert_eq!(v.source_position().0, 9, "a wrap is reported, not taken");
-        assert_eq!(v.prev_hunk(), HunkStep::Moved);
-        assert_eq!(v.source_position().0, 6);
-        assert_eq!(v.prev_hunk(), HunkStep::Wrapped);
+        assert_eq!(v.hunk_target_lines(), vec![6, 9]);
         v.goto_source_line(9);
 
         let diff = DiffView {
@@ -2281,7 +2211,7 @@ mod tests {
         // A reload against the same base re-diffs; an identical text is clean.
         v.reload("# Title\n\nalpha beta\n\n- one\n- three\n\nlast word here\n".to_owned());
         assert_eq!(v.diff_counts(), Some((0, 0)));
-        assert_eq!(v.next_hunk(), HunkStep::Clean);
+        assert!(v.hunk_target_lines().is_empty());
         v.show_diff(DiffView {
             base: Side::ComparisonBase,
             target: Side::ComparisonTarget,

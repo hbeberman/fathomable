@@ -1,24 +1,16 @@
 // @okf-doc: /decisions/0067-the-texts-key-bar.md
 //! The text column's key bar (ADR 0067).
 //!
-//! A key bar on `ui.header` replaces the bottom text row while it has
-//! something to say, as the threads pane's bar replaces its bottom row
-//! (ADR 0066); the text never moves for it, and with nothing to say the
-//! row is text. It has something to say while a draft is open, a
-//! thread is under the cursor, or the file has a thread to fold: then,
-//! while another pane has the keys, it says how to focus the text, and
-//! a click on it does; with the keys it reads the draft's keys, else
-//! the diff's keys while a diff is open (ADR 0069), the thread cursor's
-//! reply/edit/lifecycle/fold keys, then `Z` for the file's threads.
+//! The persistent bar replaces the bottom text row without moving text.
+//! It keeps the local comment or thread actions first, then the direct
+//! workspace comparison and open-thread cycles.
 
 use crate::app::draw::header::{Header, HintOf, draft_hints};
 use crate::app::input::bindings::{Action, Where};
 use crate::app::threads::words::Words;
 use crate::app::{App, Focus};
 
-/// The text's key bar: the draft's keys, else the diff's keys, the
-/// thread cursor's keys, and `Z` for the file while the text has focus;
-/// the focus tip otherwise.
+/// The text's key bar, or the focus tip while another pane owns the keys.
 pub(crate) fn text_bar(app: &App) -> Header {
     if app.focus() != Focus::View {
         return Header::bar(vec![HintOf::new("", "click or Space w l to focus", &[])]);
@@ -27,36 +19,50 @@ pub(crate) fn text_bar(app: &App) -> Header {
         return Header::bar(draft_hints(compose));
     }
     let place = Where::View;
-    let mut hints = crate::app::diff_keys::diff_hints(app);
+    let mut hints = Vec::new();
+    let mut thread_here = false;
+    let mut on_thread_row = false;
     if let Some(id) = app.thread_cursor().thread()
         && app.threads_at_cursor().contains(id)
         && let Some(thread) = app.thread(id)
     {
+        thread_here = true;
         let mark = app.mark_of(id);
         let words = Words::of(mark.map(crate::app::threads::Mark::placement), thread);
-        let expanded = app.is_expanded(id);
-        let on_thread_row = app.cursor_on_thread_row(id);
+        on_thread_row = app.cursor_on_thread_row(id);
         hints.extend(thread_hints(
             app,
             place,
             words,
             thread.is_archived(),
-            expanded,
             on_thread_row,
         ));
     }
-    let stubs = app.stubs();
-    if !stubs.is_empty() {
-        let any_expanded = stubs
-            .iter()
-            .filter_map(|stub| stub.thread())
-            .any(|id| app.is_expanded(id));
-        let what = if any_expanded {
-            "fold all"
+    if !on_thread_row && app.commenting_available() {
+        let comment = HintOf::keyed(place, Action::Comment, "comment");
+        if thread_here {
+            hints.push(comment);
         } else {
-            "unfold all"
-        };
-        hints.push(HintOf::keyed(place, Action::FoldAll, what));
+            hints.insert(0, comment);
+        }
+    }
+    let stubs = app.stubs();
+    if thread_here && !stubs.is_empty() {
+        hints.push(HintOf::paired(
+            place,
+            Action::Fold,
+            Action::FoldAll,
+            "folding",
+        ));
+    }
+    hints.extend(crate::app::diff_keys::diff_hints(app));
+    if app.has_open_threads() {
+        hints.push(HintOf::paired(
+            Where::Any,
+            Action::OpenThreadPrev,
+            Action::OpenThreadNext,
+            "threads",
+        ));
     }
     Header::bar(hints)
 }
@@ -69,7 +75,6 @@ fn thread_hints(
     place: Where,
     words: Words,
     archived: bool,
-    expanded: bool,
     on_thread_row: bool,
 ) -> Vec<HintOf> {
     let resolve = if words.is_resolved() {
@@ -95,11 +100,6 @@ fn thread_hints(
     if words.is_resolved() && !archived {
         hints.push(HintOf::keyed(place, Action::ArchiveThread, "archive"));
     }
-    hints.push(HintOf::keyed(
-        place,
-        Action::Fold,
-        if expanded { "fold" } else { "expand" },
-    ));
     hints
 }
 
@@ -108,7 +108,7 @@ mod tests {
     use std::fmt::Write as _;
 
     use crossterm::event::KeyCode;
-    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store, ThreadId};
 
     use super::text_bar;
     use crate::app::Focus;
@@ -133,15 +133,72 @@ mod tests {
         Ok(())
     }
 
+    fn assert_bar_hints(app: &crate::app::App, hints: &[&str]) -> anyhow::Result<()> {
+        let footer = bar(app)?;
+        for hint in hints {
+            assert!(footer.contains(hint), "{footer:?}");
+        }
+        Ok(())
+    }
+
+    fn assert_distinct_bar_actions(app: &crate::app::App, a: Action, b: Action) {
+        let footer = text_bar(app);
+        let width = app.column_width();
+        let column_of =
+            |action| (0..width).find(|column| footer.action_at(width, *column) == Some(action));
+        assert!(column_of(a).is_some(), "{a:?} is visible");
+        assert!(column_of(b).is_some(), "{b:?} is visible");
+        assert_ne!(column_of(a), column_of(b));
+    }
+
+    fn app_with_two_threads() -> anyhow::Result<(
+        fathomable_testing::TempDir,
+        crate::app::App,
+        ThreadId,
+        ThreadId,
+    )> {
+        let dir = testing::workspace("text-bar", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir)
+            .source_view()
+            .options(|o| crate::app::Options {
+                watch: fathomable_core::config::WatchConfig {
+                    toast: std::time::Duration::ZERO,
+                    ..o.watch
+                },
+                ..o
+            })
+            .build()?;
+        assert!(app.text_bar_shown());
+        assert_eq!(bar(&app)?.trim(), "comment c");
+        app.view_mut().goto_source_line(3);
+        app.start_new_comment();
+        assert!(bar(&app)?.contains("submit Enter"));
+        app.compose_insert("mine");
+        app.compose_submit();
+        let theirs = Store::open(testing::store_path(&dir))?.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                std::path::Path::new("README.md"),
+                LineRange::new(5, 5),
+                "theirs",
+            ),
+            testing::README,
+            2,
+        )?;
+        app.reload_store();
+        let mine = app.file_threads()[0].clone();
+        Ok((dir, app, mine, theirs))
+    }
+
     fn archive_resolved_cursor(
         app: &mut crate::app::App,
         id: &fathomable_core::annotations::ThreadId,
     ) -> anyhow::Result<()> {
         testing::press(app, "r");
-        assert_eq!(
-            bar(app)?.trim(),
-            "reply c · edit e · reopen r · archive a · fold z · fold all Z"
-        );
+        assert_bar_hints(
+            app,
+            &["reply c", "edit e", "reopen r", "archive a", "folding z/Z"],
+        )?;
         let rows = screen(app)?;
         assert!(
             rows.iter()
@@ -157,7 +214,7 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect();
         assert!(narrow.contains("archive a"), "{narrow:?}");
-        assert!(!narrow.contains("fold all"), "{narrow:?}");
+        assert!(!narrow.contains("folding"), "{narrow:?}");
         click_bar_action(app, Action::ArchiveThread)?;
         assert!(
             app.thread(id)
@@ -234,7 +291,9 @@ mod tests {
             let end = app.text_bar_row() - 1;
             let content: String = rows[end].chars().skip(app.sidebar_width()).collect();
             assert_eq!(content.trim(), "~", "{rows:?}");
-            assert!(bar(&app)?.contains("base"));
+            let footer = bar(&app)?;
+            assert!(footer.contains("comment c"), "{footer:?}");
+            assert!(!footer.contains("base") && !footer.contains("target"));
             assert_eq!(app.view().cursor_source_line(), Some(60));
         }
         Ok(())
@@ -247,52 +306,25 @@ mod tests {
     /// focus tip.
     #[test]
     fn the_bar_reads_the_cursor_threads_keys() -> anyhow::Result<()> {
-        let dir = testing::workspace("text-bar", testing::README)?;
-        // No toasts: the agent's comment would raise one over the bar.
-        let mut app = testing::AppBuilder::new(&dir)
-            .source_view()
-            .options(|o| crate::app::Options {
-                watch: fathomable_core::config::WatchConfig {
-                    toast: std::time::Duration::ZERO,
-                    ..o.watch
-                },
-                ..o
-            })
-            .build()?;
-        assert!(!app.text_bar_shown(), "no thread, no draft: no bar");
+        let (_dir, mut app, mine, theirs) = app_with_two_threads()?;
         assert_eq!(app.text_rows(), 30 - 2, "only the file header takes a row");
 
-        // The user's thread on L3, an agent's on L5.
-        app.view_mut().goto_source_line(3);
-        app.start_new_comment();
-        assert!(
-            bar(&app)?.contains("submit Enter"),
-            "the draft's keys: {:?}",
-            bar(&app)?
-        );
-        app.compose_insert("mine");
-        app.compose_submit();
-        let theirs = Store::open(testing::store_path(&dir))?.annotate(
-            Draft::new(
-                Author::agent("reviewer"),
-                std::path::Path::new("README.md"),
-                LineRange::new(5, 5),
-                "theirs",
-            ),
-            testing::README,
-            2,
-        )?;
-        app.reload_store();
-        let mine = app.file_threads()[0].clone();
         app.expand_thread(mine.clone());
         app.goto_message(theirs.clone(), 0);
         assert_eq!(app.thread_cursor().thread(), Some(&theirs));
 
-        assert_eq!(
-            bar(&app)?.trim(),
-            "reply c · auto-resolve R · resolve r · fold z · fold all Z",
-            "the agent's thread: no edit"
-        );
+        assert_bar_hints(
+            &app,
+            &[
+                "reply c",
+                "auto-resolve R",
+                "resolve r",
+                "folding z/Z",
+                "threads Shift-Tab/Tab",
+            ],
+        )?;
+        let footer = bar(&app)?;
+        assert!(!footer.contains("edit e"), "{footer:?}");
         let rows = screen(&app)?;
         assert!(
             !rows
@@ -302,26 +334,40 @@ mod tests {
         );
         // On the user's own message `edit e` joins the keys.
         app.goto_message(mine.clone(), 0);
-        assert_eq!(
-            bar(&app)?.trim(),
-            "reply c · edit e · auto-resolve R · resolve r · fold z · fold all Z"
-        );
+        assert_bar_hints(
+            &app,
+            &[
+                "reply c",
+                "edit e",
+                "auto-resolve R",
+                "resolve r",
+                "folding z/Z",
+                "threads Shift-Tab/Tab",
+            ],
+        )?;
 
         // A stub reads `expand z`; with none expanded `Z` unfolds.
         app.fold_thread(&mine);
         app.fold_thread(&theirs);
         app.view_mut().goto_source_line(3);
-        assert_eq!(
-            bar(&app)?.trim(),
-            "edit e · auto-resolve R · resolve r · expand z · unfold all Z"
-        );
+        assert_bar_hints(
+            &app,
+            &[
+                "comment c",
+                "edit e",
+                "auto-resolve R",
+                "resolve r",
+                "folding z/Z",
+                "threads Shift-Tab/Tab",
+            ],
+        )?;
         assert!(
             !screen(&app)?.iter().any(|row| row.contains("(z expand)")),
             "the stub carries no hint"
         );
-        // A line no thread covers keeps `Z` alone.
+        // A line no thread covers keeps the default workspace loop.
         app.view_mut().goto_source_line(1);
-        assert_eq!(bar(&app)?.trim(), "unfold all Z");
+        assert_eq!(bar(&app)?.trim(), "comment c · threads Shift-Tab/Tab");
 
         // Another pane's focus: the tip. A click on the tip focuses the
         // text, and one on a hint runs it.
@@ -344,6 +390,9 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("stub row"))?;
         app.view_mut().goto_row(stub_row);
         assert_eq!(app.thread_cursor().thread(), Some(&mine));
+        app.resize(180, 30);
+        assert_distinct_bar_actions(&app, Action::Fold, Action::FoldAll);
+        assert_distinct_bar_actions(&app, Action::OpenThreadPrev, Action::OpenThreadNext);
         click_bar_action(&mut app, Action::Comment)?;
         assert!(app.draft().is_some(), "`reply c` on the bar starts a reply");
         press_key(&mut app, KeyCode::Esc);

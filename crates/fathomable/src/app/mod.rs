@@ -27,6 +27,7 @@ pub(crate) mod input;
 mod jumplist;
 mod licenses;
 mod menu_bar;
+mod navigation;
 mod review_points;
 pub(crate) mod run;
 mod sidebar;
@@ -72,7 +73,7 @@ use input::bindings::Chord;
 
 pub(crate) use threads::cursor::ThreadCursor;
 pub(crate) use threads::{Compose, Mark};
-use view::{HunkStep, Syntax, View};
+use view::{Syntax, View};
 use watch::{Fingerprint, is_git_metadata};
 
 /// Toasts visible at once.
@@ -571,6 +572,8 @@ pub(crate) struct App {
     /// Documents by index, most recently shown first (`Space F r`).
     recent: Vec<usize>,
     jumplist: jumplist::Jumplist,
+    /// The exact comparison stop reached by the last `J` or `K`.
+    change_stop: Option<navigation::ChangeStop>,
     /// Where a search started, recorded on the jumplist when it lands
     /// somewhere else (ADR 0049).
     search_origin: Option<jumplist::Position>,
@@ -747,6 +750,7 @@ impl App {
             current: None,
             recent: Vec::new(),
             jumplist: jumplist::Jumplist::default(),
+            change_stop: None,
             search_origin: None,
             welcome: View::new(String::new(), 1, 1),
             getting_started: None,
@@ -1671,92 +1675,6 @@ impl App {
         }
     }
 
-    /// `]g`: the next hunk in this file, or the first hunk of the next
-    /// uncommitted file when this one's run out, wrapping.
-    pub(crate) fn hunk_next(&mut self) {
-        self.step_hunk(true);
-    }
-
-    /// `[g`: the previous hunk, crossing into the last hunk of the
-    /// previous uncommitted file.
-    pub(crate) fn hunk_prev(&mut self) {
-        self.step_hunk(false);
-    }
-
-    fn step_hunk(&mut self, forward: bool) {
-        let step = if forward {
-            self.view_mut().next_hunk()
-        } else {
-            self.view_mut().prev_hunk()
-        };
-        match step {
-            HunkStep::Moved => {}
-            HunkStep::NoBase if self.current.is_none() => self.notice("no file open"),
-            HunkStep::NoBase => self.notice("no diff base: not in a git repository"),
-            HunkStep::Wrapped | HunkStep::Clean => self.step_dirty(forward, true),
-        }
-    }
-
-    /// `]G`: the next uncommitted file in path order, at its first hunk.
-    pub(crate) fn dirty_next(&mut self) {
-        self.step_dirty(true, false);
-    }
-
-    /// `[G`: the previous uncommitted file, at its first hunk.
-    pub(crate) fn dirty_prev(&mut self) {
-        self.step_dirty(false, false);
-    }
-
-    /// Open the next (or previous) dirty file. `from_hunk` lands on the
-    /// last hunk when stepping backwards, so `[g` walks hunks in order;
-    /// `]G` always lands on the first.
-    fn step_dirty(&mut self, forward: bool, from_hunk: bool) {
-        let current = self.current.map(|i| self.docs[i].relative.clone());
-        let comparison_status = self.comparison_status();
-        let next = if forward {
-            comparison_status.after(current.as_deref())
-        } else {
-            comparison_status.before(current.as_deref())
-        };
-        let Some(entry) = next else {
-            self.notice(if self.walks.in_flight() {
-                "git status is still walking the tree"
-            } else {
-                "nothing in the selected comparison"
-            });
-            return;
-        };
-        let path = entry.path().to_path_buf();
-        let is_current = current.as_deref() == Some(path.as_path());
-        let wrapped = is_current
-            || match (forward, current.as_deref()) {
-                (true, Some(cur)) => path < *cur,
-                (false, Some(cur)) => path > *cur,
-                _ => false,
-            };
-        if !is_current {
-            self.close_popup();
-            self.focus = Focus::View;
-            self.open(&path);
-            if self.current_path() != path {
-                return;
-            }
-        }
-        let line = if forward || !from_hunk {
-            self.view().first_hunk_line()
-        } else {
-            self.view().last_hunk_line()
-        };
-        self.view_mut().goto_source_line(line.unwrap_or(1));
-        if wrapped {
-            self.notice(if forward {
-                "wrapped to first change"
-            } else {
-                "wrapped to last change"
-            });
-        }
-    }
-
     fn on_change(&mut self, relative: &Path, absolute: &Path) {
         // A new file is one `Space f` away (ADR 0028).
         self.file_index.seen(&mut self.workspace, relative);
@@ -2048,24 +1966,13 @@ impl App {
             .max(1)
     }
 
-    /// Whether the text's key bar replaces the bottom text row (ADR
-    /// 0067): the column shows a document, and a diff is open (ADR
-    /// 0069), a draft is open, a thread is under the cursor, or the file
-    /// has a thread to fold. The review list and the file-info pane have
-    /// no bar of this kind.
+    /// Whether the text's key bar replaces the bottom text row.
     pub(crate) fn text_bar_shown(&self) -> bool {
         self.has_document()
             && !self.getting_started()
             && self.directory_path().is_none()
             && !self.review_list().is_open()
             && self.info().is_none()
-            && (self.view().diff_view()
-                || self.draft().is_some()
-                || self
-                    .thread_cursor()
-                    .thread()
-                    .is_some_and(|id| self.threads_at_cursor().contains(id))
-                || !self.stubs().is_empty())
     }
 
     /// The screen row the text's key bar replaces: the bottom text row.
@@ -2292,6 +2199,19 @@ impl App {
                     },
                 }
             };
+            let mut comparison_notice = target_absent.then(|| "not present in Target".to_owned());
+            let document = match document {
+                Err(error)
+                    if self.diff_mode != DiffMode::Off
+                        && self.comparison_status.get(&relative).is_some() =>
+                {
+                    comparison_notice = Some(format!(
+                        "content unavailable in selected comparison: {error}"
+                    ));
+                    Ok(Document::missing(&absolute, policy))
+                }
+                other => other,
+            };
             match document {
                 Ok(document) => {
                     // A binary or over-limit file has no text: the view is
@@ -2323,8 +2243,7 @@ impl App {
                         marks: Vec::new(),
                         draft: None,
                         deleted,
-                        comparison_notice: target_absent
-                            .then(|| "not present in Target".to_owned()),
+                        comparison_notice,
                     });
                     self.docs.len() - 1
                 }
@@ -2366,15 +2285,24 @@ impl App {
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
 
-    /// Where the reader is: the current file and the cursor's source
-    /// line, or `None` before any file is open.
+    /// Where the reader is: an exact Reviews entry or a source line.
     fn position(&self) -> Option<jumplist::Position> {
+        if self.review_list().is_open()
+            && let Some(thread) = self.thread_cursor().thread().cloned()
+        {
+            return Some(jumplist::Position::Review { thread });
+        }
         let path = self.current_path().to_path_buf();
         if path.as_os_str().is_empty() {
             return None;
         }
         let line = self.view().cursor_source_line().unwrap_or(1);
-        Some(jumplist::Position { path, line })
+        let thread = self
+            .thread_cursor()
+            .thread()
+            .filter(|id| self.threads_at_cursor().contains(*id))
+            .cloned();
+        Some(jumplist::Position::File { path, line, thread })
     }
 
     /// A far move is leaving `from` (ADR 0049).
@@ -2407,14 +2335,27 @@ impl App {
     }
 
     fn go_to_position(&mut self, target: &jumplist::Position) {
-        if self.current_path() != target.path {
-            self.close_popup();
-            self.open(&target.path);
-            if self.current_path() != target.path {
-                return;
+        match target {
+            jumplist::Position::File { path, line, thread } => {
+                self.open_file_view();
+                self.focus = Focus::View;
+                if self.current_path() != path {
+                    self.open(path);
+                    if self.current_path() != path {
+                        return;
+                    }
+                }
+                self.view_mut().goto_source_line(*line);
+                if let Some(thread) = thread
+                    && self.marks().iter().any(|mark| mark.id() == thread)
+                {
+                    self.set_thread_cursor(thread.clone());
+                }
+            }
+            jumplist::Position::Review { thread } => {
+                self.show_thread_in_review(thread);
             }
         }
-        self.view_mut().goto_source_line(target.line);
     }
 
     /// Re-read the working document at `index`.

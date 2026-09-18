@@ -71,6 +71,7 @@ impl Chord {
             KeyCode::Char(ch) => Key::Char(ch),
             KeyCode::Enter => Key::Enter,
             KeyCode::Esc => Key::Esc,
+            KeyCode::Tab if event.modifiers.contains(KeyModifiers::SHIFT) => Key::BackTab,
             KeyCode::Tab => Key::Tab,
             KeyCode::BackTab => Key::BackTab,
             KeyCode::Backspace => Key::Backspace,
@@ -148,7 +149,7 @@ const fn k(key: Key) -> Chord {
 /// A key sequence: one chord, or a prefix and what follows it.
 pub(crate) type Keys = &'static [Chord];
 
-/// How a sequence is written: bare characters run together (`gg`, `]c`),
+/// How a sequence is written: bare characters run together (`gg`, `]w`),
 /// anything else is space-separated (`Space d s`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
@@ -285,10 +286,8 @@ actions! {
     FilesUntracked,
     /// `Space F g`: show ignored files in the files pane (ADR 0068).
     FilesIgnored,
-    HunkNext,
-    HunkPrev,
-    DirtyNext,
-    DirtyPrev,
+    ChangeNext,
+    ChangePrev,
     JumpBack,
     JumpForward,
     /// `q`: open the guarded quit confirmation from any normal pane.
@@ -327,8 +326,8 @@ actions! {
     Help,
     ThreadNext,
     ThreadPrev,
-    ThreadNextAcross,
-    ThreadPrevAcross,
+    OpenThreadNext,
+    OpenThreadPrev,
     Reply,
     EditMessage,
     EditNewestOwn,
@@ -574,32 +573,18 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "delete thread",
     ),
     bind(
-        W::View,
-        &[&[c(']'), c('c')]],
-        A::ThreadNext,
-        "Threads",
-        "next thread in file",
+        W::Any,
+        &[&[k(K::Tab)]],
+        A::OpenThreadNext,
+        "Navigation",
+        "next open review thread",
     ),
     bind(
-        W::View,
-        &[&[c('['), c('c')]],
-        A::ThreadPrev,
-        "Threads",
-        "previous thread in file",
-    ),
-    bind(
-        W::View,
-        &[&[c(']'), c('C')]],
-        A::ThreadNextAcross,
-        "Threads",
-        "next thread in workspace",
-    ),
-    bind(
-        W::View,
-        &[&[c('['), c('C')]],
-        A::ThreadPrevAcross,
-        "Threads",
-        "previous thread in workspace",
+        W::Any,
+        &[&[k(K::BackTab)]],
+        A::OpenThreadPrev,
+        "Navigation",
+        "previous open review thread",
     ),
     bind(
         W::View,
@@ -609,32 +594,18 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "comparison: whitespace",
     ),
     bind(
-        W::View,
-        &[&[c(']'), c('g')]],
-        A::HunkNext,
-        "Git",
-        "next hunk, across files",
+        W::Any,
+        &[&[c('J')]],
+        A::ChangeNext,
+        "Navigation",
+        "next comparison change",
     ),
     bind(
-        W::View,
-        &[&[c('['), c('g')]],
-        A::HunkPrev,
-        "Git",
-        "previous hunk, across files",
-    ),
-    bind(
-        W::View,
-        &[&[c(']'), c('G')]],
-        A::DirtyNext,
-        "Git",
-        "next uncommitted file",
-    ),
-    bind(
-        W::View,
-        &[&[c('['), c('G')]],
-        A::DirtyPrev,
-        "Git",
-        "previous uncommitted file",
+        W::Any,
+        &[&[c('K')]],
+        A::ChangePrev,
+        "Navigation",
+        "previous comparison change",
     ),
     bind(
         W::Any,
@@ -1594,10 +1565,20 @@ pub(crate) fn first_keys(place: Where, action: Action) -> Option<Keys> {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use super::{
         Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu,
         menu_spell, spell,
     };
+
+    #[test]
+    fn both_shift_tab_terminal_encodings_use_backtab() {
+        let shifted = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
+        let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
+        assert_eq!(Chord::from_event(shifted), Some(k(Key::BackTab)));
+        assert_eq!(Chord::from_event(backtab), Some(k(Key::BackTab)));
+    }
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
 

@@ -13,6 +13,12 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Workspace traversal amended 2026-09-18 by
+[0090](0090-direct-workspace-navigation.md): `Tab`/`Shift-Tab` directly
+cycle active and resolution-proposed threads from every normal pane.
+Resolved and archived threads are excluded. File-local and workspace
+bracket traversal retire; list-local `j`/`k` movement remains.
+
 ## Context
 
 Three surfaces showed threads and each kept its own idea of which one:

@@ -627,17 +627,27 @@ pub(crate) fn review_header(app: &App) -> Header {
 /// The file surface's header: a clickable title, the current path, and
 /// passive lifecycle counts for that file.
 pub(crate) fn file_header(app: &App) -> Header {
-    let path = app.current_path();
-    let filename = path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
+    let directory = app.directory_path();
+    let filename = directory.map_or_else(
+        || {
+            let path = app.current_path();
+            path.file_name().map_or_else(
+                || path.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            )
+        },
+        |path| format!("{}/", path.display()),
+    );
+    let counts = directory.map_or_else(
+        || passive_count_hints(app.review_counts(true), app.stubs_resolved()),
+        |_| Vec::new(),
     );
     Header::counted(
         vec![
             (" File".to_owned(), Tone::Dir),
             (format!("  {filename}"), Tone::Info),
         ],
-        passive_count_hints(app.review_counts(true), app.stubs_resolved()),
+        counts,
         Align::Right,
     )
 }

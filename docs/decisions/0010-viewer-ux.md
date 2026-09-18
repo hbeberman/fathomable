@@ -29,6 +29,9 @@ still returns path and view badges to the status line.
 Amended 2026-09-16 by
 [0065](0065-z-folds-and-unfolds.md): `c` always starts a comment and
 `z` owns inline thread expansion and folding.
+Amended later 2026-09-17: the document status pill is `FILE` during both
+navigation and selection. Selection remains an interaction state, not a
+separate pane identity; command and search input still replace the status line.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
@@ -130,6 +133,10 @@ viewer, the layout engine, and later themes agree.
   (`AUTO`), so neither disappears when focus moves. `DELETED` is the
   banner only. The right block reads `line:col`, the percentage, `+a -r`,
   then every count as `N word`: `2 waiting  3 threads  1 followed`.
+- Amended 2026-09-17: the File surface is identified as `FILE` in both
+  navigation and selection instead of exposing `NOR` and `SEL`. Selection
+  remains visible in the document itself. Command and search input continue
+  to replace the whole status line with their prompt.
 - `:` and `/` input replace the status line while active, as in Vim. Pending
   key sequences and transient messages ("search hit BOTTOM, continuing at
   TOP", "copied 3 lines") use the same line and clear on the next key.

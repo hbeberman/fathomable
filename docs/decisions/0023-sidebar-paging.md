@@ -23,6 +23,9 @@ file with a brief directory summary.
 Amended 2026-09-17: sidebar paging updates the current file behind an open
 Reviews view without closing it. File-scoped Reviews therefore follows the
 highlight. Explicit `Enter` or a row-menu **Open** still commits to File view.
+Amended later 2026-09-17: a directory summary stays under the standard File
+header, which names the selected directory; it does not introduce a separate
+directory-pane header.
 
 ## Context
 
@@ -41,11 +44,13 @@ highlight drives the pane.
   taking focus: `j`/`k`, `gg`/`G`, the wheel, and the step `l` takes into
   an expanded directory all page the viewer.
 - While the files pane owns the keys, a highlight on a *directory*
-  replaces the prior file with a read-only summary: the root-relative path;
-  counts of its direct files and subdirectories under the files pane's
-  active filters; then, when nonzero, the changed-file and `+n -m` totals
-  and the open and waiting thread counts across its whole subtree. The
-  summary has no navigation hints: the files pane owns directory navigation.
+  replaces the prior file body with a read-only summary under the File
+  surface's normal chrome. That chrome reads `File` and the root-relative
+  directory path; the body gives counts of its direct files and subdirectories
+  under the files pane's active filters, then, when nonzero, the changed-file
+  and `+n -m` totals and the lifecycle thread counts across its whole subtree.
+  The summary has no navigation hints: the files pane owns directory
+  navigation.
 - Landing keeps `open`'s semantics: paged-through files join the open-file
   history and the recent list ([0012](0012-workspace-mode.md)), and the
   file left behind is snapshotted as seen ([0015](0015-follow-mode.md)),

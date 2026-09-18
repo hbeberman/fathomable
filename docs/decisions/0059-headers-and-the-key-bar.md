@@ -53,6 +53,11 @@ cross-navigation to Reviews plus rendered, inline-thread, and resolved-thread
 settings. Comparison labels remain in the global menu bar, so unified diffs
 use this same File row rather than stacking a second local header.
 
+Amended later 2026-09-17: a directory highlighted in Files keeps that same
+File header, with the selected root-relative directory path beside `File`.
+Directory statistics sit in the body below it; there is no second,
+directory-specific header or pane identity.
+
 ## Context
 
 The review list of [0049](0049-inline-threads-and-the-rail.md) drew its

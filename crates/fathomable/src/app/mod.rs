@@ -1852,13 +1852,12 @@ impl App {
         }
     }
 
-    /// Rows reserved for the document surface header.
+    /// Rows reserved for the File surface header.
     pub(crate) fn file_chrome_rows(&self) -> usize {
         usize::from(
-            self.has_document()
+            (self.has_document() || self.directory_path().is_some())
                 && !self.review_list().is_open()
-                && !self.getting_started()
-                && self.directory_path().is_none(),
+                && !self.getting_started(),
         )
     }
 

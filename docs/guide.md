@@ -214,6 +214,8 @@ plus **Fold file** in workspace scope.
 The File view has its own header above the document. `File` is the only
 hovered and clickable title region; the current filename follows passively,
 and lifecycle counts for that file sit at the right.
+When a directory is highlighted in Files, the same header shows its
+root-relative directory path and the body below shows the directory summary.
 Clicking `File` opens **Open Reviews** (`t`), then checked **Rendered view**,
 **Show inline threads**, and **Show resolved threads** settings below a
 separator. The presentation state stays in this menu rather than becoming

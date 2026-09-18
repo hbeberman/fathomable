@@ -19,7 +19,7 @@ pub(super) struct DirectorySelection {
     counts: Option<DirectoryCounts>,
 }
 
-/// The directory facts drawn in place of the last file.
+/// The directory facts drawn beneath the File surface's chrome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DirectoryInfo {
     pub(crate) path: PathBuf,
@@ -218,7 +218,7 @@ impl App {
         self.show_highlight();
     }
 
-    /// Facts about the directory currently replacing the file view.
+    /// Facts about the directory currently replacing the file body.
     pub(crate) fn directory_info(&self) -> Option<DirectoryInfo> {
         let directory = self
             .directory
@@ -252,7 +252,7 @@ impl App {
         })
     }
 
-    /// The directory replacing the file view while the files pane has focus.
+    /// The directory replacing the file body while the files pane has focus.
     pub(crate) fn directory_path(&self) -> Option<&std::path::Path> {
         self.directory
             .as_ref()

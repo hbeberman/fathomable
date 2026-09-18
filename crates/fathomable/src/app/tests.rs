@@ -545,7 +545,10 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
         ),
         (2, 3, 0, 2, 0, 0)
     );
-    let output = screen(&app)?.join("\n");
+    let shown = screen(&app)?;
+    let chrome = &shown[app.pane_top()];
+    assert!(chrome.contains("File  docs/"), "{chrome}");
+    let output = shown.join("\n");
     assert!(output.contains("docs/"), "{output}");
     assert!(output.contains("files  3"), "{output}");
     assert!(output.contains("subdirectories  1"), "{output}");

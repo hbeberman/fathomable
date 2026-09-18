@@ -4,7 +4,6 @@
 //! Everything here is plain data so the ADR 0010 conventions can be tested
 //! without a terminal; `ui` draws it and `keys` drives it.
 
-use std::fmt;
 use std::sync::Arc;
 #[cfg(test)]
 use std::time::Duration;
@@ -23,24 +22,13 @@ mod navigation;
 /// Rendered lines kept visible above and below the cursor.
 const SCROLLOFF: usize = 3;
 
-/// Editing-style mode shown in the status pill.
+/// Interaction state for navigation, selection, and status-line input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
     Normal,
     Select,
     Command,
     Search { backward: bool },
-}
-
-impl fmt::Display for Mode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Normal => "NOR",
-            Self::Select => "SEL",
-            Self::Command => "CMD",
-            Self::Search { .. } => "SRCH",
-        })
-    }
 }
 
 /// Which layout of the document the pane shows.

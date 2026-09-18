@@ -913,12 +913,18 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     annotate(&mut app, "one")?;
     app.view_mut().toggle_source_view();
     let parts = crate::app::draw::status_parts(&app);
-    assert_eq!(parts.pill, "NOR");
+    assert_eq!(parts.pill, "FILE");
     assert_eq!(parts.badges, ["SRC"]);
     assert!(
         parts.right_text().contains("1 threads"),
         "{}",
         parts.right_text()
+    );
+    app.view_mut().select_lines();
+    assert_eq!(
+        crate::app::draw::status_parts(&app).pill,
+        "FILE",
+        "selection does not rename the File surface"
     );
     app.focus_threads_pane();
     let parts = crate::app::draw::status_parts(&app);

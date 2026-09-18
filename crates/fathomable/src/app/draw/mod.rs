@@ -1724,8 +1724,7 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
         Focus::Review => "REVIEW",
         Focus::ThreadsPane => "THREADS",
         Focus::View => match view.mode() {
-            Mode::Normal => "NOR",
-            Mode::Select => "SEL",
+            Mode::Normal | Mode::Select => "FILE",
             Mode::Command => "CMD",
             Mode::Search { .. } => "SRCH",
         },
@@ -2635,15 +2634,7 @@ fn draw_directory_info(
         .map(|(label, _)| display_width(label))
         .max()
         .unwrap_or(0);
-    let width = usize::from(area.width);
-    let header = vec![Span::styled(
-        format!(" {}/", info.path.display()),
-        theme.popup_key,
-    )];
-    let mut lines = vec![
-        padded_line(header, width).style(theme.header),
-        Line::default(),
-    ];
+    let mut lines = vec![Line::default()];
     for (label, value) in rows {
         lines.push(Line::from(vec![
             Span::styled(format!("  {label:>label_width$}"), theme.popup_key),

@@ -7,7 +7,7 @@ use fathomable_testing::{TempDir, git};
 use crate::app::draw;
 use crate::app::input::mouse::handle_mouse;
 use crate::app::testing::{AppBuilder, buffer, screen};
-use crate::app::{ComparisonSide, PickerKind, Popup};
+use crate::app::{ComparisonSide, Focus, PickerKind, Popup};
 use fathomable_core::theme::Theme as CoreTheme;
 use fathomable_core::workspace::{CommitId, ComparisonEndpoint, Workspace};
 
@@ -187,7 +187,44 @@ fn branch_picker_mouse_hovers_clicks_and_wheels() -> anyhow::Result<()> {
         fs::write(refs.join(format!("branch-{index:02}")), format!("{head}\n"))?;
     }
     let mut app = menu_app(&root, &dir.0.join("points"))?;
+    app.toggle_sidebar();
+    assert!(app.sidebar_width() > 0, "the Files pane is visible");
     app.open_picker(PickerKind::ComparisonBranches(ComparisonSide::Base));
+
+    let Some(Popup::Picker(picker)) = app.popup() else {
+        return Err(anyhow::anyhow!("branch picker"));
+    };
+    let layout = draw::picker_layout(&app, picker);
+    let (width, height) = app.size();
+    let frame = (0..height)
+        .find_map(|row| {
+            (0..width)
+                .find(|&column| layout.contains(column, row))
+                .map(|column| (column, row))
+        })
+        .ok_or_else(|| anyhow::anyhow!("picker frame"))?;
+    assert_eq!(layout.entry_at(frame.0, frame.1, picker.matched()), None);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        frame.0,
+        frame.1,
+    );
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker))
+            if picker.kind() == PickerKind::ComparisonBranches(ComparisonSide::Base)
+    ));
+
+    let outside = (0, app.pane_top() + 1);
+    assert!(!layout.contains(outside.0, outside.1));
+    assert!(outside.0 < app.sidebar_width());
+    assert!((1..app.tree_rows()).contains(&(outside.1 - app.pane_top())));
+    mouse(&mut app, MouseEventKind::ScrollDown, outside.0, outside.1);
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.selected() == 0
+    ));
 
     let rendered = screen(&app)?;
     let (row, line) = rendered
@@ -229,6 +266,20 @@ fn branch_picker_mouse_hovers_clicks_and_wheels() -> anyhow::Result<()> {
             if picker.kind() == PickerKind::ComparisonBranchCommits(ComparisonSide::Base)
                 && picker.scope() == Some("branch-05")
     ));
+
+    app.focus_pane(Focus::View);
+    mouse(
+        &mut app,
+        MouseEventKind::Down(MouseButton::Left),
+        outside.0,
+        outside.1,
+    );
+    assert!(app.popup().is_none());
+    assert_eq!(
+        app.focus(),
+        Focus::View,
+        "the dismissed click does not focus the underlying Files pane"
+    );
     Ok(())
 }
 

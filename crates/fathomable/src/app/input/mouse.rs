@@ -310,6 +310,9 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                 MouseEventKind::ScrollUp if layout.contains(column, row) => {
                     app.picker_move(-WHEEL_LINES);
                 }
+                MouseEventKind::Down(MouseButton::Left) if !layout.contains(column, row) => {
+                    app.close_popup();
+                }
                 MouseEventKind::Down(MouseButton::Left) => {
                     if let Some(index) = entry {
                         app.picker_select(index);

@@ -11,6 +11,7 @@ Start here before changing documented behavior or adding project documentation.
 
 - [Fathomable charter](charter.md)
 - [Setup guide](guide.md)
+- [Commit hooks and staged gates](commit-hooks.md)
 - [Roadmap](roadmap.md)
 - [Design decisions](decisions/index.md)
 - [List focus language](decisions/0079-list-focus-language.md)

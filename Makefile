@@ -11,7 +11,7 @@ export PERF_PATH
 
 .PHONY: help gates gates-verbose fmt fmt-check clippy test doctest doc okf links \
 	docs-check boundaries public-api audit deny udeps mutants mutants-file \
-	perf install-commit-hooks build-deps clean install
+	perf install-commit-hooks test-commit-hooks build-deps clean install
 
 help:
 	@printf '%s\n' \
@@ -34,7 +34,8 @@ help:
 		'mutants           Run mutation testing' \
 		'mutants-file      Mutate FILE=<path>' \
 		'perf              Profile fathomable [PERF_PATH] until it exits' \
-		'install-commit-hooks Install or refresh the local commit hook' \
+		'install-commit-hooks Install or migrate the prek commit-msg hook' \
+		'test-commit-hooks Test hook installation and staged-tree guarantees' \
 		'install           Install fathomable into ~/.cargo/bin' \
 		'build-deps        Install optional Cargo tooling' \
 		'clean             Remove build artifacts'
@@ -109,6 +110,9 @@ perf:
 
 install-commit-hooks:
 	scripts/install-commit-hooks.sh
+
+test-commit-hooks:
+	python3 scripts/test-commit-hooks.py
 
 install:
 	cargo install --path crates/fathomable --locked

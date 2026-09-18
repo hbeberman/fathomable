@@ -69,8 +69,11 @@ user, system, or repo policy.
 
 ## Gates
 
-The bootstrap installs a local commit hook automatically. Refresh it with
-`just install-commit-hooks`.
+Install or migrate the prek-managed `commit-msg` hook with
+`just install-commit-hooks` after `scripts/setup-build-deps.sh`.
+It checks the message before running all gates against the staged tree.
+See [Commit hooks and staged gates](docs/commit-hooks.md); installation
+uses Git's shared hooks directory, including from linked worktrees.
 
 ```sh
 scripts/gates.sh
@@ -80,7 +83,11 @@ scripts/gates.sh
 `just gates` forwards to Make. Set `FATHOMABLE_HOOK_VERBOSE=1` when debugging
 a failing gate.
 
-Do not bypass hooks with `--no-verify`.
+`prek run --config prek.toml --stage manual` checks the staged snapshot
+without committing. `just test-commit-hooks` runs the hook regression suite.
+
+Do not bypass hooks with `--no-verify`, `SKIP`, `PREK_SKIP`, or
+`PREK_ALLOW_NO_CONFIG`.
 
 ## Committing
 

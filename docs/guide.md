@@ -25,8 +25,13 @@ fathomable --version
 ```
 
 Contributors should also install the tools in
-[CONTRIBUTING.md](../CONTRIBUTING.md) and run `scripts/gates.sh` before a
-commit.
+[CONTRIBUTING.md](../CONTRIBUTING.md), then run `just install-commit-hooks`
+to install or migrate the prek-managed `commit-msg` hook. The hook checks
+the commit message and runs `scripts/gates.sh` against the full staged
+tree. Run `scripts/gates.sh` directly to check the current checkout, or
+`prek run --config prek.toml --stage manual` to check the staged snapshot.
+See [Commit hooks and staged gates](commit-hooks.md) for migration safety,
+linked-worktree installation, and `just test-commit-hooks`.
 
 ## 2. Launch and state compatibility
 

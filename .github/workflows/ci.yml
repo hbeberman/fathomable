@@ -30,13 +30,15 @@ jobs:
       - name: Install cargo tools
         uses: taiki-e/install-action@2ca9b94c269419b7b0c711c09d0b21c4e1d51145 # v2.83.1
         with:
-          tool: cargo-audit@0.22.1,cargo-deny@0.19.9,cargo-nextest@0.9.138,lychee@0.24.2
+          tool: cargo-audit@0.22.1,cargo-deny@0.19.9,cargo-nextest@0.9.138,lychee@0.24.2,prek@0.5.3
       - name: Install cargo-public-api
         run: cargo install cargo-public-api --locked --version 0.51.0
       - name: Install documentation lint dependencies
         run: python3 -m pip install --requirement requirements-docs.txt
       - name: Format
         run: make fmt-check
+      - name: Test commit hooks
+        run: make test-commit-hooks
       - name: Clippy
         run: make clippy
       - name: Test

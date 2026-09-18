@@ -1,0 +1,28 @@
+# @okf-doc: /commit-hooks.md
+minimum_prek_version = "0.5.3"
+default_install_hook_types = ["commit-msg"]
+fail_fast = true
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "commit-message"
+name = "Commit message policy"
+entry = "scripts/check-commit-message.sh"
+language = "system"
+stages = ["commit-msg"]
+always_run = true
+priority = 0
+
+[[repos.hooks]]
+id = "staged-gates"
+name = "Full staged-tree gates"
+entry = "scripts/run-staged-gates.sh"
+language = "system"
+stages = ["pre-commit", "commit-msg", "manual"]
+always_run = true
+pass_filenames = false
+require_serial = true
+priority = 1
+verbose = true

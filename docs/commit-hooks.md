@@ -1,11 +1,12 @@
 ---
 type: Software
 title: Commit hooks and staged gates
-description: Native prek checks, staged tracked-content validation, and explicit commit-hook installation.
+description: Native prek checks, staged validation, transient run history, and explicit hook installation.
 resource: prek.toml
 related_resources:
   - scripts/install-commit-hooks.sh
   - scripts/check-commit-message.sh
+  - scripts/commit-hook-history.py
   - scripts/setup-build-deps.sh
   - justfile
   - .github/workflows/ci.yml
@@ -16,8 +17,9 @@ tags:
 
 # Commit hooks and staged gates
 
-[prek](https://github.com/j178/prek) manages the Git hook shim and runs
-the repository's checks directly. `prek.toml` is their single source of
+[prek](https://github.com/j178/prek) generates the Git hook shim and runs
+the repository's checks directly. A thin observer retains its native logs;
+it does not execute or schedule individual checks. `prek.toml` is their single source of
 truth: each of the 14 checks is a local `language = "system"` hook.
 Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
@@ -32,7 +34,9 @@ setup commands do not install Git hooks automatically. The installer
 validates `prek.toml` and installs only the `commit-msg` shim, explicitly
 bound to that config. It replaces the recognized bootstrap hook rather
 than leaving it in prek's legacy chaining mode, which would run the full
-gate twice. Reinstalling refreshes the prek shim.
+gate twice. It prepares a native shim in a temporary directory, adds the
+history observer, and atomically replaces the installed hook. Reinstalling
+refreshes the shim and enables history on an existing installation.
 
 The installer refuses an existing `core.hooksPath`, an unrecognized,
 symlinked, or non-regular `commit-msg`, and any `commit-msg.legacy` entry.
@@ -41,8 +45,9 @@ explicitly before retrying. It leaves other hook types alone.
 
 Git's default hooks directory is shared by linked worktrees. Installing
 from any worktree therefore affects all worktrees; do this only after
-they contain the new config. A checkout without `prek.toml` fails closed,
-not silently without checks.
+they contain the config and observer script. A checkout without
+`prek.toml` or `scripts/commit-hook-history.py` fails closed, not silently
+without checks.
 
 To evaluate a migration branch without changing the shared hook, install
 a private shim in that linked worktree's Git directory and select it for
@@ -51,6 +56,7 @@ individual commits:
 ```sh
 git_dir=$(git rev-parse --absolute-git-dir)
 prek install --config prek.toml --hook-type commit-msg --git-dir "$git_dir"
+python3 scripts/commit-hook-history.py --instrument-shim "$git_dir/hooks/commit-msg"
 git -c core.hooksPath="$git_dir/hooks" commit
 ```
 
@@ -127,6 +133,39 @@ Checks run at a stable source root and preserve the checkout's `target/`.
 The former snapshot runner already shared that build directory; native
 execution retains build-cache reuse while keeping source paths stable.
 
+## Transient commit-hook history
+
+The installed hook saves each attempt under the current worktree's ignored
+`.tmp/commit-hook-history/` directory. A UTC timestamp and unique suffix
+pair two files:
+
+- `YYYYMMDDTHHMMSS.ffffffZ-unique.prek.log`: prek's native `--log-file`
+  trace, including its version, preparation steps, and individual
+  `run{hook_id=...}` execution spans. A closing span's `time.busy` plus
+  `time.idle` measures that phase's elapsed time, including subprocess waits.
+- `YYYYMMDDTHHMMSS.ffffffZ-unique.output.log`: the console output, including
+  failure diagnostics and failed hook IDs. A small header records trigger
+  time, worktree, and observer PID; a footer records finish time, total
+  monotonic duration in seconds, exit code, and success/failure or signal.
+
+This measures the **commit-msg attempt**, not time an agent spent preparing
+changes, composing a message, or staging files. A successful hook is not
+proof Git subsequently created a commit. Message rejection and native prek
+setup failures are retained, even if no expensive check ran.
+
+The observer streams output normally, forwards interrupt/termination/hangup
+signals to prek's process group, and preserves its exit status. Failure to
+create or write history produces a warning rather than replacing a gate's
+result. A forcibly killed process or machine shutdown can leave logs without
+a footer; treat that as an incomplete attempt, not success.
+
+Files are created owner-readable/writable only. Diagnostics may contain
+source snippets and local paths: keep them transient and do not commit or
+upload them automatically. There is no rotation or cleanup policy; retain or
+remove old attempts as needed. Linked worktrees share the installed hook
+but keep their histories separate. Direct `prek run`, `just gates`, and CI
+do not use this observer, so they do not pollute commit-attempt history.
+
 ## Running and verifying
 
 Check the **current checkout**, including unstaged tracked edits:
@@ -172,7 +211,8 @@ fixture repositories with cheap stand-in checks.
 It covers installation/migration safety, message rejection, failure
 propagation, native staged-content handling and its untracked-file limits,
 empty/deletion/documentation/merge commits, alternate indexes,
-`git commit --only`, and linked worktrees. This suite runs as a check in
+`git commit --only`, linked worktrees, native timing/error logs, and signal
+forwarding. This suite runs as a check in
 the gate and CI; the actual Rust and documentation checks still run
 separately.
 

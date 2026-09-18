@@ -65,6 +65,13 @@ installing from one affects the others, and a checkout missing `prek.toml`
 fails closed. For an isolated trial before migration, see
 [Commit hooks and staged gates](docs/commit-hooks.md).
 
+Reinstalling also enables transient commit-hook history. Each Git attempt
+saves a timestamped native prek trace and console log in the current
+worktree's `.tmp/commit-hook-history/`. The trace records phase timings;
+the console log includes failure diagnostics, total duration, and exit
+status. Logs are ignored, local, and may contain source snippets. Direct
+`just gates` and `prek run` do not add commit-attempt history.
+
 ## 2. The gate
 
 `prek.toml` is the single source of truth for all 14 checks, each a local

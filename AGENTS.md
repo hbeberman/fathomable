@@ -76,6 +76,9 @@ before running all 14 checks against staged tracked contents, including
 empty, deletion-only, documentation-only, and merge commits.
 See [Commit hooks and staged gates](docs/commit-hooks.md); installation
 uses Git's shared hooks directory, including from linked worktrees.
+The installed hook keeps timestamped native traces and console/error logs
+under each worktree's ignored `.tmp/commit-hook-history/`. These measure
+hook attempts, not total agent work; do not commit or upload them.
 
 ```sh
 just gates

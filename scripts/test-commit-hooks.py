@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -56,6 +58,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 program = Path(sys.argv[0]).name
 if program == "cargo":
@@ -85,7 +88,7 @@ else:
 root = Path.cwd()
 files = {}
 for directory, children, names in os.walk(root):
-    children[:] = sorted(name for name in children if name != ".git")
+    children[:] = sorted(name for name in children if name not in {".git", ".tmp"})
     for name in sorted(names):
         path = Path(directory) / name
         if name != ".git":
@@ -99,8 +102,15 @@ event = {
 }
 with open(os.environ["FATHOMABLE_TEST_EVENTS"], "a") as log:
     log.write(json.dumps(event) + "\\n")
+if os.environ.get("FATHOMABLE_TEST_DELAY_HOOK") == hook:
+    time.sleep(0.08)
+if os.environ.get("FATHOMABLE_TEST_WAIT_HOOK") == hook:
+    (root / ".tmp" / "phase-ready").touch()
+    time.sleep(30)
 if (os.environ.get("FATHOMABLE_TEST_FAIL_HOOK") == hook
         or (hook == "commit-hooks" and files.get("payload.txt") == "invalid\\n")):
+    if os.environ.get("FATHOMABLE_TEST_LARGE_ERROR"):
+        print("earliest diagnostic " + "x" * 70000)
     print("fixture gate: rejected " + hook)
     sys.exit(1)
 print("fixture gate: accepted " + hook)
@@ -119,7 +129,7 @@ def inventory(root):
     result = {}
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
-        if relative.parts[0] == ".git":
+        if relative.parts[0] in {".git", ".tmp"}:
             continue
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode):
@@ -197,7 +207,7 @@ class CommitHooks(unittest.TestCase):
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "core.autocrlf", "false")
         for name in (
-            "install-commit-hooks.sh", "check-commit-message.sh",
+            "install-commit-hooks.sh", "check-commit-message.sh", "commit-hook-history.py",
         ):
             destination = self.repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
@@ -207,7 +217,7 @@ class CommitHooks(unittest.TestCase):
             self.write(name, FIXTURE_GATE, executable=True)
         self.write("payload.txt", "valid\n")
         self.write("keep.txt", "baseline\n")
-        self.write(".gitignore", "ignored.dat\n")
+        self.write(".gitignore", "ignored.dat\n.tmp/\n")
         self.git("add", ".")
         self.git("commit", "-qm", "chore: initial fixture")
         self.hooks = Path(self.git(
@@ -245,6 +255,10 @@ class CommitHooks(unittest.TestCase):
         if not self.log.exists():
             return []
         return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def history(self, repo=None, kind="output"):
+        directory = (repo or self.repo) / ".tmp/commit-hook-history"
+        return sorted(directory.glob(f"*.{kind}.log"))
 
     def state(self, repo=None, env=None):
         return (
@@ -307,6 +321,11 @@ class CommitHooks(unittest.TestCase):
         self.install()
         self.assertFalse((self.hooks / "commit-msg.legacy").exists())
         self.commit()
+
+    def test_observer_install_failure_preserves_the_installed_hook(self):
+        self.install()
+        self.write("scripts/commit-hook-history.py", "raise SystemExit(91)\n")
+        self.assert_install_refused()
 
     def test_other_hooks_are_untouched(self):
         for name in ("pre-commit", "pre-push", "prepare-commit-msg"):
@@ -400,6 +419,109 @@ class CommitHooks(unittest.TestCase):
             self.assertEqual(set(event["files"]), expected)
             self.assertEqual(event["files"]["payload.txt"], "staged change\n")
         self.assertEqual(self.git("show", "HEAD:payload.txt").stdout, "staged change\n")
+
+    def test_history_records_each_attempt_and_native_phase_timings(self):
+        self.install()
+        self.write("payload.txt", "staged change\n")
+        self.git("add", "payload.txt")
+        for _ in range(2):
+            self.commit(env=self.env | {"FATHOMABLE_TEST_DELAY_HOOK": "fmt"})
+        logs, traces = self.history(), self.history(kind="prek")
+        self.assertEqual(len(logs), 2)
+        self.assertEqual(len(traces), 2)
+        for log, trace in zip(logs, traces, strict=True):
+            self.assertRegex(log.name, r"^\d{8}T\d{6}\.\d{6}Z-.+\.output\.log$")
+            text = log.read_text()
+            self.assertIn(f"worktree={self.repo}", text)
+            self.assertIn("triggered_at=", text)
+            self.assertIn("finished_at=", text)
+            self.assertIn("exit_code=0\nexit_reason=passed", text)
+            duration = float(text.split("duration_seconds=")[-1].splitlines()[0])
+            self.assertGreaterEqual(duration, 0.08)
+            native = trace.read_text()
+            self.assertIn("DEBUG prek: 0.5.3", native)
+            for hook in ["commit-message", *GATE_IDS]:
+                self.assertIn(f"run{{hook_id={hook} language=system}}: close time.busy=", native)
+            for path in (log, trace):
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.git("check-ignore", str(path))
+
+    def test_history_records_message_rejection_before_any_gate(self):
+        self.install()
+        self.commit("invalid subject", success=False, gates=[])
+        text = self.history()[-1].read_text()
+        self.assertIn("- hook id: commit-message", text)
+        self.assertIn("exit_code=1\nexit_reason=failed", text)
+        self.assertIn("does not follow Conventional Commits", text)
+        self.assertNotIn("hook_id=fmt", self.history(kind="prek")[-1].read_text())
+
+    def test_history_retains_full_failure_details(self):
+        self.install()
+        self.commit(
+            success=False, gates=["commit-hooks", "fmt"],
+            env=self.env | {
+                "FATHOMABLE_TEST_FAIL_HOOK": "fmt", "FATHOMABLE_TEST_LARGE_ERROR": "1",
+            },
+        )
+        text = self.history()[-1].read_text()
+        self.assertIn("- hook id: fmt", text)
+        self.assertIn("- exit code: 1", text)
+        self.assertIn("exit_code=1\nexit_reason=failed", text)
+        self.assertIn("fixture gate: rejected fmt", text)
+        self.assertIn("earliest diagnostic", text)
+
+    def test_history_records_native_setup_errors_without_inventing_phases(self):
+        self.install()
+        config = self.repo / "prek.toml"
+        config.write_text(config.read_text() + "\n# unstaged config\n")
+        self.commit(success=False, gates=[])
+        text = self.history()[-1].read_text()
+        self.assertIn("not staged", text.lower())
+        self.assertIn("exit_reason=failed", text)
+        self.assertNotIn("run{hook_id=", self.history(kind="prek")[-1].read_text())
+
+    def test_logging_failure_warns_without_changing_gate_results(self):
+        self.install()
+        self.write(".tmp/commit-hook-history", "not a directory\n")
+        result = self.commit()
+        self.assertIn("cannot create logs", result.stdout)
+        result = self.commit(
+            success=False, gates=["commit-hooks"],
+            env=self.env | {"FATHOMABLE_TEST_FAIL_HOOK": "commit-hooks"},
+        )
+        self.assertIn("cannot create logs", result.stdout)
+        self.assertIn("fixture gate: rejected commit-hooks", result.stdout)
+
+    def test_observer_forwards_termination_and_records_interruption(self):
+        self.install()
+        process = subprocess.Popen(
+            ["git", "commit", "--allow-empty", "-m", "test: interrupted hook"],
+            cwd=self.repo, env=self.env | {"FATHOMABLE_TEST_WAIT_HOOK": "fmt"},
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        observer_pid = None
+        try:
+            ready = self.repo / ".tmp/phase-ready"
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                self.assertIsNone(process.poll())
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "fixture phase did not start")
+            text = self.history()[0].read_text()
+            observer_pid = int(text.split("observer_pid=")[1].splitlines()[0])
+            os.kill(observer_pid, signal.SIGTERM)
+            output, _ = process.communicate(timeout=10)
+            self.assertNotEqual(process.returncode, 0, output.decode())
+            text = self.history()[-1].read_text()
+            self.assertIn("finished_at=", text)
+            self.assertIn("exit_reason=SIGTERM", text)
+            self.assertNotIn("exit_code=0\n", text)
+        finally:
+            if process.poll() is None:
+                if observer_pid is not None:
+                    os.kill(observer_pid, signal.SIGTERM)
+                process.terminate()
+                process.communicate(timeout=10)
 
     def test_native_gates_preserve_environment_except_rustdoc_flags(self):
         self.install()
@@ -570,6 +692,8 @@ class CommitHooks(unittest.TestCase):
         event = self.events()[0]
         self.assertEqual(event["files"]["payload.txt"], "valid linked change\n")
         self.assertEqual(self.state(), main)
+        self.assertEqual(self.history(), [])
+        self.assertIn(f"worktree={linked}", self.history(linked)[-1].read_text())
 
     def test_alternate_index_is_respected_and_default_index_preserved(self):
         self.install()
@@ -682,6 +806,7 @@ class CommitHooks(unittest.TestCase):
                 )
                 self.assertEqual(self.state(), before)
                 self.assertEqual(self.head(), head)
+                self.assertEqual(self.history(), [])
                 events = self.events()[count:]
                 self.assert_gates(
                     events, GATE_IDS if success else ["commit-hooks"],

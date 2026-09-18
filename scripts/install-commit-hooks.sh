@@ -19,6 +19,10 @@ if ! command -v prek >/dev/null 2>&1; then
     echo "install-commit-hooks: prek is missing; run scripts/setup-build-deps.sh" >&2
     exit 1
 fi
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "install-commit-hooks: python3 is required for local hook history" >&2
+    exit 1
+fi
 prek validate-config prek.toml
 
 # Git uses the common hooks directory in linked worktrees too.
@@ -41,4 +45,18 @@ if [[ -e $hook.legacy || -L $hook.legacy ]]; then
     exit 1
 fi
 
-exec prek install --config prek.toml --hook-type commit-msg --overwrite
+# Prepare and instrument the native shim before replacing the shared hook.
+mkdir -p "$hooks_dir"
+staging=$(mktemp -d "$hooks_dir/.fathomable-hook.XXXXXX")
+cleanup() {
+    rm -f -- "$staging/hooks/commit-msg"
+    if [[ -d $staging/hooks ]]; then
+        rmdir -- "$staging/hooks"
+    fi
+    rmdir -- "$staging"
+}
+trap cleanup EXIT
+prek install --config prek.toml --hook-type commit-msg --git-dir "$staging"
+python3 scripts/commit-hook-history.py --instrument-shim "$staging/hooks/commit-msg"
+mv -- "$staging/hooks/commit-msg" "$hook"
+printf 'Installed observed commit-msg hook at %s\n' "$hook"

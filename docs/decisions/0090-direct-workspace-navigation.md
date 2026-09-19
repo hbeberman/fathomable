@@ -76,6 +76,18 @@ The jumplist records both source positions and exact Reviews entries, so
 `Alt-Left` and `Alt-Right` return across a fallback without confusing two
 threads on the same source line.
 
+Every successful comparison or thread landing also asks Files to reveal the
+destination path. Files expands listed ancestors and centers the destination
+when it has enough rows, but never takes keyboard focus from File or Reviews.
+The destination is retained while Files is hidden, so showing it later applies
+the same reveal. On a Reviews fallback, the destination remains the thread's
+path even though File restores the previously displayed source.
+
+Files filters remain authoritative. If they exclude the destination, navigation
+does not fabricate a row or bypass a rule: the existing Files highlight stays
+where it is. The remembered destination is retried when the listing changes or
+Files reopens.
+
 ### A persistent, compact File footer
 
 An ordinary text File always keeps its bottom key bar. Its default loop is:
@@ -106,6 +118,8 @@ actions for mouse use, subject to the same availability rules.
   actions; terminal Shift-Tab normalization happens at event conversion.
 - Open-thread traversal uses lifecycle independently of current presentation
   filters, never activates another worktree, and falls back to Reviews.
+- Files mirrors a listed traversal destination without taking focus; hidden
+  state and temporarily filtered destinations retain the reveal target.
 - The jumplist distinguishes File lines from exact Reviews threads.
 - The File footer is persistent for ordinary text documents, while draft,
   file-info, directory, and Reviews surfaces retain their own presentation.

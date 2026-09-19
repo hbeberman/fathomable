@@ -162,7 +162,9 @@ whitespace. A pending new annotation must be submitted or cancelled first.
 Use `J` and `K` to cycle every comparison change across the workspace.
 Text hunks are individual stops; a changed path with no text hunk, such as a
 binary or mode-only change, is one stop. The cycle follows the selected
-comparison and is unavailable in Off mode.
+comparison and is unavailable in Off mode. Files expands and centers a listed
+destination without taking keyboard focus; a hidden Files pane catches up when
+shown.
 
 ### Review discussions
 
@@ -180,6 +182,9 @@ Use `Tab` and `Shift-Tab` from any normal pane to cycle active and
 resolution-proposed threads across the workspace. Resolved and archived
 threads are skipped. Source opens when it can be displayed; otherwise
 Fathomable selects the expanded Reviews entry and its stored evidence.
+Files follows the destination path without taking focus from File or Reviews.
+Active Files filters still apply: an excluded destination is not fabricated,
+and its reveal waits until the listing admits it.
 This navigation never switches worktrees: use `]w` and `[w` explicitly.
 
 The File footer keeps the core loop visible as

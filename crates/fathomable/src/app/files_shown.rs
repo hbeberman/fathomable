@@ -46,7 +46,7 @@ impl App {
         } else {
             tree.set_virtual_paths(&status, virtual_paths);
         }
-        self.scroll_tree();
+        self.refresh_tree_target();
         self.refresh_directory_selection();
         if !self.sidebar.tree {
             // The header that names the state is not on screen.
@@ -73,7 +73,7 @@ impl App {
             } else {
                 tree.set_virtual_paths(&status, virtual_paths);
             }
-            self.scroll_tree();
+            self.refresh_tree_target();
             self.refresh_directory_selection();
         }
     }
@@ -87,7 +87,7 @@ impl App {
         let review_paths = self.review_paths();
         if let Some(tree) = self.tree.as_mut() {
             tree.set_review_paths(&mut self.workspace, &status, review_paths);
-            self.scroll_tree();
+            self.refresh_tree_target();
             self.refresh_directory_selection();
         }
     }

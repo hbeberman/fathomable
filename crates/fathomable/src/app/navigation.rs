@@ -127,6 +127,7 @@ impl App {
                 hunk: None,
                 row: self.view().cursor().row,
             });
+            self.synchronize_tree_to(path);
         } else {
             let index = if forward { 0 } else { lines.len() - 1 };
             self.land_on_hunk(path.to_path_buf(), &lines, index);
@@ -139,6 +140,7 @@ impl App {
         self.open_file_view();
         self.focus = Focus::View;
         self.view_mut().goto_source_line(lines[index]);
+        self.synchronize_tree_to(&path);
         self.change_stop = Some(ChangeStop {
             path,
             hunk: Some(index),
@@ -172,6 +174,9 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
+    use anyhow::Context;
+    use fathomable_core::annotations::{Author, Draft, LineRange, Store};
+    use fathomable_core::tree::{Rule, Tree};
     use fathomable_testing::{TempDir, git};
 
     use super::stepped_hunk_index;
@@ -257,6 +262,245 @@ mod tests {
                 .is_some_and(|info| info.notice.join(" ").contains("not UTF-8")),
             "{:?}",
             app.info()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn comparison_navigation_reveals_nested_destination_without_taking_files_focus()
+    -> anyhow::Result<()> {
+        let dir = TempDir::new("navigation-tree-nested")?;
+        let root = &dir.0;
+        fs::create_dir_all(root.join("docs/deep"))?;
+        fs::write(root.join("README.md"), "readme\n")?;
+        fs::write(root.join("docs/deep/target.md"), "old\n")?;
+        git::init(root)?;
+        git::commit_and_stage(
+            root,
+            &[("README.md", "readme\n"), ("docs/deep/target.md", "old\n")],
+        )?;
+        fs::write(root.join("docs/deep/target.md"), "new\n")?;
+
+        let mut app = AppBuilder::at(root).source_view().build()?;
+        app.show_tree();
+        assert_eq!(app.focus(), Focus::Tree);
+        assert!(
+            app.tree()
+                .is_some_and(|tree| !tree.contains(Path::new("docs/deep/target.md")))
+        );
+
+        testing::press(&mut app, "J");
+
+        assert_eq!(app.current_path(), Path::new("docs/deep/target.md"));
+        assert_eq!(app.focus(), Focus::View);
+        let tree = app.tree().context("visible files tree")?;
+        assert_eq!(
+            tree.current().map(fathomable_core::tree::Row::path),
+            Some(Path::new("docs/deep/target.md"))
+        );
+        for path in ["docs", "docs/deep"] {
+            assert!(
+                tree.rows()
+                    .iter()
+                    .any(|row| row.path() == Path::new(path) && row.expanded()),
+                "{path} should be expanded"
+            );
+        }
+
+        app.toggle_tree_focus();
+        testing::press(&mut app, "hh");
+        app.refresh_review_paths();
+        let tree = app.tree().context("visible files tree")?;
+        assert_eq!(
+            tree.current().map(fathomable_core::tree::Row::path),
+            Some(Path::new("docs/deep"))
+        );
+        assert!(
+            tree.current().is_some_and(|row| !row.expanded()),
+            "manual collapse must survive passive refresh"
+        );
+        assert!(!tree.contains(Path::new("docs/deep/target.md")));
+        Ok(())
+    }
+
+    #[test]
+    fn hidden_files_retains_filtered_destination_and_centers_it_when_admitted() -> anyhow::Result<()>
+    {
+        let dir = TempDir::new("navigation-tree-hidden")?;
+        let root = &dir.0;
+        let mut files = vec![("README.md".to_owned(), "readme\n".to_owned())];
+        for index in 0..=40 {
+            files.push((format!("{index:02}.md"), format!("old {index}\n")));
+        }
+        for (path, text) in &files {
+            fs::write(root.join(path), text)?;
+        }
+        git::init(root)?;
+        let refs: Vec<_> = files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect();
+        git::commit_and_stage(root, &refs)?;
+        fs::write(root.join("20.md"), "new 20\n")?;
+
+        let mut app = AppBuilder::at(root).source_view().build()?;
+        app.resize(100, 12);
+        app.show_tree();
+        app.toggle_tree_shown();
+        assert!(!app.sidebar.tree);
+
+        testing::press(&mut app, "J");
+        assert_eq!(app.current_path(), Path::new("20.md"));
+        assert_eq!(app.focus(), Focus::View);
+        app.toggle_tree_shown();
+
+        let tree = app.tree().context("reopened files tree")?;
+        let cursor = tree.cursor();
+        assert_eq!(
+            tree.current().map(fathomable_core::tree::Row::path),
+            Some(Path::new("20.md"))
+        );
+        let body_rows = app.tree_rows().saturating_sub(1).max(1);
+        assert_eq!(cursor - app.tree_scroll(), body_rows / 2);
+
+        app.open(Path::new("README.md"));
+        app.files_toggle(Rule::Reviews);
+        app.toggle_tree_shown();
+        testing::press(&mut app, "J");
+        app.toggle_tree_shown();
+        assert!(
+            app.tree()
+                .is_some_and(|tree| !tree.contains(Path::new("20.md"))),
+            "the active filter must not fabricate the destination"
+        );
+
+        app.files_toggle(Rule::Reviews);
+        assert_eq!(
+            app.tree()
+                .and_then(Tree::current)
+                .map(fathomable_core::tree::Row::path),
+            Some(Path::new("20.md")),
+            "removing the filter retries the remembered destination"
+        );
+        assert_eq!(app.focus(), Focus::View);
+        Ok(())
+    }
+
+    #[test]
+    fn source_thread_navigation_reveals_nested_file_and_keeps_file_focus() -> anyhow::Result<()> {
+        let dir = testing::workspace("navigation-thread-source", testing::README)?;
+        let root = testing::root(&dir);
+        fs::create_dir_all(root.join("docs/deep"))?;
+        fs::write(root.join("docs/deep/guide.md"), "guide\n")?;
+        let mut store = Store::open(testing::store_path(&dir))?;
+        store.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("README.md"),
+                LineRange::new(1, 1),
+                "readme",
+            ),
+            testing::README,
+            1,
+        )?;
+        store.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("docs/deep/guide.md"),
+                LineRange::new(1, 1),
+                "guide",
+            ),
+            "guide\n",
+            1,
+        )?;
+
+        let mut app = AppBuilder::new(&dir).source_view().build()?;
+        app.show_tree();
+        app.open_review();
+        assert_eq!(app.focus(), Focus::Review);
+
+        testing::press_key(&mut app, crossterm::event::KeyCode::Tab);
+
+        assert_eq!(app.current_path(), Path::new("docs/deep/guide.md"));
+        assert_eq!(app.focus(), Focus::View);
+        assert!(!app.review_list().is_open());
+        let tree = app.tree().context("visible files tree")?;
+        assert_eq!(
+            tree.current().map(fathomable_core::tree::Row::path),
+            Some(Path::new("docs/deep/guide.md"))
+        );
+        for path in ["docs", "docs/deep"] {
+            assert!(
+                tree.rows()
+                    .iter()
+                    .any(|row| row.path() == Path::new(path) && row.expanded()),
+                "{path} should be expanded"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn review_fallback_reveals_thread_file_after_hidden_files_reopens() -> anyhow::Result<()> {
+        let base = (1..=20)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        let dir = testing::workspace("navigation-thread-fallback", &base)?;
+        let root = testing::root(&dir);
+        fs::write(root.join("binary.bin"), [0, 1, 2])?;
+        git::init(&root)?;
+        git::commit_and_stage(
+            &root,
+            &[("README.md", &base), ("binary.bin", "\0\u{1}\u{2}")],
+        )?;
+        fs::write(
+            root.join("README.md"),
+            base.replace("line 5", "changed 5")
+                .replace("line 15", "changed 15"),
+        )?;
+        let mut store = Store::open(testing::store_path(&dir))?;
+        store.annotate(
+            Draft::new(
+                Author::agent("reviewer"),
+                Path::new("binary.bin"),
+                LineRange::new(1, 1),
+                "binary",
+            ),
+            "source\n",
+            1,
+        )?;
+
+        let mut app = AppBuilder::new(&dir).source_view().build()?;
+        app.show_tree();
+        app.toggle_tree_shown();
+        app.open_review();
+        assert_eq!(app.focus(), Focus::Review);
+
+        testing::press_key(&mut app, crossterm::event::KeyCode::Tab);
+
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.focus(), Focus::Review);
+        assert!(app.review_list().is_open());
+        app.toggle_tree_shown();
+        assert_eq!(app.focus(), Focus::Review);
+        assert_eq!(
+            app.tree()
+                .and_then(Tree::current)
+                .map(fathomable_core::tree::Row::path),
+            Some(Path::new("binary.bin"))
+        );
+
+        testing::press(&mut app, "J");
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.focus(), Focus::View);
+        assert_eq!(
+            app.tree()
+                .and_then(Tree::current)
+                .map(fathomable_core::tree::Row::path),
+            Some(Path::new("README.md")),
+            "same-file hunk landing replaces the fallback destination"
         );
         Ok(())
     }

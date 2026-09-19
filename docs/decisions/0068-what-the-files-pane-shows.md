@@ -50,6 +50,11 @@ Amended later 2026-09-18: the header represents active filters only as the
 dim comma-list `c`, `r`, `u`, and `i`, where `u` means untracked files are
 hidden. The clickable **Files** title and the key chords carry the full labels.
 
+Amended later 2026-09-18: direct comparison and open-thread navigation may ask
+Files to reveal and center a destination, including while the pane is hidden.
+The four filters remain authoritative: an excluded destination creates no row
+and leaves the highlight unchanged until a later listing admits it.
+
 ## Context
 
 The files pane lists every non-ignored file under the workspace, with a

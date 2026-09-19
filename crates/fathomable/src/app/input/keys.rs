@@ -395,6 +395,18 @@ impl App {
 
     fn act_tree(&mut self, action: Action) -> Effect {
         let before = tree_highlight(self);
+        if matches!(
+            action,
+            Action::MoveDown
+                | Action::MoveUp
+                | Action::MoveLeft
+                | Action::MoveRight
+                | Action::Confirm
+                | Action::Top
+                | Action::Bottom
+        ) {
+            self.cancel_tree_target();
+        }
         match action {
             Action::MoveDown => self.with_tree(|tree, _| {
                 tree.move_down(1);

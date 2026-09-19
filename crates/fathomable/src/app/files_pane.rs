@@ -76,10 +76,11 @@ impl App {
     /// wheel does (ADR 0023); only `Enter` commits focus to the view.
     pub(crate) fn tree_click(&mut self, row: usize) {
         let index = self.tree_scroll + row;
+        if self.tree().is_none_or(|tree| index >= tree.rows().len()) {
+            return;
+        }
+        self.cancel_tree_target();
         self.with_tree_result(|tree, workspace| {
-            if index >= tree.rows().len() {
-                return Ok(None);
-            }
             tree.set_cursor(index);
             if tree.current().is_some_and(|entry| !entry.is_dir()) {
                 return Ok(None);
@@ -104,6 +105,7 @@ impl App {
         });
         self.focus = Focus::Tree;
         if self.tree().map(Tree::cursor) != before {
+            self.cancel_tree_target();
             self.show_highlight();
         }
     }
@@ -152,6 +154,68 @@ impl App {
         }
         let max = tree.rows().len().saturating_sub(rows);
         self.tree_scroll = self.tree_scroll.min(max);
+    }
+
+    /// Remember and reveal a workspace-navigation destination in Files.
+    pub(super) fn synchronize_tree_to(&mut self, path: &std::path::Path) {
+        self.tree_target = Some(path.to_path_buf());
+        self.reveal_tree_path(path);
+    }
+
+    /// Let explicit Files navigation supersede a remembered destination.
+    pub(super) fn cancel_tree_target(&mut self) {
+        self.tree_target = None;
+    }
+
+    /// Reveal the remembered navigation destination, or the current file.
+    pub(super) fn reveal_current(&mut self) {
+        let path = self
+            .tree_target
+            .clone()
+            .unwrap_or_else(|| self.current_path().to_path_buf());
+        self.reveal_tree_path(&path);
+    }
+
+    /// Retry a remembered destination after the Files listing changes.
+    pub(super) fn refresh_tree_target(&mut self) {
+        if let Some(path) = self.tree_target.clone() {
+            self.reveal_tree_path(&path);
+        } else {
+            self.scroll_tree();
+        }
+    }
+
+    fn reveal_tree_path(&mut self, path: &std::path::Path) {
+        if path.as_os_str().is_empty() {
+            return;
+        }
+        let revealed = match self.tree.as_mut() {
+            Some(tree) => match tree.reveal(&mut self.workspace, path) {
+                Ok(revealed) => revealed,
+                Err(error) => {
+                    tracing::debug!(%error, "cannot reveal file in tree");
+                    false
+                }
+            },
+            None => false,
+        };
+        if !self.sidebar.tree {
+            return;
+        }
+        if revealed {
+            self.center_tree();
+        } else {
+            self.scroll_tree();
+        }
+    }
+
+    fn center_tree(&mut self) {
+        let rows = self.tree_rows().saturating_sub(1).max(1);
+        let Some(tree) = self.tree.as_ref() else {
+            return;
+        };
+        let max = tree.rows().len().saturating_sub(rows);
+        self.tree_scroll = tree.cursor().saturating_sub(rows / 2).min(max);
     }
 
     /// Show the file or directory summary under the tree cursor, leaving

@@ -77,6 +77,7 @@ fn sidebar_mouse(
                 None
             });
             if tree_highlight(app) != before {
+                app.cancel_tree_target();
                 app.show_highlight();
             }
         }

@@ -607,6 +607,8 @@ pub(crate) struct App {
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     tree_scroll: usize,
+    /// The last workspace-navigation destination the files pane should reveal.
+    tree_target: Option<PathBuf>,
     /// Tree width once dragged; the default follows the terminal.
     sidebar_cols: Option<usize>,
     /// The thread and message the thread surfaces show; authoritative
@@ -772,6 +774,7 @@ impl App {
             expanded: HashSet::new(),
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
+            tree_target: None,
             sidebar_cols: None,
             thread_cursor: ThreadCursor::default(),
             thread_cursor_anchor: None,
@@ -2105,6 +2108,7 @@ impl App {
     )]
     pub(crate) fn open(&mut self, path: &Path) {
         self.getting_started = None;
+        self.tree_target = None;
         let had_directory = self.directory.take().is_some();
         let relative = self.workspace.relative(&self.workspace.root().join(path));
         let loaded = self.docs.iter().position(|doc| doc.relative == relative);
@@ -2479,18 +2483,6 @@ impl App {
             self.reveal_current();
         }
         self.relayout();
-    }
-
-    fn reveal_current(&mut self) {
-        let path = self.current_path().to_path_buf();
-        if path.as_os_str().is_empty() {
-            return;
-        }
-        if let Some(tree) = self.tree.as_mut()
-            && let Err(error) = tree.reveal(&mut self.workspace, &path)
-        {
-            tracing::debug!(%error, "cannot reveal current file in tree");
-        }
     }
 
     // ----- popups -----

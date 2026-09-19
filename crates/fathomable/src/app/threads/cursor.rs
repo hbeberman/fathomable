@@ -294,6 +294,7 @@ impl App {
             self.goto_thread(&id);
             self.set_thread_cursor(id);
             self.focus = crate::app::Focus::View;
+            self.synchronize_tree_to(&path);
             return Some(ThreadLanding::Source);
         }
         if !previous.0.as_os_str().is_empty() && previous.0 != self.current_path() {
@@ -302,8 +303,10 @@ impl App {
                 self.view_mut().goto_source_line(previous.1);
             }
         }
-        self.show_thread_in_review(&id)
-            .then_some(ThreadLanding::Review)
+        self.show_thread_in_review(&id).then(|| {
+            self.synchronize_tree_to(&path);
+            ThreadLanding::Review
+        })
     }
 
     /// Whether `id` can host an inline reply or edit in the current File.

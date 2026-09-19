@@ -62,6 +62,7 @@ impl App {
 
     /// A new status landed: the files pane lists by it.
     pub(super) fn sift_tree(&mut self) {
+        self.cancel_tree_scan();
         let status = self.files_filter_status();
         let virtual_paths = self.comparison_virtual_paths();
         let snapshot_paths = self.comparison_snapshot_paths();
@@ -80,6 +81,7 @@ impl App {
 
     /// Re-project qualifying current-workspace threads into tree paths.
     pub(super) fn refresh_review_paths(&mut self) {
+        self.cancel_tree_scan();
         if self.tree.is_none() {
             return;
         }

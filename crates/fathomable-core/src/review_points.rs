@@ -676,7 +676,7 @@ impl ReviewPointStore {
         if let Some(entry) = point.entry(path) {
             return match &entry.content {
                 ReviewContent::Tombstone => Ok(None),
-                ReviewContent::Blob(blob) => self.read_blob(blob, point, path).map(Some),
+                ReviewContent::Blob(blob) => self.read_blob(blob, point, path, workspace).map(Some),
             };
         }
         if let Some(issue) = point
@@ -717,12 +717,14 @@ impl ReviewPointStore {
         workspace: &mut Workspace,
     ) -> Result<Comparison, ReviewPointError> {
         self.require_active(point)?;
+        workspace.begin_comparison();
         let baseline = point
             .head()
             .cloned()
             .map_or(ComparisonEndpoint::EmptyTree, ComparisonEndpoint::Commit);
         let mut point_files = workspace.endpoint_files(&baseline)?;
         for entry in &point.entries {
+            workspace.check_path_count(point_files.len().saturating_add(1))?;
             if entry.is_tombstone() {
                 point_files.remove(&entry.path);
             } else {
@@ -746,8 +748,10 @@ impl ReviewPointStore {
         let mut paths = BTreeSet::new();
         paths.extend(point_files.keys().cloned());
         paths.extend(working_files.keys().cloned());
+        workspace.check_path_count(paths.len())?;
         let mut changes = Vec::new();
         for path in paths {
+            workspace.check_scan()?;
             let point_file = point_files.get(&path);
             let working_file = working_files.get(&path);
             let mut base_state = point_file.map_or(PathState::Absent, |file| {
@@ -809,14 +813,22 @@ impl ReviewPointStore {
         blob: &str,
         point: &ReviewPoint,
         path: &Path,
+        workspace: &Workspace,
     ) -> Result<Vec<u8>, ReviewPointError> {
-        crate::private_state::read(self.dir.join(BLOB_DIR).join(blob)).map_err(|error| {
-            ReviewPointError::MissingBacking {
+        workspace.check_scan()?;
+        let mut bytes = Vec::new();
+        crate::private_state::open_read(self.dir.join(BLOB_DIR).join(blob))
+            .and_then(|file| {
+                file.take(workspace.content_limit().saturating_add(1))
+                    .read_to_end(&mut bytes)
+            })
+            .map_err(|error| ReviewPointError::MissingBacking {
                 point: point.id.clone(),
                 path: path.to_path_buf(),
                 detail: format!("content blob {blob} is unavailable: {error}"),
-            }
-        })
+            })?;
+        workspace.charge_content(bytes.len())?;
+        Ok(bytes)
     }
 
     fn require_active(&self, point: &ReviewPoint) -> Result<(), ReviewPointError> {

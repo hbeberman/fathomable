@@ -286,10 +286,11 @@ impl Node {
 #[derive(Debug, Clone, Default)]
 struct Deleted {
     children: HashMap<PathBuf, Vec<Node>>,
+    limited: bool,
 }
 
 impl Deleted {
-    fn new(status: &Status, virtual_paths: &[PathBuf]) -> Self {
+    fn new(status: &Status, virtual_paths: &[PathBuf], limit: usize) -> Self {
         let mut deleted = Self::default();
         let mut paths: Vec<PathBuf> = status
             .entries()
@@ -299,12 +300,20 @@ impl Deleted {
                     || (entry.staged_state() == Some(State::Deleted)
                         && entry.unstaged_state().is_none())
             })
+            .take(limit)
             .map(|entry| entry.path().to_path_buf())
             .collect();
-        paths.extend(virtual_paths.iter().cloned());
+        deleted.limited = status.len().saturating_add(virtual_paths.len()) > limit;
+        paths.extend(
+            virtual_paths
+                .iter()
+                .take(limit.saturating_sub(paths.len()))
+                .cloned(),
+        );
         paths.sort();
         paths.dedup();
-        for entry_path in paths {
+        let mut count = 0;
+        'paths: for entry_path in paths {
             for path in entry_path.ancestors() {
                 let Some((parent, name)) = path
                     .parent()
@@ -316,6 +325,11 @@ impl Deleted {
                 if children.iter().any(|child| child.name == name) {
                     break;
                 }
+                if count >= limit {
+                    deleted.limited = true;
+                    break 'paths;
+                }
+                count += 1;
                 children.push(Node {
                     name: name.to_owned(),
                     is_dir: path != entry_path.as_path(),
@@ -333,11 +347,12 @@ impl Deleted {
         deleted
     }
 
-    fn merge(&self, path: &Path, children: &mut Vec<Node>) {
+    fn merge(&self, path: &Path, children: &mut Vec<Node>, available: &mut usize) -> bool {
         let deleted = self.children.get(path).map_or(&[][..], Vec::as_slice);
         children
             .retain(|child| !child.deleted || deleted.iter().any(|entry| entry.name == child.name));
         let mut added = false;
+        let mut limited = false;
         for entry in deleted {
             match children.iter().position(|child| child.name == entry.name) {
                 Some(index) if children[index].is_dir != entry.is_dir => {
@@ -346,6 +361,11 @@ impl Deleted {
                 }
                 Some(_) => {}
                 None => {
+                    if *available == 0 {
+                        limited = true;
+                        continue;
+                    }
+                    *available -= 1;
                     children.push(entry.clone());
                     added = true;
                 }
@@ -354,15 +374,18 @@ impl Deleted {
         if added {
             children.sort_by(|a, b| entry_order(a.is_dir, &a.name, b.is_dir, &b.name));
         }
+        limited
     }
 
-    fn sync(&self, node: &mut Node, path: &Path) {
+    fn sync(&self, node: &mut Node, path: &Path, available: &mut usize) -> bool {
+        let mut limited = self.limited;
         if let Some(children) = node.children.as_mut() {
-            self.merge(path, children);
+            limited |= self.merge(path, children, available);
             for child in children {
-                self.sync(child, &path.join(&child.name));
+                limited |= self.sync(child, &path.join(&child.name), available);
             }
         }
+        limited
     }
 }
 
@@ -389,6 +412,9 @@ pub struct Tree {
     admitted_review_paths: Vec<PathBuf>,
     virtual_paths: Vec<PathBuf>,
     snapshot_paths: Option<Vec<PathBuf>>,
+    retained_limit: usize,
+    limited: bool,
+    listing_issue: Option<WorkspaceError>,
 }
 
 impl Tree {
@@ -417,6 +443,9 @@ impl Tree {
             admitted_review_paths: Vec::new(),
             virtual_paths: Vec::new(),
             snapshot_paths: None,
+            retained_limit: workspace.limits().retained_paths,
+            limited: false,
+            listing_issue: None,
         };
         tree.refresh(workspace)?;
         Ok(tree)
@@ -426,6 +455,20 @@ impl Tree {
     #[must_use]
     pub fn shown(&self) -> Shown {
         self.shown
+    }
+
+    /// Whether discovery is incomplete or physical/virtual entries reached their budget.
+    #[must_use]
+    pub const fn discovery_limited(&self) -> bool {
+        self.limited || self.listing_issue.is_some()
+    }
+
+    /// The retained reason a physical listing is incomplete.
+    ///
+    /// Collapsing or reusing a listing does not clear its coverage warning.
+    #[must_use]
+    pub fn listing_incomplete(&self) -> Option<&WorkspaceError> {
+        self.listing_issue.as_ref()
     }
 
     /// List by `shown` under `status`, keeping the cursor's path where it
@@ -462,7 +505,7 @@ impl Tree {
             &self.admitted_review_paths,
             self.snapshot_paths.as_deref(),
         );
-        self.deleted = Deleted::new(status, &self.virtual_paths);
+        self.deleted = Deleted::new(status, &self.virtual_paths, self.retained_limit);
         let cursor_path = self.current().map(|row| row.path.clone());
         self.rebuild();
         if let Some(path) = cursor_path {
@@ -573,11 +616,24 @@ impl Tree {
             return Ok(None);
         };
         let filter = self.shown.filter();
+        let available = workspace
+            .limits()
+            .retained_paths
+            .saturating_sub(node_count(&self.root));
         let Some(node) = find_node(&mut self.root, &path) else {
             return Ok(None);
         };
         if node.children.is_none() {
-            node.children = Some(read_children(workspace, &path, filter, &self.deleted)?);
+            node.children = Some(read_children(
+                workspace,
+                &path,
+                filter,
+                &self.deleted,
+                available,
+            )?);
+            if let Some(error) = workspace.listing_incomplete() {
+                self.listing_issue = Some(error.clone());
+            }
         }
         let counts = node
             .children
@@ -604,6 +660,19 @@ impl Tree {
     /// Returns [`WorkspaceError`] when the root cannot be read; a deeper
     /// directory that vanished is collapsed instead.
     pub fn refresh(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        workspace.begin_listing_scan();
+        let result = self.refresh_listings(workspace);
+        workspace.end_listing_scan();
+        self.listing_issue = workspace
+            .listing_incomplete()
+            .cloned()
+            .or_else(|| result.as_ref().err().cloned());
+        result
+    }
+
+    fn refresh_listings(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        self.retained_limit = workspace.limits().retained_paths;
+        self.limited = false;
         let cursor_path = self.current().map(|row| row.path.clone());
         self.sync_review_paths(workspace);
         self.admitted = Admitted::new(
@@ -621,17 +690,27 @@ impl Tree {
             Path::new(""),
             self.shown.filter(),
             &self.deleted,
+            workspace.limits().retained_paths,
         )?);
+        let mut failure = None;
         for path in expanded {
+            if workspace.listing_incomplete().is_some() {
+                break;
+            }
             if let Err(error) = self.expand_path(workspace, &path) {
-                tracing::debug!(%error, "directory gone during refresh");
+                if matches!(workspace.root().join(&path).try_exists(), Ok(false)) {
+                    tracing::debug!(%error, "directory gone during refresh");
+                } else {
+                    failure = Some(error);
+                    break;
+                }
             }
         }
         self.rebuild();
         if let Some(path) = cursor_path {
             self.select_path(&path);
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 
     /// Re-read the listing that holds `dir` after a file appeared,
@@ -661,10 +740,15 @@ impl Tree {
         };
         let dir = dir.as_path();
         let filter = self.shown.filter();
+        let available = workspace
+            .limits()
+            .retained_paths
+            .saturating_sub(node_count(&self.root));
         let Some(node) = find_node(&mut self.root, dir) else {
             return Ok(false);
         };
-        let fresh = match read_children(workspace, dir, filter, &self.deleted) {
+        let available = available.saturating_add(node.children.as_ref().map_or(0, Vec::len));
+        let fresh = match read_children(workspace, dir, filter, &self.deleted, available) {
             Ok(fresh) => fresh,
             Err(error) if !workspace.root().join(dir).is_dir() => {
                 tracing::debug!(%error, "directory gone; collapsing it");
@@ -675,6 +759,9 @@ impl Tree {
             }
             Err(error) => return Err(error),
         };
+        if let Some(error) = workspace.listing_incomplete() {
+            self.listing_issue = Some(error.clone());
+        }
         let mut old = node.children.take().unwrap_or_default();
         node.children = Some(
             fresh
@@ -843,6 +930,7 @@ impl Tree {
     /// Returns [`WorkspaceError`] when a directory cannot be read. Directories
     /// expanded before that failure remain expanded and visible.
     pub fn toggle_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        workspace.begin_listing_scan();
         let cursor = self.current().map(|row| row.path.clone());
         let unfold = self.rows.iter().any(|row| {
             row.is_dir
@@ -862,6 +950,14 @@ impl Tree {
             }
             Ok(())
         };
+        workspace.end_listing_scan();
+        if let Some(error) = result
+            .as_ref()
+            .err()
+            .or_else(|| workspace.listing_incomplete())
+        {
+            self.listing_issue = Some(error.clone());
+        }
         self.rebuild();
         if let Some(cursor) = cursor {
             for path in cursor.ancestors() {
@@ -876,7 +972,11 @@ impl Tree {
     fn expand_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
         let mut pending = vec![PathBuf::new()];
         while let Some(path) = pending.pop() {
+            workspace.check_scan()?;
             self.expand_path(workspace, &path)?;
+            if let Some(error) = workspace.listing_incomplete() {
+                return Err(error.clone());
+            }
             if let Some(children) =
                 find_node(&mut self.root, &path).and_then(|node| node.children.as_ref())
             {
@@ -960,6 +1060,10 @@ impl Tree {
         path: &Path,
     ) -> Result<bool, WorkspaceError> {
         let filter = self.shown.filter();
+        let available = workspace
+            .limits()
+            .retained_paths
+            .saturating_sub(node_count(&self.root));
         let Some(node) = find_node(&mut self.root, path) else {
             return Ok(false);
         };
@@ -967,7 +1071,16 @@ impl Tree {
             return Ok(false);
         }
         if node.children.is_none() {
-            node.children = Some(read_children(workspace, path, filter, &self.deleted)?);
+            node.children = Some(read_children(
+                workspace,
+                path,
+                filter,
+                &self.deleted,
+                available,
+            )?);
+            if let Some(error) = workspace.listing_incomplete() {
+                self.listing_issue = Some(error.clone());
+            }
         }
         node.expanded = true;
         Ok(true)
@@ -980,7 +1093,10 @@ impl Tree {
     }
 
     fn rebuild(&mut self) {
-        self.deleted.sync(&mut self.root, Path::new(""));
+        let mut available = self.retained_limit.saturating_sub(node_count(&self.root));
+        self.limited |= self
+            .deleted
+            .sync(&mut self.root, Path::new(""), &mut available);
         let mut rows = Vec::new();
         push_rows(&self.root, &PathBuf::new(), 0, &self.admitted, &mut rows);
         self.rows = rows;
@@ -1008,8 +1124,9 @@ fn read_children(
     path: &Path,
     filter: Filter,
     deleted: &Deleted,
+    available: usize,
 ) -> Result<Vec<Node>, WorkspaceError> {
-    let entries = match workspace.list_dir_with(path, filter) {
+    let entries = match workspace.list_dir_with_limit(path, filter, available) {
         Ok(entries) => entries,
         Err(_)
             if deleted.children.contains_key(path)
@@ -1020,7 +1137,7 @@ fn read_children(
         }
         Err(error) => return Err(error),
     };
-    let mut children = entries
+    let mut children: Vec<_> = entries
         .into_iter()
         .map(|entry| Node {
             is_dir: entry.is_dir(),
@@ -1035,8 +1152,23 @@ fn read_children(
             deleted: false,
         })
         .collect();
-    deleted.merge(path, &mut children);
+    let mut remaining = available.saturating_sub(children.len());
+    if deleted.merge(path, &mut children, &mut remaining) {
+        workspace.note_listing_limit();
+    }
     Ok(children)
+}
+
+fn node_count(root: &Node) -> usize {
+    let mut count = 0;
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        if let Some(children) = &node.children {
+            count += children.len();
+            pending.extend(children);
+        }
+    }
+    count
 }
 
 /// The listing to re-read so the tree reflects a change at `dir`: `dir`

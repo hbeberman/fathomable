@@ -7,7 +7,7 @@
 //! `watch` block (ADR 0015, renamed by ADR 0047), the
 //! `markdown` block (ADR 0016), the `viewer` block (ADR 0026), the
 //! `layout` block (ADR 0081), and the `threads` block (ADR 0049) are
-//! understood, along with the `diff` and `user` blocks.
+//! understood, along with the `limits`, `diff`, and `user` blocks.
 //!
 //! [`Config`] is [`Display`](fmt::Display): it writes the same KDL back
 //! with every setting explained, which is what `--config-show` prints,
@@ -40,6 +40,7 @@ pub struct Config {
     watch: WatchConfig,
     markdown: MarkdownConfig,
     viewer: ViewerConfig,
+    limits: LimitsConfig,
     layout: LayoutConfig,
     threads: ThreadsConfig,
     diff: DiffConfig,
@@ -53,6 +54,7 @@ impl Default for Config {
             watch: WatchConfig::default(),
             markdown: MarkdownConfig::default(),
             viewer: ViewerConfig::default(),
+            limits: LimitsConfig::default(),
             layout: LayoutConfig::default(),
             threads: ThreadsConfig::default(),
             diff: DiffConfig::default(),
@@ -196,6 +198,68 @@ impl Default for SidebarConfig {
             width: 32,
             split: 8,
         }
+    }
+}
+
+// These finite defaults cover conservative small-workspace use without
+// claiming to cap process RSS: each retained item can own additional data.
+const DEFAULT_DISCOVERY_ENTRIES: usize = 100_000;
+const DEFAULT_WORKSPACE_WATCHES: usize = 8_192;
+const DEFAULT_RETAINED_PATHS: usize = 50_000;
+const DEFAULT_COMPARISON_PATHS: usize = 10_000;
+const DEFAULT_COMPARISON_BYTES: u64 = 64 * 1_024 * 1_024;
+const DEFAULT_PENDING_EVENTS: usize = 4_096;
+
+/// Finite resource ceilings for workspace processing.
+///
+/// The defaults conservatively accommodate a small workspace. They bound
+/// individual collections or workloads, not total process RSS.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LimitsConfig {
+    /// Maximum entries considered during workspace discovery.
+    pub discovery_entries: usize,
+    /// Maximum filesystem watches installed for one workspace.
+    pub workspace_watches: usize,
+    /// Maximum paths retained for workspace presentation.
+    pub retained_paths: usize,
+    /// Maximum paths included in one comparison.
+    pub comparison_paths: usize,
+    /// Maximum source bytes included in one comparison.
+    pub comparison_bytes: u64,
+    /// Maximum filesystem events waiting to be processed.
+    pub pending_events: usize,
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            discovery_entries: DEFAULT_DISCOVERY_ENTRIES,
+            workspace_watches: DEFAULT_WORKSPACE_WATCHES,
+            retained_paths: DEFAULT_RETAINED_PATHS,
+            comparison_paths: DEFAULT_COMPARISON_PATHS,
+            comparison_bytes: DEFAULT_COMPARISON_BYTES,
+            pending_events: DEFAULT_PENDING_EVENTS,
+        }
+    }
+}
+
+impl LimitsConfig {
+    fn validate(&self) -> Result<(), ConfigError> {
+        for (name, value) in [
+            ("discovery-entries", self.discovery_entries),
+            ("workspace-watches", self.workspace_watches),
+            ("retained-paths", self.retained_paths),
+            ("comparison-paths", self.comparison_paths),
+            ("pending-events", self.pending_events),
+        ] {
+            if value == 0 {
+                return Err(non_positive_limit(name, None));
+            }
+        }
+        if self.comparison_bytes == 0 {
+            return Err(non_positive_limit("comparison-bytes", None));
+        }
+        Ok(())
     }
 }
 
@@ -590,6 +654,50 @@ impl Config {
                         }
                     }
                 }
+                "limits" => {
+                    let Some(children) = node.children() else {
+                        return Err(ConfigError {
+                            path: None,
+                            line,
+                            message: "`limits` takes a block of settings".to_owned(),
+                        });
+                    };
+                    for child in children.nodes() {
+                        let line = Some(line_of(child.span().offset()));
+                        let limits = &mut config.limits;
+                        match child.name().value() {
+                            "discovery-entries" => {
+                                limits.discovery_entries =
+                                    positive_cells(child, line, "entry count")?;
+                            }
+                            "workspace-watches" => {
+                                limits.workspace_watches =
+                                    positive_cells(child, line, "watch count")?;
+                            }
+                            "retained-paths" => {
+                                limits.retained_paths = positive_cells(child, line, "path count")?;
+                            }
+                            "comparison-paths" => {
+                                limits.comparison_paths =
+                                    positive_cells(child, line, "path count")?;
+                            }
+                            "comparison-bytes" => {
+                                limits.comparison_bytes =
+                                    positive_count(child, line, "byte count")?;
+                            }
+                            "pending-events" => {
+                                limits.pending_events = positive_cells(child, line, "event count")?;
+                            }
+                            other => {
+                                return Err(ConfigError {
+                                    path: None,
+                                    line,
+                                    message: format!("unknown limits setting `{other}`"),
+                                });
+                            }
+                        }
+                    }
+                }
                 other => {
                     return Err(ConfigError {
                         path: None,
@@ -623,6 +731,23 @@ impl Config {
     #[must_use]
     pub fn viewer(&self) -> &ViewerConfig {
         &self.viewer
+    }
+
+    /// Finite resource ceilings for workspace processing.
+    #[must_use]
+    pub fn limits(&self) -> &LimitsConfig {
+        &self.limits
+    }
+
+    /// Replace every finite resource ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when any ceiling is zero.
+    pub fn set_limits(&mut self, limits: LimitsConfig) -> Result<(), ConfigError> {
+        limits.validate()?;
+        self.limits = limits;
+        Ok(())
     }
 
     /// Startup chrome and sidebar layout.
@@ -681,6 +806,15 @@ viewer {{
     max-file-size-mib {max_file_size_mib} // Largest text file to load, in MiB; larger files show file info.
 }}
 
+limits {{
+    discovery-entries {discovery_entries} // Entry count; positive; no unlimited value.
+    workspace-watches {workspace_watches} // Watch count; positive; no unlimited value.
+    retained-paths {retained_paths} // Path count; positive; no unlimited value.
+    comparison-paths {comparison_paths} // Path count; positive; no unlimited value.
+    comparison-bytes {comparison_bytes} // Byte count; positive; no unlimited value.
+    pending-events {pending_events} // Event count; positive; no unlimited value.
+}}
+
 layout {{
     menu-bar #{menu_bar} // Show the menu bar at startup.
     sidebar {{
@@ -714,6 +848,12 @@ user {{
             extensions = words(&self.markdown.extensions),
             names = words(&self.markdown.names),
             max_file_size_mib = self.viewer.max_file_size_mib,
+            discovery_entries = self.limits.discovery_entries,
+            workspace_watches = self.limits.workspace_watches,
+            retained_paths = self.limits.retained_paths,
+            comparison_paths = self.limits.comparison_paths,
+            comparison_bytes = self.limits.comparison_bytes,
+            pending_events = self.limits.pending_events,
             menu_bar = self.layout.menu_bar,
             visible = self.layout.sidebar.visible,
             files = self.layout.sidebar.files,
@@ -840,6 +980,33 @@ fn cells(node: &KdlNode, line: Option<usize>, what: &str) -> Result<usize, Confi
         line,
         message: format!("`{}` is too large a {what}", node.name().value()),
     })
+}
+
+/// A positive count that fits `usize`, described as `what` in the error.
+fn positive_cells(node: &KdlNode, line: Option<usize>, what: &str) -> Result<usize, ConfigError> {
+    let n = positive_count(node, line, what)?;
+    usize::try_from(n).map_err(|_overflow| ConfigError {
+        path: None,
+        line,
+        message: format!("`{}` is too large a {what}", node.name().value()),
+    })
+}
+
+/// A positive integer, described as `what` in the error.
+fn positive_count(node: &KdlNode, line: Option<usize>, what: &str) -> Result<u64, ConfigError> {
+    one_arg(node, line, what)?
+        .as_integer()
+        .and_then(|value| u64::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| non_positive_limit(node.name().value(), line))
+}
+
+fn non_positive_limit(name: &str, line: Option<usize>) -> ConfigError {
+    ConfigError {
+        path: None,
+        line,
+        message: format!("`{name}` must be a positive integer; there is no unlimited value"),
+    }
 }
 
 /// A non-negative integer, described as `what` in the error.

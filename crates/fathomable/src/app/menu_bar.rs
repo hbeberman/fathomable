@@ -1524,6 +1524,7 @@ mod tests {
         assert!(!super::action_available(&app, super::Action::SourceView));
         app.open(std::path::Path::new("README.md"));
         app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+        app.settle_background();
         assert!(!super::action_available(&app, super::Action::SourceView));
         Ok(())
     }
@@ -1533,6 +1534,7 @@ mod tests {
         let mut app = shown_app("menu-diff-choices")?;
         app.toggle_whitespace();
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
 
         let rows = rows(&app, Root::Diff);
         let items = rows.iter().filter_map(super::Row::item).collect::<Vec<_>>();
@@ -1619,6 +1621,7 @@ mod tests {
     fn off_menu_bar_renders_only_the_clickable_target() -> anyhow::Result<()> {
         let mut app = shown_app("menu-bar-off-target")?;
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         let tail = super::bar_tail(&app, app.size().0);
         assert!(tail.base.is_none());
         let target = tail.target.context("Target should fit")?;

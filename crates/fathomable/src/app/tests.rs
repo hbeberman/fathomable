@@ -299,6 +299,7 @@ fn opening_files_builds_the_recent_list() -> anyhow::Result<()> {
     assert_eq!(app.current_path(), Path::new("docs/guide.md"));
 
     app.open_picker(PickerKind::Recent);
+    app.settle_background();
     assert_eq!(picker_items(&app), ["docs/guide.md", "README.md"]);
     Ok(())
 }
@@ -586,6 +587,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
             1 => {
                 app.view_mut().set_bases(None, Some(String::new()));
                 app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+                app.settle_background();
             }
             _ => {}
         }
@@ -798,6 +800,7 @@ fn picker_filters_and_opens() -> anyhow::Result<()> {
     let dir = fixture("picker")?;
     let mut app = app(&dir)?;
     app.act(Action::PickFile);
+    app.settle_background();
     assert_eq!(picker_items(&app).len(), 3);
     for ch in "guide".chars() {
         app.picker_char(ch);
@@ -823,6 +826,7 @@ fn the_picker_index_follows_events() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     let listed = |app: &mut App, kind: PickerKind| -> Vec<String> {
         app.open_picker(kind);
+        app.settle_background();
         let items = picker_items(app);
         app.close_popup();
         items
@@ -841,6 +845,7 @@ fn the_picker_index_follows_events() -> anyhow::Result<()> {
         Event::Created(dir.0.join("Cargo.toml")),
         Event::Created(dir.0.join("crates")),
     ]);
+    app.settle_background();
     assert_eq!(
         listed(&mut app, PickerKind::Files),
         [
@@ -863,6 +868,7 @@ fn the_picker_index_follows_events() -> anyhow::Result<()> {
         },
         Event::Removed(dir.0.join("crates")),
     ]);
+    app.settle_background();
     assert_eq!(
         listed(&mut app, PickerKind::Files),
         ["Cargo.toml", "NOTES.md", "README.md", "docs/guide.md"]
@@ -875,6 +881,7 @@ fn the_picker_index_follows_events() -> anyhow::Result<()> {
         Event::Created(dir.0.join(".gitignore")),
         Event::Created(dir.0.join("out.log")),
     ]);
+    app.settle_background();
     assert!(!listed(&mut app, PickerKind::Files).contains(&"out.log".to_owned()));
     assert!(listed(&mut app, PickerKind::AllFiles).contains(&"out.log".to_owned()));
     Ok(())
@@ -1194,16 +1201,19 @@ fn off_hides_file_edit_toasts_without_discarding_them() -> anyhow::Result<()> {
     assert!(active.contains("live-toast-sentinel"), "{active}");
 
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.toasts().len(), 1, "Off retains timed toasts");
     let off = crate::app::testing::screen(&app)?.join("\n");
     assert!(!off.contains("live-toast-sentinel"), "{off}");
     assert_eq!(app.current_path(), Path::new("README.md"));
 
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     let restored = crate::app::testing::screen(&app)?.join("\n");
     assert!(restored.contains("live-toast-sentinel"), "{restored}");
 
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     app.toasts[0].until = std::time::Instant::now();
     app.tick();
     assert!(app.toasts().is_empty(), "hidden toast expires normally");
@@ -1521,6 +1531,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
         .build()?;
     app.toggle_tree_focus();
     app.open_picker(PickerKind::Files);
+    app.settle_background();
     assert!(!picker_items(&app).iter().any(|p| p == "NEW.md"));
     app.close_popup();
     let has = |app: &App, path: &str| app.tree().is_some_and(|t| t.contains(Path::new(path)));
@@ -1528,9 +1539,11 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     // A created file lands in the root listing and the picker index.
     fs::write(dir.0.join("NEW.md"), "# New\n")?;
     app.on_events(vec![Event::Created(dir.0.join("NEW.md"))]);
+    app.settle_background();
     assert!(has(&app, "NEW.md"));
     assert_eq!(app.tree().map(Tree::cursor), Some(0), "cursor stays");
     app.open_picker(PickerKind::Files);
+    app.settle_background();
     assert!(picker_items(&app).iter().any(|p| p == "NEW.md"));
     app.close_popup();
 
@@ -1538,15 +1551,18 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     // creation whose individual event never arrived.
     fs::write(dir.0.join("MISSED.md"), "# Missed\n")?;
     app.on_events(vec![Event::Rescan]);
+    app.settle_background();
     app.settle_status();
     assert!(has(&app, "MISSED.md"));
     app.open_picker(PickerKind::Files);
+    app.settle_background();
     assert!(picker_items(&app).iter().any(|p| p == "MISSED.md"));
     app.close_popup();
 
     // A collapsed directory is not re-read until it is expanded.
     fs::write(dir.0.join("docs/deep.md"), "# Deep\n")?;
     app.on_events(vec![Event::Created(dir.0.join("docs/deep.md"))]);
+    app.settle_background();
     assert!(!has(&app, "docs/deep.md"));
     app.with_tree_result(Tree::activate);
     assert!(has(&app, "docs/deep.md"));
@@ -1558,6 +1574,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     fs::create_dir_all(dir.0.join("crates/pipe/src"))?;
     fs::write(dir.0.join("crates/pipe/Cargo.toml"), "[package]\n")?;
     app.on_events(vec![Event::Created(dir.0.join("crates/pipe/Cargo.toml"))]);
+    app.settle_background();
     assert!(has(&app, "crates"));
     assert!(!has(&app, "crates/pipe"), "the new listing stays lazy");
 
@@ -1565,6 +1582,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
     fs::create_dir_all(dir.0.join("build"))?;
     fs::write(dir.0.join("build/out"), "")?;
     app.on_events(vec![Event::Created(dir.0.join("build/out"))]);
+    app.settle_background();
     assert!(!has(&app, "build"));
 
     // A rename re-reads both listings.
@@ -1573,6 +1591,7 @@ fn watcher_events_refresh_the_listing_they_land_in() -> anyhow::Result<()> {
         from: dir.0.join("NEW.md"),
         to: dir.0.join("docs/MOVED.md"),
     }]);
+    app.settle_background();
     assert!(!has(&app, "NEW.md"));
     assert!(has(&app, "docs/MOVED.md"));
     Ok(())
@@ -1597,6 +1616,7 @@ fn ignored_churn_is_dropped_except_for_the_open_file() -> anyhow::Result<()> {
     assert!(!app.raw_is_relevant(&Raw::Modify(sibling)));
     fs::write(&open, "two\n")?;
     app.on_events(vec![Event::Change(open)]);
+    app.settle_background();
     assert_eq!(app.view().text(), "two\n");
     Ok(())
 }
@@ -1668,6 +1688,7 @@ fn a_file_event_refreshes_the_dirty_set_for_its_path_only() -> anyhow::Result<()
 
     // Lost events walk the whole tree again.
     app.on_events(vec![Event::Rescan]);
+    app.settle_background();
     app.settle_status();
     assert_eq!(
         dirty(&app),
@@ -1684,6 +1705,7 @@ fn a_file_event_refreshes_the_dirty_set_for_its_path_only() -> anyhow::Result<()
         from: dir.0.join("docs"),
         to: dir.0.join("moved"),
     }]);
+    app.settle_background();
     assert_eq!(
         dirty(&app),
         vec![
@@ -1724,13 +1746,17 @@ fn a_write_during_the_full_walk_lands_in_the_set() -> anyhow::Result<()> {
     // until it lands, and a file written meanwhile is examined again on
     // the result, whether or not the walk saw it.
     app.on_events(vec![Event::Rescan]);
+    app.settle_background();
     fs::write(dir.0.join("NEW.md"), "# New\n")?;
     app.on_events(vec![Event::Created(dir.0.join("NEW.md"))]);
+    app.settle_background();
     assert!(app.status().contains(Path::new("NEW.md")), "seen at once");
     // A second walk supersedes the first; the earlier result is dropped.
     app.on_events(vec![Event::Rescan]);
+    app.settle_background();
     fs::write(dir.0.join("docs/guide.md"), "# Guide\n\nmore\n")?;
     app.on_events(vec![Event::Change(dir.0.join("docs/guide.md"))]);
+    app.settle_background();
     app.settle_status();
     assert_eq!(
         dirty(&app),

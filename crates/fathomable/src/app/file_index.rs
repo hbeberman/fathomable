@@ -1,23 +1,44 @@
-//! The pickers' file index, kept across events rather than rebuilt
-//! (ADR 0028).
-//!
-//! A walk of the tree costs a `readdir` per directory, tens of
-//! milliseconds on a large repository, and every agent write used to
-//! drop the index so `Space f f` paid it again. Now a path that appears
-//! joins the index where the walk would have put it, a path that goes
-//! leaves it, and only a change to the ignore rules or a lost-events
-//! rescan walks again.
+// @okf-doc: /decisions/0012-workspace-mode.md
+//! Bounded, cancellable file discovery for the two workspace pickers.
 
-use std::cmp::Ordering;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use fathomable_core::workspace::{EntryKind, Filter, Workspace, walk_order};
+use fathomable_core::config::LimitsConfig;
+use fathomable_core::workspace::{Cancellation, EntryKind, Filter, Workspace, walk_order};
 
-/// The files a picker offers, walked once and then patched.
+use super::background::Worker;
+
+#[derive(Debug)]
+struct Request {
+    root: PathBuf,
+    filter: Filter,
+    limits: LimitsConfig,
+}
+
+#[derive(Debug)]
+struct Indexed {
+    files: Vec<String>,
+    incomplete: Option<String>,
+}
+
+fn discover(request: Request, cancellation: Cancellation) -> Result<Indexed, String> {
+    let mut workspace = Workspace::discover(request.root).map_err(|error| error.to_string())?;
+    workspace.set_limits(request.limits);
+    workspace.set_cancellation(cancellation);
+    let found = workspace.discover_files(request.filter);
+    Ok(Indexed {
+        files: found.paths().to_vec(),
+        incomplete: found.incomplete().map(ToString::to_string),
+    })
+}
+
+/// The files a picker offers, with an explicit incomplete-discovery reason.
 #[derive(Debug)]
 pub(super) struct FileIndex {
     filter: Filter,
     files: Option<Vec<String>>,
+    incomplete: Option<String>,
+    worker: Worker<Request, Result<Indexed, String>>,
 }
 
 impl FileIndex {
@@ -25,33 +46,63 @@ impl FileIndex {
         Self {
             filter,
             files: None,
+            incomplete: None,
+            worker: Worker::new(discover),
         }
     }
 
-    /// The files, in walk order; walked now when not in hand.
     pub(super) fn files(&mut self, workspace: &mut Workspace) -> Vec<String> {
-        if self.files.is_none() {
-            let files = workspace.walk_files(self.filter);
-            tracing::info!(files = files.len(), filter = ?self.filter, "indexed workspace");
-            self.files = Some(files);
+        if self.files.is_none() && !self.worker.pending() {
+            self.incomplete = Some("scanning files; coverage is incomplete".to_owned());
+            self.files = Some(Vec::new());
+            if let Err(error) = self.worker.submit(Request {
+                root: workspace.root().to_path_buf(),
+                filter: self.filter,
+                limits: workspace.limits().clone(),
+            }) {
+                self.incomplete = Some(format!("cannot start file discovery: {error}"));
+            }
         }
         self.files.clone().unwrap_or_default()
     }
 
-    /// Forget the files: the next use walks again.
-    pub(super) fn clear(&mut self) {
-        self.files = None;
+    pub(super) fn incomplete(&self) -> Option<&str> {
+        self.incomplete.as_deref()
     }
 
-    /// Root-relative `relative` is on disk: it joins the index if it is
-    /// a file the filter shows, and a directory the index knows nothing
-    /// under (one that arrived whole) is walked. Nothing happens before
-    /// the first walk.
+    pub(super) fn pending(&self) -> bool {
+        self.worker.pending()
+    }
+
+    pub(super) fn poll(&mut self) -> bool {
+        match self.worker.poll() {
+            Ok(Some(Ok(index))) => {
+                self.files = Some(index.files);
+                self.incomplete = index.incomplete;
+                true
+            }
+            Ok(Some(Err(error))) => {
+                self.incomplete = Some(error);
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                self.incomplete = Some(error.to_string());
+                true
+            }
+        }
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.worker.cancel();
+        self.files = None;
+        self.incomplete = None;
+    }
+
     pub(super) fn seen(&mut self, workspace: &mut Workspace, relative: &Path) {
-        let Some(files) = self.files.as_mut() else {
+        if self.files.is_none() {
             return;
-        };
-        // A symlink is a file here, as the walk has it.
+        }
         let Ok(meta) = workspace.root().join(relative).symlink_metadata() else {
             return;
         };
@@ -63,33 +114,33 @@ impl FileIndex {
         if self.filter == Filter::Visible && workspace.is_ignored(relative, kind) {
             return;
         }
+        if kind == EntryKind::Dir || self.worker.pending() {
+            self.clear();
+            let _ = self.files(workspace);
+            return;
+        }
         let path = relative.to_string_lossy().into_owned();
-        let arrived = match kind {
-            EntryKind::File => vec![path],
-            EntryKind::Dir => {
-                let prefix = format!("{path}/");
-                if files.iter().any(|have| have.starts_with(&prefix)) {
-                    return;
-                }
-                workspace.walk_files_under(relative, self.filter)
+        if let Some(files) = &mut self.files {
+            let at = files.partition_point(|have| walk_order(have, &path).is_lt());
+            if files.get(at) == Some(&path) {
+                return;
             }
-        };
-        for path in arrived {
-            let at = files.partition_point(|have| walk_order(have, &path) == Ordering::Less);
-            if files.get(at) != Some(&path) {
+            if files.len() >= workspace.limits().retained_paths {
+                self.incomplete = Some("file index limited by retained-path budget".to_owned());
+            } else {
                 files.insert(at, path);
             }
         }
     }
 
-    /// Root-relative `relative` is gone: it, and everything under it,
-    /// leaves the index.
-    pub(super) fn removed(&mut self, relative: &Path) {
+    pub(super) fn removed(&mut self, workspace: &mut Workspace, relative: &Path) {
         let Some(files) = self.files.as_mut() else {
             return;
         };
-        let path = relative.to_string_lossy();
-        let prefix = format!("{path}/");
-        files.retain(|have| *have != path && !have.starts_with(&prefix));
+        files.retain(|path| !Path::new(path).starts_with(relative));
+        if self.worker.pending() {
+            self.clear();
+            let _ = self.files(workspace);
+        }
     }
 }

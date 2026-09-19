@@ -190,7 +190,9 @@ fn one_pair_survives_file_switches_and_loads_historical_paths() -> anyhow::Resul
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.hunk_next();
     assert_eq!(app.current_path(), Path::new("gone.md"));
     app.hunk_next();
@@ -209,6 +211,7 @@ fn one_pair_survives_file_switches_and_loads_historical_paths() -> anyhow::Resul
     app.open(Path::new("gone.md"));
     assert_eq!(app.view().text(), "from A\n");
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     assert!(app.view().diff_view());
     assert_eq!(
         app.comparison()
@@ -235,7 +238,9 @@ fn commit_to_working_opens_a_clean_deleted_path_from_the_selected_base() -> anyh
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&base)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     assert!(app.status().is_empty());
     app.open(Path::new("gone.md"));
     assert_eq!(app.view().text(), "from A\n");
@@ -479,6 +484,7 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
     press(&mut app, " vs");
     assert!(app.view().source_view());
     app.select_diff_mode(DiffMode::Unified);
+    app.settle_background();
     assert!(app.view().diff_view());
     press(&mut app, " vs");
     assert_eq!(app.diff_mode(), DiffMode::Unified);
@@ -488,11 +494,13 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
             .is_some_and(|message| message.contains("unavailable in unified"))
     );
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     assert!(
         app.view().source_view(),
         "the source choice returns with the standard view"
     );
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert!(app.view().source_view());
     press(&mut app, " vs");
     assert!(!app.view().source_view(), "Off still permits rendered view");
@@ -506,6 +514,7 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
         Some("rendered view is unavailable for this file")
     );
     app.select_diff_mode(DiffMode::Unified);
+    app.settle_background();
     assert!(app.view().diff_view());
     app.open(Path::new("README.md"));
     assert!(
@@ -513,6 +522,7 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
         "file switches keep unified presentation"
     );
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     assert!(
         !app.view().source_view(),
         "the eligible document restores its rendered choice"
@@ -547,11 +557,15 @@ fn off_clears_base_fallback_and_excludes_target_absent_paths() -> anyhow::Result
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("gone.md"));
     assert_eq!(app.view().text(), "base secret\n");
     app.select_diff_mode(DiffMode::Unified);
+    app.settle_background();
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
 
     assert_eq!(app.current_path(), Path::new("gone.md"));
     assert_eq!(app.view().text(), "");
@@ -574,6 +588,7 @@ fn off_clears_base_fallback_and_excludes_target_absent_paths() -> anyhow::Result
             .all(|line| !line.text().contains("base secret"))
     );
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     assert_eq!(app.view().text(), "base secret\n");
     assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
     Ok(())
@@ -590,9 +605,11 @@ fn off_clears_file_content_when_target_enumeration_fails() -> anyhow::Result<()>
     let unavailable =
         ComparisonEndpoint::Commit(CommitId::parse("0000000000000000000000000000000000000000")?);
     app.set_comparison_target(unavailable);
+    app.settle_background();
     assert_eq!(app.view().text(), "must not survive\n");
 
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(app.view().text(), "");
     assert!(!app.view().diff_view());
@@ -623,9 +640,11 @@ fn off_preserves_cursor_and_viewport_across_target_refreshes() -> anyhow::Result
     let scroll = app.view().scroll();
 
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.view().cursor_source_line(), line);
     assert_eq!(app.view().scroll(), scroll);
     app.refresh_comparison();
+    app.settle_background();
     assert_eq!(app.view().cursor_source_line(), line);
     assert_eq!(app.view().scroll(), scroll);
     Ok(())
@@ -646,9 +665,11 @@ fn off_suspends_cached_gutters_and_counts_until_diff_returns() -> anyhow::Result
             .is_some_and(|(added, removed)| { added > 0 && removed > 0 })
     );
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.view().diff_counts(), None);
 
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     assert!(
         app.view()
             .diff_counts()
@@ -673,6 +694,7 @@ fn off_working_tree_filters_exclude_deleted_and_open_ignored_targets() -> anyhow
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.show_tree();
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
 
     let contains = |app: &crate::app::App, path: &str| {
         app.tree()
@@ -764,8 +786,11 @@ fn off_target_selection_ignores_base_and_base_selection_restores_mode() -> anyho
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("a.txt"));
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     app.set_comparison_base(ComparisonEndpoint::ReviewPoint("point".to_owned()));
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(
         app.comparison.base(),
@@ -777,10 +802,12 @@ fn off_target_selection_ignores_base_and_base_selection_restores_mode() -> anyho
     );
 
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(app.view().text(), "one\n");
     assert!(app.comparison.error().is_none());
     app.select_diff_mode(DiffMode::Unified);
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(
         app.comparison.target(),
@@ -788,6 +815,7 @@ fn off_target_selection_ignores_base_and_base_selection_restores_mode() -> anyho
     );
 
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     fs::write(root.join("a.txt"), "working\n")?;
     let current = app
         .current
@@ -798,9 +826,11 @@ fn off_target_selection_ignores_base_and_base_selection_restores_mode() -> anyho
     let unavailable =
         ComparisonEndpoint::Commit(CommitId::parse("0000000000000000000000000000000000000000")?);
     app.set_comparison_base(unavailable.clone());
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(app.comparison.base(), &unavailable);
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Standard);
     assert_eq!(
         app.comparison.base(),
@@ -820,6 +850,7 @@ fn review_point_picker_accepts_an_optional_name() -> anyhow::Result<()> {
         .review_points(dir.0.join("points"))
         .build()?;
     app.set_comparison_target(ComparisonEndpoint::Index);
+    app.settle_background();
 
     press(&mut app, " dpBefore fixes");
     assert!(matches!(
@@ -854,8 +885,10 @@ fn saving_a_point_restores_diff_mode_and_selects_working_tree() -> anyhow::Resul
         .review_points(dir.0.join("points"))
         .build()?;
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
 
     app.save_review_point(None);
+    app.settle_background();
 
     assert_eq!(app.diff_mode(), DiffMode::Standard);
     assert!(matches!(
@@ -886,6 +919,7 @@ fn failed_preference_write_keeps_the_new_point_selected_for_this_viewer() -> any
     symlink(&unrelated, &temporary)?;
 
     app.save_review_point(Some("local"));
+    app.settle_background();
 
     let point = app
         .review_points
@@ -918,6 +952,7 @@ fn review_point_picker_entry_compares_against_working() -> anyhow::Result<()> {
         .review_points(dir.0.join("points"))
         .build()?;
     app.save_review_point(Some("P"));
+    app.settle_background();
     let point = app
         .review_points
         .as_ref()
@@ -925,6 +960,7 @@ fn review_point_picker_entry_compares_against_working() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("saved point"))?;
     fs::write(root.join("a.md"), "working\n")?;
     app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+    app.settle_background();
 
     assert_eq!(
         app.comparison()
@@ -954,6 +990,7 @@ fn filtered_revision_picker_uses_the_highlighted_choice() -> anyhow::Result<()> 
     let mut app = AppBuilder::at(&root).unopened().build()?;
 
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     press(&mut app, "feature");
     press_key(&mut app, KeyCode::Enter);
 
@@ -982,7 +1019,9 @@ fn immutable_comparison_synthesizes_modified_paths_missing_from_checkout() -> an
     git::commit_and_stage(&root, &[])?;
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(second)?));
+    app.settle_background();
     app.show_tree();
 
     assert!(
@@ -1044,7 +1083,9 @@ fn historical_target_confines_the_tree_picker_and_file_view() -> anyhow::Result<
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(second)?));
+    app.settle_background();
     app.show_tree();
 
     let tree_paths: Vec<_> = app
@@ -1065,6 +1106,7 @@ fn historical_target_confines_the_tree_picker_and_file_view() -> anyhow::Result<
     assert_eq!(app.view().text(), "second\n");
 
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     assert!(
         app.tree()
             .is_some_and(|tree| tree.contains(Path::new("current-only.md")))
@@ -1134,9 +1176,13 @@ fn head_to_working_tree_reselects_the_current_head() -> anyhow::Result<()> {
 
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     app.act(Action::ComparisonHeadWorkingTree);
+    app.settle_background();
 
     assert_eq!(
         app.comparison.base(),
@@ -1173,9 +1219,12 @@ fn unified_presentation_rebuilds_across_files_and_comparisons() -> anyhow::Resul
         .ok_or_else(|| anyhow::anyhow!("second"))?;
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("a.txt"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     app.open(Path::new("b.txt"));
     assert!(app.view().diff_view());
     assert!(
@@ -1188,6 +1237,7 @@ fn unified_presentation_rebuilds_across_files_and_comparisons() -> anyhow::Resul
 
     fs::write(root.join("a.txt"), "working-a\n")?;
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     app.open(Path::new("a.txt"));
     assert!(app.view().diff_view());
     assert!(

@@ -109,8 +109,19 @@ fn worktree_watch_paths_are_existing_directories() -> TestResult {
     fathomable_testing::git::worktree_add(&main, &linked, "feature")?;
     let paths = workspace.worktree_watch_paths();
     assert!(paths.contains(&registry));
-    assert!(paths.contains(&registry.join("linked")));
+    assert!(!paths.contains(&registry.join("linked")));
+    assert!(
+        paths.len() <= 4,
+        "registry children are discovered by the bounded worker"
+    );
     assert!(paths.iter().all(|path| path.is_dir()), "{paths:?}");
+    let linked_workspace = Workspace::discover(&linked)?;
+    let linked_paths = linked_workspace.worktree_watch_paths();
+    assert_eq!(linked_paths.first(), Some(&registry.join("linked")));
+    for i in 0..40 {
+        fs::create_dir(registry.join(format!("extra-{i}")))?;
+    }
+    assert_eq!(workspace.worktree_watch_paths(), paths);
     Ok(())
 }
 

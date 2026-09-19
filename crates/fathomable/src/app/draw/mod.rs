@@ -3573,6 +3573,7 @@ mod tests {
         let theme = Theme::from_core(&core);
 
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         let buffer = toast_buffer(&app, &theme, 40, 4)?;
         let off = (0..4)
             .map(|row| buffer_row(&buffer, row))
@@ -3581,6 +3582,7 @@ mod tests {
         assert!(!off.contains("live-secret"), "{off:?}");
 
         app.select_diff_mode(DiffMode::Standard);
+        app.settle_background();
         let buffer = toast_buffer(&app, &theme, 40, 4)?;
         let active = (0..4)
             .map(|row| buffer_row(&buffer, row))
@@ -3630,6 +3632,7 @@ mod tests {
                 long_tag.to_owned(),
             )),
         );
+        app.settle_background();
         assert!(
             !crate::app::menu_bar::bar_tail(&app, app.size().0).endpoints_rendered(),
             "the long endpoint must exercise the status fallback"
@@ -3641,6 +3644,7 @@ mod tests {
         );
 
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         let screen = testing::screen(&app)?;
         assert!(
             screen

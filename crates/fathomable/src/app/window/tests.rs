@@ -105,6 +105,7 @@ fn hidden_draft_ignores_keys_mouse_paste_and_direct_actions() -> anyhow::Result<
     press_key(&mut app, KeyCode::Enter);
     press_key(&mut app, KeyCode::Backspace);
     app.act(crate::app::input::bindings::Action::Confirm);
+    app.settle_background();
     testing::click(&mut app, 5, 1);
     wheel(&mut app, 5, 1)?;
     assert_eq!(app.draft().context("kept draft")?.buffer().text(), text);
@@ -151,6 +152,7 @@ fn hidden_picker_and_command_keep_their_input_without_activation() -> anyhow::Re
     std::fs::write(testing::root(&dir).join("second.rs"), "second\n")?;
     let mut app = source_app(&dir)?;
     app.open_picker(PickerKind::Files);
+    app.settle_background();
     app.resize(12, 2);
     press(&mut app, "second");
     press_key(&mut app, KeyCode::Down);

@@ -6,6 +6,8 @@ resource: crates/fathomable/src/app/mod.rs
 related_resources:
   - crates/fathomable/src/app/draw/mod.rs
   - crates/fathomable/src/app/run.rs
+  - crates/fathomable/src/app/background.rs
+  - crates/fathomable/src/app/file_index.rs
   - crates/fathomable-core/src/workspace.rs
   - crates/fathomable-core/src/tree.rs
   - crates/fathomable-core/src/picker.rs
@@ -20,6 +22,27 @@ tags:
 Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
 amended 2026-09-14 (`l` / Right is directory navigation only);
 amended 2026-09-18 (synchronized terminal frames).
+
+Amended 2026-09-19: recursive picker discovery uses one cancellable worker
+per index, one replaceable pending request, and one bounded result slot.
+Superseded generations cannot replace the current index. A picker retains
+useful partial results and names the examined-entry or retained-path limit,
+cancellation, or filesystem error that prevented complete coverage.
+Directory entries are counted before filtering or retaining them, including
+in a single wide directory. Directory symlinks are not recursively followed.
+Workers do not hold UI locks during I/O, and dropping them requests
+cancellation without joining a potentially blocked filesystem call.
+The `limits` block and invocation-only CLI overrides are described in
+[configuration](0008-configuration-format.md).
+
+Recursive `Z` expansion also runs on a cancellable worker. Materialized
+physical entries and virtual ancestors are bounded; useful rows survive an
+incomplete walk, and the persistent `files partial` marker and `:status`
+explain the coverage. A newer tree interaction cancels the old generation
+rather than allowing its result to overwrite the user's selection.
+Physical-listing incompleteness belongs to the retained tree, not just the
+worker that read it: a successful collapse or no-op cannot clear it. A
+complete reread of the affected materialized listings can clear the warning.
 
 Amended 2026-09-15 by [0081](0081-the-menu-bar.md): one `layout` config
 sets the menu bar and sidebar startup state consistently for file and

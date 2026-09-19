@@ -144,6 +144,7 @@ mod tests {
         cursor_on(&mut app, 2, "guide")?;
         assert_eq!(app.view().file_reference().as_deref(), Some("guide.md#L3"));
         app.act(Action::GotoFile);
+        app.settle_background();
         assert_eq!(app.current_path(), Path::new("docs/guide.md"));
         assert_eq!(app.view().cursor_source_line(), Some(3));
         // The way back is the jumplist.
@@ -160,6 +161,7 @@ mod tests {
         cursor_on(&mut app, 2, "lib.rs")?;
         assert_eq!(app.view().file_reference().as_deref(), Some("src/lib.rs:2"));
         app.act(Action::GotoFile);
+        app.settle_background();
         assert_eq!(app.current_path(), Path::new("src/lib.rs"));
         assert_eq!(app.view().cursor_source_line(), Some(2));
         Ok(())
@@ -171,6 +173,7 @@ mod tests {
         app.open(Path::new("docs/notes.md"));
         cursor_on(&mut app, 2, "src/)")?;
         app.act(Action::GotoFile);
+        app.settle_background();
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
         assert_eq!(app.message(), Some("src is a directory"));
 
@@ -179,10 +182,12 @@ mod tests {
             app.act(Action::GotoFile),
             crate::app::view::Effect::Open("https://example.com/x.md".to_owned())
         );
+        app.settle_background();
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
 
         app.view_mut().line_end();
         app.act(Action::GotoFile);
+        app.settle_background();
         assert_eq!(app.message(), Some("no file nothing"));
         assert_eq!(app.current_path(), Path::new("docs/notes.md"));
         Ok(())

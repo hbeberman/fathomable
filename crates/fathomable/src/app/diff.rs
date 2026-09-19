@@ -57,12 +57,17 @@ impl App {
     /// Select one session-wide diff presentation.
     pub(crate) fn select_diff_mode(&mut self, mode: DiffMode) {
         if mode == self.diff_mode {
+            if mode == DiffMode::Off && self.comparison.restore_mode.is_some() {
+                self.comparison.cancel();
+                self.refresh_off_target();
+            }
             return;
         }
         if self.annotation_draft_blocks("changing diff mode") {
             return;
         }
         if mode == DiffMode::Off {
+            self.comparison.cancel();
             if self.diff_mode != DiffMode::Off {
                 self.last_active_diff_mode = self.diff_mode;
             }
@@ -82,6 +87,10 @@ impl App {
             };
             self.comparison
                 .refresh(&mut self.workspace, self.review_points.as_ref());
+            self.comparison.restore_mode = Some(mode);
+            if self.comparison.pending() {
+                return;
+            }
             if let Some(error) = self.comparison.error().map(str::to_owned) {
                 self.notice(error);
                 return;
@@ -168,6 +177,7 @@ impl App {
             return;
         }
         self.comparison.toggle_whitespace();
+        self.refresh_comparison();
         let compare = self.comparison.compare();
         for doc in &mut self.docs {
             doc.view.set_compare(compare);
@@ -313,10 +323,13 @@ impl App {
 
     /// Kept for callers that need the active pair after a refresh.
     pub(crate) fn refresh_comparison(&mut self) {
+        if self.comparison.defer_refresh_for_annotation() {
+            return;
+        }
         let recovered = match self.reload_selected_review_point() {
             Ok(recovered) => recovered,
             Err(error) => {
-                if self.diff_mode == DiffMode::Off {
+                if self.diff_mode == DiffMode::Off && self.comparison.restore_mode.is_none() {
                     self.refresh_off_target();
                     self.notice(error);
                 } else {
@@ -326,7 +339,7 @@ impl App {
                 return;
             }
         };
-        if self.diff_mode == DiffMode::Off {
+        if self.diff_mode == DiffMode::Off && self.comparison.restore_mode.is_none() {
             self.refresh_off_target();
             if let Some(id) = recovered {
                 self.notice(format!(
@@ -354,6 +367,12 @@ impl App {
     }
 
     pub(super) fn apply_refreshed_comparison(&mut self, branch_changed: bool) {
+        if self.comparison.pending() {
+            for doc in &mut self.docs {
+                doc.view.mark_diff_stale();
+            }
+            return;
+        }
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             for doc in &mut self.docs {
                 doc.view.mark_diff_stale();
@@ -399,21 +418,25 @@ impl App {
         self.comparison.refresh_target_alias(&self.workspace);
         self.comparison_status = fathomable_core::status::Status::default();
         let target = self.comparison.target().clone();
-        let paths = match self.workspace.endpoint_paths(&target) {
-            Ok(paths) => paths,
-            Err(error) => {
-                let message = error.to_string();
-                for index in 0..self.docs.len() {
-                    self.clear_off_projection(index, Some(message.clone()));
-                }
-                self.off_target_paths = None;
-                self.sift_tree();
-                self.notice(message);
-                self.relayout();
-                return;
+        if target != ComparisonEndpoint::WorkingTree {
+            self.comparison.refresh_paths(&self.workspace);
+            self.off_target_paths = None;
+            for index in 0..self.docs.len() {
+                self.clear_off_projection(
+                    index,
+                    Some("Target paths scanning; coverage is incomplete".to_owned()),
+                );
             }
-        };
-        self.off_target_paths = Some(paths);
+            self.sift_tree();
+            self.relayout();
+            return;
+        }
+        self.comparison.cancel();
+        self.off_target_paths = None;
+        self.finish_off_target();
+    }
+
+    pub(super) fn finish_off_target(&mut self) {
         let mut first_error = None;
         for index in 0..self.docs.len() {
             if let Err(error) = self.apply_off_projection(index)
@@ -430,7 +453,7 @@ impl App {
         self.relayout();
     }
 
-    fn clear_off_projection(&mut self, index: usize, notice: Option<String>) {
+    pub(super) fn clear_off_projection(&mut self, index: usize, notice: Option<String>) {
         let doc = &mut self.docs[index];
         doc.view.clear_diff();
         doc.view.clear_comparison_body();

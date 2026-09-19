@@ -564,6 +564,11 @@ impl View {
         self.comparison.clone()
     }
 
+    /// Whether the last comparison projection loaded both text sides.
+    pub(crate) fn comparison_projection_ready(&self) -> bool {
+        matches!(self.comparison, Some(DiffBody::Diff { .. }))
+    }
+
     /// Retain a body independently of later working-document reloads.
     pub(crate) fn set_comparison_body(&mut self, body: DiffBody) {
         self.comparison = Some(body);

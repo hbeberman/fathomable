@@ -4,6 +4,7 @@ title: Setup guide
 description: Everyday UX, KDL configuration, agent setup, and where Fathomable saves state.
 related_resources:
   - scripts/perf-record.sh
+  - scripts/test-workspace-performance.py
 tags:
   - onboarding
 ---
@@ -36,6 +37,42 @@ fathomable README.md         # Open a file in its workspace
 
 In Git, the workspace is the enclosing repository or linked worktree.
 Outside Git, a directory is its own workspace.
+
+A fresh non-Git workspace starts with **Diff Off**: browsing a directory does
+not implicitly read every file against an empty tree. Explicit comparisons
+remain available, including a saved review point against the working tree.
+Saved endpoint choices are retained.
+
+Recursive discovery runs in the background with finite budgets. File pickers
+show a scanning or incomplete-coverage explanation while their results are
+partial. Comparisons show scanning, limited, or stale/error status rather than
+reporting an incomplete walk as clean. A limit does not prove that an omitted
+path is absent. Loaded-file reads still obey `viewer.max-file-size-mib`.
+New annotations require a ready projection matching the selected endpoints.
+An active or parked new-annotation draft freezes comparison refreshes so a
+background result cannot replace its evidence; deferred refreshes resume
+after the last such draft is submitted or discarded.
+
+Broad live watching prioritizes the root, loaded-file ancestors, and
+materialized directories, then stops at its finite budget. The status badge
+retains `watch scanning`, `watch limited`, or `watch error`; `:status` keeps
+the exact coverage state and reason visible. Limited or errored broad coverage is
+not retried by a periodic whole-tree walk; `R` requests a fresh generation.
+Thread-state observation retains its separate narrow recovery path.
+Git refs and worktree-registry discovery share the broad watch budget;
+immediate state/Git control watches have a separate fixed ceiling of 16.
+
+The `limits` config block below sets discovery entries, workspace watches,
+retained paths, comparison paths, comparison content bytes, and pending
+events. Positive invocation-only overrides are `--discovery-entries`,
+`--workspace-watches`, `--retained-paths`, `--comparison-paths`,
+`--comparison-bytes`, and `--pending-events`; zero is rejected, not unlimited.
+Content bytes count reads, including line-count passes, rather than unique
+file sizes. Git status uses the same scan/path/content budgets and remains
+stale on exhaustion. These are operation budgets, not an exact process-RSS
+ceiling: loaded documents, Git metadata decoding, and allocator overhead are
+separate. Cancellation does not interrupt a blocked filesystem syscall, but
+quitting does not join discovery workers.
 
 ## UX
 
@@ -310,6 +347,15 @@ viewer {
     max-file-size-mib 64 // Largest text file to load, in MiB; larger files show file info.
 }
 
+limits {
+    discovery-entries 100000 // Entry count; positive; no unlimited value.
+    workspace-watches 8192 // Watch count; positive; no unlimited value.
+    retained-paths 50000 // Path count; positive; no unlimited value.
+    comparison-paths 10000 // Path count; positive; no unlimited value.
+    comparison-bytes 67108864 // Byte count; positive; no unlimited value.
+    pending-events 4096 // Event count; positive; no unlimited value.
+}
+
 layout {
     menu-bar #true // Show the menu bar at startup.
     sidebar {
@@ -521,3 +567,15 @@ frame-pointer build and keeps the exact sampled executable with owner-only
 artifacts under Cargo's `target/perf/` directory. These artifacts can contain
 source paths and terminal content; inspect them before sharing. Caller stacks
 from an older capture cannot be repaired after recording.
+
+For repeatable availability checks, build the release executable, then run
+`python3 scripts/test-workspace-performance.py --bin target/release/fathomable`
+(adjust the executable path for a target-specific build). This Linux,
+Python-standard-library harness creates isolated synthetic wide/deep
+workspaces and temporary state; it never scans the real home directory.
+It checks first-frame overhead against a small fixture (250 ms), correlated
+input-response p99 during discovery/churn (50 ms), quit latency (100 ms),
+finite inotify coverage, visible incomplete status, and warm RSS stability.
+It prints aggregate JSON and removes its named temporary fixture afterward.
+Run it on a quiet host: these are measured regression thresholds, not
+hard real-time guarantees for arbitrary filesystems.

@@ -47,6 +47,7 @@ fn off_rejects_comparison_and_git_actions_consistently() -> anyhow::Result<()> {
     let dir = fixture("diff-off-actions")?;
     let mut app = source_app(&dir)?;
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
 
     for action in [
         Action::ComparisonWhitespace,
@@ -55,6 +56,7 @@ fn off_rejects_comparison_and_git_actions_consistently() -> anyhow::Result<()> {
         Action::ChangePrev,
     ] {
         app.act(action);
+        app.settle_background();
         assert_eq!(app.message(), Some("diff mode is off"), "{action:?}");
         assert!(app.popup().is_none(), "{action:?} must not open a popup");
     }
@@ -176,6 +178,7 @@ fn alt_space_reveals_and_focuses_the_application_menu_over_a_popup() -> anyhow::
     app.toggle_menu_bar();
     app.open_help();
     app.act(Action::ApplicationMenu);
+    app.settle_background();
     assert!(app.menu_bar_shown());
     assert!(app.popup().is_none());
     assert!(matches!(
@@ -439,6 +442,7 @@ fn unmatched_second_space_cancels_only_the_prefix() -> anyhow::Result<()> {
     app.view_mut().clear_selection();
     app.view_mut().set_bases(None, Some("before\n".to_owned()));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     press(&mut app, "  ");
     assert!(app.view().diff_view(), "cancel does not act as Escape");
     assert!(app.prefix().is_empty());

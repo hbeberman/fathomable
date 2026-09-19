@@ -287,6 +287,7 @@ mod tests {
         let mut app = testing::source_app(&dir)?;
         app.view_mut().set_bases(None, Some("old\n".to_owned()));
         app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+        app.settle_background();
         for width in [80, 100] {
             app.resize(width, 30);
             testing::press(&mut app, "ge");

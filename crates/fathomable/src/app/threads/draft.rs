@@ -177,6 +177,10 @@ impl App {
             self.store_mut();
             return false;
         }
+        if !self.annotation_projection_matches_selection() {
+            self.notice("comparison projection is not ready; cannot annotate displayed content");
+            return false;
+        }
         true
     }
 
@@ -289,6 +293,9 @@ impl App {
         if self.draft().is_some() {
             self.notice("finish or discard this file's draft first");
             return;
+        }
+        if matches!(target, ComposeTarget::New(_) | ComposeTarget::OnFile) {
+            self.comparison.freeze_for_annotation();
         }
         let buffer = Buffer::from_text(&original);
         self.popup = Some(Popup::Compose(Compose {
@@ -507,6 +514,9 @@ impl App {
         if let Some(view) = from_review {
             self.open_review_view(view);
         }
+        if !self.has_new_annotation_draft() && self.comparison.unfreeze_after_annotation() {
+            self.refresh_comparison();
+        }
     }
 
     /// The draft's text changed: its rows are laid out again and the
@@ -599,6 +609,9 @@ impl App {
         comment: String,
         submission: UserSubmit,
     ) -> Result<SubmitResult, String> {
+        if !self.annotation_projection_matches_selection() {
+            return Err("comparison projection changed; keeping the annotation draft".to_owned());
+        }
         let Some(index) = self.current else {
             return Err("no open file".to_owned());
         };

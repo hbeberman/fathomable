@@ -15,6 +15,34 @@ tags:
 Status: accepted (2026-08-28); amended 2026-09-13 (resource-bounded
 watches); amended 2026-09-14 (searchable Git tombstones)
 
+Resource handling amended 2026-09-19: the first frame is drawn before
+broad watch discovery starts. A dedicated worker owns recursive discovery
+and installation, checks generation cancellation, and installs nonrecursive
+watches up to the configured ceiling. Root, loaded-file ancestors, and
+materialized directories precede broad coverage. Directory entries are
+charged before filtering; retained paths, notification queues, debounce
+batches, and discovery results are bounded. Overflow coalesces to a rescan,
+not silent event loss. Filesystem paths retain collision-resistant hashing.
+
+Coverage stays explicitly scanning, complete, limited, or errored in
+`:status`; limits/errors do not schedule a whole-tree retry each second.
+Explicit refresh, changed demand, and newly created subtrees may request a
+new generation. Narrow state-watch recovery remains separate. A cancelled
+generation cannot overwrite newer coverage, and shutdown requests
+cancellation without joining blocked filesystem calls. Config dimensions
+and invocation-only overrides are documented in the
+[guide](../guide.md#start).
+
+The priority set is installed before broad enumeration can exhaust its
+entry budget. Explicitly loaded external files receive only a narrow parent
+watch, not a recursive walk outside the workspace. Git refs and worktree
+registry descendants share the broad worker's budgets; new namespaces under
+registered Git roots trigger bounded discovery even outside a linked
+checkout. The event loop receives at most four Git anchor paths, not an
+enumerated registry. Immediate state/Git control watches have a separate
+fixed ceiling of 16, with state observation prioritized and permanent
+control-cap exhaustion reported rather than retried indefinitely.
+
 Thread observation amended 2026-09-18 by
 [0089](0089-store-only-mcp.md): thread-store notifications are coalesced
 independently of the workspace/Git quiet period and may trigger immediate

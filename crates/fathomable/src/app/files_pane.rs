@@ -12,6 +12,46 @@ use fathomable_core::workspace::Workspace;
 use super::view::Effect;
 use super::{App, Focus, TREE_SCROLLOFF};
 
+#[derive(Debug)]
+pub(super) struct TreeRequest {
+    root: PathBuf,
+    tree: Tree,
+    limits: fathomable_core::config::LimitsConfig,
+}
+
+#[derive(Debug)]
+pub(super) struct TreeResult {
+    pub(super) tree: Option<Tree>,
+    pub(super) incomplete: Option<String>,
+}
+
+pub(super) fn expand_tree(
+    request: TreeRequest,
+    cancellation: fathomable_core::workspace::Cancellation,
+) -> TreeResult {
+    let mut workspace = match Workspace::discover(request.root) {
+        Ok(workspace) => workspace,
+        Err(error) => {
+            return TreeResult {
+                tree: None,
+                incomplete: Some(error.to_string()),
+            };
+        }
+    };
+    workspace.set_limits(request.limits);
+    workspace.set_cancellation(cancellation);
+    let mut tree = request.tree;
+    let incomplete = tree
+        .toggle_all(&mut workspace)
+        .err()
+        .map(|error| error.to_string())
+        .or_else(|| tree.listing_incomplete().map(ToString::to_string));
+    TreeResult {
+        tree: Some(tree),
+        incomplete,
+    }
+}
+
 /// The selected directory and the direct counts read for its card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct DirectorySelection {
@@ -34,15 +74,43 @@ pub(crate) struct DirectoryInfo {
 }
 
 impl App {
+    pub(super) fn cancel_tree_scan(&mut self) {
+        if self.tree_walk.pending() {
+            self.tree_issue =
+                Some("directory discovery cancelled; coverage is incomplete".to_owned());
+        }
+        self.tree_walk.cancel();
+    }
+
+    pub(crate) fn toggle_all_directories(&mut self) {
+        let Some(tree) = self.tree.clone() else {
+            return;
+        };
+        self.tree_issue = Some("scanning directories; coverage is incomplete".to_owned());
+        if let Err(error) = self.tree_walk.submit(TreeRequest {
+            root: self.workspace.root().to_path_buf(),
+            tree,
+            limits: self.workspace.limits().clone(),
+        }) {
+            let message = format!("cannot start directory discovery: {error}");
+            self.tree_issue = Some(message.clone());
+            self.notice(message);
+        }
+    }
+
     /// Run `f` on the tree, then keep the cursor on screen.
     pub(crate) fn with_tree(
         &mut self,
         f: impl FnOnce(&mut Tree, &mut Workspace) -> Option<Activation>,
     ) {
+        self.cancel_tree_scan();
         let Some(tree) = self.tree.as_mut() else {
             return;
         };
         let activation = f(tree, &mut self.workspace);
+        if let Some(error) = self.workspace.listing_incomplete() {
+            self.tree_issue = Some(error.to_string());
+        }
         self.scroll_tree();
         if let Some(Activation::Open(path)) = activation {
             self.open(&path);

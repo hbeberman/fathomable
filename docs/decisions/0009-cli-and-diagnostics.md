@@ -57,6 +57,10 @@ Command line:
   workspace ([0080](0080-automatic-chat-identity.md)).
 - `--config PATH` overrides the config file; `--theme NAME` selects a theme
   from `$XDG_CONFIG_HOME/fathomable/themes/` for this run.
+- `--discovery-entries`, `--workspace-watches`, `--retained-paths`,
+  `--comparison-paths`, `--comparison-bytes`, and `--pending-events` accept
+  positive finite counts once per invocation and override the matching
+  `limits` setting for both the viewer and `--config-show`.
 - Admin flags, all non-interactive and printing to stdout:
   `--doctor` (terminal capabilities, XDG directories, config parse, git,
   thread-store readability and recovery, live sessions), `--sessions`

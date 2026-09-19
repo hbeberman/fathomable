@@ -107,12 +107,14 @@ pub(crate) fn source_app(dir: &TempDir) -> anyhow::Result<App> {
 pub(crate) fn press(app: &mut App, keys: &str) {
     for ch in keys.chars() {
         keys::handle_key(app, key(ch));
+        app.settle_background();
     }
 }
 
 /// Press one key with no modifiers.
 pub(crate) fn press_key(app: &mut App, code: KeyCode) {
     keys::handle_key(app, KeyEvent::new(code, KeyModifiers::NONE));
+    app.settle_background();
 }
 
 /// Complete every source highlight the app has queued.
@@ -228,8 +230,12 @@ impl AppBuilder {
         if let Some(adjust) = self.options {
             options = adjust(options);
         }
+        // Most app fixtures exercise a chosen presentation, not startup policy.
+        let mode = options.diff.mode;
         let mut app = App::new(workspace, self.width, self.height, options);
+        app.select_diff_mode(mode);
         app.settle_status();
+        app.settle_background();
         if let Some(path) = &self.open {
             app.open(Path::new(path));
             if self.source_view {

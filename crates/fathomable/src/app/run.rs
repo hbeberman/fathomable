@@ -193,8 +193,13 @@ const INPUT_PAUSED: u8 = 2;
 
 /// The input thread: reads terminal events until it is told to pause.
 struct Input {
-    events: mpsc::Receiver<io::Result<Event>>,
+    events: mpsc::Receiver<InputEvent>,
     state: Arc<AtomicU8>,
+}
+
+struct InputEvent {
+    received_at: Instant,
+    event: io::Result<Event>,
 }
 
 impl Input {
@@ -213,7 +218,7 @@ impl Input {
 }
 
 fn spawn_input() -> anyhow::Result<Input> {
-    let (input_tx, events) = mpsc::channel::<io::Result<Event>>(64);
+    let (input_tx, events) = mpsc::channel::<InputEvent>(64);
     let state = Arc::new(AtomicU8::new(INPUT_READING));
     let flag = Arc::clone(&state);
     thread::Builder::new()
@@ -234,13 +239,23 @@ fn spawn_input() -> anyhow::Result<Input> {
                     Ok(false) => continue,
                     Ok(true) => {}
                     Err(error) => {
-                        let _ = input_tx.blocking_send(Err(error));
+                        let _ = input_tx.blocking_send(InputEvent {
+                            received_at: Instant::now(),
+                            event: Err(error),
+                        });
                         break;
                     }
                 }
                 let event = crossterm::event::read();
                 let failed = event.is_err();
-                if input_tx.blocking_send(event).is_err() || failed {
+                if input_tx
+                    .blocking_send(InputEvent {
+                        received_at: Instant::now(),
+                        event,
+                    })
+                    .is_err()
+                    || failed
+                {
                     break;
                 }
             }
@@ -321,6 +336,9 @@ async fn edit_file(
 /// continuously refilled channel cannot monopolize terminal input or timers.
 const RAW_DRAIN_LIMIT: usize = 256;
 
+/// Poll cadence while a comparison or picker worker has a result in flight.
+const BACKGROUND_POLL: Duration = Duration::from_millis(10);
+
 /// Fixed recovery cadence while watcher coverage or store reconciliation is
 /// degraded. Incoming events never move an already scheduled deadline.
 const WATCH_RETRY: Duration = Duration::from_secs(1);
@@ -335,6 +353,7 @@ async fn run_async(
     theme: &Theme,
     open: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let run_started = Instant::now();
     let (opener_tx, mut opener_rx) = mpsc::channel::<Result<(), String>>(16);
     let mut sigterm = signal(SignalKind::terminate()).context("cannot listen for SIGTERM")?;
     let mut sighup = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
@@ -357,36 +376,53 @@ async fn run_async(
     app.start_on(open);
     let mut highlights =
         highlight::Worker::new().context("cannot start syntax highlight worker")?;
-    let (mut doc_watcher, mut reload_rx) = match install_watcher(&mut app) {
-        Ok((watcher, raws, healthy)) => {
-            if !healthy {
-                app.set_watching_root(false);
+    // Paint before broad discovery is even requested. The input thread is
+    // already live, so startup never waits for recursive filesystem work.
+    draw(&app, &theme, &mut terminal)?;
+    tracing::info!(
+        elapsed_millis = u64::try_from(run_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        "first frame drawn"
+    );
+    app.arm_review_point_delete_confirmation();
+    let limits = app.workspace.limits();
+    let watch_limits = watch::WatchLimits::new(
+        limits.workspace_watches,
+        limits.discovery_entries,
+        limits.retained_paths,
+        limits.pending_events,
+    )
+    .context("workspace limits must be positive")?;
+    let (mut doc_watcher, mut reload_rx, mut discovery_rx) =
+        match install_watcher(&mut app, watch_limits) {
+            Ok((watcher, raws, discoveries, _healthy)) => (Some(watcher), Some(raws), discoveries),
+            Err(error) => {
+                tracing::warn!(%error, "cannot start file watcher");
+                app.set_watch_status(watch::WatchStatus::Errored {
+                    watched: 0,
+                    examined: 0,
+                    reason: error.to_string(),
+                });
+                app.set_thread_watch_coverage(false);
+                (None, None, None)
             }
-            (Some(watcher), Some(raws))
-        }
-        Err(error) => {
-            tracing::warn!(%error, "cannot start file watcher");
-            app.set_watching_root(false);
-            app.set_thread_watch_coverage(false);
-            (None, None)
-        }
-    };
+        };
     let mut watch_retry_at = if watch_health(&app, doc_watcher.as_ref()) {
         None
     } else {
         schedule_retry(None, Instant::now())
     };
 
-    let mut batch = watch::Batch::default();
+    let mut batch = watch::Batch::new(watch_limits.pending_events());
     let mut redraw = true;
     loop {
+        redraw |= app.poll_background();
         highlights
             .submit(app.take_highlight_jobs())
             .context("syntax highlight worker stopped")?;
         if let Some(watcher) = doc_watcher.as_mut() {
             redraw |= rewatch(&mut app, watcher);
-            sync_loaded_watches(&app, watcher);
-            redraw |= app.set_watching_root(watcher.coverage_complete());
+            redraw |= app.sync_workspace_watches(watcher, false);
+            redraw |= app.set_watch_status(watcher.status().clone());
         }
         if watch_health(&app, doc_watcher.as_ref()) {
             watch_retry_at = None;
@@ -398,10 +434,20 @@ async fn run_async(
             app.arm_review_point_delete_confirmation();
             redraw = false;
         }
+        let background_pending = app.background_pending();
         let (effect, changed) = tokio::select! {
             event = input.events.recv() => match event {
-                Some(Ok(event)) => (handle_events(&mut app, &event, &mut input.events)?, true),
-                Some(Err(error)) => return Err(error).context("reading terminal input"),
+                Some(InputEvent { received_at, event: Ok(event) }) => {
+                    tracing::trace!(
+                        queued_micros =
+                            u64::try_from(received_at.elapsed().as_micros()).unwrap_or(u64::MAX),
+                        "input dispatched"
+                    );
+                    (handle_events(&mut app, &event, &mut input.events)?, true)
+                }
+                Some(InputEvent { event: Err(error), .. }) => {
+                    return Err(error).context("reading terminal input");
+                }
                 None => (Effect::Quit, false),
             },
             notice = next_raw(&mut reload_rx) => {
@@ -433,6 +479,22 @@ async fn run_async(
                 });
                 (Effect::None, changed)
             }
+            discovered = next_discovery(&mut discovery_rx) => {
+                let changed = match (discovered, doc_watcher.as_mut()) {
+                    (Some(update), Some(watcher)) => {
+                        let applied = watcher.apply_discovery(update);
+                        if applied {
+                            app.set_watch_status(watcher.status().clone());
+                        }
+                        applied
+                    }
+                    _ => false,
+                };
+                (Effect::None, changed)
+            }
+            () = background_poll(background_pending) => {
+                (Effect::None, app.poll_background())
+            }
             () = tokio::time::sleep(app.tick_in().unwrap_or(Duration::from_hours(1))) => {
                 app.tick();
                 (Effect::None, true)
@@ -461,15 +523,20 @@ async fn run_async(
                 watch_retry_at = None;
                 let changed = match doc_watcher.as_mut() {
                     Some(watcher) => retry_watches(&mut app, watcher),
-                    None => match install_watcher(&mut app) {
-                        Ok((watcher, raws, _healthy)) => {
+                    None => match install_watcher(&mut app, watch_limits) {
+                        Ok((watcher, raws, discoveries, _healthy)) => {
                             doc_watcher = Some(watcher);
                             reload_rx = Some(raws);
+                            discovery_rx = discoveries;
                             true
                         }
                         Err(error) => {
                             tracing::warn!(%error, "cannot recover file watcher");
-                            app.set_watching_root(false);
+                            app.set_watch_status(watch::WatchStatus::Errored {
+                                watched: 0,
+                                examined: 0,
+                                reason: error.to_string(),
+                            });
                             app.set_thread_watch_coverage(false);
                             false
                         }
@@ -582,15 +649,18 @@ where
     }
 }
 
-/// Keep narrow coverage for every loaded file, including ignored ones.
-fn sync_loaded_watches(app: &App, watcher: &mut watch::Watcher) {
-    let loaded = app.loaded_abs_paths();
-    watcher.follow(loaded.iter().map(std::path::PathBuf::as_path));
-}
-
 async fn next_raw(raws: &mut Option<watch::Raws>) -> Option<watch::Raw> {
     match raws {
         Some(raws) => raws.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+async fn next_discovery(
+    discoveries: &mut Option<watch::Discoveries>,
+) -> Option<watch::DiscoveryUpdate> {
+    match discoveries {
+        Some(discoveries) => discoveries.recv().await,
         None => std::future::pending().await,
     }
 }
@@ -602,17 +672,20 @@ async fn retry_deadline(deadline: Option<Instant>) {
     }
 }
 
+async fn background_poll(pending: bool) {
+    if pending {
+        tokio::time::sleep(BACKGROUND_POLL).await;
+    } else {
+        std::future::pending::<()>().await;
+    }
+}
+
 /// Apply one debounced watcher batch and repair structural watch changes.
 fn apply_batch(app: &mut App, watcher: &mut watch::Watcher, batch: &mut watch::Batch) -> bool {
     let mut events = batch.take(|path| app.loaded_fingerprint(path), app.max_file_bytes());
     events.retain(|event| event.path().is_none_or(|path| watcher.is_target(path)));
-    let sync = watcher.needs_root_sync(&events);
-    let mut changed = !events.is_empty();
+    let changed = !events.is_empty();
     app.on_events(events);
-    if sync {
-        let complete = app.sync_workspace_watches(watcher);
-        changed |= app.set_watching_root(complete && watcher.coverage_complete());
-    }
     changed
 }
 
@@ -628,7 +701,6 @@ fn enqueue_raws(
     let raws = drain_raws(incoming, first);
     let mut changed = false;
     let mut thread_dirty = false;
-    let mut synthetic = Vec::new();
     for raw in raws {
         let state_dirty = watcher.thread_state_dirty(&raw);
         thread_dirty |= state_dirty;
@@ -639,22 +711,15 @@ fn enqueue_raws(
             | watch::Raw::Rename { to: path, .. } => Some(path),
             _ => None,
         };
-        if let Some(path) = arrived {
-            let (created, complete) = app.watch_created(watcher, path);
-            synthetic.extend(created);
-            if !complete {
-                changed |= app.set_watching_root(false);
-            }
+        if let Some(path) = arrived
+            && app.watch_created(watcher, path)
+        {
+            changed |= app.set_watch_status(watcher.status().clone());
         }
         if watcher.accepts(&raw)
             && app.raw_is_relevant(&raw)
             && (!state_dirty || matches!(raw, watch::Raw::Rescan))
         {
-            batch.push(raw, debounce);
-        }
-    }
-    for raw in synthetic {
-        if watcher.accepts(&raw) && app.raw_is_relevant(&raw) {
             batch.push(raw, debounce);
         }
     }
@@ -688,21 +753,30 @@ struct Enqueued {
 /// The watches a viewer starts with: visible workspace directories, the
 /// thread store, and worktree Git paths.
 fn start_watching(app: &mut App, doc_watcher: &mut watch::Watcher) -> bool {
-    let watching = app.sync_workspace_watches(doc_watcher);
+    app.sync_workspace_watches(doc_watcher, true);
     let state = [app.store_path().to_path_buf()];
     let state_covered = doc_watcher.watch_state(state.iter().map(std::path::PathBuf::as_path));
     app.take_rewatch();
     doc_watcher.watch_worktrees(app.worktree_watch_paths());
-    app.set_watching_root(watching && doc_watcher.coverage_complete());
+    app.set_watch_status(doc_watcher.status().clone());
     let reloaded = app.reload_store();
     app.set_thread_watch_coverage(state_covered && reloaded.healthy);
     state_covered && reloaded.healthy && doc_watcher.coverage_complete()
 }
 
-fn install_watcher(app: &mut App) -> anyhow::Result<(watch::Watcher, watch::Raws, bool)> {
-    let (mut watcher, raws) = watch::Watcher::new()?;
+fn install_watcher(
+    app: &mut App,
+    limits: watch::WatchLimits,
+) -> anyhow::Result<(
+    watch::Watcher,
+    watch::Raws,
+    Option<watch::Discoveries>,
+    bool,
+)> {
+    let (mut watcher, raws) = watch::Watcher::with_limits(limits)?;
+    let discoveries = watcher.take_discoveries();
     let healthy = start_watching(app, &mut watcher);
-    Ok((watcher, raws, healthy))
+    Ok((watcher, raws, discoveries, healthy))
 }
 
 fn reconcile_thread_updates(app: &mut App, watcher: &mut watch::Watcher) -> super::StoreReload {
@@ -714,10 +788,7 @@ fn reconcile_thread_updates(app: &mut App, watcher: &mut watch::Watcher) -> supe
 }
 
 fn retry_watches(app: &mut App, watcher: &mut watch::Watcher) -> bool {
-    let root = app.sync_workspace_watches(watcher);
     watcher.watch_worktrees(app.worktree_watch_paths());
-    sync_loaded_watches(app, watcher);
-    app.set_watching_root(root && watcher.coverage_complete());
     let reloaded = reconcile_thread_updates(app, watcher);
     reloaded.changed
 }
@@ -734,8 +805,8 @@ fn rewatch(app: &mut App, doc_watcher: &mut watch::Watcher) -> bool {
     };
     let mut changed = false;
     if rewatch.root.is_some() {
-        let watching = app.sync_workspace_watches(doc_watcher);
-        changed |= app.set_watching_root(watching && doc_watcher.coverage_complete());
+        changed |= app.sync_workspace_watches(doc_watcher, true);
+        changed |= app.set_watch_status(doc_watcher.status().clone());
     }
     doc_watcher.watch_worktrees(&rewatch.extras);
     let reloaded = reconcile_thread_updates(app, doc_watcher);
@@ -817,7 +888,7 @@ fn opener_status(result: io::Result<ExitStatus>) -> Result<(), String> {
 fn handle_events(
     app: &mut App,
     event: &Event,
-    incoming: &mut mpsc::Receiver<io::Result<Event>>,
+    incoming: &mut mpsc::Receiver<InputEvent>,
 ) -> anyhow::Result<Effect> {
     let mut effect = handle_event(app, event);
     // Coalesce a burst (wheel flick, key repeat) into one frame: draining
@@ -826,7 +897,12 @@ fn handle_events(
     while matches!(effect, Effect::None)
         && let Ok(next) = incoming.try_recv()
     {
-        let next = next.context("reading terminal input")?;
+        tracing::trace!(
+            queued_micros =
+                u64::try_from(next.received_at.elapsed().as_micros()).unwrap_or(u64::MAX),
+            "input dispatched"
+        );
+        let next = next.event.context("reading terminal input")?;
         effect = handle_event(app, &next);
     }
     Ok(effect)
@@ -860,8 +936,9 @@ mod tests {
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
     use super::{
-        Command, Context, Duration, Instant, RAW_DRAIN_LIMIT, drain_raws, handle_events, io, mpsc,
-        opener_status, schedule_retry, spawn_opener,
+        BACKGROUND_POLL, Command, Context, Duration, InputEvent, Instant, RAW_DRAIN_LIMIT,
+        background_poll, drain_raws, handle_events, io, mpsc, opener_status, schedule_retry,
+        spawn_opener,
     };
     use crate::app::draw;
     use crate::app::input::bindings::Action;
@@ -922,7 +999,10 @@ mod tests {
             })
         };
         let (sender, mut incoming) = mpsc::channel(2);
-        sender.try_send(Ok(click(confirm_cell)))?;
+        sender.try_send(InputEvent {
+            received_at: Instant::now(),
+            event: Ok(click(confirm_cell)),
+        })?;
 
         handle_events(&mut app, &click(picker_cell), &mut incoming)?;
 
@@ -1009,12 +1089,28 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn background_timer_exists_only_while_work_is_pending() {
+        assert!(
+            tokio::time::timeout(BACKGROUND_POLL * 3, background_poll(true))
+                .await
+                .is_ok(),
+            "pending work should receive a polling turn"
+        );
+        assert!(
+            tokio::time::timeout(BACKGROUND_POLL * 2, background_poll(false))
+                .await
+                .is_err(),
+            "idle applications must not retain a polling timer"
+        );
+    }
+
     #[test]
     fn raw_drain_is_bounded_under_continuous_refill() -> anyhow::Result<()> {
         let (sender, raws) = Raws::test_channel();
         for index in 0..(RAW_DRAIN_LIMIT * 2) {
             sender
-                .send(Raw::Modify(format!("/workspace/{index}").into()))
+                .try_send(Raw::Modify(format!("/workspace/{index}").into()))
                 .context("receiver unexpectedly closed")?;
         }
         let mut raws = Some(raws);
@@ -1045,14 +1141,14 @@ mod tests {
         let dir = testing::workspace("run-thread-priority", testing::README)?;
         let mut app = testing::app(&dir)?;
         let (mut watcher, _) = watch::Watcher::new()?;
-        app.sync_workspace_watches(&mut watcher);
+        app.sync_workspace_watches(&mut watcher, true);
         let state = testing::store_path(&dir);
         assert!(watcher.watch_state([state.as_path()]));
 
         let (sender, raws) = Raws::test_channel();
         for _ in 0..(RAW_DRAIN_LIMIT * 2) {
             sender
-                .send(Raw::Modify(testing::root(&dir).join("README.md")))
+                .try_send(Raw::Modify(testing::root(&dir).join("README.md")))
                 .context("receiver unexpectedly closed")?;
         }
         let mut raws = Some(raws);

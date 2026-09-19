@@ -88,7 +88,7 @@ impl App {
                     };
                     if available && persisted {
                         self.push_toast(format!(
-                            "Saved {label} [{short}]{excluded}; comparing to Working tree"
+                            "Saved {label} [{short}]{excluded}; comparison scanning"
                         ));
                     } else if available {
                         self.notice(format!(
@@ -173,6 +173,7 @@ mod tests {
         fs::create_dir(&objects)?;
 
         app.finish_review_point_capture(Ok(result));
+        app.settle_background();
 
         assert!(
             app.review_points
@@ -185,7 +186,11 @@ mod tests {
             app.toasts()
                 .last()
                 .is_some_and(|toast| toast.text().contains("Saved saved")
-                    && toast.text().contains("comparison unavailable"))
+                    && toast.text().contains("comparison scanning"))
+        );
+        assert!(
+            app.message()
+                .is_some_and(|message| !message.contains("scanning"))
         );
         Ok(())
     }
@@ -228,6 +233,7 @@ mod tests {
             })
             .build()?;
         app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+        app.settle_background();
         assert!(matches!(
             app.thread(&thread)
                 .map(fathomable_core::annotations::Thread::origin_version),
@@ -306,11 +312,15 @@ mod tests {
             })
             .build()?;
         app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+        app.settle_background();
         app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+        app.settle_background();
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         app.start_new_comment();
         external.delete(point.id())?;
         app.open_picker(PickerKind::ComparisonReviewPoints);
+        app.settle_background();
         assert!(matches!(app.popup(), Some(Popup::Compose(_))));
         assert!(
             app.review_points
@@ -319,6 +329,7 @@ mod tests {
             "browsing points must not replace draft provenance"
         );
         app.save_review_point(Some("blocked"));
+        app.settle_background();
         assert!(
             app.review_points
                 .as_ref()
@@ -335,6 +346,7 @@ mod tests {
         app.compose_cancel();
 
         app.select_diff_mode(DiffMode::Standard);
+        app.settle_background();
         assert_eq!(app.diff_mode(), DiffMode::Standard);
         assert_eq!(
             app.comparison.target(),
@@ -379,6 +391,7 @@ mod tests {
             .clone();
         let mut app = AppBuilder::at(&root).review_points(&points).build()?;
         app.open_picker(PickerKind::ComparisonReviewPoints);
+        app.settle_background();
         external.delete(point.id())?;
 
         app.picker_confirm();
@@ -415,14 +428,18 @@ mod tests {
             .context("second target")?;
         let mut app = AppBuilder::at(&root).review_points(&points).build()?;
         app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+        app.settle_background();
         app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+        app.settle_background();
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         fs::OpenOptions::new()
             .append(true)
             .open(points.join("review-points.jsonl"))?
             .write_all(b"{\"event\":\"unknown\"}\n")?;
 
         app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+        app.settle_background();
 
         assert_eq!(app.diff_mode(), DiffMode::Off);
         assert_eq!(app.view().text(), "second target\n");
@@ -457,11 +474,13 @@ mod tests {
             .unopened()
             .build()?;
         app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point.id().to_owned()));
+        app.settle_background();
         app.open(Path::new("README.md"));
         assert_eq!(app.view().text(), "point only\n");
         external.delete(point.id())?;
 
         app.refresh_comparison();
+        app.settle_background();
 
         assert_eq!(app.comparison.base(), &ComparisonEndpoint::EmptyTree);
         assert_eq!(app.view().text(), "");

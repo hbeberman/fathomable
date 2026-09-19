@@ -186,6 +186,7 @@ mod tests {
         assert!(active.rows.iter().any(|(label, _)| label == "git"));
 
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
         let off = app
             .info()
             .ok_or_else(|| anyhow::anyhow!("off binary info"))?;

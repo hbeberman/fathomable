@@ -364,6 +364,7 @@ mod tests {
         assert!(app.git_on_row(0).is_some());
 
         app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+        app.settle_background();
         assert!((0..app.view().layout().lines().len()).all(|row| app.git_on_row(row).is_none()));
         Ok(())
     }
@@ -518,6 +519,7 @@ mod tests {
         assert_eq!(git_cells(&app)?[1].content, " ");
 
         app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+        app.settle_background();
         let cells = git_cells(&app)?;
         let mut synthetic = 0;
         for (row, cell) in cells.iter().enumerate() {

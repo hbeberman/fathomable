@@ -23,6 +23,13 @@ tags:
 Status: accepted (2026-09-07); amended 2026-09-15 (the optional
 `worktrees/` registry is watched only while it exists)
 
+Watch discovery amended 2026-09-19: the core supplies only the active Git
+directory, common directory, refs, and existing registry as deduplicated
+anchors. Registry children and nested refs are discovered and watched by
+the finite background worker described in [0028](0028-live-workspace.md).
+This includes newly created namespaces outside the active linked checkout;
+partial coverage is explicit rather than an unlimited UI-thread walk.
+
 Thread landing amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): direct thread traversal never
 activates another worktree. It shows projected source in the current

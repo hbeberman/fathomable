@@ -439,6 +439,7 @@ fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
     app.on_events(vec![crate::app::watch::Event::Change(
         root.join(".git/index"),
     )]);
+    app.settle_background();
     app.settle_status();
     let buffer = render(&app, &theme)?;
     assert_eq!(buffer[(1, y)].symbol(), "D");
@@ -538,6 +539,7 @@ fn a_comparison_picker_cursor_follows_the_typed_query() -> anyhow::Result<()> {
     let dir = testing::workspace("comparison-picker-cursor", testing::README)?;
     let mut app = testing::app(&dir)?;
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     for ch in "main".chars() {
         app.picker_char(ch);
     }

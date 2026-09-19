@@ -538,7 +538,7 @@ impl App {
             Action::Confirm => self.with_tree_result(Tree::activate),
             Action::Fold => self.with_tree_result(Tree::toggle_nearest_directory),
             Action::FoldAll => {
-                self.with_tree_result(|tree, workspace| tree.toggle_all(workspace).map(|()| None));
+                self.toggle_all_directories();
             }
             Action::CopyPath => return self.copy_tree_path(),
             Action::CopyFullPath => return self.copy_tree_full_path(),

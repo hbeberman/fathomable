@@ -165,6 +165,7 @@ fn changed_only_is_dormant_and_restored_around_off() -> anyhow::Result<()> {
     assert_eq!(names(&app), ["notes.txt", "README.md"]);
 
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     assert!(names(&app).iter().any(|path| path == "src"));
     assert!(app.files_setting_checked(crate::app::input::bindings::Action::FilesChanged));
     assert!(!app.files_shown_marker().contains('c'));
@@ -184,6 +185,7 @@ fn changed_only_is_dormant_and_restored_around_off() -> anyhow::Result<()> {
     assert!(app.files_setting_checked(crate::app::input::bindings::Action::FilesChanged));
 
     app.select_diff_mode(DiffMode::Standard);
+    app.settle_background();
     assert_eq!(names(&app), ["notes.txt", "README.md"]);
     assert!(app.files_shown_marker().contains('c'));
     let active_header = header_row(&app)?;
@@ -503,6 +505,7 @@ fn only_reviews_follows_a_local_working_tree_rename() -> anyhow::Result<()> {
     let to = root.join("RENAMED.md");
     fs::rename(&from, &to)?;
     app.on_events(vec![crate::app::watch::Event::Renamed { from, to }]);
+    app.settle_background();
     assert_eq!(
         names(&app),
         ["RENAMED.md"],
@@ -546,6 +549,7 @@ fn live_deletion_restoration_keeps_pinned_comparison_entries() -> anyhow::Result
     app.with_tree_result(|tree, workspace| tree.reveal(workspace, file).map(|_| None));
     fs::remove_file(root.join(file))?;
     app.on_events(vec![Event::Removed(root.join(file))]);
+    app.settle_background();
     assert!(
         names(&app).contains(&"src/lib.rs".to_owned()),
         "rows={:?} comparison={:?}",
@@ -566,10 +570,12 @@ fn live_deletion_restoration_keeps_pinned_comparison_entries() -> anyhow::Result
     // A restored tombstone is already listed, but still needs a disk listing.
     fs::write(root.join(file), "fn lib() {}\n")?;
     app.on_events(vec![Event::Change(root.join(file))]);
+    app.settle_background();
     assert!(names(&app).contains(&"src/lib.rs".to_owned()));
     assert!(!app.status().contains(file));
     fs::remove_file(root.join(file))?;
     app.on_events(vec![Event::Removed(root.join(file))]);
+    app.settle_background();
     press(&mut app, " Fc Fu");
     assert!(names(&app).contains(&"src/lib.rs".to_owned()));
 
@@ -581,6 +587,7 @@ fn live_deletion_restoration_keeps_pinned_comparison_entries() -> anyhow::Result
         ],
     )?;
     app.on_events(vec![Event::Change(root.join(".git/index"))]);
+    app.settle_background();
     app.settle_status();
     assert!(
         names(&app).contains(&"src/lib.rs".to_owned()),

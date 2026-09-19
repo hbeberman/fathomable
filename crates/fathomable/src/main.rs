@@ -9,6 +9,7 @@ mod doctor;
 mod logging;
 mod mcp;
 
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -45,6 +46,30 @@ struct Cli {
     /// Select a theme from the config themes directory for this run.
     #[arg(long, value_name = "NAME")]
     theme: Option<String>,
+
+    /// Maximum entries considered during workspace discovery.
+    #[arg(long, value_name = "COUNT")]
+    discovery_entries: Option<NonZeroUsize>,
+
+    /// Maximum filesystem watches installed for one workspace.
+    #[arg(long, value_name = "COUNT")]
+    workspace_watches: Option<NonZeroUsize>,
+
+    /// Maximum paths retained for workspace presentation.
+    #[arg(long, value_name = "COUNT")]
+    retained_paths: Option<NonZeroUsize>,
+
+    /// Maximum paths included in one comparison.
+    #[arg(long, value_name = "COUNT")]
+    comparison_paths: Option<NonZeroUsize>,
+
+    /// Maximum source bytes included in one comparison.
+    #[arg(long, value_name = "BYTES")]
+    comparison_bytes: Option<NonZeroU64>,
+
+    /// Maximum filesystem events waiting to be processed.
+    #[arg(long, value_name = "COUNT")]
+    pending_events: Option<NonZeroUsize>,
 
     /// Print terminal, directory, and log diagnostics and exit.
     #[arg(long)]
@@ -115,7 +140,8 @@ fn run_tui(
     shared_state_ancestor_count: usize,
 ) -> anyhow::Result<()> {
     let path = cli.path.clone().unwrap_or_else(|| PathBuf::from("."));
-    let theme = load_theme(cli, dirs)?;
+    let config = load_config(cli, dirs)?;
+    let theme = Theme::load(config.theme(), dirs)?;
     tracing::info!(theme = theme.name(), "theme loaded");
     let highlighter = Highlighter::new(theme.syntect())
         .with_context(|| format!("theme `{}`: code.syntect", theme.name()))?;
@@ -142,7 +168,6 @@ fn run_tui(
         tracing::warn!(%error, "cannot write the workspace marker");
     }
 
-    let config = Config::load(dirs, cli.config.as_deref())?;
     let (store, thread_store_error) = match Store::open_workspace(dirs, &key) {
         Ok(store) => {
             tracing::info!(path = %store.path().display(), threads = store.threads().len(), "threads loaded");
@@ -172,6 +197,7 @@ fn run_tui(
     let result = app::run::run(
         workspace,
         app::Options {
+            limits: config.limits().clone(),
             record: record.clone(),
             dirs: dirs.clone(),
             store,
@@ -273,16 +299,13 @@ fn list_viewers(dirs: &XdgDirs) -> ExitCode {
 
 /// `--config-show`: the effective settings.
 fn config_show(cli: &Cli, dirs: &XdgDirs) -> ExitCode {
-    let mut config = match Config::load(dirs, cli.config.as_deref()) {
+    let config = match load_config(cli, dirs) {
         Ok(config) => config,
         Err(error) => {
             eprintln!("fathomable: {error}");
             return ExitCode::FAILURE;
         }
     };
-    if let Some(theme) = &cli.theme {
-        config.set_theme(theme);
-    }
     println!("config {}", config_path(cli, dirs).display());
     print!("{config}");
     ExitCode::SUCCESS
@@ -295,9 +318,31 @@ fn config_path(cli: &Cli, dirs: &XdgDirs) -> PathBuf {
         .unwrap_or_else(|| dirs.config_dir().join("config.kdl"))
 }
 
-/// Pick the theme: `--theme`, then `config.kdl`, then the built-in default.
-fn load_theme(cli: &Cli, dirs: &XdgDirs) -> anyhow::Result<Theme> {
-    let config = Config::load(dirs, cli.config.as_deref())?;
-    let name = cli.theme.as_deref().unwrap_or(config.theme());
-    Ok(Theme::load(name, dirs)?)
+/// Load the file and apply every command-line configuration override.
+fn load_config(cli: &Cli, dirs: &XdgDirs) -> Result<Config, fathomable_core::config::ConfigError> {
+    let mut config = Config::load(dirs, cli.config.as_deref())?;
+    if let Some(theme) = &cli.theme {
+        config.set_theme(theme);
+    }
+    let mut limits = config.limits().clone();
+    if let Some(value) = cli.discovery_entries {
+        limits.discovery_entries = value.get();
+    }
+    if let Some(value) = cli.workspace_watches {
+        limits.workspace_watches = value.get();
+    }
+    if let Some(value) = cli.retained_paths {
+        limits.retained_paths = value.get();
+    }
+    if let Some(value) = cli.comparison_paths {
+        limits.comparison_paths = value.get();
+    }
+    if let Some(value) = cli.comparison_bytes {
+        limits.comparison_bytes = value.get();
+    }
+    if let Some(value) = cli.pending_events {
+        limits.pending_events = value.get();
+    }
+    config.set_limits(limits)?;
+    Ok(config)
 }

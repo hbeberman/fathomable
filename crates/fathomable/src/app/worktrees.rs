@@ -206,13 +206,14 @@ impl App {
         if self.annotation_draft_blocks("changing worktree") {
             return false;
         }
-        let workspace = match Workspace::discover(&root) {
+        let mut workspace = match Workspace::discover(&root) {
             Ok(workspace) => workspace,
             Err(error) => {
                 self.notice(format!("cannot open {}: {error}", root.display()));
                 return false;
             }
         };
+        workspace.set_limits(self.workspace.limits().clone());
         if workspace.key() != self.workspace.key() {
             self.notice(format!("{} is another repository", root.display()));
             return false;
@@ -225,6 +226,8 @@ impl App {
         });
         let label = self.label_of(&root);
         self.close_popup();
+        self.cancel_tree_scan();
+        self.tree_issue = None;
         self.docs.clear();
         self.highlights.clear();
         self.current = None;
@@ -239,8 +242,7 @@ impl App {
         self.status_stale = false;
         self.local_thread_paths.clear();
         self.workspace = workspace;
-        self.comparison =
-            super::comparison::State::load(&self.dirs, &self.workspace, self.comparison.compare());
+        self.comparison.reload(&self.dirs, &self.workspace);
         self.rewatch = Some(Rewatch {
             root: Some(root.clone()),
             extras: self.worktree_paths.clone(),
@@ -443,6 +445,7 @@ mod tests {
         assert!(shown[1].contains("File  a.md"));
 
         app.act(Action::WorktreeNext);
+        app.settle_background();
         assert_eq!(app.workspace().root(), feature);
         assert_eq!(app.worktree_label().as_deref(), Some("feature"));
         assert_eq!(app.current_path(), Path::new("a.md"), "the file follows");
@@ -465,8 +468,10 @@ mod tests {
         // `[w` wraps back; a file the worktree lacks closes to the welcome.
         fs::remove_file(feature.join("a.md"))?;
         app.act(Action::WorktreePrev);
+        app.settle_background();
         assert_eq!(app.workspace().root(), main);
         app.act(Action::WorktreeNext);
+        app.settle_background();
         assert_eq!(app.current_path(), Path::new(""), "nothing open");
         Ok(())
     }
@@ -479,6 +484,7 @@ mod tests {
         let mut app = app_on(&dir, &main)?;
         app.open(Path::new("a.md"));
         app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+        app.settle_background();
         assert_eq!(app.view().text(), "MAIN_TARGET_SENTINEL\n");
 
         assert!(app.activate_worktree(&feature));
@@ -632,6 +638,7 @@ mod tests {
         let mut app = app_on(&dir, &main.canonicalize()?)?;
         assert_eq!(app.worktree_label(), None);
         app.act(Action::WorktreeNext);
+        app.settle_background();
         assert_eq!(app.message(), Some("one worktree"));
         Ok(())
     }

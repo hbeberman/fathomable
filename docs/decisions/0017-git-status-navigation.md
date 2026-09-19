@@ -3,6 +3,8 @@ type: Decision
 title: Git status as the primary change layer
 description: The gutter, hunk keys, and sidebar marks mean uncommitted git state, staged and unstaged told apart; last-seen recency moves to its own signals.
 resource: crates/fathomable-core/src/status.rs
+related_resources:
+  - crates/fathomable/src/app/status_walk.rs
 tags:
   - decision
   - git
@@ -42,6 +44,16 @@ the superseded Git-primary model.
 Amended later 2026-09-18: `Space d d` returns only as the direct
 current-`HEAD`-to-working-tree selector. It does not toggle a diff view;
 `:diff` remains removed.
+
+Resource handling amended 2026-09-19: both full and incremental status
+scans run on one persistent cancellable worker, with one replaceable request
+and one result slot. Changed paths coalesce against the last accepted
+status; exceeding the pending-event or retained-path budget requests a full
+scan rather than dropping events. Delivery checks both root and generation.
+Discovery, Git path collection, hashing, and line-count reads honor the
+finite scan/path/content budgets. An incomplete status stays visibly stale,
+never complete and clean. The UI does not replay recursive status work
+when a background result arrives, and shutdown never joins the scan.
 
 ## Context
 

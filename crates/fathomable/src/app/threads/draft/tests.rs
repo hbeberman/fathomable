@@ -17,6 +17,23 @@ use crate::app::input::bindings::Where;
 use crate::app::input::keys;
 use crate::app::testing::{self, click, press, press_key, screen};
 
+fn loose_blob_path(root: &Path, revision: &str, path: &str) -> anyhow::Result<std::path::PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", &format!("{revision}:{path}")])
+        .output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "cannot resolve test blob: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let id = String::from_utf8(output.stdout)?;
+    let id = id.trim();
+    anyhow::ensure!(id.len() == 40, "unexpected test blob id");
+    Ok(root.join(".git/objects").join(&id[..2]).join(&id[2..]))
+}
+
 #[test]
 fn historical_deleted_source_comments_keep_base_origin() -> anyhow::Result<()> {
     let dir = TempDir::new("historical-deleted-origin")?;
@@ -40,7 +57,9 @@ fn historical_deleted_source_comments_keep_base_origin() -> anyhow::Result<()> {
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("gone.md"));
     app.start_new_comment();
     anyhow::ensure!(
@@ -96,6 +115,7 @@ fn switching_an_open_working_file_to_history_captures_displayed_text() -> anyhow
         .build()?;
     app.open(Path::new("a.txt"));
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&historical)?));
+    app.settle_background();
     app.start_new_comment();
     press(&mut app, "displayed history");
     app.compose_submit();
@@ -107,6 +127,255 @@ fn switching_an_open_working_file_to_history_captures_displayed_text() -> anyhow
         .context("historical thread")?;
     assert_eq!(thread.origin().snippet(), "historical");
     assert_eq!(thread.origin_version(), &OriginVersion::commit(historical));
+    Ok(())
+}
+
+#[test]
+fn pending_and_failed_target_change_cannot_create_mismatched_provenance() -> anyhow::Result<()> {
+    let dir = TempDir::new("pending-target-annotation")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "old a\n"), ("b.txt", "old b\n")])?;
+    let old = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("old commit")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "new a\n"), ("b.txt", "new b\n")])?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    assert_eq!(app.view().text(), "new a\n");
+    let mut limits = app.workspace.limits().clone();
+    limits.comparison_paths = 1;
+    app.workspace.set_limits(limits);
+
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&old)?));
+    assert!(app.comparison.pending());
+    app.start_new_comment();
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    assert!(
+        app.message()
+            .is_some_and(|message| message.contains("projection is not ready"))
+    );
+
+    app.settle_background();
+    assert!(
+        app.comparison
+            .error()
+            .is_some_and(|error| error.contains("limited"))
+    );
+    assert_eq!(app.view().text(), "new a\n");
+    app.start_new_comment();
+    app.compose_insert("must not be stored");
+    app.compose_submit();
+    assert!(
+        app.store
+            .as_ref()
+            .is_some_and(|store| store.threads().is_empty())
+    );
+
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    assert!(app.comparison.pending());
+    app.start_file_comment();
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    app.settle_background();
+    app.start_file_comment();
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    Ok(())
+}
+
+#[test]
+fn active_and_parked_drafts_freeze_pending_projection_evidence() -> anyhow::Result<()> {
+    let dir = TempDir::new("draft-projection-freeze")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "old a\n"), ("b.txt", "old b\n")])?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+
+    app.open(Path::new("a.txt"));
+    fs::write(dir.0.join("a.txt"), "new a\n")?;
+    app.refresh_comparison();
+    assert!(app.comparison.pending());
+    app.start_new_comment();
+    assert!(!app.comparison.pending());
+    press(&mut app, "active evidence");
+    app.refresh_comparison();
+    assert!(!app.comparison.pending());
+    let _ = app.poll_background();
+    assert_eq!(app.view().text(), "old a\n");
+    app.comparison
+        .select_target_aliased(ComparisonEndpoint::EmptyTree, None);
+    app.compose_submit();
+    assert!(matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    assert!(
+        app.store
+            .as_ref()
+            .is_some_and(|store| store.threads().is_empty())
+    );
+    app.comparison
+        .select_target_aliased(ComparisonEndpoint::WorkingTree, None);
+    app.compose_submit();
+    assert!(app.comparison.pending());
+    app.settle_background();
+
+    app.open(Path::new("b.txt"));
+    fs::write(dir.0.join("b.txt"), "new b\n")?;
+    app.start_new_comment();
+    assert!(!app.comparison.pending());
+    press(&mut app, "parked evidence");
+    app.open(Path::new("a.txt"));
+    app.refresh_comparison();
+    assert!(!app.comparison.pending());
+    let _ = app.poll_background();
+    let parked = app
+        .docs
+        .iter()
+        .find(|doc| doc.relative == Path::new("b.txt"))
+        .context("parked document")?;
+    assert_eq!(parked.view.text(), "old b\n");
+
+    let store = app.store.as_ref().context("thread store")?;
+    assert_eq!(store.threads().len(), 1);
+    assert_eq!(store.threads()[0].origin().snippet(), "old a");
+    Ok(())
+}
+
+#[test]
+fn pending_off_to_active_restore_blocks_new_annotations() -> anyhow::Result<()> {
+    let dir = TempDir::new("draft-pending-mode-restore")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\n")])?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
+
+    app.set_comparison_base(ComparisonEndpoint::EmptyTree);
+    assert!(app.comparison.restore_mode.is_some());
+    app.start_new_comment();
+
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    assert!(app.comparison.pending());
+    app.settle_background();
+    assert_ne!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
+    Ok(())
+}
+
+#[test]
+fn failed_active_projection_read_blocks_annotation_on_retained_text() -> anyhow::Result<()> {
+    let dir = TempDir::new("draft-failed-active-projection")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "two\n")])?;
+    let second = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("second commit")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "three\n")])?;
+    let third = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("third commit")?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    assert_eq!(app.view().text(), "two\n");
+
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&third)?));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !app.comparison.poll() {
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "comparison did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    anyhow::ensure!(app.comparison.error().is_none(), "comparison failed");
+    fs::remove_file(loose_blob_path(&dir.0, &third, "a.txt")?)?;
+    let index = app.current.context("current document")?;
+    app.apply_comparison_projection(index);
+
+    assert_eq!(app.view().text(), "two\n");
+    assert!(!app.view().comparison_projection_ready());
+    assert!(app.docs[index].comparison_notice.is_some());
+    app.start_new_comment();
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
+    Ok(())
+}
+
+#[test]
+fn failed_off_target_read_blocks_file_annotation() -> anyhow::Result<()> {
+    let dir = TempDir::new("draft-failed-off-projection")?;
+    git::init(&dir.0)?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "one\n")])?;
+    let first = Workspace::discover(&dir.0)?
+        .head_commit()
+        .context("first commit")?;
+    git::commit_and_stage(&dir.0, &[("a.txt", "two\n")])?;
+    let store = Store::open(dir.0.join("threads.jsonl"))?;
+    let mut app = testing::AppBuilder::at(&dir.0)
+        .unopened()
+        .options(move |mut options| {
+            options.store = Some(store);
+            options
+        })
+        .build()?;
+    app.settle_background();
+    app.open(Path::new("a.txt"));
+    app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
+    app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let paths = loop {
+        if let Some(result) = app.comparison.poll_paths() {
+            break result.map_err(anyhow::Error::msg)?;
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "Target discovery did not finish"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
+    app.off_target_paths = Some(paths);
+    fs::remove_file(loose_blob_path(&dir.0, &first, "a.txt")?)?;
+    app.finish_off_target();
+
+    let index = app.current.context("current document")?;
+    assert!(app.docs[index].comparison_notice.is_some());
+    app.start_file_comment();
+    assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
     Ok(())
 }
 
@@ -137,7 +406,9 @@ fn off_branch_historical_target_projects_inline_without_rescoping() -> anyhow::R
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(base)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
     app.open(Path::new("a.txt"));
     app.start_new_comment();
     press(&mut app, "feature discussion");
@@ -178,9 +449,12 @@ fn duplicate_removed_lines_keep_the_selected_base_range_in_origin() -> anyhow::R
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("a.md"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     let row = app
         .view()
         .layout()
@@ -228,9 +502,12 @@ fn removed_unified_line_draft_blocks_mode_and_endpoint_changes_when_parked() -> 
     let base = ComparisonEndpoint::Commit(CommitId::parse(&first)?);
     let target = ComparisonEndpoint::Commit(CommitId::parse(&second)?);
     app.set_comparison_base(base.clone());
+    app.settle_background();
     app.set_comparison_target(target.clone());
+    app.settle_background();
     app.open(Path::new("a.md"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     let row = app
         .view()
         .layout()
@@ -243,6 +520,7 @@ fn removed_unified_line_draft_blocks_mode_and_endpoint_changes_when_parked() -> 
     press(&mut app, "pending removed-line note");
 
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Unified);
     assert!(
         app.message()
@@ -252,8 +530,11 @@ fn removed_unified_line_draft_blocks_mode_and_endpoint_changes_when_parked() -> 
     app.open(Path::new("b.md"));
     assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
     app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.settle_background();
     app.set_comparison_base(target.clone());
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Unified);
     assert_eq!(app.comparison.base(), &base);
     assert_eq!(app.comparison.target(), &target);
@@ -289,7 +570,9 @@ fn working_edits_do_not_relocate_threads_in_an_immutable_comparison() -> anyhow:
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("a.txt"));
     app.view_mut().goto_source_line(2);
     app.start_new_comment();
@@ -340,7 +623,9 @@ fn working_renames_do_not_rewrite_immutable_comparison_paths() -> anyhow::Result
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&first)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
+    app.settle_background();
     app.open(Path::new("a.txt"));
     app.start_new_comment();
     press(&mut app, "historical target");
@@ -352,6 +637,7 @@ fn working_renames_do_not_rewrite_immutable_comparison_paths() -> anyhow::Result
         from: dir.0.join("a.txt"),
         to: dir.0.join("b.txt"),
     }]);
+    app.settle_background();
 
     assert_eq!(app.current_path(), Path::new("a.txt"));
     assert_eq!(app.view().text(), "two\n");
@@ -652,6 +938,7 @@ fn a_parked_draft_follows_its_documents_rename() -> anyhow::Result<()> {
     let to = dir.0.join("ws/GUIDE.md");
     fs::rename(&from, &to)?;
     app.on_events(vec![Event::Renamed { from, to }]);
+    app.settle_background();
     app.open(Path::new("GUIDE.md"));
     assert_eq!(app.compose_draft(), Some("keep with file"));
     app.compose_submit();

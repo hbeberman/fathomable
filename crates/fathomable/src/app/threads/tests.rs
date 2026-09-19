@@ -363,6 +363,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
         from: dir.0.join("ws/README.md"),
         to: dir.0.join("ws/docs/GUIDE.md"),
     }]);
+    app.settle_background();
     assert_eq!(app.current_path(), Path::new("docs/GUIDE.md"));
     assert_eq!(app.message(), Some("renamed to docs/GUIDE.md"));
     assert_eq!(app.view().cursor(), cursor);
@@ -385,6 +386,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
         from: dir.0.join("ws/docs"),
         to: dir.0.join("ws/notes"),
     }]);
+    app.settle_background();
     assert_eq!(app.current_path(), Path::new("notes/GUIDE.md"));
     assert_eq!(
         app.thread(&id).map(|thread| app.thread_path(thread)),
@@ -398,6 +400,7 @@ fn a_rename_carries_the_threads_and_the_open_document() -> anyhow::Result<()> {
         "# Readme\n\nintro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
     )?;
     app.on_events(vec![Event::Change(dir.0.join("ws/notes/GUIDE.md"))]);
+    app.settle_background();
     assert!(app.view().text().contains("intro"));
     assert_eq!(app.marks()[0].range(), Some(LineRange::new(5, 7)));
     Ok(())
@@ -414,6 +417,7 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
 
     fs::remove_file(dir.0.join("ws/README.md"))?;
     app.on_events(vec![Event::Removed(dir.0.join("ws/README.md"))]);
+    app.settle_background();
     assert!(app.deleted());
     assert_eq!(
         app.banner(),
@@ -450,6 +454,7 @@ fn a_deleted_file_keeps_its_content_and_refuses_new_comments() -> anyhow::Result
         "# Readme\n\nintro\n\nalpha\nbeta\ngamma\n\n- one\n- two\n",
     )?;
     app.on_events(vec![Event::Created(dir.0.join("ws/README.md"))]);
+    app.settle_background();
     assert!(!app.deleted());
     assert!(app.info().is_none());
     assert!(app.view().text().contains("intro"));
@@ -2881,6 +2886,7 @@ fn every_overlay_draws_at_any_terminal_size() -> anyhow::Result<()> {
     draw(&mut app, "status")?;
     app.close_popup();
     app.open_picker(crate::app::PickerKind::Files);
+    app.settle_background();
     draw(&mut app, "picker")?;
     app.close_popup();
     app.open_review();

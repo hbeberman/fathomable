@@ -303,7 +303,7 @@ impl App {
             "none (the welcome screen)".to_owned()
         };
         let thread_counts = self.review_counts(false);
-        let lines = vec![
+        let mut lines = vec![
             ("document".to_owned(), document),
             ("diff mode".to_owned(), self.diff_mode().to_string()),
             (
@@ -336,14 +336,7 @@ impl App {
                     |reason| format!("degraded: {reason}"),
                 ),
             ),
-            (
-                "watching".to_owned(),
-                if self.watching_root {
-                    "visible workspace files".to_owned()
-                } else {
-                    "partial workspace coverage; retrying".to_owned()
-                },
-            ),
+            ("watching".to_owned(), self.watch_status.label()),
             ("proposed".to_owned(), self.proposed_total().to_string()),
             (
                 "thread count".to_owned(),
@@ -351,6 +344,21 @@ impl App {
                     .to_string(),
             ),
         ];
+        if let Some(reason) = &self.tree_issue {
+            lines.push(("file discovery".to_owned(), reason.clone()));
+        } else if self
+            .tree
+            .as_ref()
+            .is_some_and(fathomable_core::tree::Tree::discovery_limited)
+        {
+            lines.push((
+                "file discovery".to_owned(),
+                "limited by retained-path budget; coverage is incomplete".to_owned(),
+            ));
+        }
+        if let Some(reason) = self.comparison.error() {
+            lines.push(("comparison coverage".to_owned(), reason.to_owned()));
+        }
         lines
     }
 }
@@ -360,6 +368,7 @@ mod tests {
     use fathomable_core::config::DiffMode;
 
     use crate::app::testing;
+    use crate::app::watch::{LimitReason, WatchStatus};
 
     use super::{Command, CommandCompletion, CompletionDirection, find_command, matching_commands};
 
@@ -376,6 +385,7 @@ mod tests {
         for removed in ["licenses", "nohlsearch", "noh", "source"] {
             assert_eq!(find_command(removed), None, "{removed}");
         }
+
         for alias in ["q", "q!", "quit", "quit!"] {
             assert_eq!(
                 find_command(alias).map(super::CommandSpec::command),
@@ -383,11 +393,34 @@ mod tests {
                 "{alias}"
             );
         }
+
         assert!(
             commands
                 .iter()
                 .all(|command| !command.description().contains("Args:"))
         );
+    }
+
+    #[test]
+    fn status_keeps_limited_workspace_coverage_visible() -> anyhow::Result<()> {
+        let dir = testing::workspace("watch-status-limited", testing::README)?;
+        let mut app = testing::app(&dir)?;
+        app.set_watch_status(WatchStatus::Limited {
+            watched: 8,
+            examined: 21,
+            reason: LimitReason::WorkspaceWatches,
+        });
+
+        let watching = app
+            .status_lines()
+            .into_iter()
+            .find_map(|(label, value)| (label == "watching").then_some(value))
+            .ok_or_else(|| anyhow::anyhow!("watching status row"))?;
+        assert_eq!(
+            watching,
+            "limited: workspace watch limit reached (8 watched, 21 entries examined)"
+        );
+        Ok(())
     }
 
     #[test]
@@ -439,6 +472,7 @@ mod tests {
                 .all(|(label, _)| label != "changes")
         );
         app.select_diff_mode(DiffMode::Off);
+        app.settle_background();
 
         let rows = app.status_lines();
         let document = rows

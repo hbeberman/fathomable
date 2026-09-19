@@ -75,6 +75,7 @@ fn bare_q_is_guarded_in_panes_and_owned_by_input_and_popups() -> anyhow::Result<
     app.compose_cancel();
 
     app.open_picker(PickerKind::Files);
+    app.settle_background();
     handle_key(&mut app, testing::key('q'));
     assert!(matches!(
         app.popup(),

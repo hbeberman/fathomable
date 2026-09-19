@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 
 use fathomable_core::XdgDirs;
-use fathomable_core::config::{Config, ConfigError, DiffMode};
+use fathomable_core::config::{Config, ConfigError, DiffMode, LimitsConfig};
 use fathomable_core::theme::DEFAULT_THEME;
 
 type TestResult = Result<(), Box<dyn Error>>;
@@ -108,6 +108,87 @@ fn viewer_block_sets_the_size_ceiling_in_mib() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn limits_have_finite_defaults_and_parse_every_key() -> TestResult {
+    assert_eq!(
+        Config::default().limits(),
+        &LimitsConfig {
+            discovery_entries: 100_000,
+            workspace_watches: 8_192,
+            retained_paths: 50_000,
+            comparison_paths: 10_000,
+            comparison_bytes: 67_108_864,
+            pending_events: 4_096,
+        }
+    );
+    let config = Config::parse(
+        r"
+limits {
+    discovery-entries 11
+    workspace-watches 12
+    retained-paths 13
+    comparison-paths 14
+    comparison-bytes 15
+    pending-events 16
+}
+",
+    )?;
+    assert_eq!(
+        config.limits(),
+        &LimitsConfig {
+            discovery_entries: 11,
+            workspace_watches: 12,
+            retained_paths: 13,
+            comparison_paths: 14,
+            comparison_bytes: 15,
+            pending_events: 16,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn limits_reject_invalid_values_with_the_setting_line() -> TestResult {
+    for value in ["0", "-1", "\"many\"", "#true", "18446744073709551616"] {
+        let text = format!("theme \"default-dark\"\nlimits {{\n    retained-paths {value}\n}}\n");
+        let error = must_fail(&text)?;
+        assert_eq!(error.line(), Some(3), "{value}: {error}");
+    }
+    let overflow = must_fail(
+        "theme \"default-dark\"\nlimits {\n    comparison-bytes 18446744073709551616\n}\n",
+    )?;
+    assert_eq!(overflow.line(), Some(3));
+    let unknown = must_fail("theme \"default-dark\"\nlimits {\n    unlimited #true\n}\n")?;
+    assert_eq!(unknown.line(), Some(3));
+    assert!(
+        unknown
+            .to_string()
+            .contains("unknown limits setting `unlimited`"),
+        "{unknown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn replacing_limits_validates_before_mutating() -> TestResult {
+    let mut config = Config::default();
+    let before = config.clone();
+    let mut invalid = config.limits().clone();
+    invalid.pending_events = 0;
+    let error = config
+        .set_limits(invalid)
+        .err()
+        .ok_or("zero must not disable a limit")?;
+    assert!(error.to_string().contains("no unlimited value"), "{error}");
+    assert_eq!(config, before);
+
+    let mut valid = config.limits().clone();
+    valid.pending_events = 17;
+    config.set_limits(valid)?;
+    assert_eq!(config.limits().pending_events, 17);
+    Ok(())
+}
+
 /// The `(block, key)` pairs a KDL config text sets, comments stripped.
 fn keys(text: &str) -> BTreeSet<(String, String)> {
     let mut block = String::new();
@@ -141,6 +222,14 @@ theme "mine \"quoted\" \\ back"
 watch { toast 0; ignore "target/**" "a b" "c\"d"; debounce 1 }
 markdown { extensions "txt"; names "notes" }
 viewer { max-file-size-mib 1 }
+limits {
+    discovery-entries 11
+    workspace-watches 12
+    retained-paths 13
+    comparison-paths 14
+    comparison-bytes 15
+    pending-events 16
+}
 layout {
     menu-bar #false
     sidebar {

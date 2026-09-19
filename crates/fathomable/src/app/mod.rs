@@ -10,6 +10,7 @@
 //! and `clipboard` are what their names say; and [`run`] owns the terminal
 //! and file watcher.
 
+mod background;
 mod clipboard;
 mod commands;
 mod comparison;
@@ -702,10 +703,12 @@ pub(crate) struct App {
     last_active_diff_mode: DiffMode,
     /// Target-only path boundary while diff presentation is Off.
     off_target_paths: Option<Vec<PathBuf>>,
+    tree_walk: background::Worker<files_pane::TreeRequest, files_pane::TreeResult>,
+    tree_issue: Option<String>,
     /// The changed-only Files rule retained while Off does not apply it.
     dormant_changed_filter: bool,
-    /// Whether the recursive workspace watch is in place.
-    watching_root: bool,
+    /// Truthful broad workspace observation state.
+    watch_status: watch::WatchStatus,
     /// Whether the dirty set missed a refresh, so the next one must
     /// walk the whole tree rather than build on it.
     status_stale: bool,
@@ -739,7 +742,12 @@ impl App {
         clippy::too_many_lines,
         reason = "App construction lists each independent viewer state field explicitly."
     )]
-    pub(crate) fn new(workspace: Workspace, width: usize, height: usize, options: Options) -> Self {
+    pub(crate) fn new(
+        mut workspace: Workspace,
+        width: usize,
+        height: usize,
+        options: Options,
+    ) -> Self {
         let Options {
             record,
             dirs,
@@ -757,13 +765,19 @@ impl App {
             user,
             config_path,
             shared_state_ancestor_count,
+            limits,
         } = options;
+        workspace.set_limits(limits);
         let toast_duration = watch.toast;
         let ignore = watch_ignore(&watch);
         let (thread_store_path, store_backing) = store_backing(store.as_ref(), &dirs, &record);
         let (activity_store, activity_cursor) = activity_observation(store.as_ref());
         let comparison = comparison::State::load(&dirs, &workspace, diff.compare());
-        let diff_mode = diff.mode;
+        let diff_mode = if !workspace.is_git() && !comparison.has_preference() {
+            DiffMode::Off
+        } else {
+            diff.mode
+        };
         let last_active_diff_mode = match diff_mode {
             DiffMode::Unified => DiffMode::Unified,
             DiffMode::Standard | DiffMode::Off => DiffMode::Standard,
@@ -835,8 +849,10 @@ impl App {
             diff_mode,
             last_active_diff_mode,
             off_target_paths: None,
+            tree_walk: background::Worker::new(files_pane::expand_tree),
+            tree_issue: None,
             dormant_changed_filter: false,
-            watching_root: true,
+            watch_status: watch::WatchStatus::default(),
             status_stale: false,
             walks: status_walk::Walks::new(),
             status: Status::default(),
@@ -1155,14 +1171,23 @@ impl App {
         }
     }
 
-    /// Whether every visible workspace directory is watched.
-    pub(crate) fn set_watching_root(&mut self, watching: bool) -> bool {
-        if self.watching_root == watching {
+    /// Update persistent broad workspace observation status.
+    pub(crate) fn set_watch_status(&mut self, status: watch::WatchStatus) -> bool {
+        if self.watch_status == status {
             return false;
         }
-        self.watching_root = watching;
-        if !watching {
-            self.notice("live updates degraded: workspace watch coverage is partial; retrying");
+        let notice = match &status {
+            watch::WatchStatus::Limited { reason, .. } => {
+                Some(format!("workspace watch coverage is partial: {reason}"))
+            }
+            watch::WatchStatus::Errored { reason, .. } => {
+                Some(format!("live updates errored: {reason}"))
+            }
+            watch::WatchStatus::Scanning { .. } | watch::WatchStatus::Complete { .. } => None,
+        };
+        self.watch_status = status;
+        if let Some(notice) = notice {
+            self.notice(notice);
         }
         true
     }
@@ -1188,6 +1213,7 @@ impl App {
             .collect();
         self.on_events(events);
         self.settle_status();
+        self.settle_background();
     }
 
     /// What one settled watcher batch did (ADR 0028). Loaded documents
@@ -1305,6 +1331,7 @@ impl App {
             self.relayout();
         }
         if !dirs.is_empty() {
+            self.sift_tree();
             for dir in dirs {
                 self.with_tree_result(|tree, workspace| {
                     tree.refresh_dir(workspace, &dir).map(|_| None)
@@ -1312,6 +1339,7 @@ impl App {
             }
             self.refresh_directory_selection();
         }
+        self.refresh_active_file_picker();
     }
 
     /// Reload append-only state files that another process changed.
@@ -1367,6 +1395,7 @@ impl App {
         self.file_index.clear();
         self.all_index.clear();
         self.with_tree_result(|tree, workspace| tree.refresh(workspace).map(|()| None));
+        self.refresh_active_file_picker();
     }
 
     /// Re-read the ignore rules when `events` name an ignore or attribute
@@ -1426,8 +1455,8 @@ impl App {
     /// last content under a banner (ADR 0028); a directory takes every
     /// document under it along.
     fn on_removed(&mut self, relative: &Path) {
-        self.file_index.removed(relative);
-        self.all_index.removed(relative);
+        self.file_index.removed(&mut self.workspace, relative);
+        self.all_index.removed(&mut self.workspace, relative);
         let root = self.workspace.root().to_path_buf();
         for index in 0..self.docs.len() {
             let doc = &mut self.docs[index];
@@ -1450,8 +1479,8 @@ impl App {
     /// and thread paths are projected locally without rewriting the board.
     fn on_renamed(&mut self, from: &Path, to: &Path) {
         tracing::info!(from = %from.display(), to = %to.display(), "renamed");
-        self.file_index.removed(from);
-        self.all_index.removed(from);
+        self.file_index.removed(&mut self.workspace, from);
+        self.all_index.removed(&mut self.workspace, from);
         self.file_index.seen(&mut self.workspace, to);
         self.all_index.seen(&mut self.workspace, to);
         let root = self.workspace.root().to_path_buf();
@@ -1535,10 +1564,14 @@ impl App {
     /// to start is reported and leaves it to be walked next time.
     fn refresh_status(&mut self) {
         if !self.workspace.is_git() {
-            self.take_status(Ok(Status::default()));
+            self.status = Status::default();
+            self.status_stale = false;
             return;
         }
-        if let Err(error) = self.walks.start(self.workspace.root().to_path_buf()) {
+        if let Err(error) = self.walks.start(
+            self.workspace.root().to_path_buf(),
+            self.workspace.limits().clone(),
+        ) {
             self.status_stale = true;
             self.notice(format!("git status: cannot start the walk: {error}"));
         }
@@ -1549,15 +1582,24 @@ impl App {
     /// the paths it touched, never a walk of the tree. A walk in flight
     /// examines them again when it lands.
     fn refresh_status_for(&mut self, changed: &[PathBuf]) {
-        self.walks.note_changed(changed);
-        if self.status_stale {
-            if !self.walks.in_flight() {
-                self.refresh_status();
-            }
+        if !self.workspace.is_git() {
             return;
         }
-        let result = self.workspace.status_after(&self.status, changed);
-        self.take_status(result);
+        if self.status_stale {
+            self.refresh_status();
+            return;
+        }
+        if let Err(error) = self.walks.incremental(
+            self.workspace.root().to_path_buf(),
+            self.workspace.limits().clone(),
+            self.status.clone(),
+            changed,
+        ) {
+            self.status_stale = true;
+            self.notice(format!(
+                "git status: cannot start incremental scan: {error}"
+            ));
+        }
     }
 
     /// The next full walk's result, when it lands.
@@ -1569,16 +1611,9 @@ impl App {
     /// are examined again on it, so nothing written meanwhile is lost.
     /// An older walk's result, superseded by a newer one, is dropped.
     pub(crate) fn on_walked(&mut self, walked: status_walk::Walked) {
-        let Some((result, changed)) = self.walks.accept(walked) else {
+        let Some(result) = self.walks.accept(walked) else {
             return;
         };
-        let result = result.and_then(|status| {
-            if changed.is_empty() {
-                Ok(status)
-            } else {
-                self.workspace.status_after(&status, &changed)
-            }
-        });
         self.take_status(result);
     }
 
@@ -2451,6 +2486,7 @@ impl App {
                     tree.set_virtual_paths(&status, self.comparison_virtual_paths());
                 }
                 self.tree = Some(tree);
+                self.tree_issue = self.workspace.listing_incomplete().map(ToString::to_string);
                 self.refresh_review_paths();
                 true
             }
@@ -2582,6 +2618,113 @@ impl App {
         tracing::info!(?kind, items = items.len(), "picker opened");
         self.park_draft();
         self.popup = Some(Popup::Picker(PickerState::scoped(kind, items, scope)));
+        self.refresh_picker_coverage();
+    }
+
+    fn refresh_picker_coverage(&mut self) {
+        let incomplete = match self.popup.as_ref() {
+            Some(Popup::Picker(picker)) if picker.kind == PickerKind::Files => {
+                self.file_index.incomplete()
+            }
+            Some(Popup::Picker(picker)) if picker.kind == PickerKind::AllFiles => {
+                self.all_index.incomplete()
+            }
+            _ => return,
+        }
+        .map(str::to_owned);
+        if let Some(Popup::Picker(picker)) = &mut self.popup {
+            picker.scope = incomplete;
+        }
+    }
+
+    pub(crate) fn background_pending(&self) -> bool {
+        self.comparison.pending()
+            || self.file_index.pending()
+            || self.all_index.pending()
+            || self.tree_walk.pending()
+    }
+
+    fn refresh_active_file_picker(&mut self) {
+        let kind = match &self.popup {
+            Some(Popup::Picker(picker)) => picker.kind,
+            _ => return,
+        };
+        if !matches!(kind, PickerKind::Files | PickerKind::AllFiles) {
+            return;
+        }
+        let files = self.index(if kind == PickerKind::Files {
+            Filter::Visible
+        } else {
+            Filter::All
+        });
+        if let Some(Popup::Picker(picker)) = &mut self.popup {
+            picker.picker = Picker::new(files);
+            picker.requery();
+        }
+        self.refresh_picker_coverage();
+    }
+
+    pub(crate) fn poll_background(&mut self) -> bool {
+        let tree_changed = match self.tree_walk.poll() {
+            Ok(Some(result)) => {
+                if let Some(tree) = result.tree {
+                    self.tree = Some(tree);
+                    self.scroll_tree();
+                    self.refresh_directory_selection();
+                }
+                self.tree_issue = result.incomplete;
+                true
+            }
+            Ok(None) => false,
+            Err(error) => {
+                self.tree_issue = Some(error.to_string());
+                true
+            }
+        };
+        let compared = self.comparison.poll();
+        if compared {
+            if let Some(mode) = self.comparison.restore_mode.take() {
+                if self.comparison.error().is_none() {
+                    self.activate_diff_mode(mode);
+                } else if let Some(error) = self.comparison.error().map(str::to_owned) {
+                    self.notice(error);
+                }
+            } else if self.diff_mode != DiffMode::Off {
+                self.apply_refreshed_comparison(false);
+            }
+        }
+        let target = self.comparison.poll_paths();
+        let target_changed = target.is_some();
+        if let Some(result) = target {
+            match result {
+                Ok(paths) => {
+                    self.off_target_paths = Some(paths);
+                    self.finish_off_target();
+                }
+                Err(error) => {
+                    for index in 0..self.docs.len() {
+                        self.clear_off_projection(index, Some(error.clone()));
+                    }
+                    self.notice(error);
+                }
+            }
+        }
+        let indexed = self.file_index.poll() | self.all_index.poll();
+        if indexed || compared || target_changed {
+            self.refresh_active_file_picker();
+        }
+        tree_changed || indexed || compared || target_changed
+    }
+
+    #[cfg(test)]
+    pub(crate) fn settle_background(&mut self) {
+        self.settle_status();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.background_pending() {
+            assert!(Instant::now() < deadline, "workspace scan did not finish");
+            self.poll_background();
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 
     fn index(&mut self, filter: Filter) -> Vec<String> {
@@ -2765,6 +2908,8 @@ fn on_this_side(event: watch::Event, root: &Path) -> Option<watch::Event> {
 /// Everything [`App::new`] needs beyond the workspace and terminal size.
 #[derive(Debug)]
 pub(crate) struct Options {
+    /// Finite recursive-work and buffering budgets.
+    pub(crate) limits: fathomable_core::config::LimitsConfig,
     /// This viewer's record, already written to the viewers directory.
     pub(crate) record: Record,
     /// Where persistent application state lives.
@@ -2805,6 +2950,7 @@ impl Options {
     pub(crate) fn for_test(root: PathBuf) -> Self {
         use fathomable_core::session::Id;
         Self {
+            limits: fathomable_core::config::LimitsConfig::default(),
             record: Record::new(Id::mint(), root.clone(), root),
             // Isolate each test process from older runs' state and permissions.
             dirs: XdgDirs::resolve(|name| {
@@ -2838,5 +2984,7 @@ impl Options {
 
 #[cfg(test)]
 mod render_integrity_tests;
+#[cfg(test)]
+mod resource_tests;
 #[cfg(test)]
 mod tests;

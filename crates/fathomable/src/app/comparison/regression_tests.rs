@@ -87,6 +87,7 @@ fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()
         .build()?;
 
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     let rendered = screen(&app)?;
     assert!(
         rendered
@@ -134,6 +135,7 @@ fn selecting_an_endpoint_refreshes_the_comparison_once() -> anyhow::Result<()> {
     let refreshes = app.comparison.refresh_count();
 
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
+    app.settle_background();
 
     assert_eq!(app.comparison.refresh_count(), refreshes.wrapping_add(1));
     Ok(())
@@ -194,6 +196,7 @@ fn branch_picker_mouse_hovers_clicks_and_wheels() -> anyhow::Result<()> {
     app.toggle_sidebar();
     assert!(app.sidebar_width() > 0, "the Files pane is visible");
     app.open_picker(PickerKind::ComparisonBranches(ComparisonSide::Base));
+    app.settle_background();
 
     let Some(Popup::Picker(picker)) = app.popup() else {
         return Err(anyhow::anyhow!("branch picker"));
@@ -300,6 +303,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     let mut app = menu_app(&root, &points)?;
 
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     let items = picker_items(&app);
     assert_eq!(
         &items[..7],
@@ -316,6 +320,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     assert!(super::commit_id_from_row(&items[7]).is_some());
 
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     app.picker_move(3);
     app.picker_confirm();
     assert!(matches!(
@@ -339,6 +344,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
         ("Tag v1".to_owned(), "WorkingTree".to_owned())
     );
     app.open_picker(PickerKind::ComparisonTags(ComparisonSide::Base));
+    app.settle_background();
     assert!(
         screen(&app)?
             .iter()
@@ -366,6 +372,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     assert!(app.popup().is_none());
 
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     app.picker_move(4);
     app.picker_confirm();
     app.picker_confirm();
@@ -397,12 +404,14 @@ fn comparison_picker_distinguishes_index_from_head() -> anyhow::Result<()> {
         .build()?;
 
     app.open_picker(PickerKind::ComparisonTarget);
+    app.settle_background();
     assert!(!picker_items(&app).contains(&"Review points...".to_owned()));
     app.picker_move(1);
     app.picker_confirm();
     assert_eq!(app.comparison.target(), &ComparisonEndpoint::Index);
 
     app.open_picker(PickerKind::ComparisonTarget);
+    app.settle_background();
     assert!(
         screen(&app)?
             .iter()
@@ -428,6 +437,7 @@ fn moved_tag_alias_falls_back_to_the_pinned_commit() -> anyhow::Result<()> {
     git::tag(&root, "v1")?;
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open_picker(PickerKind::ComparisonBase);
+    app.settle_background();
     app.picker_move(3);
     app.picker_confirm();
     app.picker_confirm();
@@ -436,6 +446,7 @@ fn moved_tag_alias_falls_back_to_the_pinned_commit() -> anyhow::Result<()> {
     git::commit_and_stage(&root, &[("a.txt", "two\n")])?;
     git::retag(&root, "v1")?;
     app.refresh_comparison();
+    app.settle_background();
 
     assert_eq!(
         app.comparison.base(),
@@ -456,15 +467,18 @@ fn moved_target_tag_alias_falls_back_while_off() -> anyhow::Result<()> {
     git::tag(&root, "v1")?;
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.select_diff_mode(DiffMode::Off);
+    app.settle_background();
     app.set_comparison_target_aliased(
         ComparisonEndpoint::Commit(CommitId::parse(&first)?),
         Some(EndpointAlias::Tag("v1".to_owned())),
     );
+    app.settle_background();
     assert_eq!(app.comparison_menu_pair().1, "Tag v1");
 
     git::commit_and_stage(&root, &[("a.txt", "two\n")])?;
     git::retag(&root, "v1")?;
     app.refresh_comparison();
+    app.settle_background();
 
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert_eq!(app.comparison_menu_pair().1, first[..7]);
@@ -514,6 +528,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("a.txt"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     let before: Vec<String> = app
         .view()
         .layout()
@@ -526,6 +541,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     let original_mode = fs::metadata(&file)?.permissions().mode();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o0))?;
     app.refresh_comparison();
+    app.settle_background();
     fs::set_permissions(&file, fs::Permissions::from_mode(original_mode))?;
 
     assert!(app.comparison.stale());
@@ -546,7 +562,9 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     let index = app.current.ok_or_else(|| anyhow::anyhow!("no document"))?;
     assert!(app.reload_doc(index).is_some());
     app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.settle_background();
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     assert_eq!(
         app.view()
             .layout()
@@ -558,6 +576,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
         "watcher reloads must not mix new bytes into a stale comparison"
     );
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
     assert_eq!(app.view().text(), "three\n");
     assert!(!app.view().diff_view());
@@ -583,13 +602,16 @@ fn off_clears_stale_unified_when_the_target_read_also_fails() -> anyhow::Result<
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("a.txt"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
 
     let file = root.join("a.txt");
     let original_mode = fs::metadata(&file)?.permissions().mode();
     fs::set_permissions(&file, fs::Permissions::from_mode(0o0))?;
     app.refresh_comparison();
+    app.settle_background();
     assert!(app.comparison.stale());
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
     fs::set_permissions(&file, fs::Permissions::from_mode(original_mode))?;
 
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
@@ -617,6 +639,7 @@ fn off_uses_only_target_with_review_point_or_unavailable_base() -> anyhow::Resul
         .review_points(dir.0.join("points"))
         .build()?;
     app.save_review_point(Some("captured"));
+    app.settle_background();
     let point = app
         .review_points
         .as_ref()
@@ -631,8 +654,11 @@ fn off_uses_only_target_with_review_point_or_unavailable_base() -> anyhow::Resul
 
     app.open(Path::new("a.txt"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
     app.set_comparison_base(ComparisonEndpoint::ReviewPoint(point));
+    app.settle_background();
     assert_eq!(
         app.diff_mode(),
         fathomable_core::config::DiffMode::Off,
@@ -643,18 +669,22 @@ fn off_uses_only_target_with_review_point_or_unavailable_base() -> anyhow::Resul
     let unavailable =
         ComparisonEndpoint::Commit(CommitId::parse("0000000000000000000000000000000000000000")?);
     app.set_comparison_base(unavailable);
+    app.settle_background();
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
     assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
     assert!(!app.view().text().contains("BASE_SENTINEL"));
     assert!(!app.view().text().contains("REVIEW_POINT_SENTINEL"));
 
     app.set_comparison_base(ComparisonEndpoint::ReviewPoint("missing-point".to_owned()));
+    app.settle_background();
     assert_eq!(app.diff_mode(), fathomable_core::config::DiffMode::Off);
     assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
 
     app.set_comparison_target(ComparisonEndpoint::WorkingTree);
+    app.settle_background();
     fs::write(root.join("a.txt"), "REFRESHED_TARGET_SENTINEL\n")?;
     app.refresh_comparison();
+    app.settle_background();
     assert_eq!(app.view().text(), "REFRESHED_TARGET_SENTINEL\n");
     Ok(())
 }
@@ -698,12 +728,16 @@ fn off_target_only_holds_across_recent_jumplist_and_review_jumps() -> anyhow::Re
         })
         .build()?;
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&base)?));
+    app.settle_background();
     app.set_comparison_target(ComparisonEndpoint::Commit(CommitId::parse(&target)?));
+    app.settle_background();
     app.open(Path::new("gone.md"));
     app.open(Path::new("stay.md"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Off);
+    app.settle_background();
 
     app.open_picker(PickerKind::Recent);
+    app.settle_background();
     app.picker_move(1);
     app.picker_confirm();
     assert_target_absent_without_base(&app);
@@ -759,13 +793,18 @@ fn deleting_an_open_untracked_file_clears_its_cached_diff() -> anyhow::Result<()
     let mut app = AppBuilder::at(&root).unopened().build()?;
     app.open(Path::new("scratch.txt"));
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
     assert_eq!(app.view().pair_counts(), Some((1, 0)));
 
     fs::remove_file(root.join("scratch.txt"))?;
     app.on_removed(Path::new("scratch.txt"));
+    app.settle_background();
     app.refresh_comparison();
+    app.settle_background();
     app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.settle_background();
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
+    app.settle_background();
 
     assert!(!app.comparison.stale());
     assert_eq!(app.view().pair_counts(), Some((0, 0)));

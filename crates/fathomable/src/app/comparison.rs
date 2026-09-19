@@ -5,6 +5,7 @@
 //! render the projection of that selection; they do not select their own
 //! pair of endpoints.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -19,10 +20,129 @@ use fathomable_core::workspace::{
 use serde::{Deserialize, Serialize};
 
 use super::App;
+use super::background::Worker;
 use super::diff::{DiffBody, Text};
 
 const PREFERENCE_FILE: &str = "comparison.json";
 const COMMIT_PICKER_LIMIT: usize = 500;
+
+#[derive(Debug)]
+struct Request {
+    root: PathBuf,
+    base: ComparisonEndpoint,
+    target: ComparisonEndpoint,
+    review_points: Option<PathBuf>,
+    limits: fathomable_core::config::LimitsConfig,
+    compare: Compare,
+}
+
+#[derive(Debug)]
+struct Computed {
+    comparison: Comparison,
+    counts: HashMap<PathBuf, (usize, usize)>,
+}
+
+#[derive(Debug)]
+struct TargetRequest {
+    root: PathBuf,
+    endpoint: ComparisonEndpoint,
+    limits: fathomable_core::config::LimitsConfig,
+}
+
+fn target_paths(
+    request: TargetRequest,
+    cancellation: fathomable_core::workspace::Cancellation,
+) -> Result<Vec<PathBuf>, String> {
+    let mut workspace = Workspace::discover(request.root).map_err(|error| error.to_string())?;
+    workspace.set_limits(request.limits);
+    workspace.set_cancellation(cancellation);
+    workspace
+        .endpoint_paths(&request.endpoint)
+        .map_err(|error| error.to_string())
+}
+
+fn compute(
+    request: Request,
+    cancellation: fathomable_core::workspace::Cancellation,
+) -> Result<Computed, String> {
+    let mut workspace = Workspace::discover(&request.root).map_err(|error| error.to_string())?;
+    workspace.set_limits(request.limits);
+    workspace.set_cancellation(cancellation);
+    let store = request
+        .review_points
+        .map(ReviewPointStore::open)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    let comparison = match (&request.base, &request.target) {
+        (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => {
+            let store = store
+                .as_ref()
+                .ok_or_else(|| format!("review point {id} is unavailable"))?;
+            let point = store
+                .get(id)
+                .ok_or_else(|| format!("review point {id} is unavailable"))?;
+            store
+                .compare_to_working(point, &mut workspace)
+                .map_err(|error| error.to_string())?
+        }
+        (ComparisonEndpoint::ReviewPoint(_), _) | (_, ComparisonEndpoint::ReviewPoint(_)) => {
+            return Err("review points compare only against the working tree".to_owned());
+        }
+        _ => workspace
+            .compare(request.base.clone(), request.target.clone())
+            .map_err(|error| error.to_string())?,
+    };
+    let mut counts = HashMap::new();
+    for change in comparison.changes() {
+        if change.kind() == PathChangeKind::Missing {
+            let detail = match (change.base(), change.target()) {
+                (PathState::Missing(detail), _) | (_, PathState::Missing(detail)) => {
+                    detail.as_str()
+                }
+                _ => "comparison content unavailable",
+            };
+            return Err(format!("{}: {detail}", change.path().display()));
+        }
+        if matches!(
+            change.kind(),
+            PathChangeKind::Binary | PathChangeKind::Unsupported
+        ) {
+            continue;
+        }
+        let text = |endpoint: &ComparisonEndpoint| -> Result<Option<String>, String> {
+            if let ComparisonEndpoint::ReviewPoint(id) = endpoint {
+                let store = store
+                    .as_ref()
+                    .ok_or_else(|| format!("review point {id} is unavailable"))?;
+                let point = store
+                    .get(id)
+                    .ok_or_else(|| format!("review point {id} is unavailable"))?;
+                store
+                    .load_bytes(point, &workspace, change.path())
+                    .map_err(|error| error.to_string())?
+                    .map_or(Ok(None), |bytes| Ok(String::from_utf8(bytes).ok()))
+            } else {
+                workspace
+                    .endpoint_bytes(endpoint, change.path())
+                    .map_err(|error| error.to_string())
+                    .map(|bytes| bytes.and_then(|bytes| String::from_utf8(bytes).ok()))
+            }
+        };
+        let base = text(&request.base)?;
+        let target = text(&request.target)?;
+        let count = match (base, target) {
+            (Some(base), Some(target)) => {
+                fathomable_core::diff::Diff::compare(&base, &target, request.compare.whitespace)
+                    .counts()
+            }
+            (None, Some(target)) => (target.lines().count(), 0),
+            (Some(base), None) => (0, base.lines().count()),
+            (None, None) => (0, 0),
+        };
+        counts.insert(change.path().to_path_buf(), count);
+    }
+    Ok(Computed { comparison, counts })
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "kind", content = "name")]
@@ -54,6 +174,12 @@ pub(crate) struct State {
     observed_head: Option<String>,
     current: Option<Comparison>,
     error: Option<String>,
+    worker: Worker<Request, Result<Computed, String>>,
+    counts: HashMap<PathBuf, (usize, usize)>,
+    annotation_frozen: bool,
+    refresh_deferred: bool,
+    pub(super) restore_mode: Option<DiffMode>,
+    target_worker: Worker<TargetRequest, Result<Vec<PathBuf>, String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +217,12 @@ impl State {
             observed_head: workspace.head_commit(),
             current: None,
             error: None,
+            worker: Worker::new(compute),
+            counts: HashMap::new(),
+            annotation_frozen: false,
+            refresh_deferred: false,
+            restore_mode: None,
+            target_worker: Worker::new(target_paths),
         };
         if let Err(error) = dirs.prepare_state_dir(&preference_dir) {
             state.error = Some(format!("comparison preference unavailable: {error}"));
@@ -167,7 +299,9 @@ impl State {
 
     /// The last successfully computed effective comparison.
     pub(crate) fn current(&self) -> Option<&Comparison> {
-        self.current.as_ref()
+        self.current
+            .as_ref()
+            .filter(|current| current.base() == &self.base && current.target() == &self.target)
     }
 
     /// A visible error from the newest refresh, if any.
@@ -182,6 +316,7 @@ impl State {
 
     /// Record a refresh failure while retaining the last successful result.
     pub(crate) fn record_error(&mut self, error: String) {
+        self.cancel();
         self.error = Some(error);
     }
 
@@ -217,58 +352,117 @@ impl State {
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
+        if self.defer_refresh_for_annotation() {
+            return;
+        }
+        self.target_worker.cancel();
         let aliases_changed = self.validate_aliases(workspace);
-        let result = match (&self.base, &self.target) {
-            (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => review_points
-                .ok_or_else(|| format!("review point {id} is unavailable"))
-                .and_then(|store| {
-                    store
-                        .get(id)
-                        .ok_or_else(|| format!("review point {id} is unavailable"))
-                        .and_then(|point| {
-                            store
-                                .compare_to_working(point, workspace)
-                                .map_err(|error| error.to_string())
-                        })
-                }),
-            (ComparisonEndpoint::ReviewPoint(_), _) | (_, ComparisonEndpoint::ReviewPoint(_)) => {
-                Err("review points compare only against the working tree".to_owned())
-            }
-            _ => workspace
-                .compare(self.base.clone(), self.target.clone())
-                .map_err(|error| error.to_string()),
-        };
-        let result = result.and_then(|comparison| {
-            let unavailable = comparison
-                .changes()
-                .iter()
-                .find(|change| change.kind() == PathChangeKind::Missing)
-                .map(|change| {
-                    let detail = match (change.base(), change.target()) {
-                        (PathState::Missing(detail), _) | (_, PathState::Missing(detail)) => detail,
-                        _ => "comparison endpoint content is unavailable",
-                    };
-                    format!("{}: {detail}", change.path().display())
-                });
-            unavailable.map_or(Ok(comparison), Err)
-        });
-        match result {
-            Ok(comparison) => {
-                self.current = Some(comparison);
-                self.error = None;
-                if aliases_changed || !self.persisted {
-                    self.persist();
-                }
-            }
-
-            Err(error) => {
-                self.error = Some(error);
-                if aliases_changed {
-                    self.persist();
-                }
-            }
+        self.error = Some("comparison scanning; coverage is incomplete".to_owned());
+        if let Err(error) = self.worker.submit(Request {
+            root: workspace.root().to_path_buf(),
+            base: self.base.clone(),
+            target: self.target.clone(),
+            review_points: review_points.map(|store| store.dir().to_path_buf()),
+            limits: workspace.limits().clone(),
+            compare: self.compare,
+        }) {
+            self.error = Some(format!("cannot start comparison: {error}"));
+        }
+        if aliases_changed || !self.persisted {
+            self.persist();
         }
         self.observed_head = workspace.head_commit();
+    }
+
+    pub(super) fn pending(&self) -> bool {
+        self.worker.pending() || self.target_worker.pending()
+    }
+
+    pub(super) fn cancel(&mut self) {
+        self.worker.cancel();
+        self.target_worker.cancel();
+        self.restore_mode = None;
+    }
+
+    pub(super) fn freeze_for_annotation(&mut self) {
+        self.refresh_deferred |= self.pending();
+        self.annotation_frozen = true;
+        self.cancel();
+    }
+
+    pub(super) fn unfreeze_after_annotation(&mut self) -> bool {
+        self.annotation_frozen = false;
+        std::mem::take(&mut self.refresh_deferred)
+    }
+
+    pub(super) fn defer_refresh_for_annotation(&mut self) -> bool {
+        if self.annotation_frozen {
+            self.refresh_deferred = true;
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn refresh_paths(&mut self, workspace: &Workspace) {
+        if self.defer_refresh_for_annotation() {
+            return;
+        }
+        self.cancel();
+        self.error = Some("Target paths scanning; coverage is incomplete".to_owned());
+        if let Err(error) = self.target_worker.submit(TargetRequest {
+            root: workspace.root().to_path_buf(),
+            endpoint: self.target.clone(),
+            limits: workspace.limits().clone(),
+        }) {
+            self.error = Some(format!("cannot start Target discovery: {error}"));
+        }
+    }
+
+    pub(super) fn poll_paths(&mut self) -> Option<Result<Vec<PathBuf>, String>> {
+        match self.target_worker.poll() {
+            Ok(Some(result)) => {
+                self.error = result.as_ref().err().cloned();
+                Some(result)
+            }
+            Ok(None) => None,
+            Err(error) => {
+                let error = error.to_string();
+                self.error = Some(error.clone());
+                Some(Err(error))
+            }
+        }
+    }
+
+    pub(super) fn reload(&mut self, dirs: &fathomable_core::XdgDirs, workspace: &Workspace) {
+        self.cancel();
+        let mut next = Self::load(dirs, workspace, self.compare);
+        std::mem::swap(&mut next.worker, &mut self.worker);
+        std::mem::swap(&mut next.target_worker, &mut self.target_worker);
+        *self = next;
+    }
+
+    pub(super) fn poll(&mut self) -> bool {
+        match self.worker.poll() {
+            Ok(Some(Ok(result))) => {
+                self.current = Some(result.comparison);
+                self.counts = result.counts;
+                self.error = None;
+                true
+            }
+            Ok(Some(Err(error))) => {
+                self.error = Some(error);
+                true
+            }
+            Err(error) => {
+                self.error = Some(error.to_string());
+                true
+            }
+            Ok(None) => false,
+        }
+    }
+
+    pub(super) const fn has_preference(&self) -> bool {
+        self.persisted
     }
 
     pub(crate) fn set_base_aliased(
@@ -543,6 +737,24 @@ impl App {
         self.comparison.current()
     }
 
+    /// Whether displayed comparison content matches the selected endpoints.
+    pub(in crate::app) fn annotation_projection_matches_selection(&self) -> bool {
+        if self.comparison.restore_mode.is_some() {
+            return false;
+        }
+        let Some(doc) = self.current.and_then(|index| self.docs.get(index)) else {
+            return false;
+        };
+        if self.diff_mode == DiffMode::Off {
+            return doc.comparison_notice.is_none()
+                && (self.comparison.target() == &ComparisonEndpoint::WorkingTree
+                    || (!self.comparison.target_worker.pending()
+                        && self.comparison.error().is_none()));
+        }
+        self.comparison.current().is_some()
+            && (self.plain_default_comparison() || doc.view.comparison_projection_ready())
+    }
+
     /// Whether the content currently projected follows the working tree.
     pub(crate) fn displayed_target_is_working_tree(&self) -> bool {
         if self.diff_mode == DiffMode::Off {
@@ -633,10 +845,34 @@ impl App {
                 self.comparison.target()
             )
         };
-        if self.comparison.stale() {
+        if self.comparison.pending() {
+            badge.push_str(" · scanning");
+        } else if self
+            .comparison
+            .error()
+            .is_some_and(|error| error.contains("limited"))
+        {
+            badge.push_str(" · limited");
+        } else if self.comparison.stale() {
             badge.push_str(" · stale");
         } else if self.comparison.error().is_some() {
             badge.push_str(" · error");
+        }
+        if self.tree_issue.is_some()
+            || self
+                .tree
+                .as_ref()
+                .is_some_and(fathomable_core::tree::Tree::discovery_limited)
+        {
+            badge.push_str(" · files partial");
+        }
+        match &self.watch_status {
+            super::watch::WatchStatus::Scanning { generation, .. } if *generation != 0 => {
+                badge.push_str(" · watch scanning");
+            }
+            super::watch::WatchStatus::Limited { .. } => badge.push_str(" · watch limited"),
+            super::watch::WatchStatus::Errored { .. } => badge.push_str(" · watch error"),
+            _ => {}
         }
         badge
     }
@@ -875,6 +1111,7 @@ impl App {
             return;
         }
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
+        self.comparison.restore_mode = restore;
         self.comparison.set_base_aliased(
             endpoint,
             alias,
@@ -930,6 +1167,7 @@ impl App {
         target_alias: Option<EndpointAlias>,
     ) -> (bool, bool) {
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);
+        self.comparison.restore_mode = restore;
         let persisted = self.comparison.set_endpoints_aliased(
             base,
             base_alias,
@@ -938,7 +1176,7 @@ impl App {
             &mut self.workspace,
             self.review_points.as_ref(),
         );
-        let available = self.comparison.error().is_none();
+        let available = self.comparison.error().is_none() || self.comparison.pending();
         if let Some(error) = self.comparison.error().map(str::to_owned) {
             self.notice(error);
         } else if let Some(mode) = restore {
@@ -1088,8 +1326,22 @@ impl App {
         comparison
             .changes()
             .iter()
-            .filter(|change| !self.workspace.root().join(change.path()).is_file())
-            .map(|change| change.path().to_path_buf())
+            .map(fathomable_core::diff::PathChange::path)
+            // A selected deletion must survive until its background comparison lands.
+            .chain(
+                self.tree
+                    .as_ref()
+                    .and_then(|tree| tree.current())
+                    .map(fathomable_core::tree::Row::path)
+                    .filter(|path| {
+                        comparison
+                            .target_paths()
+                            .iter()
+                            .any(|target| target == path)
+                    }),
+            )
+            .filter(|path| !self.workspace.root().join(path).is_file())
+            .map(Path::to_path_buf)
             .collect()
     }
 
@@ -1131,23 +1383,11 @@ impl App {
     }
 
     fn comparison_line_counts(&self, path: &Path) -> Result<(usize, usize), String> {
-        let comparison = self
-            .comparison
-            .current()
-            .ok_or_else(|| "comparison unavailable".to_owned())?;
-        let base = self.comparison_endpoint_text(comparison.base(), path)?;
-        let target = self.comparison_endpoint_text(comparison.target(), path)?;
-        match (base, target) {
-            (Some(base), Some(target)) => Ok(fathomable_core::diff::Diff::compare(
-                &base,
-                &target,
-                self.comparison.compare().whitespace,
-            )
-            .counts()),
-            (None, Some(target)) => Ok((target.lines().count(), 0)),
-            (Some(base), None) => Ok((0, base.lines().count())),
-            (None, None) => Ok((0, 0)),
-        }
+        self.comparison
+            .counts
+            .get(path)
+            .copied()
+            .ok_or_else(|| "comparison line counts unavailable".to_owned())
     }
 
     /// Update a loaded view to the selected target and base.

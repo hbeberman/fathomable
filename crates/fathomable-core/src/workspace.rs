@@ -25,12 +25,15 @@
 //! # Ok::<(), fathomable_core::workspace::WorkspaceError>(())
 //! ```
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
 use gix::ObjectId;
 use gix::bstr::{BString, ByteSlice};
@@ -42,6 +45,44 @@ use gix::worktree::stack::state::ignore::Source;
 use crate::content::{self, Attr};
 use crate::diff::{Comparison, Diff, FileMode, PathChange, PathInfo, PathState};
 use crate::status::{self, Changes, State, Status};
+
+/// Cooperative cancellation of a workspace scan, without joining its thread.
+#[derive(Debug, Clone, Default)]
+pub struct Cancellation(Arc<AtomicBool>);
+
+impl Cancellation {
+    /// Ask the scan to stop before its next entry or content read.
+    pub fn cancel(&self) {
+        self.0.store(true, AtomicOrdering::Relaxed);
+    }
+
+    /// Whether cancellation has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(AtomicOrdering::Relaxed)
+    }
+}
+
+/// Bounded discovery results, including why enumeration stopped early.
+#[derive(Debug)]
+pub struct Discovery {
+    paths: Vec<String>,
+    incomplete: Option<WorkspaceError>,
+}
+
+impl Discovery {
+    /// Discovered root-relative file paths.
+    #[must_use]
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// The limit, cancellation, or filesystem error preventing complete coverage.
+    #[must_use]
+    pub fn incomplete(&self) -> Option<&WorkspaceError> {
+        self.incomplete.as_ref()
+    }
+}
 
 /// One directory entry, as the tree pane shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,12 +130,6 @@ pub enum Filter {
     Visible,
     /// Hide only `.git`.
     All,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Listing {
-    BestEffort,
-    Complete,
 }
 
 /// One repository commit discovered or resolved by the workspace.
@@ -321,6 +356,11 @@ pub struct Workspace {
     /// git common dir, or the root outside git.
     key: PathBuf,
     ignore: Option<Ignore>,
+    limits: crate::config::LimitsConfig,
+    cancellation: Cancellation,
+    content_remaining: Cell<Option<u64>>,
+    listing_incomplete: Option<WorkspaceError>,
+    listing_examined: Option<usize>,
 }
 
 struct Ignore {
@@ -335,9 +375,10 @@ impl fmt::Debug for Workspace {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Workspace")
             .field("root", &self.root)
+            .field("limits", &self.limits)
             .field("key", &self.key)
             .field("git", &self.ignore.is_some())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -382,6 +423,11 @@ impl Workspace {
                         root,
                         key,
                         ignore: Some(ignore),
+                        limits: crate::config::LimitsConfig::default(),
+                        cancellation: Cancellation::default(),
+                        content_remaining: Cell::new(None),
+                        listing_incomplete: None,
+                        listing_examined: None,
                     })
                 }
                 None => Ok(Self::plain(dir)),
@@ -399,7 +445,101 @@ impl Workspace {
             key: root.clone(),
             root,
             ignore: None,
+            limits: crate::config::LimitsConfig::default(),
+            cancellation: Cancellation::default(),
+            content_remaining: Cell::new(None),
+            listing_incomplete: None,
+            listing_examined: None,
         }
+    }
+
+    /// Configure finite discovery and comparison budgets for this workspace.
+    pub fn set_limits(&mut self, limits: crate::config::LimitsConfig) {
+        self.limits = limits;
+    }
+
+    /// The finite budgets used by this workspace.
+    #[must_use]
+    pub fn limits(&self) -> &crate::config::LimitsConfig {
+        &self.limits
+    }
+
+    /// Why a materialized directory listing is incomplete, if any.
+    #[must_use]
+    pub fn listing_incomplete(&self) -> Option<&WorkspaceError> {
+        self.listing_incomplete.as_ref()
+    }
+
+    pub(crate) fn clear_listing_issue(&mut self) {
+        self.listing_incomplete = None;
+    }
+
+    pub(crate) fn note_listing_limit(&mut self) {
+        self.listing_incomplete = Some(self.scan_error(
+            "directory listing limited by retained-path budget; coverage is incomplete",
+        ));
+    }
+
+    pub(crate) fn begin_listing_scan(&mut self) {
+        self.listing_examined = Some(0);
+        self.clear_listing_issue();
+    }
+
+    pub(crate) fn end_listing_scan(&mut self) {
+        self.listing_examined = None;
+    }
+
+    /// Attach cooperative cancellation to scans performed by this workspace.
+    pub fn set_cancellation(&mut self, cancellation: Cancellation) {
+        self.cancellation = cancellation;
+    }
+
+    fn scan_error(&self, message: impl Into<String>) -> WorkspaceError {
+        WorkspaceError {
+            path: self.root.clone(),
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn check_scan(&self) -> Result<(), WorkspaceError> {
+        if self.cancellation.is_cancelled() {
+            return Err(self.scan_error("scan cancelled; coverage is incomplete"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn check_path_count(&self, count: usize) -> Result<(), WorkspaceError> {
+        self.check_scan()?;
+        if count > self.limits.comparison_paths.min(self.limits.retained_paths) {
+            return Err(
+                self.scan_error("comparison limited by path budget; coverage is incomplete")
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn begin_comparison(&self) {
+        self.content_remaining
+            .set(Some(self.limits.comparison_bytes));
+    }
+
+    pub(crate) fn content_limit(&self) -> u64 {
+        self.content_remaining
+            .get()
+            .unwrap_or(self.limits.comparison_bytes)
+    }
+
+    pub(crate) fn charge_content(&self, bytes: usize) -> Result<(), WorkspaceError> {
+        self.check_scan()?;
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        if bytes > self.content_limit() {
+            return Err(self
+                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+        }
+        if let Some(remaining) = self.content_remaining.get() {
+            self.content_remaining.set(Some(remaining - bytes));
+        }
+        Ok(())
     }
 
     /// The absolute workspace root: the worktree this instance reads.
@@ -430,9 +570,9 @@ impl Workspace {
     }
 
     /// The paths a viewer watches for the worktree set and the other
-    /// worktrees' `HEAD`s moving (ADR 0070): the common dir, its `refs`,
-    /// its `worktrees/` registry, and each linked worktree's git dir;
-    /// none outside git.
+    /// worktrees' `HEAD`s moving (ADR 0070): the active git dir, common
+    /// dir, its `refs`, and its `worktrees/` registry. The viewer discovers
+    /// registry children with its bounded watcher; none are outside git.
     #[must_use]
     pub fn worktree_watch_paths(&self) -> Vec<PathBuf> {
         let Some(git) = self.ignore.as_ref() else {
@@ -440,14 +580,16 @@ impl Workspace {
         };
         let common = crate::worktrees::canonical(git.repo.common_dir());
         let registry = crate::worktrees::registry(&common);
-        let mut out = vec![common.clone(), common.join("refs")];
-        match std::fs::read_dir(&registry) {
-            Ok(entries) => {
-                out.push(registry);
-                out.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+        let mut out = Vec::with_capacity(4);
+        for path in [
+            crate::worktrees::canonical(git.repo.git_dir()),
+            common.clone(),
+            common.join("refs"),
+            registry,
+        ] {
+            if path.is_dir() && !out.contains(&path) {
+                out.push(path);
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(_) => out.push(registry),
         }
         out
     }
@@ -787,6 +929,7 @@ impl Workspace {
         base: ComparisonEndpoint,
         target: ComparisonEndpoint,
     ) -> Result<Comparison, WorkspaceError> {
+        self.begin_comparison();
         let base_files = self.endpoint_files(&base)?;
         let target_files = self.endpoint_files(&target)?;
         let target_paths = target_files
@@ -797,8 +940,10 @@ impl Workspace {
         let mut paths = BTreeSet::new();
         paths.extend(base_files.keys().cloned());
         paths.extend(target_files.keys().cloned());
+        self.check_path_count(paths.len())?;
         let mut changes = Vec::new();
         for path in paths {
+            self.check_scan()?;
             let base_file = base_files.get(&path);
             let target_file = target_files.get(&path);
             let mut base_state = base_file.map_or(PathState::Absent, |file| {
@@ -889,10 +1034,96 @@ impl Workspace {
         endpoint: &ComparisonEndpoint,
         relative: &Path,
     ) -> Result<Option<PathInfo>, WorkspaceError> {
-        Ok(self
-            .endpoint_files(endpoint)?
-            .remove(relative)
-            .map(|file| file.info))
+        self.check_scan()?;
+        let failure = |message: String| WorkspaceError {
+            path: self.root.join(relative),
+            message,
+        };
+        let (mode, size, object) = match endpoint {
+            ComparisonEndpoint::EmptyTree => return Ok(None),
+            ComparisonEndpoint::WorkingTree => {
+                let metadata = match fs::symlink_metadata(self.root.join(relative)) {
+                    Ok(metadata) => metadata,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                    Err(error) => {
+                        return Err(failure(format!(
+                            "cannot inspect working-tree path: {error}"
+                        )));
+                    }
+                };
+                (
+                    working_tree_mode(&metadata),
+                    metadata.is_file().then_some(metadata.len()),
+                    None,
+                )
+            }
+            ComparisonEndpoint::Commit(id) => {
+                let git = self.ignore.as_ref().ok_or_else(|| {
+                    failure("commit paths are unavailable outside a Git repository".to_owned())
+                })?;
+                let id = ObjectId::from_hex(id.as_str().as_bytes())
+                    .map_err(|error| failure(error.to_string()))?;
+                let commit = git
+                    .repo
+                    .find_commit(id)
+                    .map_err(|error| failure(format!("cannot read commit: {error}")))?;
+                let tree = commit
+                    .tree()
+                    .map_err(|error| failure(format!("cannot read commit tree: {error}")))?;
+                let Some(entry) = tree
+                    .lookup_entry_by_path(relative)
+                    .map_err(|error| failure(error.to_string()))?
+                else {
+                    return Ok(None);
+                };
+                let mode = tree_mode(entry.mode());
+                let size = if mode.is_supported() {
+                    Some(
+                        git.repo
+                            .find_header(entry.id())
+                            .map_err(|error| failure(error.to_string()))?
+                            .size(),
+                    )
+                } else {
+                    None
+                };
+                (mode, size, Some(entry.id().to_hex().to_string()))
+            }
+            ComparisonEndpoint::Index => {
+                let git = self.ignore.as_ref().ok_or_else(|| {
+                    failure("index paths are unavailable outside a Git repository".to_owned())
+                })?;
+                let index = git
+                    .repo
+                    .index_or_empty()
+                    .map_err(|error| failure(error.to_string()))?;
+                let path = unix_path(relative);
+                let Some(entry) = index.entry_by_path(path.as_ref()) else {
+                    return Ok(None);
+                };
+                let mode = index_mode(entry.mode);
+                let size = if mode.is_supported() {
+                    Some(
+                        git.repo
+                            .find_header(entry.id)
+                            .map_err(|error| failure(error.to_string()))?
+                            .size(),
+                    )
+                } else {
+                    None
+                };
+                (mode, size, Some(entry.id.to_hex().to_string()))
+            }
+            ComparisonEndpoint::ReviewPoint(id) => {
+                return Err(failure(format!(
+                    "review point {id} requires ReviewPointStore"
+                )));
+            }
+        };
+        Ok(Some(
+            PathInfo::new(mode, size, object, false)
+                .with_supported(endpoint_size_supported(mode, size)),
+        ))
     }
 
     /// Load endpoint bytes for one repository-relative path.
@@ -910,7 +1141,8 @@ impl Workspace {
         endpoint: &ComparisonEndpoint,
         relative: &Path,
     ) -> Result<Option<Vec<u8>>, WorkspaceError> {
-        match endpoint {
+        self.check_scan()?;
+        let bytes = match endpoint {
             ComparisonEndpoint::EmptyTree => Ok(None),
             ComparisonEndpoint::Commit(id) => self.commit_bytes(id, relative),
             ComparisonEndpoint::Index => self.index_endpoint_bytes(relative),
@@ -921,7 +1153,11 @@ impl Workspace {
                     "review point {id} requires ReviewPointStore to load endpoint content"
                 ),
             }),
+        }?;
+        if let Some(bytes) = &bytes {
+            self.charge_content(bytes.len())?;
         }
+        Ok(bytes)
     }
 
     /// Load endpoint UTF-8 text for one repository-relative path.
@@ -1112,6 +1348,18 @@ impl Workspace {
                 ),
             });
         }
+        let size = git
+            .repo
+            .find_header(entry.id())
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("cannot inspect commit blob: {error}"),
+            })?
+            .size();
+        if size > self.content_limit() {
+            return Err(self
+                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
+        }
         let object = entry.object().map_err(|error| WorkspaceError {
             path: self.root.join(relative),
             message: format!(
@@ -1143,6 +1391,18 @@ impl Workspace {
                 path: self.root.join(relative),
                 message: format!("index has an unsupported entry at {}", relative.display()),
             });
+        }
+        let size = git
+            .repo
+            .find_header(entry.id)
+            .map_err(|error| WorkspaceError {
+                path: self.root.join(relative),
+                message: format!("cannot inspect index blob: {error}"),
+            })?
+            .size();
+        if size > self.content_limit() {
+            return Err(self
+                .scan_error("comparison limited by content byte budget; coverage is incomplete"));
         }
         let object = git
             .repo
@@ -1178,12 +1438,25 @@ impl Workspace {
                 });
         }
         if metadata.is_file() {
-            return fs::read(&absolute)
-                .map(Some)
+            let limit = self.content_limit();
+            if metadata.len() > limit {
+                return Err(self.scan_error(
+                    "comparison limited by content byte budget; coverage is incomplete",
+                ));
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(&absolute)
+                .and_then(|file| file.take(limit.saturating_add(1)).read_to_end(&mut bytes))
                 .map_err(|error| WorkspaceError {
                     path: absolute,
                     message: format!("cannot read working-tree file: {error}"),
-                });
+                })?;
+            if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > limit {
+                return Err(self.scan_error(
+                    "comparison limited by content byte budget; coverage is incomplete",
+                ));
+            }
+            return Ok(Some(bytes));
         }
         Err(WorkspaceError {
             path: absolute,
@@ -1216,7 +1489,7 @@ impl Workspace {
             message: format!("cannot read tree of commit {}: {error}", id.short()),
         })?;
         let mut files = BTreeMap::new();
-        collect_endpoint_tree(&git.repo, &tree, Path::new(""), &mut files).map_err(|message| {
+        collect_endpoint_tree(self, &git.repo, &tree, &mut files).map_err(|message| {
             WorkspaceError {
                 path: self.root.clone(),
                 message: format!("cannot enumerate commit {}: {message}", id.short()),
@@ -1238,6 +1511,7 @@ impl Workspace {
         })?;
         let mut files = BTreeMap::new();
         for entry in index.entries() {
+            self.check_path_count(files.len().saturating_add(1))?;
             if entry.stage() != gix::index::entry::Stage::Unconflicted {
                 continue;
             }
@@ -1270,15 +1544,14 @@ impl Workspace {
                 path: self.root.clone(),
                 message: format!("cannot read index paths for working-tree endpoint: {error}"),
             })?;
-            paths.extend(
-                index
-                    .entries()
-                    .iter()
-                    .map(|entry| gix::path::from_bstr(entry.path(&index)).into_owned()),
-            );
+            for entry in index.entries() {
+                paths.insert(gix::path::from_bstr(entry.path(&index)).into_owned());
+                self.check_path_count(paths.len())?;
+            }
         }
         let mut files = BTreeMap::new();
         for relative in paths {
+            self.check_scan()?;
             let absolute = self.root.join(&relative);
             let metadata = match fs::symlink_metadata(&absolute) {
                 Ok(metadata) => metadata,
@@ -1305,6 +1578,7 @@ impl Workspace {
                         });
                 }
                 parent = directory.parent();
+                self.check_path_count(files.len())?;
             }
             files.insert(
                 relative,
@@ -1313,6 +1587,7 @@ impl Workspace {
                         .with_supported(endpoint_size_supported(mode, size)),
                 },
             );
+            self.check_path_count(files.len())?;
         }
         Ok(files)
     }
@@ -1615,6 +1890,8 @@ impl Workspace {
     ///
     /// Returns [`WorkspaceError`] when `HEAD` or the index cannot be read.
     pub fn status(&mut self) -> Result<Status, WorkspaceError> {
+        self.check_scan()?;
+        self.begin_comparison();
         let started = std::time::Instant::now();
         let Some(git) = self.ignore.as_ref() else {
             return Ok(Status::default());
@@ -1627,15 +1904,23 @@ impl Workspace {
             .repo
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
+        self.check_path_count(index.entries().len())?;
         let mut head: BTreeMap<BString, ObjectId> = BTreeMap::new();
         if let Some(tree) = head_tree_of(&git.repo).map_err(&fail)? {
-            collect_blobs(&tree, &mut BString::default(), &mut head)
-                .map_err(|error| fail(format!("cannot walk HEAD tree: {error}")))?;
+            collect_blobs(
+                &tree,
+                BString::default(),
+                &mut head,
+                &self.limits,
+                &self.cancellation,
+            )
+            .map_err(|error| fail(format!("cannot walk HEAD tree: {error}")))?;
         }
         let hash = git.repo.object_hash();
         let mut dirty: BTreeMap<BString, (Option<State>, Option<State>)> = BTreeMap::new();
         let mut in_index: BTreeSet<BString> = BTreeSet::new();
         for entry in index.entries() {
+            self.check_scan()?;
             if !is_status_entry(entry) {
                 continue;
             }
@@ -1646,8 +1931,8 @@ impl Workspace {
                 Some(_) => Some(State::Modified),
                 None => Some(State::Added),
             };
-            let absolute = self.root.join(gix::path::from_bstr(path.as_bstr()));
-            let worktree = worktree_state(&absolute, entry, hash, &index);
+            let relative = gix::path::from_bstr(path.as_bstr());
+            let worktree = worktree_state(self, &relative, entry, hash, &index)?;
             if Changes::from_sides(staged, worktree).is_some() {
                 dirty.insert(path, (staged, worktree));
             }
@@ -1657,7 +1942,12 @@ impl Workspace {
                 dirty.insert(path.clone(), (Some(State::Deleted), None));
             }
         }
-        for file in self.walk_files(Filter::Visible) {
+        let discovered = self.discover_files(Filter::Visible);
+        if let Some(error) = discovered.incomplete {
+            return Err(error);
+        }
+        for file in discovered.paths {
+            self.check_path_count(dirty.len().saturating_add(1))?;
             let path = BString::from(file);
             if !in_index.contains(&path) {
                 dirty
@@ -1670,7 +1960,7 @@ impl Workspace {
         for (path, (staged, unstaged)) in dirty {
             let relative = gix::path::from_bstr(path.as_bstr()).into_owned();
             if let Some(changes) = Changes::from_sides(staged, unstaged) {
-                entries.push(self.dirty_entry(relative, changes));
+                entries.push(self.dirty_entry(relative, changes)?);
             }
         }
         let status = Status::from_entries(entries);
@@ -1701,6 +1991,8 @@ impl Workspace {
         previous: &Status,
         changed: &[PathBuf],
     ) -> Result<Status, WorkspaceError> {
+        self.check_scan()?;
+        self.begin_comparison();
         let started = std::time::Instant::now();
         let Some(git) = self.ignore.as_ref() else {
             return Ok(Status::default());
@@ -1721,11 +2013,15 @@ impl Workspace {
         let index = repo
             .index_or_empty()
             .map_err(|error| fail(format!("cannot read the index: {error}")))?;
+        self.check_path_count(index.entries().len())?;
+        self.check_path_count(previous.len())?;
         let mut head = Head {
             tree: head_tree_of(&repo).map_err(&fail)?,
             hash: repo.object_hash(),
             collected: BTreeMap::new(),
             covered: Vec::new(),
+            limits: self.limits.clone(),
+            cancellation: self.cancellation.clone(),
         };
         let examine = self.paths_to_examine(&index, previous, changed, &mut head)?;
         let mut entries: Vec<status::Entry> = previous
@@ -1735,8 +2031,9 @@ impl Workspace {
             .cloned()
             .collect();
         for relative in &examine {
+            self.check_path_count(entries.len().saturating_add(1))?;
             if let Some(changes) = self.dirty_state(&index, &head, previous, relative)? {
-                entries.push(self.dirty_entry(relative.clone(), changes));
+                entries.push(self.dirty_entry(relative.clone(), changes)?);
             }
         }
         let status = Status::from_entries(entries);
@@ -1765,6 +2062,7 @@ impl Workspace {
     ) -> Result<BTreeSet<PathBuf>, WorkspaceError> {
         let mut examine: BTreeSet<PathBuf> = BTreeSet::new();
         for path in changed {
+            self.check_scan()?;
             examine.insert(path.clone());
             let mut prefix = unix_path(path).into_owned();
             if !prefix.is_empty() {
@@ -1779,10 +2077,12 @@ impl Workspace {
             }
             for entry in tracked {
                 examine.insert(gix::path::from_bstr(entry.path(index)).into_owned());
+                self.check_path_count(examine.len())?;
             }
             for entry in previous.entries() {
                 if entry.path().starts_with(path) {
                     examine.insert(entry.path().to_path_buf());
+                    self.check_path_count(examine.len())?;
                 }
             }
             // A directory that appeared whole, moved in, or was written
@@ -1794,8 +2094,16 @@ impl Workspace {
                 .symlink_metadata()
                 .is_ok_and(|meta| meta.is_dir());
             if is_dir && !self.is_ignored(path, EntryKind::Dir) {
-                self.walk_under(path, Filter::Visible, &mut examine);
+                let discovered = self.discover_files_under(path, Filter::Visible);
+                if let Some(error) = discovered.incomplete {
+                    return Err(error);
+                }
+                for found in discovered.paths {
+                    examine.insert(PathBuf::from(found));
+                    self.check_path_count(examine.len())?;
+                }
             }
+            self.check_path_count(examine.len())?;
         }
         Ok(examine)
     }
@@ -1826,7 +2134,7 @@ impl Workspace {
             };
             return Ok(Changes::from_sides(
                 staged,
-                worktree_state(&absolute, entry, head.hash, index),
+                worktree_state(self, relative, entry, head.hash, index)?,
             ));
         }
         let on_disk = absolute
@@ -1859,27 +2167,41 @@ impl Workspace {
     }
 
     /// The entry for a dirty `relative`, with its aggregate line counts.
-    fn dirty_entry(&mut self, relative: PathBuf, changes: Changes) -> status::Entry {
-        match self.count_lines(&relative) {
+    fn dirty_entry(
+        &mut self,
+        relative: PathBuf,
+        changes: Changes,
+    ) -> Result<status::Entry, WorkspaceError> {
+        Ok(match self.count_lines(&relative)? {
             Lines::Text { added, removed } => status::Entry::new(relative, changes, added, removed),
             Lines::Binary => status::Entry::new(relative, changes, 0, 0).binary(),
-        }
+        })
     }
 
     /// Line counts of the working tree against `HEAD`, or that the file
     /// is binary by git's rule (ADR 0026): the `diff` attribute, else a
     /// `NUL` in the first bytes of whichever side exists.
-    fn count_lines(&mut self, relative: &Path) -> Lines {
+    fn count_lines(&mut self, relative: &Path) -> Result<Lines, WorkspaceError> {
         let attr = self.diff_attr(relative);
-        let old = self.head_bytes(relative).ok().flatten().unwrap_or_default();
-        let new = self.worktree_bytes(relative).unwrap_or_default();
+        let old = if let Some(head) = self.head_commit() {
+            self.endpoint_bytes(
+                &ComparisonEndpoint::Commit(
+                    CommitId::parse(head).map_err(|error| self.scan_error(error.to_string()))?,
+                ),
+                relative,
+            )?
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let new = self.worktree_bytes(relative)?.unwrap_or_default();
         let binary = attr
             .decided()
             .unwrap_or_else(|| content::is_binary(&old) || content::is_binary(&new));
         if binary {
-            return Lines::Binary;
+            return Ok(Lines::Binary);
         }
-        match (String::from_utf8(old), String::from_utf8(new)) {
+        Ok(match (String::from_utf8(old), String::from_utf8(new)) {
             (Ok(old), Ok(new)) => {
                 let (added, removed) = Diff::new(&old, &new).counts();
                 Lines::Text { added, removed }
@@ -1888,18 +2210,24 @@ impl Workspace {
                 added: 0,
                 removed: 0,
             },
-        }
+        })
     }
 
     /// The diffable bytes of `relative` on disk: a symlink's target path,
     /// matching the blob git stores for it, or the file's content.
-    fn worktree_bytes(&self, relative: &Path) -> Option<Vec<u8>> {
+    fn worktree_bytes(&self, relative: &Path) -> Result<Option<Vec<u8>>, WorkspaceError> {
         let absolute = self.root.join(relative);
         match absolute.symlink_metadata() {
-            Ok(meta) if meta.is_symlink() => fs::read_link(&absolute)
-                .ok()
-                .map(|target| target.to_string_lossy().into_owned().into_bytes()),
-            _ => fs::read(&absolute).ok(),
+            Ok(meta) if meta.is_symlink() => {
+                let target = fs::read_link(&absolute).map_err(|error| WorkspaceError {
+                    path: absolute,
+                    message: error.to_string(),
+                })?;
+                let bytes = target.to_string_lossy().into_owned().into_bytes();
+                self.charge_content(bytes.len())?;
+                Ok(Some(bytes))
+            }
+            _ => self.endpoint_bytes(&ComparisonEndpoint::WorkingTree, relative),
         }
     }
 
@@ -1999,22 +2327,14 @@ impl Workspace {
         relative: &Path,
         filter: Filter,
     ) -> Result<Vec<Entry>, WorkspaceError> {
-        self.list_dir_with_policy(relative, filter, Listing::BestEffort)
+        self.list_dir_with_limit(relative, filter, self.limits.retained_paths)
     }
 
-    fn list_dir_checked(
+    pub(crate) fn list_dir_with_limit(
         &mut self,
         relative: &Path,
         filter: Filter,
-    ) -> Result<Vec<Entry>, WorkspaceError> {
-        self.list_dir_with_policy(relative, filter, Listing::Complete)
-    }
-
-    fn list_dir_with_policy(
-        &mut self,
-        relative: &Path,
-        filter: Filter,
-        listing: Listing,
+        retained_limit: usize,
     ) -> Result<Vec<Entry>, WorkspaceError> {
         let dir = self.root.join(relative);
         let read = fs::read_dir(&dir).map_err(|source| WorkspaceError {
@@ -2022,34 +2342,40 @@ impl Workspace {
             message: format!("cannot read directory: {source}"),
         })?;
         let mut entries = Vec::new();
-        for item in read {
+        for (examined, item) in read.enumerate() {
+            self.check_scan()?;
+            if examined >= self.limits.discovery_entries
+                || self
+                    .listing_examined
+                    .is_some_and(|count| count >= self.limits.discovery_entries)
+                || entries.len() >= retained_limit
+            {
+                self.listing_incomplete = Some(self.scan_error(
+                    "directory listing limited by discovery budget; coverage is incomplete",
+                ));
+                break;
+            }
+            if let Some(examined) = &mut self.listing_examined {
+                *examined += 1;
+            }
             let item = match item {
                 Ok(item) => item,
-                Err(error) if listing == Listing::Complete => {
-                    return Err(WorkspaceError {
-                        path: dir,
-                        message: format!("cannot enumerate directory: {error}"),
-                    });
-                }
                 Err(error) => {
                     tracing::warn!(%error, dir = %dir.display(), "skipping unreadable entry");
+                    self.listing_incomplete = Some(self.scan_error(format!(
+                        "cannot enumerate directory: {error}; coverage is incomplete"
+                    )));
                     continue;
                 }
             };
             let name = item.file_name();
-            let name = match name.to_str() {
-                Some(name) => name.to_owned(),
-                None if listing == Listing::Complete => {
-                    return Err(WorkspaceError {
-                        path: item.path(),
-                        message: "file name is not valid UTF-8".to_owned(),
-                    });
-                }
-                None => {
-                    tracing::debug!(dir = %dir.display(), "skipping non-UTF-8 file name");
-                    continue;
-                }
+            let Some(name) = name.to_str() else {
+                tracing::debug!(dir = %dir.display(), "skipping non-UTF-8 file name");
+                self.listing_incomplete =
+                    Some(self.scan_error("non-UTF-8 file name; coverage is incomplete"));
+                continue;
             };
+            let name = name.to_owned();
             if name == ".git" {
                 continue;
             }
@@ -2058,18 +2384,15 @@ impl Workspace {
             // link is a file-like entry, wherever it points.
             let file_type = match item.file_type() {
                 Ok(file_type) => Some(file_type),
-                Err(error) if listing == Listing::Complete => {
-                    return Err(WorkspaceError {
-                        path: item.path(),
-                        message: format!("cannot inspect directory entry: {error}"),
-                    });
-                }
                 Err(error) => {
                     tracing::warn!(
                         %error,
                         path = %item.path().display(),
                         "cannot inspect directory entry"
                     );
+                    self.listing_incomplete = Some(self.scan_error(format!(
+                        "cannot inspect entry: {error}; coverage is incomplete"
+                    )));
                     None
                 }
             };
@@ -2093,7 +2416,9 @@ impl Workspace {
                 is_link,
             });
         }
-        entries.sort_by(|a, b| entry_order(a.is_dir, &a.name, b.is_dir, &b.name));
+        entries.sort_by_cached_key(|entry| {
+            (!entry.is_dir, entry.name.to_lowercase(), entry.name.clone())
+        });
         Ok(entries)
     }
 
@@ -2120,63 +2445,102 @@ impl Workspace {
         root: &Path,
         filter: Filter,
     ) -> Result<Vec<PathBuf>, WorkspaceError> {
-        let mut files = Vec::new();
+        let found = self.discover_files_under(root, filter);
+        if let Some(error) = found.incomplete {
+            return Err(error);
+        }
+        Ok(found.paths.into_iter().map(PathBuf::from).collect())
+    }
+
+    /// Discover files with finite examined-entry and retained-path budgets.
+    ///
+    /// Partial results remain useful, but [`Discovery::incomplete`] must be
+    /// shown whenever it is present. Directory symlinks are never descended.
+    pub fn discover_files(&mut self, filter: Filter) -> Discovery {
+        self.discover_files_under(Path::new(""), filter)
+    }
+
+    fn discover_files_under(&mut self, root: &Path, filter: Filter) -> Discovery {
+        let mut found = Discovery {
+            paths: Vec::new(),
+            incomplete: None,
+        };
         let mut pending = vec![root.to_path_buf()];
-        while let Some(dir) = pending.pop() {
-            let entries = self.list_dir_checked(&dir, filter)?;
-            let mut dirs = Vec::new();
-            for entry in entries {
-                let path = dir.join(&entry.name);
-                if entry.is_dir && !entry.is_link {
-                    dirs.push(path);
-                } else {
-                    files.push(path);
+        let mut examined = 0;
+        let result = (|| {
+            while let Some(dir) = pending.pop() {
+                self.check_scan()?;
+                let read = fs::read_dir(self.root.join(&dir)).map_err(|error| WorkspaceError {
+                    path: self.root.join(&dir),
+                    message: format!("cannot enumerate directory: {error}; coverage is incomplete"),
+                })?;
+                for item in read {
+                    self.check_scan()?;
+                    if examined >= self.limits.discovery_entries {
+                        return Err(self.scan_error(
+                            "discovery limited by examined-entry budget; coverage is incomplete",
+                        ));
+                    }
+                    examined += 1;
+                    let item = item.map_err(|error| {
+                        self.scan_error(format!(
+                            "cannot enumerate entry: {error}; coverage is incomplete"
+                        ))
+                    })?;
+                    if item.file_name() == ".git" {
+                        continue;
+                    }
+                    let path = dir.join(item.file_name());
+                    let kind = item.file_type().map_err(|error| {
+                        self.scan_error(format!(
+                            "cannot inspect entry: {error}; coverage is incomplete"
+                        ))
+                    })?;
+                    let is_dir = kind.is_dir() && !kind.is_symlink();
+                    if filter == Filter::Visible
+                        && self.is_ignored(
+                            &path,
+                            if is_dir {
+                                EntryKind::Dir
+                            } else {
+                                EntryKind::File
+                            },
+                        )
+                    {
+                        continue;
+                    }
+                    if pending.len().saturating_add(found.paths.len()) >= self.limits.retained_paths
+                    {
+                        return Err(self.scan_error(
+                            "discovery limited by retained-path budget; coverage is incomplete",
+                        ));
+                    }
+                    if is_dir {
+                        pending.push(path);
+                    } else {
+                        let text = path.to_str().ok_or_else(|| {
+                            self.scan_error("non-UTF-8 path; coverage is incomplete")
+                        })?;
+                        found.paths.push(text.to_owned());
+                    }
                 }
             }
-            pending.extend(dirs.into_iter().rev());
-        }
-        Ok(files)
+            Ok(())
+        })();
+        found.incomplete = result.err();
+        found.paths.sort_by(|a, b| walk_order(a, b));
+        found
     }
 
     /// The files under root-relative `dir` as [`Workspace::walk_files`]
     /// lists them, `dir` itself listed first: what a directory that
     /// arrived whole adds to an index kept in [`walk_order`].
     pub fn walk_files_under(&mut self, dir: &Path, filter: Filter) -> Vec<String> {
-        let mut files: Vec<PathBuf> = Vec::new();
-        self.walk_under(dir, filter, &mut files);
-        files
-            .into_iter()
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect()
-    }
-
-    /// The walk of [`Workspace::walk_files`] from root-relative `dir`
-    /// down, each file pushed onto `out`.
-    fn walk_under<C>(&mut self, dir: &Path, filter: Filter, out: &mut C)
-    where
-        C: Extend<PathBuf>,
-    {
-        let mut pending = vec![dir.to_path_buf()];
-        while let Some(dir) = pending.pop() {
-            let entries = match self.list_dir_with(&dir, filter) {
-                Ok(entries) => entries,
-                Err(error) => {
-                    tracing::warn!(%error, "skipping directory while indexing");
-                    continue;
-                }
-            };
-            let mut dirs = Vec::new();
-            for entry in entries {
-                let path = dir.join(&entry.name);
-                if entry.is_dir && !entry.is_link {
-                    dirs.push(path);
-                } else {
-                    out.extend(std::iter::once(path));
-                }
-            }
-            // Push in reverse so the stack yields subdirectories in order.
-            pending.extend(dirs.into_iter().rev());
+        let found = self.discover_files_under(dir, filter);
+        if let Some(error) = found.incomplete {
+            tracing::warn!(%error, "incomplete file index");
         }
+        found.paths
     }
 }
 
@@ -2263,55 +2627,59 @@ fn named_revision_choice(
 }
 
 fn collect_endpoint_tree(
+    workspace: &Workspace,
     repo: &gix::Repository,
     tree: &gix::Tree<'_>,
-    prefix: &Path,
     out: &mut BTreeMap<PathBuf, EndpointFile>,
 ) -> Result<(), String> {
-    for entry in tree.iter() {
-        let entry = entry.map_err(|error| error.to_string())?;
-        let path = prefix.join(gix::path::from_bstr(entry.filename()));
-        let mode = tree_mode(entry.mode());
-        if mode.is_directory() {
+    let mut pending = vec![(tree.id, PathBuf::new())];
+    while let Some((id, prefix)) = pending.pop() {
+        workspace.check_scan().map_err(|error| error.to_string())?;
+        let tree = repo.find_tree(id).map_err(|error| error.to_string())?;
+        for entry in tree.iter() {
+            workspace
+                .check_path_count(out.len().saturating_add(1))
+                .map_err(|error| error.to_string())?;
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = prefix.join(gix::path::from_bstr(entry.filename()));
+            let mode = tree_mode(entry.mode());
+            if mode.is_directory() {
+                out.insert(
+                    path.clone(),
+                    EndpointFile {
+                        info: PathInfo::new(
+                            mode,
+                            None,
+                            Some(entry.object_id().to_hex().to_string()),
+                            false,
+                        )
+                        .with_supported(endpoint_size_supported(mode, None)),
+                    },
+                );
+                pending.push((entry.object_id(), path));
+                continue;
+            }
+            let size = mode
+                .is_supported()
+                .then(|| {
+                    repo.find_header(entry.object_id())
+                        .map(|header| header.size())
+                })
+                .transpose()
+                .map_err(|error| error.to_string())?;
             out.insert(
-                path.clone(),
+                path,
                 EndpointFile {
                     info: PathInfo::new(
                         mode,
-                        None,
+                        size,
                         Some(entry.object_id().to_hex().to_string()),
                         false,
                     )
-                    .with_supported(endpoint_size_supported(mode, None)),
+                    .with_supported(endpoint_size_supported(mode, size)),
                 },
             );
-            let subtree = entry
-                .object()
-                .map_err(|error| error.to_string())?
-                .into_tree();
-            collect_endpoint_tree(repo, &subtree, &path, out)?;
-            continue;
         }
-        let size = mode
-            .is_supported()
-            .then(|| {
-                repo.find_header(entry.object_id())
-                    .map(|header| header.size())
-            })
-            .transpose()
-            .map_err(|error| error.to_string())?;
-        out.insert(
-            path,
-            EndpointFile {
-                info: PathInfo::new(
-                    mode,
-                    size,
-                    Some(entry.object_id().to_hex().to_string()),
-                    false,
-                )
-                .with_supported(endpoint_size_supported(mode, size)),
-            },
-        );
     }
     Ok(())
 }
@@ -2553,6 +2921,8 @@ struct Head<'repo> {
     /// The directory prefixes `collected` covers, each ending in `/`
     /// (empty for the root).
     covered: Vec<BString>,
+    limits: crate::config::LimitsConfig,
+    cancellation: Cancellation,
 }
 
 impl Head<'_> {
@@ -2576,8 +2946,14 @@ impl Head<'_> {
                     .map_err(|error| format!("cannot read {} from HEAD: {error}", dir.display()))?
             };
             if let Some(subtree) = subtree {
-                collect_blobs(&subtree, &mut prefix.clone(), &mut self.collected)
-                    .map_err(|error| format!("cannot walk HEAD tree: {error}"))?;
+                collect_blobs(
+                    &subtree,
+                    prefix.clone(),
+                    &mut self.collected,
+                    &self.limits,
+                    &self.cancellation,
+                )
+                .map_err(|error| format!("cannot walk HEAD tree: {error}"))?;
             }
         }
         self.covered.push(prefix);
@@ -2648,69 +3024,97 @@ fn unix_path(relative: &Path) -> std::borrow::Cow<'_, gix::bstr::BStr> {
 /// hashed as git would. A symlink's blob is its target path, so that is
 /// what gets hashed, never the file the link points at.
 fn worktree_state(
-    absolute: &Path,
+    workspace: &Workspace,
+    relative: &Path,
     entry: &gix::index::Entry,
     hash: gix::hash::Kind,
     index: &gix::index::State,
-) -> Option<State> {
+) -> Result<Option<State>, WorkspaceError> {
+    workspace.check_scan()?;
+    let absolute = workspace.root.join(relative);
     let is_link = entry.mode == gix::index::entry::Mode::SYMLINK;
-    match gix::index::fs::Metadata::from_path_no_follow(absolute) {
-        Ok(meta) if meta.is_file() && !is_link => {
-            let racy = entry.stat.is_racy(
-                index.timestamp(),
-                gix::index::entry::stat::Options::default(),
-            );
-            let fresh = !racy
-                && gix::index::entry::Stat::from_fs(&meta)
-                    .ok()
-                    .is_some_and(|stat| {
-                        stat.size == entry.stat.size
-                            && stat.mtime == entry.stat.mtime
-                            && entry.stat.mtime.secs != 0
+    Ok(
+        match gix::index::fs::Metadata::from_path_no_follow(&absolute) {
+            Ok(meta) if meta.is_file() && !is_link => {
+                let racy = entry.stat.is_racy(
+                    index.timestamp(),
+                    gix::index::entry::stat::Options::default(),
+                );
+                let fresh = !racy
+                    && gix::index::entry::Stat::from_fs(&meta)
+                        .ok()
+                        .is_some_and(|stat| {
+                            stat.size == entry.stat.size
+                                && stat.mtime == entry.stat.mtime
+                                && entry.stat.mtime.secs != 0
+                        });
+                if fresh {
+                    None
+                } else {
+                    let same = workspace.worktree_bytes(relative)?.is_some_and(|data| {
+                        gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &data)
+                            .is_ok_and(|id| id == entry.id)
                     });
-            if fresh {
-                None
-            } else {
-                let same = fs::read(absolute).ok().is_some_and(|data| {
-                    gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &data)
+                    (!same).then_some(State::Modified)
+                }
+            }
+            Ok(meta) if meta.is_symlink() && is_link => {
+                let same = workspace.worktree_bytes(relative)?.is_some_and(|target| {
+                    gix::objs::compute_hash(hash, gix::objs::Kind::Blob, &target)
                         .is_ok_and(|id| id == entry.id)
                 });
                 (!same).then_some(State::Modified)
             }
-        }
-        Ok(meta) if meta.is_symlink() && is_link => {
-            let same = fs::read_link(absolute).ok().is_some_and(|target| {
-                let target = gix::path::to_unix_separators_on_windows(gix::path::into_bstr(
-                    target.as_path(),
-                ));
-                gix::objs::compute_hash(hash, gix::objs::Kind::Blob, target.as_ref())
-                    .is_ok_and(|id| id == entry.id)
-            });
-            (!same).then_some(State::Modified)
-        }
-        // A file became a symlink or the other way around.
-        Ok(meta) if meta.is_file() || meta.is_symlink() => Some(State::Modified),
-        _ => Some(State::Deleted),
-    }
+            // A file became a symlink or the other way around.
+            Ok(meta) if meta.is_file() || meta.is_symlink() => Some(State::Modified),
+            _ => Some(State::Deleted),
+        },
+    )
 }
 
 fn collect_blobs(
     tree: &gix::Tree<'_>,
-    prefix: &mut BString,
+    prefix: BString,
     out: &mut BTreeMap<BString, ObjectId>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    for entry in tree.iter() {
-        let entry = entry?;
-        let len = prefix.len();
-        prefix.extend_from_slice(entry.filename());
-        if entry.mode().is_tree() {
-            let subtree = entry.object()?.into_tree();
-            prefix.push(b'/');
-            collect_blobs(&subtree, prefix, out)?;
-        } else if entry.mode().is_blob_or_symlink() {
-            out.insert(prefix.clone(), entry.object_id());
+    limits: &crate::config::LimitsConfig,
+    cancellation: &Cancellation,
+) -> Result<(), String> {
+    let mut pending = vec![(tree.clone(), prefix)];
+    let mut examined = 0usize;
+    while let Some((tree, prefix)) = pending.pop() {
+        for entry in tree.iter() {
+            if cancellation.is_cancelled() {
+                return Err("Git discovery cancelled; coverage is incomplete".to_owned());
+            }
+            if examined >= limits.discovery_entries {
+                return Err(
+                    "Git discovery limited by examined-entry budget; coverage is incomplete"
+                        .to_owned(),
+                );
+            }
+            examined += 1;
+            let entry = entry.map_err(|error| error.to_string())?;
+            let mut path = prefix.clone();
+            path.extend_from_slice(entry.filename());
+            if out.len().saturating_add(pending.len())
+                >= limits.retained_paths.min(limits.comparison_paths)
+            {
+                return Err(
+                    "Git discovery limited by retained-path budget; coverage is incomplete"
+                        .to_owned(),
+                );
+            }
+            if entry.mode().is_tree() {
+                let subtree = entry
+                    .object()
+                    .map_err(|error| error.to_string())?
+                    .into_tree();
+                path.push(b'/');
+                pending.push((subtree, path));
+            } else if entry.mode().is_blob_or_symlink() {
+                out.insert(path, entry.object_id());
+            }
         }
-        prefix.truncate(len);
     }
     Ok(())
 }

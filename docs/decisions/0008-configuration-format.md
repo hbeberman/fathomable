@@ -46,6 +46,10 @@ and the user prefers KDL.
   `$XDG_CONFIG_HOME/fathomable/themes/*.kdl`.
 - Missing config is valid; every setting has a default. Unknown nodes are
   errors with a location, not silently ignored.
+- The `limits` block sets positive, finite ceilings for discovery entries,
+  workspace watches, retained paths, comparison paths and bytes, and pending
+  events. There is no unlimited value. Defaults conservatively accommodate a
+  small workspace and bound individual work, not total process RSS.
 - `--config-show` prints every effective setting with a KDL usage comment,
   including units and special values. The guide's default example matches
   that text; comments do not change parsing or round-trip values.

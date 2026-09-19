@@ -21,6 +21,27 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Resource bounds amended 2026-09-19: fresh non-Git workspaces start in Off
+without enumerating or comparing the working tree. Saved endpoint choices
+remain available; explicitly selecting Base or an active mode starts a
+comparison. Comparison and immutable Target enumeration run on cancellable
+workers, with generation checks on delivery. One running and one replaceable
+pending request prevent repeated refreshes from spawning unbounded workers.
+The last successful comparison may remain visibly stale after an error;
+pending, limited, and failed work never means a complete clean comparison.
+Path and aggregate content-read budgets are finite, including saved
+review-point content. Mutable reads use bounded readers, not only a size
+check before an unbounded read. Changed-path line counts are computed on the
+worker rather than rereading every changed file on the event-loop thread.
+While a requested active mode is waiting for its comparison, filesystem
+events replace the scan without cancelling that presentation intent. An
+explicit Off selection cancels it.
+Annotation creation and submission require matching displayed provenance,
+not merely a newly selected endpoint. Active and parked new-annotation
+drafts cancel pending projection work and defer further comparison refreshes
+until the final draft closes. A failed or pending endpoint selection cannot
+associate retained text with a different immutable commit.
+
 Navigation amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): Shift-Up/Down and `K`/`J`
 traverse the selected comparison in Standard or Unified mode, including

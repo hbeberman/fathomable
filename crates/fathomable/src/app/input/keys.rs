@@ -48,7 +48,8 @@ pub(crate) fn place(app: &App) -> Option<Where> {
             | Popup::Menu(_)
             | Popup::DiffMode(_)
             | Popup::ConfirmQuit
-            | Popup::ConfirmBoard { .. },
+            | Popup::ConfirmBoard { .. }
+            | Popup::ConfirmReviewPointDelete { .. },
         ) => None,
         Some(Popup::Compose(_)) => Some(Where::Draft),
         Some(Popup::Picker(_)) => Some(Where::Picker),
@@ -73,7 +74,11 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     }
     if matches!(
         app.popup(),
-        Some(Popup::ConfirmQuit | Popup::ConfirmBoard { .. })
+        Some(
+            Popup::ConfirmQuit
+                | Popup::ConfirmBoard { .. }
+                | Popup::ConfirmReviewPointDelete { .. }
+        )
     ) {
         return confirmation_key(app, key);
     }
@@ -300,6 +305,7 @@ impl App {
             Action::DiffUnified => self.select_diff_mode(DiffMode::Unified),
             Action::DiffOff => self.select_diff_mode(DiffMode::Off),
             Action::ComparisonSave => self.request_review_point(),
+            Action::ComparisonDelete => self.request_review_point_delete(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
             Action::ComparisonHeadWorkingTree => self.select_head_working_tree(),
@@ -538,6 +544,9 @@ impl App {
 
 fn confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
     match key.code {
+        crossterm::event::KeyCode::Char('y') if app.review_point_delete_confirmation_armed() => {
+            app.confirm_review_point_delete();
+        }
         crossterm::event::KeyCode::Enter => match app.popup() {
             Some(Popup::ConfirmQuit) => {
                 app.close_popup();
@@ -549,6 +558,9 @@ fn confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
         crossterm::event::KeyCode::Esc => match app.popup() {
             Some(Popup::ConfirmQuit) => app.close_popup(),
             Some(Popup::ConfirmBoard { .. }) => app.cancel_clear_board(),
+            Some(Popup::ConfirmReviewPointDelete { .. }) => {
+                app.cancel_review_point_delete();
+            }
             _ => {}
         },
         _ => {}

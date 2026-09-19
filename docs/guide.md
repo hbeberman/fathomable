@@ -65,6 +65,7 @@ the table below is a quick reference, not the full list.
 | `Space F u` `Space F g` | hide untracked / show ignored in Files |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
 | `Space d d` | compare the current HEAD to the working tree |
+| `Space d c` `Space d x` | save / delete a review point |
 | `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `Space w w` | focus the next pane |
@@ -127,8 +128,8 @@ A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
 does **not** advance that Base; choose the new commit explicitly. The Diff menu
 begins with Standard, Unified, and Off, then Base, Target, and **Head to
 WorkingTree**. That action, or `Space d d`, pins the current `HEAD` as Base and
-selects the working tree as Target. Save review point follows a separator, and
-Ignore whitespace follows another. There is no comparison-control popup,
+selects the working tree as Target. Save/Delete review point follow a
+separator, and Ignore whitespace follows another. There is no comparison-control popup,
 **Start comparison at current HEAD**, or `:diff`.
 
 Rendered/Source is available in Standard and Off only for files matched by
@@ -147,6 +148,16 @@ provenance returns there when the controls are hidden or too narrow.
 Choose it under the base picker's **Review points...** to see changes since
 that save. Saving a point does not select it automatically. See
 [comparison and review-point details](decisions/0087-global-comparisons-and-board-history.md).
+
+`Space d x` or **Diff > Delete review point...** opens the repository-wide
+point list. Selecting a point opens a separate confirmation; press `y` to
+delete or `Esc` to cancel. Deletion removes the point from comparison
+selection and reclaims only content blobs no other point uses. Threads keep
+their immutable point ID, baseline, content identity, excerpt, and messages.
+This is logical deletion with best-effort reclamation, not secure erasure.
+If the deleted point is the selected Base, Fathomable replaces Base with the
+current pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
+whitespace. A pending new annotation must be submitted or cancelled first.
 
 Use `J` and `K` to cycle every comparison change across the workspace.
 Text hunks are individual stops; a changed path with no text hunk, such as a

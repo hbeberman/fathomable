@@ -115,24 +115,25 @@ pub(crate) enum DraftRow {
 }
 
 impl App {
-    /// Block endpoint and mode changes while a new annotation is pending.
-    pub(in crate::app) fn annotation_draft_blocks(&mut self, action: &str) -> bool {
+    /// Whether a new line or file annotation is active or parked.
+    pub(in crate::app) fn has_new_annotation_draft(&self) -> bool {
         let is_new = |compose: &Compose| {
             matches!(
                 compose.target(),
                 ComposeTarget::New(_) | ComposeTarget::OnFile
             )
         };
-        let active = match &self.popup {
-            Some(Popup::Compose(compose)) => is_new(compose),
-            _ => false,
-        };
-        let parked = self
-            .docs
-            .iter()
-            .filter_map(|doc| doc.draft.as_ref())
-            .any(is_new);
-        if active || parked {
+        matches!(&self.popup, Some(Popup::Compose(compose)) if is_new(compose))
+            || self
+                .docs
+                .iter()
+                .filter_map(|doc| doc.draft.as_ref())
+                .any(is_new)
+    }
+
+    /// Block endpoint and mode changes while a new annotation is pending.
+    pub(in crate::app) fn annotation_draft_blocks(&mut self, action: &str) -> bool {
+        if self.has_new_annotation_draft() {
             self.notice(format!(
                 "submit or cancel the pending annotation before {action}"
             ));

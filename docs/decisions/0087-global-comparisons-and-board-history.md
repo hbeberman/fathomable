@@ -293,6 +293,30 @@ including a reversal that disappears from a commit-to-working-tree net
 diff. Review points are not valid targets, and saving another point does not
 select it.
 
+Lifecycle amended 2026-09-18: `Space d x` and **Delete review point...** open
+a searchable repository-wide point picker. Selection opens a separate
+destructive confirmation; `y` confirms and Esc cancels. A pending new line or
+file annotation blocks deletion so displayed source and provenance cannot be
+silently rebound.
+
+Deletion appends a durable `review-point-delete` record under the same
+exclusive manifest lock as capture. Replay repairs only an interrupted final
+JSONL suffix and otherwise fails closed on malformed complete records. The
+lock remains held while blobs referenced only by the deleted point are
+validated and removed; shared blobs remain. Deletion is committed before
+cleanup, so cleanup failures are reported without resurrecting the point.
+Logical deletion and best-effort reclamation are not secure erasure:
+historical manifests, Git objects, copied excerpts, caches, backups, shared
+blobs, and failed-cleanup blobs may remain.
+
+Viewers reload point metadata at point-dependent actions. A selected deleted
+Base falls back to pinned `HEAD`, or EmptyTree without one, while preserving
+Target, mode, whitespace, and dormant Off state; preference persistence is
+best-effort and startup reconciliation remains authoritative. Threads never
+pin point blobs or change on deletion: their copied point ID, baseline,
+content identity, excerpt, messages, lifecycle, and archive state remain
+available to the viewer and MCP.
+
 ### Immutable origin and qualified placement
 
 Every thread stores immutable origin evidence:

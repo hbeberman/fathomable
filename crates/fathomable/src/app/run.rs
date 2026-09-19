@@ -395,6 +395,7 @@ async fn run_async(
         }
         if redraw {
             draw(&app, &theme, &mut terminal)?;
+            app.arm_review_point_delete_confirmation();
             redraw = false;
         }
         let (effect, changed) = tokio::select! {
@@ -856,12 +857,16 @@ mod tests {
     use std::path::Path;
     use std::process::Stdio;
 
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
     use super::{
-        Command, Context, Duration, Instant, RAW_DRAIN_LIMIT, drain_raws, io, mpsc, opener_status,
-        schedule_retry, spawn_opener,
+        Command, Context, Duration, Instant, RAW_DRAIN_LIMIT, drain_raws, handle_events, io, mpsc,
+        opener_status, schedule_retry, spawn_opener,
     };
+    use crate::app::draw;
+    use crate::app::input::bindings::Action;
     use crate::app::watch::{Raw, Raws};
-    use crate::app::{testing, watch};
+    use crate::app::{Popup, testing, watch};
     use fathomable_core::annotations::{Author, Draft, LineRange, Store};
 
     async fn opener_result(command: Command) -> anyhow::Result<Result<(), String>> {
@@ -880,6 +885,57 @@ mod tests {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         command
+    }
+
+    #[test]
+    fn queued_picker_click_cannot_confirm_point_deletion_before_redraw() -> anyhow::Result<()> {
+        let dir = testing::workspace("queued-point-delete", testing::README)?;
+        let points = dir.0.join("points");
+        let mut app = testing::AppBuilder::new(&dir)
+            .review_points(&points)
+            .build()?;
+        app.save_review_point(Some("point"));
+        app.request_review_point_delete();
+        let picker_cell = match app.popup() {
+            Some(Popup::Picker(picker)) => {
+                let layout = draw::picker_layout(&app, picker);
+                (0..app.pane_rows())
+                    .flat_map(|row| (0..app.size().0).map(move |column| (column, row)))
+                    .find(|(column, row)| {
+                        layout.entry_at(*column, *row, picker.matched()) == Some(0)
+                    })
+                    .context("picker row")?
+            }
+            _ => anyhow::bail!("delete picker did not open"),
+        };
+        let confirmation = draw::review_point_delete_confirmation_layout(&app);
+        let confirm_cell = (0..app.pane_rows())
+            .flat_map(|row| (0..app.size().0).map(move |column| (column, row)))
+            .find(|(column, row)| confirmation.action_at(*column, *row) == Some(Action::Confirm))
+            .context("confirmation control")?;
+        let click = |(column, row)| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: u16::try_from(column).unwrap_or(u16::MAX),
+                row: u16::try_from(row).unwrap_or(u16::MAX),
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+        let (sender, mut incoming) = mpsc::channel(2);
+        sender.try_send(Ok(click(confirm_cell)))?;
+
+        handle_events(&mut app, &click(picker_cell), &mut incoming)?;
+
+        assert!(matches!(
+            app.popup(),
+            Some(Popup::ConfirmReviewPointDelete { armed: false, .. })
+        ));
+        assert!(
+            app.review_points
+                .as_ref()
+                .is_some_and(|store| !store.is_empty())
+        );
+        Ok(())
     }
 
     #[tokio::test]

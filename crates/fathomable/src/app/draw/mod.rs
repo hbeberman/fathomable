@@ -310,6 +310,11 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         }) => {
             draw_board_confirmation(frame, theme, app, *counts, *changed);
         }
+        Some(Popup::ConfirmReviewPointDelete {
+            id, name, created, ..
+        }) => {
+            draw_review_point_delete_confirmation(frame, theme, app, id, name.as_deref(), *created);
+        }
         Some(Popup::Picker(picker)) => {
             draw_picker(
                 frame,
@@ -2590,6 +2595,7 @@ fn draw_picker(
             format!("{} advanced endpoints", side.label())
         }
         super::PickerKind::ReviewPointName => "review point name (optional)".to_owned(),
+        super::PickerKind::ReviewPointDelete => "delete review point".to_owned(),
         super::PickerKind::Worktree => "worktree".to_owned(),
     };
     let title_line = Line::from(vec![
@@ -2673,6 +2679,31 @@ fn draw_quit_confirmation(frame: &mut Frame<'_>, theme: &Theme, app: &App) {
     draw_confirmation_controls(frame, theme, app, &layout);
 }
 
+fn draw_review_point_delete_confirmation(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    id: &str,
+    name: Option<&str>,
+    created: u64,
+) {
+    let layout = review_point_delete_confirmation_layout(app);
+    let block = rounded_block(theme, " Delete review point ", theme.popup);
+    let inner = block.inner(layout.popup);
+    let label = name.unwrap_or("unnamed");
+    let short = id.chars().take(8).collect::<String>();
+    let lines = vec![
+        Line::from("Delete this repository-wide review point?"),
+        Line::from(format!("{short} · {}", format_time(created))),
+        Line::from(label.to_owned()),
+        Line::from("Threads keep their origin evidence; the snapshot will not."),
+    ];
+    frame.render_widget(Clear, layout.popup);
+    frame.render_widget(block, layout.popup);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+    draw_confirmation_controls(frame, theme, app, &layout);
+}
+
 fn draw_confirmation_controls(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -2730,6 +2761,13 @@ pub(crate) fn board_confirmation_layout(app: &App, changed: bool) -> Confirmatio
     let area = confirmation_area(app);
     let width = area.width.saturating_sub(4).clamp(42, 90);
     confirmation_layout(app, width, 7, usize::from(changed) + 2, "clear")
+}
+
+/// Current review-point deletion confirmation geometry.
+pub(crate) fn review_point_delete_confirmation_layout(app: &App) -> ConfirmationLayout {
+    let mut layout = confirmation_layout(app, 72, 7, 4, "delete");
+    layout.spec = header::ConfirmationControls::with_key("y", "delete");
+    layout
 }
 
 fn confirmation_layout(

@@ -672,8 +672,13 @@ pub(crate) struct ConfirmationControls {
 impl ConfirmationControls {
     /// Build affirmative-then-cancel controls for `verb`.
     pub(crate) fn new(verb: &'static str) -> Self {
+        Self::with_key("Enter", verb)
+    }
+
+    /// Build controls with an explicit affirmative key.
+    pub(crate) fn with_key(key: &'static str, verb: &'static str) -> Self {
         let mut bar = Header::bar(vec![
-            HintOf::control("Enter", verb, Action::Confirm),
+            HintOf::control(key, verb, Action::Confirm),
             HintOf::control("Esc", "cancel", Action::Escape),
         ]);
         bar.left_pad = 0;

@@ -290,6 +290,7 @@ actions! {
     DiffUnified,
     DiffOff,
     ComparisonSave,
+    ComparisonDelete,
     ComparisonBase,
     ComparisonTarget,
     ComparisonHeadWorkingTree,
@@ -923,6 +924,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ComparisonSave,
         "Space menu",
         "diff: save review point",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('d'), c('x')]],
+        A::ComparisonDelete,
+        "Space menu",
+        "diff: delete review point…",
     ),
     bind(
         W::Any,
@@ -1769,7 +1777,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["s", "u", "o", "b", "t", "d", "c", "w"]
+            ["s", "u", "o", "b", "t", "d", "c", "x", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

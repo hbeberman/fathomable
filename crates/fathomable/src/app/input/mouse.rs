@@ -388,9 +388,11 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                 Some(Effect::None)
             }
         }
-        Some(Popup::ConfirmQuit | Popup::ConfirmBoard { .. }) => {
-            Some(confirmation_mouse(app, left, column, row))
-        }
+        Some(
+            Popup::ConfirmQuit
+            | Popup::ConfirmBoard { .. }
+            | Popup::ConfirmReviewPointDelete { .. },
+        ) => Some(confirmation_mouse(app, left, column, row)),
         Some(Popup::Status | Popup::About) => Some(Effect::None),
         _ => None,
     }
@@ -401,9 +403,13 @@ fn confirmation_mouse(app: &mut App, left: bool, column: usize, row: usize) -> E
         return Effect::None;
     }
     let is_quit = matches!(app.popup(), Some(Popup::ConfirmQuit));
+    let is_point = matches!(app.popup(), Some(Popup::ConfirmReviewPointDelete { .. }));
     let layout = match app.popup() {
         Some(Popup::ConfirmQuit) => draw::quit_confirmation_layout(app),
         Some(Popup::ConfirmBoard { changed, .. }) => draw::board_confirmation_layout(app, *changed),
+        Some(Popup::ConfirmReviewPointDelete { .. }) => {
+            draw::review_point_delete_confirmation_layout(app)
+        }
         _ => return Effect::None,
     };
     match layout.action_at(column, row) {
@@ -412,7 +418,11 @@ fn confirmation_mouse(app: &mut App, left: bool, column: usize, row: usize) -> E
             Effect::Quit
         }
         Some(bindings::Action::Confirm) => {
-            app.confirm_clear_board();
+            if is_point && app.review_point_delete_confirmation_armed() {
+                app.confirm_review_point_delete();
+            } else if !is_point {
+                app.confirm_clear_board();
+            }
             Effect::None
         }
         Some(bindings::Action::Escape) if is_quit => {
@@ -420,12 +430,18 @@ fn confirmation_mouse(app: &mut App, left: bool, column: usize, row: usize) -> E
             Effect::None
         }
         Some(bindings::Action::Escape) => {
-            app.cancel_clear_board();
+            if is_point {
+                app.cancel_review_point_delete();
+            } else {
+                app.cancel_clear_board();
+            }
             Effect::None
         }
         _ if !layout.contains(column, row) => {
             if is_quit {
                 app.close_popup();
+            } else if is_point {
+                app.cancel_review_point_delete();
             } else {
                 app.cancel_clear_board();
             }

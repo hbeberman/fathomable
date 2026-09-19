@@ -180,6 +180,8 @@ pub(crate) enum PickerKind {
     ComparisonAdvanced(ComparisonSide),
     /// Optional name for a new workspace review point.
     ReviewPointName,
+    /// Saved review points eligible for deletion.
+    ReviewPointDelete,
     /// The worktrees of the workspace, the active one marked (ADR 0070).
     Worktree,
 }
@@ -438,6 +440,13 @@ pub(crate) enum Popup {
         slate: annotations::BoardSlate,
         counts: threads::archive::BoardCounts,
         changed: bool,
+    },
+    /// Confirmation for deleting one durable review point.
+    ConfirmReviewPointDelete {
+        id: String,
+        name: Option<String>,
+        created: u64,
+        armed: bool,
     },
 }
 
@@ -2508,6 +2517,13 @@ impl App {
     }
 
     pub(crate) fn open_picker(&mut self, kind: PickerKind) {
+        if matches!(
+            kind,
+            PickerKind::ComparisonReviewPoints | PickerKind::ReviewPointDelete
+        ) && !self.reload_review_points()
+        {
+            return;
+        }
         let items = match kind {
             PickerKind::Files => self.index(Filter::Visible),
             PickerKind::AllFiles => self.index(Filter::All),
@@ -2524,6 +2540,7 @@ impl App {
             PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
             PickerKind::ComparisonAdvanced(_) => vec!["Empty tree".to_owned()],
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
+            PickerKind::ReviewPointDelete => self.review_point_delete_choices(),
             PickerKind::Worktree => self.worktree_choices(),
         };
         self.open_scoped_picker(kind, items, None);
@@ -2688,6 +2705,9 @@ impl App {
                 };
                 let _ = item;
                 self.save_review_point(name);
+            }
+            Some((PickerKind::ReviewPointDelete, item, _)) => {
+                self.request_review_point_delete_confirmation(&item);
             }
             Some((PickerKind::Worktree, item, _)) => self.choose_worktree(&item),
             None => {}

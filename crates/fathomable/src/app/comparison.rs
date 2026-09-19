@@ -147,6 +147,14 @@ impl State {
         self.target_alias.as_ref()
     }
 
+    /// The selected review-point Base, when there is one.
+    pub(crate) fn review_point_base(&self) -> Option<&str> {
+        match &self.base {
+            ComparisonEndpoint::ReviewPoint(id) => Some(id),
+            _ => None,
+        }
+    }
+
     pub(crate) fn observed_head(&self) -> Option<&str> {
         self.observed_head.as_deref()
     }
@@ -169,6 +177,11 @@ impl State {
     /// Whether the displayed comparison is from an older successful refresh.
     pub(crate) fn stale(&self) -> bool {
         self.error.is_some() && self.current.is_some()
+    }
+
+    /// Record a refresh failure while retaining the last successful result.
+    pub(crate) fn record_error(&mut self, error: String) {
+        self.error = Some(error);
     }
 
     /// Number of refresh attempts observed by regression tests.
@@ -343,6 +356,7 @@ impl State {
             tracing::warn!(%error, path = %parent.display(), "cannot create comparison preference directory");
             return;
         }
+
         let temporary = self
             .preference
             .with_extension(format!("{}.tmp", std::process::id()));
@@ -352,6 +366,15 @@ impl State {
                 tracing::warn!(%error, path = %self.preference.display(), "cannot persist comparison preference");
             }
         }
+    }
+
+    /// Replace a missing review-point Base without changing Target or mode.
+    pub(crate) fn replace_missing_review_point_base(&mut self, workspace: &Workspace) {
+        let (base, alias) = head_endpoint(workspace);
+        self.base = base;
+        self.base_alias = alias;
+        self.error = None;
+        self.persist();
     }
 
     /// Whether the observed branch/HEAD changed since the last refresh.
@@ -743,6 +766,9 @@ impl App {
                 self.choose_diff_side_input(side.picker_kind(), item, input);
             }
             super::PickerKind::ComparisonReviewPoints => {
+                if !self.reload_review_points() {
+                    return;
+                }
                 self.choose_diff_side_input(super::PickerKind::ComparisonBase, item, input);
             }
             _ => {}
@@ -1146,6 +1172,32 @@ impl App {
         !self.workspace.is_git()
             && self.comparison.base() == &ComparisonEndpoint::EmptyTree
             && self.comparison.target() == &ComparisonEndpoint::WorkingTree
+    }
+
+    /// Remove retained point-backed rows after a non-Git fallback.
+    pub(crate) fn repair_review_point_fallback_projection(&mut self) {
+        if !self.plain_default_comparison() {
+            return;
+        }
+        for index in 0..self.docs.len() {
+            let path = self.docs[index].relative.clone();
+            let target = self
+                .workspace
+                .endpoint_text(&ComparisonEndpoint::WorkingTree, &path)
+                .ok()
+                .flatten();
+            self.docs[index].view.clear_comparison_body();
+            self.docs[index].view.set_bases(None, None);
+            self.docs[index].comparison_notice = target
+                .is_none()
+                .then(|| "not present in WorkingTree".to_owned());
+            self.docs[index].deleted = None;
+            self.docs[index].view.set_worktree_missing(target.is_none());
+            let changed = self.docs[index].view.reload(target.unwrap_or_default());
+            if changed {
+                self.queue_highlight(index);
+            }
+        }
     }
 }
 

@@ -46,6 +46,7 @@ use crate::workspace::{
 const INDEX_FILE: &str = "review-points.jsonl";
 const BLOB_DIR: &str = "blobs";
 const EVENT_NAME: &str = "review-point";
+const DELETE_EVENT_NAME: &str = "review-point-delete";
 
 /// One deliberate workspace state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -243,6 +244,62 @@ impl CaptureResult {
     }
 }
 
+/// The result of deleting one review point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteResult {
+    point: Option<ReviewPoint>,
+    reclaimed_blobs: usize,
+    reclaimed_bytes: u64,
+    issues: Vec<DeleteIssue>,
+}
+
+impl DeleteResult {
+    /// The point that was durably deleted, or `None` when it was already gone.
+    #[must_use]
+    pub fn point(&self) -> Option<&ReviewPoint> {
+        self.point.as_ref()
+    }
+
+    /// Number of unshared blob files removed.
+    #[must_use]
+    pub const fn reclaimed_blobs(&self) -> usize {
+        self.reclaimed_blobs
+    }
+
+    /// Bytes occupied by the removed blob files.
+    #[must_use]
+    pub const fn reclaimed_bytes(&self) -> u64 {
+        self.reclaimed_bytes
+    }
+
+    /// Post-commit cleanup or lock-release failures.
+    #[must_use]
+    pub fn issues(&self) -> &[DeleteIssue] {
+        &self.issues
+    }
+}
+
+/// A failure after a review-point deletion was durably committed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteIssue {
+    blob: Option<String>,
+    detail: String,
+}
+
+impl DeleteIssue {
+    /// The affected content digest, when cleanup concerned one blob.
+    #[must_use]
+    pub fn blob(&self) -> Option<&str> {
+        self.blob.as_deref()
+    }
+
+    /// The cleanup failure.
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        &self.detail
+    }
+}
+
 /// Persistent content-addressed review-point storage.
 #[derive(Debug)]
 pub struct ReviewPointStore {
@@ -278,7 +335,7 @@ impl ReviewPointStore {
         crate::private_state::ensure_dir(dir.join(BLOB_DIR))?;
         let log_path = dir.join(INDEX_FILE);
         let mut log = crate::private_state::open_append(&log_path)?;
-        let mut lock = FileLock::shared(&mut log)?;
+        let mut lock = FileLock::exclusive(&mut log)?;
         let result = replay_log(lock.file_mut());
         let unlock = lock.unlock();
         let points = match result {
@@ -292,6 +349,32 @@ impl ReviewPointStore {
             }
         };
         Ok(Self { dir, points, log })
+    }
+
+    /// Reload the active points from the durable manifest.
+    ///
+    /// An interrupted final record is discarded under the manifest lock.
+    /// Complete malformed records still fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O or format error without replacing the current map.
+    pub fn reload(&mut self) -> Result<(), ReviewPointError> {
+        let mut lock = FileLock::exclusive(&mut self.log)?;
+        let result = replay_log(lock.file_mut());
+        let unlock = lock.unlock();
+        let points = match result {
+            Ok(points) => {
+                unlock?;
+                points
+            }
+            Err(error) => {
+                let _ = unlock;
+                return Err(error);
+            }
+        };
+        self.points = points;
+        Ok(())
     }
 
     /// The storage directory.
@@ -340,6 +423,47 @@ impl ReviewPointStore {
                 .map(|metadata| metadata.len())
                 .sum()
         })
+    }
+
+    /// Delete one point and reclaim blobs no active point still references.
+    ///
+    /// The deletion record is made durable before any blob is removed.
+    /// Cleanup failures are returned in [`DeleteResult`] because they do not
+    /// undo the logical deletion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when replay fails or the deletion commit cannot be
+    /// established. [`ReviewPointError::CommitUncertain`] means callers must
+    /// reload or retry before claiming whether deletion occurred.
+    pub fn delete(&mut self, id: &str) -> Result<DeleteResult, ReviewPointError> {
+        let event = StoredDeleteEvent {
+            kind: DELETE_EVENT_NAME.to_owned(),
+            id: id.to_owned(),
+            deleted: crate::clock::now(),
+        };
+        let mut line = serde_json::to_vec(&event).map_err(|source| ReviewPointError::Json {
+            detail: source.to_string(),
+        })?;
+        line.push(b'\n');
+        let mut lock = FileLock::exclusive(&mut self.log)?;
+        let result = delete_locked(&self.dir, lock.file_mut(), id, &line);
+        match result {
+            Ok((points, mut deleted)) => {
+                if let Err(error) = lock.unlock() {
+                    deleted.issues.push(DeleteIssue {
+                        blob: None,
+                        detail: format!("manifest lock release failed: {error}"),
+                    });
+                }
+                self.points = points;
+                Ok(deleted)
+            }
+            Err(error) => {
+                let _ = lock.unlock();
+                Err(error)
+            }
+        }
     }
 
     /// Capture an explicit workspace review point.
@@ -545,6 +669,7 @@ impl ReviewPointStore {
         workspace: &Workspace,
         path: &Path,
     ) -> Result<Option<Vec<u8>>, ReviewPointError> {
+        self.require_active(point)?;
         if let Some(entry) = point.entry(path) {
             return match &entry.content {
                 ReviewContent::Tombstone => Ok(None),
@@ -588,6 +713,7 @@ impl ReviewPointStore {
         point: &ReviewPoint,
         workspace: &mut Workspace,
     ) -> Result<Comparison, ReviewPointError> {
+        self.require_active(point)?;
         let baseline = point
             .head()
             .cloned()
@@ -690,12 +816,22 @@ impl ReviewPointStore {
         })
     }
 
+    fn require_active(&self, point: &ReviewPoint) -> Result<(), ReviewPointError> {
+        if self.points.contains_key(point.id()) {
+            Ok(())
+        } else {
+            Err(ReviewPointError::Unavailable {
+                point: point.id.clone(),
+            })
+        }
+    }
+
     fn publish(
         &mut self,
         point: &ReviewPoint,
         blobs: &[(String, Vec<u8>)],
     ) -> Result<(), ReviewPointError> {
-        let event = StoredEvent::from_point(point);
+        let event = StoredPointEvent::from_point(point);
         let mut line = serde_json::to_vec(&event).map_err(|source| ReviewPointError::Json {
             detail: source.to_string(),
         })?;
@@ -725,7 +861,7 @@ enum ReviewContent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredEvent {
+struct StoredPointEvent {
     #[serde(rename = "event")]
     kind: String,
     id: String,
@@ -736,6 +872,20 @@ struct StoredEvent {
     head: Option<String>,
     entries: Vec<StoredEntry>,
     issues: Vec<StoredIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredDeleteEvent {
+    #[serde(rename = "event")]
+    kind: String,
+    id: String,
+    deleted: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredEventKind {
+    #[serde(rename = "event")]
+    kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -754,7 +904,7 @@ struct StoredIssue {
     detail: String,
 }
 
-impl StoredEvent {
+impl StoredPointEvent {
     fn from_point(point: &ReviewPoint) -> Self {
         Self {
             kind: EVENT_NAME.to_owned(),
@@ -788,6 +938,11 @@ impl StoredEvent {
     }
 
     fn into_point(self) -> Result<ReviewPoint, ReviewPointError> {
+        if !is_digest(&self.id) {
+            return Err(ReviewPointError::Invalid(
+                "review-point id must be a lowercase SHA-256 digest".to_owned(),
+            ));
+        }
         let head = self
             .head
             .map(CommitId::parse)
@@ -800,6 +955,13 @@ impl StoredEvent {
                 if entry.tombstone == entry.blob.is_some() {
                     return Err(ReviewPointError::Invalid(
                         "review-point entry must be either a blob or tombstone".to_owned(),
+                    ));
+                }
+                if let Some(blob) = entry.blob.as_deref()
+                    && !is_digest(blob)
+                {
+                    return Err(ReviewPointError::Invalid(
+                        "review-point blob must be a lowercase SHA-256 digest".to_owned(),
                     ));
                 }
                 Ok(ReviewEntry {
@@ -908,6 +1070,20 @@ pub enum ReviewPointError {
         /// The requested repository-relative path.
         path: PathBuf,
         /// The backing failure.
+        detail: String,
+    },
+    /// A point has been logically deleted or is otherwise no longer active.
+    #[error("review point {point} is no longer available")]
+    Unavailable {
+        /// The inactive point identifier.
+        point: String,
+    },
+    /// The manifest write failed after its durable outcome became uncertain.
+    #[error("review point {point} deletion outcome is uncertain: {detail}")]
+    CommitUncertain {
+        /// The point whose deletion must be reloaded or retried.
+        point: String,
+        /// The underlying append, flush, or sync failure.
         detail: String,
     },
     /// JSON serialization failed before publication.
@@ -1096,11 +1272,6 @@ struct FileLock<'a> {
 }
 
 impl<'a> FileLock<'a> {
-    fn shared(file: &'a mut File) -> io::Result<Self> {
-        file.lock_shared()?;
-        Ok(Self { file, locked: true })
-    }
-
     fn exclusive(file: &'a mut File) -> io::Result<Self> {
         file.lock()?;
         Ok(Self { file, locked: true })
@@ -1127,28 +1298,175 @@ impl Drop for FileLock<'_> {
 
 fn replay_log(file: &mut File) -> Result<BTreeMap<String, ReviewPoint>, ReviewPointError> {
     file.seek(SeekFrom::Start(0))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let complete = if bytes.last() == Some(&b'\n') {
+        bytes.len()
+    } else {
+        bytes
+            .iter()
+            .rposition(|byte| *byte == b'\n')
+            .map_or(0, |index| index + 1)
+    };
+    if complete < bytes.len() {
+        file.set_len(u64::try_from(complete).map_err(io::Error::other)?)?;
+        bytes.truncate(complete);
+    }
+    file.sync_all()?;
+    let text = std::str::from_utf8(&bytes).map_err(|source| ReviewPointError::Format {
+        line: bytes[..source.valid_up_to()]
+            .split(|byte| *byte == b'\n')
+            .count(),
+        detail: source.to_string(),
+    })?;
     let mut points = BTreeMap::new();
     for (line_number, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
-        let event: StoredEvent =
+        let kind: StoredEventKind =
             serde_json::from_str(line).map_err(|source| ReviewPointError::Format {
                 line: line_number + 1,
                 detail: source.to_string(),
             })?;
-        if event.kind != EVENT_NAME {
-            return Err(ReviewPointError::UnexpectedEvent {
-                line: line_number + 1,
-                event: event.kind,
-            });
+        match kind.kind.as_str() {
+            EVENT_NAME => {
+                let event: StoredPointEvent =
+                    serde_json::from_str(line).map_err(|source| ReviewPointError::Format {
+                        line: line_number + 1,
+                        detail: source.to_string(),
+                    })?;
+                let point = event.into_point()?;
+                points.insert(point.id.clone(), point);
+            }
+            DELETE_EVENT_NAME => {
+                let event: StoredDeleteEvent =
+                    serde_json::from_str(line).map_err(|source| ReviewPointError::Format {
+                        line: line_number + 1,
+                        detail: source.to_string(),
+                    })?;
+                if !is_digest(&event.id) {
+                    return Err(ReviewPointError::Invalid(
+                        "deleted review-point id must be a lowercase SHA-256 digest".to_owned(),
+                    ));
+                }
+                let _ = event.deleted;
+                points.remove(&event.id);
+            }
+            event => {
+                return Err(ReviewPointError::UnexpectedEvent {
+                    line: line_number + 1,
+                    event: event.to_owned(),
+                });
+            }
         }
-        let point = event.into_point()?;
-        points.insert(point.id.clone(), point);
     }
     Ok(points)
+}
+
+fn delete_locked(
+    dir: &Path,
+    file: &mut File,
+    id: &str,
+    line: &[u8],
+) -> Result<(BTreeMap<String, ReviewPoint>, DeleteResult), ReviewPointError> {
+    let mut points = replay_log(file)?;
+    let Some(point) = points.get(id).cloned() else {
+        return Ok((
+            points,
+            DeleteResult {
+                point: None,
+                reclaimed_blobs: 0,
+                reclaimed_bytes: 0,
+                issues: Vec::new(),
+            },
+        ));
+    };
+    let candidates: BTreeSet<String> = point
+        .entries()
+        .iter()
+        .filter_map(ReviewEntry::blob)
+        .map(str::to_owned)
+        .collect();
+
+    file.seek(SeekFrom::End(0))?;
+    if let Err(error) = file
+        .write_all(line)
+        .and_then(|()| file.flush())
+        .and_then(|()| file.sync_all())
+    {
+        return Err(ReviewPointError::CommitUncertain {
+            point: id.to_owned(),
+            detail: error.to_string(),
+        });
+    }
+    points.remove(id);
+
+    let referenced: BTreeSet<&str> = points
+        .values()
+        .flat_map(ReviewPoint::entries)
+        .filter_map(ReviewEntry::blob)
+        .collect();
+    let blob_dir = dir.join(BLOB_DIR);
+    let mut reclaimed_blobs = 0;
+    let mut reclaimed_bytes = 0_u64;
+    let mut issues = Vec::new();
+    for blob in candidates {
+        if referenced.contains(blob.as_str()) {
+            continue;
+        }
+        let path = blob_dir.join(&blob);
+        let opened = match crate::private_state::open_read(&path) {
+            Ok(opened) => opened,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                issues.push(DeleteIssue {
+                    blob: Some(blob),
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        let size = match opened.metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(error) => {
+                issues.push(DeleteIssue {
+                    blob: Some(blob),
+                    detail: error.to_string(),
+                });
+                continue;
+            }
+        };
+        drop(opened);
+        match fs::remove_file(&path) {
+            Ok(()) => {
+                reclaimed_blobs += 1;
+                reclaimed_bytes = reclaimed_bytes.saturating_add(size);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => issues.push(DeleteIssue {
+                blob: Some(blob),
+                detail: error.to_string(),
+            }),
+        }
+    }
+    if reclaimed_blobs > 0
+        && let Err(error) = sync_directory(&blob_dir)
+    {
+        issues.push(DeleteIssue {
+            blob: None,
+            detail: format!("blob directory sync failed: {error}"),
+        });
+    }
+    Ok((
+        points,
+        DeleteResult {
+            point: Some(point),
+            reclaimed_blobs,
+            reclaimed_bytes,
+            issues,
+        },
+    ))
 }
 
 fn publish_locked(
@@ -1196,6 +1514,13 @@ fn ensure_blob(dir: &Path, blob: &str, bytes: &[u8]) -> io::Result<()> {
 
 fn sync_directory(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
+}
+
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -1368,6 +1693,176 @@ mod tests {
 
         let reopened = ReviewPointStore::open(state)?;
         assert_eq!(reopened.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn deletion_reclaims_only_unshared_blobs_and_replays() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("review-point-delete")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("shared.md"), "shared\n")?;
+        fs::write(repo.join("changed.md"), "first\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let first = store
+            .capture(&mut workspace, Some("first"))?
+            .point()
+            .ok_or("first point")?
+            .clone();
+        fs::write(repo.join("changed.md"), "second\n")?;
+        let second = store
+            .capture(&mut workspace, Some("second"))?
+            .point()
+            .ok_or("second point")?
+            .clone();
+        let shared = first
+            .entry(Path::new("shared.md"))
+            .and_then(ReviewEntry::blob)
+            .ok_or("shared blob")?;
+        let unique = first
+            .entry(Path::new("changed.md"))
+            .and_then(ReviewEntry::blob)
+            .ok_or("unique blob")?;
+
+        let deleted = store.delete(first.id())?;
+        assert_eq!(deleted.point().map(ReviewPoint::id), Some(first.id()));
+        assert_eq!(deleted.reclaimed_blobs(), 1);
+        assert!(deleted.reclaimed_bytes() > 0);
+        assert!(deleted.issues().is_empty());
+        assert!(state.join(BLOB_DIR).join(shared).exists());
+        assert!(!state.join(BLOB_DIR).join(unique).exists());
+        assert!(matches!(
+            store.load_bytes(&first, &workspace, Path::new("shared.md")),
+            Err(ReviewPointError::Unavailable { .. })
+        ));
+        assert_eq!(
+            store.load_bytes(&second, &workspace, Path::new("shared.md"))?,
+            Some(b"shared\n".to_vec())
+        );
+
+        let already = store.delete(first.id())?;
+        assert!(already.point().is_none());
+        drop(store);
+        let reopened = ReviewPointStore::open(state)?;
+        assert!(reopened.get(first.id()).is_none());
+        assert!(reopened.get(second.id()).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn reload_repairs_only_an_unterminated_final_record() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("review-point-tail")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let point = store
+            .capture(&mut workspace, None)?
+            .point()
+            .ok_or("point")?
+            .clone();
+        drop(store);
+        let manifest = state.join(INDEX_FILE);
+        let mut file = fs::OpenOptions::new().append(true).open(&manifest)?;
+        file.write_all(br#"{"event":"review-point-delete","id":""#)?;
+        drop(file);
+
+        let mut reopened = ReviewPointStore::open(&state)?;
+        assert!(reopened.get(point.id()).is_some());
+        assert_eq!(fs::read(&manifest)?.last(), Some(&b'\n'));
+        reopened.delete(point.id())?;
+        assert!(ReviewPointStore::open(state)?.get(point.id()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_blob_ids_fail_before_forming_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-bad-blob")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let point = store
+            .capture(&mut workspace, None)?
+            .point()
+            .ok_or("point")?
+            .clone();
+        let blob = point.entries()[0].blob().ok_or("blob")?;
+        drop(store);
+        let manifest = state.join(INDEX_FILE);
+        let text = fs::read_to_string(&manifest)?;
+        fs::write(&manifest, text.replace(blob, "../outside"))?;
+
+        let error = ReviewPointStore::open(state)
+            .err()
+            .ok_or("invalid store opened")?;
+        assert!(error.to_string().contains("lowercase SHA-256"));
+        Ok(())
+    }
+
+    #[test]
+    fn unsafe_blob_cleanup_is_reported_after_deletion() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-delete-cleanup")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let point = store
+            .capture(&mut workspace, None)?
+            .point()
+            .ok_or("point")?
+            .clone();
+        let blob = point.entries()[0].blob().ok_or("blob")?;
+        fs::hard_link(state.join(BLOB_DIR).join(blob), state.join("extra-link"))?;
+
+        let deleted = store.delete(point.id())?;
+        assert!(deleted.point().is_some());
+        assert_eq!(deleted.reclaimed_blobs(), 0);
+        assert_eq!(deleted.issues().len(), 1);
+        assert_eq!(deleted.issues()[0].blob(), Some(blob));
+        assert!(store.get(point.id()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn stale_handles_serialize_delete_delete_and_recapture()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-delete-stale")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "same\n")?;
+        let state = dir.0.join("state");
+        let mut workspace_a = Workspace::discover(&repo)?;
+        let mut workspace_b = Workspace::discover(&repo)?;
+        let mut first = ReviewPointStore::open(&state)?;
+        let mut second = ReviewPointStore::open(&state)?;
+        let point = first
+            .capture(&mut workspace_a, Some("first"))?
+            .point()
+            .ok_or("point")?
+            .clone();
+
+        assert!(first.delete(point.id())?.point().is_some());
+        assert!(second.delete(point.id())?.point().is_none());
+        let replacement = second.capture(&mut workspace_b, Some("replacement"))?;
+        let replacement = replacement.point().ok_or("replacement")?;
+        assert_eq!(
+            second.load_bytes(replacement, &workspace_b, Path::new("a.md"))?,
+            Some(b"same\n".to_vec())
+        );
+        let reopened = ReviewPointStore::open(state)?;
+        assert!(reopened.get(point.id()).is_none());
+        assert!(reopened.get(replacement.id()).is_some());
         Ok(())
     }
 }

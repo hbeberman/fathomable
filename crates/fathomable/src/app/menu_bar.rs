@@ -680,6 +680,11 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 Action::ComparisonSave,
                 "Save review point",
             )),
+            Row::Item(Item::action(
+                app,
+                Action::ComparisonDelete,
+                "Delete review point…",
+            )),
             Row::Separator,
             Row::Item(Item::action(
                 app,
@@ -740,6 +745,10 @@ fn action_available(app: &App, action: Action) -> bool {
                 thread.lifecycle() != fathomable_core::annotations::Lifecycle::Resolved
             }),
         Action::ComparisonSave => app.review_points.is_some(),
+        Action::ComparisonDelete => app
+            .review_points
+            .as_ref()
+            .is_some_and(|store| !store.is_empty()),
         Action::ComparisonWhitespace | Action::FilesChanged => app.diff_mode() != DiffMode::Off,
         Action::SourceView => app.source_view_available(),
         Action::ArchiveThread => app
@@ -802,6 +811,9 @@ impl App {
         self.take_prefix();
         self.cancel_delete();
         self.park_draft();
+        if root == Root::Diff && self.review_points.is_some() && !self.has_new_annotation_draft() {
+            let _ = self.reload_review_points();
+        }
         if matches!(
             self.view().mode(),
             crate::app::view::Mode::Command | crate::app::view::Mode::Search { .. }
@@ -1396,7 +1408,7 @@ mod tests {
         assert_eq!(rows(&app, Root::Go).len(), 11);
         assert_eq!(rows(&app, Root::Review).len(), 16);
         let diff_rows = rows(&app, Root::Diff);
-        assert_eq!(diff_rows.len(), 11);
+        assert_eq!(diff_rows.len(), 12);
         let diff_labels = diff_rows
             .iter()
             .filter_map(super::Row::item)
@@ -1412,6 +1424,7 @@ mod tests {
                 "Pick target…",
                 "Head to WorkingTree",
                 "Save review point",
+                "Delete review point…",
                 "Ignore whitespace",
             ]
         );
@@ -1484,12 +1497,13 @@ mod tests {
                 ("Pick target…", false),
                 ("Head to WorkingTree", false),
                 ("Save review point", false),
+                ("Delete review point…", false),
                 ("Ignore whitespace", false),
             ]
         );
         assert!(items[3].enabled, "Base is the intentional restore route");
-        assert!(items[7].checked, "the whitespace preference is retained");
-        assert!(!items[7].enabled, "but cannot run while Off");
+        assert!(items[8].checked, "the whitespace preference is retained");
+        assert!(!items[8].enabled, "but cannot run while Off");
         app.open_title_menu(Root::Diff);
         let screen = testing::screen(&app)?.join("\n");
         assert!(screen.contains("▌ Diff off"), "{screen}");

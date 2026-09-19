@@ -73,13 +73,30 @@ impl App {
         }
 
         if self.diff_mode == DiffMode::Off {
+            let recovered = match self.reload_selected_review_point() {
+                Ok(recovered) => recovered,
+                Err(error) => {
+                    self.notice(error);
+                    return;
+                }
+            };
             self.comparison
                 .refresh(&mut self.workspace, self.review_points.as_ref());
             if let Some(error) = self.comparison.error().map(str::to_owned) {
                 self.notice(error);
                 return;
             }
+            if recovered.is_some() {
+                self.repair_review_point_fallback_projection();
+            }
             self.activate_diff_mode(mode);
+            if let Some(id) = recovered {
+                self.notice(format!(
+                    "review point {} was deleted; Base reset to {}",
+                    id.chars().take(8).collect::<String>(),
+                    self.comparison_menu_pair().0
+                ));
+            }
         } else {
             self.diff_mode = mode;
             self.last_active_diff_mode = mode;
@@ -279,14 +296,44 @@ impl App {
 
     /// Kept for callers that need the active pair after a refresh.
     pub(crate) fn refresh_comparison(&mut self) {
+        let recovered = match self.reload_selected_review_point() {
+            Ok(recovered) => recovered,
+            Err(error) => {
+                if self.diff_mode == DiffMode::Off {
+                    self.refresh_off_target();
+                    self.notice(error);
+                } else {
+                    self.comparison.record_error(error);
+                    self.apply_refreshed_comparison(false);
+                }
+                return;
+            }
+        };
         if self.diff_mode == DiffMode::Off {
             self.refresh_off_target();
+            if let Some(id) = recovered {
+                self.notice(format!(
+                    "review point {} was deleted; Base reset to {}",
+                    id.chars().take(8).collect::<String>(),
+                    self.comparison_menu_pair().0
+                ));
+            }
             return;
         }
         let branch_changed = self.comparison.head_changed(&self.workspace);
         self.comparison
             .refresh(&mut self.workspace, self.review_points.as_ref());
+        if recovered.is_some() {
+            self.repair_review_point_fallback_projection();
+        }
         self.apply_refreshed_comparison(branch_changed);
+        if let Some(id) = recovered {
+            self.notice(format!(
+                "review point {} was deleted; Base reset to {}",
+                id.chars().take(8).collect::<String>(),
+                self.comparison_menu_pair().0
+            ));
+        }
     }
 
     pub(super) fn apply_refreshed_comparison(&mut self, branch_changed: bool) {

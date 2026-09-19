@@ -932,6 +932,13 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     handle_key(&mut app, key('d'));
     let place = super::super::keys::place(&app).context("view receives keys")?;
     let sections = app.which_key_sections(place);
+    let selected = sections
+        .iter()
+        .flat_map(bindings::MenuSection::entries)
+        .filter(|entry| entry.active())
+        .map(bindings::MenuEntry::key)
+        .collect::<Vec<_>>();
+    assert_eq!(selected, ["s"]);
     let grid = draw::which_key_grid(&app, &sections);
     assert_eq!(grid.columns.len(), 3);
     assert_eq!(grid.rows, 5);
@@ -940,7 +947,7 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
             .iter()
             .map(|column| column.label_width)
             .collect::<Vec<_>>(),
-        [8, 20, 21]
+        [13, 24, 21]
     );
 
     let screen = testing::screen(&app)?;
@@ -956,13 +963,13 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     assert_eq!(
         card,
         [
-            "╭ Space d · diff ┬──────────────────────────┬───────────────────────────╮",
-            "│s  standard     │b  pick base…             │p  save review point       │",
-            "│u  unified      │t  pick target…           │r  manage review points…   │",
-            "│o  off          │d  HEAD to Working tree   ├───────────────────────────┤",
-            "│                │l  HEAD~1 to HEAD         │w  whitespace              │",
-            "│                │c  Commit~1 to Commit…    │                           │",
-            "╰────────────────┴──────────────────────────┴───────────────────────────╯",
+            "╭ Space d · diff ───┬──────────────────────────────┬───────────────────────────╮",
+            "│▌ s  standard diff │b  pick base…                 │p  save review point       │",
+            "│  u  unified diff  │t  pick target…               │r  manage review points…   │",
+            "│  o  diff off      │d  show uncommitted changes   ├───────────────────────────┤",
+            "│                   │l  show latest commit         │w  ignore whitespace       │",
+            "│                   │c  show a specific commit…    │                           │",
+            "╰───────────────────┴──────────────────────────────┴───────────────────────────╯",
         ]
     );
 
@@ -971,8 +978,29 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     let narrow = draw::which_key_grid(&app, &sections);
     assert_eq!(narrow.columns.len(), 1);
     assert_eq!(narrow.rows, 14);
-    assert_eq!(narrow.columns[0].label_width, 21);
+    assert_eq!(narrow.columns[0].label_width, 22);
     assert!(!narrow.insufficient_space);
+    let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+    let theme = draw::Theme::from_core(&core);
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 30))?;
+    terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
+    let buffer = terminal.backend().buffer();
+    assert_eq!(
+        buffer[(
+            u16::try_from(narrow.x + narrow.width - 1)?,
+            u16::try_from(narrow.y)?
+        )]
+            .symbol(),
+        "╮"
+    );
+    assert_eq!(
+        buffer[(
+            u16::try_from(narrow.x + narrow.width - 1)?,
+            u16::try_from(narrow.y + narrow.height - 1)?
+        )]
+            .symbol(),
+        "╯"
+    );
 
     let wide = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 120, 30);
     assert_eq!(wide.columns.len(), 3);
@@ -982,7 +1010,7 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
             .iter()
             .map(|column| column.label_width)
             .collect::<Vec<_>>(),
-        [8, 20, 21]
+        [13, 24, 21]
     );
 
     let narrow_tall = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 19, 30);
@@ -1001,6 +1029,85 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     let impossible = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 2, 1);
     assert!(impossible.insufficient_space);
     assert_eq!(impossible.entry_at(0, 0), None);
+    Ok(())
+}
+
+#[test]
+fn diff_hint_marker_tracks_the_actual_mode_after_a_rejected_change() -> anyhow::Result<()> {
+    use ratatui::style::Modifier;
+
+    let dir = fixture("diff-hint-marker")?;
+    let mut app = app(&dir)?;
+    app.resize(80, 30);
+
+    for mode in [DiffMode::Standard, DiffMode::Unified, DiffMode::Off] {
+        app.take_prefix();
+        app.select_diff_mode(mode);
+        app.settle_background();
+        handle_key(&mut app, key(' '));
+        handle_key(&mut app, key('d'));
+        let place = super::super::keys::place(&app).context("view receives keys")?;
+        let sections = app.which_key_sections(place);
+        let selected = sections
+            .iter()
+            .flat_map(bindings::MenuSection::entries)
+            .filter(|entry| entry.active())
+            .map(bindings::MenuEntry::key)
+            .collect::<Vec<_>>();
+        let expected = match mode {
+            DiffMode::Standard => "s",
+            DiffMode::Unified => "u",
+            DiffMode::Off => "o",
+        };
+        assert_eq!(selected, [expected]);
+        if mode == DiffMode::Off {
+            let whitespace = sections
+                .iter()
+                .flat_map(bindings::MenuSection::entries)
+                .find(|entry| entry.key() == "w")
+                .context("whitespace entry")?;
+            assert!(!app.which_key_enabled(place, whitespace.chord()));
+        }
+        let grid = draw::which_key_grid(&app, &sections);
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = draw::Theme::from_core(&core);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30))?;
+        terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
+        let buffer = terminal.backend().buffer();
+        let x = u16::try_from(grid.x)?..u16::try_from(grid.x + grid.width)?;
+        let y = u16::try_from(grid.y)?..u16::try_from(grid.y + grid.height)?;
+        let markers = y
+            .flat_map(|row| x.clone().map(move |column| (column, row)))
+            .filter(|&(column, row)| buffer[(column, row)].symbol() == "▌")
+            .collect::<Vec<_>>();
+        assert_eq!(markers.len(), 1, "{mode:?}: {markers:?}");
+        let marker = &buffer[markers[0]];
+        assert!(marker.modifier.contains(Modifier::BOLD));
+        assert_eq!(Some(marker.fg), theme.popup_key.fg);
+    }
+
+    app.take_prefix();
+    app.select_diff_mode(DiffMode::Unified);
+    app.settle_background();
+    assert_eq!(app.diff_mode(), DiffMode::Unified);
+    let row = row_of(&app, "alpha beta")?;
+    app.view_mut().goto_row(row);
+    app.view_mut().select_lines();
+    app.start_comment();
+    app.select_diff_mode(DiffMode::Off);
+    assert_eq!(app.diff_mode(), DiffMode::Unified);
+    app.compose_cancel();
+
+    handle_key(&mut app, key(' '));
+    handle_key(&mut app, key('d'));
+    let sections = app.which_key_sections(Where::View);
+    let selected = sections
+        .iter()
+        .flat_map(bindings::MenuSection::entries)
+        .filter(|entry| entry.active())
+        .map(bindings::MenuEntry::key)
+        .collect::<Vec<_>>();
+    assert_eq!(selected, ["u"]);
     Ok(())
 }
 

@@ -18,6 +18,14 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Amended 2026-09-19: the `Space d` leader card uses concise workflow labels
+while preserving the Diff menu's actions, order, and semantic sections. Its
+Standard, Unified, and Off rows reuse the inter-column padding for a bold `▌`
+on exactly the current mode, so the full labels still form three columns at
+80 cells and continue to reflow on narrower terminals. The marker is derived
+from the effective mode when the card is built; a rejected or deferred mode
+request cannot move it. Ignore whitespace remains present but disabled in Off.
+
 Amended 2026-09-19: **Help > MCP Setup** and `:mcp` open the same
 scrollable, read-only setup steps for registering Fathomable's stdio MCP
 server. The view shows commands and binding guidance; it does not edit host

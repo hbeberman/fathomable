@@ -86,6 +86,16 @@ Plain header space and content can focus a pane without changing the title's
 menu target. `Alt-Space` opens and focuses the top-left Fathomable menu,
 revealing the app bar first if it is hidden. Hover never focuses.
 
+The startup welcome and **Help > Getting started** keep the complete quick
+reference visible by first tightening optional blank rows, then placing the
+Pane, Diff, and Comment sections in readable columns on short, wide terminals.
+Narrow layouts wrap the introduction and retain one control column when height
+allows; genuinely undersized layouts use the normal terminal-too-small
+treatment instead of clipping a section. `Alt-Space` has its own line below
+the `Space` keymap hint. The welcome's brief `c` description applies to adding
+a comment in File; elsewhere `c` remains contextual, including **only
+changed** in File list and reply in the thread surfaces.
+
 The **File list** title menu has four session filters: **only changed**,
 **only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
 `Space F o`, `Space F u`, and `Space F i` toggle them from any pane. The same
@@ -157,8 +167,8 @@ the table below is a quick reference, not the full list.
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space T Z` | fold or unfold all file groups in Thread list |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
-| `Space d d` | compare the current HEAD to the working tree |
-| `Space d l` `Space d c` | compare HEAD or a chosen commit with its first parent |
+| `Space d d` | show uncommitted changes (current `HEAD` to working tree) |
+| `Space d l` `Space d c` | show the latest commit or a specific commit against its first parent |
 | `Space d w` | ignore whitespace |
 | `Space d p` `Space d r` | save-and-select / manage review points |
 | `Space v s` | source / rendered view for configured Markdown files |
@@ -241,15 +251,19 @@ new-file comment must be submitted or cancelled before changing mode, Base, or
 Target.
 
 A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
-does **not** advance that Base; choose the new commit explicitly. The Diff menu
-begins with Standard, Unified, and Off, then Base, Target, and **HEAD to Working
-tree**. That action, or `Space d d`, pins the current `HEAD` as Base and selects
-the working tree as Target. `Space d l` selects the immutable `HEAD~1` to
-`HEAD` pair. `Space d c` opens a commit-only picker and compares the chosen
-commit with its first parent; root commits are rejected explicitly. Save/Delete
-review point and Manage review points follow a separator, and Ignore whitespace follows another. There
-is no comparison-control popup, **Start comparison at current HEAD**, or
-`:diff`.
+does **not** advance that Base; choose the new commit explicitly. The `Space d`
+card begins with **standard diff**, **unified diff**, and **diff off**, then
+**pick base…**, **pick target…**, **show uncommitted changes**, **show latest
+commit**, and **show a specific commit…**. **show uncommitted changes**, or
+`Space d d`, pins the current `HEAD` as Base and selects the working tree as
+Target. **show latest commit**, or `Space d l`, selects the immutable `HEAD~1`
+to `HEAD` pair. **show a specific commit…**, or `Space d c`, opens a
+commit-only picker and compares the chosen commit with its first parent; root
+commits are rejected explicitly. **save review point** and **manage review
+points…** follow a separator, and **ignore whitespace** follows another. The
+active Standard, Unified, or Off row carries the same `▌` marker as the top
+Diff menu. There is no comparison-control popup, **Start comparison at current
+HEAD**, or `:diff`.
 
 Rendered/Source is available in Standard and Off only for files matched by
 `markdown.extensions` or `markdown.names`, including custom extensions and

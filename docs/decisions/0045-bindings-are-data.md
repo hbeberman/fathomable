@@ -13,6 +13,13 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Amended 2026-09-19: the `Space d` labels use direct workflow language:
+**standard diff**, **unified diff**, **diff off**, **pick base…**, **pick
+target…**, **show uncommitted changes**, **show latest commit**, **show a
+specific commit…**, **save review point**, **manage review points…**, and
+**ignore whitespace**. The binding descriptions retain their `diff: ` prefix
+so the derived submenu breadcrumb removes it in one place.
+
 Amended 2026-09-18: `Alt-Space` is a binding-table action that opens and
 focuses the top-left Fathomable menu. Dispatch recognizes this one global
 accelerator before popup and text-input precedence so it is as reachable as

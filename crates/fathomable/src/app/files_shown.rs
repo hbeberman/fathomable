@@ -215,7 +215,17 @@ impl App {
 
     /// The drawn which-key sections, grouped by related actions.
     pub(crate) fn which_key_sections(&self, place: Where) -> Vec<bindings::MenuSection> {
-        bindings::menu_sections(place, self.prefix(), |action| self.live_label(action))
+        let mut sections =
+            bindings::menu_sections(place, self.prefix(), |action| self.live_label(action));
+        let active = match self.diff_mode() {
+            fathomable_core::config::DiffMode::Standard => Action::DiffStandard,
+            fathomable_core::config::DiffMode::Unified => Action::DiffUnified,
+            fathomable_core::config::DiffMode::Off => Action::DiffOff,
+        };
+        for section in &mut sections {
+            section.select(active);
+        }
+        sections
     }
 
     /// Whether a visible which-key route is currently actionable.

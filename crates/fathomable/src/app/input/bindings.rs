@@ -910,21 +910,21 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('d'), c('s')]],
         A::DiffStandard,
         "Space menu",
-        "diff: standard",
+        "diff: standard diff",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('u')]],
         A::DiffUnified,
         "Space menu",
-        "diff: unified",
+        "diff: unified diff",
     ),
     bind(
         W::Any,
         &[&[c(' '), c('d'), c('o')]],
         A::DiffOff,
         "Space menu",
-        "diff: off",
+        "diff: diff off",
     ),
     bind_in(
         W::Any,
@@ -947,7 +947,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('d'), c('d')]],
         A::ComparisonHeadWorkingTree,
         "Space menu",
-        "diff: HEAD to Working tree",
+        "diff: show uncommitted changes",
         1,
     ),
     bind_in(
@@ -955,7 +955,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('d'), c('l')]],
         A::ComparisonHeadParent,
         "Space menu",
-        "diff: HEAD~1 to HEAD",
+        "diff: show latest commit",
         1,
     ),
     bind_in(
@@ -963,7 +963,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('d'), c('c')]],
         A::ComparisonCommitParent,
         "Space menu",
-        "diff: Commit~1 to Commit…",
+        "diff: show a specific commit…",
         1,
     ),
     bind_in(
@@ -987,7 +987,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c(' '), c('d'), c('w')]],
         A::ComparisonWhitespace,
         "Space menu",
-        "diff: whitespace",
+        "diff: ignore whitespace",
         3,
     ),
     bind(
@@ -1675,7 +1675,7 @@ pub(crate) fn menu_entries(
 ) -> Vec<(Chord, String)> {
     menu_entries_with_sections(place, typed, relabel)
         .into_iter()
-        .map(|(chord, label, _)| (chord, label))
+        .map(|(chord, label, _, _)| (chord, label))
         .collect()
 }
 
@@ -1684,6 +1684,9 @@ pub(crate) fn menu_entries(
 pub(crate) struct MenuEntry {
     chord: Chord,
     label: String,
+    action: Option<Action>,
+    choice: bool,
+    active: bool,
 }
 
 impl MenuEntry {
@@ -1701,6 +1704,16 @@ impl MenuEntry {
     pub(crate) fn label(&self) -> &str {
         &self.label
     }
+
+    #[must_use]
+    pub(crate) const fn active(&self) -> bool {
+        self.active
+    }
+
+    #[must_use]
+    pub(crate) const fn choice(&self) -> bool {
+        self.choice
+    }
 }
 
 /// One semantic group in a which-key card.
@@ -1714,6 +1727,16 @@ impl MenuSection {
     pub(crate) fn entries(&self) -> &[MenuEntry] {
         &self.entries
     }
+
+    pub(crate) fn select(&mut self, action: Action) {
+        for entry in &mut self.entries {
+            entry.choice = matches!(
+                entry.action,
+                Some(Action::DiffStandard | Action::DiffUnified | Action::DiffOff)
+            );
+            entry.active = entry.action == Some(action);
+        }
+    }
 }
 
 /// Which-key sections in binding-table order.
@@ -1725,7 +1748,7 @@ pub(crate) fn menu_sections(
 ) -> Vec<MenuSection> {
     let entries = menu_entries_with_sections(place, typed, relabel);
     let mut sections: Vec<(u8, MenuSection)> = Vec::new();
-    for (chord, label, section) in entries {
+    for (chord, label, section, action) in entries {
         let section = if typed.len() > 1 { section } else { 0 };
         if sections
             .last()
@@ -1739,7 +1762,13 @@ pub(crate) fn menu_sections(
             ));
         }
         if let Some((_, current)) = sections.last_mut() {
-            current.entries.push(MenuEntry { chord, label });
+            current.entries.push(MenuEntry {
+                chord,
+                label,
+                action,
+                choice: false,
+                active: false,
+            });
         }
     }
     sections.into_iter().map(|(_, section)| section).collect()
@@ -1749,13 +1778,14 @@ fn menu_entries_with_sections(
     place: Where,
     typed: &[Chord],
     relabel: impl Fn(Action) -> Option<&'static str>,
-) -> Vec<(Chord, String, u8)> {
-    let mut entries: Vec<(Chord, String, u8)> = Vec::new();
+) -> Vec<(Chord, String, u8, Option<Action>)> {
+    let mut entries: Vec<(Chord, String, u8, Option<Action>)> = Vec::new();
     for binding in applicable(place) {
         for keys in binding.keys {
             if keys.len() > typed.len() && keys.starts_with(typed) {
                 let next = keys[typed.len()];
-                if !entries.iter().any(|(key, _, _)| *key == next) {
+                if !entries.iter().any(|(key, _, _, _)| *key == next) {
+                    let action = (keys.len() == typed.len() + 1).then_some(binding.action);
                     let label = if keys.len() == typed.len() + 1 {
                         // The breadcrumb row already names the submenu,
                         // so an entry inside one does not repeat it.
@@ -1767,7 +1797,7 @@ fn menu_entries_with_sections(
                         let word = submenu_word(&keys[..=typed.len()]).unwrap_or("more");
                         format!("{word}…")
                     };
-                    entries.push((next, label, binding.menu_section));
+                    entries.push((next, label, binding.menu_section, action));
                 }
             }
         }

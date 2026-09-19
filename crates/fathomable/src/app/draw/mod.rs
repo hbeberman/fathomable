@@ -919,10 +919,7 @@ fn draw_file_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
 fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect, gutter: usize) {
     let text_rows = usize::from(text_area.height);
     if app.getting_started() {
-        frame.render_widget(
-            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
-            text_area,
-        );
+        draw_welcome(frame, app, theme, text_area);
     } else if app.review_list().is_open() {
         draw_review(frame, app, theme, text_area);
     } else if let Some(directory) = app.directory_info() {
@@ -935,95 +932,360 @@ fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect,
             text_area,
         );
     } else {
-        frame.render_widget(
-            Paragraph::new(welcome_lines(app, theme, text_area)).style(theme.text),
-            text_area,
-        );
+        draw_welcome(frame, app, theme, text_area);
     }
+}
+
+fn draw_welcome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    if let Some(lines) = welcome_lines(app, theme, area) {
+        frame.render_widget(Paragraph::new(lines).style(theme.text), area);
+        return;
+    }
+    let message = vec![
+        Line::from("Terminal too small"),
+        Line::from(format!(
+            "Welcome needs more room; have {}×{}",
+            area.width, area.height
+        )),
+        Line::from("Resize, use Layout to hide a pane, or q to quit"),
+    ];
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(message)
+            .alignment(Alignment::Center)
+            .style(theme.warning),
+        centred(area, area.width, u16_of(3)),
+    );
+}
+
+type WelcomeEntry = (&'static str, &'static str);
+
+const WELCOME_COLUMN_GAP: usize = 3;
+const WELCOME_PANE: &[WelcomeEntry] = &[
+    ("f", "File pane"),
+    ("F", "File list"),
+    ("t", "Threads pane"),
+    ("T", "Threads list"),
+    ("w/W", "cycle pane focus"),
+    ("q", "quit"),
+];
+const WELCOME_DIFF: &[WelcomeEntry] = &[
+    ("J/K", "next/previous change"),
+    ("L/H", "next/previous changed file"),
+    ("Space d d", "show uncommitted changes"),
+    ("Space d l", "show latest commit"),
+    ("Space d c", "show a specific commit"),
+];
+const WELCOME_COMMENT: &[WelcomeEntry] = &[
+    ("Tab/⇧Tab", "next/previous comment thread"),
+    ("c", "add a comment"),
+    ("r", "resolve/reopen thread"),
+];
+const WELCOME_PRODUCT: &[&str] = &[
+    "A read-only workspace viewer for reviewing diffs and",
+    "interactive comment threads with agents via MCP.",
+];
+const WELCOME_INTERACTION: &[&str] = &[
+    "Usable with both mouse (right/left click) and keyboard.",
+    "Space opens a hotkey list.",
+    "Alt-Space moves keyboard focus to the menu bar.",
+];
+
+#[derive(Clone, Copy)]
+enum WelcomeLayout {
+    Single,
+    Two,
+    Three,
+}
+
+struct WelcomePlan {
+    product: Vec<String>,
+    interaction: Vec<String>,
+    layout: WelcomeLayout,
+    spacing: usize,
+    block_width: usize,
 }
 
 /// What the text column shows before any file is open: a short introduction
 /// and the keys that get going, centred as a block.
-fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
+fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Option<Vec<Line<'a>>> {
     let root = app.workspace().root().display().to_string();
-    let entries = [
-        ("f", "File pane"),
-        ("F", "File list"),
-        ("t", "Threads pane"),
-        ("T", "Threads list"),
-        ("w / W", "cycle pane focus"),
-        ("q", "quit"),
-    ];
-    let diff_entries = [
-        ("J / K", "next / previous change"),
-        ("L / H", "next / previous changed file"),
-        ("Space d", "diff options"),
-    ];
-    let intro = [
-        "A read-only workspace viewer for reviewing diffs and",
-        "interactive comment threads with agents via MCP.",
-        "",
-        "Usable with both mouse (right/left click) and keyboard.",
-        "Space opens a hotkey list. Alt-Space moves keyboard focus",
-        "to the menu bar.",
-    ];
-    let key_width = entries
-        .iter()
-        .chain(diff_entries.iter())
-        .map(|(key, _)| display_width(key))
-        .max()
-        .unwrap_or(0);
     let width = usize::from(area.width);
-    let block_width = entries
-        .iter()
-        .map(|(_, label)| key_width + 2 + display_width(label))
-        .chain(
-            diff_entries
-                .iter()
-                .map(|(_, label)| key_width + 2 + display_width(label)),
-        )
-        .chain(intro.iter().map(|line| display_width(line)))
-        .chain(std::iter::once(display_width(&root)))
-        .max()
-        .unwrap_or(0)
-        .min(width);
-    let left = " ".repeat(width.saturating_sub(block_width) / 2);
+    let plan = welcome_plan(width, usize::from(area.height), display_width(&root))?;
+    let left = " ".repeat(width.saturating_sub(plan.block_width) / 2);
     let mut body: Vec<Line<'a>> = vec![
         Line::from(Span::styled(
             format!("{left}Fathomable"),
             theme.heading[0].add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            format!("{left}{}", truncate_left(&root, block_width)),
+            format!("{left}{}", truncate_left(&root, plan.block_width)),
             theme.text.add_modifier(Modifier::DIM),
         )),
     ];
-    body.push(Line::from(""));
-    for line in intro {
+    if plan.spacing >= 1 {
+        body.push(Line::from(""));
+    }
+    for line in &plan.product {
         body.push(Line::raw(format!("{left}{line}")));
     }
-    body.push(Line::from(""));
-    for (key, label) in entries {
-        body.push(Line::from(vec![
-            Span::styled(format!("{left}{key:<key_width$}"), theme.popup_key),
-            Span::raw(format!("  {label}")),
-        ]));
+    if plan.spacing >= plan.layout.maximum_spacing() {
+        body.push(Line::from(""));
     }
-    body.push(Line::from(""));
-    body.push(Line::from(Span::styled(
-        format!("{left}Diff controls"),
-        theme.info.add_modifier(Modifier::BOLD),
-    )));
-    for (key, label) in diff_entries {
-        body.push(Line::from(vec![
-            Span::styled(format!("{left}{key:<key_width$}"), theme.popup_key),
-            Span::raw(format!("  {label}")),
-        ]));
+    for line in &plan.interaction {
+        body.push(Line::raw(format!("{left}{line}")));
     }
+    if plan.spacing >= 2 {
+        body.push(Line::from(""));
+    }
+    let mut controls = welcome_controls(theme, plan.layout, plan.spacing);
+    for line in &mut controls {
+        line.spans.insert(0, Span::raw(left.clone()));
+    }
+    body.extend(controls);
     let top = usize::from(area.height).saturating_sub(body.len()) / 3;
     let mut out = vec![Line::from(""); top];
     out.extend(body);
-    out
+    Some(out)
+}
+
+impl WelcomeLayout {
+    const fn maximum_spacing(self) -> usize {
+        match self {
+            Self::Single => 5,
+            Self::Two => 4,
+            Self::Three => 3,
+        }
+    }
+}
+
+fn welcome_plan(width: usize, height: usize, root_width: usize) -> Option<WelcomePlan> {
+    let product = WELCOME_PRODUCT
+        .iter()
+        .flat_map(|line| wrap_words(line, width))
+        .collect::<Vec<_>>();
+    let interaction = WELCOME_INTERACTION
+        .iter()
+        .flat_map(|line| wrap_words(line, width))
+        .collect::<Vec<_>>();
+    let pane_width = welcome_section_width(WELCOME_PANE);
+    let diff_width = welcome_section_width(WELCOME_DIFF);
+    let comment_width = welcome_section_width(WELCOME_COMMENT);
+    let intro_rows = 2 + product.len() + interaction.len();
+    let single_rows = intro_rows
+        + welcome_section_height(WELCOME_PANE)
+        + welcome_section_height(WELCOME_DIFF)
+        + welcome_section_height(WELCOME_COMMENT);
+    let single_width = welcome_single_width();
+    let two_width = pane_width + WELCOME_COLUMN_GAP + diff_width.max(comment_width);
+    let two_rows = intro_rows
+        + welcome_section_height(WELCOME_PANE)
+            .max(welcome_section_height(WELCOME_DIFF) + welcome_section_height(WELCOME_COMMENT));
+    let three_width =
+        pane_width + diff_width + comment_width + WELCOME_COLUMN_GAP.saturating_mul(2);
+    let three_rows = intro_rows
+        + welcome_section_height(WELCOME_PANE)
+            .max(welcome_section_height(WELCOME_DIFF))
+            .max(welcome_section_height(WELCOME_COMMENT));
+    let (layout, required_rows, controls_width) = if single_width <= width && single_rows <= height
+    {
+        (WelcomeLayout::Single, single_rows, single_width)
+    } else if two_width <= width && two_rows <= height {
+        (WelcomeLayout::Two, two_rows, two_width)
+    } else if three_width <= width && three_rows <= height {
+        (WelcomeLayout::Three, three_rows, three_width)
+    } else {
+        return None;
+    };
+    let spacing = height
+        .saturating_sub(required_rows)
+        .min(layout.maximum_spacing());
+    let block_width = product
+        .iter()
+        .chain(&interaction)
+        .map(|line| display_width(line))
+        .chain([controls_width, root_width.min(width)])
+        .max()
+        .unwrap_or(0)
+        .min(width);
+    Some(WelcomePlan {
+        product,
+        interaction,
+        layout,
+        spacing,
+        block_width,
+    })
+}
+
+fn welcome_controls<'a>(theme: &Theme, layout: WelcomeLayout, spacing: usize) -> Vec<Line<'a>> {
+    let shared_key_width = WELCOME_PANE
+        .iter()
+        .chain(WELCOME_DIFF)
+        .chain(WELCOME_COMMENT)
+        .map(|(key, _)| display_width(key))
+        .max()
+        .unwrap_or(0);
+    let key_width = |entries| match layout {
+        WelcomeLayout::Single => shared_key_width,
+        WelcomeLayout::Two | WelcomeLayout::Three => welcome_key_width(entries),
+    };
+    let pane = welcome_section(
+        theme,
+        "Pane navigation",
+        WELCOME_PANE,
+        key_width(WELCOME_PANE),
+    );
+    let diff = welcome_section(
+        theme,
+        "Diff controls",
+        WELCOME_DIFF,
+        key_width(WELCOME_DIFF),
+    );
+    let comment = welcome_section(
+        theme,
+        "Comment controls",
+        WELCOME_COMMENT,
+        key_width(WELCOME_COMMENT),
+    );
+    match layout {
+        WelcomeLayout::Single => {
+            let mut lines = pane;
+            if spacing >= 3 {
+                lines.push(Line::from(""));
+            }
+            lines.extend(diff);
+            if spacing >= 4 {
+                lines.push(Line::from(""));
+            }
+            lines.extend(comment);
+            lines
+        }
+        WelcomeLayout::Two => {
+            let mut second = diff;
+            if spacing >= 3 {
+                second.push(Line::from(""));
+            }
+            second.extend(comment);
+            welcome_columns(
+                &[pane, second],
+                &[
+                    welcome_section_width(WELCOME_PANE),
+                    welcome_section_width(WELCOME_DIFF).max(welcome_section_width(WELCOME_COMMENT)),
+                ],
+                WELCOME_COLUMN_GAP,
+            )
+        }
+        WelcomeLayout::Three => welcome_columns(
+            &[pane, diff, comment],
+            &[
+                welcome_section_width(WELCOME_PANE),
+                welcome_section_width(WELCOME_DIFF),
+                welcome_section_width(WELCOME_COMMENT),
+            ],
+            WELCOME_COLUMN_GAP,
+        ),
+    }
+}
+
+fn welcome_section<'a>(
+    theme: &Theme,
+    title: &'static str,
+    entries: &[WelcomeEntry],
+    key_width: usize,
+) -> Vec<Line<'a>> {
+    let mut lines = vec![Line::from(Span::styled(
+        title,
+        theme.info.add_modifier(Modifier::BOLD),
+    ))];
+    lines.extend(entries.iter().map(|(key, label)| {
+        Line::from(vec![
+            Span::styled(format!("{key:<key_width$}"), theme.popup_key),
+            Span::raw(format!("  {label}")),
+        ])
+    }));
+    lines
+}
+
+fn welcome_key_width(entries: &[WelcomeEntry]) -> usize {
+    entries
+        .iter()
+        .map(|(key, _)| display_width(key))
+        .max()
+        .unwrap_or(0)
+}
+
+fn welcome_section_width(entries: &[WelcomeEntry]) -> usize {
+    let key_width = welcome_key_width(entries);
+    entries
+        .iter()
+        .map(|(_, label)| key_width + 2 + display_width(label))
+        .max()
+        .unwrap_or(0)
+}
+
+const fn welcome_section_height(entries: &[WelcomeEntry]) -> usize {
+    entries.len() + 1
+}
+
+fn welcome_single_width() -> usize {
+    let key_width = WELCOME_PANE
+        .iter()
+        .chain(WELCOME_DIFF)
+        .chain(WELCOME_COMMENT)
+        .map(|(key, _)| display_width(key))
+        .max()
+        .unwrap_or(0);
+    WELCOME_PANE
+        .iter()
+        .chain(WELCOME_DIFF)
+        .chain(WELCOME_COMMENT)
+        .map(|(_, label)| key_width + 2 + display_width(label))
+        .max()
+        .unwrap_or(0)
+}
+
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    if text.is_empty() || width == 0 {
+        return vec![text.to_owned()];
+    }
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let joined_width =
+            display_width(&line) + usize::from(!line.is_empty()) + display_width(word);
+        if !line.is_empty() && joined_width > width {
+            lines.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn welcome_columns<'a>(columns: &[Vec<Line<'a>>], widths: &[usize], gap: usize) -> Vec<Line<'a>> {
+    let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
+    (0..rows)
+        .map(|row| {
+            let mut spans = Vec::new();
+            for (index, (column, width)) in columns.iter().zip(widths).enumerate() {
+                let line = column.get(row);
+                if let Some(line) = line {
+                    spans.extend(line.spans.clone());
+                }
+                let used = line.map_or(0, Line::width);
+                spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+                if index + 1 < columns.len() {
+                    spans.push(Span::raw(" ".repeat(gap)));
+                }
+            }
+            Line::from(spans)
+        })
+        .collect()
 }
 
 fn place_cursor(
@@ -2241,7 +2503,20 @@ fn hint_cell_spans(
             };
             let surface = theme.menu.patch(row_style).add_modifier(dim);
             let key = entry.key();
-            let mut spans = vec![Span::styled(
+            let marker_style = if entry.active() {
+                on_surface(surface, theme.popup_key).add_modifier(Modifier::BOLD)
+            } else {
+                surface
+            };
+            let mut spans = if column.label_width > 0 && entry.choice() {
+                vec![Span::styled(
+                    if entry.active() { "▌ " } else { "  " },
+                    marker_style,
+                )]
+            } else {
+                Vec::new()
+            };
+            spans.push(Span::styled(
                 format!(
                     "{}{}",
                     " ".repeat(column.key_width.saturating_sub(display_width(&key))),
@@ -2252,7 +2527,7 @@ fn hint_cell_spans(
                     .patch(theme.info)
                     .patch(row_style)
                     .add_modifier(dim),
-            )];
+            ));
             if column.label_width > 0 {
                 spans.push(Span::styled("  ", surface));
                 spans.push(Span::styled(
@@ -2260,8 +2535,9 @@ fn hint_cell_spans(
                     surface,
                 ));
             }
-            let used =
-                column.key_width + usize::from(column.label_width > 0) * (2 + column.label_width);
+            let used = column.key_width
+                + usize::from(column.label_width > 0)
+                    * (2 + column.label_width + usize::from(entry.choice()) * 2);
             spans.push(Span::styled(
                 " ".repeat(column.width.saturating_sub(used)),
                 surface,
@@ -3836,6 +4112,27 @@ mod tests {
             .collect()
     }
 
+    fn welcome_screen(app: &crate::app::App) -> anyhow::Result<Vec<String>> {
+        let (width, height) = app.size();
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(
+            u16::try_from(width)?,
+            u16::try_from(height)?,
+        ))?;
+        terminal.draw(|frame| super::draw(frame, app, &theme))?;
+        let buffer = terminal.backend().buffer();
+        Ok((0..buffer.area.height)
+            .map(|row| {
+                (0..buffer.area.width)
+                    .map(|column| buffer[(column, row)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect())
+    }
+
     #[test]
     fn too_small_warning_replaces_panes_and_resize_restores_them() -> anyhow::Result<()> {
         let dir = testing::workspace("pane-size-warning", testing::README)?;
@@ -4462,39 +4759,162 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn welcome_renders_the_complete_shortcut_block() -> anyhow::Result<()> {
-        let dir = testing::workspace("welcome-shortcuts", testing::README)?;
-        let app = testing::AppBuilder::new(&dir).unopened().build()?;
-        let rows = testing::screen(&app)?;
-        let rows: Vec<&str> = rows.iter().map(|row| row.trim_start()).collect();
+    fn assert_complete_welcome(app: &crate::app::App) -> anyhow::Result<()> {
+        let rows = welcome_screen(app)?;
+        let rows = rows
+            .iter()
+            .map(|row| row.trim())
+            .filter(|row| !row.is_empty())
+            .collect::<Vec<_>>();
+        let root = app.workspace().root().display().to_string();
+        let root = super::truncate_left(&root, 55.min(app.size().0));
         let expected = [
-            "f        File pane",
-            "F        File list",
-            "t        Threads pane",
-            "T        Threads list",
-            "w / W    cycle pane focus",
-            "q        quit",
-            "",
+            "Fathomable",
+            root.as_str(),
+            "A read-only workspace viewer for reviewing diffs and",
+            "interactive comment threads with agents via MCP.",
+            "Usable with both mouse (right/left click) and keyboard.",
+            "Space opens a hotkey list.",
+            "Alt-Space moves keyboard focus to the menu bar.",
+            "Pane navigation",
+            "f          File pane",
+            "F          File list",
+            "t          Threads pane",
+            "T          Threads list",
+            "w/W        cycle pane focus",
+            "q          quit",
             "Diff controls",
-            "J / K    next / previous change",
-            "L / H    next / previous changed file",
-            "Space d  diff options",
+            "J/K        next/previous change",
+            "L/H        next/previous changed file",
+            "Space d d  show uncommitted changes",
+            "Space d l  show latest commit",
+            "Space d c  show a specific commit",
+            "Comment controls",
+            "Tab/⇧Tab   next/previous comment thread",
+            "c          add a comment",
+            "r          resolve/reopen thread",
         ];
         let start = rows
             .iter()
             .position(|row| *row == expected[0])
-            .ok_or_else(|| anyhow::anyhow!("welcome shortcut block was not rendered"))?;
-
+            .ok_or_else(|| anyhow::anyhow!("welcome was not rendered"))?;
         assert_eq!(&rows[start..start + expected.len()], expected);
+
         let screen = rows.join("\n");
-        assert!(screen.contains("A read-only workspace viewer for reviewing diffs and"));
-        assert!(screen.contains("interactive comment threads with agents via MCP."));
-        assert!(screen.contains("Usable with both mouse (right/left click) and keyboard."));
-        assert!(screen.contains("Space opens a hotkey list."));
-        assert!(screen.contains("Alt-Space moves keyboard focus"));
+        assert!(!screen.contains("Space opens a hotkey list. Alt-Space"));
+        assert!(!screen.contains(" / "));
         assert!(!screen.contains(&app.viewer_label()));
         Ok(())
+    }
+
+    #[test]
+    fn startup_welcome_renders_every_shortcut_at_normal_size() -> anyhow::Result<()> {
+        let dir = testing::workspace("welcome-shortcuts", testing::README)?;
+        let app = testing::AppBuilder::new(&dir).unopened().build()?;
+        assert_complete_welcome(&app)
+    }
+
+    #[test]
+    fn getting_started_welcome_renders_every_shortcut_at_normal_size() -> anyhow::Result<()> {
+        let dir = testing::workspace("getting-started-shortcuts", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).build()?;
+        app.command("help");
+        assert!(app.getting_started());
+        assert_complete_welcome(&app)
+    }
+
+    #[test]
+    fn short_wide_welcome_reflows_control_sections_without_clipping() -> anyhow::Result<()> {
+        let dir = testing::workspace("welcome-short-wide", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+        app.resize(100, 20);
+        let rows = welcome_screen(&app)?;
+        let pane_row = rows
+            .iter()
+            .position(|row| row.contains("Pane navigation"))
+            .ok_or_else(|| anyhow::anyhow!("Pane navigation was not rendered"))?;
+        assert!(rows[pane_row].contains("Diff controls"), "{rows:?}");
+        assert!(rows.iter().any(|row| row.contains("Comment controls")));
+        for text in [
+            "Space d d  show uncommitted changes",
+            "Space d l  show latest commit",
+            "Space d c  show a specific commit",
+            "Tab/⇧Tab  next/previous comment thread",
+            "r         resolve/reopen thread",
+        ] {
+            assert!(
+                rows.iter().any(|row| row.contains(text)),
+                "{text:?} was clipped: {rows:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_welcome_wraps_intro_and_keeps_single_column_controls() -> anyhow::Result<()> {
+        let dir = testing::workspace("welcome-narrow", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+        app.resize(60, 36);
+        let rows = welcome_screen(&app)?;
+        let headings = ["Pane navigation", "Diff controls", "Comment controls"]
+            .map(|heading| {
+                rows.iter()
+                    .position(|row| row.contains(heading))
+                    .ok_or_else(|| anyhow::anyhow!("{heading} was not rendered"))
+            })
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert!(headings.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(rows.iter().any(|row| row.contains("and keyboard.")));
+        assert!(rows.iter().any(|row| row.contains("to the menu bar.")));
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("Tab/⇧Tab   next/previous comment thread")),
+            "{rows:?}"
+        );
+        assert!(
+            rows.iter()
+                .any(|row| row.contains("r          resolve/reopen thread")),
+            "{rows:?}"
+        );
+        Ok(())
+    }
+
+    fn assert_welcome_too_small(app: &crate::app::App) -> anyhow::Result<()> {
+        let rows = welcome_screen(app)?;
+        assert!(
+            rows.iter().any(|row| row.contains("Terminal too small")),
+            "sidebar={}, column={}: {rows:?}",
+            app.sidebar_width(),
+            app.column_width()
+        );
+        assert!(rows.iter().any(|row| row.contains("Resize, use Layout")));
+        assert!(!rows.iter().any(|row| row.contains("Pane navigation")));
+        assert!(!rows.iter().any(|row| row.contains("Comment controls")));
+        Ok(())
+    }
+
+    #[test]
+    fn narrow_tall_startup_welcome_uses_terminal_too_small_treatment() -> anyhow::Result<()> {
+        let dir = testing::workspace("welcome-narrow-tall-startup", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+        app.window_files();
+        app.resize(40, 40);
+        assert!(app.panes_fit(), "exercise the welcome-specific fallback");
+        assert_welcome_too_small(&app)
+    }
+
+    #[test]
+    fn narrow_tall_getting_started_welcome_uses_terminal_too_small_treatment() -> anyhow::Result<()>
+    {
+        let dir = testing::workspace("welcome-narrow-tall-help", testing::README)?;
+        let mut app = testing::AppBuilder::new(&dir).build()?;
+        app.window_files();
+        app.resize(40, 40);
+        app.command("help");
+        assert!(app.getting_started());
+        assert!(app.panes_fit(), "exercise the welcome-specific fallback");
+        assert_welcome_too_small(&app)
     }
 
     #[test]

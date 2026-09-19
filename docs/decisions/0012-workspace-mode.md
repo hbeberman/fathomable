@@ -23,6 +23,17 @@ Status: accepted (2026-08-26); amended 2026-09-06 (ignore rules reload);
 amended 2026-09-14 (`l` / Right is directory navigation only);
 amended 2026-09-18 (synchronized terminal frames).
 
+Amended 2026-09-19: the startup welcome and **Getting started** share the
+canonical product introduction and complete quick reference. `Alt-Space` has
+its own line directly below the `Space` keymap hint. **Pane navigation**,
+**Diff controls**, and **Comment controls** name the shortcut groups; slash
+pairs have no surrounding spaces. At constrained normal heights, optional
+blank rows disappear before any heading or shortcut. If that is not enough,
+the three control sections reflow intact into two or three columns when width
+permits. Narrow layouts wrap the introduction and prefer one control column;
+dimensions that cannot hold a complete responsive arrangement retain the
+terminal-too-small treatment rather than clipping startup or `:help`.
+
 Amended 2026-09-19: recursive picker discovery uses one cancellable worker
 per index, one replaceable pending request, and one bounded result slot.
 Superseded generations cannot replace the current index. A picker retains

@@ -114,31 +114,31 @@ const COMMANDS: [CommandSpec; 5] = [
     CommandSpec::new(
         "about",
         &[],
-        "Show Fathomable version, license, and repository information. Args: none.",
+        "Show Fathomable version, license, and repository information.",
         Command::About,
     ),
     CommandSpec::new(
         "doctor",
         &[],
-        "Inspect configuration, storage, workspace, and terminal diagnostics. Args: none.",
+        "Inspect configuration, storage, workspace, and terminal diagnostics.",
         Command::Doctor,
     ),
     CommandSpec::new(
         "help",
         &[],
-        "Open or close the getting-started guide. Args: none.",
+        "Open or close the getting-started guide.",
         Command::Help,
     ),
     CommandSpec::new(
         "quit",
         &["q", "q!", "quit!"],
-        "Quit immediately without confirmation. Aliases: q, q!, quit!. Args: none.",
+        "Quit immediately without confirmation. Aliases: q, q!, quit!.",
         Command::Quit,
     ),
     CommandSpec::new(
         "status",
         &[],
-        "Show live viewer, workspace, and storage status. Args: none.",
+        "Show live viewer, workspace, and storage status.",
         Command::Status,
     ),
 ];
@@ -386,7 +386,7 @@ mod tests {
         assert!(
             commands
                 .iter()
-                .all(|command| command.description().contains("Args: none."))
+                .all(|command| !command.description().contains("Args:"))
         );
     }
 

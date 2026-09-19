@@ -121,7 +121,7 @@ fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::R
     assert_eq!(app.view().input(), "status");
     let selected = screen(&app)?;
     assert!(selected.contains("Show live viewer"));
-    assert!(selected.contains("Args: none."));
+    assert!(!selected.contains("Args:"));
 
     handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(

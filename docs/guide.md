@@ -166,7 +166,8 @@ the table below is a quick reference, not the full list.
 | `Space F Z` | fold or unfold all directories in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
 | `Space T Z` | fold or unfold all file groups in Thread list |
-| `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
+| `Space d n` `Space d u` `Space d o` | Normal / Unified / Off diff mode |
+| `Space d s` `Space d t` | pick the diff source / target |
 | `Space d d` | show uncommitted changes (current `HEAD` to working tree) |
 | `Space d l` `Space d c` | show the latest commit or a specific commit against its first parent |
 | `Space d w` | ignore whitespace |
@@ -220,52 +221,61 @@ Files the editor is configured to write elsewhere are outside this protection.
 ### Compare versions
 
 One session-global diff mode applies to every file and review/history view.
-The rightmost control in each File or Threads header reads **Diff: standard**,
+The rightmost control in each File or Threads header reads **Diff: normal**,
 **Diff: unified**, or **Diff: off**. Click it for the three mode choices, or
-use `Space d s`, `Space d u`, and `Space d o`:
+use `Space d n`, `Space d u`, and `Space d o`:
 
-- **Standard** shows Target content with comparison gutters, counts, File list
+- **Normal** shows Target content with comparison gutters, counts, File list
   filtering, and hunk navigation.
-- **Unified** shows the selected Base-to-Target patch. It follows file
+- **Unified** shows the selected Source-to-Target patch. It follows file
   switches and remains active when you press `Esc`.
-- **Off** is Target-only source browsing. It shows no Base content or
-  Base-only paths and suppresses comparison, Git-status, and file-edit toasts
+- **Off** is Target-only source browsing. It shows no diff Source content or
+  Source-only paths and suppresses comparison, Git-status, and file-edit toasts
   and counts. Plain activity notifications remain visible.
 
-Off retains the selected Base, the whitespace setting, the **only changed**
-File list filter, and the last active Standard/Unified mode so they return when
+Off retains the selected Source, the whitespace setting, the **only changed**
+File list filter, and the last active Normal/Unified mode so they return when
 diffs are enabled. Their controls are dormant while Off. Changing Target keeps
-Off active; choosing Base attempts to restore the last active mode. If that
+Off active; choosing Source attempts to restore the last active mode. If that
 pair cannot be read, both endpoint choices remain selected and the viewer stays
-Off with an error. A Base-only file that was already open says **not present in
-Target** and shows no Base body. Threads still shows clearly labelled immutable
+Off with an error. A Source-only file that was already open says **not present
+in Target** and shows no diff Source body. Threads still shows clearly labelled immutable
 origin excerpts and stored discussion history because those are review
 evidence, not source browsing.
 
-In Standard and Unified, the Base and Target at the right of the menu bar apply
+In Normal and Unified, the Source and Target at the right of the menu bar apply
 to every file. Off shows only the clickable Target. Click an endpoint, or use
-`Space d b` / `Space d t`, to choose a commit, tag, branch commit, index
-(staged content), or working tree (files on disk). Review points are Base-only.
+`Space d s` / `Space d t`, to choose a commit, tag, branch commit, index
+(staged content), or working tree (files on disk). Review points are Source-only.
 These choices never fetch, check out, or modify Git. A pending new-line or
-new-file comment must be submitted or cancelled before changing mode, Base, or
-Target.
+new-file comment must be submitted or cancelled before changing mode, Source,
+or Target.
 
 A fresh Git workspace compares a pinned `HEAD` to the working tree. Committing
-does **not** advance that Base; choose the new commit explicitly. The `Space d`
-card begins with **standard diff**, **unified diff**, and **diff off**, then
-**pick base…**, **pick target…**, **show uncommitted changes**, **show latest
+does **not** advance that Source; choose the new commit explicitly. The `Space d`
+card begins with **normal diff**, **unified diff**, and **diff off**, then
+**pick source…**, **pick target…**, **show uncommitted changes**, **show latest
 commit**, and **show a specific commit…**. **show uncommitted changes**, or
-`Space d d`, pins the current `HEAD` as Base and selects the working tree as
+`Space d d`, pins the current `HEAD` as Source and selects the working tree as
 Target. **show latest commit**, or `Space d l`, selects the immutable `HEAD~1`
 to `HEAD` pair. **show a specific commit…**, or `Space d c`, opens a
 commit-only picker and compares the chosen commit with its first parent; root
 commits are rejected explicitly. **save review point** and **manage review
 points…** follow a separator, and **ignore whitespace** follows another. The
-active Standard, Unified, or Off row carries the same `▌` marker as the top
+active Normal, Unified, or Off row carries the same `▌` marker as the top
 Diff menu. There is no comparison-control popup, **Start comparison at current
 HEAD**, or `:diff`.
 
-Rendered/Source is available in Standard and Off only for files matched by
+The endpoint cards are titled **diff source**, **diff target**, and **diff
+commit**. Nested cards retain that role and add their path in parentheses, such
+as **diff source (tags)**, **diff target (branches)**, or **diff commit
+(branches)**. Card metadata names what it counts, such as **24 branches** or,
+while filtering, **8 of 397 choices**; the optional review-point name card has
+no counter. Long branch names are shortened before they can hide the typed
+query, and narrow cards drop count metadata before the query. Commit rows keep
+the subject prominent while the short hash and UTC date are dim.
+
+Rendered/Source is available in Normal and Off only for files matched by
 `markdown.extensions` or `markdown.names`, including custom extensions and
 extensionless names. Other files stay in source view: the menu action is
 greyed out, and `Space v s` explains why it is unavailable without changing
@@ -279,11 +289,11 @@ provenance returns there when the controls are hidden or too narrow.
 
 `Space d p` captures the active checkout's working tree as an optionally named,
 immutable **review point** without changing Git, then selects that exact point
-as Base against the working tree. The resulting comparison is normally empty;
+as Source against the working tree. The resulting comparison is normally empty;
 later edits show what changed since the save. Capture ignores File-list filters,
 and reported exclusions remain part of the point. A manifest write failure can
 leave publication uncertain; reload before retrying when the notice says so.
-Choose any saved point under the base picker's **Review points...**. See
+Choose any saved point under the Source picker's **Review points...**. See
 [comparison and review-point details](decisions/0087-global-comparisons-and-board-history.md).
 
 `Space d r` or **Diff > Manage review points...** opens the searchable
@@ -306,7 +316,7 @@ returns to the point card. Deletion removes the point from comparison selection
 and reclaims only content blobs no other point uses. Threads keep their
 immutable point ID, baseline, content identity, excerpt, and messages. This is
 logical deletion with best-effort reclamation, not secure erasure. If the
-deleted point is the selected Base, Fathomable replaces Base with the current
+deleted point is the selected Source, Fathomable replaces Source with the current
 pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
 whitespace. A pending new annotation must be submitted or cancelled before
 management.
@@ -408,7 +418,7 @@ threads {
 }
 
 diff {
-    mode "standard" // Startup presentation: "standard", "unified", or "off".
+    mode "normal" // Startup presentation: "normal", "unified", or "off".
     context 3 // Unchanged lines shown around each diff hunk.
     ignore-whitespace #false // Default only; saved comparisons keep their whitespace rule.
 }

@@ -18,9 +18,14 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Terminology amended 2026-09-19: the mode row is **Normal diff**
+(`Space d n`), and the endpoint rows are **Pick source...** (`Space d s`) and
+**Pick target...** (`Space d t`). The mode control reads `Diff: normal`.
+`standard`, `Space d b`, and the old labels have no compatibility aliases.
+
 Amended 2026-09-19: the `Space d` leader card uses concise workflow labels
 while preserving the Diff menu's actions, order, and semantic sections. Its
-Standard, Unified, and Off rows reuse the inter-column padding for a bold `▌`
+Normal, Unified, and Off rows reuse the inter-column padding for a bold `▌`
 on exactly the current mode, so the full labels still form three columns at
 80 cells and continue to reflow on narrower terminals. The marker is derived
 from the effective mode when the card is built; a rejected or deferred mode
@@ -40,7 +45,7 @@ inside **Comparison controls...** is superseded 2026-09-18 by the diff-mode
 amendment below. Both the popup and action are removed without aliases.
 
 Amended later 2026-09-18: the Diff menu places **Head to WorkingTree**
-immediately after Base and Target. It pins the current `HEAD` as Base and
+immediately after Source and Target. It pins the current `HEAD` as Source and
 selects the working tree as Target through `Space d d`. A separator before
 **Save review point** keeps capture separate from endpoint selection.
 
@@ -72,10 +77,10 @@ rows follow a separator. Bare `f` selects File view and bare `t` selects
 Reviews view. The centered identity no longer carries the filename, which
 moves into the File surface header. Compact mode keeps Layout under `☰`.
 
-Amended 2026-09-18: **Diff** begins with mutually exclusive **Standard
-diff**, **Unified diff**, and **Diff off** rows, then Base, Target, Save review
+Amended 2026-09-18: **Diff** begins with mutually exclusive **Normal
+diff**, **Unified diff**, and **Diff off** rows, then Source, Target, Save review
 point, and Ignore whitespace. File and every Reviews/history header gain a
-rightmost mode control. Active modes show the Base-to-Target pair in the app
+rightmost mode control. Active modes show the Source-to-Target pair in the app
 bar; Off shows only Target. Normal comparison provenance appears in the
 bottom status line only when those endpoint controls do not actually render.
 
@@ -96,7 +101,7 @@ accelerator reveals it first so the focused menu target remains visible.
 Amended 2026-09-19: Diff endpoint shortcuts now appear as **HEAD to Working
 tree** (`Space d d`), **HEAD~1 to HEAD** (`Space d l`), and **Commit~1 to
 Commit...** (`Space d c`). Capture reads **Save review point and use as
-Base...** (`Space d p`). Go's file pickers use lowercase `Space f f/i/r`.
+Source...** (`Space d p`). Go's file pickers use lowercase `Space f f/i/r`.
 
 ## Context
 
@@ -130,8 +135,8 @@ content they affect.
   it. The current filename belongs to the File surface header. If space is
   too narrow, repository identity truncates and then disappears before
   overlapping controls.
-- Its right side names the selected endpoints. Standard and Unified show
-  `base to target`; Off hides Base and shows the bare Target label. Every
+- Its right side names the selected endpoints. Normal and Unified show
+  `source to target`; Off hides Source and shows the bare Target label. Every
   rendered endpoint label is a muted-blue `ui.popup.key` button: hovering
   patches `ui.list.hover`, and clicking opens that endpoint's picker. Passive
   branch or worktree, full path, mode, and major-view identity are deliberately
@@ -174,10 +179,10 @@ content they affect.
 - **Go** contains the file pickers and jumplist Back/Forward.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**
-  begins with bold-`▌`, mutually exclusive **Standard diff**, **Unified diff**,
-  and **Diff off** choices. Base, Target, **HEAD to Working tree**,
+  begins with bold-`▌`, mutually exclusive **Normal diff**, **Unified diff**,
+  and **Diff off** choices. Source, Target, **HEAD to Working tree**,
   **HEAD~1 to HEAD**, and **Commit~1 to Commit...** follow, then a separator
-  and **Save review point and use as Base...**, then a separator and **Ignore
+  and **Save review point and use as Source...**, then a separator and **Ignore
   whitespace**. Ignore whitespace remains checked but dim while Off. The
   removed Comparison controls popup, Start comparison at current HEAD, typed
   commit batches, and `:diff` have no menu rows or compatibility aliases. The
@@ -200,8 +205,8 @@ content they affect.
   lines. It reveals a hidden app bar first. Menu navigation then uses the
   existing `h`/`j`/`k`/`l`, arrow, and Enter behavior.
 - The rendered endpoint labels behave like the menu titles: each receives the
-  shared accent and hover background, and a click opens its Base or Target
-  picker without opening a title menu. Off has no Base label or Base hit
+  shared accent and hover background, and a click opens its Source or Target
+  picker without opening a title menu. Off has no Source label or Source hit
   region.
 - With several worktrees, the centered repository/worktree segment uses the
   same accent and hover background; clicking it opens the worktree picker.
@@ -223,7 +228,7 @@ content they affect.
 ### Header mode control
 
 - The File header and the headers of Reviews, Recently resolved, and Archived
-  end with dim `Diff: standard`, `Diff: unified`, or `Diff: off`.
+  end with dim `Diff: normal`, `Diff: unified`, or `Diff: off`.
 - The control outranks passive counts and filters when width is constrained.
   It disappears only when it cannot coexist with the surface title.
 - Clicking it opens an anchored, three-row, non-searchable choice popup with

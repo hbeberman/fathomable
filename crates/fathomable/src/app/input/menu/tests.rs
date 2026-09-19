@@ -169,7 +169,7 @@ fn header_mode_menu_works_from_file_and_all_review_views() -> anyhow::Result<()>
     left(&mut app, cell.0, cell.1);
     let screen = testing::screen(&app)?;
     assert!(
-        screen.iter().any(|row| row.contains("▌ Standard diff")),
+        screen.iter().any(|row| row.contains("▌ Normal diff")),
         "{screen:?}"
     );
     handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -241,7 +241,7 @@ fn header_mode_menu_reflows_and_keeps_mouse_bounds_after_terminal_shrink() -> an
     assert!(grid.x + grid.width <= app.size().0, "{grid:?}");
     let screen = testing::screen(&app)?;
     assert!(
-        screen.iter().any(|row| row.contains("▌ Standard diff")),
+        screen.iter().any(|row| row.contains("▌ Normal diff")),
         "{screen:?}"
     );
     left(&mut app, grid.x + 1, grid.y + 3);
@@ -938,7 +938,7 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
         .filter(|entry| entry.active())
         .map(bindings::MenuEntry::key)
         .collect::<Vec<_>>();
-    assert_eq!(selected, ["s"]);
+    assert_eq!(selected, ["n"]);
     let grid = draw::which_key_grid(&app, &sections);
     assert_eq!(grid.columns.len(), 3);
     assert_eq!(grid.rows, 5);
@@ -947,7 +947,7 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
             .iter()
             .map(|column| column.label_width)
             .collect::<Vec<_>>(),
-        [13, 24, 21]
+        [12, 24, 21]
     );
 
     let screen = testing::screen(&app)?;
@@ -963,13 +963,13 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     assert_eq!(
         card,
         [
-            "╭ Space d · diff ───┬──────────────────────────────┬───────────────────────────╮",
-            "│▌ s  standard diff │b  pick base…                 │p  save review point       │",
-            "│  u  unified diff  │t  pick target…               │r  manage review points…   │",
-            "│  o  diff off      │d  show uncommitted changes   ├───────────────────────────┤",
-            "│                   │l  show latest commit         │w  ignore whitespace       │",
-            "│                   │c  show a specific commit…    │                           │",
-            "╰───────────────────┴──────────────────────────────┴───────────────────────────╯",
+            "╭ Space d · diff ──┬──────────────────────────────┬───────────────────────────╮",
+            "│▌ n  normal diff  │s  pick source…               │p  save review point       │",
+            "│  u  unified diff │t  pick target…               │r  manage review points…   │",
+            "│  o  diff off     │d  show uncommitted changes   ├───────────────────────────┤",
+            "│                  │l  show latest commit         │w  ignore whitespace       │",
+            "│                  │c  show a specific commit…    │                           │",
+            "╰──────────────────┴──────────────────────────────┴───────────────────────────╯",
         ]
     );
 
@@ -1010,7 +1010,7 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
             .iter()
             .map(|column| column.label_width)
             .collect::<Vec<_>>(),
-        [13, 24, 21]
+        [12, 24, 21]
     );
 
     let narrow_tall = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 19, 30);
@@ -1040,7 +1040,7 @@ fn diff_hint_marker_tracks_the_actual_mode_after_a_rejected_change() -> anyhow::
     let mut app = app(&dir)?;
     app.resize(80, 30);
 
-    for mode in [DiffMode::Standard, DiffMode::Unified, DiffMode::Off] {
+    for mode in [DiffMode::Normal, DiffMode::Unified, DiffMode::Off] {
         app.take_prefix();
         app.select_diff_mode(mode);
         app.settle_background();
@@ -1055,7 +1055,7 @@ fn diff_hint_marker_tracks_the_actual_mode_after_a_rejected_change() -> anyhow::
             .map(bindings::MenuEntry::key)
             .collect::<Vec<_>>();
         let expected = match mode {
-            DiffMode::Standard => "s",
+            DiffMode::Normal => "n",
             DiffMode::Unified => "u",
             DiffMode::Off => "o",
         };

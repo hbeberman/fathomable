@@ -425,7 +425,7 @@ impl App {
             Action::StubResolvedToggle => self.toggle_resolved_stubs(),
             Action::DeleteThread => self.thread_delete_here(),
             Action::SourceView => self.toggle_source_view(),
-            Action::DiffStandard => self.select_diff_mode(DiffMode::Standard),
+            Action::DiffNormal => self.select_diff_mode(DiffMode::Normal),
             Action::DiffUnified => self.select_diff_mode(DiffMode::Unified),
             Action::DiffOff => self.select_diff_mode(DiffMode::Off),
             Action::ComparisonSave => self.request_review_point(),

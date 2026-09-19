@@ -174,7 +174,7 @@ const fn k(key: Key) -> Chord {
 pub(crate) type Keys = &'static [Chord];
 
 /// How a sequence is written: bare characters run together (`gg`, `]w`),
-/// anything else is space-separated (`Space d s`, `Ctrl-d`).
+/// anything else is space-separated (`Space d n`, `Ctrl-d`).
 #[must_use]
 pub(crate) fn spell(keys: &[Chord]) -> String {
     spell_with_space(keys, "Space")
@@ -290,7 +290,7 @@ actions! {
     /// `Space t f`: a comment on the open file as a whole (ADR 0063).
     FileComment,
     SourceView,
-    DiffStandard,
+    DiffNormal,
     DiffUnified,
     DiffOff,
     ComparisonSave,
@@ -907,10 +907,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('d'), c('s')]],
-        A::DiffStandard,
+        &[&[c(' '), c('d'), c('n')]],
+        A::DiffNormal,
         "Space menu",
-        "diff: standard diff",
+        "diff: normal diff",
     ),
     bind(
         W::Any,
@@ -928,10 +928,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind_in(
         W::Any,
-        &[&[c(' '), c('d'), c('b')]],
+        &[&[c(' '), c('d'), c('s')]],
         A::ComparisonBase,
         "Space menu",
-        "diff: pick base…",
+        "diff: pick source…",
         1,
     ),
     bind_in(
@@ -1732,7 +1732,7 @@ impl MenuSection {
         for entry in &mut self.entries {
             entry.choice = matches!(
                 entry.action,
-                Some(Action::DiffStandard | Action::DiffUnified | Action::DiffOff)
+                Some(Action::DiffNormal | Action::DiffUnified | Action::DiffOff)
             );
             entry.active = entry.action == Some(action);
         }
@@ -1908,15 +1908,16 @@ mod tests {
         for place in PANES {
             for (keys, action) in [
                 ([c(' '), c('v'), c('s')], Action::SourceView),
-                ([c(' '), c('d'), c('s')], Action::DiffStandard),
+                ([c(' '), c('d'), c('n')], Action::DiffNormal),
                 ([c(' '), c('d'), c('u')], Action::DiffUnified),
                 ([c(' '), c('d'), c('o')], Action::DiffOff),
-                ([c(' '), c('d'), c('b')], Action::ComparisonBase),
+                ([c(' '), c('d'), c('s')], Action::ComparisonBase),
                 ([c(' '), c('d'), c('d')], Action::ComparisonHeadWorkingTree),
                 ([c(' '), c('d'), c('r')], Action::ComparisonManage),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
+            assert_eq!(lookup(place, &[c(' '), c('d'), c('b')]), Match::Miss);
             assert_eq!(lookup(place, &[c(' '), c('d'), c('x')]), Match::Miss);
         }
         assert_eq!(lookup(Where::View, &[c('b')]), Match::Miss);
@@ -2058,7 +2059,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["s", "u", "o", "b", "t", "d", "l", "c", "p", "r", "w"]
+            ["n", "u", "o", "s", "t", "d", "l", "c", "p", "r", "w"]
         );
         assert_eq!(
             keys(Where::View, &[c(' '), c('F')]),

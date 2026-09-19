@@ -1207,7 +1207,7 @@ fn off_hides_file_edit_toasts_without_discarding_them() -> anyhow::Result<()> {
     assert!(!off.contains("live-toast-sentinel"), "{off}");
     assert_eq!(app.current_path(), Path::new("README.md"));
 
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     let restored = crate::app::testing::screen(&app)?.join("\n");
     assert!(restored.contains("live-toast-sentinel"), "{restored}");

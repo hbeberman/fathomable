@@ -2882,7 +2882,7 @@ fn draw_table(
     frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
 }
 
-type PickerCells = Vec<(char, Option<u32>)>;
+type PickerCells = Vec<(char, Option<u32>, bool)>;
 
 fn plain_picker_cells(item: &str, width: usize) -> PickerCells {
     let fitted = fit_ellipsis(item, width);
@@ -2894,7 +2894,7 @@ fn plain_picker_cells(item: &str, width: usize) -> PickerCells {
             let source = (index < source_len && ch != '…')
                 .then(|| u32::try_from(index).ok())
                 .flatten();
-            (ch, source)
+            (ch, source, false)
         })
         .collect()
 }
@@ -2934,20 +2934,20 @@ fn picker_row_parts(item: &str, width: usize, badge_width: usize) -> (PickerCell
     let date_start = subject_start + subject.chars().count() + 1;
     let mut cells = Vec::with_capacity(width);
     for (index, ch) in short.chars().enumerate() {
-        cells.push((ch, u32::try_from(index).ok()));
+        cells.push((ch, u32::try_from(index).ok(), true));
     }
     if width < 18 {
         return (cells, Vec::new());
     }
     if width == 18 {
-        cells.push((' ', None));
+        cells.push((' ', None, false));
         for (index, ch) in date.chars().enumerate() {
-            cells.push((ch, u32::try_from(date_start + index).ok()));
+            cells.push((ch, u32::try_from(date_start + index).ok(), true));
         }
         return (cells, Vec::new());
     }
 
-    cells.push((' ', None));
+    cells.push((' ', None, false));
     let subject_width = width - 19;
     let fitted = fit_ellipsis(subject, subject_width);
     let subject_len = subject.chars().count();
@@ -2955,11 +2955,11 @@ fn picker_row_parts(item: &str, width: usize, badge_width: usize) -> (PickerCell
         let source = (index < subject_len && ch != '…')
             .then(|| u32::try_from(subject_start + index).ok())
             .flatten();
-        cells.push((ch, source));
+        cells.push((ch, source, false));
     }
-    let mut trailing = vec![(' ', None)];
+    let mut trailing = vec![(' ', None, false)];
     for (index, ch) in date.chars().enumerate() {
-        trailing.push((ch, u32::try_from(date_start + index).ok()));
+        trailing.push((ch, u32::try_from(date_start + index).ok(), true));
     }
     (cells, trailing)
 }
@@ -2977,10 +2977,10 @@ fn push_picker_cells(
     cells: PickerCells,
     matched_positions: &[u32],
     row_style: Style,
-    match_style: Style,
+    theme: &Theme,
     width: usize,
 ) {
-    for (ch, source_index) in cells {
+    for (ch, source_index, dim) in cells {
         let cells = display_width(&ch.to_string());
         if *used + cells > width {
             break;
@@ -2988,7 +2988,9 @@ fn push_picker_cells(
         let matched = source_index
             .is_some_and(|source_index| matched_positions.binary_search(&source_index).is_ok());
         let style = if matched {
-            on_surface(row_style, match_style)
+            on_surface(row_style, theme.picker_match).remove_modifier(Modifier::DIM)
+        } else if dim {
+            on_surface(row_style, theme.info).add_modifier(Modifier::DIM)
         } else {
             row_style
         };
@@ -3049,7 +3051,7 @@ fn picker_line(
     let mut badges = Vec::new();
     let mut reserved = 0;
     for (shown, label, style) in [
-        (roles.base, "[current base]", theme.popup_key),
+        (roles.base, "[current source]", theme.popup_key),
         (roles.target, "[current target]", theme.popup_key),
     ] {
         let badge_width = 1 + display_width(label);
@@ -3066,7 +3068,7 @@ fn picker_line(
         leading,
         item.positions(),
         row_style,
-        theme.picker_match,
+        theme,
         width,
     );
     for (label, style, _) in badges {
@@ -3083,7 +3085,7 @@ fn picker_line(
         trailing,
         item.positions(),
         row_style,
-        theme.picker_match,
+        theme,
         width,
     );
     spans.push(Span::styled(
@@ -3182,6 +3184,115 @@ pub(crate) fn picker_layout(app: &App, picker: &PickerState) -> PickerLayout {
     )
 }
 
+fn picker_title(picker: &PickerState) -> String {
+    match picker.kind() {
+        super::PickerKind::Files => "files".to_owned(),
+        super::PickerKind::AllFiles => "files (incl. ignored)".to_owned(),
+        super::PickerKind::Recent => "recent".to_owned(),
+        super::PickerKind::ComparisonBase => "diff source".to_owned(),
+        super::PickerKind::ComparisonTarget => "diff target".to_owned(),
+        super::PickerKind::ComparisonCommit => "diff commit".to_owned(),
+        super::PickerKind::ComparisonTags(side) => format!("diff {} (tags)", side.label()),
+        super::PickerKind::ComparisonBranches(side) => {
+            format!("diff {} (branches)", side.label())
+        }
+        super::PickerKind::ComparisonBranchCommits(side) => picker.scope().map_or_else(
+            || format!("diff {} (branch commits)", side.label()),
+            |branch| format!("diff {} (branches / {branch} / commits)", side.label()),
+        ),
+        super::PickerKind::ComparisonReviewPoints => "diff source (review points)".to_owned(),
+        super::PickerKind::ComparisonAdvanced(side) => {
+            format!("diff {} (advanced)", side.label())
+        }
+        super::PickerKind::ReviewPointName => "save review point (name optional)".to_owned(),
+        super::PickerKind::ReviewPointManage => "manage review points".to_owned(),
+        super::PickerKind::Worktree => "worktree".to_owned(),
+    }
+}
+
+fn picker_count(picker: &PickerState) -> Option<String> {
+    let (singular, plural) = match picker.kind() {
+        super::PickerKind::Files | super::PickerKind::AllFiles | super::PickerKind::Recent => {
+            ("file", "files")
+        }
+        super::PickerKind::ComparisonBase
+        | super::PickerKind::ComparisonTarget
+        | super::PickerKind::ComparisonCommit
+        | super::PickerKind::ComparisonAdvanced(_) => ("choice", "choices"),
+        super::PickerKind::ComparisonTags(_) => ("tag", "tags"),
+        super::PickerKind::ComparisonBranches(_) => ("branch", "branches"),
+        super::PickerKind::ComparisonBranchCommits(_) => ("commit", "commits"),
+        super::PickerKind::ComparisonReviewPoints | super::PickerKind::ReviewPointManage => {
+            ("review point", "review points")
+        }
+        super::PickerKind::ReviewPointName => return None,
+        super::PickerKind::Worktree => ("worktree", "worktrees"),
+    };
+    let matched = picker.matched();
+    let total = picker.total();
+    if picker.input().is_empty() {
+        return Some(if total == 0 {
+            format!("no {plural}")
+        } else {
+            format!("{total} {}", if total == 1 { singular } else { plural })
+        });
+    }
+    Some(if matched == 0 {
+        "no matches".to_owned()
+    } else {
+        format!("{matched} of {total} {plural}")
+    })
+}
+
+fn fitted_picker_title(picker: &PickerState, width: usize) -> String {
+    if let super::PickerKind::ComparisonBranchCommits(side) = picker.kind()
+        && let Some(branch) = picker.scope()
+    {
+        let prefix = format!("diff {} (branches / ", side.label());
+        let suffix = " / commits)";
+        let fixed = display_width(&prefix) + display_width(suffix);
+        if fixed < width {
+            let branch = fit_ellipsis(branch, width - fixed).trim_end().to_owned();
+            return format!("{prefix}{branch}{suffix}");
+        }
+    }
+    fit_ellipsis(&picker_title(picker), width)
+        .trim_end()
+        .to_owned()
+}
+
+fn picker_header(
+    picker: &PickerState,
+    theme: &Theme,
+    popup_width: usize,
+) -> (Line<'static>, usize) {
+    const MIN_TITLE_SPAN: usize = 12;
+
+    let available = popup_width.saturating_sub(3);
+    let input_width = display_width(picker.input());
+    let mut count = picker_count(picker).map(|count| format!("   {count} "));
+    if count.as_ref().is_some_and(|count| {
+        available.saturating_sub(input_width.saturating_add(display_width(count))) < MIN_TITLE_SPAN
+    }) {
+        count = None;
+    }
+    let count_width = count.as_deref().map_or(0, display_width);
+    let title_width = available
+        .saturating_sub(input_width.saturating_add(count_width))
+        .saturating_sub(4);
+    let title = fitted_picker_title(picker, title_width);
+    let prefix = format!(" {title} > ");
+    let cursor = (1 + display_width(&prefix) + input_width).min(popup_width.saturating_sub(2));
+    let mut spans = vec![
+        Span::styled(prefix, theme.popup_key),
+        Span::raw(picker.input().to_owned()),
+    ];
+    if let Some(count) = count {
+        spans.push(Span::styled(count, theme.info));
+    }
+    (Line::from(spans), cursor)
+}
+
 fn draw_picker(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -3193,37 +3304,7 @@ fn draw_picker(
     let popup = layout.popup;
     let list_rows = layout.rows;
     let first = layout.first;
-    let title = match picker.kind() {
-        super::PickerKind::Files => "files".to_owned(),
-        super::PickerKind::AllFiles => "files (incl. ignored)".to_owned(),
-        super::PickerKind::Recent => "recent".to_owned(),
-        super::PickerKind::ComparisonBase => "comparison base".to_owned(),
-        super::PickerKind::ComparisonTarget => "comparison target".to_owned(),
-        super::PickerKind::ComparisonCommit => "commit to compare with its parent".to_owned(),
-        super::PickerKind::ComparisonTags(side) => format!("{} tags", side.label()),
-        super::PickerKind::ComparisonBranches(side) => format!("{} branches", side.label()),
-        super::PickerKind::ComparisonBranchCommits(side) => picker.scope().map_or_else(
-            || format!("{} branch commits", side.label()),
-            |branch| format!("{} · {branch}", side.label()),
-        ),
-        super::PickerKind::ComparisonReviewPoints => "comparison review points".to_owned(),
-        super::PickerKind::ComparisonAdvanced(side) => {
-            format!("{} advanced endpoints", side.label())
-        }
-        super::PickerKind::ReviewPointName => {
-            "capture working tree and use as Base (name optional)".to_owned()
-        }
-        super::PickerKind::ReviewPointManage => "manage review points".to_owned(),
-        super::PickerKind::Worktree => "worktree".to_owned(),
-    };
-    let title_line = Line::from(vec![
-        Span::styled(format!(" {title} > "), theme.popup_key),
-        Span::raw(picker.input().to_owned()),
-        Span::styled(
-            format!("   {}/{} ", picker.matched(), picker.total()),
-            theme.info,
-        ),
-    ]);
+    let (title_line, cursor) = picker_header(picker, theme, usize::from(popup.width));
     let block = rounded_block(theme, title_line, theme.popup);
     let body = block.inner(popup);
     let hovered = app
@@ -3266,9 +3347,7 @@ fn draw_picker(
             rename,
         );
     }
-    let col = (2 + display_width(&title) + 3 + display_width(picker.input()))
-        .min(usize::from(popup.width.saturating_sub(1)));
-    frame.set_cursor_position((popup.x + u16_of(col), popup.y));
+    frame.set_cursor_position((popup.x + u16_of(cursor), popup.y));
 }
 
 fn draw_board_confirmation(
@@ -4078,18 +4157,18 @@ mod tests {
     use fathomable_testing::git;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
-    use ratatui::style::{Color, Style};
+    use ratatui::style::{Color, Modifier, Style};
 
-    use crate::app::Popup;
     use crate::app::input::bindings::Action;
     use crate::app::testing;
     use crate::app::threads::list::Row;
     use crate::app::view::Effect;
+    use crate::app::{ComparisonSide, PickerKind, PickerState, Popup};
 
     use super::{
         ABOUT_ANCHOR, ListRender, Theme, about_area, fit, fit_ellipsis, format_age,
-        format_age_short, format_time, list_row, picker_row_cells, quit_confirmation_layout,
-        status_message_style,
+        format_age_short, format_time, list_row, picker_count, picker_header, picker_line,
+        picker_row_cells, picker_title, quit_confirmation_layout, status_message_style,
     };
 
     fn toast_buffer(
@@ -4277,7 +4356,7 @@ mod tests {
         assert!(off.contains("ordinary notice"), "{off:?}");
         assert!(!off.contains("live-secret"), "{off:?}");
 
-        app.select_diff_mode(DiffMode::Standard);
+        app.select_diff_mode(DiffMode::Normal);
         app.settle_background();
         let buffer = toast_buffer(&app, &theme, 40, 4)?;
         let active = (0..4)
@@ -4958,12 +5037,145 @@ mod tests {
         );
         let rendered: String = picker_row_cells(&row, 36)
             .into_iter()
-            .map(|(ch, _)| ch)
+            .map(|(ch, _, _)| ch)
             .collect();
         assert_eq!(display_width(&rendered), 36);
         assert!(rendered.starts_with("1234567 "));
         assert!(rendered.contains('…'));
         assert!(rendered.ends_with(" 2026-09-16"));
+    }
+
+    #[test]
+    fn diff_picker_titles_preserve_the_navigation_path() {
+        for (kind, scope, expected) in [
+            (PickerKind::ComparisonBase, None, "diff source"),
+            (PickerKind::ComparisonTarget, None, "diff target"),
+            (PickerKind::ComparisonCommit, None, "diff commit"),
+            (
+                PickerKind::ComparisonTags(ComparisonSide::CommitParent),
+                None,
+                "diff commit (tags)",
+            ),
+            (
+                PickerKind::ComparisonBranches(ComparisonSide::Base),
+                None,
+                "diff source (branches)",
+            ),
+            (
+                PickerKind::ComparisonBranchCommits(ComparisonSide::Target),
+                Some("origin/main"),
+                "diff target (branches / origin/main / commits)",
+            ),
+            (
+                PickerKind::ComparisonReviewPoints,
+                None,
+                "diff source (review points)",
+            ),
+            (
+                PickerKind::ComparisonAdvanced(ComparisonSide::Target),
+                None,
+                "diff target (advanced)",
+            ),
+        ] {
+            let picker =
+                PickerState::scoped(kind, vec!["candidate".to_owned()], scope.map(str::to_owned));
+            assert_eq!(picker_title(&picker), expected);
+        }
+    }
+
+    #[test]
+    fn picker_counts_name_the_current_context() {
+        let mut picker = PickerState::new(
+            PickerKind::ComparisonBranches(ComparisonSide::Base),
+            vec!["main".to_owned(), "release".to_owned()],
+        );
+        assert_eq!(picker_count(&picker).as_deref(), Some("2 branches"));
+        picker.set_query("main");
+        assert_eq!(picker_count(&picker).as_deref(), Some("1 of 2 branches"));
+        picker.set_query("missing");
+        assert_eq!(picker_count(&picker).as_deref(), Some("no matches"));
+
+        let picker = PickerState::new(PickerKind::ReviewPointName, vec!["unnamed".to_owned()]);
+        assert_eq!(picker_count(&picker), None);
+    }
+
+    #[test]
+    fn long_branch_picker_titles_preserve_query_and_context() -> anyhow::Result<()> {
+        let row = format!(
+            "{} subject 2026-09-16",
+            "1234567890abcdef1234567890abcdef12345678"
+        );
+        let mut picker = PickerState::scoped(
+            PickerKind::ComparisonBranchCommits(ComparisonSide::Base),
+            vec![row],
+            Some("origin/feature/terminology-ux-redesign".to_owned()),
+        );
+        picker.set_query("1234");
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+
+        let (line, cursor) = picker_header(&picker, &theme, 76);
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("diff source (branches / "), "{text}");
+        assert!(text.contains(" / commits) > 1234"), "{text}");
+        assert!(text.ends_with("1 of 1 commits "), "{text}");
+        assert!(cursor < 75);
+
+        let (line, cursor) = picker_header(&picker, &theme, 30);
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("> 1234"), "{text}");
+        assert!(!text.contains("1 of 1"), "{text}");
+        assert!(cursor < 29);
+        Ok(())
+    }
+
+    #[test]
+    fn commit_picker_hash_and_date_are_dim_unless_matched() -> anyhow::Result<()> {
+        let row = format!(
+            "{} subject 2026-09-16",
+            "1234567890abcdef1234567890abcdef12345678"
+        );
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        let mut picker = PickerState::new(PickerKind::ComparisonCommit, vec![row]);
+        let rendered = picker_line(&theme, &picker, 0, &picker.matches()[0], 40, None, false);
+        let cells = rendered
+            .spans
+            .iter()
+            .flat_map(|span| span.content.chars().map(move |ch| (ch, span.style)))
+            .collect::<Vec<_>>();
+        let text = cells.iter().map(|(ch, _)| ch).collect::<String>();
+        let hash = text
+            .find("1234567")
+            .ok_or_else(|| anyhow::anyhow!("hash"))?;
+        let subject = text
+            .find("subject")
+            .ok_or_else(|| anyhow::anyhow!("subject"))?;
+        let date = text
+            .find("2026-09-16")
+            .ok_or_else(|| anyhow::anyhow!("date"))?;
+        assert!(cells[hash].1.add_modifier.contains(Modifier::DIM));
+        assert!(!cells[subject].1.add_modifier.contains(Modifier::DIM));
+        assert!(cells[date].1.add_modifier.contains(Modifier::DIM));
+
+        picker.set_query("1234");
+        let rendered = picker_line(&theme, &picker, 0, &picker.matches()[0], 40, None, false);
+        let hash_style = rendered
+            .spans
+            .iter()
+            .find(|span| span.content == "1")
+            .map(|span| span.style)
+            .ok_or_else(|| anyhow::anyhow!("matched hash"))?;
+        assert!(!hash_style.add_modifier.contains(Modifier::DIM));
+        Ok(())
     }
 
     #[test]

@@ -195,7 +195,7 @@ Space f r    recent files
 - 0017's tree bullet: the pane may list a subset; the letters, the
   counts, and the root totals are unchanged.
 - 0087's comparison model (amended 2026-09-17): with a non-working target,
-  "all files" means the target snapshot plus base-only comparison deletions,
+  "all files" means the target snapshot plus source-only comparison deletions,
   not the current checkout. The visible file picker follows the same boundary.
   The four rules remain filters over that source.
 

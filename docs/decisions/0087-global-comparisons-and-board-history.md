@@ -21,9 +21,20 @@ tags:
 
 Status: accepted (2026-09-16)
 
+Terminology amended 2026-09-19: **Normal diff** and `diff.mode = "normal"`
+replace Standard and `"standard"` without a compatibility alias. `Space d n`
+selects Normal, while `Space d s` opens **Pick source...**; `Space d b` is
+retired. User-facing comparison endpoints are Source and Target, while
+persisted fields and annotation-format enum names remain unchanged. Picker
+titles preserve the workflow and nesting path: **diff source**, **diff
+target**, and **diff commit**, with qualifiers such as **(tags)**,
+**(branches)**, and **(branches / name / commits)**. Their metadata names the
+current candidate type and shows matched-to-total counts only while filtering.
+Commit subjects remain prominent while short IDs and UTC dates are dim.
+
 Resource bounds amended 2026-09-19: fresh non-Git workspaces start in Off
 without enumerating or comparing the working tree. Saved endpoint choices
-remain available; explicitly selecting Base or an active mode starts a
+remain available; explicitly selecting Source or an active mode starts a
 comparison. Comparison and immutable Target enumeration run on cancellable
 workers, with generation checks on delivery. One running and one replaceable
 pending request prevent repeated refreshes from spawning unbounded workers.
@@ -44,7 +55,7 @@ associate retained text with a different immutable commit.
 
 Navigation amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): Shift-Up/Down and `K`/`J`
-traverse the selected comparison in Standard or Unified mode, including
+traverse the selected comparison in Normal or Unified mode, including
 hunkless changed paths; Shift-Left/Right and `H`/`L` traverse changed files
 at their first diff. Off still gates traversal and its footer hint.
 
@@ -55,14 +66,14 @@ bound checkout; ephemeral viewer-local rename projection remains a display
 concern, not an alternate write interpretation.
 
 Presentation amended 2026-09-18: one session-global, configuration-defaulted
-mode presents the selected endpoints as Standard, Unified, or Off. Off is
+mode presents the selected endpoints as Normal, Unified, or Off. Off is
 Target-only source browsing, not history redaction. This amendment removes
 Comparison controls, Start comparison at current HEAD, typed commit batches,
 `Space d d`, and `:diff` without compatibility aliases.
 
 Presentation amended later 2026-09-18: `Space d d` returns as a direct
 current-`HEAD`-to-working-tree selector, not the removed presentation toggle.
-The Diff menu exposes it as **Head to WorkingTree** below Base and Target;
+The Diff menu exposes it as **Head to WorkingTree** below Source and Target;
 **Save review point** begins a separate section.
 
 Presentation amended later 2026-09-18: queued live-change badges, hints,
@@ -74,7 +85,7 @@ Presentation amended 2026-09-19: `Space d l` selects the resolved current
 `HEAD` and its first parent; `Space d c` picks one commit and selects that
 commit with its first parent. Root commits are rejected without changing the
 pair. `Space d p` captures a review point and immediately selects that exact
-point as Base with Working tree as Target. `Space t` replaces `Space c` for
+point as Source with Working tree as Target. `Space t` replaces `Space c` for
 repository-board workflows.
 
 Supersedes the last-seen and per-file checkpoint comparison model of
@@ -114,18 +125,18 @@ The desired model has three independent concepts:
 
 1. the versions the viewer compares;
 2. the repository's discussion board;
-3. explicit saved workspace states used as temporal bases.
+3. explicit saved workspace states used as temporal sources.
 
 ## Decision
 
 ### One comparison per checkout
 
 A running viewer owns one comparison for its active checkout. The selected
-Base, Target, whitespace rule, and session-global presentation mode apply to
+Source, Target, whitespace rule, and session-global presentation mode apply to
 every file. Opening another file does not choose another pair or mode.
-`diff { mode "standard" }` chooses the startup mode; `standard`, `unified`,
-and `off` are the only accepted values. Runtime mode changes do not persist.
-Base, Target, and whitespace keep their existing persistence and session
+`diff { mode "normal" }` chooses the startup mode; `normal`, `unified`, and
+`off` are the only accepted values. Runtime mode changes do not persist.
+Source, Target, and whitespace keep their existing persistence and session
 rules.
 
 The primary endpoints are:
@@ -136,10 +147,10 @@ The primary endpoints are:
 - the live working tree;
 - an explicit review point, resolved through its owning store.
 
-A fresh Git checkout pins the current `HEAD` commit once as its base and uses
+A fresh Git checkout pins the current `HEAD` commit once as its source and uses
 the working tree as target. An unborn repository uses the empty tree.
 Persisted checkout-local selection takes precedence. A later commit never
-advances an already selected commit endpoint. To advance Base, select the new
+advances an already selected commit endpoint. To advance Source, select the new
 commit explicitly.
 
 `A -> B` means the direct net delta between those endpoint trees. It never
@@ -147,14 +158,15 @@ silently substitutes a merge base or three-dot comparison.
 
 The endpoint picker is hierarchical. Its first rows distinguish the working
 tree (files on disk), index (the staged next-commit snapshot), and `HEAD`
-(the checked-out commit), followed by **Tags...**, **Branches...**, base-only
+(the checked-out commit), followed by **Tags...**, **Branches...**, source-only
 **Review points...**, and **Advanced...** for the empty tree. Up to 500
 commits reachable from `HEAD` follow those choices, newest first.
 
-Commit rows render as short ID, subject, and right-aligned UTC `YYYY-MM-DD`;
-the subject is ellipsized before the date is displaced. Endpoint-bearing rows
-show muted-blue **[current base]** and **[current target]** hints using the
-shared popup-key accent; commit-row hints sit immediately before the date.
+Commit rows render as dim short ID, prominent subject, and dim right-aligned
+UTC `YYYY-MM-DD`; the subject is ellipsized before the date is displaced.
+Endpoint-bearing rows show muted-blue **[current source]** and **[current
+target]** hints using the shared popup-key accent; commit-row hints sit
+immediately before the date.
 Equivalent working-tree, index, `HEAD`, tag, and commit rows therefore expose
 the active pair without changing what selection means.
 
@@ -171,6 +183,15 @@ first result set in memory. Other typed local Git revisions remain available;
 typed `first..last` batches do not. Escape returns from a nested picker to its
 parent before closing the endpoint picker.
 
+Root cards are titled **diff source**, **diff target**, or **diff commit**.
+Nested titles append **(tags)**, **(branches)**, **(review points)**, or
+**(advanced)** as applicable; branch histories append **(branches / name /
+commits)**. Unfiltered metadata names the candidate type, such as **24
+branches**. A non-empty filter reports **8 of 397 choices**, or **no matches**;
+the optional review-point name card has no count. Branch names ellipsize before
+they can hide the query, and narrow cards drop count metadata before query
+text.
+
 Picker motion lets the cursor move freely between three-row top and bottom
 margins. Crossing a margin scrolls the list while keeping the cursor at that
 margin. Once the list reaches its beginning or end, the cursor can move closer
@@ -181,27 +202,28 @@ click chooses it, and the wheel moves through the visible choices.
 
 The **Diff** menu begins with three mutually exclusive `▌` choices:
 
-- **Standard diff** (`Space d s`) shows Target content with comparison
+- **Normal diff** (`Space d n`) shows Target content with comparison
   gutters, counts, Files filtering, and hunk navigation.
-- **Unified diff** (`Space d u`) shows the selected Base-to-Target patch. It
+- **Unified diff** (`Space d u`) shows the selected Source-to-Target patch. It
   follows file switches and remains selected when `Esc` closes transient
   input or returns to File.
 - **Diff off** (`Space d o`) loads and enumerates Target without evaluating
-  Base. The File surface never falls back to Base bytes, and Files/pickers
-  omit Base-only paths. An already open Base-only path retains its label,
-  displays `not present in Target`, and has no Base body.
+  Source. The File surface never falls back to Source bytes, and Files/pickers
+  omit Source-only paths. An already open Source-only path retains its label,
+  displays `not present in Target`, and has no Source body.
 
-Base, Target, **HEAD to Working tree**, **HEAD~1 to HEAD**, and **Commit~1 to
-Commit...** follow those mode rows. The direct HEAD action pins the current
-`HEAD` as Base and selects the working tree as Target. The parent actions
+**Pick source...** (`Space d s`), **Pick target...** (`Space d t`), **HEAD to
+Working tree**, **HEAD~1 to HEAD**, and **Commit~1 to Commit...** follow those
+mode rows. The direct HEAD action pins the current
+`HEAD` as Source and selects the working tree as Target. The parent actions
 first resolve one immutable commit identity, derive its first parent, and
 select the parent-to-commit pair atomically; a root commit leaves both
 endpoints unchanged. Save review point and Ignore whitespace each begin a
 separate section.
-Off retains Base, whitespace, the only-changed Files filter, and the last
-Standard/Unified mode. Changed-only and Ignore whitespace are dormant while
+Off retains Source, whitespace, the only-changed Files filter, and the last
+Normal/Unified mode. Changed-only and Ignore whitespace are dormant while
 Off: their marks are hidden, rows are disabled, and direct keys report `diff
-mode is off`. Selecting Target alone keeps Off active. Selecting Base attempts
+mode is off`. Selecting Target alone keeps Off active. Selecting Source attempts
 to restore the last active mode; if the pair cannot be read, both endpoints
 remain selected, the failure is reported, and mode remains Off. Entering Off
 clears retained Unified and deletion-backed source content before any fallible
@@ -214,12 +236,12 @@ visible. There is no live-change queue, badge, hint, status row, jump action,
 or internal acknowledgement state. `:status` and file/binary information
 report mode Off and Target facts only.
 
-Rendered/Source remains available in Standard and Off only for files accepted
+Rendered/Source remains available in Normal and Off only for files accepted
 by the configured [Markdown classifier](0016-syntax-highlighting.md#markdown-versus-source-files).
 Other files stay in source view. Unified retains each file's source/rendered
 choice but disables it through `Space v s` and menus. A pending
 new-line or new-file annotation draft, including a parked draft on a removed
-Unified row, blocks mode, Base, and Target changes until submit or cancel.
+Unified row, blocks mode, Source, and Target changes until submit or cancel.
 Replies and message edits do not.
 
 The comparison owns:
@@ -236,11 +258,11 @@ The comparison owns:
 
 The files pane and visible file picker follow the selected Target. A working
 tree Target lists the live checkout. A commit, index, or empty-tree Target
-lists only that snapshot. Standard and Unified additionally include Base-only
+lists only that snapshot. Normal and Unified additionally include Source-only
 paths deleted by the comparison so their removal remains navigable. Off never
 includes those paths. Files added to the checkout after an immutable Target do
 not leak into that historical view. Opening a listed path displays Target
-content; Standard and Unified may display Base content for a comparison
+content; Normal and Unified may display Source content for a comparison
 deletion, while Off never does.
 
 Current Git index/worktree status remains a separately labelled fact. It
@@ -248,7 +270,7 @@ does not replace the selected comparison's changed set.
 
 Working-tree endpoints mean final on-disk content. Staged and unstaged
 changes that cancel therefore produce no net change against the selected
-base, while the index remains an explicit endpoint.
+source, while the index remains an explicit endpoint.
 
 The endpoint and whitespace selection is persisted outside the checkout under
 a checkout-derived comparison directory. Worktree navigation restores that
@@ -260,8 +282,8 @@ redefine it. Two viewers on the same checkout do not live-control one another;
 their last-used endpoint preference has explicit last-successful-writer
 behavior.
 
-The menu bar right-aligns compact `base to target` controls in Standard and
-Unified. Off hides Base and shows only the bare clickable Target. Commit
+The menu bar right-aligns compact `source to target` controls in Normal and
+Unified. Off hides Source and shows only the bare clickable Target. Commit
 endpoints use short IDs. Working tree, index, empty tree, and `HEAD` use those
 names; an explicitly selected tag uses `Tag name`. `HEAD` and tag names are
 presentation aliases beside the pinned commit ID, not mutable endpoints. They
@@ -270,7 +292,7 @@ falls back to the short commit ID. Every displayed label uses the shared
 popup-key accent and menu hover background and opens its endpoint picker.
 
 The File header and every Reviews/history header end with a dim
-`Diff: standard`, `Diff: unified`, or `Diff: off` control. It outranks passive
+`Diff: normal`, `Diff: unified`, or `Diff: off` control. It outranks passive
 counts at narrow widths and opens an anchored, non-searchable, three-row
 choice popup. Normal `CMP ...` and unified-diff provenance is absent from the
 bottom line whenever endpoint controls actually render. Stale/error status
@@ -323,10 +345,10 @@ Git objects are not mirrored or retained. If history rewriting or garbage
 collection removes a required commit, the point reports unavailable content
 and never substitutes the current `HEAD` or working file.
 
-A review point selected as the base compares directly to the working tree,
+A review point selected as the source compares directly to the working tree,
 including a reversal that disappears from a commit-to-working-tree net
 diff. Review points are not valid targets. A successful `Space d p` capture
-selects the exact returned point as Base and Working tree as Target without
+selects the exact returned point as Source and Working tree as Target without
 re-querying by name or time. Capture, comparison, and preference-persistence
 outcomes are reported separately: a point remains selected for the running
 viewer if only preference persistence fails, while comparison failure leaves
@@ -370,7 +392,7 @@ historical manifests, Git objects, copied excerpts, caches, backups, shared
 blobs, and failed-cleanup blobs may remain.
 
 Viewers reload point metadata at point-dependent actions. A selected deleted
-Base falls back to pinned `HEAD`, or EmptyTree without one, while preserving
+Source falls back to pinned `HEAD`, or EmptyTree without one, while preserving
 Target, mode, whitespace, and dormant Off state; preference persistence is
 best-effort and startup reconciliation remains authoritative. Threads never
 pin point blobs or change on deletion: their copied point ID, baseline,
@@ -389,7 +411,7 @@ Every thread stores immutable origin evidence:
 - a content identity, which identifies bytes but is not called a snapshot.
 
 A historical target comment originates at the target. A removed line
-originates at the base. Selections spanning both sides are refused. Unified
+originates at the source. Selections spanning both sides are refused. Unified
 diff rows carry exact old/new line identities, so repeated removed text
 cannot be matched to the wrong occurrence.
 

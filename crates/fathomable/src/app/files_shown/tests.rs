@@ -207,7 +207,7 @@ fn changed_only_is_dormant_and_restored_around_off() -> anyhow::Result<()> {
     assert_eq!(app.message(), Some("diff mode is off"));
     assert!(app.files_setting_checked(crate::app::input::bindings::Action::FilesChanged));
 
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert_eq!(names(&app), ["notes.txt", "README.md"]);
     assert!(app.files_shown_marker().contains('c'));

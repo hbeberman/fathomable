@@ -244,7 +244,10 @@ fn commit_to_working_opens_a_clean_deleted_path_from_the_selected_base() -> anyh
     assert!(app.status().is_empty());
     app.open(Path::new("gone.md"));
     assert_eq!(app.view().text(), "from A\n");
-    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted in comparison · showing diff source")
+    );
     Ok(())
 }
 
@@ -261,8 +264,14 @@ fn explicit_modes_use_the_space_d_bindings() -> anyhow::Result<()> {
     assert!(app.view().diff_view());
     press_key(&mut app, KeyCode::Esc);
     assert!(app.view().diff_view());
-    press(&mut app, " ds");
+    press(&mut app, " dn");
     assert!(!app.view().diff_view());
+    press(&mut app, " ds");
+    assert!(matches!(
+        app.popup(),
+        Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ComparisonBase
+    ));
+    press_key(&mut app, KeyCode::Esc);
     press(&mut app, " do");
     assert_eq!(app.diff_mode(), DiffMode::Off);
     press(&mut app, " dp");
@@ -461,7 +470,7 @@ fn startup_mode_controls_presentation_and_off_falls_back_to_standard() -> anyhow
         })
         .build()?;
     assert_eq!(off.diff_mode(), DiffMode::Off);
-    assert_eq!(off.last_active_diff_mode, DiffMode::Standard);
+    assert_eq!(off.last_active_diff_mode, DiffMode::Normal);
     assert_eq!(off.view().text(), "new\n");
     assert!(!off.view().diff_view());
     Ok(())
@@ -493,7 +502,7 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
         app.message()
             .is_some_and(|message| message.contains("unavailable in unified"))
     );
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert!(
         app.view().source_view(),
@@ -521,7 +530,7 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
         app.view().diff_view(),
         "file switches keep unified presentation"
     );
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert!(
         !app.view().source_view(),
@@ -587,10 +596,13 @@ fn off_clears_base_fallback_and_excludes_target_absent_paths() -> anyhow::Result
             .iter()
             .all(|line| !line.text().contains("base secret"))
     );
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert_eq!(app.view().text(), "base secret\n");
-    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted in comparison · showing diff source")
+    );
     Ok(())
 }
 
@@ -668,7 +680,7 @@ fn off_suspends_cached_gutters_and_counts_until_diff_returns() -> anyhow::Result
     app.settle_background();
     assert_eq!(app.view().diff_counts(), None);
 
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert!(
         app.view()
@@ -831,7 +843,7 @@ fn off_target_selection_ignores_base_and_base_selection_restores_mode() -> anyho
     assert_eq!(app.comparison.base(), &unavailable);
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&second)?));
     app.settle_background();
-    assert_eq!(app.diff_mode(), DiffMode::Standard);
+    assert_eq!(app.diff_mode(), DiffMode::Normal);
     assert_eq!(
         app.comparison.base(),
         &ComparisonEndpoint::Commit(CommitId::parse(&second)?)
@@ -890,7 +902,7 @@ fn saving_a_point_restores_diff_mode_and_selects_working_tree() -> anyhow::Resul
     app.save_review_point(None);
     app.settle_background();
 
-    assert_eq!(app.diff_mode(), DiffMode::Standard);
+    assert_eq!(app.diff_mode(), DiffMode::Normal);
     assert!(matches!(
         app.comparison.base(),
         ComparisonEndpoint::ReviewPoint(_)
@@ -1197,7 +1209,7 @@ fn head_to_working_tree_reselects_the_current_head() -> anyhow::Result<()> {
         app.comparison_menu_pair(),
         ("HEAD".to_owned(), "WorkingTree".to_owned())
     );
-    assert_eq!(app.diff_mode(), DiffMode::Standard);
+    assert_eq!(app.diff_mode(), DiffMode::Normal);
     Ok(())
 }
 

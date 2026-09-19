@@ -31,15 +31,15 @@ removed.
 
 Presentation amended 2026-09-17: the local comparison header retires. A
 unified diff uses the same File surface header as any document; global
-menu-bar base and target buttons remain the authoritative mouse controls,
+menu-bar Source and Target buttons remain the authoritative mouse controls,
 and comparison actions stay on the text key bar and Diff menu.
 
 Shortcut amended 2026-09-18: the resolved-stubs toggle moves from
 `Space v x` to the unused `Space v r`, with no compatibility alias.
 Diff presentation amended later 2026-09-18 by
-[0087](0087-global-comparisons-and-board-history.md): Standard, Unified, and
-Off are durable session-global modes selected by `Space d s/u/o` and
-defaulted by `diff { mode "standard" }`. Unified is not closed by Escape. Off
+[0087](0087-global-comparisons-and-board-history.md): Normal, Unified, and
+Off are durable session-global modes selected by `Space d n/u/o` and
+defaulted by `diff { mode "normal" }`. Unified is not closed by Escape. Off
 is Target-only source browsing. The comparison popup, `Space d d`, `:diff`,
 and the duplicate `DIFF comparison`/`CMP` display are removed; status keeps
 mode-aware provenance only when app-bar endpoint controls do not render.

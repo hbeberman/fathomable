@@ -97,19 +97,19 @@ fn comparison_picker_marks_current_endpoints_before_dates() -> anyhow::Result<()
     assert!(
         rendered
             .iter()
-            .any(|line| line.contains("HEAD") && line.contains("[current base]"))
+            .any(|line| line.contains("HEAD") && line.contains("[current source]"))
     );
     let commit = rendered
         .iter()
-        .find(|line| line.contains(&head[..7]) && line.contains("[current base]"))
+        .find(|line| line.contains(&head[..7]) && line.contains("[current source]"))
         .ok_or_else(|| anyhow::anyhow!("current commit row"))?;
     assert!(
-        commit.find("[current base]") < commit.find("1970-01-01"),
+        commit.find("[current source]") < commit.find("1970-01-01"),
         "the endpoint badge stays left of the date"
     );
     let cells = buffer(&app)?;
-    let base = text_cell(&rendered, &cells, "HEAD", "[current base]")
-        .ok_or_else(|| anyhow::anyhow!("base badge cell"))?;
+    let base = text_cell(&rendered, &cells, "HEAD", "[current source]")
+        .ok_or_else(|| anyhow::anyhow!("source badge cell"))?;
     let target = text_cell(&rendered, &cells, "Working tree", "[current target]")
         .ok_or_else(|| anyhow::anyhow!("target badge cell"))?;
     let theme = draw::Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
@@ -150,7 +150,7 @@ fn menu_bar_endpoint_buttons_hover_and_open_their_pickers() -> anyhow::Result<()
     let tail = crate::app::menu_bar::bar_tail(&app, app.size().0);
     let base = tail
         .base
-        .ok_or_else(|| anyhow::anyhow!("visible base button"))?;
+        .ok_or_else(|| anyhow::anyhow!("visible source button"))?;
     let target = tail
         .target
         .ok_or_else(|| anyhow::anyhow!("visible target button"))?;
@@ -348,7 +348,7 @@ fn comparison_picker_drills_into_tags_branches_and_commits() -> anyhow::Result<(
     assert!(
         screen(&app)?
             .iter()
-            .any(|line| line.contains("tag v1") && line.contains("[current base]"))
+            .any(|line| line.contains("tag v1") && line.contains("[current source]"))
     );
     app.picker_escape();
 
@@ -561,7 +561,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
     fs::write(&file, "three\n")?;
     let index = app.current.ok_or_else(|| anyhow::anyhow!("no document"))?;
     assert!(app.reload_doc(index).is_some());
-    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.select_diff_mode(fathomable_core::config::DiffMode::Normal);
     app.settle_background();
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     app.settle_background();
@@ -586,7 +586,7 @@ fn failed_mutable_refresh_keeps_the_last_good_diff() -> anyhow::Result<()> {
             .lines()
             .iter()
             .all(|line| !matches!(line.text().as_str(), "one" | "two")),
-        "Off must discard stale unified and Base-derived text"
+        "Off must discard stale unified and Source-derived text"
     );
     Ok(())
 }
@@ -623,7 +623,7 @@ fn off_clears_stale_unified_when_the_target_read_also_fails() -> anyhow::Result<
             .lines()
             .iter()
             .all(|line| !line.text().contains("SENTINEL")),
-        "a failed Target read must not retain stale Base or Target diff rows"
+        "a failed Target read must not retain stale Source or Target diff rows"
     );
     Ok(())
 }
@@ -662,7 +662,7 @@ fn off_uses_only_target_with_review_point_or_unavailable_base() -> anyhow::Resul
     assert_eq!(
         app.diff_mode(),
         fathomable_core::config::DiffMode::Off,
-        "a review-point Base cannot activate against a commit Target"
+        "a review-point Source cannot activate against a commit Target"
     );
     assert_eq!(app.view().text(), "TARGET_SENTINEL\n");
 
@@ -801,7 +801,7 @@ fn deleting_an_open_untracked_file_clears_its_cached_diff() -> anyhow::Result<()
     app.settle_background();
     app.refresh_comparison();
     app.settle_background();
-    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.select_diff_mode(fathomable_core::config::DiffMode::Normal);
     app.settle_background();
     app.select_diff_mode(fathomable_core::config::DiffMode::Unified);
     app.settle_background();

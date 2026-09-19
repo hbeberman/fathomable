@@ -55,7 +55,7 @@ fn selecting_off_cancels_an_in_flight_enable_request() -> anyhow::Result<()> {
     let workspace = Workspace::discover(&dir.0)?;
     let options = Options::for_test(dir.0.clone());
     let mut app = App::new(workspace, 100, 30, options);
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     assert!(app.comparison.pending());
     app.select_diff_mode(DiffMode::Off);
     app.settle_background();
@@ -72,7 +72,7 @@ fn comparison_exhaustion_never_enables_a_clean_comparison() -> anyhow::Result<()
     let mut options = Options::for_test(dir.0.clone());
     options.limits.comparison_bytes = 1;
     let mut app = App::new(workspace, 100, 30, options);
-    app.select_diff_mode(DiffMode::Standard);
+    app.select_diff_mode(DiffMode::Normal);
     app.settle_background();
     assert_eq!(app.diff_mode(), DiffMode::Off);
     assert!(
@@ -106,7 +106,7 @@ fn watch_exhaustion_stays_visible_after_another_notice() -> anyhow::Result<()> {
 
 #[test]
 fn filesystem_events_preserve_a_pending_mode_activation() -> anyhow::Result<()> {
-    for mode in [DiffMode::Standard, DiffMode::Unified] {
+    for mode in [DiffMode::Normal, DiffMode::Unified] {
         let dir = TempDir::new(&format!("pending-mode-event-{mode:?}"))?;
         fs::write(dir.0.join("file"), "before\n")?;
         let workspace = Workspace::discover(&dir.0)?;

@@ -529,7 +529,7 @@ fn removed_unified_line_draft_blocks_mode_and_endpoint_changes_when_parked() -> 
 
     app.open(Path::new("b.md"));
     assert!(!matches!(app.popup(), Some(crate::app::Popup::Compose(_))));
-    app.select_diff_mode(fathomable_core::config::DiffMode::Standard);
+    app.select_diff_mode(fathomable_core::config::DiffMode::Normal);
     app.settle_background();
     app.set_comparison_base(target.clone());
     app.settle_background();

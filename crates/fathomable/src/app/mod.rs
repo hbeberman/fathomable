@@ -216,7 +216,7 @@ impl ComparisonSide {
 
     const fn label(self) -> &'static str {
         match self {
-            Self::Base => "base",
+            Self::Base => "source",
             Self::Target => "target",
             Self::CommitParent => "commit",
         }
@@ -570,7 +570,7 @@ impl Deleted {
             Self::Loaded => "deleted from worktree · showing last loaded",
             Self::Index => "deleted from worktree · showing INDEX",
             Self::Head => "staged deletion · showing HEAD",
-            Self::ComparisonBase => "deleted in comparison · showing base",
+            Self::ComparisonBase => "deleted in comparison · showing diff source",
         }
     }
 }
@@ -851,7 +851,7 @@ impl App {
         };
         let last_active_diff_mode = match diff_mode {
             DiffMode::Unified => DiffMode::Unified,
-            DiffMode::Standard | DiffMode::Off => DiffMode::Standard,
+            DiffMode::Normal | DiffMode::Off => DiffMode::Normal,
         };
         let mut app = Self {
             workspace,

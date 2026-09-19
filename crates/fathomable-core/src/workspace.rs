@@ -1661,7 +1661,7 @@ impl Workspace {
     }
 
     /// The text of root-relative `relative` as committed at `HEAD`, the
-    /// diff base for the gutter and the diff view (ADR 0006).
+    /// diff source for the gutter and the diff view (ADR 0006).
     ///
     /// Returns `None` outside git, and `Some("")` for a file `HEAD` does
     /// not have (unborn branch, untracked, or newly added), so every line
@@ -1770,7 +1770,7 @@ impl Workspace {
             .map_err(|error| fail(format!("cannot read HEAD: {error}")))?
             .is_unborn();
         if unborn {
-            tracing::debug!("HEAD is unborn; diff base is empty");
+            tracing::debug!("HEAD is unborn; diff source is empty");
             return Ok(Some(Vec::new()));
         }
         let tree = git

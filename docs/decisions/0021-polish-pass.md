@@ -27,7 +27,7 @@ through Help or `:doctor`; `:status` keeps its narrower live-viewer role.
 Amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): both historical diff
 toggles and their `:diff` commands are removed without aliases. Explicit
-Standard, Unified, and Off modes replace them; the diff-toggle and command
+Normal, Unified, and Off modes replace them; the diff-toggle and command
 routing sections below remain historical rationale.
 
 Amended 2026-09-18: the command line now lists every canonical command while

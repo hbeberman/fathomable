@@ -662,9 +662,9 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
         Root::Diff => vec![
             Row::Item(Item::choice(
                 app,
-                Action::DiffStandard,
-                "Standard diff",
-                app.diff_mode() == DiffMode::Standard,
+                Action::DiffNormal,
+                "Normal diff",
+                app.diff_mode() == DiffMode::Normal,
             )),
             Row::Item(Item::choice(
                 app,
@@ -679,7 +679,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
                 app.diff_mode() == DiffMode::Off,
             )),
             Row::Separator,
-            Row::Item(Item::action(app, Action::ComparisonBase, "Pick base…")),
+            Row::Item(Item::action(app, Action::ComparisonBase, "Pick source…")),
             Row::Item(Item::action(app, Action::ComparisonTarget, "Pick target…")),
             Row::Item(Item::action(
                 app,
@@ -700,7 +700,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(
                 app,
                 Action::ComparisonSave,
-                "Save review point and use as Base…",
+                "Save review point and use as Source…",
             )),
             Row::Item(Item::action(
                 app,
@@ -1475,15 +1475,15 @@ mod tests {
         assert_eq!(
             diff_labels,
             [
-                "Standard diff",
+                "Normal diff",
                 "Unified diff",
                 "Diff off",
-                "Pick base…",
+                "Pick source…",
                 "Pick target…",
                 "HEAD to Working tree",
                 "HEAD~1 to HEAD",
                 "Commit~1 to Commit…",
-                "Save review point and use as Base…",
+                "Save review point and use as Source…",
                 "Manage review points…",
                 "Ignore whitespace",
             ]
@@ -1552,27 +1552,28 @@ mod tests {
                 .map(|item| (item.label.as_str(), item.active))
                 .collect::<Vec<_>>(),
             [
-                ("Standard diff", false),
+                ("Normal diff", false),
                 ("Unified diff", false),
                 ("Diff off", true),
-                ("Pick base…", false),
+                ("Pick source…", false),
                 ("Pick target…", false),
                 ("HEAD to Working tree", false),
                 ("HEAD~1 to HEAD", false),
                 ("Commit~1 to Commit…", false),
-                ("Save review point and use as Base…", false),
+                ("Save review point and use as Source…", false),
                 ("Manage review points…", false),
                 ("Ignore whitespace", false),
             ]
         );
-        assert!(items[3].enabled, "Base is the intentional restore route");
+        assert!(items[3].enabled, "Source is the intentional restore route");
         assert!(items[10].checked, "the whitespace preference is retained");
         assert!(!items[10].enabled, "but cannot run while Off");
         app.open_title_menu(Root::Diff);
         let screen = testing::screen(&app)?.join("\n");
         assert!(screen.contains("▌ Diff off"), "{screen}");
-        assert!(screen.contains("Standard diff"), "{screen}");
+        assert!(screen.contains("Normal diff"), "{screen}");
         assert!(screen.contains("Unified diff"), "{screen}");
+        assert!(screen.contains("Sp d n"), "{screen}");
         assert!(screen.contains("Sp d s"), "{screen}");
         assert!(screen.contains("Sp d u"), "{screen}");
         assert!(screen.contains("Sp d o"), "{screen}");

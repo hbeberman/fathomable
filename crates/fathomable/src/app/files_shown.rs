@@ -218,7 +218,7 @@ impl App {
         let mut sections =
             bindings::menu_sections(place, self.prefix(), |action| self.live_label(action));
         let active = match self.diff_mode() {
-            fathomable_core::config::DiffMode::Standard => Action::DiffStandard,
+            fathomable_core::config::DiffMode::Normal => Action::DiffNormal,
             fathomable_core::config::DiffMode::Unified => Action::DiffUnified,
             fathomable_core::config::DiffMode::Off => Action::DiffOff,
         };

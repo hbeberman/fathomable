@@ -13,8 +13,12 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Amended later 2026-09-19: `Space d n/u/o` selects Normal, Unified, or Off,
+and `Space d s/t` opens the Source or Target endpoint picker. `Space d b` and
+the `"standard"` mode value are retired without aliases.
+
 Amended 2026-09-19: the `Space d` labels use direct workflow language:
-**standard diff**, **unified diff**, **diff off**, **pick base…**, **pick
+**normal diff**, **unified diff**, **diff off**, **pick source…**, **pick
 target…**, **show uncommitted changes**, **show latest commit**, **show a
 specific commit…**, **save review point**, **manage review points…**, and
 **ignore whitespace**. The binding descriptions retain their `diff: ` prefix
@@ -64,11 +68,11 @@ point can instead be selected directly as the comparison base.
 Amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): the preceding
 Comparison controls retention is superseded. The popup and Start at HEAD
-action are removed; `Space d s/u/o` selects Standard, Unified, or Off.
+action are removed; `Space d n/u/o` selects Normal, Unified, or Off.
 `:diff` has no compatibility alias.
 
 Amended later 2026-09-18: `Space d d` is restored with one direct meaning:
-pin the current `HEAD` as Base and select the working tree as Target. It does
+pin the current `HEAD` as Source and select the working tree as Target. It does
 not toggle presentation or reopen the removed comparison controls.
 
 Amended 2026-09-19: lowercase leaders name workflows and uppercase leaders

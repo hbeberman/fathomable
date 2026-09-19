@@ -280,7 +280,7 @@ impl State {
         self.target_alias.as_ref()
     }
 
-    /// The selected review-point Base, when there is one.
+    /// The selected review-point Source, when there is one.
     pub(crate) fn review_point_base(&self) -> Option<&str> {
         match &self.base {
             ComparisonEndpoint::ReviewPoint(id) => Some(id),
@@ -574,7 +574,7 @@ impl State {
         }
     }
 
-    /// Replace a missing review-point Base without changing Target or mode.
+    /// Replace a missing review-point Source without changing Target or mode.
     pub(crate) fn replace_missing_review_point_base(&mut self, workspace: &Workspace) {
         let (base, alias) = head_endpoint(workspace);
         self.base = base;
@@ -1107,7 +1107,7 @@ impl App {
         endpoint: ComparisonEndpoint,
         alias: Option<EndpointAlias>,
     ) {
-        if self.annotation_draft_blocks("changing Base") {
+        if self.annotation_draft_blocks("changing Source") {
             return;
         }
         let restore = (self.diff_mode == DiffMode::Off).then_some(self.last_active_diff_mode);

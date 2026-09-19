@@ -67,7 +67,7 @@ impl App {
         true
     }
 
-    /// Reload and repair a selected review-point Base when it was deleted.
+    /// Reload and repair a selected review-point Source when it was deleted.
     pub(crate) fn reload_selected_review_point(&mut self) -> Result<Option<String>, String> {
         let Some(id) = self.comparison.review_point_base().map(str::to_owned) else {
             return Ok(None);
@@ -391,9 +391,9 @@ mod tests {
         app.compose_cancel();
         app.compose_cancel();
 
-        app.select_diff_mode(DiffMode::Standard);
+        app.select_diff_mode(DiffMode::Normal);
         app.settle_background();
-        assert_eq!(app.diff_mode(), DiffMode::Standard);
+        assert_eq!(app.diff_mode(), DiffMode::Normal);
         assert_eq!(
             app.comparison.target(),
             &ComparisonEndpoint::Commit(CommitId::parse(&target)?)

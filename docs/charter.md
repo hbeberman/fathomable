@@ -29,7 +29,7 @@ the agent does the writing.
   form threads. Agents reply into threads, so a document can carry a
   long-running local review conversation across many agent sessions.
 - A **diff lens**: one pinned, checkout-wide comparison and session-global
-  Standard, Unified, or Off presentation applies to every file. Standard
+  Normal, Unified, or Off presentation applies to every file. Normal
   supplies comparison gutters and navigation, Unified is a durable patch view,
   and Off is Target-only source browsing without comparison, Git-status, or
   file-edit toasts. Explicit review points provide deliberate
@@ -131,7 +131,7 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
   to two rows or expanded to the whole thread.
 - **Review list**: the `Space t` view of every thread on the work.
 - **Review point**: an explicit saved workspace manifest used as a temporal
-  comparison base. It is not a review session, task boundary, or automatic
+  diff source. It is not a review session, task boundary, or automatic
   reader snapshot.
 - **Jumplist**: the positions far moves leave behind, walked with
   `Alt-Left` and `Alt-Right`.

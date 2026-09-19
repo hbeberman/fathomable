@@ -68,7 +68,7 @@ impl Default for Config {
 pub enum DiffMode {
     /// Show Target content with comparison gutters and navigation.
     #[default]
-    Standard,
+    Normal,
     /// Show the selected comparison as a unified patch.
     Unified,
     /// Browse Target content without comparison presentation.
@@ -78,7 +78,7 @@ pub enum DiffMode {
 impl fmt::Display for DiffMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::Standard => "standard",
+            Self::Normal => "normal",
             Self::Unified => "unified",
             Self::Off => "off",
         })
@@ -542,7 +542,7 @@ impl Config {
                         match child.name().value() {
                             "mode" => {
                                 config.diff.mode = match one_string(child, line)? {
-                                    "standard" => DiffMode::Standard,
+                                    "normal" => DiffMode::Normal,
                                     "unified" => DiffMode::Unified,
                                     "off" => DiffMode::Off,
                                     value => {
@@ -550,7 +550,7 @@ impl Config {
                                             path: None,
                                             line,
                                             message: format!(
-                                                "unknown diff mode `{value}`; expected `standard`, `unified`, or `off`"
+                                                "unknown diff mode `{value}`; expected `normal`, `unified`, or `off`"
                                             ),
                                         });
                                     }
@@ -832,7 +832,7 @@ threads {{
 }}
 
 diff {{
-    mode {mode} // Startup presentation: \"standard\", \"unified\", or \"off\".
+    mode {mode} // Startup presentation: \"normal\", \"unified\", or \"off\".
     context {context} // Unchanged lines shown around each diff hunk.
     ignore-whitespace #{ignore_whitespace} // Default only; saved comparisons keep their whitespace rule.
 }}
@@ -1216,9 +1216,9 @@ threads {
             Config::default().diff().compare(),
             crate::diff::Compare::default()
         );
-        assert_eq!(Config::default().diff().mode, DiffMode::Standard);
+        assert_eq!(Config::default().diff().mode, DiffMode::Normal);
         for (value, mode) in [
-            ("standard", DiffMode::Standard),
+            ("normal", DiffMode::Normal),
             ("unified", DiffMode::Unified),
             ("off", DiffMode::Off),
         ] {
@@ -1229,7 +1229,8 @@ threads {
             ("diff { width 5 }", "unknown diff setting `width`"),
             ("diff { context #true }", "context"),
             ("diff { mode \"side-by-side\" }", "unknown diff mode"),
-            ("diff { mode \"Standard\" }", "unknown diff mode"),
+            ("diff { mode \"standard\" }", "unknown diff mode"),
+            ("diff { mode \"Normal\" }", "unknown diff mode"),
             ("diff { mode #true }", "exactly one string"),
             ("diff { mode \"off\" \"unified\" }", "exactly one string"),
             ("diff 1", "block"),

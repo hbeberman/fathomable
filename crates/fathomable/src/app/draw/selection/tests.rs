@@ -431,7 +431,10 @@ fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
     testing::click(&mut app, 0, usize::from(y));
     assert_eq!(app.current_path(), std::path::Path::new("main.c"));
     assert_selection(&render(&app, &theme)?, 0, y, width - 1, &theme, true);
-    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted in comparison · showing diff source")
+    );
     assert_eq!(app.view().text(), "int main() {\n    return 0;\n}\n");
     assert!(app.info().is_none());
 
@@ -445,7 +448,10 @@ fn deleted_files_show_red_letters_and_removed_counts() -> anyhow::Result<()> {
     assert_eq!(buffer[(1, y)].symbol(), "D");
     assert_eq!(buffer[(2, y)].symbol(), " ");
     assert_eq!(Some(buffer[(1, y)].fg), theme.diff_minus.fg);
-    assert_eq!(app.banner(), Some("deleted in comparison · showing base"));
+    assert_eq!(
+        app.banner(),
+        Some("deleted in comparison · showing diff source")
+    );
     assert_eq!(app.view().text(), "int main() {\n    return 0;\n}\n");
     Ok(())
 }
@@ -549,7 +555,7 @@ fn a_comparison_picker_cursor_follows_the_typed_query() -> anyhow::Result<()> {
     terminal.draw(|frame| draw::draw(frame, &app, &theme))?;
     let cursor = terminal.get_cursor_position()?;
     let buffer = terminal.backend().buffer();
-    let row = row_containing(buffer, 0, 100, "comparison base > main")?;
+    let row = row_containing(buffer, 0, 100, "diff source > main")?;
     let input = (0..=96_u16)
         .find(|&x| {
             (0..4)

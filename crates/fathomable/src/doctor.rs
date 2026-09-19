@@ -266,7 +266,7 @@ fn workspace_checks(
         report.check(
             true,
             format!(
-                "{} is not a git work tree; no HEAD diff base",
+                "{} is not a git work tree; no HEAD diff source",
                 workspace.root().display()
             ),
         );

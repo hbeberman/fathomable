@@ -278,14 +278,14 @@ impl ModeMenu {
         let mut menu = Menu::under_right_edge("Diff", Where::Any, right, row);
         let mode = app.diff_mode();
         for (action, label, choice) in [
-            (Action::DiffStandard, "Standard diff", DiffMode::Standard),
+            (Action::DiffNormal, "Normal diff", DiffMode::Normal),
             (Action::DiffUnified, "Unified diff", DiffMode::Unified),
             (Action::DiffOff, "Diff off", DiffMode::Off),
         ] {
             menu.push_choice(action, label, mode == choice);
         }
         let selected = match mode {
-            DiffMode::Standard => 0,
+            DiffMode::Normal => 0,
             DiffMode::Unified => 1,
             DiffMode::Off => 2,
         };

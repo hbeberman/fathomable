@@ -49,7 +49,7 @@ pub(crate) enum ReviewView {
 
 fn origin_evidence(thread: &Thread) -> String {
     let side = match thread.origin_side() {
-        fathomable_core::annotations::OriginSide::Base => "base",
+        fathomable_core::annotations::OriginSide::Base => "source",
         fathomable_core::annotations::OriginSide::Target => "target",
         fathomable_core::annotations::OriginSide::Unspecified => "unspecified",
     };

@@ -1258,9 +1258,9 @@ mod tests {
         file.left[1].0 = format!("  {}", "x".repeat(25));
         let narrow = text(&file.line(&theme, 40));
         assert!(narrow.contains("File"), "{narrow}");
-        assert!(narrow.contains("Diff: standard"), "{narrow}");
+        assert!(narrow.contains("Diff: normal"), "{narrow}");
         assert!(!narrow.contains("xxxxxxxx"), "{narrow}");
-        let minimum = file.title_width() + display_width("Diff: standard") + HINT_MARGIN;
+        let minimum = file.title_width() + display_width("Diff: normal") + HINT_MARGIN;
         assert!(file.control_bounds(minimum, Control::DiffMode).is_some());
         assert!(
             file.control_bounds(minimum.saturating_sub(1), Control::DiffMode)
@@ -1270,8 +1270,8 @@ mod tests {
         let assert_control = |header: Header, title: &str| {
             let wide = text(&header.line(&theme, 100));
             assert!(wide.contains(title), "{wide}");
-            assert!(wide.contains("Diff: standard"), "{wide}");
-            let minimum = header.left_width() + display_width("Diff: standard") + HINT_MARGIN;
+            assert!(wide.contains("Diff: normal"), "{wide}");
+            let minimum = header.left_width() + display_width("Diff: normal") + HINT_MARGIN;
             assert!(
                 header.control_bounds(minimum, Control::DiffMode).is_some(),
                 "{title} should retain Diff after optional state is dropped"
@@ -1326,7 +1326,7 @@ mod tests {
                     (" README.md".to_owned(), Tone::Info),
                 ],
                 vec![HintOf::word("+3".to_owned(), Tone::Added)],
-                vec![HintOf::diff_mode(DiffMode::Standard)],
+                vec![HintOf::diff_mode(DiffMode::Normal)],
             );
             let inactive = header.line_with_header_hovers(&theme, 48, false, None, false);
             let focused = header.line_with_header_hovers(&theme, 48, false, None, true);

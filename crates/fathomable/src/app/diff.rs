@@ -101,7 +101,7 @@ impl App {
             self.activate_diff_mode(mode);
             if let Some(id) = recovered {
                 self.notice(format!(
-                    "review point {} was deleted; Base reset to {}",
+                    "review point {} was deleted; Source reset to {}",
                     id.chars().take(8).collect::<String>(),
                     self.comparison_menu_pair().0
                 ));
@@ -111,7 +111,7 @@ impl App {
             self.last_active_diff_mode = mode;
             match mode {
                 DiffMode::Unified => self.show_unified_diff(),
-                DiffMode::Standard => {
+                DiffMode::Normal => {
                     for doc in &mut self.docs {
                         doc.view.clear_diff();
                     }
@@ -343,7 +343,7 @@ impl App {
             self.refresh_off_target();
             if let Some(id) = recovered {
                 self.notice(format!(
-                    "review point {} was deleted; Base reset to {}",
+                    "review point {} was deleted; Source reset to {}",
                     id.chars().take(8).collect::<String>(),
                     self.comparison_menu_pair().0
                 ));
@@ -359,7 +359,7 @@ impl App {
         self.apply_refreshed_comparison(branch_changed);
         if let Some(id) = recovered {
             self.notice(format!(
-                "review point {} was deleted; Base reset to {}",
+                "review point {} was deleted; Source reset to {}",
                 id.chars().take(8).collect::<String>(),
                 self.comparison_menu_pair().0
             ));
@@ -391,11 +391,11 @@ impl App {
             && self.comparison.target()
                 == &fathomable_core::workspace::ComparisonEndpoint::WorkingTree
         {
-            self.notice("working tree changed; pinned comparison base retained");
+            self.notice("working tree changed; pinned diff source retained");
         }
         match self.diff_mode {
             DiffMode::Unified => self.show_unified_diff(),
-            DiffMode::Standard => {
+            DiffMode::Normal => {
                 for doc in &mut self.docs {
                     doc.view.clear_diff();
                 }

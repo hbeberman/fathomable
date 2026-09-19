@@ -42,7 +42,7 @@ separate pane identity; command and search input still replace the status line.
 
 Amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): mode-aware endpoint
-controls replace generic comparison controls. Standard and Unified show Base
+controls replace generic comparison controls. Normal and Unified show Source
 to Target, Off shows Target only, and comparison provenance appears in the
 bottom status line only when those controls do not actually render.
 

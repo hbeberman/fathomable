@@ -201,7 +201,7 @@ impl App {
             && cursor_on_removed_diff_line(view)
             && displayed_diff_side_and_range(view).is_none()
         {
-            self.notice("cannot determine the removed line's base evidence");
+            self.notice("cannot determine the removed line's source evidence");
             return;
         }
         // A detached thread's row is not text (ADR 0039).

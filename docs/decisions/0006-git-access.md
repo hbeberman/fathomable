@@ -21,7 +21,7 @@ that endpoint. Last-seen is removed.
 
 Presentation amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): the historical `gd` /
-`:diff` toggle below is removed without an alias. Standard, Unified, and Off
+`:diff` toggle below is removed without an alias. Normal, Unified, and Off
 are explicit session-global modes; Off reads Target only. The milestone text
 below remains historical implementation context.
 

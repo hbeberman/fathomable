@@ -71,9 +71,9 @@ pub enum Face {
     Marker,
     /// Quoted body text.
     Quote,
-    /// A line added against the diff base (ADR 0006).
+    /// A line added against the diff source (ADR 0006).
     DiffAdded,
-    /// A line removed against the diff base.
+    /// A line removed against the diff source.
     DiffRemoved,
     /// A unified-diff hunk header.
     DiffHeader,
@@ -480,7 +480,7 @@ impl Layout {
         let diff = crate::diff::Diff::compare(old, new, compare.whitespace);
         let mut lines = Vec::new();
         if diff.is_empty() {
-            let chunk = Chunk::new("no changes against the diff base", Style::marker(), None);
+            let chunk = Chunk::new("no changes against the diff source", Style::marker(), None);
             lines.extend(wrap_hard(&chunk, width));
             return Self::finish(lines, width, index);
         }

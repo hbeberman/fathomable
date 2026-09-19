@@ -124,7 +124,7 @@ mnemonics; the Go menu exposes each traversal action as a separate mouse
 target. No standalone `Z` hint is shown away from a thread, and `y` remains
 an undisplayed power-user action.
 
-Unified and Standard use the same comparison-navigation hint. Endpoint and
+Unified and Normal use the same comparison-navigation hint. Endpoint and
 whitespace controls remain in the Diff menu and commands rather than
 occupying the File footer. The Go menu exposes all six direct traversal
 actions for mouse use, subject to the same availability rules.

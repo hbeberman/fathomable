@@ -451,7 +451,7 @@ Milestones are ordered; each is usable on its own. Details live in the
     Thread-list settings, and `t`, `r`, and `R` form the direct review grammar
     ([0086](decisions/0086-one-thread-summary-and-its-actions.md)).
 78. **Global comparisons and deliberate board history.** One pinned
-    checkout-wide comparison and a session-global Standard/Unified/Off mode
+    checkout-wide comparison and a session-global Normal/Unified/Off mode
     drive every file and change surface; Off is Target-only source browsing
     while labelled historical review evidence remains; explicit
     content-addressed workspace review points replace last-seen and per-file
@@ -459,11 +459,12 @@ Milestones are ordered; each is usable on its own. Details live in the
     comments; the repository board remains visible across histories and gains
     Recently resolved, deliberate archive/restore, and confirmed Clear board
     actions. File and history headers expose the mode, active app bars show
-    Base to Target, Off shows Target only, and removed comparison controls,
-    commit batches, and `:diff` have no compatibility aliases. `Space d d`
+    Source to Target, Off shows Target only, and removed comparison controls,
+    commit batches, and `:diff` have no compatibility aliases. `Space d n/u/o`
+    selects the mode, `Space d s/t` picks Source or Target, `Space d d`
     directly reselects current HEAD to working tree, `Space d l/c` selects
     immutable first-parent comparisons, `Space d p` saves a review point and
-    selects it as Base against Working tree, and `Space d r` manages the
+    selects it as Source against Working tree, and `Space d r` manages the
     append-only rename and guarded logical-delete lifecycle by stable point ID
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
 79. **Bundled license notices.** Help > Licenses displays offline first- and

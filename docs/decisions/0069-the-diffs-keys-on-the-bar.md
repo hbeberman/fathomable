@@ -28,14 +28,14 @@ now controls the single global pair, review points, and whitespace.
 
 Presentation amended 2026-09-17: the pair-name header also retires. A diff
 uses the File surface header, while the global menu-bar endpoint buttons
-open the base and target pickers. The diff's applicable actions remain on
+open the Source and Target pickers. The diff's applicable actions remain on
 the text key bar. [0086](0086-one-thread-summary-and-its-actions.md) later
 standardizes every bar as action then hotkey with whole-button hover.
 
 Diff presentation amended 2026-09-18 by
 [0087](0087-global-comparisons-and-board-history.md): `D`, transient
 Escape-close diff behavior, comparison-control hints, and `Space d d` /
-`:diff` are removed. `Space d s/u/o` selects durable Standard, Unified, or Off
+`:diff` are removed. `Space d n/u/o` selects durable Normal, Unified, or Off
 mode; Off gates hunk navigation and related hints. The decision text and
 consequences below are retained as historical rationale, not the current
 keymap or bar contract.
@@ -45,7 +45,7 @@ current-`HEAD`-to-working-tree selector. It does not restore `D`, `:diff`,
 comparison-control hints, or transient presentation.
 
 Amended again 2026-09-18 by
-[0090](0090-direct-workspace-navigation.md): both Standard and Unified
+[0090](0090-direct-workspace-navigation.md): both Normal and Unified
 show the conditional `diffs ⇧arrows/HJKL` traversal hint. Shift-Up/Down and
 `K`/`J` traverse comparison stops; Shift-Left/Right and `H`/`L` traverse
 changed files at their first diff. Endpoint and whitespace controls remain

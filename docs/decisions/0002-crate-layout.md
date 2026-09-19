@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Crate layout
-description: Split Fathomable into a terminal-free core crate and a single binary crate.
+description: Separate the terminal-free core, binary, and unpublished test support.
 resource: crates/fathomable-core/src/lib.rs
 related_resources:
   - Cargo.toml
@@ -12,8 +12,8 @@ related_resources:
   - scripts/check-boundaries.sh
   - scripts/check-public-api.sh
 tags:
-  - decision
   - architecture
+  - decision
 ---
 
 # 0002 Crate layout
@@ -23,6 +23,11 @@ Status: accepted (2026-08-26)
 MCP access amended 2026-09-18 by [0089](0089-store-only-mcp.md):
 the binary's MCP mode uses the core store directly rather than talking to a
 viewer socket. Crate boundaries and the stdio MCP transport remain unchanged.
+
+Distribution amended 2026-09-19: the first public alpha is prepared as
+separate `fathomable-core` and `fathomable` crates.io source packages.
+`fathomable-testing` remains unpublished, and publishing and GitHub tag
+creation remain manual maintainer actions.
 
 Amended 2026-09-03 by [0048](0048-modules-by-concept.md): a third
 workspace member, `fathomable-testing`, holds the test scaffolding shared
@@ -37,7 +42,7 @@ that the terminal never leaks into that logic.
 
 ## Decision
 
-Two workspace crates:
+Three workspace crates:
 
 - `fathomable-core`: document model, Markdown layout with source mapping,
   syntax highlighting, annotations and anchors, sessions, git diffing,
@@ -48,6 +53,8 @@ Two workspace crates:
   [0009](0009-cli-and-diagnostics.md); amended 2026-08-26 from an earlier
   `mcp` subcommand). Owns `ratatui`, `crossterm`, and the event loop; the MCP
   mode links `rmcp` and talks to a running TUI session over a Unix socket.
+- `fathomable-testing`: repository-only temporary workspace and Git fixtures
+  shared by tests in the product crates.
 
 The `boundaries` gate forbids `fathomable-core` from depending on `ratatui`,
 `crossterm`, or `rmcp`.
@@ -65,10 +72,11 @@ the existing general API tripwires still apply to it.
 
 ### Package metadata
 
-All three crates inherit the shared repository URL
+All three crates inherit the shared repository URL and homepage
 (`https://github.com/hbeberman/fathomable`) and license metadata from
-`[workspace.package]`. `repository.workspace = true` is required in each
-member; a workspace value alone does not populate package metadata.
+`[workspace.package]`. Each member explicitly opts into those workspace
+values; defining them only at the workspace does not populate package
+metadata.
 
 The MIT SPDX identifier remains in `license`, while `license-file` points
 to the root `LICENSE`. Members inherit both so Cargo includes that same
@@ -76,8 +84,17 @@ copyright and permission notice as `LICENSE` in each package without
 maintaining duplicate source files. The binary separately embeds the
 [third-party notice bundle](0088-bundled-licenses.md).
 
-These metadata declarations do not enable publication. All crates remain
-`publish = false` until a deliberate release change.
+The product crates permit only the crates.io registry. Their shared test
+support is a path-only dev-dependency, which Cargo omits from the published
+manifests, and `fathomable-testing` remains `publish = false`. Package both
+product crates in one workspace command so Cargo's temporary local registry
+verifies the application against the packaged core before either exists on
+crates.io.
+
+Actual publication is deliberately not automated. A maintainer publishes
+`fathomable-core` first, waits for that exact version to become available,
+and then publishes `fathomable`. The maintainer separately creates the GitHub
+tag and release at the same clean commit.
 
 ## Consequences
 
@@ -85,3 +102,5 @@ These metadata declarations do not enable publication. All crates remain
   ranges" structure that `fathomable` converts to ratatui widgets. That
   conversion is thin and the layout is unit-tested as plain data.
 - A future HTTP MCP transport or a second frontend only touches the binary.
+- `cargo package --workspace --exclude fathomable-testing --locked` is the
+  local source-distribution preflight; it uploads nothing.

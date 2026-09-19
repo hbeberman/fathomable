@@ -22,6 +22,12 @@ Toolchain selection amended 2026-09-19 by the
 notice generation and distributed releases use the recorded release compiler,
 not the floating development channel or the application's supported floor.
 
+Crates.io distribution amended 2026-09-19 by the
+[crate layout](0002-crate-layout.md#package-metadata): publishable workspace
+packages remain covered by the single first-party MIT section. The generator
+excludes only their exact manifests from third-party inventory and still
+rejects every unrecognized path or non-crates.io dependency source.
+
 ## Decision
 
 Fathomable's own source remains MIT-licensed. Third-party code and embedded
@@ -53,10 +59,12 @@ metadata alone is not sufficient for syntect's embedded grammar/theme data.
 
 `cargo-about` **0.9.2** inventories the x86_64 GNU/Linux normal/build
 dependency graph and gathers license texts from cached crate sources.
-`about.toml` selects accepted licenses, excludes dev/private workspace
-crates, and records hash-checked clarifications for combined or unrecognized
-license files. For dual licenses it prefers MIT when available; `cargo deny`
-remains the independent dependency-policy gate.
+`about.toml` selects accepted licenses, excludes dev/private workspace crates,
+and records hash-checked clarifications for combined or unrecognized license
+files. The generator separately removes exact first-party workspace manifests
+that cargo-about includes after they become publishable; an unrecognized path
+or non-crates.io source still fails closed. For dual licenses it prefers MIT
+when available; `cargo deny` remains the independent dependency-policy gate.
 
 `scripts/generate_licenses.py` invokes `cargo about generate --frozen --fail`
 and formats its JSON report as plain text, preserving package versions,

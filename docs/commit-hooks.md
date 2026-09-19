@@ -212,6 +212,8 @@ unused-dependency analysis across all workspace targets and features.
 `cargo-udeps` is not installed by contributor setup or run by hooks, CI, or `just release`;
 invoke it intentionally [before a release](../CONTRIBUTING.md#release-builds).
 `just install` explicitly runs `cargo +stable install` with locked dependencies.
+`just package` checks the license bundle and locally verifies the two
+publishable crates without uploading either one.
 Other recipes run their substantive commands directly; see
 [Contributing](../CONTRIBUTING.md#2-the-gate).
 

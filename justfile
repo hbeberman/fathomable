@@ -77,6 +77,10 @@ test-commit-hooks:
 install:
     cargo +stable install --path crates/fathomable --locked
 
+package:
+    scripts/check-licenses.sh
+    python3 scripts/rust-toolchain.py release cargo package --workspace --exclude fathomable-testing --locked
+
 release:
     scripts/check-licenses.sh
     python3 scripts/rust-toolchain.py release cargo build --release --locked --bin fathomable --target x86_64-unknown-linux-gnu

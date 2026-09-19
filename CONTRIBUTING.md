@@ -283,6 +283,38 @@ cargo +nightly udeps --workspace --all-targets --all-features --locked
 Review its findings before removing dependencies; indirect uses can produce
 false positives. Nightly is already installed for the public-API gate.
 
+Prepare the two crates.io source packages from a clean release commit:
+
+```sh
+just package
+# Without just:
+scripts/check-licenses.sh
+python3 scripts/rust-toolchain.py release cargo package \
+    --workspace --exclude fathomable-testing --locked
+```
+
+This creates and builds `fathomable-core` and `fathomable` together through
+Cargo's temporary local registry, proving that the application package uses
+the packaged core rather than the workspace path. The package manifests omit
+the path-only `fathomable-testing` dev-dependency; that fixture crate remains
+unpublished. Inspect the two `.crate` archives under `target/package/`.
+Packaging is local and does not upload, tag, or create a GitHub release.
+
+Publishing and tag creation are manual maintainer actions. When the maintainer
+is ready, publish the core first, wait until crates.io serves that exact
+version, and then publish the application:
+
+```sh
+python3 scripts/rust-toolchain.py release cargo publish \
+    --locked --registry crates-io -p fathomable-core
+python3 scripts/rust-toolchain.py release cargo publish \
+    --locked --registry crates-io -p fathomable
+```
+
+The GitHub tag and release must point to the same clean commit used to build
+the packages. Agents and local release helpers stop after package preflight;
+they do not upload crates or create the tag.
+
 Build the attributed release executable separately:
 
 ```sh

@@ -22,9 +22,10 @@ builds are separate; see the
 [toolchain policy](decisions/0001-dependency-policy.md#rust-toolchain-roles).
 
 **Enthusiast alpha:** features may appear, change, or disappear at any time.
-There is no cross-upgrade persistence guarantee for Fathomable stores,
-including annotations and review points. Treat this state as disposable
-between versions and keep important conclusions outside the app. See the
+There is no cross-upgrade or cross-downgrade persistence guarantee for
+Fathomable stores, including annotations and review points. Treat this state
+as disposable between versions and keep important conclusions outside the app.
+See the
 [alpha contract](decisions/0083-single-user-alpha-clean-slate.md#enthusiast-alpha-contract).
 
 ## Start
@@ -550,11 +551,12 @@ eligible files.
 After upgrading, restart viewers and the agent host's MCP connection
 together. Incompatible annotation stores are refused, not automatically
 migrated or deleted. State persists across ordinary restarts of a compatible
-build, but an upgrade may require an explicit operator reset. Stop affected
-processes before backing up or resetting app-owned state and review the
-actual XDG paths; never remove repository files as part of a reset. A backup
-may need the older build to remain readable. Configuration is preserved by
-default, but obsolete settings may need manual changes.
+build, but an upgrade or downgrade may require an explicit operator reset.
+Stop affected processes before backing up or resetting app-owned state and
+review the actual XDG paths; never remove repository files as part of a reset.
+A backup is recovery material for a build that understands that exact stored
+format, not a migration format for another build. Configuration is preserved
+by default, but obsolete settings may need manual changes.
 
 For paths and connection diagnostics, run
 `fathomable --doctor`; `fathomable --viewers` lists running viewers.

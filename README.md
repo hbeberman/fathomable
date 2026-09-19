@@ -5,10 +5,11 @@ agent-driven work. You read files as they change, leave threads on the
 lines an agent wrote, and the agent answers over MCP. Currently Linux only.
 
 **Enthusiast alpha:** expect features to appear, change, or disappear at
-any time. Fathomable stores are not guaranteed to survive upgrades; treat
-annotations, review points, and other app state as disposable between
-versions. Keep important review conclusions elsewhere. Incompatible stores
-are refused, not automatically migrated or deleted. See the
+any time. Fathomable stores are not guaranteed to survive upgrades or
+downgrades; treat annotations, review points, and other app state as
+disposable between versions. Keep important review conclusions elsewhere.
+Incompatible stores are refused, not automatically migrated or deleted. A
+backup may require the exact build that wrote it. See the
 [alpha contract](docs/decisions/0083-single-user-alpha-clean-slate.md#enthusiast-alpha-contract).
 
 ## Install
@@ -38,6 +39,9 @@ cargo +stable install --path crates/fathomable --locked
 # Ensure ~/.cargo/bin is in PATH
 fathomable --version
 ```
+
+After an alpha is published on crates.io, the checkout steps can be replaced
+with `cargo +stable install fathomable --locked`.
 
 At run time the viewer only shells out for two optional things: your
 `$VISUAL` or `$EDITOR` to draft a long comment, and `xdg-open` to follow

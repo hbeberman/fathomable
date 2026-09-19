@@ -9,6 +9,7 @@ license.workspace = true
 license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -34,4 +35,4 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 
 [dev-dependencies]
-fathomable-testing.workspace = true
+fathomable-testing = { path = "../fathomable-testing" }

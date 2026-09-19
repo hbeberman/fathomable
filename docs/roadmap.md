@@ -488,3 +488,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     owner without recolouring header facts; list movement previews in place,
     and undersized split layouts show a recoverable size warning
     ([0091](decisions/0091-pane-focus-navigation.md)).
+83. **Crates.io source distribution.** The first public alpha is prepared as
+    separate `fathomable-core` and `fathomable` packages, verified together
+    locally while the test-support crate remains unpublished. Uploading those
+    packages and creating the matching GitHub tag are explicit maintainer
+    actions ([0002](decisions/0002-crate-layout.md#package-metadata)).

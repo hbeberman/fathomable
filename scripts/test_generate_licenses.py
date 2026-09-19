@@ -82,6 +82,38 @@ class LicenseTests(unittest.TestCase):
         self.assertNotIn("package authors", text)
         self.assertNotIn(directory, text)
 
+    def test_first_party_workspace_crates_are_covered_only_by_project_license(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            value = inventory(root)
+            package = {
+                "name": "fathomable-core",
+                "version": "0.1.0",
+                "license": "MIT",
+                "source": None,
+                "manifest_path": str(root / "crates/fathomable-core/Cargo.toml"),
+            }
+            value["crates"].append({"package": package})
+            value["licenses"].append({
+                "id": "MIT",
+                "name": "MIT License",
+                "source_path": None,
+                "text": "Synthetic first-party text",
+                "used_by": [{"crate": package}],
+            })
+            text, packages = licenses.crate_notices(
+                root, value, {"package_notices": {}},
+            )
+        self.assertEqual(set(packages), {"example@1.2.3"})
+        self.assertNotIn("fathomable-core", text)
+        self.assertNotIn("Synthetic first-party text", text)
+
+    def test_unrecognized_path_dependency_is_rejected(self):
+        value = inventory(Path("."))
+        value["crates"][0]["package"]["source"] = None
+        with self.assertRaisesRegex(licenses.LicenseBundleError, "unsupported source"):
+            licenses.crate_notices(Path("."), value, {"package_notices": {}})
+
     def test_unreviewed_synthesized_license_is_rejected(self):
         with self.assertRaisesRegex(licenses.LicenseBundleError, "synthesized MIT"):
             licenses.crate_notices(

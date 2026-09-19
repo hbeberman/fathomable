@@ -20,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "crates/fathomable/assets/licenses.txt"
 SEPARATOR = "=" * 79
 NOTICE_NAME = re.compile(r"^(?:notice|copyright)(?:[-_.].*)?$", re.IGNORECASE)
+FIRST_PARTY_MANIFESTS = {
+    "fathomable": Path("crates/fathomable/Cargo.toml"),
+    "fathomable-core": Path("crates/fathomable-core/Cargo.toml"),
+    "fathomable-testing": Path("crates/fathomable-testing/Cargo.toml"),
+}
 
 
 class LicenseBundleError(RuntimeError):
@@ -131,6 +136,16 @@ def package_key(package: dict[str, Any]) -> str:
     return f"{package['name']}@{package['version']}"
 
 
+def is_first_party(root: Path, package: dict[str, Any]) -> bool:
+    """Recognize an exact workspace package, not an arbitrary path dependency."""
+    if package["source"] is not None:
+        return False
+    relative = FIRST_PARTY_MANIFESTS.get(package["name"])
+    if relative is None:
+        return False
+    return Path(package["manifest_path"]).resolve() == (root / relative).resolve()
+
+
 def source_url(package: dict[str, Any]) -> str:
     if package["source"] != "registry+https://github.com/rust-lang/crates.io-index":
         raise LicenseBundleError(f"unsupported source for {package_key(package)}")
@@ -169,6 +184,7 @@ def crate_notices(
     packages = {
         package_key(item["package"]): item["package"]
         for item in inventory["crates"]
+        if not is_first_party(root, item["package"])
     }
     if not packages:
         raise LicenseBundleError("cargo-about returned no dependency packages")
@@ -187,7 +203,13 @@ def crate_notices(
     output = [section("DEPENDENCY PACKAGES", "\n".join(records))]
     covered = set()
     for license in sorted(inventory["licenses"], key=lambda item: (item["id"], item["text"])):
-        users = sorted(package_key(user["crate"]) for user in license["used_by"])
+        users = sorted(
+            key
+            for user in license["used_by"]
+            if (key := package_key(user["crate"])) in packages
+        )
+        if not users:
+            continue
         covered.update(users)
         # Offline cargo-about can synthesize generic SPDX text without copyrights.
         # Only reviewed replacements may stand in for missing upstream files.

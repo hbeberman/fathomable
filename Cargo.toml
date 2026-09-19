@@ -17,10 +17,11 @@ license = "MIT"
 license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/hbeberman/fathomable"
+homepage = "https://github.com/hbeberman/fathomable"
 description = "Read-only terminal workspace viewer and annotation side-car for agent-driven work"
 keywords = ["tui", "markdown", "mcp", "review"]
 categories = ["development-tools"]
-publish = false
+publish = ["crates-io"]
 
 [workspace.dependencies]
 # Versions live here; each crate names the features it needs (ADR 0001).

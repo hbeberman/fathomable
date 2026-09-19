@@ -9,6 +9,7 @@ license.workspace = true
 license-file.workspace = true
 readme.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Terminal-free core for Fathomable: document model, layout, annotations, sessions"
 keywords.workspace = true
 categories.workspace = true
@@ -32,4 +33,4 @@ unicode-segmentation.workspace = true
 unicode-width.workspace = true
 
 [dev-dependencies]
-fathomable-testing.workspace = true
+fathomable-testing = { path = "../fathomable-testing" }

@@ -37,6 +37,7 @@ allow = ["Apache-2.0 WITH LLVM-exception"]
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

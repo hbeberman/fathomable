@@ -86,27 +86,7 @@ rejected for good (record rejections in the [charter](charter.md)).
   terminal that keeps the right button for itself. Origin: 0050; the
   clickable `Space` menu is the fallback for now.
 
-## Checkpoint follow-ups
-
-- **Pruning checkpoints.** Origin:
-  [0049](decisions/0049-inline-threads-and-the-rail.md); nothing expires
-  in the first version and `--doctor` counts the store. A retention
-  rule (age, count, or size) can come once the store has been used.
-- **"New since checkpoint" marks** on stub and threads-pane rows, and a
-  gutter or `]g` toggle for the checkpoint base. Origin: 0049; offered
-  in the design round and not chosen.
-
 ## Milestone 5 follow-ups
 
 - **Side-by-side diff view.** [0006](decisions/0006-git-access.md) allows
-  it; only unified shipped. The last-seen base, changed-file jumping, and
-  base refresh on commit moved to
-  [0015](decisions/0015-follow-mode.md).
-
-## Open investigations
-
-- **"Last seen" recency heuristic.** When a view counts as read, with
-  hysteresis so brief glances and rapid agent edits do not churn snapshots.
-  Origin: [0006](decisions/0006-git-access.md).
-
-- **Snapshot bounds** for "last seen" diff bases. Origin: 0006.
+  it; only unified shipped.

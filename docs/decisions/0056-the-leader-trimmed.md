@@ -43,6 +43,10 @@ replacing `Space v x` with no compatibility alias. The map below records
 the pre-[0060](0060-one-diff-two-sides.md) state; this amendment supersedes
 0060's later `s` / `t` / `x` map.
 
+Amended later 2026-09-18 by
+[0082](0082-three-tool-review-core.md): the unimplemented `Space a w`
+wake placeholder and its otherwise empty agent submenu are removed.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) laid out the `Space` menu

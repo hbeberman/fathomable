@@ -277,7 +277,6 @@ impl App {
             Action::WindowNext => self.window_next(),
             Action::WindowFiles => self.window_files(),
             Action::WindowThreads => self.window_threads(),
-            Action::Wake => self.wake(),
             Action::Help => self.open_help(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),

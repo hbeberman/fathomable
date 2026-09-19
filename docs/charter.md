@@ -58,8 +58,7 @@ Permanent non-goals:
   ([0080](decisions/0080-automatic-chat-identity.md)).
 - **Not an automatic agent scheduler or delivery service.** It does not
   subscribe, assign, acknowledge, automatically wake, remind, or route chats,
-  and reading a thread does not authorize work. The visible manual wake key
-  is an unimplemented placeholder for a future user-directed integration.
+  and reading a thread does not authorize work.
 
 Deferred, not rejected:
 
@@ -69,9 +68,6 @@ Deferred, not rejected:
 - Multiple panes inside Fathomable (v1 is one pane; the layout is designed so
   splitting can be added).
 - HTTP transport for the MCP server.
-- A user-triggered wake integration that sends all open threads and an
-  optional instruction to a chosen chat
-  ([0082](decisions/0082-three-tool-review-core.md)).
 - Cross-workspace MCP routing. A server is bound to one repository checkout;
   shared worktree storage and manual viewer worktree navigation remain.
 - macOS and Windows. Linux is the only supported platform.

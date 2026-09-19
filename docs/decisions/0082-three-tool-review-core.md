@@ -3,8 +3,6 @@ type: Decision
 title: Three-tool review core
 description: Fathomable exposes only repository-bound thread reading, starting, and replying; discussion state stays human-governed and viewer navigation stays manual.
 resource: crates/fathomable/src/mcp/tools.rs
-related_resources:
-  - crates/fathomable/src/app/agents.rs
 tags:
   - annotations
   - architecture
@@ -237,9 +235,9 @@ MCP `open`, agent-followed paths, auto-jump, its `AUTO` badge, `:auto`, and
 `Space j a` are removed. `--name` still names a viewer window for the human;
 it is not an agent routing target.
 
-`Space a w` remains a visible human action but reports
-`Wake agent is not yet implemented`. It has no picker, delivery check, spawn,
-or success path.
+Amended 2026-09-18: the unimplemented `Space a w` placeholder and its empty
+agent submenu are removed. Fathomable exposes no wake action or planned wake
+surface.
 
 ### Migration removes configuration, not user state
 
@@ -265,8 +263,5 @@ deleted.
   delivery side effect.
 - User prompts and thread prose remain the coordination mechanism. This is
   less structured and more truthful than inferred obligation state.
-- A future wake integration may let the user send **all open threads** plus
-  an optional instruction to a chosen chat. Its transport and chat-selection
-  mechanism are undecided; hooks alone are not assumed sufficient.
 - Historical decisions retain their narratives with explicit superseding
   notes so the removed design remains understandable.

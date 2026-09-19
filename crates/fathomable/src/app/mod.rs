@@ -5,12 +5,11 @@
 //! [`App`] is plain state so the viewer's behaviour is tested without a
 //! terminal. The modules are grouped by concept (ADR 0048): `threads`
 //! holds the thread cursor, the panes, the list, and the store operations;
-//! `draw` renders; `input` binds and dispatches keys and the mouse; `agents`
-//! holds the human-invoked wake stub; `sidebar` is the column and
-//! `files_pane` its upper pane; `view`, `watch`, `commands`, and `clipboard`
-//! are what their names say; and [`run`] owns the terminal and file watcher.
+//! `draw` renders; `input` binds and dispatches keys and the mouse; `sidebar`
+//! is the column and `files_pane` its upper pane; `view`, `watch`, `commands`,
+//! and `clipboard` are what their names say; and [`run`] owns the terminal
+//! and file watcher.
 
-pub(crate) mod agents;
 mod clipboard;
 mod commands;
 mod comparison;

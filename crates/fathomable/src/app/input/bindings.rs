@@ -343,7 +343,6 @@ actions! {
     WindowThreads,
     PaneScope,
     ReviewResolved,
-    Wake,
     Help,
     ThreadNext,
     ThreadPrev,
@@ -948,13 +947,6 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c(' '), c('a'), c('w')]],
-        A::Wake,
-        "Space menu",
-        "agent: wake",
-    ),
-    bind(
-        W::Any,
         &[&[c(' '), c('?')]],
         A::Help,
         "Space menu",
@@ -1441,7 +1433,6 @@ const SUBMENUS: &[(Keys, &str)] = &[
     (&[c(' '), c('v')], "view"),
     (&[c(' '), c('d')], "diff"),
     (&[c(' '), c('j')], "jump"),
-    (&[c(' '), c('a')], "agent"),
 ];
 
 /// The word `typed` is a submenu for, when it is one.
@@ -1737,8 +1728,8 @@ mod tests {
     }
 
     /// The menu after `Space` lists each entry once with its next key,
-    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, `d`, and
-    /// `a` (ADR 0049, ADR 0056, ADR 0060).
+    /// and the submenus open under `F`, `w`, `p`, `c`, `v`, and `d`
+    /// (ADR 0049, ADR 0056, ADR 0060).
     #[test]
     fn menus_come_from_the_table() {
         let space = menu(Where::View, &[c(' ')]);
@@ -1754,7 +1745,6 @@ mod tests {
             ("c", "threads…"),
             ("v", "view…"),
             ("d", "diff…"),
-            ("a", "agent…"),
         ] {
             let entries: Vec<&str> = space
                 .iter()
@@ -1790,7 +1780,7 @@ mod tests {
             ["h", "j", "k", "l", "w", "f", "t"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('p')]), ["f", "s", "m", "t"]);
-        assert_eq!(keys(Where::View, &[c(' '), c('a')]), ["w"]);
+        assert_eq!(lookup(Where::View, &[c(' '), c('a')]), Match::Miss);
         assert_eq!(lookup(Where::ThreadsPane, &[c(' '), c(' ')]), Match::Miss);
         assert!(menu(Where::Draft, &[c(' ')]).is_empty());
     }
@@ -1808,7 +1798,6 @@ mod tests {
             (c('v'), "view"),
             (c('d'), "diff"),
             (c('j'), "jump"),
-            (c('a'), "agent"),
         ] {
             for (key, label) in menu(Where::View, &[c(' '), prefix]) {
                 assert!(

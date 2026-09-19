@@ -198,6 +198,10 @@ same day; the choices are below.
   and a click elsewhere drops the prefix as `Esc` does. The layout that
   places entries in rows and columns is one function the drawing and
   the mouse share, so a click lands on the entry that was drawn there.
+  (Amended 2026-09-19: the shared layout reflows semantic sections
+  column-major for the available terminal area. Vertical column dividers and
+  column-local section rules are part of that geometry, and their cells are
+  inert.)
 - `Space ?` takes a click on a row: the binding runs when it applies
   on the focused surface (its place, or `Any` on a pane), else the
   popup closes as any key closes it. A click closes `:status` too.

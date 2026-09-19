@@ -49,7 +49,7 @@ use crate::app::view::{Mode, View};
 use crate::app::input::bindings;
 use crate::app::input::help;
 use crate::app::input::keys::place;
-use crate::app::input::menu::{Grid, Menu};
+use crate::app::input::menu::{Grid, HintCell, HintGrid, Menu};
 use crate::app::menu_bar::{self, Focused, MenuLayout, Row as MenuRow};
 use crate::app::{App, Focus, MAX_TOASTS, NoticeTone, PickerState, Popup, Toast, ToastKind};
 
@@ -359,27 +359,22 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         None => {
             // A which-key menu for the keys typed so far (ADR 0045).
             if let Some(place) = place(app).filter(|_| !app.prefix().is_empty()) {
-                let raw = app.which_key_rows(place);
-                let enabled: Vec<bool> = raw
+                let sections = app.which_key_sections(place);
+                let enabled: Vec<bool> = sections
                     .iter()
-                    .map(|row| {
-                        row.chord()
-                            .is_some_and(|chord| app.which_key_enabled(place, chord))
-                    })
+                    .flat_map(bindings::MenuSection::entries)
+                    .map(|entry| app.which_key_enabled(place, entry.chord()))
                     .collect();
-                let entries: Vec<(String, String)> =
-                    raw.iter().map(bindings::MenuRow::display).collect();
-                let grid = which_key_grid(app, &entries);
+                let grid = which_key_grid(app, &sections);
                 let hover = app
                     .pointer()
-                    .and_then(|(column, row)| grid.entry_at(column, row))
-                    .filter(|&index| raw[index].chord().is_some());
+                    .and_then(|(column, row)| grid.entry_at(column, row));
                 draw_menu(
                     frame,
                     theme,
-                    grid,
+                    &grid,
                     &bindings::menu_title(app.prefix()),
-                    &entries,
+                    &sections,
                     &enabled,
                     hover,
                 );
@@ -2047,15 +2042,8 @@ fn truncate_left(text: &str, max: usize) -> String {
 
 /// The which-key grid at the viewer's bottom right, above the status
 /// line, shared with mouse hit testing (ADR 0050).
-pub(crate) fn which_key_grid(app: &App, entries: &[(String, String)]) -> Grid {
-    Grid::bottom(
-        entries,
-        &bindings::menu_title(app.prefix()),
-        0,
-        app.pane_top(),
-        app.size().0,
-        app.pane_rows(),
-    )
+pub(crate) fn which_key_grid(app: &App, sections: &[bindings::MenuSection]) -> HintGrid {
+    HintGrid::bottom(sections, 0, app.pane_top(), app.size().0, app.pane_rows())
 }
 
 const STATUS_TITLE: &str = " Status · any key closes ";
@@ -2065,68 +2053,184 @@ const STATUS_TITLE: &str = " Status · any key closes ";
 fn draw_menu(
     frame: &mut Frame<'_>,
     theme: &Theme,
-    grid: Grid,
+    grid: &HintGrid,
     title: &str,
-    entries: &[(String, String)],
+    sections: &[bindings::MenuSection],
     enabled: &[bool],
     hover: Option<usize>,
 ) {
-    if grid.height < 2 || entries.is_empty() {
+    if grid.height < 2 || sections.is_empty() {
         return;
     }
-    let key_width = grid.key_width;
-    let label_width = grid.label_width;
-    let mut lines = Vec::with_capacity(grid.rows);
-    for r in 0..grid.rows {
-        let mut spans = Vec::new();
-        for c in 0..grid.columns {
-            let index = c * grid.rows + r;
-            let Some((key, label)) = entries.get(index) else {
-                break;
-            };
-            if key.is_empty() && label.is_empty() {
-                spans.push(Span::styled(
-                    "─".repeat(Grid::column_width(key_width, label_width)),
-                    theme.menu.add_modifier(Modifier::DIM),
-                ));
-                continue;
-            }
+    let area = hint_grid_rect(grid);
+    let first_width = grid
+        .columns
+        .first()
+        .map_or(grid.width.saturating_sub(2), |column| column.width);
+    let title = if first_width >= 2 {
+        let title = fit_ellipsis(title, first_width - 2).trim_end().to_owned();
+        format!(" {title} ")
+    } else {
+        String::new()
+    };
+    let block = rounded_block(theme, Span::styled(title, theme.info), theme.menu);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    if grid.insufficient_space {
+        let message = fit_ellipsis("Terminal too small", grid.width.saturating_sub(2));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(message, theme.info)))
+                .alignment(Alignment::Center)
+                .style(theme.menu),
+            Rect {
+                x: area.x.saturating_add(1),
+                y: area.y.saturating_add(1),
+                width: area.width.saturating_sub(2),
+                height: area.height.saturating_sub(2),
+            },
+        );
+        return;
+    }
+
+    let entries = sections
+        .iter()
+        .flat_map(bindings::MenuSection::entries)
+        .collect::<Vec<_>>();
+    let border_style = theme.menu.patch(theme.info).add_modifier(Modifier::DIM);
+    for row in 0..grid.rows {
+        let cells = grid
+            .columns
+            .iter()
+            .map(|column| column.cells[row])
+            .collect::<Vec<_>>();
+        let mut spans = Vec::with_capacity(grid.columns.len() * 4 + 1);
+        spans.push(Span::styled(
+            if matches!(cells.first(), Some(HintCell::Rule)) {
+                "├"
+            } else {
+                "│"
+            },
+            border_style,
+        ));
+        for (column_index, (column, cell)) in grid.columns.iter().zip(&cells).enumerate() {
+            spans.extend(hint_cell_spans(
+                theme,
+                grid,
+                column.width,
+                *cell,
+                &entries,
+                enabled,
+                hover,
+                border_style,
+            ));
+            let next = cells.get(column_index + 1);
+            let junction = hint_junction(*cell, next.copied());
+            spans.push(Span::styled(junction, border_style));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(theme.menu),
+            Rect {
+                x: area.x,
+                y: area.y.saturating_add(1 + u16_of(row)),
+                width: area.width,
+                height: 1,
+            },
+        );
+    }
+    for column in 1..grid.columns.len() {
+        let Some(x) = grid.column_x(column).map(u16_of) else {
+            continue;
+        };
+        for (y, glyph) in [(area.y, "┬"), (area.bottom().saturating_sub(1), "┴")] {
+            frame.render_widget(
+                Paragraph::new(Span::styled(glyph, border_style)),
+                Rect {
+                    x: x.saturating_sub(1),
+                    y,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the helper receives the complete immutable rendering context for one cell"
+)]
+fn hint_cell_spans(
+    theme: &Theme,
+    grid: &HintGrid,
+    column_width: usize,
+    cell: HintCell,
+    entries: &[&bindings::MenuEntry],
+    enabled: &[bool],
+    hover: Option<usize>,
+    border_style: Style,
+) -> Vec<Span<'static>> {
+    match cell {
+        HintCell::Rule => vec![Span::styled("─".repeat(column_width), border_style)],
+        HintCell::Empty => vec![Span::styled(" ".repeat(column_width), theme.menu)],
+        HintCell::Entry(index) => {
+            let entry = entries[index];
             let row_style = if hover == Some(index) {
                 theme.list_hover
             } else {
                 Style::default()
             };
-            let enabled = enabled.get(index).copied().unwrap_or(true);
-            let dim = if enabled {
+            let dim = if enabled.get(index).copied().unwrap_or(true) {
                 Modifier::empty()
             } else {
                 Modifier::DIM
             };
-            spans.push(Span::styled(
-                format!("{key:>key_width$}"),
+            let surface = theme.menu.patch(row_style).add_modifier(dim);
+            let key = entry.key();
+            let mut spans = vec![Span::styled(
+                format!(
+                    "{}{}",
+                    " ".repeat(grid.key_width.saturating_sub(display_width(&key))),
+                    key
+                ),
                 theme
                     .menu
                     .patch(theme.info)
                     .patch(row_style)
                     .add_modifier(dim),
-            ));
+            )];
+            if grid.label_width > 0 {
+                spans.push(Span::styled("  ", surface));
+                spans.push(Span::styled(
+                    fit_ellipsis(entry.label(), grid.label_width),
+                    surface,
+                ));
+            }
+            let used = grid.key_width + usize::from(grid.label_width > 0) * (2 + grid.label_width);
             spans.push(Span::styled(
-                format!("  {label:<label_width$}   "),
-                theme.menu.patch(row_style).add_modifier(dim),
+                " ".repeat(column_width.saturating_sub(used)),
+                surface,
             ));
+            spans
         }
-        lines.push(Line::from(spans));
     }
-    let area = grid_rect(grid);
-    let block = rounded_block(
-        theme,
-        Span::styled(format!(" {title} "), theme.info),
-        theme.menu,
-    );
-    let inner = block.inner(area);
-    frame.render_widget(Clear, area);
-    frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(lines).style(theme.menu), inner);
+}
+
+const fn hint_junction(cell: HintCell, next: Option<HintCell>) -> &'static str {
+    match (matches!(cell, HintCell::Rule), next) {
+        (true, Some(HintCell::Rule)) => "┼",
+        (true, _) => "┤",
+        (false, Some(HintCell::Rule)) => "├",
+        (false, _) => "│",
+    }
+}
+
+fn hint_grid_rect(grid: &HintGrid) -> Rect {
+    Rect {
+        x: u16_of(grid.x),
+        y: u16_of(grid.y),
+        width: u16_of(grid.width),
+        height: u16_of(grid.height),
+    }
 }
 
 fn grid_rect(grid: Grid) -> Rect {

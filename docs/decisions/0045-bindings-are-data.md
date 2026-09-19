@@ -73,6 +73,16 @@ visibility without moving focus. Mixed leader menus draw section rules from
 binding metadata. `Space d l/c/p` means HEAD-parent comparison, picked
 commit-parent comparison, and save-and-select review point.
 
+Amended later 2026-09-19: pending-prefix helpers consume those semantic
+sections rather than separator-shaped rows. Their card reflows the ordered
+entries column-major for the current terminal, prefers a compact eight-row
+body, and grows vertically when narrow space makes that more legible. A
+section stays together when practical and otherwise continues in the next
+column without a false boundary. Column dividers and full-width section rules
+join as one border. Labels shorten only after comfortable layouts fail; keys
+remain whole. The card never scrolls, and an impossibly small viewport gets an
+explicit size warning rather than clipped or omitted actions.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,
@@ -122,10 +132,12 @@ is possible while the map is prose.
 - **Everything that shows a key reads the table.** `Space ?` renders
   `help()`, grouped by `group`, in as many columns as the popup needs.
   A pending prefix draws a which-key menu of the sequences that continue
-  it (`menu`), which is what the `Space` menu, the `Space j` submenu, and
-  the old `g` hint list now are. A pane header asks `hint(place, action)`
-  how a key is spelled, so a hint cannot name a key that is not bound
-  there. The status line shows the prefix as the table spells it.
+  it (`menu_sections`), which is what the `Space` menu, the `Space j`
+  submenu, and the old `g` hint list now are. The card computes columns from
+  the current terminal instead of binding data naming a side. A pane header
+  asks `hint(place, action)` how a key is spelled, so a hint cannot name a key
+  that is not bound there. The status line shows the prefix as the table
+  spells it.
   (Amended 2026-09-04 by [0049](0049-inline-threads-and-the-rail.md): the which-key
   menu leads with a row naming the prefix and its group word, `Space t
   · threads`, and re-renders at every level. Amended 2026-09-14 by

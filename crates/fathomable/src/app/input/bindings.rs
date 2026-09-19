@@ -5,7 +5,7 @@
 //! A [`Binding`] pairs one [`Action`] with the key sequences that fire it
 //! in one [`Where`]. Dispatch looks a typed sequence up with [`lookup`];
 //! a sequence that is the start of a longer binding is a prefix and the
-//! viewer waits for the rest, showing [`menu_rows`] meanwhile. The help
+//! viewer waits for the rest, showing [`menu_sections`] meanwhile. The help
 //! popup groups and wraps [`BINDINGS`], and a pane header asks
 //! [`hint`] how a key is spelled, so no surface can name a key the table
 //! does not bind.
@@ -1661,49 +1661,70 @@ pub(crate) fn menu_entries(
         .collect()
 }
 
-/// One actionable entry or visual separator in a which-key submenu.
+/// One actionable entry in a semantic which-key section.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MenuRow {
-    Entry(Chord, String),
-    Separator,
+pub(crate) struct MenuEntry {
+    chord: Chord,
+    label: String,
 }
 
-impl MenuRow {
+impl MenuEntry {
     #[must_use]
-    pub(crate) const fn chord(&self) -> Option<Chord> {
-        match self {
-            Self::Entry(chord, _) => Some(*chord),
-            Self::Separator => None,
-        }
+    pub(crate) const fn chord(&self) -> Chord {
+        self.chord
     }
 
     #[must_use]
-    pub(crate) fn display(&self) -> (String, String) {
-        match self {
-            Self::Entry(chord, label) => (chord.to_string(), label.clone()),
-            Self::Separator => (String::new(), String::new()),
-        }
+    pub(crate) fn key(&self) -> String {
+        self.chord.to_string()
+    }
+
+    #[must_use]
+    pub(crate) fn label(&self) -> &str {
+        &self.label
     }
 }
 
-/// Which-key rows, with separators between distinct submenu sections.
+/// One semantic group in a which-key card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MenuSection {
+    entries: Vec<MenuEntry>,
+}
+
+impl MenuSection {
+    #[must_use]
+    pub(crate) fn entries(&self) -> &[MenuEntry] {
+        &self.entries
+    }
+}
+
+/// Which-key sections in binding-table order.
 #[must_use]
-pub(crate) fn menu_rows(
+pub(crate) fn menu_sections(
     place: Where,
     typed: &[Chord],
     relabel: impl Fn(Action) -> Option<&'static str>,
-) -> Vec<MenuRow> {
+) -> Vec<MenuSection> {
     let entries = menu_entries_with_sections(place, typed, relabel);
-    let mut rows = Vec::with_capacity(entries.len());
-    let mut section = None;
-    for (chord, label, next_section) in entries {
-        if typed.len() > 1 && section.is_some_and(|section| section != next_section) {
-            rows.push(MenuRow::Separator);
+    let mut sections: Vec<(u8, MenuSection)> = Vec::new();
+    for (chord, label, section) in entries {
+        let section = if typed.len() > 1 { section } else { 0 };
+        if sections
+            .last()
+            .is_none_or(|(current, _)| *current != section)
+        {
+            sections.push((
+                section,
+                MenuSection {
+                    entries: Vec::new(),
+                },
+            ));
         }
-        rows.push(MenuRow::Entry(chord, label));
-        section = Some(next_section);
+        if let Some((_, current)) = sections.last_mut() {
+            current.entries.push(MenuEntry { chord, label });
+        }
     }
-    rows
+    sections.into_iter().map(|(_, section)| section).collect()
 }
 
 fn menu_entries_with_sections(
@@ -1769,8 +1790,8 @@ mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use super::{
-        Action, BINDINGS, Chord, Key, Match, MenuRow, Where, ZELLIJ_LOCKS, c, hint, k, lookup,
-        menu, menu_rows, menu_spell, shift, spell,
+        Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu,
+        menu_sections, menu_spell, shift, spell,
     };
 
     #[test]
@@ -2047,16 +2068,15 @@ mod tests {
     }
 
     #[test]
-    fn mixed_submenus_draw_section_separators() {
-        let rows = menu_rows(Where::View, &[c(' '), c('d')], |_| None);
+    fn mixed_submenus_keep_semantic_sections() {
+        let sections = menu_sections(Where::View, &[c(' '), c('d')], |_| None);
         assert_eq!(
-            rows.iter()
-                .filter(|row| matches!(row, MenuRow::Separator))
-                .count(),
-            3
+            sections
+                .iter()
+                .map(|section| section.entries().len())
+                .collect::<Vec<_>>(),
+            [3, 5, 2, 1]
         );
-        assert!(!matches!(rows.first(), Some(MenuRow::Separator)));
-        assert!(!matches!(rows.last(), Some(MenuRow::Separator)));
     }
 
     /// A submenu's entries drop the word the breadcrumb already says:

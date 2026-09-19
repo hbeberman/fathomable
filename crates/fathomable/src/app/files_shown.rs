@@ -213,9 +213,9 @@ impl App {
         bindings::menu_entries(place, self.prefix(), |action| self.live_label(action))
     }
 
-    /// The drawn which-key rows, including separators between action groups.
-    pub(crate) fn which_key_rows(&self, place: Where) -> Vec<bindings::MenuRow> {
-        bindings::menu_rows(place, self.prefix(), |action| self.live_label(action))
+    /// The drawn which-key sections, grouped by related actions.
+    pub(crate) fn which_key_sections(&self, place: Where) -> Vec<bindings::MenuSection> {
+        bindings::menu_sections(place, self.prefix(), |action| self.live_label(action))
     }
 
     /// Whether a visible which-key route is currently actionable.

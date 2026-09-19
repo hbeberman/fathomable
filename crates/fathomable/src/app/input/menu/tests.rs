@@ -12,7 +12,7 @@ use crate::app::testing::{self, app, key};
 use super::super::bindings::{self, Action, Where};
 use super::super::keys::handle_key;
 use super::super::mouse::handle_mouse;
-use super::Menu;
+use super::{HintCell, Menu};
 use crate::app::draw;
 use crate::app::draw::header;
 use crate::app::threads::ComposeTarget;
@@ -369,7 +369,8 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
         .iter()
         .position(|(k, _)| k == "f")
         .context("Space f")?;
-    let grid = draw::which_key_grid(&app, &shown);
+    let sections = app.which_key_sections(Where::View);
+    let grid = draw::which_key_grid(&app, &sections);
     let cell = (0..grid.width)
         .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
         .map(|(x, y)| (grid.x + x, grid.y + y))
@@ -383,7 +384,8 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
         .iter()
         .position(|(k, _)| k == "f")
         .context("Space f f")?;
-    let grid = draw::which_key_grid(&app, &shown);
+    let sections = app.which_key_sections(Where::View);
+    let grid = draw::which_key_grid(&app, &sections);
     let cell = (0..grid.width)
         .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
         .map(|(x, y)| (grid.x + x, grid.y + y))
@@ -401,7 +403,8 @@ fn the_which_key_menu_and_the_help_take_clicks() -> anyhow::Result<()> {
         .iter()
         .position(|(k, _)| k == "v")
         .context("Space v")?;
-    let grid = draw::which_key_grid(&app, &shown);
+    let sections = app.which_key_sections(Where::View);
+    let grid = draw::which_key_grid(&app, &sections);
     let cell = (0..grid.width)
         .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
         .map(|(x, y)| (grid.x + x, grid.y + y))
@@ -422,21 +425,25 @@ fn a_which_key_section_separator_is_inert() -> anyhow::Result<()> {
     handle_key(&mut app, key(' '));
     handle_key(&mut app, key('d'));
     let place = Where::View;
-    let rows = app.which_key_rows(place);
-    let separator = rows
+    let sections = app.which_key_sections(place);
+    let (separator_column, separator_row) = draw::which_key_grid(&app, &sections)
+        .columns
         .iter()
-        .position(|row| matches!(row, bindings::MenuRow::Separator))
+        .enumerate()
+        .find_map(|(column, layout)| {
+            layout
+                .cells
+                .iter()
+                .position(|cell| *cell == HintCell::Rule)
+                .map(|row| (column, row))
+        })
         .context("Diff submenu separator")?;
-    let shown = rows
-        .iter()
-        .map(bindings::MenuRow::display)
-        .collect::<Vec<_>>();
-    let grid = draw::which_key_grid(&app, &shown);
-    let cell = (0..grid.width)
-        .flat_map(|x| (0..grid.height).map(move |y| (x, y)))
-        .map(|(x, y)| (grid.x + x, grid.y + y))
-        .find(|&(x, y)| grid.entry_at(x, y) == Some(separator))
-        .context("separator is drawn somewhere")?;
+    let grid = draw::which_key_grid(&app, &sections);
+    let cell = (
+        grid.column_x(separator_column)
+            .context("separator column")?,
+        grid.y + 1 + separator_row,
+    );
     let focus = app.focus();
     let cursor = app.view().cursor();
     let threads = app.thread_counts();
@@ -879,8 +886,8 @@ fn chord_helpers_anchor_to_the_viewer_bottom_right_from_every_pane() -> anyhow::
                 }
 
                 let place = super::super::keys::place(&app).context("pane receives keys")?;
-                let shown = bindings::menu(place, app.prefix());
-                let grid = draw::which_key_grid(&app, &shown);
+                let sections = app.which_key_sections(place);
+                let grid = draw::which_key_grid(&app, &sections);
                 assert_eq!(grid.x + grid.width, width);
                 assert_eq!(grid.y + grid.height, app.pane_top() + app.pane_rows());
                 assert!(grid.height <= app.pane_rows());
@@ -896,8 +903,8 @@ fn space_helper_uses_a_rounded_breadcrumb_border() -> anyhow::Result<()> {
     let mut app = app(&dir)?;
     handle_key(&mut app, key(' '));
     let place = super::super::keys::place(&app).context("view receives keys")?;
-    let shown = bindings::menu(place, app.prefix());
-    let grid = draw::which_key_grid(&app, &shown);
+    let sections = app.which_key_sections(place);
+    let grid = draw::which_key_grid(&app, &sections);
     let buffer = testing::buffer(&app)?;
     assert_eq!(
         buffer[(u16::try_from(grid.x)?, u16::try_from(grid.y)?)].symbol(),
@@ -913,6 +920,76 @@ fn space_helper_uses_a_rounded_breadcrumb_border() -> anyhow::Result<()> {
         })
         .collect::<String>();
     assert!(title.contains("Space"), "{title:?}");
+    Ok(())
+}
+
+#[test]
+fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> {
+    let dir = fixture("diff-hint-card")?;
+    let mut app = app(&dir)?;
+    app.resize(80, 30);
+    handle_key(&mut app, key(' '));
+    handle_key(&mut app, key('d'));
+    let place = super::super::keys::place(&app).context("view receives keys")?;
+    let sections = app.which_key_sections(place);
+    let grid = draw::which_key_grid(&app, &sections);
+    assert_eq!(grid.columns.len(), 2);
+    assert_eq!(grid.rows, 7);
+
+    let screen = testing::screen(&app)?;
+    let card = screen[grid.y..grid.y + grid.height]
+        .iter()
+        .map(|line| {
+            line.chars()
+                .skip(grid.x)
+                .take(grid.width)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        card,
+        [
+            "╭ Space d · diff ──────────┬──────────────────────────╮",
+            "│s  standard               │l  HEAD~1 to HEAD         │",
+            "│u  unified                │c  Commit~1 to Commit…    │",
+            "│o  off                    ├──────────────────────────┤",
+            "├──────────────────────────┤p  save review point      │",
+            "│b  pick base…             │x  delete review point…   │",
+            "│t  pick target…           ├──────────────────────────┤",
+            "│d  HEAD to Working tree   │w  whitespace             │",
+            "╰──────────────────────────┴──────────────────────────╯",
+        ]
+    );
+
+    app.resize(30, 30);
+    let sections = app.which_key_sections(place);
+    let narrow = draw::which_key_grid(&app, &sections);
+    assert_eq!(narrow.columns.len(), 1);
+    assert_eq!(narrow.rows, 14);
+    assert_eq!(narrow.label_width, 20);
+    assert!(!narrow.insufficient_space);
+
+    let wide = super::HintGrid::bottom(&sections, 0, 0, 120, 30);
+    assert_eq!(wide.columns.len(), 3);
+    assert_eq!(wide.rows, 5);
+    assert_eq!(wide.label_width, 20);
+
+    let narrow_tall = super::HintGrid::bottom(&sections, 0, 0, 19, 30);
+    assert_eq!(narrow_tall.columns.len(), 1);
+    assert_eq!(narrow_tall.rows, 14);
+    assert_eq!(narrow_tall.label_width, 11);
+
+    let narrower_tall = super::HintGrid::bottom(&sections, 0, 0, 16, 30);
+    assert_eq!(narrower_tall.columns.len(), 1);
+    assert_eq!(narrower_tall.label_width, 8);
+
+    let keys_only = super::HintGrid::bottom(&sections, 0, 0, 3, 30);
+    assert!(!keys_only.insufficient_space);
+    assert_eq!(keys_only.label_width, 0);
+
+    let impossible = super::HintGrid::bottom(&sections, 0, 0, 2, 1);
+    assert!(impossible.insufficient_space);
+    assert_eq!(impossible.entry_at(0, 0), None);
     Ok(())
 }
 

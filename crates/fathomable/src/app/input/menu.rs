@@ -13,7 +13,7 @@ use std::path::Path;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fathomable_core::config::DiffMode;
 
-use super::bindings::{self, Action, Chord, Keys, Match, Where};
+use super::bindings::{self, Action, Chord, Keys, Match, MenuSection, Where};
 use crate::app::threads::pane::{PanePoint, PaneScope};
 use crate::app::threads::words::Words;
 use crate::app::view::{Effect, Mode};
@@ -343,40 +343,6 @@ impl Grid {
         key_width + 2 + label_width + 3
     }
 
-    /// The which-key menu (ADR 0045) at the bottom right of the area at
-    /// `(x, y)` of `pane_width` by `pane_height`: as many columns as
-    /// keep the box to eight rows.
-    #[must_use]
-    pub(crate) fn bottom(
-        entries: &[(String, String)],
-        title: &str,
-        x: usize,
-        y: usize,
-        pane_width: usize,
-        pane_height: usize,
-    ) -> Self {
-        let (key_width, label_width) =
-            measure(entries.iter().map(|(k, l)| (k.as_str(), l.as_str())));
-        let max_rows = pane_height.saturating_sub(2).clamp(1, 8);
-        let columns = entries.len().div_ceil(max_rows).max(1);
-        let rows = entries.len().div_ceil(columns).max(1);
-        let width = (columns * Self::column_width(key_width, label_width) + 2)
-            .max(display_width(title) + 4)
-            .min(pane_width);
-        let height = (rows + 2).min(pane_height);
-        Self {
-            x: x + pane_width.saturating_sub(width),
-            y: (y + pane_height).saturating_sub(height),
-            width,
-            height,
-            rows,
-            columns,
-            key_width,
-            label_width,
-            count: entries.len(),
-        }
-    }
-
     /// A centred table in a rounded titled border. Rows that do not fit
     /// flow into further columns; the box sits a third of the way down.
     #[must_use]
@@ -407,7 +373,372 @@ impl Grid {
             count: rows.len(),
         }
     }
+}
 
+/// Preferred body height for a compact which-key card.
+///
+/// Taller cards are allowed when a narrower terminal cannot hold enough
+/// readable columns.
+const PREFERRED_HINT_ROWS: usize = 8;
+
+/// Smallest comfortable label column before the card grows vertically.
+const MIN_HINT_LABEL_WIDTH: usize = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HintCell {
+    Entry(usize),
+    Rule,
+    Empty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HintColumn {
+    pub(crate) width: usize,
+    pub(crate) cells: Vec<HintCell>,
+}
+
+/// Responsive geometry for a pending-prefix hint card.
+///
+/// Callers provide semantic sections only. The constructor chooses columns,
+/// splits sections only between entries, and keeps drawing and hit-testing on
+/// the same layout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HintGrid {
+    pub(crate) x: usize,
+    pub(crate) y: usize,
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) rows: usize,
+    pub(crate) key_width: usize,
+    pub(crate) label_width: usize,
+    pub(crate) columns: Vec<HintColumn>,
+    pub(crate) insufficient_space: bool,
+}
+
+impl HintGrid {
+    #[must_use]
+    pub(crate) fn bottom(
+        sections: &[MenuSection],
+        x: usize,
+        y: usize,
+        pane_width: usize,
+        pane_height: usize,
+    ) -> Self {
+        let entries = sections
+            .iter()
+            .flat_map(MenuSection::entries)
+            .collect::<Vec<_>>();
+        let section_ids = sections
+            .iter()
+            .enumerate()
+            .flat_map(|(section, group)| std::iter::repeat_n(section, group.entries().len()))
+            .collect::<Vec<_>>();
+        let key_width = entries
+            .iter()
+            .map(|entry| display_width(&entry.key()))
+            .max()
+            .unwrap_or(1);
+        let full_label_width = entries
+            .iter()
+            .map(|entry| display_width(entry.label()))
+            .max()
+            .unwrap_or(1);
+        let available_rows = pane_height.saturating_sub(2);
+        let plan = responsive_hint_plan(
+            &section_ids,
+            key_width,
+            full_label_width,
+            pane_width,
+            available_rows,
+        );
+        let Some(plan) = plan else {
+            let height = pane_height.min(3);
+            return Self {
+                x,
+                y: (y + pane_height).saturating_sub(height),
+                width: pane_width,
+                height,
+                rows: height.saturating_sub(2),
+                key_width,
+                label_width: 0,
+                columns: Vec::new(),
+                insufficient_space: true,
+            };
+        };
+
+        let column_width = hint_column_width(key_width, plan.label_width);
+        let mut columns = Vec::with_capacity(plan.ends.len());
+        let mut start = 0;
+        for end in plan.ends {
+            let mut cells = Vec::with_capacity(plan.rows);
+            for index in start..end {
+                if index > start && section_ids[index] != section_ids[index - 1] {
+                    cells.push(HintCell::Rule);
+                }
+                cells.push(HintCell::Entry(index));
+            }
+            cells.resize(plan.rows, HintCell::Empty);
+            columns.push(HintColumn {
+                width: column_width,
+                cells,
+            });
+            start = end;
+        }
+        let width = hint_box_width(columns.len(), key_width, plan.label_width);
+        let height = plan.rows + 2;
+        Self {
+            x: x + pane_width.saturating_sub(width),
+            y: (y + pane_height).saturating_sub(height),
+            width,
+            height,
+            rows: plan.rows,
+            key_width,
+            label_width: plan.label_width,
+            columns,
+            insufficient_space: false,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn contains(&self, column: usize, row: usize) -> bool {
+        column >= self.x
+            && column < self.x + self.width
+            && row >= self.y
+            && row < self.y + self.height
+    }
+
+    #[must_use]
+    pub(crate) fn column_x(&self, column: usize) -> Option<usize> {
+        let before = self.columns.get(..column)?;
+        Some(self.x + 1 + before.iter().map(|column| column.width + 1).sum::<usize>())
+    }
+
+    #[must_use]
+    pub(crate) fn entry_at(&self, column: usize, row: usize) -> Option<usize> {
+        let body_row = row.checked_sub(self.y + 1)?;
+        if body_row >= self.rows {
+            return None;
+        }
+        self.columns
+            .iter()
+            .enumerate()
+            .find_map(|(index, hint_column)| {
+                let start = self.column_x(index)?;
+                (column >= start && column < start + hint_column.width)
+                    .then(|| hint_column.cells.get(body_row).copied())
+                    .flatten()
+                    .and_then(|cell| match cell {
+                        HintCell::Entry(entry) => Some(entry),
+                        HintCell::Rule | HintCell::Empty => None,
+                    })
+            })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HintPlan {
+    label_width: usize,
+    rows: usize,
+    ends: Vec<usize>,
+    cuts: usize,
+    squared_heights: usize,
+}
+
+fn responsive_hint_plan(
+    section_ids: &[usize],
+    key_width: usize,
+    full_label_width: usize,
+    pane_width: usize,
+    available_rows: usize,
+) -> Option<HintPlan> {
+    let preferred_rows = available_rows.min(PREFERRED_HINT_ROWS);
+    let comfortable_label_width = full_label_width.min(MIN_HINT_LABEL_WIDTH);
+    hint_plan(
+        section_ids,
+        key_width,
+        full_label_width,
+        comfortable_label_width,
+        pane_width,
+        preferred_rows,
+    )
+    .or_else(|| {
+        hint_plan(
+            section_ids,
+            key_width,
+            full_label_width,
+            comfortable_label_width,
+            pane_width,
+            available_rows,
+        )
+    })
+    .or_else(|| {
+        (0..comfortable_label_width).rev().find_map(|label_width| {
+            hint_plan_at_label_width(
+                section_ids,
+                key_width,
+                label_width,
+                pane_width,
+                preferred_rows,
+            )
+            .or_else(|| {
+                hint_plan_at_label_width(
+                    section_ids,
+                    key_width,
+                    label_width,
+                    pane_width,
+                    available_rows,
+                )
+            })
+        })
+    })
+}
+
+fn hint_plan(
+    section_ids: &[usize],
+    key_width: usize,
+    full_label_width: usize,
+    minimum_label_width: usize,
+    pane_width: usize,
+    row_limit: usize,
+) -> Option<HintPlan> {
+    if section_ids.is_empty() || row_limit == 0 {
+        return None;
+    }
+    for label_width in (minimum_label_width..=full_label_width).rev() {
+        if let Some(plan) =
+            hint_plan_at_label_width(section_ids, key_width, label_width, pane_width, row_limit)
+        {
+            return Some(plan);
+        }
+    }
+    None
+}
+
+fn hint_plan_at_label_width(
+    section_ids: &[usize],
+    key_width: usize,
+    label_width: usize,
+    pane_width: usize,
+    row_limit: usize,
+) -> Option<HintPlan> {
+    let mut best = None;
+    for columns in 1..=section_ids.len() {
+        if hint_box_width(columns, key_width, label_width) > pane_width {
+            break;
+        }
+        let Some(partition) = best_partition(section_ids, columns, row_limit) else {
+            continue;
+        };
+        let candidate = HintPlan {
+            label_width,
+            rows: partition.tallest,
+            ends: partition.ends,
+            cuts: partition.cuts,
+            squared_heights: partition.squared_heights,
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| better_hint_plan(&candidate, current))
+        {
+            best = Some(candidate);
+        }
+    }
+    best
+}
+
+fn better_hint_plan(candidate: &HintPlan, current: &HintPlan) -> bool {
+    candidate.cuts < current.cuts
+        || (candidate.cuts == current.cuts
+            && (candidate.ends.len() < current.ends.len()
+                || (candidate.ends.len() == current.ends.len()
+                    && (candidate.squared_heights < current.squared_heights
+                        || (candidate.squared_heights == current.squared_heights
+                            && candidate.ends > current.ends)))))
+}
+
+fn hint_box_width(columns: usize, key_width: usize, label_width: usize) -> usize {
+    columns
+        .saturating_mul(hint_column_width(key_width, label_width))
+        .saturating_add(columns.saturating_sub(1))
+        .saturating_add(2)
+}
+
+fn hint_column_width(key_width: usize, label_width: usize) -> usize {
+    key_width + usize::from(label_width > 0) * (2 + label_width + 3)
+}
+
+fn best_partition(section_ids: &[usize], columns: usize, row_limit: usize) -> Option<Partition> {
+    #[derive(Debug, Clone)]
+    struct Candidate(Partition);
+
+    fn better(candidate: &Candidate, current: &Candidate) -> bool {
+        candidate.0.cuts < current.0.cuts
+            || (candidate.0.cuts == current.0.cuts
+                && (candidate.0.squared_heights < current.0.squared_heights
+                    || (candidate.0.squared_heights == current.0.squared_heights
+                        && candidate.0.ends > current.0.ends)))
+    }
+
+    if columns == 0 || columns > section_ids.len() {
+        return None;
+    }
+    let entries = section_ids.len();
+    let mut plans = vec![vec![None; entries + 1]; columns + 1];
+    plans[0][0] = Some(Candidate(Partition {
+        ends: Vec::new(),
+        cuts: 0,
+        squared_heights: 0,
+        tallest: 0,
+    }));
+    for used in 1..=columns {
+        for end in used..=entries {
+            let mut best = None;
+            for start in used - 1..end {
+                let Some(previous) = plans[used - 1][start].clone() else {
+                    continue;
+                };
+                let height = segment_height(section_ids, start, end);
+                if height > row_limit {
+                    continue;
+                }
+                let mut candidate = previous;
+                candidate.0.cuts +=
+                    usize::from(start > 0 && section_ids[start - 1] == section_ids[start]);
+                candidate.0.squared_heights = candidate
+                    .0
+                    .squared_heights
+                    .saturating_add(height.saturating_mul(height));
+                candidate.0.tallest = candidate.0.tallest.max(height);
+                candidate.0.ends.push(end);
+                if best
+                    .as_ref()
+                    .is_none_or(|current| better(&candidate, current))
+                {
+                    best = Some(candidate);
+                }
+            }
+            plans[used][end] = best;
+        }
+    }
+    plans[columns][entries].take().map(|candidate| candidate.0)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Partition {
+    ends: Vec<usize>,
+    cuts: usize,
+    squared_heights: usize,
+    tallest: usize,
+}
+
+fn segment_height(section_ids: &[usize], start: usize, end: usize) -> usize {
+    end.saturating_sub(start)
+        + (start + 1..end)
+            .filter(|index| section_ids[*index] != section_ids[*index - 1])
+            .count()
+}
+
+impl Grid {
     /// Whether the cell is inside the box, border included.
     #[must_use]
     pub(crate) fn contains(&self, column: usize, row: usize) -> bool {

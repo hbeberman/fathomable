@@ -54,9 +54,9 @@ changes do not alter selections, content, folds, or scroll positions.
 
 `Esc` first cancels transient UI. From either sidebar pane it returns to the
 current main surface. From main Threads it no longer switches to File; `f`
-does that explicitly. Bare arrows and `h`/`j`/`k`/`l` remain local,
-`Tab`/`Shift-Tab` retain open-thread traversal, `J`/`K` retain comparison
-traversal, and `Alt-Left`/`Alt-Right` retain history traversal.
+does that explicitly. Bare arrows and `h`/`j`/`k`/`l` remain local. `Tab`/`Shift-Tab` retain
+open-thread traversal; shifted arrows and `H`/`J`/`K`/`L` traverse comparison
+changes and changed files; `Alt-Left`/`Alt-Right` retain history traversal.
 
 In File list, `z` toggles the selected directory or the immediate parent of a
 selected file. Folding a file's parent moves the cursor to that directory, so

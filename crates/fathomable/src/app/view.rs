@@ -165,7 +165,7 @@ pub(crate) struct View {
     diff_shown: Option<DiffView>,
     /// How diffs are compared and listed (ADR 0060).
     compare: Compare,
-    /// The working tree against `HEAD`: the gutter, `J`/`K`, and the counts.
+    /// The working tree against `HEAD`: the gutter, diff traversal, and counts.
     diff: Option<Diff>,
     /// The working tree against the index: which hunks are not yet staged.
     unstaged: Option<Diff>,

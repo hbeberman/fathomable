@@ -25,7 +25,8 @@ something to say and takes no row of its own.
 Amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): an ordinary text File again
 keeps the bottom bar, now with useful defaults rather than an empty row.
-Its compact loop is `comment c · diffs K/J · threads Shift-Tab/Tab`;
+Its compact loop is
+`comment c · diffs ⇧arrows/HJKL · threads (⇧)Tab`;
 conditional hints disappear when unavailable, and the fold pair reads
 `folding z/Z` with separate click targets.
 

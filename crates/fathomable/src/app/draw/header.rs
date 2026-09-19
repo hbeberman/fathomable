@@ -75,10 +75,11 @@ enum Hover {
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
-/// words alone, two actions for an `a/b` pair split at the slash. A
-/// count (ADR 0066) is a circle in a state's colour with its number
-/// against it and a word after the number (ADR 0075) that the header
-/// draws only when every count's fits.
+/// words alone, two actions for an `a/b` pair split at the slash, or
+/// explicit targets in a grouped key legend. A count (ADR 0066) is a
+/// circle in a state's colour with its number against it and a word
+/// after the number (ADR 0075) that the header draws only when every
+/// count's fits.
 #[derive(Debug, Clone)]
 pub(crate) struct HintOf {
     key: String,
@@ -88,6 +89,7 @@ pub(crate) struct HintOf {
     /// The word after `what`, a space between; empty for most hints.
     word: String,
     actions: Vec<Action>,
+    key_targets: Vec<KeyTarget>,
     control: Option<Control>,
     /// The key's colour when it is not the info colour.
     tone: Option<Tone>,
@@ -100,6 +102,13 @@ pub(crate) struct HintOf {
     number: bool,
 }
 
+#[derive(Debug, Clone)]
+struct KeyTarget {
+    start: usize,
+    end: usize,
+    action: Action,
+}
+
 impl HintOf {
     pub(super) fn new(key: impl Into<String>, what: impl Into<String>, actions: &[Action]) -> Self {
         Self {
@@ -108,6 +117,7 @@ impl HintOf {
             what: what.into(),
             word: String::new(),
             actions: actions.to_vec(),
+            key_targets: Vec::new(),
             control: None,
             tone: None,
             faint: false,
@@ -130,6 +140,30 @@ impl HintOf {
         Self::new(pair(place, a, b), what, &[a, b])
     }
 
+    /// A grouped key legend whose named segments retain distinct click targets.
+    pub(crate) fn mapped(
+        key: &'static str,
+        what: &'static str,
+        targets: &[(&'static str, Action)],
+    ) -> Self {
+        let mut hint = Self::new(key, what, &[]);
+        for (segment, action) in targets {
+            let Some(byte) = key.find(segment) else {
+                continue;
+            };
+            let start = display_width(&key[..byte]);
+            hint.key_targets.push(KeyTarget {
+                start,
+                end: start + display_width(segment),
+                action: *action,
+            });
+            if !hint.actions.contains(action) {
+                hint.actions.push(*action);
+            }
+        }
+        hint
+    }
+
     /// `● 2 user`: the circle in `state`'s colour, the count after a
     /// space in the text colour, `word` after that when the header has
     /// room (ADR 0075), all dim when it counts what is hidden (ADR
@@ -148,6 +182,7 @@ impl HintOf {
             what: n.to_string(),
             word: word.to_owned(),
             actions: actions.to_vec(),
+            key_targets: Vec::new(),
             control: None,
             tone: Some(Tone::Mark(state)),
             faint,
@@ -165,6 +200,7 @@ impl HintOf {
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
+            key_targets: Vec::new(),
             control: None,
             tone: Some(tone),
             faint: false,
@@ -181,6 +217,7 @@ impl HintOf {
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
+            key_targets: Vec::new(),
             control: None,
             tone: Some(tone),
             faint: true,
@@ -196,6 +233,7 @@ impl HintOf {
             what: String::new(),
             word: String::new(),
             actions: Vec::new(),
+            key_targets: Vec::new(),
             control: Some(Control::DiffMode),
             tone: Some(Tone::Info),
             faint: true,
@@ -448,18 +486,25 @@ impl Header {
             if column >= at && column < end {
                 let offset = column - at;
                 let key = hint.key_in(form);
+                let key_start = if self.action_first {
+                    display_width(&hint.what)
+                        + usize::from(hint.gap && !hint.key.is_empty() && !hint.what.is_empty())
+                        + usize::from(form == Form::Worded) * hint.word_width()
+                } else {
+                    0
+                };
+                if !hint.key_targets.is_empty() {
+                    let key_offset = offset.checked_sub(key_start);
+                    return key_offset.and_then(|offset| {
+                        hint.key_targets
+                            .iter()
+                            .find(|target| offset >= target.start && offset < target.end)
+                            .map(|target| target.action)
+                    });
+                }
                 let slash = key.find('/').map(|byte| display_width(&key[..byte]));
                 return match (hint.actions.as_slice(), slash) {
                     ([first, second], Some(slash)) => {
-                        let key_start = if self.action_first {
-                            display_width(&hint.what)
-                                + usize::from(
-                                    hint.gap && !hint.key.is_empty() && !hint.what.is_empty(),
-                                )
-                                + usize::from(form == Form::Worded) * hint.word_width()
-                        } else {
-                            0
-                        };
                         Some(if offset < key_start || offset - key_start <= slash {
                             *first
                         } else {

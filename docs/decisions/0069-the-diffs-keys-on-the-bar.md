@@ -46,8 +46,10 @@ comparison-control hints, or transient presentation.
 
 Amended again 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): both Standard and Unified
-show the conditional `diffs K/J` traversal hint. Endpoint and whitespace
-controls remain in the Diff menu rather than the File footer.
+show the conditional `diffs ⇧arrows/HJKL` traversal hint. Shift-Up/Down and
+`K`/`J` traverse comparison stops; Shift-Left/Right and `H`/`L` traverse
+changed files at their first diff. Endpoint and whitespace controls remain
+in the Diff menu rather than the File footer.
 
 ## Context
 

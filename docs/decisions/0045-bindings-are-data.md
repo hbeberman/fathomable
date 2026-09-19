@@ -19,10 +19,12 @@ accelerator before popup and text-input precedence so it is as reachable as
 the menu bar's mouse target.
 
 Amended 2026-09-18 by
-[0090](0090-direct-workspace-navigation.md): `J`/`K` and
-`Tab`/`Shift-Tab` are the four direct normal-pane traversal actions.
-The bracket-prefixed comparison and thread traversal sequences retire
-without aliases, and shifted `Tab` events normalize to `Shift-Tab`.
+[0090](0090-direct-workspace-navigation.md): shifted arrows and
+`H`/`J`/`K`/`L` traverse comparison changes and changed files, while
+`Tab`/`Shift-Tab` traverse open threads from every normal pane. The
+bracket-prefixed comparison and thread traversal sequences retire without
+aliases; event conversion retains shifted arrows and normalizes shifted
+`Tab` to `Shift-Tab`.
 
 Amended 2026-09-04 by [0050](0050-mouse-menus-and-gestures.md): the which-key menu and `Space ?` take clicks and hover, pane-header hints carry their action and take clicks, and `gx`, `gy`, and the tree's `y` are new rows.
 

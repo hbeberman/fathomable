@@ -57,11 +57,13 @@ pub(crate) fn text_bar(app: &App) -> Header {
     }
     hints.extend(crate::app::diff_keys::diff_hints(app));
     if app.has_open_threads() {
-        hints.push(HintOf::paired(
-            Where::Any,
-            Action::OpenThreadPrev,
-            Action::OpenThreadNext,
+        hints.push(HintOf::mapped(
+            "(⇧)Tab",
             "threads",
+            &[
+                ("(⇧)", Action::OpenThreadPrev),
+                ("Tab", Action::OpenThreadNext),
+            ],
         ));
     }
     Header::bar(hints)
@@ -106,6 +108,7 @@ fn thread_hints(
 #[cfg(test)]
 mod tests {
     use std::fmt::Write as _;
+    use std::fs;
 
     use crossterm::event::KeyCode;
     use fathomable_core::annotations::{Author, Draft, LineRange, Store, ThreadId};
@@ -299,6 +302,34 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn traversal_hints_use_compact_shift_legends() -> anyhow::Result<()> {
+        let dir = testing::workspace("bar-shift-legends", "old\n")?;
+        let root = testing::root(&dir);
+        fathomable_testing::git::init(&root)?;
+        fathomable_testing::git::commit_and_stage(&root, &[("README.md", "old\n")])?;
+        fs::write(root.join("README.md"), "new\n")?;
+
+        let mut app = testing::source_app(&dir)?;
+        app.resize(180, 30);
+        assert!(bar(&app)?.contains("diffs ⇧arrows/HJKL"));
+        let hint = text_bar(&app);
+        let width = app.column_width();
+        assert_eq!(hint.action_at(width, 0), None);
+        for action in [
+            Action::ChangeFilePrev,
+            Action::ChangeNext,
+            Action::ChangePrev,
+            Action::ChangeFileNext,
+        ] {
+            assert!(
+                (0..width).any(|column| hint.action_at(width, column) == Some(action)),
+                "{action:?} keeps a click target"
+            );
+        }
+        Ok(())
+    }
+
     /// The bar carries the thread cursor's keys and only those that work
     /// (ADR 0064): `edit e` on the user's own message, `expand z` on a
     /// stub and `fold z` on an expanded thread, `Z` for the file; the
@@ -320,7 +351,7 @@ mod tests {
                 "auto-resolve R",
                 "resolve r",
                 "folding z/Z",
-                "threads Shift-Tab/Tab",
+                "threads (⇧)Tab",
             ],
         )?;
         let footer = bar(&app)?;
@@ -342,7 +373,7 @@ mod tests {
                 "auto-resolve R",
                 "resolve r",
                 "folding z/Z",
-                "threads Shift-Tab/Tab",
+                "threads (⇧)Tab",
             ],
         )?;
 
@@ -358,7 +389,7 @@ mod tests {
                 "auto-resolve R",
                 "resolve r",
                 "folding z/Z",
-                "threads Shift-Tab/Tab",
+                "threads (⇧)Tab",
             ],
         )?;
         assert!(
@@ -367,7 +398,7 @@ mod tests {
         );
         // A line no thread covers keeps the default workspace loop.
         app.view_mut().goto_source_line(1);
-        assert_eq!(bar(&app)?.trim(), "comment c · threads Shift-Tab/Tab");
+        assert_eq!(bar(&app)?.trim(), "comment c · threads (⇧)Tab");
 
         // Another pane's focus: the tip. A click on the tip focuses the
         // text, and one on a hint runs it.

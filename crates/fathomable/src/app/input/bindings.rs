@@ -53,9 +53,9 @@ impl fmt::Display for Key {
     }
 }
 
-/// One key press: a [`Key`] with its modifiers. Shift is retained only
-/// for Enter; shifted letters arrive as uppercase characters, and
-/// Shift-Tab is normalized to [`Key::BackTab`].
+/// One key press: a [`Key`] with its modifiers. Shift is retained for
+/// Enter and arrow keys; shifted letters arrive as uppercase characters,
+/// and Shift-Tab is normalized to [`Key::BackTab`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Chord {
     pub(crate) key: Key,
@@ -90,7 +90,11 @@ impl Chord {
             key,
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
             alt: event.modifiers.contains(KeyModifiers::ALT),
-            shift: event.modifiers.contains(KeyModifiers::SHIFT) && key == Key::Enter,
+            shift: event.modifiers.contains(KeyModifiers::SHIFT)
+                && matches!(
+                    key,
+                    Key::Enter | Key::Up | Key::Down | Key::Left | Key::Right
+                ),
         })
     }
 
@@ -310,6 +314,8 @@ actions! {
     FilesIgnored,
     ChangeNext,
     ChangePrev,
+    ChangeFileNext,
+    ChangeFilePrev,
     JumpBack,
     JumpForward,
     /// `q`: open the guarded quit confirmation from any normal pane.
@@ -632,17 +638,31 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Any,
-        &[&[c('J')]],
+        &[&[c('J')], &[shift(K::Down)]],
         A::ChangeNext,
         "Navigation",
         "next comparison change",
     ),
     bind(
         W::Any,
-        &[&[c('K')]],
+        &[&[c('K')], &[shift(K::Up)]],
         A::ChangePrev,
         "Navigation",
         "previous comparison change",
+    ),
+    bind(
+        W::Any,
+        &[&[c('L')], &[shift(K::Right)]],
+        A::ChangeFileNext,
+        "Navigation",
+        "next changed file",
+    ),
+    bind(
+        W::Any,
+        &[&[c('H')], &[shift(K::Left)]],
+        A::ChangeFilePrev,
+        "Navigation",
+        "previous changed file",
     ),
     bind(
         W::Any,
@@ -1600,7 +1620,7 @@ mod tests {
     };
 
     #[test]
-    fn shift_is_retained_only_for_enter() {
+    fn shift_is_retained_for_arrows_and_enter() {
         let shifted = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
         let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
         assert_eq!(Chord::from_event(shifted), Some(k(Key::BackTab)));
@@ -1613,6 +1633,35 @@ mod tests {
             Chord::from_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
             Some(shift(Key::Enter))
         );
+        for key in [Key::Up, Key::Down, Key::Left, Key::Right] {
+            let code = match key {
+                Key::Up => KeyCode::Up,
+                Key::Down => KeyCode::Down,
+                Key::Left => KeyCode::Left,
+                Key::Right => KeyCode::Right,
+                _ => unreachable!("the test lists only arrow keys"),
+            };
+            assert_eq!(
+                Chord::from_event(KeyEvent::new(code, KeyModifiers::SHIFT)),
+                Some(shift(key))
+            );
+        }
+    }
+
+    #[test]
+    fn shifted_arrows_and_hjkl_share_comparison_navigation() {
+        for (keys, action) in [
+            ([c('J')], Action::ChangeNext),
+            ([shift(Key::Down)], Action::ChangeNext),
+            ([c('K')], Action::ChangePrev),
+            ([shift(Key::Up)], Action::ChangePrev),
+            ([c('L')], Action::ChangeFileNext),
+            ([shift(Key::Right)], Action::ChangeFileNext),
+            ([c('H')], Action::ChangeFilePrev),
+            ([shift(Key::Left)], Action::ChangeFilePrev),
+        ] {
+            assert_eq!(lookup(Where::View, &keys), Match::Exact(action));
+        }
     }
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];

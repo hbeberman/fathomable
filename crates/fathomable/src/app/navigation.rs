@@ -15,26 +15,54 @@ pub(super) struct ChangeStop {
     row: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Previous,
+    Next,
+}
+
+impl Direction {
+    const fn is_next(self) -> bool {
+        matches!(self, Self::Next)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathLanding {
+    TraversalEdge,
+    FirstHunk,
+}
+
 impl App {
-    /// `J`: the next comparison hunk or changed path, across files.
+    /// `J` or Shift-Down: the next comparison hunk or changed path.
     pub(crate) fn hunk_next(&mut self) {
-        self.step_change(true);
+        self.step_change(Direction::Next);
     }
 
-    /// `K`: the previous comparison hunk or changed path, across files.
+    /// `K` or Shift-Up: the previous comparison hunk or changed path.
     pub(crate) fn hunk_prev(&mut self) {
-        self.step_change(false);
+        self.step_change(Direction::Previous);
     }
 
-    /// Whether the selected comparison has a stop for `J` or `K`.
+    /// `L` or Shift-Right: the next changed file, at its first diff.
+    pub(crate) fn changed_file_next(&mut self) {
+        self.step_changed_file(Direction::Next);
+    }
+
+    /// `H` or Shift-Left: the previous changed file, at its first diff.
+    pub(crate) fn changed_file_prev(&mut self) {
+        self.step_changed_file(Direction::Previous);
+    }
+
+    /// Whether the selected comparison has a traversable diff stop.
     pub(crate) fn has_change_stops(&self) -> bool {
         self.diff_mode() != DiffMode::Off && !self.comparison_status().is_empty()
     }
 
-    fn step_change(&mut self, forward: bool) {
+    fn comparison_paths(&mut self) -> Option<Vec<PathBuf>> {
         if self.diff_mode() == DiffMode::Off {
             self.notice("diff mode is off");
-            return;
+            return None;
         }
         let paths: Vec<PathBuf> = self
             .comparison_status()
@@ -44,15 +72,29 @@ impl App {
             .collect();
         if paths.is_empty() {
             self.notice("nothing in the selected comparison");
-            return;
+            return None;
         }
-        if self.step_hunk_in_file(forward) {
-            return;
-        }
-        self.step_changed_path(&paths, forward);
+        Some(paths)
     }
 
-    fn step_hunk_in_file(&mut self, forward: bool) -> bool {
+    fn step_change(&mut self, direction: Direction) {
+        let Some(paths) = self.comparison_paths() else {
+            return;
+        };
+        if self.step_hunk_in_file(direction) {
+            return;
+        }
+        self.step_changed_path(&paths, direction, PathLanding::TraversalEdge);
+    }
+
+    fn step_changed_file(&mut self, direction: Direction) {
+        let Some(paths) = self.comparison_paths() else {
+            return;
+        };
+        self.step_changed_path(&paths, direction, PathLanding::FirstHunk);
+    }
+
+    fn step_hunk_in_file(&mut self, direction: Direction) -> bool {
         let path = self.current_path().to_path_buf();
         if self.comparison_status().get(&path).is_none() {
             return false;
@@ -69,7 +111,7 @@ impl App {
                 .filter(|index| lines.get(*index).is_some())
         });
         let line = self.view().cursor_source_line().unwrap_or(0);
-        let index = stepped_hunk_index(&lines, line, remembered, forward);
+        let index = stepped_hunk_index(&lines, line, remembered, direction.is_next());
         let Some(index) = index else {
             return false;
         };
@@ -77,29 +119,41 @@ impl App {
         true
     }
 
-    fn step_changed_path(&mut self, paths: &[PathBuf], forward: bool) {
+    fn step_changed_path(&mut self, paths: &[PathBuf], direction: Direction, landing: PathLanding) {
         let current = self.current_path();
         let (start, mut wrapped) = match paths.binary_search_by(|path| path.as_path().cmp(current))
         {
-            Ok(index) if forward => ((index + 1) % paths.len(), index + 1 == paths.len()),
-            Err(index) if forward => (index % paths.len(), index == paths.len()),
+            Ok(index) if direction.is_next() => {
+                ((index + 1) % paths.len(), index + 1 == paths.len())
+            }
+            Err(index) if direction.is_next() => (index % paths.len(), index == paths.len()),
             Ok(index) | Err(index) => (index.checked_sub(1).unwrap_or(paths.len() - 1), index == 0),
         };
         for offset in 0..paths.len() {
-            let index = if forward {
+            let index = if direction.is_next() {
                 (start + offset) % paths.len()
             } else {
                 (start + paths.len() - offset) % paths.len()
             };
-            if offset > 0 && ((forward && index == 0) || (!forward && index + 1 == paths.len())) {
+            if offset > 0
+                && ((direction.is_next() && index == 0)
+                    || (!direction.is_next() && index + 1 == paths.len()))
+            {
                 wrapped = true;
             }
-            if self.land_on_changed_path(&paths[index], forward) {
+            if self.land_on_changed_path(&paths[index], direction, landing) {
                 if wrapped {
-                    self.notice(if forward {
-                        "wrapped to first change"
-                    } else {
-                        "wrapped to last change"
+                    self.notice(match (direction, landing) {
+                        (Direction::Next, PathLanding::TraversalEdge) => "wrapped to first change",
+                        (Direction::Previous, PathLanding::TraversalEdge) => {
+                            "wrapped to last change"
+                        }
+                        (Direction::Next, PathLanding::FirstHunk) => {
+                            "wrapped to first changed file"
+                        }
+                        (Direction::Previous, PathLanding::FirstHunk) => {
+                            "wrapped to last changed file"
+                        }
                     });
                 }
                 return;
@@ -109,7 +163,12 @@ impl App {
         self.notice("no comparison change can be opened");
     }
 
-    fn land_on_changed_path(&mut self, path: &Path, forward: bool) -> bool {
+    fn land_on_changed_path(
+        &mut self,
+        path: &Path,
+        direction: Direction,
+        landing: PathLanding,
+    ) -> bool {
         self.close_popup();
         self.open_file_view();
         if self.current_path() != path {
@@ -129,7 +188,11 @@ impl App {
             });
             self.synchronize_tree_to(path);
         } else {
-            let index = if forward { 0 } else { lines.len() - 1 };
+            let index = if landing == PathLanding::FirstHunk || direction.is_next() {
+                0
+            } else {
+                lines.len() - 1
+            };
             self.land_on_hunk(path.to_path_buf(), &lines, index);
         }
         true
@@ -237,6 +300,37 @@ mod tests {
         app.hunk_next();
         assert_eq!(app.focus(), Focus::View);
         assert!(!app.review_list().is_open());
+        assert_eq!(app.current_path(), Path::new("README.md"));
+        assert_eq!(app.view().cursor_source_line(), Some(5));
+        Ok(())
+    }
+
+    #[test]
+    fn changed_file_navigation_always_lands_on_the_first_hunk() -> anyhow::Result<()> {
+        let base = (1..=20)
+            .map(|line| format!("line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let dir = testing::workspace("navigation-changed-files", &base)?;
+        let root = testing::root(&dir);
+        fs::write(root.join("z.txt"), &base)?;
+        git::init(&root)?;
+        git::commit_and_stage(&root, &[("README.md", &base), ("z.txt", &base)])?;
+        let changed = base
+            .replace("line 5", "changed 5")
+            .replace("line 15", "changed 15");
+        fs::write(root.join("README.md"), &changed)?;
+        fs::write(root.join("z.txt"), &changed)?;
+
+        let mut app = AppBuilder::new(&dir).source_view().build()?;
+        assert_eq!(app.view().hunk_target_lines(), vec![5, 15]);
+        app.view_mut().goto_source_line(15);
+
+        app.changed_file_next();
+        assert_eq!(app.current_path(), Path::new("z.txt"));
+        assert_eq!(app.view().cursor_source_line(), Some(5));
+
+        app.changed_file_prev();
         assert_eq!(app.current_path(), Path::new("README.md"));
         assert_eq!(app.view().cursor_source_line(), Some(5));
         Ok(())

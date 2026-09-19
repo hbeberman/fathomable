@@ -229,6 +229,8 @@ fn is_far_move(action: Action) -> bool {
             | Action::ThreadPrev
             | Action::ChangeNext
             | Action::ChangePrev
+            | Action::ChangeFileNext
+            | Action::ChangeFilePrev
             | Action::OpenThreadNext
             | Action::OpenThreadPrev
             | Action::GotoFile
@@ -242,6 +244,8 @@ fn unavailable_while_diff_is_off(action: Action) -> bool {
             | Action::FilesChanged
             | Action::ChangeNext
             | Action::ChangePrev
+            | Action::ChangeFileNext
+            | Action::ChangeFilePrev
     )
 }
 
@@ -381,6 +385,8 @@ impl App {
             Action::JumpForward => self.jump_forward(),
             Action::ChangeNext => self.hunk_next(),
             Action::ChangePrev => self.hunk_prev(),
+            Action::ChangeFileNext => self.changed_file_next(),
+            Action::ChangeFilePrev => self.changed_file_prev(),
             Action::OpenThreadNext => self.thread_step_across(1),
             Action::OpenThreadPrev => self.thread_step_across(-1),
             Action::ConfirmQuit => self.request_quit(),

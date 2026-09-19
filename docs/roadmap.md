@@ -469,11 +469,13 @@ Milestones are ordered; each is usable on its own. Details live in the
     debounce, known watch failures retry explicitly, and failed refreshes
     retain the last-good board. Viewer metadata and annotation format 5 remain
     ([0089](decisions/0089-store-only-mcp.md)).
-81. **Direct workspace navigation.** `J`/`K` cycle exact comparison changes
-    and changed paths; `Tab`/`Shift-Tab` cycle open review threads with
-    Reviews fallback and no implicit worktree switch; the persistent File
-    footer teaches `comment c · diffs K/J · threads Shift-Tab/Tab` and
-    compacts thread folds to `folding z/Z`
+81. **Direct workspace navigation.** `Shift-Up`/`Shift-Down` and `K`/`J`
+    cycle exact comparison changes, while `Shift-Left`/`Shift-Right` and
+    `H`/`L` cycle changed files at their first diff; `Tab`/`Shift-Tab` cycle
+    open review threads with Threads fallback and no implicit worktree
+    switch; the persistent File footer teaches
+    `comment c · diffs ⇧arrows/HJKL · threads (⇧)Tab` and compacts thread
+    folds to `folding z/Z`
     ([0090](decisions/0090-direct-workspace-navigation.md)).
 82. **Pane focus navigation.** File, File list, Threads, and Thread list use
     direct `f`/`F`/`t`/`T` focus, while `w`/`W` cycle displayed panes.

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Direct workspace navigation
-description: J and K cycle comparison changes; Tab and Shift-Tab cycle open review threads; the persistent File footer teaches that loop.
+description: Shift-arrow and HJKL traverse comparison changes and changed files; Tab and Shift-Tab traverse open threads; the File footer teaches both loops.
 resource: crates/fathomable/src/app/navigation.rs
 tags:
   - annotations
@@ -14,6 +14,11 @@ tags:
 # 0090 Direct workspace navigation
 
 Status: accepted (2026-09-18)
+
+Amended later 2026-09-18: `Shift-Up`/`Shift-Down` join `K`/`J` on the
+comparison-stop cycle. `Shift-Left`/`Shift-Right` and `H`/`L` add a changed-file
+cycle that always lands on the destination's first diff. The grouped footer
+legends are `diffs ⇧arrows/HJKL` and `threads (⇧)Tab`.
 
 Amended later 2026-09-18 by [0091](0091-pane-focus-navigation.md): the four
 normal panes are now named File, File list, Threads, and Thread list.
@@ -44,15 +49,21 @@ changed in the selected comparison, and which open discussion needs review.
 
 ## Decision
 
-### Two direct workspace cycles
+### Direct workspace traversal
 
-`J` moves to the next comparison stop and `K` to the previous one. Stops are
-the comparison's ordered text hunks, not rendered rows. Distinct hunks remain
-distinct when Markdown layout maps them to the same row. Every changed path
-with no text hunk contributes one path-level stop, including mode, type,
-binary, unsupported, and unavailable-content changes. Traversal crosses
-paths in comparison order, wraps, and focuses File. Off reports that diff
-mode is off; an empty comparison reports that it has no changes.
+`Shift-Down` or `J` moves to the next comparison stop and `Shift-Up` or `K`
+to the previous one. Stops are the comparison's ordered text hunks, not
+rendered rows. Distinct hunks remain distinct when Markdown layout maps them
+to the same row. Every changed path with no text hunk contributes one
+path-level stop, including mode, type, binary, unsupported, and
+unavailable-content changes.
+
+`Shift-Right` or `L` moves to the next changed path and `Shift-Left` or `H`
+to the previous one. Changed-file traversal always focuses the first text
+hunk in the destination file; a hunkless changed path focuses its path-level
+stop. Both comparison traversals follow path order, wrap, and focus File.
+Off reports that diff mode is off; an empty comparison reports that it has
+no changes.
 
 `Tab` moves to the next open review thread and `Shift-Tab` to the previous
 one. Both terminal encodings of Shift-Tab map to the same action. The order
@@ -61,7 +72,7 @@ then stable thread id. Open means active or resolution-proposed. Resolved
 and archived threads do not participate, regardless of Files or Reviews
 filters.
 
-The four actions apply in normal File, Files, Threads, and Reviews panes.
+The six actions apply in normal File, Files, Threads, and Reviews panes.
 Drafts, pickers, and input lines keep precedence. The retired `]g`/`[g`,
 `]G`/`[G`, `]c`/`[c`, and `]C`/`[C` sequences have no aliases.
 
@@ -98,7 +109,7 @@ Files reopens.
 An ordinary text File always keeps its bottom key bar. Its default loop is:
 
 ```text
-comment c · diffs K/J · threads Shift-Tab/Tab
+comment c · diffs ⇧arrows/HJKL · threads (⇧)Tab
 ```
 
 `comment c` appears only while a new comment can be persisted. On a thread
@@ -107,20 +118,23 @@ has a stop, and `threads` only when an open thread exists. Immediate thread
 actions precede traversal hints, so narrowing drops the workspace loop
 before the local action.
 
-Where both thread-fold actions apply, one paired hint reads `folding z/Z`.
-Each key retains its own click target. No standalone `Z` hint is shown away
-from a thread, and `y` remains an undisplayed power-user action.
+Where both thread-fold actions apply, one paired hint reads `folding z/Z`,
+with a click target for each key. The compact traversal legends are grouped
+mnemonics; the Go menu exposes each traversal action as a separate mouse
+target. No standalone `Z` hint is shown away from a thread, and `y` remains
+an undisplayed power-user action.
 
 Unified and Standard use the same comparison-navigation hint. Endpoint and
 whitespace controls remain in the Diff menu and commands rather than
-occupying the File footer. The Go menu exposes all four direct traversal
+occupying the File footer. The Go menu exposes all six direct traversal
 actions for mouse use, subject to the same availability rules.
 
 ## Consequences
 
 - `app/navigation.rs` owns exact-hunk and path-level comparison stops.
-- The binding table, dispatch, help, menus, and hints share four direct
-  actions; terminal Shift-Tab normalization happens at event conversion.
+- The binding table, dispatch, help, menus, and hints share six direct
+  actions; terminal Shift-Tab normalization and shifted-arrow retention
+  happen at event conversion.
 - Open-thread traversal uses lifecycle independently of current presentation
   filters, never activates another worktree, and falls back to Reviews.
 - Files mirrors a listed traversal destination without taking focus; hidden

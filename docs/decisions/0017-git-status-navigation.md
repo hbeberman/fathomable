@@ -22,9 +22,10 @@ retains Git's separate `HEAD -> index` and `index -> worktree` states,
 and the files pane renders their `XY` code.
 
 Traversal superseded 2026-09-18 by
-[0090](0090-direct-workspace-navigation.md): `J`/`K` now walk exact hunks
-and one synthetic stop for every hunkless changed path across the selected
-comparison. `]g`/`[g` and `]G`/`[G` retire without aliases.
+[0090](0090-direct-workspace-navigation.md): Shift-Up/Down and `K`/`J` now
+walk exact hunks and one synthetic stop for every hunkless changed path
+across the selected comparison. Shift-Left/Right and `H`/`L` walk changed
+files at their first diff. `]g`/`[g` and `]G`/`[G` retire without aliases.
 
 Amended 2026-09-16 by
 [0087](0087-global-comparisons-and-board-history.md): current Git `XY`

@@ -110,7 +110,8 @@ the table below is a quick reference, not the full list.
 | `f` `F` | show and focus File / File list |
 | `t` `T` | show and focus Threads / Thread list |
 | `Alt-Space` | open and focus the top-left Fathomable menu |
-| `J` `K` | next / previous comparison change across the workspace |
+| `Shift-Down` `J` / `Shift-Up` `K` | next / previous comparison change across the workspace |
+| `Shift-Right` `L` / `Shift-Left` `H` | next / previous changed file, at its first diff |
 | `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
 | `]w` `[w` | next / previous worktree |
 | `c` `Space c f` | line comment or reply / file comment |
@@ -216,12 +217,14 @@ If the deleted point is the selected Base, Fathomable replaces Base with the
 current pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
 whitespace. A pending new annotation must be submitted or cancelled first.
 
-Use `J` and `K` to cycle every comparison change across the workspace.
-Text hunks are individual stops; a changed path with no text hunk, such as a
-binary or mode-only change, is one stop. The cycle follows the selected
-comparison and is unavailable in Off mode. File list expands and centers a
-listed destination without taking keyboard focus; a hidden File list catches
-up when shown.
+Use `Shift-Down` or `J` and `Shift-Up` or `K` to cycle every comparison
+change across the workspace. Text hunks are individual stops; a changed path
+with no text hunk, such as a binary or mode-only change, is one stop. Use
+`Shift-Right` or `L` and `Shift-Left` or `H` to cycle changed files in either
+direction; both land on the first diff in the destination file. Both cycles
+follow the selected comparison and are unavailable in Off mode. File list
+expands and centers a listed destination without taking keyboard focus; a
+hidden File list catches up when shown.
 
 ### Review discussions
 
@@ -245,7 +248,7 @@ fabricated, and its reveal waits until the listing admits it.
 This navigation never switches worktrees: use `]w` and `[w` explicitly.
 
 The File footer keeps the core loop visible as
-`comment c · diffs K/J · threads Shift-Tab/Tab`, omitting unavailable
+`comment c · diffs ⇧arrows/HJKL · threads (⇧)Tab`, omitting unavailable
 actions. On a thread row, `comment c` becomes `reply c`; where both fold
 actions apply, the footer uses `folding z/Z`.
 

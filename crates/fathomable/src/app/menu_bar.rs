@@ -825,6 +825,13 @@ impl App {
         self.menu_bar.open().is_some()
     }
 
+    pub(crate) fn open_app_menu(&mut self) {
+        if !self.menu_bar_shown() {
+            self.toggle_menu_bar();
+        }
+        self.open_title_menu(Root::App);
+    }
+
     pub(crate) fn open_title_menu(&mut self, root: Root) {
         self.take_prefix();
         self.cancel_delete();
@@ -902,7 +909,6 @@ const REVIEW_FILE_KEY: [Chord; 1] = [Chord {
 const STATUS_KEYS: [Chord; 7] = colon("status");
 const HELP_KEYS: [Chord; 5] = colon("help");
 const DOCTOR_KEYS: [Chord; 7] = colon("doctor");
-const LICENSES_KEYS: [Chord; 9] = colon("licenses");
 const ABOUT_KEYS: [Chord; 6] = colon("about");
 const QUIT_KEYS: [Chord; 2] = colon("q");
 
@@ -934,11 +940,10 @@ fn target_keys(target: Target) -> Option<&'static [Chord]> {
         Target::ReviewFile => Some(&REVIEW_FILE_KEY),
         Target::GettingStarted => Some(&HELP_KEYS),
         Target::Doctor => Some(&DOCTOR_KEYS),
-        Target::Licenses => Some(&LICENSES_KEYS),
         Target::Status => Some(&STATUS_KEYS),
         Target::About => Some(&ABOUT_KEYS),
         Target::Quit => Some(&QUIT_KEYS),
-        Target::Submenu(_) => None,
+        Target::Licenses | Target::Submenu(_) => None,
     }
 }
 

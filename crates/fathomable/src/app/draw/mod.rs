@@ -625,7 +625,7 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             Span::styled("Source   ", theme.info),
             Span::styled("https://github.com/hbeberman/fathomable", theme.link),
         ]),
-        Line::raw("Third-party notices: Help > Licenses or :licenses"),
+        Line::raw("Third-party notices: Help > Licenses"),
         Line::raw(""),
         Line::from(Span::styled("Esc close", theme.info)),
     ];
@@ -3710,7 +3710,7 @@ mod tests {
             "│                                                      (   )   │",
             "│License  MIT (Fathomable)                          ====`|'====│",
             "│Source   https://github.com/hbeberman/fathomable        |     │",
-            "│Third-party notices: Help > Licenses or :licenses  |\\   |   /|│",
+            "│Third-party notices: Help > Licenses               |\\   |   /|│",
             "│                                                   \\'-._|_.-'/│",
             "│Esc close                                            `-\\|/-'  │",
         ];
@@ -4025,7 +4025,7 @@ mod tests {
             "",
             "License  MIT (Fathomable)",
             "Source   https://github.com/hbeberman/fathomable",
-            "Third-party notices: Help > Licenses or :licenses",
+            "Third-party notices: Help > Licenses",
             "",
             "Esc close",
         ];

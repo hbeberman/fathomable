@@ -40,7 +40,8 @@ the document. The main column switches between **File** (`f`) and **Threads**
 titles for their existing filters and view options, right-click rows for
 actions, or use the top **Layout**, **Go**, **Review**, and **Diff** menus.
 Plain header space and content can focus a pane without changing the title's
-menu target. Hover never focuses.
+menu target. `Alt-Space` opens and focuses the top-left Fathomable menu,
+revealing the app bar first if it is hidden. Hover never focuses.
 
 The **File list** title menu has four session filters: **only changed**,
 **only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
@@ -76,9 +77,9 @@ shown, minimum terminal sizes are `20×5` for the main surface, `28×5` with
 File list, `28×6` with Thread list, and `28×8` with both; hiding the app bar
 subtracts one required row.
 Hidden drafts, pickers, and confirmations cannot accept input under the size
-warning; `Esc` dismisses them without submitting. The Thread-list footer
-reserves its row across focus changes. At minimum height, the File footer
-yields to a deletion banner so a content row remains visible.
+warning; `Esc` dismisses them without submitting. The Thread-list action
+footer appears only while that pane owns navigation. At minimum height, the
+File footer yields to a deletion banner so a content row remains visible.
 
 ### Essential keys
 
@@ -105,6 +106,7 @@ the table below is a quick reference, not the full list.
 | `w` `W` | focus the next / previous displayed pane |
 | `f` `F` | show and focus File / File list |
 | `t` `T` | show and focus Threads / Thread list |
+| `Alt-Space` | open and focus the top-left Fathomable menu |
 | `J` `K` | next / previous comparison change across the workspace |
 | `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
 | `]w` `[w` | next / previous worktree |
@@ -130,10 +132,7 @@ selected command shows a brief description and its accepted arguments.
 | `:about` | show version, license, and repository information |
 | `:doctor` | inspect configuration, storage, workspace, and terminal diagnostics |
 | `:help` | open or close the getting-started guide |
-| `:licenses` | read bundled first- and third-party license notices |
-| `:nohlsearch` (`:noh`) | clear search highlights |
 | `:quit` (`:q`, `:q!`, `:quit!`) | quit immediately without confirmation |
-| `:source` | toggle rendered/source view for configured Markdown files |
 | `:status` | show live viewer, workspace, and storage status |
 | `:<line>` | jump to a source line; numeric jumps are not completion candidates |
 
@@ -190,8 +189,8 @@ separator, and Ignore whitespace follows another. There is no comparison-control
 Rendered/Source is available in Standard and Off only for files matched by
 `markdown.extensions` or `markdown.names`, including custom extensions and
 extensionless names. Other files stay in source view: the menu action is
-greyed out, and `Space v s` or `:source` explains why it is unavailable without
-changing the view. Each Markdown file retains its own source/rendered choice
+greyed out, and `Space v s` explains why it is unavailable without changing
+the view. Each Markdown file retains its own source/rendered choice
 when switching files. Unified retains that choice but disables the toggle
 until another mode is selected. `:status` and file information report Target
 only while Off.

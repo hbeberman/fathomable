@@ -7,7 +7,7 @@
 //! their counts by colour (ADR 0066) as hints, so the resolved count
 //! takes a click; a count's word (ADR 0075, [`super::counts`]) is drawn
 //! when every count's fits and dropped with the others when not. Keys
-//! live on a bar along a pane's bottom row,
+//! live on a bar along a focused pane's bottom row,
 //! left-aligned: [`review_footer`], [`threads_pane_footer`], and the
 //! text's in [`super::bar`] (ADR 0067). Thread rows use the summary
 //! engine from `app::threads::summary` and remain factual (ADR 0086).
@@ -1064,10 +1064,10 @@ pub(crate) fn files_pane_header(app: &App) -> Header {
     Header::counted_with_tail(vec![(" File list".to_owned(), Tone::Pane)], filters, counts)
 }
 
-/// The Thread-list footer: local actions or an inactive focus hint.
+/// The Thread-list footer: local actions while the pane owns navigation.
 pub(crate) fn threads_pane_footer(app: &App) -> Header {
     if !app.pane_has_navigation(Focus::ThreadsPane) {
-        return Header::bar(vec![HintOf::new("", "click or T to focus", &[])]);
+        return Header::bar(Vec::new());
     }
     let place = Where::ThreadsPane;
     let mut hints = Vec::new();

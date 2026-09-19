@@ -1635,16 +1635,9 @@ impl View {
         };
         match spec.command() {
             Command::Quit => Effect::Quit,
-            Command::ClearHighlight => {
-                self.clear_highlight();
-                Effect::None
+            Command::About | Command::Doctor | Command::Help | Command::Status => {
+                Effect::Command(spec.form().to_owned())
             }
-            Command::About
-            | Command::Doctor
-            | Command::Help
-            | Command::Licenses
-            | Command::Source
-            | Command::Status => Effect::Command(spec.form().to_owned()),
         }
     }
 
@@ -2289,14 +2282,6 @@ mod tests {
             .collect();
         assert!(texts.iter().any(|t| t == "+- two"), "{texts:?}");
         assert!(texts.iter().any(|t| t == "-last word here"), "{texts:?}");
-        v.start_command();
-        for ch in "source".chars() {
-            v.input_char(ch);
-        }
-        assert!(
-            matches!(v.confirm(), Effect::Command(c) if c == "source"),
-            ":source is routed through the app"
-        );
         v.clear_diff();
         assert!(!v.diff_view());
 

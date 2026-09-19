@@ -2,8 +2,8 @@
 //! The `:` command registry, app-level command handling, and `:status` overlay.
 //!
 //! The registry is the source of truth for parsing, fuzzy completion, aliases,
-//! and user-visible descriptions. `View::execute` keeps commands that only
-//! touch the pane (`:quit`, `:nohlsearch`, `:N`); everything else arrives as
+//! and user-visible descriptions. `View::execute` keeps `:quit` and numeric
+//! jumps; everything else arrives as
 //! [`Effect::Command`](crate::app::view::Effect::Command).
 
 use super::App;
@@ -13,12 +13,9 @@ use fathomable_core::config::DiffMode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Command {
     About,
-    ClearHighlight,
     Doctor,
     Help,
-    Licenses,
     Quit,
-    Source,
     Status,
 }
 
@@ -113,7 +110,7 @@ impl CommandCompletion {
     }
 }
 
-const COMMANDS: [CommandSpec; 8] = [
+const COMMANDS: [CommandSpec; 5] = [
     CommandSpec::new(
         "about",
         &[],
@@ -133,28 +130,10 @@ const COMMANDS: [CommandSpec; 8] = [
         Command::Help,
     ),
     CommandSpec::new(
-        "licenses",
-        &[],
-        "Read bundled first- and third-party license notices. Args: none.",
-        Command::Licenses,
-    ),
-    CommandSpec::new(
-        "nohlsearch",
-        &["noh"],
-        "Clear search highlights. Aliases: noh. Args: none.",
-        Command::ClearHighlight,
-    ),
-    CommandSpec::new(
         "quit",
         &["q", "q!", "quit!"],
         "Quit immediately without confirmation. Aliases: q, q!, quit!. Args: none.",
         Command::Quit,
-    ),
-    CommandSpec::new(
-        "source",
-        &[],
-        "Toggle rendered and source view for configured Markdown files. Args: none.",
-        Command::Source,
     ),
     CommandSpec::new(
         "status",
@@ -236,10 +215,8 @@ impl App {
             Some(Command::Status) => self.open_status(),
             Some(Command::Help) => self.open_getting_started(),
             Some(Command::Doctor) => self.open_doctor(),
-            Some(Command::Licenses) => self.open_licenses(),
             Some(Command::About) => self.open_about(),
-            Some(Command::Source) => self.toggle_source_view(),
-            Some(Command::ClearHighlight | Command::Quit) | None => {
+            Some(Command::Quit) | None => {
                 self.notice(format!("not a command: {input}"));
             }
         }
@@ -394,21 +371,11 @@ mod tests {
                 .iter()
                 .map(|command| command.form())
                 .collect::<Vec<_>>(),
-            [
-                "about",
-                "doctor",
-                "help",
-                "licenses",
-                "nohlsearch",
-                "quit",
-                "source",
-                "status"
-            ]
+            ["about", "doctor", "help", "quit", "status"]
         );
-        assert_eq!(
-            find_command("noh").map(super::CommandSpec::command),
-            Some(Command::ClearHighlight)
-        );
+        for removed in ["licenses", "nohlsearch", "noh", "source"] {
+            assert_eq!(find_command(removed), None, "{removed}");
+        }
         for alias in ["q", "q!", "quit", "quit!"] {
             assert_eq!(
                 find_command(alias).map(super::CommandSpec::command),
@@ -432,22 +399,16 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(forms("ST"), ["status"]);
-        assert_eq!(forms("lc"), ["licenses", "nohlsearch"]);
+        assert_eq!(forms("dcr"), ["doctor"]);
         assert_eq!(forms("q"), ["quit"]);
-        assert_eq!(forms("s"), ["source", "status", "nohlsearch", "licenses"]);
+        assert_eq!(forms("s"), ["status"]);
         assert!(forms("status now").is_empty());
     }
 
     #[test]
     fn completion_cycles_the_frozen_match_set() {
-        let mut completion = CommandCompletion::new("s");
+        let mut completion = CommandCompletion::new("t");
         assert_eq!(completion.selected_index(), None);
-        assert_eq!(
-            completion
-                .select(CompletionDirection::Next)
-                .map(super::CommandSpec::form),
-            Some("source")
-        );
         assert_eq!(
             completion
                 .select(CompletionDirection::Next)
@@ -456,9 +417,15 @@ mod tests {
         );
         assert_eq!(
             completion
+                .select(CompletionDirection::Next)
+                .map(super::CommandSpec::form),
+            Some("quit")
+        );
+        assert_eq!(
+            completion
                 .select(CompletionDirection::Previous)
                 .map(super::CommandSpec::form),
-            Some("source")
+            Some("status")
         );
     }
 

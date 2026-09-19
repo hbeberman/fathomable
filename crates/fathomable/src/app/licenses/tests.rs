@@ -4,7 +4,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKi
 use super::{Licenses, content_size};
 use crate::app::input::{keys, mouse};
 use crate::app::menu_bar::{self, Root, Submenu, Target};
-use crate::app::view::Effect;
 use crate::app::{App, Popup, testing};
 
 fn pane(app: &App) -> anyhow::Result<&Licenses> {
@@ -15,20 +14,14 @@ fn pane(app: &App) -> anyhow::Result<&Licenses> {
 }
 
 #[test]
-fn licenses_command_displays_embedded_notices_without_replacing_the_document() -> anyhow::Result<()>
-{
+fn licenses_display_preserves_the_document() -> anyhow::Result<()> {
     let dir = testing::workspace("licenses-command", testing::README)?;
     let mut app = testing::source_app(&dir)?;
     testing::press(&mut app, "jj");
     let path = app.current_path().to_owned();
     let position = app.view().source_position();
     let focus = app.focus();
-    testing::press(&mut app, ":licenses");
-    let effect = keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    let Effect::Command(command) = effect else {
-        anyhow::bail!("the command line did not forward :licenses");
-    };
-    app.command(&command);
+    app.open_licenses();
     let screen = testing::screen(&app)?.join("\n");
     assert!(screen.contains("Licenses"));
     assert!(screen.contains("Fathomable"));
@@ -59,7 +52,7 @@ fn help_menu_exposes_licenses_and_runs_its_displayed_command() -> anyhow::Result
             .find(|item| item.target == Target::Licenses)
             .context("Licenses is missing from Help")?;
         assert_eq!(item.label, "Licenses");
-        assert_eq!(item.hint, ":licenses");
+        assert!(item.hint.is_empty());
         assert!(item.enabled);
         app.open_title_menu(Root::App);
         let before_help = menu_bar::rows(&app, Root::App)
@@ -71,7 +64,8 @@ fn help_menu_exposes_licenses_and_runs_its_displayed_command() -> anyhow::Result
             testing::press_key(&mut app, KeyCode::Down);
         }
         testing::press_key(&mut app, KeyCode::Right);
-        testing::press(&mut app, ":licenses");
+        testing::press(&mut app, "jjj");
+        testing::press_key(&mut app, KeyCode::Enter);
         assert!(matches!(app.popup(), Some(Popup::Licenses(_))));
         assert!(!app.title_menu_open());
         app.close_popup();
@@ -83,7 +77,7 @@ fn help_menu_exposes_licenses_and_runs_its_displayed_command() -> anyhow::Result
 fn licenses_scrolls_by_keyboard_and_mouse_and_clamps_at_both_ends() -> anyhow::Result<()> {
     let dir = testing::workspace("licenses-scroll", testing::README)?;
     let mut app = testing::app(&dir)?;
-    app.command("licenses");
+    app.open_licenses();
     let (_, height) = content_size(&app);
     testing::press_key(&mut app, KeyCode::PageDown);
     assert_eq!(pane(&app)?.scroll, height);
@@ -118,7 +112,7 @@ fn licenses_scrolls_by_keyboard_and_mouse_and_clamps_at_both_ends() -> anyhow::R
 fn licenses_resize_keeps_the_reading_location_and_remains_drawable() -> anyhow::Result<()> {
     let dir = testing::workspace("licenses-resize", testing::README)?;
     let mut app = testing::app(&dir)?;
-    app.command("licenses");
+    app.open_licenses();
     testing::press_key(&mut app, KeyCode::PageDown);
     let before = pane(&app)?
         .visible_lines(1)
@@ -164,12 +158,12 @@ fn licenses_closes_outside_and_the_menu_bar_remains_reachable() -> anyhow::Resul
             options
         })
         .build()?;
-    app.command("licenses");
+    app.open_licenses();
     testing::click(&mut app, 5, 5);
     assert!(matches!(app.popup(), Some(Popup::Licenses(_))));
     testing::click(&mut app, 0, 10);
     assert!(app.popup().is_none());
-    app.command("licenses");
+    app.open_licenses();
     testing::click(&mut app, 1, 0);
     assert!(app.title_menu_open());
     assert!(app.popup().is_none());

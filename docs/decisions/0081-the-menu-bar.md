@@ -75,6 +75,10 @@ are **File list** and **Thread list**. Pane-title clicks keep opening their
 existing settings menus; the new focus marker does not replace or move those
 targets. Layout visibility changes do not take focus.
 
+Amended later 2026-09-18: `Alt-Space` opens and focuses `☰` through the same
+path as a click, from any input layer. If the app bar is hidden, the
+accelerator reveals it first so the focused menu target remains visible.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take
@@ -137,8 +141,8 @@ content they affect.
   reports that there is no pane to show until a pane-specific toggle
   establishes one.
 - **Help** contains Getting started (`:help`), Doctor (`:doctor`), View
-  keymap (`Space ?`), and Licenses (`:licenses`,
-  [0088](0088-bundled-licenses.md)). Getting started reuses the first-workspace
+  keymap (`Space ?`), and Licenses
+  ([0088](0088-bundled-licenses.md)). Getting started reuses the first-workspace
   page in the text column and preserves the document behind it. Doctor is a fresh,
   scrollable in-app rendering of the same structured report as
   `fathomable --doctor`. Warnings use a distinct face and do not make the
@@ -170,6 +174,9 @@ content they affect.
 - Hover only changes colour. A click opens a menu; while one is open, moving
   over another title switches menus. Clicking the active title, clicking
   elsewhere, or `Esc` closes the stack.
+- `Alt-Space` opens and focuses `☰` from panes, popups, drafts, and input
+  lines. It reveals a hidden app bar first. Menu navigation then uses the
+  existing `h`/`j`/`k`/`l`, arrow, and Enter behavior.
 - The rendered endpoint labels behave like the menu titles: each receives the
   shared accent and hover background, and a click opens its Base or Target
   picker without opening a title menu. Off has no Base label or Base hit

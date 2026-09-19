@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Bundled license notices
-description: Offline first- and third-party license notices travel with the executable and are readable from Help or the command line.
+description: Offline first- and third-party license notices travel with the executable and are readable from Help.
 resource: crates/fathomable/src/app/licenses.rs
 related_resources:
   - about.toml
@@ -27,7 +27,7 @@ Each Cargo package also includes the root project `LICENSE` through the
 [shared package metadata](0002-crate-layout.md#package-metadata), independently
 of the executable's embedded notice bundle.
 
-**Help > Licenses** and `:licenses` open the same read-only, scrollable pane.
+**Help > Licenses** opens the read-only, scrollable pane.
 The executable embeds the complete notice bundle at compile time, so
 reading it needs neither a checkout nor network access. Opening the pane
 preserves the current document and parks any draft. `Esc` or a click outside

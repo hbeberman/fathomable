@@ -26,8 +26,8 @@ tags:
 
 Pane navigation and scrolling are amended by
 [0091](0091-pane-focus-navigation.md): the wheel scrolls only the pointed
-viewport, never the selected thread. Thread list permanently reserves its
-footer row, with local actions when focused and a focus hint otherwise. and the grouped threads pane
+viewport, never the selected thread. The Thread list shows its local-action
+footer only while focused and otherwise gives that row back to entries.
 
 Status: accepted (2026-09-05). Amended 2026-09-05 by
 [0067](0067-the-texts-key-bar.md): the review list's cursor entry header
@@ -192,7 +192,7 @@ agents' green (amber and teal until 2026-09-09).
   workspace scope by `fold z · fold all Z`, then `scope s · resolved x`.
   Hints drop from the end when narrow; `z` and `Z` show only where they
   work ([0064](0064-hints-you-can-press.md)).
-  The bar replaces the bottom row; the rows above it do not move, and
+  The bar replaces the bottom entry row only while the pane owns navigation;
   when the pane loses the keys that row is an entry row again.
 - The cursor's entry draws both rows on `ui.picker.selected`, bold,
   the circle in its state colour, whether or not the pane has the keys.

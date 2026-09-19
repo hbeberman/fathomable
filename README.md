@@ -88,4 +88,4 @@ This project is developed via LLM coding agents.
 Third-party components retain their own licenses. The checked-in
 [license bundle](crates/fathomable/assets/licenses.txt) contains their license
 texts, copyright notices, and source references. It is also available offline
-in the viewer through **Help > Licenses** or `:licenses`.
+in the viewer through **Help > Licenses**.

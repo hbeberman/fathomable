@@ -174,10 +174,10 @@ fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result
         app.message(),
         Some("rendered view is unavailable for this file")
     );
-    app.command("source");
+    press(&mut app, " vs");
     assert!(
         app.view().source_view(),
-        "the command cannot bypass eligibility"
+        "repeated source-view actions cannot bypass eligibility"
     );
     assert!(
         app.view().layout().lines()[0]
@@ -191,7 +191,7 @@ fn source_files_open_highlighted_and_markdown_files_rendered() -> anyhow::Result
     assert!(!app.view().source_view(), "Markdown opens rendered");
     assert_eq!(app.view().layout().lines()[0].text(), "Readme");
     app.open(Path::new("docs/guide.md"));
-    app.command("source");
+    press(&mut app, " vs");
     assert!(app.view().source_view());
     app.open(Path::new("README.md"));
     assert!(
@@ -266,7 +266,7 @@ fn source_actions_require_an_open_document() -> anyhow::Result<()> {
     press(&mut app, " vs");
     assert_eq!(app.message(), Some("no file open"));
     assert!(!app.view().source_view());
-    app.command("source");
+    press(&mut app, " vs");
     assert_eq!(app.message(), Some("no file open"));
     assert!(!app.view().source_view());
     assert_eq!(

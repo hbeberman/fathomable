@@ -13,6 +13,11 @@ tags:
 
 Status: accepted (2026-09-03)
 
+Amended 2026-09-18: `Alt-Space` is a binding-table action that opens and
+focuses the top-left Fathomable menu. Dispatch recognizes this one global
+accelerator before popup and text-input precedence so it is as reachable as
+the menu bar's mouse target.
+
 Amended 2026-09-18 by
 [0090](0090-direct-workspace-navigation.md): `J`/`K` and
 `Tab`/`Shift-Tab` are the four direct normal-pane traversal actions.

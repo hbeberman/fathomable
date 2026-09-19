@@ -137,7 +137,7 @@ enable separately.
 ### Bundled license notices
 
 The executable embeds `crates/fathomable/assets/licenses.txt`, displayed by
-**Help > Licenses** or `:licenses`. Installing the product does not run its
+**Help > Licenses**. Installing the product does not run its
 generator or need Python. Contributors need Python 3.11 or newer and
 `cargo-about` 0.9.2, installed by `scripts/setup-build-deps.sh`:
 

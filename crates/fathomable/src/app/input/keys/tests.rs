@@ -12,6 +12,7 @@ use ratatui::backend::TestBackend;
 
 use super::handle_key;
 use crate::app::input::bindings::Action;
+use crate::app::menu_bar::{Focused, Root};
 use crate::app::threads::{ComposeTarget, ThreadState};
 use crate::app::{App, Focus, Popup};
 
@@ -99,22 +100,13 @@ fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::R
             .iter()
             .map(|command| command.form())
             .collect::<Vec<_>>(),
-        [
-            "about",
-            "doctor",
-            "help",
-            "licenses",
-            "nohlsearch",
-            "quit",
-            "source",
-            "status"
-        ]
+        ["about", "doctor", "help", "quit", "status"]
     );
     let blank = screen(&app)?;
     assert!(blank.contains("about"));
     assert!(!blank.contains("Args: none."));
 
-    handle_key(&mut app, testing::key('s'));
+    handle_key(&mut app, testing::key('t'));
     assert_eq!(
         app.view()
             .command_completion()
@@ -122,26 +114,26 @@ fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::R
             .flat_map(super::super::super::commands::CommandCompletion::candidates)
             .map(|command| command.form())
             .collect::<Vec<_>>(),
-        ["source", "status", "nohlsearch", "licenses"]
+        ["status", "quit", "doctor", "about"]
     );
 
     handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-    assert_eq!(app.view().input(), "source");
+    assert_eq!(app.view().input(), "status");
     let selected = screen(&app)?;
-    assert!(selected.contains("Toggle rendered and source view"));
+    assert!(selected.contains("Show live viewer"));
     assert!(selected.contains("Args: none."));
 
     handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     assert_eq!(
         app.view().input(),
-        "status",
-        "completion keeps cycling the matches from :s"
+        "quit",
+        "completion keeps cycling the matches from :t"
     );
     handle_key(
         &mut app,
         KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
     );
-    assert_eq!(app.view().input(), "source");
+    assert_eq!(app.view().input(), "status");
 
     handle_key(&mut app, testing::key('x'));
     let completion = app
@@ -150,6 +142,45 @@ fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("command completion after typing"))?;
     assert_eq!(completion.selected_index(), None);
     assert!(completion.candidates().is_empty());
+    Ok(())
+}
+
+#[test]
+fn alt_space_reveals_and_focuses_the_application_menu_over_a_popup() -> anyhow::Result<()> {
+    let dir = fixture("application-menu")?;
+    let mut app = source_app(&dir)?;
+    assert!(!app.menu_bar_shown());
+    app.open_help();
+
+    alt(&mut app, KeyCode::Char(' '));
+
+    assert!(app.menu_bar_shown());
+    assert!(app.popup().is_none());
+    assert!(matches!(
+        app.menu_bar.open(),
+        Some(open) if open.root == Root::App && open.focused == Focused::Label
+    ));
+    handle_key(&mut app, testing::key('j'));
+    assert!(matches!(
+        app.menu_bar.open().map(|open| open.focused),
+        Some(Focused::Root(0))
+    ));
+    handle_key(&mut app, testing::key('l'));
+    assert!(matches!(
+        app.menu_bar.open().map(|open| open.focused),
+        Some(Focused::Child(0))
+    ));
+
+    app.close_title_menu();
+    app.toggle_menu_bar();
+    app.open_help();
+    app.act(Action::ApplicationMenu);
+    assert!(app.menu_bar_shown());
+    assert!(app.popup().is_none());
+    assert!(matches!(
+        app.menu_bar.open(),
+        Some(open) if open.root == Root::App && open.focused == Focused::Label
+    ));
     Ok(())
 }
 

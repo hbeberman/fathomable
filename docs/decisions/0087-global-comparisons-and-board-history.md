@@ -184,7 +184,7 @@ report mode Off and Target facts only.
 Rendered/Source remains available in Standard and Off only for files accepted
 by the configured [Markdown classifier](0016-syntax-highlighting.md#markdown-versus-source-files).
 Other files stay in source view. Unified retains each file's source/rendered
-choice but disables it through `Space v s`, menus, and `:source`. A pending
+choice but disables it through `Space v s` and menus. A pending
 new-line or new-file annotation draft, including a parked draft on a removed
 Unified row, blocks mode, Base, and Target changes until submit or cancel.
 Replies and message edits do not.

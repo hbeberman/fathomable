@@ -1,8 +1,8 @@
 // @okf-doc: /decisions/0066-one-circle-language.md
 //! The threads pane drawn (ADR 0027, ADR 0049, ADR 0066): a rule, a
 //! header with the scope and the counts by colour, then a row per file
-//! over two rows per thread, and a persistent footer with local keys
-//! or an inactive focus hint along its bottom row.
+//! over two rows per thread. A contextual footer shows local keys while
+//! the pane owns navigation.
 //!
 //! A thread's first row is its circle, its place, and the author of
 //! its newest message, with the reply count and the age at the right
@@ -88,7 +88,8 @@ pub(super) fn threads_pane_lines<'a>(
         };
         out.push(with_divider(drawn));
     }
-    let body_end = rows.saturating_sub(1);
+    let footer_shown = app.pane_has_navigation(Focus::ThreadsPane);
+    let body_end = rows.saturating_sub(usize::from(footer_shown));
     while out.len() < body_end {
         out.push(with_divider(Line::from(Span::styled(
             " ".repeat(inner),
@@ -96,7 +97,7 @@ pub(super) fn threads_pane_lines<'a>(
         ))));
     }
     out.truncate(body_end);
-    if rows > 0 {
+    if footer_shown && rows > 0 {
         let footer = threads_pane_footer(app);
         let footer_row = app.pane_top() + app.tree_rows() + rows - 1;
         let hovered = app
@@ -401,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn the_key_bar_reserves_its_row_across_focus_changes() -> anyhow::Result<()> {
+    fn the_key_bar_appears_only_while_the_thread_list_is_focused() -> anyhow::Result<()> {
         let dir = testing::workspace("pane-draw-bar", testing::README)?;
         let mut app = source_app(&dir)?;
         app.show_tree();
@@ -417,11 +418,7 @@ mod tests {
         let column = sidebar_column(&app, 100)?;
         let top = app.tree_rows();
         let last = app.pane_rows() - 1;
-        assert!(
-            column[last].contains("click or T"),
-            "inactive focus hint: {:?}",
-            column[last]
-        );
+        assert!(!column[last].contains("click or T"), "{:?}", column[last]);
         assert_eq!(app.focus(), Focus::View);
 
         app.focus_threads_pane();
@@ -432,11 +429,10 @@ mod tests {
             column[top + 2].chars().skip(1).collect::<String>(),
             "rows above do not move when focus changes"
         );
-        assert_eq!(focused[last - 1], column[last - 1]);
 
         app.leave_threads_pane();
         let back = sidebar_column(&app, 100)?;
-        assert_eq!(back[last], column[last], "the focus hint returns");
+        assert_eq!(back[last], column[last], "the content row returns");
         Ok(())
     }
 }

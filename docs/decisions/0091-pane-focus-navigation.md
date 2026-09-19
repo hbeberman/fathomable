@@ -110,9 +110,10 @@ surface alone, `28×5` with File list, `28×6` with Thread list, and `28×8`
 with both sidebar lists. Hiding the app bar subtracts one required row. These
 thresholds include the persistent status row and enough pane chrome and body
 space to keep every displayed pane visible.
-The sidebar leaves at least 20 main columns. Thread list always reserves its
-footer row, showing an inactive focus hint when appropriate. At minimum File
-height, the footer yields to a deletion banner rather than hiding all content.
+The sidebar leaves at least 20 main columns. Thread list shows its action
+footer only while it owns navigation and otherwise gives that row back to
+entries. At minimum File height, the footer yields to a deletion banner
+rather than hiding all content.
 
 When the terminal is below that minimum, pane contents and their hit regions
 are replaced by an explicit size warning rendered in the actual viewport.

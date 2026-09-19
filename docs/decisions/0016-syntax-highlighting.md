@@ -84,8 +84,8 @@ settled in a question round on 2026-08-26.
 
 - `config.kdl` gains a `markdown` block naming which files render as
   Markdown. Every other file stays in the source layout, highlighted by its
-  extension. The source/rendered toggle (`Space v s` or `:source`) is
-  available only for files matched by this configuration.
+  extension. The source/rendered toggle (`Space v s`) is available only for
+  files matched by this configuration.
 
   ```kdl
   markdown {

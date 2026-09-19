@@ -249,6 +249,34 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
 }
 
 #[test]
+fn clicking_an_unfocused_scrolled_pane_uses_its_displayed_rows() -> anyhow::Result<()> {
+    let text = "line\n".repeat(12);
+    let dir = testing::workspace("threads-pane-click-scroll", &text)?;
+    let mut app = source_app(&dir)?;
+    app.show_tree();
+    app.show_threads_pane();
+    for line in 1..=6 {
+        annotate(&mut app, line, "thread");
+    }
+    app.resize(100, 10);
+    app.focus_threads_pane();
+    app.scroll_threads_pane(isize::MAX);
+    app.focus_pane(Focus::View);
+
+    let row = app.threads_pane_body_rows().saturating_sub(1);
+    let expected = match app.threads_pane_at(row) {
+        Some(PaneRow::Thread(entry)) => entry.id,
+        other => anyhow::bail!("expected a displayed thread row, got {other:?}"),
+    };
+
+    app.threads_pane_click(row);
+
+    assert_eq!(app.thread_cursor().thread(), Some(&expected));
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    Ok(())
+}
+
+#[test]
 fn archived_review_cursor_restores_from_the_sidebar() -> anyhow::Result<()> {
     let dir = fixture("archived-restore")?;
     let mut app = source_app(&dir)?;

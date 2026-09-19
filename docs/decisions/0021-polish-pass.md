@@ -12,6 +12,11 @@ tags:
 
 Status: accepted (2026-08-27)
 
+Amended 2026-09-18: the command surface drops `:nohlsearch`/`:noh`,
+`:source`, and `:licenses` without aliases. `Esc` already clears search
+highlights, source/rendered remains a file-view action through `Space v s`
+and its menu row, and bundled notices remain under **Help > Licenses**.
+
 Amended 2026-09-15 by [0081](0081-the-menu-bar.md): the structured
 `--doctor` report is also available as a scrollable in-app Doctor view
 through Help or `:doctor`; `:status` keeps its narrower live-viewer role.
@@ -101,11 +106,10 @@ had asked for. Each cut below was put as a question and answered:
 
 ### Command routing
 
-- `View::execute` handles the commands that touch only the pane (`:q`,
-  `:noh`, `:source`, `:diff`, `:diff seen`, `:N`) and returns everything
-  else as `Effect::Command`; `App::command` in `app/commands.rs` runs
-  `:follow [on|off]` and `:status` and refuses the rest with one
-  message.
+- `View::execute` handles immediate quit and numeric line jumps and returns
+  registered app commands as `Effect::Command`; `App::command` in
+  `app/commands.rs` runs those app commands and refuses the rest with one
+  message. Removed commands have no compatibility aliases.
 
 ### Construction
 

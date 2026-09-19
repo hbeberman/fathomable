@@ -12,6 +12,11 @@ tags:
 
 Status: accepted (2026-08-26)
 
+Amended 2026-09-18: `Alt-Space` opens and focuses the top-left Fathomable
+menu from any input layer, revealing the app bar first when hidden. It uses
+the same title-menu path as a click; `h`/`j`/`k`/`l` and arrows continue
+navigation from there.
+
 Amended 2026-09-18: bare `q` in a normal pane opens a compact confirmation;
 only `Enter` or its explicit control quits, while `Esc`, cancel, or an outside
 click dismisses it. Text-entry surfaces, menus, pickers, and existing popups
@@ -63,6 +68,9 @@ the mouse.
   the hint bar, the `Space` menu, and `Space ?` render from it, and the
   picker moves on `Ctrl-j`/`Ctrl-k`.)
 - Keymap is fixed in v1; remapping through KDL config comes later.
+- `Alt-Space` is the global route to the application menu. Unlike ordinary
+  pane bindings, it takes precedence over popups and text input, just as the
+  menu bar's mouse target does.
 - Helix selection-first grammar is deferred and would be a config switch.
 - Bare `q` is guarded in normal panes: it opens a compact Quit confirmation
   whose action-first `quit Enter` and `cancel Esc` controls share keyboard,

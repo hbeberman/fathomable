@@ -26,6 +26,9 @@ status line. Amended 2026-09-17 by [0081](0081-the-menu-bar.md): the passive
 identity was removed from the menu bar; the current basename is centered
 there in subdued text beside its comparison controls, while hiding the bar
 still returns path and view badges to the status line.
+Amended 2026-09-18 by [0021](0021-polish-pass.md): `:nohlsearch`/`:noh`
+and `:source` are removed without aliases. `Esc` clears search highlights,
+and `Space v s` retains the source/rendered toggle.
 Amended 2026-09-18 by [0007](0007-key-grammar-and-mouse.md): bare `q` in a
 normal pane now opens a Quit confirmation; all four colon forms (`:q`,
 `:quit`, `:q!`, and `:quit!`) still quit immediately. The historical
@@ -186,15 +189,14 @@ viewer, the layout engine, and later themes agree.
 - Incremental: the view jumps to the first match as the pattern is typed.
   Smart case: case-insensitive unless the pattern contains an uppercase
   letter. Wrap-around with a status message. All matches are highlighted
-  (theme key `ui.search.match`) until Esc or `:noh`.
+  (theme key `ui.search.match`) until `Esc`.
 - An invalid pattern shows the regex error in the status line and leaves the
   view where it was.
 
 ### Source view
 
-- `Space v s` toggles between rendered Markdown and the raw source
-  (`:source` does the same); the cursor keeps its source line across the
-  toggle. Only files accepted by the configured
+- `Space v s` toggles between rendered Markdown and the raw source; the
+  cursor keeps its source line across the toggle. Only files accepted by the configured
   [Markdown classifier](0016-syntax-highlighting.md#markdown-versus-source-files)
   can toggle; other files stay in source view. The original `gs` alias was
   removed on 2026-09-14 to reserve `g` for navigation.

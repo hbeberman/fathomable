@@ -24,7 +24,7 @@ use crate::app::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
 const CHROME_ROWS: usize = 2;
-/// The fewest rows the pane is drawn with: rule, header, entry, and footer.
+/// The fewest rows the focused pane needs: rule, header, entry, and footer.
 const MIN_ROWS: usize = 4;
 /// Rows the tree keeps above the pane when both are shown.
 const TREE_MIN_ROWS: usize = 2;
@@ -317,12 +317,11 @@ impl App {
             .clamp(least, tallest)
     }
 
-    /// Rows the pane's entries have: the height less the rule and the
-    /// header, and the key bar.
+    /// Rows the pane's entries have after its header and contextual key bar.
     pub(crate) fn threads_pane_body_rows(&self) -> usize {
         self.threads_pane_height()
             .saturating_sub(CHROME_ROWS)
-            .saturating_sub(1)
+            .saturating_sub(usize::from(self.pane_has_navigation(Focus::ThreadsPane)))
     }
 
     /// Rows the files pane has, 0 when it is hidden.
@@ -449,6 +448,7 @@ impl App {
         self.show_threads_pane();
         if self.panes_fit() {
             self.focus = Focus::ThreadsPane;
+            self.reveal_threads_pane_selection();
         }
     }
 
@@ -537,8 +537,9 @@ impl App {
     /// the cursor goes to it; the keys stay with this pane. A click past
     /// the rows acts as one on the header.
     pub(crate) fn threads_pane_click(&mut self, row: usize) {
+        let clicked = self.threads_pane_at(row);
         self.threads_pane_focus();
-        match self.threads_pane_at(row) {
+        match clicked {
             Some(PaneRow::File { path, .. }) => {
                 self.threads_pane_toggle_fold(&path);
                 self.reveal_threads_pane_selection();

@@ -87,7 +87,7 @@ fn sidebar_mouse(
 /// and one on a file row folds it, a click on the header toggles the
 /// title menu, a click on the key bar runs its hint, a right-click on a
 /// row opens its menu, and the rule drags. Row 0 is the rule, row 1 the
-/// header, and the last row the key bar while the pane has the keys.
+/// header, and the last row is the key bar only while the pane has the keys.
 fn threads_pane_mouse(
     app: &mut App,
     kind: MouseEventKind,
@@ -96,7 +96,8 @@ fn threads_pane_mouse(
     pane_row: usize,
 ) -> Effect {
     let inner = app.sidebar_width().saturating_sub(1);
-    let bar = pane_row + 1 == app.threads_pane_height();
+    let bar =
+        app.pane_has_navigation(Focus::ThreadsPane) && pane_row + 1 == app.threads_pane_height();
     match kind {
         MouseEventKind::ScrollDown => app.scroll_threads_pane(WHEEL_LINES),
         MouseEventKind::ScrollUp => app.scroll_threads_pane(-WHEEL_LINES),

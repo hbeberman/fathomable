@@ -69,6 +69,11 @@ pub(crate) fn place(app: &App) -> Option<Where> {
 }
 
 fn key_event(app: &mut App, key: KeyEvent) -> Effect {
+    if Chord::from_event(key)
+        .is_some_and(|chord| lookup(Where::Any, &[chord]) == Match::Exact(Action::ApplicationMenu))
+    {
+        return app.act(Action::ApplicationMenu);
+    }
     if app.title_menu_open() {
         return menu_bar::key(app, key);
     }
@@ -273,6 +278,10 @@ impl App {
     /// position a far move leaves. A search moves the cursor as it is
     /// typed, so its origin is kept from `/` to Enter.
     pub(crate) fn act(&mut self, action: Action) -> Effect {
+        if action == Action::ApplicationMenu {
+            self.open_app_menu();
+            return Effect::None;
+        }
         if !self.panes_fit() && !available_while_panes_do_not_fit(action) {
             return Effect::None;
         }
@@ -335,6 +344,7 @@ impl App {
             return Effect::None;
         }
         match action {
+            Action::ApplicationMenu => unreachable!("handled before placement"),
             Action::TreeToggle => self.toggle_tree_shown(),
             Action::PickFile => self.open_picker(PickerKind::Files),
             Action::PickAnyFile => self.open_picker(PickerKind::AllFiles),
@@ -648,13 +658,12 @@ impl App {
     fn act_input(&mut self, action: Action) -> Effect {
         if action == Action::Confirm
             && self.directory_path().is_some()
-            && (self
+            && self
                 .view()
                 .input()
                 .trim()
                 .chars()
                 .all(|c| c.is_ascii_digit())
-                || self.view().input().trim() == "source")
             && !self.view().input().trim().is_empty()
         {
             self.view_mut().escape();

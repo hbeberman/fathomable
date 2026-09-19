@@ -339,6 +339,7 @@ actions! {
     WindowPrev,
     WindowFiles,
     WindowThreads,
+    ApplicationMenu,
     PaneScope,
     ReviewResolved,
     Help,
@@ -621,6 +622,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::WindowThreads,
         "Focus",
         "Thread list",
+    ),
+    bind(
+        W::Any,
+        &[&[alt(K::Char(' '))]],
+        A::ApplicationMenu,
+        "Focus",
+        "application menu",
     ),
     bind(
         W::Any,

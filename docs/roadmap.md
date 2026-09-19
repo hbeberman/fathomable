@@ -460,8 +460,8 @@ Milestones are ordered; each is usable on its own. Details live in the
     commit batches, and `:diff` have no compatibility aliases. `Space d d`
     directly reselects current HEAD to working tree
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
-79. **Bundled license notices.** Help > Licenses and `:licenses` display
-    offline first- and third-party attribution embedded in the executable;
+79. **Bundled license notices.** Help > Licenses displays offline first- and
+    third-party attribution embedded in the executable;
     contributor tooling maintains the locked notice bundle
     ([0088](decisions/0088-bundled-licenses.md)).
 80. **Store-only MCP.** All three MCP tools use the bound repository store

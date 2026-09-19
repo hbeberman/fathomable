@@ -330,9 +330,6 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
         app.message()
             .is_some_and(|message| message.contains("unavailable in unified"))
     );
-    app.command("source");
-    assert!(app.view().diff_view(), ":source cannot leave unified mode");
-
     app.select_diff_mode(DiffMode::Standard);
     assert!(
         app.view().source_view(),
@@ -340,12 +337,12 @@ fn source_display_is_retained_but_unavailable_while_unified() -> anyhow::Result<
     );
     app.select_diff_mode(DiffMode::Off);
     assert!(app.view().source_view());
-    app.command("source");
+    press(&mut app, " vs");
     assert!(!app.view().source_view(), "Off still permits rendered view");
 
     app.open(Path::new("main.rs"));
     assert!(app.view().source_view());
-    app.command("source");
+    press(&mut app, " vs");
     assert!(app.view().source_view(), "ordinary source cannot render");
     assert_eq!(
         app.message(),

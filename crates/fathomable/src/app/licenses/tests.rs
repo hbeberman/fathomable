@@ -64,7 +64,7 @@ fn help_menu_exposes_licenses_and_runs_its_displayed_command() -> anyhow::Result
             testing::press_key(&mut app, KeyCode::Down);
         }
         testing::press_key(&mut app, KeyCode::Right);
-        testing::press(&mut app, "jjj");
+        testing::press(&mut app, "jjjj");
         testing::press_key(&mut app, KeyCode::Enter);
         assert!(matches!(app.popup(), Some(Popup::Licenses(_))));
         assert!(!app.title_menu_open());

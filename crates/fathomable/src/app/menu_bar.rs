@@ -78,6 +78,7 @@ pub(crate) enum Target {
     ReviewFile,
     GettingStarted,
     Doctor,
+    McpSetup,
     Licenses,
     Status,
     About,
@@ -748,6 +749,7 @@ pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
                 "View keymap",
                 Target::Action(Action::Help),
             )),
+            Row::Item(Item::command(app, "MCP Setup", Target::McpSetup)),
             Row::Item(Item::command(app, "Licenses", Target::Licenses)),
         ],
         Submenu::Go => rows(app, Root::Go),
@@ -900,6 +902,10 @@ impl App {
                 self.open_doctor();
                 Effect::None
             }
+            Target::McpSetup => {
+                self.open_mcp_setup();
+                Effect::None
+            }
             Target::Licenses => {
                 self.open_licenses();
                 Effect::None
@@ -933,6 +939,7 @@ const REVIEW_FILE_KEY: [Chord; 1] = [Chord {
 const STATUS_KEYS: [Chord; 7] = colon("status");
 const HELP_KEYS: [Chord; 5] = colon("help");
 const DOCTOR_KEYS: [Chord; 7] = colon("doctor");
+const MCP_KEYS: [Chord; 4] = colon("mcp");
 const ABOUT_KEYS: [Chord; 6] = colon("about");
 const QUIT_KEYS: [Chord; 2] = colon("q");
 
@@ -964,6 +971,7 @@ fn target_keys(target: Target) -> Option<&'static [Chord]> {
         Target::ReviewFile => Some(&REVIEW_FILE_KEY),
         Target::GettingStarted => Some(&HELP_KEYS),
         Target::Doctor => Some(&DOCTOR_KEYS),
+        Target::McpSetup => Some(&MCP_KEYS),
         Target::Status => Some(&STATUS_KEYS),
         Target::About => Some(&ABOUT_KEYS),
         Target::Quit => Some(&QUIT_KEYS),
@@ -1493,7 +1501,7 @@ mod tests {
             review[6].item().map(|item| (&*item.label, item.checked)),
             Some(("Only current file", false))
         );
-        assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 4);
+        assert_eq!(submenu_rows(&app, super::Submenu::Help).len(), 5);
         let go = rows(&app, Root::Go);
         assert_eq!(go[0].item().map(|item| item.hint.as_str()), Some("Sp f f"));
         assert_eq!(go[1].item().map(|item| item.hint.as_str()), Some("Sp f i"));

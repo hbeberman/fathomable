@@ -15,6 +15,7 @@ pub(crate) enum Command {
     About,
     Doctor,
     Help,
+    Mcp,
     Quit,
     Status,
 }
@@ -110,7 +111,7 @@ impl CommandCompletion {
     }
 }
 
-const COMMANDS: [CommandSpec; 5] = [
+const COMMANDS: [CommandSpec; 6] = [
     CommandSpec::new(
         "about",
         &[],
@@ -128,6 +129,12 @@ const COMMANDS: [CommandSpec; 5] = [
         &[],
         "Open or close the getting-started guide.",
         Command::Help,
+    ),
+    CommandSpec::new(
+        "mcp",
+        &[],
+        "Show setup steps for connecting an agent over MCP.",
+        Command::Mcp,
     ),
     CommandSpec::new(
         "quit",
@@ -216,6 +223,7 @@ impl App {
             Some(Command::Help) => self.open_getting_started(),
             Some(Command::Doctor) => self.open_doctor(),
             Some(Command::About) => self.open_about(),
+            Some(Command::Mcp) => self.open_mcp_setup(),
             Some(Command::Quit) | None => {
                 self.notice(format!("not a command: {input}"));
             }
@@ -380,7 +388,7 @@ mod tests {
                 .iter()
                 .map(|command| command.form())
                 .collect::<Vec<_>>(),
-            ["about", "doctor", "help", "quit", "status"]
+            ["about", "doctor", "help", "mcp", "quit", "status"]
         );
         for removed in ["licenses", "nohlsearch", "noh", "source"] {
             assert_eq!(find_command(removed), None, "{removed}");

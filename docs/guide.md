@@ -193,6 +193,7 @@ selected command shows a brief description and its accepted arguments.
 | `:about` | show version, license, and repository information |
 | `:doctor` | inspect configuration, storage, workspace, and terminal diagnostics |
 | `:help` | open or close the getting-started guide |
+| `:mcp` | show setup steps for connecting an agent over MCP |
 | `:quit` (`:q`, `:q!`, `:quit!`) | quit immediately without confirmation |
 | `:status` | show live viewer, workspace, and storage status |
 | `:<line>` | jump to a source line; numeric jumps are not completion candidates |
@@ -413,6 +414,9 @@ into the `watch` block and remove the obsolete `jump` block. `jump` is no
 longer accepted as a top-level node.
 
 ## Connect an agent
+
+Open `☰->Help->MCP Setup` or run `:mcp` in the viewer for MCP setup
+steps.
 
 Register `fathomable --mcp` as a stdio MCP server in your agent host.
 It binds to the launch workspace; add `/path/to/checkout` to bind explicitly.

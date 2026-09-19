@@ -103,7 +103,7 @@ fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::R
             .iter()
             .map(|command| command.form())
             .collect::<Vec<_>>(),
-        ["about", "doctor", "help", "quit", "status"]
+        ["about", "doctor", "help", "mcp", "quit", "status"]
     );
     let blank = screen(&app)?;
     assert!(blank.contains("about"));

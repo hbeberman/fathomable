@@ -397,6 +397,17 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
             }
             _ => Some(Effect::None),
         },
+        Some(Popup::McpSetup(_)) => match kind {
+            MouseEventKind::ScrollDown => Some(crate::app::mcp_setup::wheel(app, WHEEL_LINES)),
+            MouseEventKind::ScrollUp => Some(crate::app::mcp_setup::wheel(app, -WHEEL_LINES)),
+            _ if left => {
+                if !inside(draw::report_area(app), column, row) {
+                    app.close_popup();
+                }
+                Some(Effect::None)
+            }
+            _ => Some(Effect::None),
+        },
         Some(Popup::About) if left => {
             let area = draw::about_area(app);
             let source_row = usize::from(area.y) + 7;

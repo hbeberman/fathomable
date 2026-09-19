@@ -18,7 +18,7 @@ use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use super::help;
 use crate::app::threads::list::ReviewView;
 use crate::app::view::{Effect, Mode};
-use crate::app::{commands::CompletionDirection, doctor_view, licenses, menu_bar};
+use crate::app::{commands::CompletionDirection, doctor_view, licenses, mcp_setup, menu_bar};
 
 /// Rows a scroll key or wheel notch moves.
 pub(crate) const WHEEL_LINES: isize = 3;
@@ -44,6 +44,7 @@ pub(crate) fn place(app: &App) -> Option<Where> {
             | Popup::Status
             | Popup::Doctor(_)
             | Popup::Licenses(_)
+            | Popup::McpSetup(_)
             | Popup::About
             | Popup::Menu(_)
             | Popup::DiffMode(_)
@@ -122,6 +123,9 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     }
     if matches!(app.popup(), Some(Popup::Licenses(_))) {
         return licenses::key(app, key);
+    }
+    if matches!(app.popup(), Some(Popup::McpSetup(_))) {
+        return mcp_setup::key(app, key);
     }
     if matches!(app.popup(), Some(Popup::About)) {
         if key.code == crossterm::event::KeyCode::Esc {

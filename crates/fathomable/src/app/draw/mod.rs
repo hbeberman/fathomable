@@ -312,6 +312,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         }
         Some(Popup::Doctor(doctor)) => draw_doctor(frame, app, theme, doctor),
         Some(Popup::Licenses(licenses)) => draw_licenses(frame, app, theme, licenses),
+        Some(Popup::McpSetup(setup)) => draw_mcp_setup(frame, app, theme, setup),
         Some(Popup::About) => draw_about(frame, app, theme),
         Some(Popup::Menu(menu)) => {
             draw_context_menu(frame, app, theme, menu, None);
@@ -596,6 +597,31 @@ fn draw_licenses(
     );
     let inner = block.inner(area);
     let lines = licenses
+        .visible_lines(usize::from(inner.height))
+        .map(|line| Line::raw(line.text()))
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+}
+
+fn draw_mcp_setup(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    setup: &crate::app::mcp_setup::McpSetup,
+) {
+    let area = report_area(app);
+    if area.width < 2 || area.height < 2 {
+        return;
+    }
+    let block = rounded_block(
+        theme,
+        " MCP Setup · j/k scroll · PgUp/PgDn page · Esc close ",
+        theme.popup,
+    );
+    let inner = block.inner(area);
+    let lines = setup
         .visible_lines(usize::from(inner.height))
         .map(|line| Line::raw(line.text()))
         .collect::<Vec<_>>();
@@ -916,24 +942,35 @@ fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect,
     }
 }
 
-/// What the text column shows before any file is open: the workspace,
-/// the session, and the keys that get going, centred as a block.
+/// What the text column shows before any file is open: a short introduction
+/// and the keys that get going, centred as a block.
 fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let root = app.workspace().root().display().to_string();
-    let entries: [(&str, String); 7] = [
-        ("f", "focus File".to_owned()),
-        ("F", "show and focus File list".to_owned()),
-        ("t", "focus Threads".to_owned()),
-        ("T", "show and focus Thread list".to_owned()),
-        ("w / W", "cycle pane focus".to_owned()),
-        ("Space ?", "view the keymap".to_owned()),
-        (":q", "quit".to_owned()),
+    let entries = [
+        ("f", "File pane"),
+        ("F", "File list"),
+        ("t", "Threads pane"),
+        ("T", "Threads list"),
+        ("w / W", "cycle pane focus"),
+        ("q", "quit"),
     ];
-    let facts = [("workspace", root), ("viewer", app.viewer_label())];
+    let diff_entries = [
+        ("J / K", "next / previous change"),
+        ("L / H", "next / previous changed file"),
+        ("Space d", "diff options"),
+    ];
+    let intro = [
+        "A read-only workspace viewer for following files, changes,",
+        "and review threads while agents work.",
+        "",
+        "Usable with both mouse (right/left click) and keyboard.",
+        "Space opens a hotkey list. Alt-Space moves keyboard focus",
+        "to the menu bar.",
+    ];
     let key_width = entries
         .iter()
+        .chain(diff_entries.iter())
         .map(|(key, _)| display_width(key))
-        .chain(facts.iter().map(|(label, _)| display_width(label)))
         .max()
         .unwrap_or(0);
     let width = usize::from(area.width);
@@ -941,10 +978,12 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
         .iter()
         .map(|(_, label)| key_width + 2 + display_width(label))
         .chain(
-            facts
+            diff_entries
                 .iter()
-                .map(|(_, value)| key_width + 2 + display_width(value)),
+                .map(|(_, label)| key_width + 2 + display_width(label)),
         )
+        .chain(intro.iter().map(|line| display_width(line)))
+        .chain(std::iter::once(display_width(&root)))
         .max()
         .unwrap_or(0)
         .min(width);
@@ -954,19 +993,28 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
             format!("{left}Fathomable"),
             theme.heading[0].add_modifier(Modifier::BOLD),
         )),
-        Line::from(""),
+        Line::from(Span::styled(
+            format!("{left}{}", truncate_left(&root, block_width)),
+            theme.text.add_modifier(Modifier::DIM),
+        )),
     ];
-    for (label, value) in facts {
+    body.push(Line::from(""));
+    for line in intro {
+        body.push(Line::raw(format!("{left}{line}")));
+    }
+    body.push(Line::from(""));
+    for (key, label) in entries {
         body.push(Line::from(vec![
-            Span::styled(format!("{left}{label:<key_width$}"), theme.info),
-            Span::raw(format!(
-                "  {}",
-                truncate_left(&value, block_width.saturating_sub(key_width + 2))
-            )),
+            Span::styled(format!("{left}{key:<key_width$}"), theme.popup_key),
+            Span::raw(format!("  {label}")),
         ]));
     }
     body.push(Line::from(""));
-    for (key, label) in entries.iter().filter(|(key, _)| !key.is_empty()) {
+    body.push(Line::from(Span::styled(
+        format!("{left}Diff controls"),
+        theme.info.add_modifier(Modifier::BOLD),
+    )));
+    for (key, label) in diff_entries {
         body.push(Line::from(vec![
             Span::styled(format!("{left}{key:<key_width$}"), theme.popup_key),
             Span::raw(format!("  {label}")),
@@ -4421,13 +4469,17 @@ mod tests {
         let rows = testing::screen(&app)?;
         let rows: Vec<&str> = rows.iter().map(|row| row.trim_start()).collect();
         let expected = [
-            "f          focus File",
-            "F          show and focus File list",
-            "t          focus Threads",
-            "T          show and focus Thread list",
-            "w / W      cycle pane focus",
-            "Space ?    view the keymap",
-            ":q         quit",
+            "f        File pane",
+            "F        File list",
+            "t        Threads pane",
+            "T        Threads list",
+            "w / W    cycle pane focus",
+            "q        quit",
+            "",
+            "Diff controls",
+            "J / K    next / previous change",
+            "L / H    next / previous changed file",
+            "Space d  diff options",
         ];
         let start = rows
             .iter()
@@ -4435,6 +4487,12 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("welcome shortcut block was not rendered"))?;
 
         assert_eq!(&rows[start..start + expected.len()], expected);
+        let screen = rows.join("\n");
+        assert!(screen.contains("A read-only workspace viewer"));
+        assert!(screen.contains("Usable with both mouse (right/left click) and keyboard."));
+        assert!(screen.contains("Space opens a hotkey list."));
+        assert!(screen.contains("Alt-Space moves keyboard focus"));
+        assert!(!screen.contains(&app.viewer_label()));
         Ok(())
     }
 

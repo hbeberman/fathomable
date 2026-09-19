@@ -12,6 +12,9 @@ tags:
 
 Status: accepted (2026-08-27)
 
+Amended 2026-09-19 by [0081](0081-the-menu-bar.md): `:mcp` opens the same
+read-only MCP setup steps as **Help > MCP Setup**.
+
 Amended 2026-09-18: the command surface drops `:nohlsearch`/`:noh`,
 `:source`, and `:licenses` without aliases. `Esc` already clears search
 highlights, source/rendered remains a file-view action through `Space v s`

@@ -1,10 +1,11 @@
 ---
 type: Decision
 title: The persistent menu bar
-description: A one-row application menu exposes layout, navigation, review, diff modes and endpoints, help, diagnostics, and project information; it centers repository and worktree identity, keeps mode-aware endpoints on the right, and shares rounded popup framing with every overlay.
+description: A one-row application menu exposes layout, navigation, review, diff modes and endpoints, help, diagnostics, agent setup, and project information; it centers repository and worktree identity, keeps mode-aware endpoints on the right, and shares rounded popup framing with every overlay.
 resource: crates/fathomable/src/app/menu_bar.rs
 related_resources:
   - crates/fathomable/src/app/doctor_view.rs
+  - crates/fathomable/src/app/mcp_setup.rs
 tags:
   - configuration
   - decision
@@ -16,6 +17,11 @@ tags:
 # 0081 The persistent menu bar
 
 Status: accepted (2026-09-15)
+
+Amended 2026-09-19: **Help > MCP Setup** and `:mcp` open the same
+scrollable, read-only setup steps for registering Fathomable's stdio MCP
+server. The view shows commands and binding guidance; it does not edit host
+configuration or launch another process.
 
 The Auto-jump entry described below was removed by
 [0082](0082-three-tool-review-core.md); the rest of this decision remains
@@ -146,15 +152,17 @@ content they affect.
   reports that there is no pane to show until a pane-specific toggle
   establishes one.
 - **Help** contains Getting started (`:help`), Doctor (`:doctor`), View
-  keymap (`Space ?`), and Licenses
+  keymap (`Space ?`), MCP Setup (`:mcp`), and Licenses
   ([0088](0088-bundled-licenses.md)). Getting started reuses the first-workspace
   page in the text column and preserves the document behind it. Doctor is a fresh,
   scrollable in-app rendering of the same structured report as
   `fathomable --doctor`. Warnings use a distinct face and do not make the
   report fail; `r` rebuilds the report so corrected permissions clear
-  immediately. Licenses displays the embedded first- and third-party notices
-  offline. About (`:about`) is a compact project/version, license, and
-  repository view with directions to the full notices.
+  immediately. MCP Setup displays host registration commands and checkout
+  binding guidance without changing external configuration. Licenses displays
+  the embedded first- and third-party notices offline. About (`:about`) is a
+  compact project/version, license, and repository view with directions to the
+  full notices.
 - **Go** contains the file pickers and jumplist Back/Forward.
   **Review** contains the review view and filters plus
   non-destructive thread creation/reply/edit/resolve actions. **Diff**

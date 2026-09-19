@@ -1640,7 +1640,7 @@ impl View {
         };
         match spec.command() {
             Command::Quit => Effect::Quit,
-            Command::About | Command::Doctor | Command::Help | Command::Status => {
+            Command::About | Command::Doctor | Command::Help | Command::Mcp | Command::Status => {
                 Effect::Command(spec.form().to_owned())
             }
         }

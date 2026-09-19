@@ -26,6 +26,7 @@ mod highlight;
 pub(crate) mod input;
 mod jumplist;
 mod licenses;
+mod mcp_setup;
 mod menu_bar;
 mod navigation;
 mod review_points;
@@ -465,6 +466,8 @@ pub(crate) enum Popup {
     Doctor(doctor_view::Doctor),
     /// Bundled first- and third-party license notices.
     Licenses(licenses::Licenses),
+    /// Read-only host setup steps for the stdio MCP server.
+    McpSetup(mcp_setup::McpSetup),
     /// Project identity and repository link.
     About,
     /// The context menu a right-click opened (ADR 0050).
@@ -2111,6 +2114,7 @@ impl App {
         input::help::resize(self);
         doctor_view::resize(self);
         licenses::resize(self);
+        mcp_setup::resize(self);
         menu_bar::resize(self);
     }
 

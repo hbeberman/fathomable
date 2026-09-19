@@ -50,10 +50,12 @@ remain historical context.
 
 Amended 2026-09-19: the trimmed map now pairs workflow and pane vocabularies.
 `Space f f/i/r` opens file pickers while `Space F c/o/u/i` changes File-list
-settings; `Space t` owns thread workflows while `Space T s/x` changes
-Thread-list settings. `Space d l/c/p` adds HEAD-parent, picked commit-parent,
-and save-and-select review-point actions without restoring the retired
-comparison submenu.
+settings; `Space F Z` folds or unfolds every File-list directory from any
+pane. `Space t` owns thread workflows while `Space T s/x` changes Thread-list
+settings and `Space T Z` folds or unfolds every Thread-list file group from
+any pane. `Space d l/c/p` adds HEAD-parent, picked commit-parent, and
+save-and-select review-point actions without restoring the retired comparison
+submenu.
 
 ## Context
 

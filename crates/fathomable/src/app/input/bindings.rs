@@ -316,6 +316,10 @@ actions! {
     FilesUntracked,
     /// `Space F i`: show ignored files in the files pane (ADR 0068).
     FilesIgnored,
+    /// `Space F Z`: fold or unfold all directories in the files pane.
+    FilesFoldAll,
+    /// `Space T Z`: fold or unfold all files in the threads pane.
+    ThreadsFoldAll,
     ChangeNext,
     ChangePrev,
     ChangeFileNext,
@@ -773,6 +777,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         "Space menu",
         "files: show ignored",
     ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('F'), c('Z')]],
+        A::FilesFoldAll,
+        "Space menu",
+        "files: fold or unfold all",
+    ),
     bind(W::Any, &[&[c('f')]], A::FileView, "Views", "open File"),
     bind(W::Any, &[&[c('t')]], A::Review, "Threads", "open Threads"),
     bind(
@@ -1162,6 +1173,13 @@ pub(crate) const BINDINGS: &[Binding] = &[
         A::ReviewResolved,
         "Space menu",
         "thread list: show or hide resolved threads",
+    ),
+    bind(
+        W::Any,
+        &[&[c(' '), c('T'), c('Z')]],
+        A::ThreadsFoldAll,
+        "Space menu",
+        "thread list: fold or unfold all",
     ),
     bind(
         W::ThreadsPane,
@@ -2006,13 +2024,16 @@ mod tests {
             keys(Where::View, &[c(' '), c('t')]),
             ["R", "h", "a", "A", "c", "r", "e", "d", "f"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x"]);
+        assert_eq!(keys(Where::View, &[c(' '), c('T')]), ["s", "x", "Z"]);
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
             ["s", "u", "o", "b", "t", "d", "l", "c", "p", "r", "w"]
         );
-        assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["c", "o", "u", "i"]);
+        assert_eq!(
+            keys(Where::View, &[c(' '), c('F')]),
+            ["c", "o", "u", "i", "Z"]
+        );
         assert_eq!(keys(Where::View, &[c(' '), c('f')]), ["f", "i", "r"]);
         assert_eq!(lookup(Where::View, &[c(' '), c('c')]), Match::Miss);
         assert_eq!(lookup(Where::View, &[c(' '), c('w')]), Match::Miss);
@@ -2056,6 +2077,26 @@ mod tests {
                 Match::Exact(action)
             );
         }
+        assert_eq!(
+            lookup(Where::Tree, &[c('Z')]),
+            Match::Exact(Action::FoldAll)
+        );
+        for place in PANES {
+            assert_eq!(
+                lookup(place, &[c(' '), c('F'), c('Z')]),
+                Match::Exact(Action::FilesFoldAll),
+                "{place:?}"
+            );
+            assert_eq!(
+                lookup(place, &[c(' '), c('T'), c('Z')]),
+                Match::Exact(Action::ThreadsFoldAll),
+                "{place:?}"
+            );
+        }
+        assert_eq!(
+            lookup(Where::ThreadsPane, &[c('Z')]),
+            Match::Exact(Action::FoldAll)
+        );
         for (suffix, action) in [('s', Action::PaneScope), ('x', Action::ReviewResolved)] {
             assert_eq!(
                 lookup(Where::ThreadsPane, &[c(suffix)]),

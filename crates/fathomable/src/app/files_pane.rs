@@ -83,6 +83,9 @@ impl App {
     }
 
     pub(crate) fn toggle_all_directories(&mut self) {
+        if !self.ensure_tree() {
+            return;
+        }
         let Some(tree) = self.tree.clone() else {
             return;
         };

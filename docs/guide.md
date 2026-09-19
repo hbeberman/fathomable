@@ -96,10 +96,12 @@ filters compactly as `c`, `r`, `u`, and `i`.
 
 `Space f` contains file-opening workflows: `f` opens the ordinary picker, `i`
 includes ignored paths, and `r` lists files opened during this viewer session.
-`Space F` contains only settings that change what File list shows. `Space t`
-contains thread workflows, while `Space T s` and `Space T x` change Thread-list
-scope and resolved visibility without moving focus. Section rules in mixed
-leader menus separate modes, endpoint presets, durable actions, and settings.
+`Space F` contains File-list controls: the four filters plus `Z` to fold or
+unfold all directories without moving focus from another pane. `Space t`
+contains thread workflows, while `Space T` contains Thread-list controls:
+`s` and `x` change scope and resolved visibility, and `Z` folds or unfolds all
+file groups without moving focus. Section rules in mixed leader menus separate
+modes, endpoint presets, durable actions, and settings.
 
 The focused pane marks its name with a purple `▎`; filenames, counts, filters,
 and controls remain neutral. The selected list row keeps its blue active or
@@ -151,7 +153,9 @@ the table below is a quick reference, not the full list.
 | `Space f f` `Space f i` `Space f r` | file picker / including ignored / recent files |
 | `Space F c` `Space F o` | only changed / only reviews in File list |
 | `Space F u` `Space F i` | hide untracked / show ignored in File list |
+| `Space F Z` | fold or unfold all directories in File list |
 | `Space T s` `Space T x` | Thread-list scope / show resolved |
+| `Space T Z` | fold or unfold all file groups in Thread list |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
 | `Space d d` | compare the current HEAD to the working tree |
 | `Space d l` `Space d c` | compare HEAD or a chosen commit with its first parent |

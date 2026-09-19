@@ -487,6 +487,24 @@ fn z_folds_a_file_and_shift_z_every_file() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn space_t_shift_z_folds_all_without_moving_focus() -> anyhow::Result<()> {
+    let (_dir, mut app) = three_threads("remote-fold-all")?;
+    app.focus_pane(Focus::View);
+    press(&mut app, " Ts");
+    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(file_rows(&app), ["docs/guide.md", "README.md"]);
+
+    press(&mut app, " TZ");
+    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(file_rows(&app), ["▸ docs/guide.md", "▸ README.md"]);
+
+    press(&mut app, " TZ");
+    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(file_rows(&app), ["docs/guide.md", "README.md"]);
+    Ok(())
+}
+
 /// The pane shows with the tree hidden and takes the whole sidebar;
 /// beside the tree its split is fixed whatever the thread count, and
 /// only a drag changes it. `F`, `T`, and `w` focus and cycle;

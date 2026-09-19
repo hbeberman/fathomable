@@ -66,12 +66,14 @@ not toggle presentation or reopen the removed comparison controls.
 
 Amended 2026-09-19: lowercase leaders name workflows and uppercase leaders
 name sidebar panes. `Space f f/i/r` opens ordinary, ignored-inclusive, and
-recent file pickers; `Space F c/o/u/i` changes File-list settings and those
-same suffixes work bare while File list has focus. Thread workflows move from
-`Space c` to `Space t`; `Space T s/x` changes Thread-list scope and resolved
-visibility without moving focus. Mixed leader menus draw section rules from
-binding metadata. `Space d l/c/p` means HEAD-parent comparison, picked
-commit-parent comparison, and save-and-select review point.
+recent file pickers; `Space F c/o/u/i` changes File-list settings and
+`Space F Z` folds or unfolds all File-list directories without moving focus.
+Those same suffixes work bare while File list has focus. Thread workflows move
+from `Space c` to `Space t`; `Space T s/x` changes Thread-list scope and
+resolved visibility, while `Space T Z` folds or unfolds every file group
+without moving focus. Mixed leader menus draw section rules from binding
+metadata. `Space d l/c/p` means HEAD-parent comparison, picked commit-parent
+comparison, and save-and-select review point.
 
 Amended later 2026-09-19: pending-prefix helpers consume those semantic
 sections rather than separator-shaped rows. Their card reflows the ordered

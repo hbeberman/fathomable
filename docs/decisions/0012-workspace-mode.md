@@ -62,7 +62,8 @@ styles; `ui.sidebar.selected` and `ui.picker.selected` below are retired.
 
 File shortcuts amended 2026-09-19: `Space f f` opens the ordinary picker,
 `Space f i` opens the ignored-inclusive picker, and `Space f r` opens recent
-files. Uppercase `Space F` now contains File-list settings only.
+files. Uppercase `Space F` now contains File-list controls: the four settings
+plus `Z` to fold or unfold every directory without moving pane focus.
 
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow

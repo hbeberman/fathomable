@@ -232,7 +232,8 @@ agents' green (amber and teal until 2026-09-09).
   [0086](0086-one-thread-summary-and-its-actions.md), the key bar reads
   action then hotkey, beginning `reply c · auto-resolve R · resolve r ·
   fold z · fold all Z`; scope, traversal, open, and escape hints follow
-  where they fit.
+  where they fit. `Space T Z` performs the same Thread-list-wide fold action
+  from any pane without transferring focus.
 
 ### Mouse
 

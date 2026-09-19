@@ -157,6 +157,29 @@ fn focused_file_list_uses_the_same_filter_suffixes() -> anyhow::Result<()> {
 }
 
 #[test]
+fn file_list_fold_all_works_without_moving_focus() -> anyhow::Result<()> {
+    let dir = fixture("remote-fold-all")?;
+    let mut app = AppBuilder::new(&dir).build()?;
+    app.show_tree();
+    app.focus_pane(Focus::View);
+    assert_eq!(app.focus(), Focus::View);
+    assert!(!names(&app).iter().any(|path| path == "src/lib.rs"));
+
+    press(&mut app, " F");
+    assert_eq!(label_of(&app, 'Z')?, "fold or unfold all");
+    press(&mut app, "Z");
+    app.settle_background();
+    assert_eq!(app.focus(), Focus::View);
+    assert!(names(&app).iter().any(|path| path == "src/lib.rs"));
+
+    press(&mut app, " FZ");
+    app.settle_background();
+    assert_eq!(app.focus(), Focus::View);
+    assert!(!names(&app).iter().any(|path| path == "src/lib.rs"));
+    Ok(())
+}
+
+#[test]
 fn changed_only_is_dormant_and_restored_around_off() -> anyhow::Result<()> {
     let dir = fixture("changed-off")?;
     let mut app = AppBuilder::new(&dir).build()?;

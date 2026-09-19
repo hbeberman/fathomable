@@ -55,11 +55,12 @@ Files to reveal and center a destination, including while the pane is hidden.
 The four filters remain authoritative: an excluded destination creates no row
 and leaves the highlight unchanged until a later listing admits it.
 
-Amended 2026-09-19: `Space F` is settings-only. Its `c/o/u/i` suffixes mean
-only changed, only reviews, hide untracked, and show ignored; the same keys
-work bare while Files has focus. File-opening workflows live under lowercase
-`Space f`: `f` opens the ordinary picker, `i` includes ignored paths, and `r`
-opens recent files.
+Amended 2026-09-19: `Space F` contains File-list controls. Its `c/o/u/i`
+suffixes mean only changed, only reviews, hide untracked, and show ignored;
+`Z` folds or unfolds all directories without moving focus. The same keys work
+bare while Files has focus. File-opening workflows live under lowercase
+`Space f`: `f` opens the ordinary picker, `i` includes ignored paths, and
+`r` opens recent files.
 
 ## Context
 
@@ -103,6 +104,7 @@ Space F c    only changed      /  all files
 Space F o    only reviews      /  all files
 Space F u    hide untracked    /  show untracked
 Space F i    show ignored      /  hide ignored
+Space F Z    fold all          /  unfold all
 
 Space f f    open file
 Space f i    open incl. ignored
@@ -128,10 +130,12 @@ Space f r    recent files
   tree reads, so the pane re-reads its listings when it flips. An
   ignored file is never a changed one, so *only changed* wins when both
   are on.
-- All four are **session toggles** starting off, with no config block.
+- All four filters are **session toggles** starting off, with no config block.
   `Space F c/o/u/i` works from any pane, and bare `c/o/u/i` mirrors it while
   Files has focus. Toggling while Files is hidden changes the pane all the
   same and a status-line notice names the new state.
+- `Space F Z` performs the File list's existing `Z` action from any pane,
+  without transferring focus.
 - Rules compose by intersection. A review-bearing file must also satisfy
   *only changed*, untracked, ignored, and selected-comparison snapshot rules
   that are active. Directories appear only when they lead to an admitted file.
@@ -184,7 +188,7 @@ Space f r    recent files
 
 - 0056's *Fewer entries*: the ignored toggle is `Space F i`, and all four
   settings also have direct pane keys. Pickers move to lowercase `Space f`.
-- 0056's map: `Space F` is `c` / `o` / `u` / `i`; `Space f` is
+- 0056's map: `Space F` is `c` / `o` / `u` / `i` / `Z`; `Space f` is
   `f` / `i` / `r`.
 - 0050's Files title opens the four pane settings. Row context menus stay
   item-local, and right-click on the header remains inert.
@@ -212,7 +216,8 @@ Space f r    recent files
 - `bindings::menu_entries` and `bindings::menu` take a relabel
   function; `App::which_key` supplies the live labels, and the drawing
   and the mouse go through it. The binding table gains `FilesChanged`,
-  `FilesReviews`, `FilesUntracked`, and `FilesIgnored` under `Space F`.
+  `FilesReviews`, `FilesUntracked`, `FilesIgnored`, and `FilesFoldAll` under
+  `Space F`.
 - `draw::tree_lines` builds the header through `Header`; `Tone` gains
   the diff colours for the counts. Header layout retains the totals while
   dropping the compact filter marker first.

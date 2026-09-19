@@ -72,6 +72,11 @@ unchanged. `Z` recursively unfolds directories admitted by the current
 filters, or folds them all when already expanded. Recursive unfolding skips
 symlink directories. Folding keeps the selected path when visible, otherwise
 its nearest visible ancestor; it never opens a file or transfers focus.
+`Space F Z` performs that same recursive File-list action while another pane
+keeps focus.
+
+In Thread list workspace scope, `Space T Z` likewise folds or unfolds every
+listed file group while another pane keeps focus.
 
 ### Lists preview without stealing focus
 

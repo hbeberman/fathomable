@@ -439,6 +439,8 @@ impl App {
             Action::FilesReviews => self.files_toggle(Rule::Reviews),
             Action::FilesUntracked => self.files_toggle(Rule::Untracked),
             Action::FilesIgnored => self.files_toggle(Rule::Ignored),
+            Action::FilesFoldAll => self.toggle_all_directories(),
+            Action::ThreadsFoldAll => self.threads_pane_fold_all(),
             Action::PaneScope => self.threads_pane_toggle_scope(),
             Action::ReviewResolved => self.review_toggle_resolved(),
             Action::CommandLine => {

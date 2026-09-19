@@ -19,17 +19,13 @@ impl App {
             (Some("licenses"), None, _) => self.open_licenses(),
             (Some("about"), None, _) => self.open_about(),
             (Some("source"), None, _) => self.toggle_source_view(),
-            (Some("name"), name, None) => self.set_name(name),
             _ => self.notice(format!("not a command: {command}")),
         }
     }
 
-    /// The human-facing viewer label: its name when set, then the id.
+    /// The opaque ID of this running viewer.
     pub(crate) fn viewer_label(&self) -> String {
-        match self.record.name() {
-            Some(name) => format!("{name} ({})", self.viewer_id),
-            None => format!("unnamed ({}); set one with :name", self.viewer_id),
-        }
+        self.viewer_id.clone()
     }
 
     pub(crate) fn getting_started(&self) -> bool {

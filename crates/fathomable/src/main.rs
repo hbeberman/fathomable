@@ -63,10 +63,6 @@ struct Cli {
     #[arg(long)]
     viewers: bool,
 
-    /// Give this viewer window a human-facing label (also `:name`).
-    #[arg(long, value_name = "NAME")]
-    name: Option<String>,
-
     /// Print the effective configuration after defaults and overrides.
     #[arg(long)]
     config_show: bool,
@@ -168,10 +164,9 @@ fn run_tui(
     // The state is keyed by the git common dir, shared by every worktree
     // (ADR 0070).
     let key = workspace.key().to_path_buf();
-    let record =
-        Record::new(id, key.clone(), workspace.root().to_path_buf()).with_name(cli.name.clone());
+    let record = Record::new(id, key.clone(), workspace.root().to_path_buf());
     record.write(dirs)?;
-    tracing::info!(id = %record.id(), name = ?record.name(), root = %record.root().display(), "viewer recorded");
+    tracing::info!(id = %record.id(), root = %record.root().display(), "viewer recorded");
     let marker = Marker::new(key.clone(), worktree_roots(&workspace));
     if let Err(error) = marker.write(dirs) {
         tracing::warn!(%error, "cannot write the workspace marker");
@@ -294,8 +289,7 @@ fn list_viewers(dirs: &XdgDirs) -> ExitCode {
                 String::new()
             };
             println!(
-                "  {}\t{}\t{}{on}",
-                record.name().unwrap_or("-"),
+                "  {}\t{}{on}",
                 record.id(),
                 if record.is_alive() { "live" } else { "dead" },
             );

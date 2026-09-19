@@ -1108,18 +1108,6 @@ impl App {
         &self.thread_store_path
     }
 
-    /// `:name`: label this viewer window; empty clears the name.
-    pub(crate) fn set_name(&mut self, name: Option<&str>) {
-        self.record = self.record.clone().with_name(name.map(str::to_owned));
-        match self.record.write(&self.dirs) {
-            Ok(()) => self.notice(match self.record.name() {
-                Some(name) => format!("viewer named {name}"),
-                None => "viewer name cleared".to_owned(),
-            }),
-            Err(error) => self.notice(format!("cannot save the viewer name: {error}")),
-        }
-    }
-
     /// How a root-relative `path` should be coloured and first displayed.
     /// The code highlighter shared by every view and the expanded threads.
     /// The name the user's messages carry (ADR 0058).
@@ -2729,7 +2717,7 @@ fn on_this_side(event: watch::Event, root: &Path) -> Option<watch::Event> {
 pub(crate) struct Options {
     /// This viewer's record, already written to the viewers directory.
     pub(crate) record: Record,
-    /// Where records and state live, for `:name` to rewrite the record.
+    /// Where persistent application state lives.
     pub(crate) dirs: XdgDirs,
     /// The workspace's thread store, or `None` when it could not be opened.
     pub(crate) store: Option<Store>,

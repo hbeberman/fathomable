@@ -127,10 +127,11 @@ diagnostics retire. `--viewers` no longer reports a socket column, and
 `--doctor` no longer checks runtime socket paths. No product socket requires
 `XDG_RUNTIME_DIR`.
 
-Viewer IDs, names, registrations, workspace markers, worktree bookkeeping,
-logs, and crash context remain. Dead-record cleanup removes records, not old
-socket paths. Existing runtime artifacts are unused and are not swept during
-startup or upgrade.
+Viewer IDs, registrations, workspace markers, worktree bookkeeping, logs, and
+crash context remain. Human-readable viewer names, `--name`, and `:name` were
+removed later 2026-09-18. Dead-record cleanup removes records, not old socket
+paths. Existing runtime artifacts are unused and are not swept during startup
+or upgrade.
 
 The annotation format remains **5**. This change adds no migration, reset,
 compatibility transport, or replacement protocol counter. Restart viewers

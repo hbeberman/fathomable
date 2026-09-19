@@ -232,8 +232,8 @@ Live reload still preserves reading position. Transient counted file-edit
 toasts, the jumplist, and manual worktree navigation remain. The changed-file
 queue, its hints and dots, and manual changed-file jumps are removed.
 MCP `open`, agent-followed paths, auto-jump, its `AUTO` badge, `:auto`, and
-`Space j a` are removed. `--name` still names a viewer window for the human;
-it is not an agent routing target.
+`Space j a` are removed. Viewer registrations use opaque runtime IDs; the
+human-readable `--name` and `:name` labels were removed later 2026-09-18.
 
 Amended 2026-09-18: the unimplemented `Space a w` placeholder and its empty
 agent submenu are removed. Fathomable exposes no wake action or planned wake

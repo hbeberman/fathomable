@@ -90,9 +90,6 @@ pub struct Record {
     /// The worktree the viewer shows; the key itself outside git.
     root: PathBuf,
     started: u64,
-    /// The user-set viewer name (ADR 0024 `--name`, `:name`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
 }
 
 impl Record {
@@ -106,7 +103,6 @@ impl Record {
             key,
             root,
             started: crate::clock::now(),
-            name: None,
         }
     }
 
@@ -121,25 +117,6 @@ impl Record {
     #[must_use]
     pub fn key(&self) -> &Path {
         &self.key
-    }
-
-    /// Give the viewer a name; empty clears it.
-    #[must_use]
-    pub fn with_name(mut self, name: Option<String>) -> Self {
-        self.name = name.filter(|name| !name.trim().is_empty());
-        self
-    }
-
-    /// The viewer name, when the user set one.
-    #[must_use]
-    pub fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    /// Whether `key` names this viewer: its name or its id.
-    #[must_use]
-    pub fn is_called(&self, key: &str) -> bool {
-        self.id.as_str() == key || self.name.as_deref() == Some(key)
     }
 
     /// The session id.
@@ -440,18 +417,12 @@ mod tests {
     }
 
     #[test]
-    fn records_carry_an_optional_name() -> Result<(), serde_json::Error> {
-        let named = record().with_name(Some("left".to_owned()));
-        assert_eq!(named.name(), Some("left"));
-        assert!(named.is_called("left"));
-        assert!(named.is_called("1700000000-42"));
-        assert!(!named.is_called("right"));
-        assert_eq!(record().with_name(Some("  ".to_owned())).name(), None);
-        let json = serde_json::to_string(&named)?;
-        assert!(json.contains(r#""name":"left""#), "{json}");
+    fn records_serialize_runtime_metadata_only() -> Result<(), serde_json::Error> {
+        let record = record();
+        let json = serde_json::to_string(&record)?;
+        assert!(!json.contains("name"), "{json}");
         assert!(!json.contains("socket"), "{json}");
-        assert!(!serde_json::to_string(&record())?.contains("name"));
-        assert_eq!(serde_json::from_str::<Record>(&json)?, named);
+        assert_eq!(serde_json::from_str::<Record>(&json)?, record);
         Ok(())
     }
 }

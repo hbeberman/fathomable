@@ -104,7 +104,8 @@ One word per idea ([0047](decisions/0047-one-vocabulary.md)):
 
 - **Workspace**: the directory tree Fathomable is viewing, and the home of
   its threads; there is no separate word for a workspace's annotation state.
-- **Viewer**: one running Fathomable showing a workspace, named or by id.
+- **Viewer**: one running Fathomable showing a workspace, identified by its
+  opaque runtime id.
 - **Agent session**: the concrete harness chat an agent runs in, identified
   automatically by a harness-qualified native id, independently of its
   repository binding

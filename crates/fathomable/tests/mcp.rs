@@ -1075,9 +1075,7 @@ fn replies_use_the_bound_checkout_stored_path_across_renames() -> Result<()> {
     let other = fixture.dir.0.join("viewer-checkout");
     fs::create_dir(&other)?;
     fs::write(other.join("a.md"), "viewer-only line\n")?;
-    Record::new("1700000001-1".parse::<Id>()?, fixture.key()?, other)
-        .with_name(Some("renamed-view".to_owned()))
-        .write(&fixture.dirs)?;
+    Record::new("1700000001-1".parse::<Id>()?, fixture.key()?, other).write(&fixture.dirs)?;
     fs::write(fixture.root.join("a.md"), "bound first\nbound second\n")?;
     let recreated = client.ok(
         "thread_reply",
@@ -1715,7 +1713,6 @@ fn viewer_records_do_not_affect_bound_store_writes() -> Result<()> {
         fixture.key()?,
         fixture.root.clone(),
     )
-    .with_name(Some("bound".to_owned()))
     .write(&fixture.dirs)?;
     let one = client.ok(
         "thread_start",
@@ -1728,9 +1725,7 @@ fn viewer_records_do_not_affect_bound_store_writes() -> Result<()> {
 
     let elsewhere = fixture.dir.0.join("elsewhere");
     fs::create_dir(&elsewhere)?;
-    Record::new("1700000000-2".parse::<Id>()?, fixture.key()?, elsewhere)
-        .with_name(Some("other".to_owned()))
-        .write(&fixture.dirs)?;
+    Record::new("1700000000-2".parse::<Id>()?, fixture.key()?, elsewhere).write(&fixture.dirs)?;
     let stale_dir = fixture.dirs.viewers_dir().join("1700000000-4000000");
     fixture.dirs.prepare_state_dir(&stale_dir)?;
     fathomable_core::private_state::write(

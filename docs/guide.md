@@ -30,8 +30,7 @@ fathomable README.md         # Open a file in its workspace
 ```
 
 In Git, the workspace is the enclosing repository or linked worktree.
-Outside Git, a directory is its own workspace. `--name review` labels a
-viewer; it does not change MCP routing.
+Outside Git, a directory is its own workspace.
 
 ## UX
 

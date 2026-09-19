@@ -15,6 +15,11 @@ It never edits your checkout or Git data. Install it on Linux using the
 [README](../README.md#install); contributor tooling is separate in
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
+Source builds support Rust 1.97 or newer and default to stable Rust. The
+minimum supported compiler and the compiler used for attributed release
+builds are separate; see the
+[toolchain policy](decisions/0001-dependency-policy.md#rust-toolchain-roles).
+
 **Enthusiast alpha:** features may appear, change, or disappear at any time.
 There is no cross-upgrade persistence guarantee for Fathomable stores,
 including annotations and review points. Treat this state as disposable

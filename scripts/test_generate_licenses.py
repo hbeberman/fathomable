@@ -50,6 +50,7 @@ class LicenseTests(unittest.TestCase):
         with mock.patch.object(licenses.subprocess, "run", side_effect=calls) as run:
             licenses.cargo_about(Path("."))
         command = run.call_args.args[0]
+        self.assertEqual(command[1:4], ["scripts/rust-toolchain.py", "release", "cargo"])
         for flag in ("--frozen", "--fail", "--format"):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--manifest-path") + 1],
@@ -162,13 +163,32 @@ class LicenseTests(unittest.TestCase):
     def test_toolchain_mismatch_is_fatal(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "1.97.0"\n')
+            (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "stable"\n')
             manifest = {"rust_standard_library": {
                 "release": "1.97.0", "rustc_commit": "1" * 40,
             }}
             with mock.patch.object(licenses, "run", return_value="release: 1.96.0\ncommit-hash: wrong"):
                 with self.assertRaisesRegex(licenses.LicenseBundleError, "toolchain"):
                     licenses.runtime_notices(root, manifest)
+
+    def test_release_runtime_matches_even_with_a_floating_development_channel(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "rust-toolchain.toml").write_text('[toolchain]\nchannel = "stable"\n')
+            manifest = {"rust_standard_library": {
+                "release": "1.97.0", "rustc_commit": "1" * 40,
+                "source": "https://example.test/rust",
+                "documents": [{"name": "LICENSE", "source": "https://example.test/license"}],
+            }}
+            with (
+                mock.patch.object(licenses, "run", return_value=
+                                  "release: 1.97.0\ncommit-hash: " + "1" * 40) as run,
+                mock.patch.object(licenses, "pinned_notice", return_value="Reviewed terms\n"),
+            ):
+                text = licenses.runtime_notices(root, manifest)
+                run.assert_called_once_with(["rustc", "--version", "--verbose"], root)
+            self.assertIn("RUST STANDARD LIBRARY 1.97.0", text)
+            self.assertIn("Reviewed terms", text)
 
     def test_embedded_asset_changes_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

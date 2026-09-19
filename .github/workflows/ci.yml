@@ -19,10 +19,10 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Install Rust
-        # rust-toolchain.toml pins the version; name it here so the pinned
-        # toolchain is the one that gets clippy and rustfmt.
-        run: rustup toolchain install 1.97.0 --profile minimal --component clippy,rustfmt
+      - name: Install development and release Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup toolchain install "$(python3 scripts/rust-toolchain.py release)" --profile minimal --component clippy,rustfmt
       - name: Install nightly Rust for public API and unused dependencies
         run: rustup toolchain install nightly --profile minimal
       - name: Install system tools
@@ -36,6 +36,8 @@ jobs:
         run: cargo install cargo-public-api --locked --version 0.51.0
       - name: Install documentation lint dependencies
         run: python3 -m pip install --requirement requirements-docs.txt
+      - name: Test contributor helpers
+        run: python3 -m unittest scripts/test-demo-repo.py scripts/test-perf-record.py scripts/test-rust-toolchain.py
       - name: Format
         run: prek run --config prek.toml --all-files fmt
       - name: Test commit hooks
@@ -62,3 +64,28 @@ jobs:
         run: prek run --config prek.toml --all-files unused-dependencies
       - name: Check bundled license notices
         run: prek run --config prek.toml --all-files licenses
+
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [msrv, stable]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Select compatibility compiler
+        run: |
+          channel=stable
+          if [ "${{ matrix.toolchain }}" = msrv ]; then
+            channel=$(python3 scripts/rust-toolchain.py msrv)
+          fi
+          rustup toolchain install "$channel" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$channel" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: compatibility-${{ matrix.toolchain }}
+      - name: Build with locked dependencies
+        run: cargo build --workspace --all-targets --all-features --locked
+      - name: Test with locked dependencies
+        run: cargo test --workspace --all-features --locked

@@ -36,7 +36,9 @@ if sys.argv[1] == "metadata":
         "packages": [{
             "id": "fixture 0.1.0",
             "name": "fixture",
-            "targets": [{"kind": ["bin"], "name": "fathomable"}],
+            "targets": [] if os.environ.get("MOCK_NO_BINS") else [
+                {"kind": ["bin"], "name": "fathomable"},
+            ],
         }],
     }))
 elif sys.argv[1] == "build":
@@ -133,6 +135,7 @@ class PerfRecordTests(unittest.TestCase):
         *,
         rustflags: str | None = None,
         encoded_rustflags: str | None = None,
+        no_bins: bool = False,
     ) -> list[dict[str, object]]:
         with tempfile.TemporaryDirectory(dir=SCRATCH_ROOT) as directory:
             root = Path(directory)
@@ -162,8 +165,19 @@ class PerfRecordTests(unittest.TestCase):
                 environment["RUSTFLAGS"] = rustflags
             if encoded_rustflags is not None:
                 environment["CARGO_ENCODED_RUSTFLAGS"] = encoded_rustflags
+            if no_bins:
+                environment["MOCK_NO_BINS"] = "1"
 
             status, output = run_in_pty(arguments, environment)
+            if no_bins:
+                self.assertNotEqual(status, 0, output)
+                self.assertIn("no workspace binary targets found in Cargo metadata", output)
+                self.assertNotIn("bootstrap", output)
+                self.assertFalse(target.exists())
+                self.assertFalse(perf_log.exists())
+                events = [json.loads(line) for line in cargo_log.read_text().splitlines()]
+                self.assertEqual([event["args"][0] for event in events], ["metadata"])
+                return events
             self.assertEqual(status, 0, output)
 
             out_dirs = list((target / "perf").iterdir())
@@ -192,6 +206,9 @@ class PerfRecordTests(unittest.TestCase):
             self.assertEqual(profiled_path, preserved)
 
             return cargo_events
+
+    def test_missing_binary_metadata_fails_without_building_or_profiling(self) -> None:
+        self.run_helper(["scripts/perf-record.sh", "--", "."], [], no_bins=True)
 
     def test_just_recipe_forwards_spaced_path_and_preserves_rustflags(self) -> None:
         arguments = ["just", "perf", "path with spaces.md", "fathomable"]

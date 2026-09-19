@@ -1,5 +1,5 @@
 # @okf-doc: /decisions/0001-dependency-policy.md
-# Pinned per docs/decisions/0001-dependency-policy.md; bump deliberately.
+# Development channel; MSRV and release tooling are separate (ADR 0001).
 [toolchain]
-channel = "1.97.0"
+channel = "stable"
 components = ["clippy", "rustfmt"]

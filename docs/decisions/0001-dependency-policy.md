@@ -5,6 +5,7 @@ description: Which third-party crates Fathomable takes on, and how the policy is
 resource: deny.toml
 related_resources:
   - rust-toolchain.toml
+  - scripts/rust-toolchain.py
 tags:
   - decision
   - dependencies
@@ -13,6 +14,11 @@ tags:
 # 0001 Dependency policy
 
 Status: accepted (2026-08-26)
+
+Toolchain policy amended 2026-09-19: the supported compiler floor, stable
+development channel, and recorded release compiler are independent. This
+replaces the earlier rule that advanced `rust-version` with every toolchain
+pin.
 
 ## Context
 
@@ -82,12 +88,59 @@ Rules:
   [0016](0016-syntax-highlighting.md).)
 - XDG directory resolution is implemented from environment variables in the
   standard library rather than adding a crate.
-- The toolchain is pinned to a specific stable release in
-  `rust-toolchain.toml` and bumped deliberately. `rust-version` in
-  `[workspace.package]` mirrors that pin so an older compiler fails with a
-  clear error and the resolver stays MSRV-aware; it is a floor, not a support
-  promise. Fathomable is an application and offers no compatibility guarantee
-  for older toolchains, so the two move together on every bump.
+- Compiler compatibility follows the independent roles below.
+
+### Rust toolchain roles
+
+`[workspace.package].rust-version` declares the minimum supported Rust version
+(MSRV), initially **1.97**. Members inherit it. This is a supported floor for
+building and testing the Linux workspace with the committed `Cargo.lock`,
+not a claim that older compilers cannot possibly compile the source. The
+floor rises only when an intentional source or dependency change requires it,
+with the manifest, CI, and documentation updated together. A release-compiler
+update alone does not raise the MSRV. Lowering the floor likewise requires
+evidence from the source and locked dependency graph.
+
+`rust-toolchain.toml` selects **stable** for normal development and source
+installation. Rustup's installed stable channel is updated explicitly with
+`rustup update stable`; entering the checkout does not install a specific
+numbered release. An explicit `cargo +VERSION` or `RUSTUP_TOOLCHAIN` can
+select another supported compiler.
+
+CI builds all workspace targets and runs tests, including doctests, with the
+locked dependencies on both the declared MSRV and current stable. These jobs
+use ordinary Cargo, not the contributor tool suite: the application's MSRV
+does not constrain the compilers needed to install nextest, cargo-about,
+public-API tooling, or other external tools.
+
+`licenses/manifest.json` records the exact release compiler in
+`rust_standard_library.release`, with its commit identity and reviewed
+runtime notices. This is the single release-version source, independent of
+the development channel and MSRV. Formatting, Clippy, and warnings-denied
+rustdoc use this controlled compiler so their results do not drift with
+stable updates. Nightly remains separate for public-API and unused-dependency
+inspection.
+
+`scripts/rust-toolchain.py msrv` and `scripts/rust-toolchain.py release`
+(invoked with `python3`) print the respective numeric version. With command
+arguments, the helper executes them through `rustup run` on that version,
+without changing rustup defaults or installing a compiler. Missing tools,
+invalid version declarations, and command failures are explicit errors.
+
+Contributor setup installs stable, the release compiler with rustfmt/Clippy,
+and nightly. External Cargo tools are installed explicitly using stable
+(nightly for cargo-udeps), regardless of a caller's toolchain override. The
+MSRV is installed by its CI job or explicitly by a contributor when needed.
+
+`just release` checks the committed notices, then builds the locked x86_64
+GNU/Linux executable using the recorded release compiler. Notice generation
+also selects that compiler explicitly and verifies its release and commit
+against the manifest. Changing the release compiler requires reviewing and
+updating the runtime attribution inventory, not just changing a number.
+Ordinary source builds may use another supported compiler, but their embedded
+runtime inventory still describes the recorded release; redistribution with
+another compiler requires matching runtime-notice review. See
+[bundled notices](0088-bundled-licenses.md).
 
 ## Consequences
 

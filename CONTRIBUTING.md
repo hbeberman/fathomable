@@ -50,10 +50,35 @@ scripts/install-commit-hooks.sh
 # With just: just install-commit-hooks
 ```
 
-The setup script pins the Cargo tool versions it installs and requests the
-current stable and nightly Rust toolchains. It installs PyYAML with
+The setup script pins the Cargo tool versions it installs and requests
+stable, the recorded release compiler (with rustfmt and Clippy), and nightly.
+It installs PyYAML with
 `pip --user` only when the `yaml` module is missing; on Ubuntu pip refuses
 that under PEP 668, which is why the distro package is listed above.
+
+### Rust compiler support
+
+The workspace supports Rust **1.97 or newer** with its committed lockfile.
+`Cargo.toml` declares this minimum independently of the development channel
+(`stable` in `rust-toolchain.toml`) and the exact release compiler
+(`rust_standard_library.release` in `licenses/manifest.json`). Updating the
+release compiler does not automatically raise the minimum. CI builds and
+tests on both the minimum and current stable; contributor tools may need
+newer or nightly Rust without changing the product's minimum.
+
+`rustup update stable` explicitly updates your development compiler. To
+exercise the minimum locally:
+
+```sh
+rustup toolchain install "$(python3 scripts/rust-toolchain.py msrv)" --profile minimal
+python3 scripts/rust-toolchain.py msrv cargo build --workspace --all-targets --all-features --locked
+python3 scripts/rust-toolchain.py msrv cargo test --workspace --all-features --locked
+```
+
+Formatting, Clippy, and warnings-denied rustdoc run with the recorded release
+compiler, keeping their output consistent across developer machines. Ordinary
+`cargo build`, `cargo test`, and `cargo install` use your selected compiler.
+See the [toolchain policy](docs/decisions/0001-dependency-policy.md#rust-toolchain-roles).
 
 Hook installation is explicit opt-in: building or installing the product
 does not install hooks. The installer replaces the recognized bootstrap
@@ -121,7 +146,8 @@ Each individual check recipe calls `prek run --config prek.toml --all-files`
 with the corresponding hook ID; for example,
 `prek run --config prek.toml --all-files fmt`. `just docs-check` selects
 `okf` and `links` through prek. `just fmt` is deliberately different:
-it runs `cargo fmt` to format the checkout on explicit request.
+it runs `cargo fmt` with the release compiler to format the checkout on
+explicit request.
 
 CI runs the same hooks in named steps in one main job, including unused
 dependencies. Its clean checkout catches missing committed files that
@@ -146,7 +172,7 @@ cargo install cargo-about --locked --version 0.9.2 --features cli
 ```
 
 After changing dependencies, `Cargo.lock`, the first-party license, or the
-pinned Rust toolchain, refresh the committed bundle:
+recorded release compiler, refresh the committed bundle:
 
 ```sh
 cargo fetch --locked
@@ -156,7 +182,8 @@ just licenses
 ```
 
 Generation uses `cargo-about` with `--frozen --fail` and cached package
-sources. `about.toml` holds license preferences, target selection, and
+sources, explicitly selecting the recorded release compiler rather than
+the caller's active development compiler. `about.toml` holds license preferences, target selection, and
 hash-checked clarifications. Cargo-about handles the dependency graph,
 license recognition and deduplication; the Python adapter adds the
 first-party license and supplemental attribution. Missing-file SPDX
@@ -190,6 +217,8 @@ just perf path/to/file.md            # profile the release binary until it exits
 just perf path/to/file.md fathomable # select a binary explicitly
 scripts/perf-record.sh --bin fathomable -- path/to/file.md
 python3 scripts/test-perf-record.py       # helper command/quoting regression test
+python3 scripts/test-demo-repo.py         # demo isolation and argument regressions
+python3 scripts/test-rust-toolchain.py    # compiler selection and setup regressions
 ```
 
 `just perf` accepts positional `path` (default `.`) and `bin` (default
@@ -238,6 +267,27 @@ waiting.
 `just install` runs `cargo install --path crates/fathomable --locked`;
 end users can run that Cargo command directly without installing `just`.
 
+### Release builds
+
+```sh
+just release
+# Without just:
+scripts/check-licenses.sh
+python3 scripts/rust-toolchain.py release cargo build --release --locked --bin fathomable --target x86_64-unknown-linux-gnu
+```
+
+This checks the notice bundle before building with the exact compiler
+recorded in `licenses/manifest.json`. With the default Cargo target directory,
+the executable is `target/x86_64-unknown-linux-gnu/release/fathomable`.
+The compiler must already be installed (contributor setup installs it).
+
+Normal development, source installation, and compatibility tests can use
+other supported compilers. Their embedded Rust-runtime inventory still
+describes the recorded release, as the notice bundle states. Do not
+redistribute a binary built with another compiler without reviewing and
+updating the runtime notices to match. An MSRV test demonstrates compiler
+compatibility, not notice coverage for that alternative compiler.
+
 ## 3. Working in the tree
 
 - Product code lives under `crates/` in an edition 2024 workspace: the
@@ -255,10 +305,11 @@ end users can run that Cargo command directly without installing `just`.
 - Prefer behavior-level tests at public boundaries. A test that reads a
   tracked repository file locates it with `fathomable_testing::repo_file`,
   never `env!("CARGO_MANIFEST_DIR")`.
-- `scripts/demo-repo.sh` builds a throwaway workspace with seeded
+- `scripts/demo-repo.sh [DIR]` builds a throwaway workspace with seeded
   discussions for smoke-testing the MCP server and its tools. It runs the
   repository-only `seed` Cargo example; seeding is not part of the installed
-  Fathomable binary.
+  Fathomable binary. State and configuration are always isolated under the
+  demo directory; there is no `--isolated` mode switch.
 
 ## 4. Documentation
 

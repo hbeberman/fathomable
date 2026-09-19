@@ -47,11 +47,16 @@ GATE_COMMANDS = {
     ],
     "licenses": ["scripts/check-licenses.sh"],
 }
+for gate in ("fmt", "clippy", "rustdoc"):
+    GATE_COMMANDS[gate] = [
+        "python3", "scripts/rust-toolchain.py", "release", *GATE_COMMANDS[gate],
+    ]
 GATE_IDS = list(GATE_COMMANDS)
 FIXTURE_SCRIPTS = (
     "scripts/test-commit-hooks.py", "scripts/test-doctests.sh",
     "scripts/okf-lint.py", "scripts/check-boundaries.sh",
     "scripts/check-public-api.sh", "scripts/check-licenses.sh",
+    "scripts/rust-toolchain.py",
 )
 # Keep the production config unchanged: only the programs it invokes are fixtures.
 FIXTURE_GATE = """#!/usr/bin/env python3
@@ -72,6 +77,10 @@ if program == "cargo":
 elif program == "lychee":
     hook = "links"
     command = [program, *sys.argv[1:]]
+elif program == "rust-toolchain.py":
+    assert sys.argv[1:3] == ["release", "cargo"]
+    hook = {"fmt": "fmt", "clippy": "clippy", "doc": "rustdoc"}[sys.argv[3]]
+    command = ["python3", *json.loads(os.environ["FATHOMABLE_TEST_PYTHON_ARGS"])]
 else:
     hook = {
         "test-commit-hooks.py": "commit-hooks",

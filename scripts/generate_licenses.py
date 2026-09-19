@@ -101,7 +101,8 @@ class PlainTextHTML(HTMLParser):
 
 def run(command: list[str], root: Path) -> str:
     result = subprocess.run(
-        command, cwd=root, capture_output=True, text=True, encoding="utf-8", check=False,
+        [sys.executable, str(root / "scripts/rust-toolchain.py"), "release", *command],
+        cwd=root, capture_output=True, text=True, encoding="utf-8", check=False,
     )
     if result.returncode:
         raise LicenseBundleError(
@@ -228,15 +229,14 @@ def crate_notices(
 
 def runtime_notices(root: Path, manifest: dict[str, Any]) -> str:
     runtime = manifest["rust_standard_library"]
-    configured = tomllib.loads((root / "rust-toolchain.toml").read_text())["toolchain"]["channel"]
     fields = dict(
         line.split(":", 1) for line in run(["rustc", "--version", "--verbose"], root).splitlines()
         if ":" in line
     )
-    if (configured, fields["release"].strip(), fields["commit-hash"].strip()) != (
-        runtime["release"], runtime["release"], runtime["rustc_commit"],
+    if (fields["release"].strip(), fields["commit-hash"].strip()) != (
+        runtime["release"], runtime["rustc_commit"],
     ):
-        raise LicenseBundleError("active Rust toolchain does not match attribution manifest")
+        raise LicenseBundleError("release Rust toolchain does not match attribution manifest")
     if not runtime["documents"]:
         raise LicenseBundleError("Rust runtime inventory has no documents")
     output = [section(
@@ -300,6 +300,8 @@ def render_bundle(root: Path) -> str:
         f"Target: {manifest['target']}; normal/build dependencies, excluding dev dependencies.",
         f"External package versions: {len(packages)}",
         "The Rust runtime inventory and embedded data notices are included separately.",
+        "The Rust runtime notices describe the recorded release compiler; source builds",
+        "using another compiler require runtime-notice review before redistribution.",
         "This is not a byte-for-byte software bill of materials. System linker/startup",
         "objects and dynamic OS libraries are outside scope; review native inputs",
         "and applicable obligations before distributing binaries for another target.",

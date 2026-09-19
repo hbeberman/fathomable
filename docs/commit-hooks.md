@@ -25,6 +25,15 @@ Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
 
+Rust has [independent toolchain roles](decisions/0001-dependency-policy.md#rust-toolchain-roles).
+Normal Cargo commands use the stable development channel. Formatting, Clippy,
+and warnings-denied rustdoc select the compiler recorded in the license
+manifest through `scripts/rust-toolchain.py release`; `just fmt` uses the same
+compiler as the formatting gate. License generation explicitly selects and
+verifies that release compiler too. Nightly checks remain nightly. The test
+gates use the caller's active compiler; separate CI jobs enforce the declared
+MSRV and current-stable compatibility with locked dependencies.
+
 ## Installation and migration
 
 Install prerequisites with `scripts/setup-build-deps.sh`, then run
@@ -198,13 +207,20 @@ the commands from `prek.toml`. Individual aliases, including
 `udeps` -> `unused-dependencies`, and `test-commit-hooks` -> `commit-hooks`,
 all use `--all-files`. Other individual check aliases use the same name
 as their hook ID. `just docs-check` runs `okf` and `links` through prek.
-`just fmt` is an explicit, non-hook `cargo fmt` operation. Other recipes
+`just fmt` is an explicit, non-hook `cargo fmt` operation on the release
+compiler. Other recipes
 run their substantive commands directly; see
 [Contributing](../CONTRIBUTING.md#2-the-gate).
 
 CI uses the same hooks with `--all-files`, retaining named steps in one
 main job that also includes the unused-dependencies check. It does not
 depend on a locally installed Git hook.
+
+Additional MSRV and stable jobs build all workspace targets and run tests
+and doctests with `--locked`, without requiring the external gate tools to
+support the product's MSRV. The main job also runs the demo, profiler, and
+toolchain-helper regression tests. The license gate includes the
+toolchain-helper tests as well as notice-generation tests.
 
 `just test-commit-hooks` exercises real Git commits and prek shims in
 fixture repositories with cheap stand-in checks.

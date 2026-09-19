@@ -17,6 +17,11 @@ tags:
 
 Status: accepted (2026-09-17)
 
+Toolchain selection amended 2026-09-19 by the
+[independent toolchain roles](0001-dependency-policy.md#rust-toolchain-roles):
+notice generation and distributed releases use the recorded release compiler,
+not the floating development channel or the application's supported floor.
+
 ## Decision
 
 Fathomable's own source remains MIT-licensed. Third-party code and embedded
@@ -61,7 +66,13 @@ supplements from `licenses/manifest.json`. Missing-file SPDX templates are
 rejected unless a matching pinned upstream notice supplies the actual terms.
 The Rust standard-library/runtime inventory and syntect embedded-asset
 notices remain supplemental: cargo-about does not supply them automatically.
-Toolchain identities and asset hashes must match their reviewed records.
+The exact release compiler is recorded in
+`licenses/manifest.json` under `rust_standard_library.release`. The generator
+selects it through `scripts/rust-toolchain.py release` for Cargo and rustc,
+including subprocesses of cargo-about, and verifies its release and commit
+identity. It does not compare against the development channel in
+`rust-toolchain.toml` or require the caller's active compiler to match.
+Toolchain identities and asset hashes must still match their reviewed records.
 Line endings and trailing horizontal whitespace are normalized.
 
 This is not a byte-for-byte binary inventory. System linker/startup objects
@@ -75,6 +86,14 @@ by Dependabot. A gate rejects stale output rather than silently updating it.
 `scripts/check-licenses.sh` runs generator tests and the read-only `--check`.
 Normal product installation compiles the committed bundle without installing
 the notice-generation machinery.
+
+`just release` checks that bundle before building the locked x86_64 GNU/Linux
+binary with the recorded compiler. A normal source build or compatibility test
+may use another supported compiler; its embedded runtime notices describe
+the recorded release, not that alternative compiler. The bundle says so
+explicitly. Before redistributing such a binary, review and regenerate the
+runtime inventory for its compiler. MSRV support is not attribution approval
+for every compiler version.
 
 ## Related contracts
 

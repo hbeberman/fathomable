@@ -12,7 +12,7 @@ gates-verbose:
     prek run --config prek.toml --all-files --verbose
 
 fmt:
-    cargo fmt
+    python3 scripts/rust-toolchain.py release cargo fmt
 
 fmt-check:
     prek run --config prek.toml --all-files fmt
@@ -76,6 +76,10 @@ test-commit-hooks:
 
 install:
     cargo install --path crates/fathomable --locked
+
+release:
+    scripts/check-licenses.sh
+    python3 scripts/rust-toolchain.py release cargo build --release --locked --bin fathomable --target x86_64-unknown-linux-gnu
 
 build-deps:
     scripts/setup-build-deps.sh

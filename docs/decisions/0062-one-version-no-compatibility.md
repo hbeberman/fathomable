@@ -19,6 +19,11 @@ tags:
 
 Status: accepted (2026-09-05)
 
+Demo invocation amended 2026-09-19: `scripts/demo-repo.sh [DIR]` always
+isolates state and configuration under the demo directory. The redundant
+`--isolated` flag is removed and rejected before creating files; seeding
+continues through the repository-only Cargo example.
+
 Socket rules superseded 2026-09-18 by [0089](0089-store-only-mcp.md):
 the internal transport and its version counter are removed. Annotation
 format 5, exact-format guards, and operator-only resets are unchanged.

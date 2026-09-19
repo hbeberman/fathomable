@@ -3,5 +3,5 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-python3 -m unittest scripts/test_generate_licenses.py
+python3 -m unittest scripts/test_generate_licenses.py scripts/test-rust-toolchain.py
 python3 scripts/generate_licenses.py --check

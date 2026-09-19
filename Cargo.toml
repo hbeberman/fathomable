@@ -10,7 +10,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-# Mirrors the rust-toolchain.toml pin (ADR 0001); a floor, not a support promise.
+# Supported compiler floor (ADR 0001), independent of development/release tooling.
 rust-version = "1.97"
 authors = ["Project contributors"]
 license = "MIT"

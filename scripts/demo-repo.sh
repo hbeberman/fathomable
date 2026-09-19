@@ -3,14 +3,17 @@
 # the three MCP tools can be tried safely (ADR 0082). Needs bash, git, and
 # Cargo, and an installed `fathomable` (or FATHOMABLE=path/to/binary).
 #
-#   scripts/demo-repo.sh [--isolated] [DIR]
+#   scripts/demo-repo.sh [DIR]
 #
 # DIR defaults under this checkout's ignored .tmp directory. State and config
 # always live under DIR/.xdg instead of the caller's real XDG directories.
 set -euo pipefail
 
 FATHOMABLE=${FATHOMABLE:-fathomable}
-if [ "${1:-}" = "--isolated" ]; then shift; fi
+if (( $# > 1 )) || [[ ${1:-} == -* ]]; then
+    echo "usage: demo-repo.sh [DIR] (state and config are always isolated)" >&2
+    exit 2
+fi
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 DIR=${1:-"$REPO_ROOT/.tmp/demo-repos/$(date +%Y%m%d-%H%M%S)-$$"}
 mkdir -p "$DIR"

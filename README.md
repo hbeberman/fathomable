@@ -13,8 +13,9 @@ are refused, not automatically migrated or deleted. See the
 
 ## Install
 
-Building needs a Rust toolchain, a C linker, and Git. Run the package commands
-for your distribution, then install Rust and Fathomable:
+Building needs Rust **1.97 or newer**, a C linker, and Git. The checkout
+defaults to stable Rust; the minimum is checked independently in CI.
+Run the package commands for your distribution, then install Rust and Fathomable:
 
 ```sh
 # Azure Linux 4 / Fedora
@@ -89,3 +90,7 @@ Third-party components retain their own licenses. The checked-in
 [license bundle](crates/fathomable/assets/licenses.txt) contains their license
 texts, copyright notices, and source references. It is also available offline
 in the viewer through **Help > Licenses**.
+
+The bundled Rust-runtime inventory describes the recorded release compiler.
+Before redistributing a source build made with another compiler, review its
+runtime notices; see [release builds](CONTRIBUTING.md#release-builds).

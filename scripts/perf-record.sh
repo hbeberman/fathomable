@@ -165,7 +165,7 @@ if [[ ${#bin_targets[@]} -eq 0 ]]; then
     if [[ -n $bin_name ]]; then
         fail "no binary target named '$bin_name' found"
     fi
-    fail "no binary targets found; the bootstrap scaffold is library-only until you add src/main.rs or [[bin]]"
+    fail "no workspace binary targets found in Cargo metadata"
 fi
 
 if [[ -z $bin_name && ${#bin_targets[@]} -gt 1 ]]; then

@@ -9,10 +9,9 @@ Agents and people share one rule book, [AGENTS.md](AGENTS.md).
 ## 1. Prerequisites
 
 Everything in the [README install section](README.md#install), plus the
-tools the commit gate runs. Two of the cargo tools compile native code:
-`cargo-udeps` links OpenSSL and libssh2 through the `cargo` crate, and
-`cargo-public-api` links libcurl, so `pkg-config` and the OpenSSL headers
-must be present before `cargo install` builds them. `perf` is only for
+tools the commit gate runs. The `cargo-public-api` tool compiles native code
+and links libcurl, so `pkg-config` and the OpenSSL headers must be present
+before `cargo install` builds it. `perf` is only for
 `just perf`; `just` is an optional command runner. Check recipes call prek
 directly, and other recipes run their substantive commands without Make.
 
@@ -99,7 +98,7 @@ status. Logs are ignored, local, and may contain source snippets. Direct
 
 ## 2. The gate
 
-`prek.toml` is the single source of truth for all 14 checks, each a local
+`prek.toml` is the single source of truth for all 13 checks, each a local
 system hook. Only `commit-msg` is installed: prek checks the message
 first, then runs every check once against staged tracked contents.
 Failures refuse the commit. No checks are filtered by changed filenames,
@@ -139,7 +138,6 @@ The check order and individual checkout commands are:
 | `public-api` | `just public-api` | Public API shape |
 | `audit` | `just audit` | Dependency vulnerabilities |
 | `deny` | `just deny` | Dependency licenses, sources, and bans |
-| `unused-dependencies` | `just udeps` | Unused dependencies, using nightly |
 | `licenses` | `just licenses` | Bundled notice freshness and generator tests |
 
 Each individual check recipe calls `prek run --config prek.toml --all-files`
@@ -149,9 +147,8 @@ with the corresponding hook ID; for example,
 it runs `cargo fmt` with the release compiler to format the checkout on
 explicit request.
 
-CI runs the same hooks in named steps in one main job, including unused
-dependencies. Its clean checkout catches missing committed files that
-local untracked files might mask.
+CI runs the same hooks in named steps in one main job. Its clean checkout
+catches missing committed files that local untracked files might mask.
 
 ### Dependency monitoring
 
@@ -268,6 +265,22 @@ waiting.
 end users can run that Cargo command directly without installing `just`.
 
 ### Release builds
+
+Run unused-dependency analysis intentionally before a release. It is not part
+of the commit gate, CI, contributor setup, or `just release`. Install the
+optional tool once, then run it against the workspace:
+
+```sh
+cargo +nightly install cargo-udeps --locked --version 0.1.61
+just udeps
+# Without just:
+cargo +nightly udeps --workspace --all-targets --all-features --locked
+```
+
+Review its findings before removing dependencies; indirect uses can produce
+false positives. Nightly is already installed for the public-API gate.
+
+Build the attributed release executable separately:
 
 ```sh
 just release

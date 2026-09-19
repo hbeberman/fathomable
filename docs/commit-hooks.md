@@ -20,7 +20,7 @@ tags:
 [prek](https://github.com/j178/prek) generates the Git hook shim and runs
 the repository's checks directly. A thin observer retains its native logs;
 it does not execute or schedule individual checks. `prek.toml` is their single source of
-truth: each of the 14 checks is a local `language = "system"` hook.
+truth: each of the 13 checks is a local `language = "system"` hook.
 Setup and CI pin prek to **0.5.3**, and the config requires at least that
 version. No remote hook repositories, managed hook environments, or
 additional Rust crate dependencies are used.
@@ -30,7 +30,7 @@ Normal Cargo commands use the stable development channel. Formatting, Clippy,
 and warnings-denied rustdoc select the compiler recorded in the license
 manifest through `scripts/rust-toolchain.py release`; `just fmt` uses the same
 compiler as the formatting gate. License generation explicitly selects and
-verifies that release compiler too. Nightly checks remain nightly. The test
+verifies that release compiler too. The public-API check uses nightly. The test
 gates use the caller's active compiler; separate CI jobs enforce the declared
 MSRV and current-stable compatibility with locked dependencies.
 
@@ -96,8 +96,7 @@ separate merge handling.
 | 10 | `public-api` | Public API shape |
 | 11 | `audit` | Dependency vulnerabilities |
 | 12 | `deny` | Dependency licenses, sources, and bans |
-| 13 | `unused-dependencies` | Unused dependencies |
-| 14 | `licenses` | Bundled notice freshness and generator tests |
+| 13 | `licenses` | Bundled notice freshness and generator tests |
 
 Distinct priorities and `fail_fast` enforce this order and reject an
 invalid message before running expensive checks. All hooks are
@@ -105,7 +104,7 @@ invalid message before running expensive checks. All hooks are
 mandatory on every commit, even empty, deletion-only, documentation-only,
 and merge commits; a failure stops the run and refuses the commit.
 The message checker receives Git's message filename and runs only at
-`commit-msg`. The 14 check hooks use `pass_filenames = false` and declare
+`commit-msg`. The 13 check hooks use `pass_filenames = false` and declare
 `pre-commit`, `commit-msg`, and `manual` stages. Declaring those stages
 does not install extra Git shims.
 
@@ -204,17 +203,19 @@ checkout semantics. Add `--verbose` to either command for full output.
 `justfile` directly invokes prek for check recipes; it does not duplicate
 the commands from `prek.toml`. Individual aliases, including
 `fmt-check` -> `fmt`, `test` -> `nextest`, `doc` -> `rustdoc`,
-`udeps` -> `unused-dependencies`, and `test-commit-hooks` -> `commit-hooks`,
+and `test-commit-hooks` -> `commit-hooks`,
 all use `--all-files`. Other individual check aliases use the same name
 as their hook ID. `just docs-check` runs `okf` and `links` through prek.
 `just fmt` is an explicit, non-hook `cargo fmt` operation on the release
-compiler. Other recipes
-run their substantive commands directly; see
+compiler. `just udeps` directly runs optional, locked, nightly
+unused-dependency analysis across all workspace targets and features.
+`cargo-udeps` is not installed by contributor setup or run by hooks, CI, or `just release`;
+invoke it intentionally [before a release](../CONTRIBUTING.md#release-builds).
+Other recipes run their substantive commands directly; see
 [Contributing](../CONTRIBUTING.md#2-the-gate).
 
 CI uses the same hooks with `--all-files`, retaining named steps in one
-main job that also includes the unused-dependencies check. It does not
-depend on a locally installed Git hook.
+main job. It does not depend on a locally installed Git hook.
 
 Additional MSRV and stable jobs build all workspace targets and run tests
 and doctests with `--locked`, without requiring the external gate tools to

@@ -123,8 +123,8 @@ public-API tooling, or other external tools.
 runtime notices. This is the single release-version source, independent of
 the development channel and MSRV. Formatting, Clippy, and warnings-denied
 rustdoc use this controlled compiler so their results do not drift with
-stable updates. Nightly remains separate for public-API and unused-dependency
-inspection.
+stable updates. Nightly remains separate for the public-API gate and optional
+pre-release unused-dependency inspection.
 
 `scripts/rust-toolchain.py msrv` and `scripts/rust-toolchain.py release`
 (invoked with `python3`) print the respective numeric version. With command
@@ -133,9 +133,11 @@ without changing rustup defaults or installing a compiler. Missing tools,
 invalid version declarations, and command failures are explicit errors.
 
 Contributor setup installs stable, the release compiler with rustfmt/Clippy,
-and nightly. External Cargo tools are installed explicitly using stable
-(nightly for cargo-udeps), regardless of a caller's toolchain override. The
-MSRV is installed by its CI job or explicitly by a contributor when needed.
+and nightly. External Cargo tools are installed explicitly using stable,
+regardless of a caller's toolchain override. Optional `cargo-udeps` is installed
+separately with nightly and run intentionally before releases, not by the
+commit gate or CI; see [release builds](../../CONTRIBUTING.md#release-builds).
+The MSRV is installed by its CI job or explicitly by a contributor when needed.
 
 `just release` checks the committed notices, then builds the locked x86_64
 GNU/Linux executable using the recorded release compiler. Notice generation

@@ -80,7 +80,7 @@ Install or migrate the prek-managed `commit-msg` hook with
 `just install-commit-hooks` (or `scripts/install-commit-hooks.sh`) after
 `scripts/setup-build-deps.sh`. Installation is explicit opt-in, never a
 side effect of building or installing the product. It checks the message
-before running all 14 checks against staged tracked contents, including
+before running all 13 checks against staged tracked contents, including
 empty, deletion-only, documentation-only, and merge commits.
 See [Commit hooks and staged gates](docs/commit-hooks.md); installation
 uses Git's shared hooks directory, including from linked worktrees.
@@ -91,7 +91,7 @@ hook attempts, not total agent work; do not commit or upload them.
 Agents should not run `just gates` or the equivalent full all-files gate
 immediately before committing. After targeted validation, stage and commit the
 completed change; the installed `commit-msg` hook runs the message policy and
-all 14 checks against the staged tracked contents. Use a standalone full gate
+all 13 checks against the staged tracked contents. Use a standalone full gate
 only when the user explicitly requests preflight validation or when diagnosing
 gate behavior:
 

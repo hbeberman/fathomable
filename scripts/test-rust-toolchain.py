@@ -129,7 +129,8 @@ class ToolchainTests(unittest.TestCase):
         installs = [call for call in calls if call[0] == "cargo"]
         self.assertTrue(installs)
         for call in installs:
-            self.assertEqual(call[1], "+nightly" if "cargo-udeps" in call else "+stable")
+            self.assertEqual(call[1], "+stable")
+            self.assertNotIn("cargo-udeps", call)
         self.assertNotIn("1.97", self.log.read_text())
         self.assertFalse((self.repo / ".git/hooks").exists())
 

@@ -42,9 +42,6 @@ GATE_COMMANDS = {
     "public-api": ["scripts/check-public-api.sh"],
     "audit": ["cargo", "audit"],
     "deny": ["cargo", "deny", "check"],
-    "unused-dependencies": [
-        "cargo", "+nightly", "udeps", "--all-targets", "--all-features",
-    ],
     "licenses": ["scripts/check-licenses.sh"],
 }
 for gate in ("fmt", "clippy", "rustdoc"):
@@ -71,7 +68,6 @@ if program == "cargo":
     hook = {
         "fmt": "fmt", "clippy": "clippy", "nextest": "nextest",
         "doc": "rustdoc", "audit": "audit", "deny": "deny",
-        "+nightly": "unused-dependencies",
     }[sys.argv[1]]
     command = [program, *sys.argv[1:]]
 elif program == "lychee":

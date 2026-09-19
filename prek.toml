@@ -139,16 +139,6 @@ require_serial = true
 priority = 12
 
 [[repos.hooks]]
-id = "unused-dependencies"
-name = "Unused dependencies"
-entry = "cargo +nightly udeps --all-targets --all-features"
-language = "system"
-always_run = true
-pass_filenames = false
-require_serial = true
-priority = 13
-
-[[repos.hooks]]
 id = "licenses"
 name = "Bundled license notices"
 entry = "scripts/check-licenses.sh"
@@ -156,4 +146,4 @@ language = "system"
 always_run = true
 pass_filenames = false
 require_serial = true
-priority = 14
+priority = 13

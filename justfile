@@ -51,7 +51,7 @@ deny:
     prek run --config prek.toml --all-files deny
 
 udeps:
-    prek run --config prek.toml --all-files unused-dependencies
+    cargo +nightly udeps --workspace --all-targets --all-features --locked
 
 licenses:
     prek run --config prek.toml --all-files licenses

@@ -1073,7 +1073,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     );
     app.focus_threads_pane();
     let parts = crate::app::draw::status_parts(&app);
-    assert_eq!(parts.pill, "THREADS");
+    assert_eq!(parts.pill, "THREAD LIST");
     assert_eq!(
         parts.badges,
         ["SRC", "CMP empty tree → working tree"],
@@ -1082,11 +1082,10 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Esc leaves a pane where it is; `Space w h` focuses it and
-/// `Space w l` hands the keys back, `Space p t` hides it, and `t` opens
-/// and focuses Reviews (ADR 0010, ADR 0049, ADR 0056).
+/// Esc returns from a list to the displayed main view, `T` focuses the
+/// Thread list, `w` cycles back, and only `f` leaves Threads.
 #[test]
-fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()> {
+fn esc_returns_to_the_displayed_main_without_closing_threads() -> anyhow::Result<()> {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     use crate::app::input::keys;
@@ -1107,16 +1106,14 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
     press(&mut app, KeyCode::Esc);
     assert_eq!(app.focus(), Focus::View);
     assert!(app.threads_pane_shown(), "Esc leaves the pane open");
-    space(&mut app, 'w');
-    press(&mut app, KeyCode::Char('h'));
+    press(&mut app, KeyCode::Char('T'));
     assert_eq!(
         app.focus(),
         Focus::ThreadsPane,
-        "Space w h lands on the pane while the files pane is hidden"
+        "T lands on the list while it is hidden"
     );
-    space(&mut app, 'w');
-    press(&mut app, KeyCode::Char('l'));
-    assert_eq!(app.focus(), Focus::View, "Space w l hands back");
+    press(&mut app, KeyCode::Char('w'));
+    assert_eq!(app.focus(), Focus::View, "w cycles back");
     assert!(app.threads_pane_shown());
     space(&mut app, 'p');
     press(&mut app, KeyCode::Char('t'));
@@ -1129,13 +1126,13 @@ fn esc_leaves_a_pane_and_its_space_keys_focus_and_hide_it() -> anyhow::Result<()
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Tree);
     press(&mut app, KeyCode::Char('t'));
-    assert!(app.review_list().is_open(), "t never closes Reviews");
-    assert_eq!(app.focus(), Focus::Review, "t focuses an open Reviews view");
+    assert!(app.review_list().is_open(), "t never closes Threads");
+    assert_eq!(app.focus(), Focus::Review, "t focuses an open Threads view");
     press(&mut app, KeyCode::Esc);
-    assert!(
-        !app.review_list().is_open(),
-        "Esc closes the list: it is the column"
-    );
+    assert!(app.review_list().is_open(), "Esc keeps Threads displayed");
+    assert_eq!(app.focus(), Focus::Review);
+    press(&mut app, KeyCode::Char('f'));
+    assert!(!app.review_list().is_open());
     assert_eq!(app.focus(), Focus::View);
     Ok(())
 }
@@ -2951,7 +2948,7 @@ fn a_resolution_proposal_remains_until_superseded_or_resolved() -> anyhow::Resul
     ));
     let screen = render(&app)?;
     assert!(
-        screen.contains("Reviews") && screen.contains("◐ 1 resolution proposed"),
+        screen.contains("Threads") && screen.contains("◐ 1 resolution proposed"),
         "a proposal counts under its own circle (ADR 0075): {screen}"
     );
     assert!(

@@ -180,6 +180,8 @@ pub enum Key {
     UiWarning,
     /// The background of a pane's header rows (ADR 0059).
     UiHeader,
+    /// The marker and pane name while that pane owns navigation (ADR 0091).
+    UiPaneFocus,
     UiSidebar,
     UiListActive,
     UiListInactive,
@@ -226,7 +228,7 @@ pub enum Key {
 }
 
 impl Key {
-    const NAMED: [(&'static str, Self); 43] = [
+    const NAMED: [(&'static str, Self); 44] = [
         ("ui.text", Self::UiText),
         ("ui.linenr", Self::UiLinenr),
         ("ui.selection", Self::UiSelection),
@@ -239,6 +241,7 @@ impl Key {
         ("ui.statusline.error", Self::UiStatuslineError),
         ("ui.warning", Self::UiWarning),
         ("ui.header", Self::UiHeader),
+        ("ui.pane.focus", Self::UiPaneFocus),
         ("ui.sidebar", Self::UiSidebar),
         ("ui.list.active", Self::UiListActive),
         ("ui.list.inactive", Self::UiListInactive),

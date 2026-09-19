@@ -4,7 +4,7 @@
 //!
 //! A comment or reply body goes through the same renderer as a Markdown
 //! file, wrapped to the text width less the message indent, with fenced
-//! code coloured by its language. File and Reviews surfaces share retained
+//! code coloured by its language. File and Threads surfaces share retained
 //! body layouts; inline row counts and drawing use those same layouts, so
 //! navigation and drawing do not parse or highlight a body again.
 

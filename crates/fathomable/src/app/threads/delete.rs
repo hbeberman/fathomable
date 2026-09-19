@@ -83,7 +83,7 @@ impl App {
         }
         self.place_stub_rows();
         if self.focus == Focus::ThreadsPane && self.threads_pane_height() == 0 {
-            self.focus = Focus::View;
+            self.focus = self.displayed_main_focus();
         }
         self.review_reselect(place);
         self.notice("deleted");

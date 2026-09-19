@@ -69,6 +69,12 @@ Amended later 2026-09-18: the queued live-change feature is removed, so
 **Go** contains the three file pickers and jumplist Back/Forward only.
 **Newest change** and `Space j j` have no replacement or compatibility route.
 
+Amended later 2026-09-18 by [0091](0091-pane-focus-navigation.md):
+Layout's main choices are **File** and **Threads**, and its sidebar choices
+are **File list** and **Thread list**. Pane-title clicks keep opening their
+existing settings menus; the new focus marker does not replace or move those
+targets. Layout visibility changes do not take focus.
+
 ## Context
 
 Fathomable already made the mouse a peer: pane headers and key bars take

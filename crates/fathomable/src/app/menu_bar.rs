@@ -111,21 +111,21 @@ impl Item {
         }
     }
 
-    fn command(label: &'static str, target: Target) -> Self {
+    fn command(app: &App, label: &'static str, target: Target) -> Self {
         Self {
             label: label.to_owned(),
             hint: target_keys(target)
                 .map(bindings::menu_spell)
                 .unwrap_or_default(),
-            enabled: true,
+            enabled: app.panes_fit() || matches!(target, Target::Quit | Target::Submenu(_)),
             checked: false,
             active: false,
             target,
         }
     }
 
-    fn submenu(label: &'static str, submenu: Submenu) -> Self {
-        Self::command(label, Target::Submenu(submenu))
+    fn submenu(app: &App, label: &'static str, submenu: Submenu) -> Self {
+        Self::command(app, label, Target::Submenu(submenu))
     }
 
     fn choice(app: &App, action: Action, label: &'static str, active: bool) -> Self {
@@ -546,18 +546,18 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             let mut rows = Vec::new();
             if labels(app.width).len() == 1 {
                 rows.extend([
-                    Row::Item(Item::submenu("Layout", Submenu::Layout)),
-                    Row::Item(Item::submenu("Go", Submenu::Go)),
-                    Row::Item(Item::submenu("Review", Submenu::Review)),
-                    Row::Item(Item::submenu("Diff", Submenu::Diff)),
+                    Row::Item(Item::submenu(app, "Layout", Submenu::Layout)),
+                    Row::Item(Item::submenu(app, "Go", Submenu::Go)),
+                    Row::Item(Item::submenu(app, "Review", Submenu::Review)),
+                    Row::Item(Item::submenu(app, "Diff", Submenu::Diff)),
                 ]);
             }
-            rows.push(Row::Item(Item::submenu("Help", Submenu::Help)));
+            rows.push(Row::Item(Item::submenu(app, "Help", Submenu::Help)));
             rows.extend([
                 Row::Separator,
-                Row::Item(Item::command("Status", Target::Status)),
-                Row::Item(Item::command("About", Target::About)),
-                Row::Item(Item::command("Quit", Target::Quit)),
+                Row::Item(Item::command(app, "Status", Target::Status)),
+                Row::Item(Item::command(app, "About", Target::About)),
+                Row::Item(Item::command(app, "Quit", Target::Quit)),
             ]);
             rows
         }
@@ -592,7 +592,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item::action(app, Action::JumpForward, "Forward")),
         ],
         Root::Review => vec![
-            Row::Item(Item::action(app, Action::Review, "Reviews")),
+            Row::Item(Item::action(app, Action::Review, "Threads")),
             Row::Item(Item::action(
                 app,
                 Action::ReviewRecentlyResolved,
@@ -612,7 +612,8 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item {
                 label: "Show resolved".to_owned(),
                 hint: "x".to_owned(),
-                enabled: app.review_list().is_open() || app.focus() == Focus::ThreadsPane,
+                enabled: app.panes_fit()
+                    && (app.review_list().is_open() || app.focus() == Focus::ThreadsPane),
                 checked: app.review().resolved,
                 active: false,
                 target: Target::ReviewResolved,
@@ -620,7 +621,7 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             Row::Item(Item {
                 label: "Only current file".to_owned(),
                 hint: "s".to_owned(),
-                enabled: app.review_list().is_open(),
+                enabled: app.panes_fit() && app.review_list().is_open(),
                 checked: app.review().file_only,
                 active: false,
                 target: Target::ReviewFile,
@@ -701,25 +702,33 @@ pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
             Row::Item(Item::choice(
                 app,
                 Action::FileView,
-                "File view",
+                "File",
                 !app.review_list().is_open(),
             )),
             Row::Item(Item::choice(
                 app,
                 Action::Review,
-                "Reviews view",
+                "Threads",
                 app.review_list().is_open(),
             )),
             Row::Separator,
             Row::Item(Item::action(app, Action::SidebarToggle, "Sidebar")),
-            Row::Item(Item::action(app, Action::TreeToggle, "Files pane")),
-            Row::Item(Item::action(app, Action::ThreadsPaneToggle, "Threads pane")),
+            Row::Item(Item::action(app, Action::TreeToggle, "File list")),
+            Row::Item(Item::action(app, Action::ThreadsPaneToggle, "Thread list")),
         ],
         Submenu::Help => vec![
-            Row::Item(Item::command("Getting started", Target::GettingStarted)),
-            Row::Item(Item::command("Doctor", Target::Doctor)),
-            Row::Item(Item::command("View keymap", Target::Action(Action::Help))),
-            Row::Item(Item::command("Licenses", Target::Licenses)),
+            Row::Item(Item::command(
+                app,
+                "Getting started",
+                Target::GettingStarted,
+            )),
+            Row::Item(Item::command(app, "Doctor", Target::Doctor)),
+            Row::Item(Item::command(
+                app,
+                "View keymap",
+                Target::Action(Action::Help),
+            )),
+            Row::Item(Item::command(app, "Licenses", Target::Licenses)),
         ],
         Submenu::Go => rows(app, Root::Go),
         Submenu::Review => rows(app, Root::Review),
@@ -728,6 +737,15 @@ pub(crate) fn submenu_rows(app: &App, submenu: Submenu) -> Vec<Row> {
 }
 
 fn action_available(app: &App, action: Action) -> bool {
+    if !app.panes_fit() {
+        return crate::app::input::keys::available_while_panes_do_not_fit(action);
+    }
+    if app.directory_path().is_some()
+        && matches!(app.focus(), Focus::View | Focus::Tree)
+        && crate::app::input::keys::unavailable_for_directory(action)
+    {
+        return false;
+    }
     match action {
         Action::JumpBack => app.jumplist.can_back(),
         Action::JumpForward => app.jumplist.can_forward(),
@@ -830,6 +848,9 @@ impl App {
 
     pub(crate) fn run_title_target(&mut self, target: Target) -> Effect {
         self.close_title_menu();
+        if !self.panes_fit() && !matches!(target, Target::Action(_) | Target::Quit) {
+            return Effect::None;
+        }
         match target {
             Target::Action(action) => self.act(action),
             Target::ReviewResolved => {
@@ -1268,7 +1289,7 @@ fn bar_mouse(app: &mut App, kind: MouseEventKind, column: usize) -> Effect {
             _ => {}
         }
     } else if let Some(picker) = bar_tail(app, app.width).picker_at(column) {
-        if left {
+        if left && app.panes_fit() {
             app.close_title_menu();
             app.open_picker(picker);
         }
@@ -1276,7 +1297,7 @@ fn bar_mouse(app: &mut App, kind: MouseEventKind, column: usize) -> Effect {
         .and_then(|identity| identity.picker_at(column))
         .is_some()
     {
-        if left {
+        if left && app.panes_fit() {
             app.close_title_menu();
             app.pick_worktree();
         }
@@ -1289,7 +1310,7 @@ fn bar_mouse(app: &mut App, kind: MouseEventKind, column: usize) -> Effect {
 /// The title bar and its open menu's share of one mouse event. `None`
 /// lets an event outside a closed menu continue to the panes.
 pub(crate) fn mouse(app: &mut App, event: MouseEvent) -> Option<Effect> {
-    if !app.menu_bar.shown() {
+    if !app.menu_bar.shown() || app.size().1 <= app.pane_top() {
         return None;
     }
     let column = usize::from(event.column);
@@ -1431,7 +1452,7 @@ mod tests {
         let review = rows(&app, Root::Review);
         assert_eq!(
             review[0].item().map(|item| (&*item.label, item.checked)),
-            Some(("Reviews", false))
+            Some(("Threads", false))
         );
         assert_eq!(
             review[5].item().map(|item| (&*item.label, item.checked)),
@@ -1657,7 +1678,7 @@ mod tests {
         testing::press(&mut app, " ps");
         assert_eq!(
             app.message(),
-            Some("sidebar has no panes; show Files or Threads first")
+            Some("sidebar has no lists; show File list or Thread list first")
         );
         Ok(())
     }
@@ -1675,18 +1696,18 @@ mod tests {
         assert_eq!(
             items(&app),
             [
-                ("File view".to_owned(), false, true),
-                ("Reviews view".to_owned(), false, false),
+                ("File".to_owned(), false, true),
+                ("Threads".to_owned(), false, false),
                 ("Sidebar".to_owned(), true, false),
-                ("Files pane".to_owned(), true, false),
-                ("Threads pane".to_owned(), true, false),
+                ("File list".to_owned(), true, false),
+                ("Thread list".to_owned(), true, false),
             ]
         );
         testing::click(&mut app, 4, 0);
         assert!(
             testing::screen(&app)?
                 .iter()
-                .any(|row| row.contains("▌ File view"))
+                .any(|row| row.contains("▌ File"))
         );
         app.close_title_menu();
         app.open_review();
@@ -1698,22 +1719,22 @@ mod tests {
         assert_eq!(
             items(&app),
             [
-                ("File view".to_owned(), false, true),
-                ("Reviews view".to_owned(), false, false),
+                ("File".to_owned(), false, true),
+                ("Threads".to_owned(), false, false),
                 ("Sidebar".to_owned(), true, false),
-                ("Files pane".to_owned(), false, false),
-                ("Threads pane".to_owned(), true, false),
+                ("File list".to_owned(), false, false),
+                ("Thread list".to_owned(), true, false),
             ]
         );
         testing::press(&mut app, " ps");
         assert_eq!(
             items(&app),
             [
-                ("File view".to_owned(), false, true),
-                ("Reviews view".to_owned(), false, false),
+                ("File".to_owned(), false, true),
+                ("Threads".to_owned(), false, false),
                 ("Sidebar".to_owned(), false, false),
-                ("Files pane".to_owned(), false, false),
-                ("Threads pane".to_owned(), false, false),
+                ("File list".to_owned(), false, false),
+                ("Thread list".to_owned(), false, false),
             ]
         );
         Ok(())
@@ -1781,7 +1802,9 @@ mod tests {
     #[test]
     fn short_submenu_keeps_one_item_visible_and_aligned() -> anyhow::Result<()> {
         let mut app = shown_app("short-submenu")?;
+        app.toggle_sidebar();
         app.resize(100, 6);
+        assert!(app.panes_fit());
         testing::click(&mut app, 1, 0);
         mouse::handle_mouse(
             &mut app,
@@ -1884,7 +1907,7 @@ mod tests {
     #[test]
     fn scrolling_a_child_moves_focus_to_a_visible_item() -> anyhow::Result<()> {
         let mut app = shown_app("child-scroll")?;
-        app.resize(20, 8);
+        app.resize(28, 8);
         testing::click(&mut app, 1, 0);
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         keys::handle_key(&mut app, KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));

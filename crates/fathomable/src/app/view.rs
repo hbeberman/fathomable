@@ -771,9 +771,6 @@ impl View {
         }
         self.height = height;
         self.scroll = self.scroll.min(self.max_scroll());
-        if self.cursor.row < self.scroll || self.cursor.row >= self.scroll + height {
-            self.ensure_visible();
-        }
     }
 
     /// Replace the document text after a change on disk (ADR 0010 reload).
@@ -872,6 +869,22 @@ impl View {
     /// and column, on its detached row, or on the thread's rows `seat`
     /// names, the stub once the thread has folded.
     fn relayout_seated(&mut self, seat: Option<StubSeat>) {
+        let selection = self.selection.map(|selection| {
+            (
+                selection,
+                self.source_point(selection.anchor),
+                self.source_point(selection.head),
+            )
+        });
+        let detached_viewport = (self.cursor.row < self.scroll
+            || self.cursor.row >= self.scroll + self.height)
+            .then(|| {
+                let top = Cursor {
+                    row: self.scroll,
+                    col: 0,
+                };
+                (top, self.source_point(top))
+            });
         // A cursor on a detached row stays on it (ADR 0039).
         let on_detached = self.detached_anchor_of_row(self.cursor.row);
         // A cursor on a row with no source — a blank rendered row — is
@@ -910,27 +923,7 @@ impl View {
             self.cursor.row
         };
         let screen_row = kept_row.saturating_sub(self.scroll);
-        let layout = match self.display {
-            Display::Diff => match self.diff_shown.as_ref().map(|d| &d.body) {
-                Some(DiffBody::Diff { base, target }) => Layout::diff(
-                    Self::text_of(base),
-                    Self::text_of(target),
-                    self.width,
-                    self.compare,
-                ),
-                Some(DiffBody::Notice(text)) => Layout::notice(text, self.width),
-                None => Layout::notice("no diff", self.width),
-            },
-            Display::Source => self.source_layout(),
-            Display::Rendered => self.rendered_layout(),
-        };
-        self.layout = layout.with_rows_before(&self.detached).with_rows_after(
-            &self
-                .stubs
-                .iter()
-                .map(|block| (block.anchor, block.rows))
-                .collect::<Vec<_>>(),
-        );
+        self.layout = self.build_layout();
         let index = self.layout.index();
         let line = line.min(index.line_count());
         let offset = index.offset_at(self.shown(), line, column);
@@ -962,9 +955,76 @@ impl View {
         };
         self.scroll = kept.saturating_sub(screen_row);
         self.clamp_col();
-        self.selection = None;
+        self.selection = selection.map(|(selection, anchor, head)| Selection {
+            anchor: self.cursor_for_point(anchor, selection.anchor),
+            head: self.cursor_for_point(head, selection.head),
+            linewise: selection.linewise,
+        });
+        if let Some(selection) = self.selection {
+            self.cursor = selection.head;
+        }
         self.rescan();
-        self.ensure_visible();
+        if let Some((top, point)) = detached_viewport {
+            self.scroll = self.cursor_for_point(point, top).row.min(self.max_scroll());
+        } else {
+            self.ensure_visible();
+        }
+    }
+
+    fn build_layout(&self) -> Layout {
+        let layout = match self.display {
+            Display::Diff => match self.diff_shown.as_ref().map(|d| &d.body) {
+                Some(DiffBody::Diff { base, target }) => Layout::diff(
+                    Self::text_of(base),
+                    Self::text_of(target),
+                    self.width,
+                    self.compare,
+                ),
+                Some(DiffBody::Notice(text)) => Layout::notice(text, self.width),
+                None => Layout::notice("no diff", self.width),
+            },
+            Display::Source => self.source_layout(),
+            Display::Rendered => self.rendered_layout(),
+        };
+        layout.with_rows_before(&self.detached).with_rows_after(
+            &self
+                .stubs
+                .iter()
+                .map(|block| (block.anchor, block.rows))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    fn source_point(&self, cursor: Cursor) -> Option<(usize, usize)> {
+        let offset = self.layout.lines().get(cursor.row)?.source_at(cursor.col)?;
+        let index = self.layout.index();
+        Some((index.line_of(offset), index.column_of(self.shown(), offset)))
+    }
+
+    fn cursor_for_point(&self, point: Option<(usize, usize)>, fallback: Cursor) -> Cursor {
+        if let Some((line, column)) = point
+            && let Some(offset) = self.layout.index().offset_at(self.shown(), line, column)
+            && let Some(row) = self.layout.line_at_offset(offset)
+        {
+            let line = &self.layout.lines()[row];
+            let col = line
+                .columns()
+                .into_iter()
+                .min_by_key(|&col| {
+                    line.source_at(col)
+                        .map_or(usize::MAX, |at| at.abs_diff(offset))
+                })
+                .unwrap_or(0);
+            return Cursor { row, col };
+        }
+        let row = fallback.row.min(self.last_row());
+        let col = self
+            .columns(row)
+            .into_iter()
+            .take_while(|&col| col <= fallback.col)
+            .last()
+            .unwrap_or(0);
+        Cursor { row, col }
     }
 
     fn last_row(&self) -> usize {
@@ -1087,6 +1147,7 @@ impl View {
         }
         self.want_col = self.cursor.col;
         self.extend_selection();
+        self.ensure_visible();
     }
 
     /// One grapheme right; at the last column the cursor wraps onto the
@@ -1102,35 +1163,29 @@ impl View {
         }
         self.want_col = self.cursor.col;
         self.extend_selection();
+        self.ensure_visible();
     }
 
     pub(crate) fn line_start(&mut self) {
         self.cursor.col = 0;
         self.want_col = 0;
         self.extend_selection();
+        self.ensure_visible();
     }
 
     pub(crate) fn line_end(&mut self) {
         self.cursor.col = self.columns(self.cursor.row).last().copied().unwrap_or(0);
         self.want_col = usize::MAX;
         self.extend_selection();
+        self.ensure_visible();
     }
 
-    /// Scroll the viewport without a cursor jump unless the cursor leaves it.
+    /// Scroll only the viewport, preserving the cursor and selection.
     pub(crate) fn scroll_by(&mut self, delta: isize) {
         self.scroll = self
             .scroll
             .saturating_add_signed(delta)
             .min(self.max_scroll());
-        let top = self.scroll;
-        let bottom = self.scroll + self.height - 1;
-        if self.cursor.row < top {
-            self.cursor.row = self.settle(top, true);
-            self.clamp_col();
-        } else if self.cursor.row > bottom {
-            self.cursor.row = self.settle(bottom.min(self.last_row()), false);
-            self.clamp_col();
-        }
     }
 
     /// Place the cursor at a screen position (mouse click).
@@ -2244,11 +2299,18 @@ mod tests {
     }
 
     #[test]
-    fn wheel_scroll_drags_cursor_along() {
+    fn wheel_scroll_preserves_cursor_and_selection() {
         let mut v = view();
+        v.select_chars();
+        v.move_right();
+        let cursor = v.cursor();
+        let selection = v.selection();
         v.scroll_by(3);
         assert_eq!(v.scroll(), 3);
-        assert_eq!(v.cursor().row, 3);
+        assert_eq!(v.cursor(), cursor);
+        assert_eq!(v.selection(), selection);
+        v.move_right();
+        assert_eq!(v.scroll(), 0);
         v.scroll_by(-10);
         assert_eq!(v.scroll(), 0);
     }

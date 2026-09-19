@@ -478,6 +478,8 @@ fn drafts_stay_in_their_files_when_clicking_away_and_back() -> anyhow::Result<()
     app.start_new_comment();
     press(&mut app, "main draft");
     click_file(&mut app, "README.md")?;
+    assert!(app.draft().is_none(), "preview keeps drafts parked");
+    press_key(&mut app, KeyCode::Enter);
     let draft = app.draft().context("restored README draft")?;
     assert_eq!(draft.buffer().text(), "README draft");
     assert_eq!(draft.buffer().cursor(), cursor);
@@ -490,6 +492,8 @@ fn drafts_stay_in_their_files_when_clicking_away_and_back() -> anyhow::Result<()
     assert!(app.draft().is_none());
 
     click_file(&mut app, "main.c")?;
+    assert!(app.draft().is_none(), "preview keeps drafts parked");
+    press_key(&mut app, KeyCode::Enter);
     assert_eq!(app.compose_draft(), Some("main draft"));
     press_key(&mut app, KeyCode::Enter);
     click_file(&mut app, "README.md")?;

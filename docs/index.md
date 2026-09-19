@@ -27,6 +27,7 @@ Start here before changing documented behavior or adding project documentation.
 - [Global comparisons and deliberate board history](decisions/0087-global-comparisons-and-board-history.md)
 - [Store-only MCP and independent thread refresh](decisions/0089-store-only-mcp.md)
 - [Direct workspace navigation](decisions/0090-direct-workspace-navigation.md)
+- [Pane focus navigation](decisions/0091-pane-focus-navigation.md)
 - [Parked ideas and open investigations](parked.md)
 - [Documentation system](okf.md)
 - [Tag vocabulary](tags.md)

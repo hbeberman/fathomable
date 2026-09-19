@@ -32,6 +32,12 @@ Amended 2026-09-15 by [0081](0081-the-menu-bar.md): the top-level
 Every launch uses that same startup composition. `Space p s` hides and
 shows the sidebar as one remembered unit.
 
+Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md): the two
+sidebar panes are **File list** and **Thread list**. Bare `F` and `T`
+show and focus them; `w`/`W` cycle displayed panes. The `layout.sidebar`
+configuration and `files` / `threads` child keys keep their established
+spellings.
+
 ## Context
 
 [0049](0049-inline-threads-and-the-rail.md) named the left column the

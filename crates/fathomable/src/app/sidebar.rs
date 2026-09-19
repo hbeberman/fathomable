@@ -13,7 +13,7 @@ use super::threads::pane::PaneScope;
 use super::{App, TEXT_MIN_WIDTH};
 
 /// Narrowest the sidebar can be dragged.
-const SIDEBAR_MIN_WIDTH: usize = 8;
+pub(super) const SIDEBAR_MIN_WIDTH: usize = 8;
 
 /// The sidebar's state (ADR 0049, ADR 0057): which of its panes are shown,
 /// what the threads pane lists and which files it has folded (ADR 0066),
@@ -150,6 +150,7 @@ impl App {
                 || self.sidebar.config.width.min(self.width / 3),
                 |cols| cols.min(widest),
             )
+            .min(widest)
             .max(SIDEBAR_MIN_WIDTH)
     }
 
@@ -159,7 +160,7 @@ impl App {
         if self.sidebar.shown() {
             self.sidebar.hide();
             if matches!(self.focus, super::Focus::Tree | super::Focus::ThreadsPane) {
-                self.focus = super::Focus::View;
+                self.focus = self.displayed_main_focus();
             }
             self.relayout();
             return;
@@ -168,10 +169,12 @@ impl App {
             return;
         }
         if !self.sidebar.restore() {
-            self.notice("sidebar has no panes; show Files or Threads first");
+            self.notice("sidebar has no lists; show File list or Thread list first");
             return;
         }
-        self.reveal_current();
+        if self.sidebar.tree && self.tree_target.is_some() {
+            self.refresh_tree_target();
+        }
         self.relayout();
     }
 }

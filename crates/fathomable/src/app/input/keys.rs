@@ -72,6 +72,28 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     if app.title_menu_open() {
         return menu_bar::key(app, key);
     }
+    if !app.panes_fit() {
+        if matches!(app.popup(), Some(Popup::ConfirmQuit)) {
+            return confirmation_key(app, key);
+        }
+        if key.code == crossterm::event::KeyCode::Esc {
+            app.close_popup();
+            app.take_prefix();
+            app.cancel_delete();
+            if matches!(app.view().mode(), Mode::Command | Mode::Search { .. }) {
+                app.view_mut().escape();
+            }
+            return Effect::None;
+        }
+        if key.code == crossterm::event::KeyCode::Char('q') && key.modifiers.is_empty() {
+            app.request_quit();
+            return Effect::None;
+        }
+        if app.popup().is_some() || matches!(app.view().mode(), Mode::Command | Mode::Search { .. })
+        {
+            return Effect::None;
+        }
+    }
     if matches!(
         app.popup(),
         Some(
@@ -131,6 +153,15 @@ pub(super) fn typed(app: &mut App, place: Where, chord: Chord) -> Effect {
     match lookup(place, &typed) {
         Match::Exact(action) => app.act(action),
         Match::Prefix => {
+            if !app.panes_fit()
+                && !super::bindings::BINDINGS.iter().any(|binding| {
+                    available_while_panes_do_not_fit(binding.action)
+                        && binding.keys.iter().any(|keys| keys.starts_with(&typed))
+                })
+            {
+                app.cancel_delete();
+                return Effect::None;
+            }
             // The first `d` of `dd` arms the delete (ADR 0034).
             if typed == [DELETE_PREFIX] {
                 app.arm_delete_here();
@@ -157,6 +188,9 @@ const DELETE_PREFIX: Chord = Chord {
 /// A single unbound key: text entry takes characters, everything else
 /// drops it.
 fn fallback(app: &mut App, place: Where, chord: Chord) -> Effect {
+    if !app.panes_fit() {
+        return Effect::None;
+    }
     match (place, chord.key) {
         (Where::Draft, Key::Char(ch)) if !chord.ctrl && !chord.alt => {
             app.compose_insert(ch.encode_utf8(&mut [0; 4]));
@@ -206,11 +240,42 @@ fn unavailable_while_diff_is_off(action: Action) -> bool {
     )
 }
 
+pub(in crate::app) fn available_while_panes_do_not_fit(action: Action) -> bool {
+    matches!(
+        action,
+        Action::Escape
+            | Action::ConfirmQuit
+            | Action::SidebarToggle
+            | Action::TreeToggle
+            | Action::ThreadsPaneToggle
+            | Action::MenuBarToggle
+    )
+}
+
+pub(in crate::app) fn unavailable_for_directory(action: Action) -> bool {
+    matches!(
+        action,
+        Action::NewThread
+            | Action::FileComment
+            | Action::Reply
+            | Action::ToggleResolved
+            | Action::ToggleAutoResolve
+            | Action::EditNewestOwn
+            | Action::DeleteThread
+            | Action::ArchiveThread
+            | Action::RestoreThread
+            | Action::SourceView
+    )
+}
+
 impl App {
     /// Run `action` as the focused surface means it, recording the
     /// position a far move leaves. A search moves the cursor as it is
     /// typed, so its origin is kept from `/` to Enter.
     pub(crate) fn act(&mut self, action: Action) -> Effect {
+        if !self.panes_fit() && !available_while_panes_do_not_fit(action) {
+            return Effect::None;
+        }
         if self.getting_started() && action != Action::Escape {
             self.close_getting_started();
         }
@@ -237,14 +302,36 @@ impl App {
         effect
     }
 
+    fn accepts_action(&mut self, place: Where, action: Action) -> bool {
+        if matches!(
+            place,
+            Where::View | Where::Tree | Where::Review | Where::ThreadsPane
+        ) && !self.pane_has_navigation(self.focus())
+            && !available_while_panes_do_not_fit(action)
+        {
+            return false;
+        }
+        if self.diff_mode() == DiffMode::Off && unavailable_while_diff_is_off(action) {
+            self.notice("diff mode is off");
+            return false;
+        }
+        if matches!(place, Where::View | Where::Tree)
+            && self.directory_path().is_some()
+            && unavailable_for_directory(action)
+        {
+            self.notice("select a file to use file or thread actions");
+            return false;
+        }
+        true
+    }
+
     /// The Space menu and the command line mean the same thing
     /// everywhere; the rest is looked up per surface.
     fn act_placed(&mut self, action: Action) -> Effect {
         let Some(place) = place(self) else {
             return Effect::None;
         };
-        if self.diff_mode() == DiffMode::Off && unavailable_while_diff_is_off(action) {
-            self.notice("diff mode is off");
+        if !self.accepts_action(place, action) {
             return Effect::None;
         }
         match action {
@@ -275,11 +362,8 @@ impl App {
             Action::SidebarToggle => self.toggle_sidebar(),
             Action::MenuBarToggle => self.toggle_menu_bar(),
             Action::ThreadsPaneToggle => self.toggle_threads_pane_shown(),
-            Action::WindowLeft => self.window_left(),
-            Action::WindowDown => self.window_down(),
-            Action::WindowUp => self.window_up(),
-            Action::WindowRight => self.window_right(),
             Action::WindowNext => self.window_next(),
+            Action::WindowPrev => self.window_previous(),
             Action::WindowFiles => self.window_files(),
             Action::WindowThreads => self.window_threads(),
             Action::Help => self.open_help(),
@@ -340,6 +424,12 @@ impl App {
     }
 
     fn act_view(&mut self, action: Action) -> Effect {
+        if self.directory_path().is_some() {
+            if action != Action::Escape {
+                self.notice("select a file to use file or thread actions");
+            }
+            return Effect::None;
+        }
         if self.getting_started() {
             if action == Action::Escape {
                 self.close_getting_started();
@@ -402,6 +492,8 @@ impl App {
                 | Action::MoveLeft
                 | Action::MoveRight
                 | Action::Confirm
+                | Action::Fold
+                | Action::FoldAll
                 | Action::Top
                 | Action::Bottom
         ) {
@@ -424,6 +516,19 @@ impl App {
                 self.with_tree_result(Tree::expand);
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
+            Action::Fold => self.with_tree_result(|tree, workspace| {
+                if tree
+                    .current()
+                    .is_some_and(fathomable_core::tree::Row::is_dir)
+                {
+                    tree.activate(workspace)
+                } else {
+                    Ok(None)
+                }
+            }),
+            Action::FoldAll => {
+                self.with_tree_result(|tree, workspace| tree.toggle_all(workspace).map(|()| None));
+            }
             Action::CopyPath => return self.copy_tree_path(),
             Action::CopyFullPath => return self.copy_tree_full_path(),
             Action::Top => self.with_tree(|tree, _| {
@@ -467,7 +572,7 @@ impl App {
     /// and ADR 0076).
     fn act_list(&mut self, action: Action) -> Effect {
         match action {
-            Action::Escape => self.close_review(),
+            Action::Escape => {}
             Action::MoveDown => self.review_message_step(1),
             Action::MoveUp => self.review_message_step(-1),
             Action::ThreadPrev => self.review_step(-1),
@@ -541,6 +646,21 @@ impl App {
     }
 
     fn act_input(&mut self, action: Action) -> Effect {
+        if action == Action::Confirm
+            && self.directory_path().is_some()
+            && (self
+                .view()
+                .input()
+                .trim()
+                .chars()
+                .all(|c| c.is_ascii_digit())
+                || self.view().input().trim() == "source")
+            && !self.view().input().trim().is_empty()
+        {
+            self.view_mut().escape();
+            self.notice("select a file to use file or thread actions");
+            return Effect::None;
+        }
         let view = self.view_mut();
         match action {
             Action::Escape => {

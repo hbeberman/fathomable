@@ -43,6 +43,7 @@ colors {
     "ui.statusline.error"  fg="red" mods="bold"
     "ui.warning"           fg="black" bg="red" mods="bold"
     "ui.header"            bg="surface"
+    "ui.pane.focus"        fg="purple"
 
     "ui.sidebar"              fg="fg"
     "ui.list.active"       bg="list-active"

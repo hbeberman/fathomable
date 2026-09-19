@@ -1182,15 +1182,15 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
     let sidebar = app.sidebar_width();
     let screen = testing::screen(&app)?;
     let header_text = &screen[header_row];
-    assert!(header_text.contains("Reviews"), "{header_text:?}");
+    assert!(header_text.contains("Threads"), "{header_text:?}");
     assert!(header_text.contains("workspace"), "{header_text:?}");
 
     left(&mut app, sidebar + 1, header_row);
     assert_eq!(app.focus(), Focus::Review);
-    assert_eq!(app.menu().map(Menu::title), Some("Reviews"));
+    assert_eq!(app.menu().map(Menu::title), Some("Threads"));
     let settings = app
         .menu()
-        .context("the Reviews menu")?
+        .context("the Threads menu")?
         .entries()
         .iter()
         .map(|entry| (entry.label().to_owned(), entry.checked()))
@@ -1204,7 +1204,7 @@ fn the_reviews_title_opens_checked_settings_below_the_header() -> anyhow::Result
             ("show resolved".to_owned(), Some(false)),
         ]
     );
-    let grid = app.menu().context("the Reviews menu")?.grid_in(
+    let grid = app.menu().context("the Threads menu")?.grid_in(
         app.size().0,
         app.pane_top(),
         app.pane_rows(),

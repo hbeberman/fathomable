@@ -166,7 +166,7 @@ fn the_pane_lists_the_file_and_hides_resolved() -> anyhow::Result<()> {
         column[top]
     );
     assert!(
-        column[top + 1].contains("Threads")
+        column[top + 1].contains("Thread list")
             && column[top + 1].contains("file")
             && column[top + 1].contains("● 2"),
         "{:?}",
@@ -259,7 +259,7 @@ fn archived_review_cursor_restores_from_the_sidebar() -> anyhow::Result<()> {
     app.archive_thread(&id);
     app.open_review_view(crate::app::threads::list::ReviewView::Archived);
 
-    press(&mut app, " wt");
+    press(&mut app, "T");
     assert_eq!(app.focus(), Focus::ThreadsPane);
     assert_eq!(app.thread_cursor().thread(), Some(&id));
     let column = sidebar_column(&app)?;
@@ -301,8 +301,8 @@ fn the_pane_lists_the_workspace_by_file() -> anyhow::Result<()> {
     );
     let column = sidebar_column(&app)?;
     assert!(
-        column[app.tree_rows() + 1].contains("Threads")
-            && column[app.tree_rows() + 1].contains("workspace"),
+        column[app.tree_rows() + 1].contains("Thread list")
+            && column[app.tree_rows() + 1].contains(" w "),
         "{:?}",
         column[app.tree_rows() + 1]
     );
@@ -353,14 +353,14 @@ fn the_header_shortens_scope_and_hovers_only_the_title() -> anyhow::Result<()> {
     let (_dir, mut app) = three_threads("header")?;
     app.threads_pane_toggle_scope();
     app.begin_drag(Border::Sidebar);
-    app.drag_to(17, 0);
+    app.drag_to(23, 0);
     app.end_drag();
-    assert_eq!(app.sidebar_width(), 18);
+    assert_eq!(app.sidebar_width(), 24);
 
     let top = app.tree_rows();
     let column = sidebar_column(&app)?;
     let header = &column[top + 1];
-    assert!(header.starts_with(" Threads"), "{header:?}");
+    assert!(header.contains("Thread list"), "{header:?}");
     assert!(header.contains(" w ● 3"), "{header:?}");
     assert!(!header.contains("workspace"), "{header:?}");
     let scope_column = header
@@ -378,15 +378,15 @@ fn the_header_shortens_scope_and_hovers_only_the_title() -> anyhow::Result<()> {
         },
     );
     let (theme, buffer) = sidebar_buffer(&app)?;
-    for column in 0..8 {
+    for column in 0..12 {
         assert_eq!(
             Some(buffer[(column, u16::try_from(row)?)].bg),
             theme.list_hover.bg,
-            "Threads title cell {column}"
+            "Thread-list title cell {column}"
         );
     }
     assert_eq!(
-        Some(buffer[(8, u16::try_from(row)?)].bg),
+        Some(buffer[(12, u16::try_from(row)?)].bg),
         theme.header.bg,
         "hover stops at the title hit region"
     );
@@ -461,8 +461,8 @@ fn z_folds_a_file_and_shift_z_every_file() -> anyhow::Result<()> {
 
 /// The pane shows with the tree hidden and takes the whole sidebar;
 /// beside the tree its split is fixed whatever the thread count, and
-/// only a drag changes it. `Space w h` and `Space w l` focus and
-/// return; `Space p f` and `Space p t` show and hide each pane on its
+/// only a drag changes it. `F`, `T`, and `w` focus and cycle;
+/// `Space p f` and `Space p t` show and hide each pane on its
 /// own (ADR 0056).
 #[test]
 fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> {
@@ -480,7 +480,7 @@ fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> 
     assert_eq!(app.tree_rows(), 0);
     let column = sidebar_column(&app)?;
     assert!(
-        column[1].contains("Threads") && column[1].contains("file"),
+        column[1].contains("Thread list") && column[1].contains("file"),
         "{:?}",
         column[1]
     );
@@ -490,16 +490,16 @@ fn the_sidebar_shows_either_pane_and_the_split_is_fixed() -> anyhow::Result<()> 
         column[2]
     );
 
-    // `Space w l` hands the keys back; the pane stays.
-    press(&mut app, " wl");
+    // `w` hands the keys back; the pane stays.
+    press(&mut app, "w");
     assert_eq!(app.focus(), Focus::View);
     assert!(app.threads_pane_shown());
 
     // The tree joins above at the configured split of 8 rows, and a
     // dozen threads do not grow it; `Space p f` shows the files pane
-    // and `Space w h` lands on it, the pane to the text's left.
+    // and `F` lands on it.
     press(&mut app, " pf");
-    press(&mut app, " wh");
+    press(&mut app, "F");
     assert_eq!(app.focus(), Focus::Tree);
     assert_eq!(app.threads_pane_height(), 8);
     assert_eq!(app.tree_rows(), app.pane_rows() - 8);
@@ -615,10 +615,44 @@ fn every_surface_shows_the_one_cursor() -> anyhow::Result<()> {
     assert_eq!(app.thread_cursor().thread(), Some(&ids[2]));
 
     // Esc in the threads pane leaves; the pane stays.
+    app.open_review();
     app.focus_threads_pane();
     app.leave_threads_pane();
-    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(app.focus(), Focus::Review);
     assert!(app.threads_pane_shown(), "Esc leaves, it does not hide");
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.review_list().is_open(), "Esc does not close Threads");
+    assert_eq!(app.focus(), Focus::Review);
+    Ok(())
+}
+
+#[test]
+fn thread_list_preview_preserves_threads_view_until_enter() -> anyhow::Result<()> {
+    let (_dir, mut app) = three_threads("preview-main")?;
+    app.open_review();
+    app.review_toggle_file();
+    let review = app.review();
+    app.window_threads();
+
+    press(&mut app, "j");
+    assert!(app.review_list().is_open());
+    assert_eq!(app.review(), review, "preview preserves explicit filters");
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+
+    app.focus_pane(Focus::Review);
+    app.threads_pane_click(0);
+    assert!(app.review_list().is_open());
+    assert_eq!(app.review(), review);
+    assert_eq!(
+        app.focus(),
+        Focus::ThreadsPane,
+        "row click focuses the list"
+    );
+
+    app.window_threads();
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(!app.review_list().is_open());
+    assert_eq!(app.focus(), Focus::View);
     Ok(())
 }
 
@@ -646,7 +680,11 @@ fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Resul
     // long thread that also covers L4.
     app.threads_pane_click(3);
     assert_eq!(app.threads_pane_selected(), Some(1));
-    assert_eq!(app.focus(), Focus::ThreadsPane);
+    assert_eq!(
+        app.focus(),
+        Focus::ThreadsPane,
+        "a row click focuses the list"
+    );
     app.view_mut().goto_source_line(3);
     assert_eq!(app.threads_pane_selected(), Some(0));
     app.threads_pane_click(2);
@@ -655,14 +693,16 @@ fn the_highlight_prefers_the_thread_starting_under_the_cursor() -> anyhow::Resul
 }
 
 #[test]
-fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
+fn thread_list_click_previews_and_wheel_only_scrolls() -> anyhow::Result<()> {
     let dir = fixture("mouse")?;
     let mut app = source_app(&dir)?;
     app.show_tree();
     app.show_threads_pane();
     annotate(&mut app, 2, "two");
     annotate(&mut app, 6, "six");
+    annotate(&mut app, 7, "seven");
     app.view_mut().goto_source_line(1);
+    app.sidebar.split = Some(6);
     let mouse = |kind, column: usize, row: usize| MouseEvent {
         kind,
         column: u16::try_from(column).unwrap_or(u16::MAX),
@@ -671,23 +711,40 @@ fn the_mouse_clicks_wheels_and_focuses_the_pane() -> anyhow::Result<()> {
     };
     let down = MouseEventKind::Down(MouseButton::Left);
     let top = app.tree_rows();
-    assert_eq!(app.pane_rows() - top, 8);
+    assert_eq!(app.pane_rows() - top, 6);
 
-    // A click on either row of an entry puts the cursor on its thread
-    // and the keys with the pane.
-    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 5));
+    // A row click focuses the list and previews its thread.
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top + 4));
     assert_eq!(app.view().cursor_source_line(), Some(6));
     assert_eq!(app.focus(), Focus::ThreadsPane);
     // A click on the passive header state focuses the pane without opening
     // its title menu.
     app.focus_pane(Focus::View);
-    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 10, top + 1));
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 14, top + 1));
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    // The wheel steps between threads.
-    crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollUp, 2, top + 1));
-    assert_eq!(app.view().cursor_source_line(), Some(2));
-    // A click on the tree above leaves the pane.
+    let cursor = app.thread_cursor().thread().cloned();
+    let current = app.current_path().to_path_buf();
+    let line = app.view().cursor_source_line();
+    app.scroll_threads_pane(-super::super::super::input::keys::WHEEL_LINES);
+    let rows = app.threads_pane_rows();
+    let lines = super::pane_lines(&rows);
+    let scroll = app.threads_pane_scroll(&rows, &lines);
+    let folds = app.sidebar.folded.clone();
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(MouseEventKind::ScrollDown, 2, top + 1));
+    assert_eq!(app.thread_cursor().thread(), cursor.as_ref());
+    assert_eq!(app.current_path(), current);
+    assert_eq!(app.view().cursor_source_line(), line);
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    let rows = app.threads_pane_rows();
+    let lines = super::pane_lines(&rows);
+    assert!(app.threads_pane_scroll(&rows, &lines) > scroll);
+    assert_eq!(app.sidebar.folded, folds);
+
+    // A populated File-list row previews and focuses that list.
     crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, 1));
+    assert_eq!(app.focus(), Focus::Tree);
+    // Empty content focuses the list.
+    crate::app::input::mouse::handle_mouse(&mut app, mouse(down, 2, top - 1));
     assert_eq!(app.focus(), Focus::Tree);
     Ok(())
 }

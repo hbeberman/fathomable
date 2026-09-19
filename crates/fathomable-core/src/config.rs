@@ -685,10 +685,10 @@ layout {{
     menu-bar #{menu_bar} // Show the menu bar at startup.
     sidebar {{
         visible #{visible} // Show the sidebar at startup.
-        files #{files} // Include the Files pane in the sidebar.
-        threads #{threads} // Include the Threads pane in the sidebar.
+        files #{files} // Include File list in the sidebar.
+        threads #{threads} // Include Thread list in the sidebar.
         width {width} // Sidebar columns, capped at one third of the terminal.
-        split {split} // Threads pane rows when both sidebar panes are shown.
+        split {split} // Thread list rows when both sidebar panes are shown.
     }}
 }}
 

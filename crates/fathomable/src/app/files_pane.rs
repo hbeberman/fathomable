@@ -71,12 +71,11 @@ impl App {
         }
     }
 
-    /// A click on files pane row `row` (screen coordinates): activate the
-    /// row but stay in the tree. A click pages the viewer just as the
-    /// wheel does (ADR 0023); only `Enter` commits focus to the view.
+    /// Focus File list and preview its row without changing the main surface.
     pub(crate) fn tree_click(&mut self, row: usize) {
         let index = self.tree_scroll + row;
         if self.tree().is_none_or(|tree| index >= tree.rows().len()) {
+            self.focus_pane(Focus::Tree);
             return;
         }
         self.cancel_tree_target();
@@ -87,12 +86,12 @@ impl App {
             }
             tree.activate(workspace)
         });
-        self.focus = Focus::Tree;
+        self.focus_pane(Focus::Tree);
         self.show_highlight();
     }
 
     /// A right-click on tree row `row` (ADR 0050): the highlight moves
-    /// there and the main pane shows the file as the wheel does; a
+    /// there and the main pane previews the file; a
     /// directory is neither expanded nor collapsed.
     pub(crate) fn tree_point(&mut self, row: usize) {
         let index = self.tree_scroll + row;
@@ -103,11 +102,11 @@ impl App {
             }
             None
         });
-        self.focus = Focus::Tree;
         if self.tree().map(Tree::cursor) != before {
             self.cancel_tree_target();
             self.show_highlight();
         }
+        self.focus = Focus::Tree;
     }
 
     /// `y` in the tree (ADR 0050): copy the highlighted row's path,
@@ -156,6 +155,16 @@ impl App {
         self.tree_scroll = self.tree_scroll.min(max);
     }
 
+    /// Move only the File-list viewport, leaving its cursor and preview.
+    pub(crate) fn scroll_tree_by(&mut self, delta: isize) {
+        let rows = self.tree_rows().saturating_sub(1).max(1);
+        let max = self
+            .tree
+            .as_ref()
+            .map_or(0, |tree| tree.rows().len().saturating_sub(rows));
+        self.tree_scroll = self.tree_scroll.saturating_add_signed(delta).min(max);
+    }
+
     /// Remember and reveal a workspace-navigation destination in Files.
     pub(super) fn synchronize_tree_to(&mut self, path: &std::path::Path) {
         self.tree_target = Some(path.to_path_buf());
@@ -165,15 +174,6 @@ impl App {
     /// Let explicit Files navigation supersede a remembered destination.
     pub(super) fn cancel_tree_target(&mut self) {
         self.tree_target = None;
-    }
-
-    /// Reveal the remembered navigation destination, or the current file.
-    pub(super) fn reveal_current(&mut self) {
-        let path = self
-            .tree_target
-            .clone()
-            .unwrap_or_else(|| self.current_path().to_path_buf());
-        self.reveal_tree_path(&path);
     }
 
     /// Retry a remembered destination after the Files listing changes.
@@ -219,7 +219,7 @@ impl App {
     }
 
     /// Show the file or directory summary under the tree cursor, leaving
-    /// focus where it is (ADR 0023), so `j`, `k`, and the wheel page the
+    /// focus where it is (ADR 0023), so `j` and `k` page the
     /// main pane through entries.
     pub(super) fn show_highlight(&mut self) {
         let Some((path, is_dir)) = self
@@ -256,7 +256,7 @@ impl App {
             return;
         }
         let focus = self.focus;
-        self.select_file_preserving_review(&path);
+        self.preview_file(&path);
         self.focus = focus;
     }
 
@@ -284,10 +284,7 @@ impl App {
 
     /// Facts about the directory currently replacing the file body.
     pub(crate) fn directory_info(&self) -> Option<DirectoryInfo> {
-        let directory = self
-            .directory
-            .as_ref()
-            .filter(|_| self.focus == Focus::Tree)?;
+        let directory = self.directory.as_ref()?;
         let shown = self
             .tree
             .as_ref()
@@ -316,11 +313,11 @@ impl App {
         })
     }
 
-    /// The directory replacing the file body while the files pane has focus.
+    /// The selected directory replacing the file body.
     pub(crate) fn directory_path(&self) -> Option<&std::path::Path> {
         self.directory
             .as_ref()
-            .filter(|_| self.focus == Focus::Tree)
+            .filter(|_| !self.review_list().is_open())
             .map(|directory| directory.path.as_path())
     }
 }

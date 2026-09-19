@@ -12,11 +12,11 @@ use crate::app::{App, Focus};
 
 /// The text's key bar, or the focus tip while another pane owns the keys.
 pub(crate) fn text_bar(app: &App) -> Header {
-    if app.focus() != Focus::View {
-        return Header::bar(vec![HintOf::new("", "click or Space w l to focus", &[])]);
-    }
     if let Some(compose) = app.draft() {
         return Header::bar(draft_hints(compose));
+    }
+    if !app.pane_has_navigation(Focus::View) {
+        return Header::bar(vec![HintOf::new("", "click or f to focus", &[])]);
     }
     let place = Where::View;
     let mut hints = Vec::new();
@@ -372,7 +372,7 @@ mod tests {
         // Another pane's focus: the tip. A click on the tip focuses the
         // text, and one on a hint runs it.
         app.toggle_tree_focus();
-        assert_eq!(bar(&app)?.trim(), "click or Space w l to focus");
+        assert_eq!(bar(&app)?.trim(), "click or f to focus");
         let row = app.text_bar_row();
         let sidebar = app.sidebar_width();
         click(&mut app, sidebar + 3, row);

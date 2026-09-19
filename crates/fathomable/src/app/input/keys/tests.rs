@@ -185,13 +185,13 @@ fn bare_f_and_t_switch_main_views_and_s_changes_review_scope() -> anyhow::Result
     assert_eq!(app.focus(), Focus::Review);
 
     app.start_new_comment();
-    press(&mut app, "tRr");
-    assert_eq!(app.compose_draft(), Some("tRr"));
+    press(&mut app, "tRrwWFT");
+    assert_eq!(app.compose_draft(), Some("tRrwWFT"));
     Ok(())
 }
 
 #[test]
-fn sidebar_selection_pages_files_without_closing_reviews() -> anyhow::Result<()> {
+fn file_list_click_focuses_the_list_without_leaving_threads() -> anyhow::Result<()> {
     let dir = fixture("review-file-paging")?;
     let mut app = source_app(&dir)?;
     app.open(Path::new("docs/guide.md"));
@@ -211,6 +211,7 @@ fn sidebar_selection_pages_files_without_closing_reviews() -> anyhow::Result<()>
     assert!(app.review_list().is_open());
     assert_eq!(app.focus(), Focus::Tree);
 
+    press(&mut app, "F");
     handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert!(
         !app.review_list().is_open(),
@@ -220,71 +221,78 @@ fn sidebar_selection_pages_files_without_closing_reviews() -> anyhow::Result<()>
     Ok(())
 }
 
-/// `Space w h` shows a hidden files pane with its highlight on the
-/// current file and takes the keys there; `Space w j` and `Space w k`
-/// step between the panes; `Space w l` returns; `Space w w` cycles,
-/// skipping a hidden pane; a move with nowhere to go does nothing;
-/// `Space v s` toggles the view from the files pane (ADR 0056); and
-/// `Space w f` and `Space w t` name a pane, showing it first when it
-/// is hidden (ADR 0057).
 #[test]
-fn space_w_moves_between_the_panes() -> anyhow::Result<()> {
+fn bare_focus_keys_cycle_lists_without_reselecting_content() -> anyhow::Result<()> {
     let dir = fixture("sidebar")?;
     let mut app = source_app(&dir)?;
     app.open(Path::new("docs/guide.md"));
     assert!(app.tree().is_none());
-    press(&mut app, " wl");
-    assert_eq!(app.focus(), Focus::View, "nowhere to go");
-    press(&mut app, " wh");
+
+    press(&mut app, " pf");
+    assert_eq!(app.focus(), Focus::View, "visibility does not take focus");
+    let before = app.tree().map(fathomable_core::tree::Tree::cursor);
+    press(&mut app, "F");
     assert_eq!(app.focus(), Focus::Tree);
-    let highlighted = app
-        .tree()
-        .and_then(|tree| tree.current())
-        .map(|row| row.path().to_path_buf());
-    assert_eq!(highlighted.as_deref(), Some(Path::new("docs/guide.md")));
+    assert_eq!(
+        app.tree().map(fathomable_core::tree::Tree::cursor),
+        before,
+        "focus does not reveal or reselect the current file"
+    );
+    press(&mut app, "F");
+    assert_eq!(app.focus(), Focus::Tree, "named focus is idempotent");
 
-    let before = app.view().source_view();
-    press(&mut app, " vs");
-    assert_ne!(app.view().source_view(), before);
-
-    press(&mut app, " wj");
-    assert_eq!(app.focus(), Focus::Tree, "the threads pane is hidden");
-    app.show_threads_pane();
-    press(&mut app, " wj");
+    press(&mut app, " pt");
+    assert_eq!(app.focus(), Focus::Tree, "visibility keeps existing focus");
+    press(&mut app, "w");
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    press(&mut app, " wk");
-    assert_eq!(app.focus(), Focus::Tree);
-    press(&mut app, " wl");
+    press(&mut app, "w");
     assert_eq!(app.focus(), Focus::View);
-
-    press(&mut app, " ww");
+    press(&mut app, "w");
     assert_eq!(app.focus(), Focus::Tree);
-    press(&mut app, " ww");
+    press(&mut app, "W");
+    assert_eq!(app.focus(), Focus::View);
+    press(&mut app, "W");
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    press(&mut app, " ww");
-    assert_eq!(app.focus(), Focus::View);
+    press(&mut app, "W");
+    assert_eq!(app.focus(), Focus::Tree);
+
+    press(&mut app, "t");
+    assert_eq!(app.focus(), Focus::Review);
+    press(&mut app, "wW");
+    assert_eq!(
+        app.focus(),
+        Focus::Review,
+        "main means the displayed Threads view"
+    );
+
     press(&mut app, " pf");
     assert!(!app.sidebar.tree);
-    press(&mut app, " ww");
-    assert_eq!(app.focus(), Focus::ThreadsPane, "a hidden pane is skipped");
-    press(&mut app, " wl");
-    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(app.focus(), Focus::Review);
+    press(&mut app, "w");
+    assert_eq!(app.focus(), Focus::ThreadsPane, "a hidden list is skipped");
+    press(&mut app, "w");
+    assert_eq!(app.focus(), Focus::Review);
 
-    press(&mut app, " wf");
-    assert!(app.sidebar.tree, "Space w f shows the hidden files pane");
+    press(&mut app, "F");
+    assert!(app.sidebar.tree, "F shows the hidden File list");
     assert_eq!(app.focus(), Focus::Tree);
     press(&mut app, " pt");
     assert!(!app.sidebar.threads);
-    press(&mut app, " wt");
+    assert_eq!(app.focus(), Focus::Tree);
+    press(&mut app, "T");
+    assert!(app.sidebar.threads, "T shows the hidden Thread list");
+    assert_eq!(app.focus(), Focus::ThreadsPane);
+    press(&mut app, "T");
+    assert_eq!(app.focus(), Focus::ThreadsPane, "already there");
+
+    press(&mut app, " ");
+    assert!(!app.prefix().is_empty());
+    press(&mut app, "w");
     assert!(
-        app.sidebar.threads,
-        "Space w t shows the hidden threads pane"
+        app.prefix().is_empty(),
+        "the retired Space w submenu is absent"
     );
     assert_eq!(app.focus(), Focus::ThreadsPane);
-    press(&mut app, " wt");
-    assert_eq!(app.focus(), Focus::ThreadsPane, "already there");
-    press(&mut app, " wf");
-    assert_eq!(app.focus(), Focus::Tree, "from the threads pane");
     Ok(())
 }
 

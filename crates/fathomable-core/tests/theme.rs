@@ -92,6 +92,26 @@ fn list_focus_roles_are_distinct_from_chrome_and_inherit_together() -> TestResul
 }
 
 #[test]
+fn pane_focus_uses_the_builtin_purple_and_inherits() -> TestResult {
+    for (name, expected) in [
+        ("default-dark", Color::Rgb(0xc3, 0x97, 0xd8)),
+        ("default-light", Color::Rgb(0x7d, 0x3c, 0x98)),
+    ] {
+        let theme = Theme::resolve(name, |_| Ok(None))?;
+        let focus = theme.style(Key::UiPaneFocus);
+        assert_eq!(focus.fg(), Some(expected), "{name}");
+        assert_eq!(focus.bg(), None, "{name} focus must preserve header ground");
+
+        let child = Theme::resolve(
+            "child",
+            from_map(&[("child", &format!("inherits \"{name}\""))]),
+        )?;
+        assert_eq!(child.style(Key::UiPaneFocus), focus);
+    }
+    Ok(())
+}
+
+#[test]
 fn unknown_name_is_not_found() -> TestResult {
     let error = must_fail("nope", &[])?;
     assert!(error.is_not_found());

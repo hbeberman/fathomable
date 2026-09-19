@@ -262,6 +262,8 @@ impl DirectoryCounts {
 struct Node {
     name: String,
     is_dir: bool,
+    /// Recursive traversal treats directory symlinks as files.
+    kind: EntryKind,
     expanded: bool,
     /// `None` until first expanded.
     children: Option<Vec<Node>>,
@@ -317,6 +319,11 @@ impl Deleted {
                 children.push(Node {
                     name: name.to_owned(),
                     is_dir: path != entry_path.as_path(),
+                    kind: if path == entry_path.as_path() {
+                        EntryKind::File
+                    } else {
+                        EntryKind::Dir
+                    },
                     expanded: false,
                     children: None,
                     deleted: true,
@@ -395,6 +402,7 @@ impl Tree {
             root: Node {
                 name: String::new(),
                 is_dir: true,
+                kind: EntryKind::Dir,
                 expanded: true,
                 children: None,
                 deleted: false,
@@ -672,10 +680,9 @@ impl Tree {
             fresh
                 .into_iter()
                 .map(|child| {
-                    match old
-                        .iter()
-                        .position(|o| o.name == child.name && o.is_dir == child.is_dir)
-                    {
+                    match old.iter().position(|o| {
+                        o.name == child.name && o.is_dir == child.is_dir && o.kind == child.kind
+                    }) {
                         Some(index) => {
                             let mut kept = old.swap_remove(index);
                             if child.deleted && !kept.deleted {
@@ -729,7 +736,7 @@ impl Tree {
         self.cursor = index.min(self.rows.len().saturating_sub(1));
     }
 
-    /// Enter, `l`, or a click: open a file or toggle a directory.
+    /// Open a file or toggle a directory without moving its cursor.
     ///
     /// # Errors
     ///
@@ -793,6 +800,67 @@ impl Tree {
             let parent = parent.to_path_buf();
             self.select_path(&parent);
         }
+    }
+
+    /// Expand all listed directories, or collapse them when all are expanded.
+    ///
+    /// Filters still apply, and directory symlinks are not expanded recursively.
+    /// The cursor keeps its path or the nearest visible ancestor when collapsing hides it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when a directory cannot be read. Directories
+    /// expanded before that failure remain expanded and visible.
+    pub fn toggle_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        let cursor = self.current().map(|row| row.path.clone());
+        let unfold = self.rows.iter().any(|row| {
+            row.is_dir
+                && !row.expanded
+                && find_node(&mut self.root, &row.path)
+                    .is_some_and(|node| node.kind == EntryKind::Dir)
+        });
+        let result = if unfold {
+            self.expand_all(workspace)
+        } else {
+            let mut expanded = Vec::new();
+            expanded_dirs(&self.root, Path::new(""), &mut expanded);
+            for path in expanded {
+                if self.admitted.admits(&path, true) {
+                    self.collapse_path(&path);
+                }
+            }
+            Ok(())
+        };
+        self.rebuild();
+        if let Some(cursor) = cursor {
+            for path in cursor.ancestors() {
+                if self.select_path(path) {
+                    break;
+                }
+            }
+        }
+        result
+    }
+
+    fn expand_all(&mut self, workspace: &mut Workspace) -> Result<(), WorkspaceError> {
+        let mut pending = vec![PathBuf::new()];
+        while let Some(path) = pending.pop() {
+            self.expand_path(workspace, &path)?;
+            if let Some(children) =
+                find_node(&mut self.root, &path).and_then(|node| node.children.as_ref())
+            {
+                pending.extend(
+                    children
+                        .iter()
+                        .filter(|child| child.kind == EntryKind::Dir)
+                        .filter_map(|child| {
+                            let path = path.join(&child.name);
+                            self.admitted.admits(&path, true).then_some(path)
+                        }),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Expand every directory on the way to `path` and put the cursor on it.
@@ -925,6 +993,11 @@ fn read_children(
         .into_iter()
         .map(|entry| Node {
             is_dir: entry.is_dir(),
+            kind: if entry.is_dir() && !entry.is_symlink() {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            },
             name: entry.name().to_owned(),
             expanded: false,
             children: None,

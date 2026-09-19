@@ -56,7 +56,7 @@ impl App {
             } else {
                 words.join(" ")
             };
-            self.notice(format!("files pane: {state}"));
+            self.notice(format!("File list: {state}"));
         }
     }
 
@@ -349,7 +349,7 @@ mod tests {
         press(&mut app, "c");
         assert_eq!(names(&app), ["notes.txt", "README.md"]);
         let header = header_row(&app)?;
-        assert!(header.starts_with(" Files"), "{header}");
+        assert!(header.contains("File list"), "{header}");
         assert!(header.contains("c +2 -1"), "{header}");
         assert!(!header.contains('·'), "{header}");
 
@@ -758,13 +758,13 @@ mod tests {
         let mut app = AppBuilder::new(&dir).build()?;
         assert_eq!(app.focus(), Focus::View);
         press(&mut app, " Fc");
-        assert_eq!(app.message(), Some("files pane: changed"));
+        assert_eq!(app.message(), Some("File list: changed"));
         press(&mut app, " Fu");
-        assert_eq!(app.message(), Some("files pane: changed tracked"));
+        assert_eq!(app.message(), Some("File list: changed tracked"));
         press(&mut app, " Fc Fu");
-        assert_eq!(app.message(), Some("files pane: all files"));
+        assert_eq!(app.message(), Some("File list: all files"));
         press(&mut app, " Fo");
-        assert_eq!(app.message(), Some("files pane: reviews"));
+        assert_eq!(app.message(), Some("File list: reviews"));
         press(&mut app, " Fo");
         // The rules were applied all along: showing the pane lists by them.
         press(&mut app, " Fc");
@@ -961,15 +961,15 @@ mod tests {
 
         let cells = buffer(&app)?;
         let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
-        for column in 0..6 {
+        for column in 0..10 {
             assert_eq!(
                 Some(cells[(column, u16::try_from(row)?)].bg),
                 theme.list_hover.bg,
-                "Files title cell {column}"
+                "File-list title cell {column}"
             );
         }
         assert_eq!(
-            Some(cells[(6, u16::try_from(row)?)].bg),
+            Some(cells[(10, u16::try_from(row)?)].bg),
             theme.header.bg,
             "hover stops at the title hit region"
         );

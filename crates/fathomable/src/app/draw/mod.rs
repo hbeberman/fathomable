@@ -19,7 +19,7 @@ use std::fmt::Write as _;
 
 use fathomable_core::layout::{Face, Style as Face_, display_width, graphemes};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
@@ -77,6 +77,8 @@ pub(crate) struct Theme {
     pub(crate) warning: Style,
     /// A pane's header rows and the key bars (ADR 0059, ADR 0067).
     pub(crate) header: Style,
+    /// The marker and pane name while that pane owns navigation (ADR 0091).
+    pub(crate) pane_focus: Style,
     pub(crate) mode_normal: Style,
     pub(crate) mode_select: Style,
     pub(crate) mode_input: Style,
@@ -136,6 +138,7 @@ impl Theme {
             statusline_error: style(Key::UiStatuslineError),
             warning: style(Key::UiWarning),
             header: style(Key::UiHeader),
+            pane_focus: style(Key::UiPaneFocus),
             mode_normal: style(Key::UiStatuslineNormal),
             mode_select: style(Key::UiStatuslineSelect),
             mode_input: style(Key::UiStatuslineInput),
@@ -268,6 +271,18 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
     };
 
     draw_menu_bar(frame, app, theme, area);
+    if !app.panes_fit() {
+        draw_size_warning(frame, app, theme, area);
+        frame.render_widget(
+            status_line(app, theme, usize::from(area.width)),
+            status_area,
+        );
+        if matches!(app.popup(), Some(Popup::ConfirmQuit)) {
+            draw_quit_confirmation(frame, theme, app);
+        }
+        draw_title_menus(frame, app, theme);
+        return;
+    }
     draw_sidebar(frame, app, theme, sidebar_area);
     let text_area = draw_banner(frame, app, theme, text_area);
     let text_area = draw_file_chrome(frame, app, theme, text_area);
@@ -371,6 +386,36 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         }
     }
     draw_title_menus(frame, app, theme);
+}
+
+/// Replace pane content when the selected composition cannot be drawn safely.
+fn draw_size_warning(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
+    let top = u16_of(app.pane_top()).min(area.height.saturating_sub(1));
+    let available = Rect {
+        y: area.y.saturating_add(top),
+        height: u16_of(app.pane_rows()).min(area.height.saturating_sub(top)),
+        ..area
+    };
+    if available.width == 0 || available.height == 0 {
+        return;
+    }
+    let (minimum_width, minimum_height) = app.minimum_pane_size();
+    let (width, height) = app.size();
+    let message = vec![
+        Line::from("Terminal too small"),
+        Line::from(format!(
+            "Need {minimum_width}×{minimum_height}; have {width}×{height}"
+        )),
+        Line::from("Resize, use Layout to hide a pane, or q to quit"),
+    ];
+    let warning = centred(available, available.width, u16_of(message.len()));
+    frame.render_widget(Clear, available);
+    frame.render_widget(
+        Paragraph::new(message)
+            .alignment(Alignment::Center)
+            .style(theme.warning),
+        warning,
+    );
 }
 
 fn draw_menu_bar(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
@@ -820,8 +865,14 @@ fn draw_file_chrome(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect)
     let hovered = local_pointer.is_some_and(|column| column < header.title_width());
     let control_hovered = local_pointer.and_then(|column| header.control_at(width, column));
     frame.render_widget(
-        Paragraph::new(header.line_with_header_hovers(theme, width, hovered, control_hovered))
-            .style(theme.info),
+        Paragraph::new(header.line_with_header_hovers(
+            theme,
+            width,
+            hovered,
+            control_hovered,
+            app.pane_has_navigation(Focus::View),
+        ))
+        .style(theme.info),
         Rect { height: 1, ..area },
     );
     Rect {
@@ -865,13 +916,14 @@ fn draw_column(frame: &mut Frame<'_>, app: &App, theme: &Theme, text_area: Rect,
 /// the session, and the keys that get going, centred as a block.
 fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
     let root = app.workspace().root().display().to_string();
-    let entries: [(&str, String); 6] = [
-        ("Space f", "open a file".to_owned()),
-        ("Space w f", "browse files".to_owned()),
-        ("t", "review threads".to_owned()),
+    let entries: [(&str, String); 7] = [
+        ("f", "focus File".to_owned()),
+        ("F", "show and focus File list".to_owned()),
+        ("t", "focus Threads".to_owned()),
+        ("T", "show and focus Thread list".to_owned()),
+        ("w / W", "cycle pane focus".to_owned()),
         ("Space ?", "view the keymap".to_owned()),
         (":q", "quit".to_owned()),
-        ("", String::new()),
     ];
     let facts = [("workspace", root), ("viewer", app.viewer_label())];
     let key_width = entries
@@ -1038,13 +1090,18 @@ fn tree_lines<'a>(
     let inner = width.saturating_sub(1);
     let divider = Span::styled("│", sidebar_divider_style(theme));
     let mut out = Vec::with_capacity(rows);
-    // The header row on `ui.header` (ADR 0068): Files, then the filter
+    // The header row on `ui.header` (ADR 0068): File list, then the filter
     // state before the summed `+n -m` totals (ADR 0017).
     let files_header = files_pane_header(app);
     let title_hovered = app
         .pointer()
         .is_some_and(|(column, row)| row == app.pane_top() && column < files_header.left_width());
-    let mut header = files_header.line_with_left_hover(theme, inner, title_hovered);
+    let mut header = files_header.line_with_left_hover(
+        theme,
+        inner,
+        title_hovered,
+        app.pane_has_navigation(Focus::Tree),
+    );
     header.spans.push(divider.clone());
     out.push(header);
     let navigation = Navigation::for_pane(app, Focus::Tree);
@@ -1826,9 +1883,9 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     let view = app.view();
     let directory = app.directory_path();
     let pill = match app.focus() {
-        Focus::Tree => "FILES",
-        Focus::Review => "REVIEW",
-        Focus::ThreadsPane => "THREADS",
+        Focus::Tree => "FILE LIST",
+        Focus::Review => "THREADS",
+        Focus::ThreadsPane => "THREAD LIST",
         Focus::View => match view.mode() {
             Mode::Normal | Mode::Select => "FILE",
             Mode::Command => "CMD",
@@ -2946,8 +3003,13 @@ fn draw_review(frame: &mut Frame<'_>, app: &App, theme: &Theme, area: Rect) {
             .then(|| column - app.sidebar_width())
             .and_then(|column| header.control_at(width, column))
     });
-    let mut lines =
-        vec![header.line_with_header_hovers(theme, width, title_hovered, control_hovered)];
+    let mut lines = vec![header.line_with_header_hovers(
+        theme,
+        width,
+        title_hovered,
+        control_hovered,
+        app.pane_has_navigation(Focus::Review),
+    )];
     let body = rows.saturating_sub(2);
     let scroll = list.scroll().min(all.len().saturating_sub(body));
     for row in all.iter().skip(scroll).take(body) {
@@ -3266,6 +3328,57 @@ mod tests {
         (0..buffer.area.width)
             .map(|column| buffer[(column, row)].symbol())
             .collect()
+    }
+
+    #[test]
+    fn too_small_warning_replaces_panes_and_resize_restores_them() -> anyhow::Result<()> {
+        let dir = testing::workspace("pane-size-warning", testing::README)?;
+        let mut app = testing::source_app(&dir)?;
+        app.window_files();
+        let focus = app.focus();
+        let cursor = app.tree().map(fathomable_core::tree::Tree::cursor);
+        let (minimum_width, minimum_height) = app.minimum_pane_size();
+        app.resize(minimum_width.max(60), minimum_height.saturating_sub(1));
+        assert!(!app.panes_fit());
+
+        let buffer = testing::buffer(&app)?;
+        let pane_end = u16::try_from(app.size().1)?.saturating_sub(1);
+        let screen = (u16::try_from(app.pane_top())?..pane_end)
+            .map(|row| buffer_row(&buffer, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("Terminal too small"), "{screen:?}");
+        assert!(!screen.contains("README.md"), "{screen:?}");
+        assert_eq!(app.focus(), focus);
+        assert_eq!(app.tree().map(fathomable_core::tree::Tree::cursor), cursor);
+
+        app.resize(100, 30);
+        assert!(app.panes_fit());
+        let restored = testing::buffer(&app)?;
+        let screen = (0..restored.area.height)
+            .map(|row| buffer_row(&restored, row))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!screen.contains("Terminal too small"), "{screen:?}");
+        assert!(screen.contains("README.md"), "{screen:?}");
+        assert_eq!(app.focus(), focus);
+        assert_eq!(app.tree().map(fathomable_core::tree::Tree::cursor), cursor);
+
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        for menu_shown in [false, true] {
+            if app.menu_bar_shown() != menu_shown {
+                app.toggle_menu_bar();
+            }
+            app.resize(1, 1);
+            let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(1, 1))?;
+            terminal.draw(|frame| super::draw(frame, &app, &theme))?;
+            assert_eq!(terminal.backend().buffer()[(0, 0)].symbol(), "T");
+            terminal.draw(|frame| {
+                super::draw_size_warning(frame, &app, &theme, Rect::new(0, 0, 0, 0));
+            })?;
+        }
+        Ok(())
     }
 
     fn confirmation_cells(
@@ -3846,9 +3959,11 @@ mod tests {
         let rows = testing::screen(&app)?;
         let rows: Vec<&str> = rows.iter().map(|row| row.trim_start()).collect();
         let expected = [
-            "Space f    open a file",
-            "Space w f  browse files",
-            "t          review threads",
+            "f          focus File",
+            "F          show and focus File list",
+            "t          focus Threads",
+            "T          show and focus Thread list",
+            "w / W      cycle pane focus",
             "Space ?    view the keymap",
             ":q         quit",
         ];

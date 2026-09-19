@@ -475,3 +475,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     footer teaches `comment c · diffs K/J · threads Shift-Tab/Tab` and
     compacts thread folds to `folding z/Z`
     ([0090](decisions/0090-direct-workspace-navigation.md)).
+82. **Pane focus navigation.** File, File list, Threads, and Thread list use
+    direct `f`/`F`/`t`/`T` focus, while `w`/`W` cycle displayed panes.
+    A reserved purple `▏` and pane name identify the sole normal navigation
+    owner without recolouring header facts; list movement previews in place,
+    and undersized split layouts show a recoverable size warning
+    ([0091](decisions/0091-pane-focus-navigation.md)).

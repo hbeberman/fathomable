@@ -14,6 +14,12 @@ tags:
 
 Status: accepted (2026-09-14)
 
+Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md): selection
+styling remains unchanged, while every pane header now reserves a `▏` cell
+and uses `ui.pane.focus` on that marker and the pane name only when the pane
+owns normal navigation. Overlays, prefixes, Compose, and command/search input
+suspend both the header treatment and underlying active-list treatment.
+
 ## Context
 
 The files pane's selected row looked like its header, and files, threads,
@@ -128,3 +134,5 @@ Keep `ui.sidebar`, `ui.sidebar.dir`, and `ui.picker.match` unchanged.
 - Focus can be recognised without reading a pane title, and remembered
   positions, thread state, and authorship remain visible without
   competing for the active cursor.
+- The title marker added by 0091 is a redundant pane-level cue for empty and
+  non-list surfaces; it does not replace or recolour list selection.

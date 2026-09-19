@@ -16,7 +16,7 @@ use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use super::super::{App, Border, Focus, Popup};
 use super::bindings::{self, Where};
 use super::help;
-use super::keys::{self, WHEEL_LINES, tree_highlight};
+use super::keys::{self, WHEEL_LINES};
 use crate::app::draw;
 use crate::app::draw::header;
 use crate::app::threads::draft::DraftRow;
@@ -63,24 +63,8 @@ fn sidebar_mouse(
         return threads_pane_mouse(app, kind, column, screen_row, row - tree_rows);
     }
     match kind {
-        // One row per tick, not `WHEEL_LINES`: each tick pages the main
-        // pane to the next file (ADR 0023). The text and the threads pane
-        // keep their three-line wheel.
-        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
-            let before = tree_highlight(app);
-            app.with_tree(|tree, _| {
-                if kind == MouseEventKind::ScrollDown {
-                    tree.move_down(1);
-                } else {
-                    tree.move_up(1);
-                }
-                None
-            });
-            if tree_highlight(app) != before {
-                app.cancel_tree_target();
-                app.show_highlight();
-            }
-        }
+        MouseEventKind::ScrollDown => app.scroll_tree_by(WHEEL_LINES),
+        MouseEventKind::ScrollUp => app.scroll_tree_by(-WHEEL_LINES),
         // Row 0 is the Files header.
         MouseEventKind::Down(MouseButton::Left) if row >= 1 => app.tree_click(row - 1),
         MouseEventKind::Down(MouseButton::Left)
@@ -112,10 +96,10 @@ fn threads_pane_mouse(
     pane_row: usize,
 ) -> Effect {
     let inner = app.sidebar_width().saturating_sub(1);
-    let bar = app.focus() == Focus::ThreadsPane && pane_row + 1 == app.threads_pane_height();
+    let bar = pane_row + 1 == app.threads_pane_height();
     match kind {
-        MouseEventKind::ScrollDown => app.threads_pane_move(1),
-        MouseEventKind::ScrollUp => app.threads_pane_move(-1),
+        MouseEventKind::ScrollDown => app.scroll_threads_pane(WHEEL_LINES),
+        MouseEventKind::ScrollUp => app.scroll_threads_pane(-WHEEL_LINES),
         MouseEventKind::Down(MouseButton::Left) if pane_row == 0 => {
             app.begin_drag(Border::ThreadsPane);
         }
@@ -476,6 +460,17 @@ fn mouse_event(app: &mut App, event: MouseEvent) -> Effect {
     let row = usize::from(event.row);
     let column = usize::from(event.column);
     app.pointer = Some((column, row));
+    if !app.panes_fit() {
+        app.end_drag();
+        if let Some(effect) = menu_bar::mouse(app, event) {
+            return effect;
+        }
+        return if matches!(app.popup(), Some(Popup::ConfirmQuit)) {
+            popup_mouse(app, event.kind, column, row).unwrap_or(Effect::None)
+        } else {
+            Effect::None
+        };
+    }
     if app.dragging().is_some() {
         match event.kind {
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -592,6 +587,12 @@ fn text_mouse(app: &mut App, event: MouseEvent, column: usize, row: usize) -> Ef
         }
         return Effect::None;
     };
+    if app.directory_path().is_some() {
+        if left {
+            app.focus_pane(Focus::View);
+        }
+        return Effect::None;
+    }
     if event.kind == MouseEventKind::Down(MouseButton::Right) {
         if text_row < text_rows {
             app.open_view_menu(text_row, col, column, row);

@@ -1,8 +1,8 @@
 // @okf-doc: /decisions/0066-one-circle-language.md
 //! The threads pane drawn (ADR 0027, ADR 0049, ADR 0066): a rule, a
 //! header with the scope and the counts by colour, then a row per file
-//! over two rows per thread, and, while the pane has the keys, a key
-//! bar along its bottom row in place of the last entry row.
+//! over two rows per thread, and a persistent footer with local keys
+//! or an inactive focus hint along its bottom row.
 //!
 //! A thread's first row is its circle, its place, and the author of
 //! its newest message, with the reply count and the age at the right
@@ -57,6 +57,7 @@ pub(super) fn threads_pane_lines<'a>(
         theme,
         inner,
         title_hovered,
+        app.pane_has_navigation(Focus::ThreadsPane),
     )));
     let entries = app.threads_pane_rows();
     if entries.is_empty() {
@@ -69,7 +70,6 @@ pub(super) fn threads_pane_lines<'a>(
             theme.info,
         ))));
     }
-    let focused = app.focus() == Focus::ThreadsPane;
     let navigation = Navigation::for_pane(app, Focus::ThreadsPane);
     let lines = pane_lines(&entries);
     let scroll = app.threads_pane_scroll(&entries, &lines);
@@ -88,7 +88,7 @@ pub(super) fn threads_pane_lines<'a>(
         };
         out.push(with_divider(drawn));
     }
-    let body_end = rows.saturating_sub(usize::from(focused));
+    let body_end = rows.saturating_sub(1);
     while out.len() < body_end {
         out.push(with_divider(Line::from(Span::styled(
             " ".repeat(inner),
@@ -96,7 +96,7 @@ pub(super) fn threads_pane_lines<'a>(
         ))));
     }
     out.truncate(body_end);
-    if focused && rows > 0 {
+    if rows > 0 {
         let footer = threads_pane_footer(app);
         let footer_row = app.pane_top() + app.tree_rows() + rows - 1;
         let hovered = app
@@ -400,11 +400,8 @@ mod tests {
         Ok(())
     }
 
-    /// The key bar replaces the bottom row while the pane has the keys
-    /// and gives it back when the keys leave; the rows above stay put
-    /// (ADR 0066).
     #[test]
-    fn the_key_bar_takes_the_bottom_row_only_with_the_keys() -> anyhow::Result<()> {
+    fn the_key_bar_reserves_its_row_across_focus_changes() -> anyhow::Result<()> {
         let dir = testing::workspace("pane-draw-bar", testing::README)?;
         let mut app = source_app(&dir)?;
         app.show_tree();
@@ -421,8 +418,8 @@ mod tests {
         let top = app.tree_rows();
         let last = app.pane_rows() - 1;
         assert!(
-            column[last].contains("one"),
-            "an entry row: {:?}",
+            column[last].contains("click or T"),
+            "inactive focus hint: {:?}",
             column[last]
         );
         assert_eq!(app.focus(), Focus::View);
@@ -433,13 +430,13 @@ mod tests {
         assert_eq!(
             focused[top + 2].chars().skip(1).collect::<String>(),
             column[top + 2].chars().skip(1).collect::<String>(),
-            "rows above do not move when the cursor bar appears"
+            "rows above do not move when focus changes"
         );
         assert_eq!(focused[last - 1], column[last - 1]);
 
         app.leave_threads_pane();
         let back = sidebar_column(&app, 100)?;
-        assert_eq!(back[last], column[last], "the entry row is back");
+        assert_eq!(back[last], column[last], "the focus hint returns");
         Ok(())
     }
 }

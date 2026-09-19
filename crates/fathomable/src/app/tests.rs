@@ -58,6 +58,21 @@ fn configured_layout_is_consistent_for_file_and_workspace_starts() -> anyhow::Re
     Ok(())
 }
 
+#[test]
+fn empty_file_surface_reserves_its_header() -> anyhow::Result<()> {
+    let dir = crate::app::testing::bare("empty-file-header")?;
+    let mut app = AppBuilder::new(&dir).unopened().build()?;
+    assert!(!app.has_document());
+    assert_eq!(app.file_chrome_rows(), 1);
+
+    app.open_getting_started();
+    assert_eq!(app.file_chrome_rows(), 0);
+    app.close_getting_started();
+    app.open_review();
+    assert_eq!(app.file_chrome_rows(), 0);
+    Ok(())
+}
+
 /// An `App` on the fixture's root with nothing open, under `options`.
 fn app_with(dir: &TempDir, options: Options) -> anyhow::Result<App> {
     AppBuilder::at(&dir.0)
@@ -321,6 +336,7 @@ fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
     // are indented past what a narrow sidebar can show.
     app.open(Path::new("docs/deep/notes.md"));
     app.show_tree();
+    app.synchronize_tree_to(Path::new("docs/deep/notes.md"));
     assert!(
         app.tree()
             .is_some_and(|tree| tree.rows().iter().any(|row| row.depth() == 2)),
@@ -329,7 +345,7 @@ fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
 
     let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
     let theme = crate::app::draw::Theme::from_core(&core);
-    for width in 1..=40u16 {
+    for width in 28..=40u16 {
         app.resize(usize::from(width), 12);
         let mut terminal = Terminal::new(TestBackend::new(width, 12))?;
         terminal.draw(|frame| crate::app::draw::draw(frame, &app, &theme))?;
@@ -350,7 +366,7 @@ fn narrow_sidebar_draws_whole_rows() -> anyhow::Result<()> {
 }
 
 #[test]
-fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
+fn tree_pane_toggles_focus_without_revealing_current_file() -> anyhow::Result<()> {
     let dir = fixture("sidebar")?;
     let mut app = app(&dir)?;
     assert_eq!(app.sidebar_width(), 0);
@@ -362,7 +378,11 @@ fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
         .tree()
         .and_then(|tree| tree.current())
         .map(|row| row.path().to_path_buf());
-    assert_eq!(selected.as_deref(), Some(Path::new("docs/notes.md")));
+    assert_eq!(
+        selected.as_deref(),
+        Some(Path::new("docs")),
+        "focus preserves the File-list cursor"
+    );
     app.toggle_tree_focus();
     assert_eq!(app.focus(), Focus::View);
     assert!(app.tree().is_some(), "tree stays visible");
@@ -371,6 +391,81 @@ fn tree_pane_toggles_focus_and_reveals_current_file() -> anyhow::Result<()> {
     app.toggle_tree_shown();
     assert!(app.tree().is_some(), "the same key shows it again");
     assert_eq!(app.focus(), Focus::View, "showing does not take the keys");
+    Ok(())
+}
+
+#[test]
+fn pane_minimums_cover_each_requested_composition_and_main_view() -> anyhow::Result<()> {
+    let dir = fixture("pane-minimums")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("README.md"));
+    app.toggle_menu_bar();
+    assert_eq!(app.minimum_pane_size(), (20, 5));
+
+    app.toggle_tree_shown();
+    assert_eq!(app.minimum_pane_size(), (28, 5));
+    app.toggle_threads_pane_shown();
+    assert_eq!(app.minimum_pane_size(), (28, 8));
+
+    app.open_review();
+    assert_eq!(
+        app.minimum_pane_size(),
+        (28, 8),
+        "File and Threads have the same requirement"
+    );
+    app.window_threads();
+    let focus = app.focus();
+    for (width, height, fits) in [(27, 8, false), (28, 7, false), (28, 8, true), (29, 9, true)] {
+        app.resize(width, height);
+        assert_eq!(app.panes_fit(), fits, "{width}x{height}");
+        assert_eq!(app.focus(), focus, "resize preserves requested focus");
+    }
+
+    app.toggle_tree_shown();
+    assert_eq!(app.minimum_pane_size(), (28, 6));
+    app.toggle_threads_pane_shown();
+    assert_eq!(app.minimum_pane_size(), (20, 5));
+    app.toggle_menu_bar();
+    assert_eq!(app.minimum_pane_size(), (20, 4));
+    Ok(())
+}
+
+#[test]
+fn undersized_layout_blocks_content_but_allows_recovery() -> anyhow::Result<()> {
+    use crate::app::testing::press;
+
+    let dir = fixture("pane-too-small")?;
+    let mut app = app(&dir)?;
+    app.open(Path::new("README.md"));
+    app.toggle_tree_shown();
+    app.window_files();
+    let cursor = app.tree().map(Tree::cursor);
+    app.resize(27, 5);
+    assert!(!app.panes_fit());
+    assert!(!app.pane_has_navigation(Focus::Tree));
+
+    press(&mut app, "j");
+    assert_eq!(app.tree().map(Tree::cursor), cursor);
+    press(&mut app, "w");
+    assert_eq!(app.focus(), Focus::Tree);
+
+    press(&mut app, " pf");
+    assert!(app.panes_fit(), "hiding a list recovers the layout");
+    assert_eq!(app.focus(), Focus::View);
+    assert!(app.pane_has_navigation(Focus::View));
+
+    app.resize(20, 4);
+    press(&mut app, "F");
+    assert!(
+        app.sidebar.tree,
+        "named focus still requests the hidden list"
+    );
+    assert!(!app.panes_fit());
+    assert_eq!(
+        app.focus(),
+        Focus::View,
+        "a newly invisible list does not take focus"
+    );
     Ok(())
 }
 
@@ -499,7 +594,7 @@ fn long_lines_wrap_in_rendered_source_and_diff_views() -> anyhow::Result<()> {
 }
 
 #[test]
-fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
+fn file_list_selection_previews_but_wheel_only_scrolls() -> anyhow::Result<()> {
     use crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
@@ -522,40 +617,58 @@ fn the_tree_highlight_pages_the_viewer() -> anyhow::Result<()> {
     assert_eq!(app.current_path(), Path::new("docs/guide.md"));
     assert_eq!(app.focus(), Focus::Tree, "paging does not steal focus");
 
-    // The wheel steps one row per tick: guide.md to notes.md, not three
-    // rows down.
+    app.resize(100, 5);
+    let cursor = app.tree().map(Tree::cursor);
+    let path = app.current_path().to_path_buf();
+    let scroll = app.tree_scroll();
+    let wheel_row = u16::try_from(app.pane_top() + 1)?;
     crate::app::input::mouse::handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::ScrollDown,
             column: 0,
-            row: 5,
+            row: wheel_row,
             modifiers: KeyModifiers::NONE,
         },
     );
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+    assert_eq!(app.tree().map(Tree::cursor), cursor);
+    assert_eq!(app.current_path(), path);
     assert_eq!(app.focus(), Focus::Tree);
+    assert!(app.tree_scroll() >= scroll, "wheel moves only the viewport");
 
     // Paging is browsing, not a far move: the jumplist has nothing.
     app.jump_back();
     assert_eq!(app.message(), Some("at oldest position"));
-    assert_eq!(app.current_path(), Path::new("docs/notes.md"));
+    assert_eq!(app.current_path(), path);
 
-    // A click pages too: it shows the row it lands on and stays in
-    // the tree. Row 0 is the root header, so screen row 4 is README.
+    app.window_right();
+    let (index, clicked) = app
+        .tree()
+        .and_then(|tree| {
+            tree.rows()
+                .iter()
+                .enumerate()
+                .skip(app.tree_scroll())
+                .take(app.tree_rows().saturating_sub(1))
+                .find(|(_, row)| !row.is_dir())
+                .map(|(index, row)| (index, row.path().to_path_buf()))
+        })
+        .ok_or_else(|| anyhow::anyhow!("visible file row"))?;
+    let click_row = u16::try_from(app.pane_top() + 1 + index.saturating_sub(app.tree_scroll()))?;
     crate::app::input::mouse::handle_mouse(
         &mut app,
         MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 0,
-            row: 4,
+            row: click_row,
             modifiers: KeyModifiers::NONE,
         },
     );
-    assert_eq!(app.current_path(), Path::new("README.md"));
-    assert_eq!(app.focus(), Focus::Tree, "a click does not steal focus");
+    assert_eq!(app.current_path(), clicked);
+    assert_eq!(app.focus(), Focus::Tree, "a row click focuses the list");
 
     // Enter commits: focus moves to the viewer.
+    app.window_files();
     keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     assert_eq!(app.focus(), Focus::View);
     Ok(())
@@ -566,7 +679,7 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
     use crossterm::event::KeyCode;
     use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store};
 
-    use crate::app::testing::{press, press_key, screen};
+    use crate::app::testing::{press_key, screen};
 
     let dir = fixture("directory-summary")?;
     fs::create_dir_all(dir.0.join("docs/reference"))?;
@@ -618,7 +731,8 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
     app.settle_status();
     app.open(Path::new("README.md"));
     app.toggle_tree_focus();
-    press(&mut app, "k");
+    app.synchronize_tree_to(Path::new("docs"));
+    app.show_highlight();
 
     let info = app
         .directory_info()
@@ -648,8 +762,9 @@ fn a_directory_highlight_shows_its_summary_instead_of_the_last_file() -> anyhow:
     assert!(!output.contains("Readme"), "{output}");
 
     press_key(&mut app, KeyCode::Esc);
-    assert!(app.directory_info().is_none());
-    assert!(screen(&app)?.join("\n").contains("Readme"));
+    assert_eq!(app.focus(), Focus::View);
+    assert_eq!(app.directory_path(), Some(Path::new("docs")));
+    assert!(screen(&app)?.join("\n").contains("subdirectories  1"));
     Ok(())
 }
 

@@ -66,6 +66,153 @@ fn assert_selection(buffer: &Buffer, x: u16, y: u16, width: u16, theme: &Theme, 
     }
 }
 
+fn marker_count(buffer: &Buffer) -> usize {
+    buffer
+        .content
+        .iter()
+        .filter(|cell| cell.symbol() == "▏")
+        .count()
+}
+
+fn assert_pane_title(buffer: &Buffer, x: u16, y: u16, name: &str, theme: &Theme, focused: bool) {
+    assert_eq!(buffer[(x, y)].symbol(), if focused { "▏" } else { " " });
+    let expected = if focused {
+        theme.pane_focus.fg
+    } else {
+        theme.text.fg
+    };
+    for (offset, character) in name.chars().enumerate() {
+        let cell = &buffer[(x + 1 + u16::try_from(offset).unwrap_or(u16::MAX), y)];
+        assert_eq!(cell.symbol(), character.to_string());
+        assert_eq!(Some(cell.fg), expected, "{name:?} cell {offset}");
+    }
+}
+
+#[test]
+fn pane_titles_show_exactly_one_focus_marker_and_suspend_it_for_overlays() -> anyhow::Result<()> {
+    let dir = testing::workspace("pane-focus-titles", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.show_tree();
+    app.show_threads_pane();
+
+    for name in BUILTIN_NAMES {
+        let theme = Theme::from_core(&CoreTheme::resolve(name, |_| Ok(None))?);
+        app.window_files();
+        let sidebar = u16::try_from(app.sidebar_width())?;
+        let pane_top = u16::try_from(app.pane_top())?;
+        let thread_top = u16::try_from(app.pane_top() + app.tree_rows() + 1)?;
+        let buffer = render(&app, &theme)?;
+        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_pane_title(&buffer, 0, pane_top, "File list", &theme, true);
+        assert_pane_title(&buffer, sidebar, pane_top, "File", &theme, false);
+        assert_pane_title(&buffer, 0, thread_top, "Thread list", &theme, false);
+
+        app.focus_pane(Focus::View);
+        let buffer = render(&app, &theme)?;
+        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_pane_title(&buffer, sidebar, pane_top, "File", &theme, true);
+        let filename_x = sidebar + u16::try_from(" File  ".len())?;
+        assert_ne!(Some(buffer[(filename_x, pane_top)].fg), theme.pane_focus.fg);
+
+        app.open_review();
+        let buffer = render(&app, &theme)?;
+        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_pane_title(&buffer, sidebar, pane_top, "Threads", &theme, true);
+
+        app.open_status();
+        let buffer = render(&app, &theme)?;
+        assert_eq!(marker_count(&buffer), 0, "{name}");
+        app.close_popup();
+        app.close_review();
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_file_and_thread_lists_keep_their_focused_headers() -> anyhow::Result<()> {
+    let dir = testing::bare("empty-pane-focus")?;
+    let mut app = testing::AppBuilder::new(&dir).unopened().build()?;
+    let theme = Theme::from_core(&CoreTheme::resolve("default-dark", |_| Ok(None))?);
+    app.show_tree();
+    app.show_threads_pane();
+
+    app.window_files();
+    let buffer = render(&app, &theme)?;
+    assert_pane_title(
+        &buffer,
+        0,
+        u16::try_from(app.pane_top())?,
+        "File list",
+        &theme,
+        true,
+    );
+
+    app.window_threads();
+    let buffer = render(&app, &theme)?;
+    assert_pane_title(
+        &buffer,
+        0,
+        u16::try_from(app.pane_top() + app.tree_rows() + 1)?,
+        "Thread list",
+        &theme,
+        true,
+    );
+
+    app.open_review();
+    let buffer = render(&app, &theme)?;
+    assert_pane_title(
+        &buffer,
+        u16::try_from(app.sidebar_width())?,
+        u16::try_from(app.pane_top())?,
+        "Threads",
+        &theme,
+        true,
+    );
+    app.open_review_view(crate::app::threads::list::ReviewView::RecentlyResolved);
+    let history = render(&app, &theme)?;
+    assert_pane_title(
+        &history,
+        u16::try_from(app.sidebar_width())?,
+        u16::try_from(app.pane_top())?,
+        "Threads",
+        &theme,
+        true,
+    );
+
+    app.close_review();
+    app.focus_pane(Focus::View);
+    let file = render(&app, &theme)?;
+    assert_pane_title(
+        &file,
+        u16::try_from(app.sidebar_width())?,
+        u16::try_from(app.pane_top())?,
+        "File",
+        &theme,
+        true,
+    );
+    Ok(())
+}
+
+#[test]
+fn directory_and_file_info_surfaces_keep_the_file_focus_header() -> anyhow::Result<()> {
+    let dir = testing::workspace("file-surface-focus", testing::README)?;
+    std::fs::create_dir_all(testing::root(&dir).join("docs"))?;
+    std::fs::write(testing::root(&dir).join("image.bin"), b"\0binary")?;
+    let mut app = testing::source_app(&dir)?;
+    let theme = Theme::from_core(&CoreTheme::resolve("default-light", |_| Ok(None))?);
+    let x = u16::try_from(app.sidebar_width())?;
+    let y = u16::try_from(app.pane_top())?;
+
+    app.open(std::path::Path::new("docs"));
+    app.focus_pane(Focus::View);
+    assert_pane_title(&render(&app, &theme)?, x, y, "File", &theme, true);
+
+    app.open(std::path::Path::new("image.bin"));
+    assert!(app.info().is_some());
+    assert_pane_title(&render(&app, &theme)?, x, y, "File", &theme, true);
+    Ok(())
+}
+
 #[test]
 fn files_threads_and_review_share_active_and_remembered_selection() -> anyhow::Result<()> {
     let dir = testing::workspace("list-focus-panes", testing::README)?;

@@ -34,18 +34,51 @@ Outside Git, a directory is its own workspace.
 
 ## UX
 
-**Files** browses the workspace; **Threads** lists discussions beside the
-document. The main column switches between **File** (`f`) and **Reviews**
-(`t`). Click pane titles for filters and view options, right-click rows for
+**File list** browses the workspace; **Thread list** lists discussions beside
+the document. The main column switches between **File** (`f`) and **Threads**
+(`t`). `F` and `T` show and focus the corresponding sidebar list. Click pane
+titles for their existing filters and view options, right-click rows for
 actions, or use the top **Layout**, **Go**, **Review**, and **Diff** menus.
-The mouse wheel scrolls; dragging the sidebar divider resizes it.
+Plain header space and content can focus a pane without changing the title's
+menu target. Hover never focuses.
 
-The **Files** title menu has four session filters: **only changed**,
+The **File list** title menu has four session filters: **only changed**,
 **only reviews**, **hide untracked**, and **show ignored**. `Space F c`,
 `Space F o`, `Space F u`, and `Space F g` toggle them from any pane. Only
 reviews means files with an active or resolution-proposed, non-archived thread
-in the current workspace. Filters combine, and the Files header names active
+in the current workspace. Filters combine, and the File list header names active
 filters compactly as `c`, `r`, `u`, and `i`.
+
+The focused pane marks its name with a purple `▏`; filenames, counts, filters,
+and controls remain neutral. The selected list row keeps its blue active or
+remembered treatment independently. Menus, popups, prefixes, drafts, and
+command/search input suspend the pane marker.
+
+Use `w` and `W` to cycle focus forward and backward through the current main
+surface, File list, and Thread list, skipping hidden panes. Layout show/hide
+actions do not take focus. Hiding a focused sidebar pane returns to the
+current main surface. In a list, movement and clicks preview content without
+leaving the list; `Enter` explicitly opens and focuses File source or the
+Threads evidence fallback. The mouse wheel scrolls only the pointed viewport:
+it never changes selection, preview, focus, or the main surface. Dragging the
+sidebar divider resizes it.
+
+In File list, `z` folds or unfolds the selected directory without opening a
+file. `Z` unfolds every directory admitted by the current filters, or folds
+them all when already expanded. Recursive unfolding skips directory symlinks.
+Previewing a file keeps its draft parked; explicitly opening File resumes it.
+
+The configured split remains intact on a narrow terminal. When it cannot fit,
+Fathomable replaces pane content with a size warning showing the required and
+current dimensions. Resize, use **Layout** to hide a pane, or quit; recovery
+preserves focus, selections, previews, and scroll positions. With the app bar
+shown, minimum terminal sizes are `20×5` for the main surface, `28×5` with
+File list, `28×6` with Thread list, and `28×8` with both; hiding the app bar
+subtracts one required row.
+Hidden drafts, pickers, and confirmations cannot accept input under the size
+warning; `Esc` dismisses them without submitting. The Thread-list footer
+reserves its row across focus changes. At minimum height, the File footer
+yields to a deletion banner so a content row remains visible.
 
 ### Essential keys
 
@@ -61,25 +94,27 @@ the table below is a quick reference, not the full list.
 | `v` `V` `y` | select characters, select lines, copy |
 | `gf` | follow a file reference or URL |
 | `Space f` | file picker |
-| `Space F c` `Space F o` | only changed / only reviews in Files |
-| `Space F u` `Space F g` | hide untracked / show ignored in Files |
+| `Space F c` `Space F o` | only changed / only reviews in File list |
+| `Space F u` `Space F g` | hide untracked / show ignored in File list |
 | `Space d s` `Space d u` `Space d o` | Standard / Unified / Off diff mode |
 | `Space d d` | compare the current HEAD to the working tree |
+| `Space d w` | ignore whitespace |
 | `Space d c` `Space d x` | save / delete a review point |
 | `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
-| `Space w w` | focus the next pane |
-| `f` `t` | File / Reviews |
+| `w` `W` | focus the next / previous displayed pane |
+| `f` `F` | show and focus File / File list |
+| `t` `T` | show and focus Threads / Thread list |
 | `J` `K` | next / previous comparison change across the workspace |
 | `Tab` `Shift-Tab` | next / previous open review thread across the workspace |
 | `]w` `[w` | next / previous worktree |
 | `c` `Space c f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
-| `z` `Z` | fold one thread / all threads |
+| `z` `Z` | fold/unfold a directory / all directories in File list; threads elsewhere |
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
 | `Shift-Enter` `Alt-Enter` | draft newline / draft newline fallback |
 | `Ctrl-e` | edit with `$VISUAL` or `$EDITOR` |
-| `Esc` | cancel transient input or return to File |
+| `Esc` | cancel transient UI; from a sidebar return to the current main surface |
 | `Space ?` | keymap |
 | `q` | quit after confirmation |
 | `:q` `:quit` `:q!` `:quit!` | quit immediately |
@@ -94,11 +129,11 @@ Files the editor is configured to write elsewhere are outside this protection.
 ### Compare versions
 
 One session-global diff mode applies to every file and review/history view.
-The rightmost control in each File or Reviews header reads **Diff: standard**,
+The rightmost control in each File or Threads header reads **Diff: standard**,
 **Diff: unified**, or **Diff: off**. Click it for the three mode choices, or
 use `Space d s`, `Space d u`, and `Space d o`:
 
-- **Standard** shows Target content with comparison gutters, counts, Files
+- **Standard** shows Target content with comparison gutters, counts, File list
   filtering, and hunk navigation.
 - **Unified** shows the selected Base-to-Target patch. It follows file
   switches and remains active when you press `Esc`.
@@ -107,12 +142,12 @@ use `Space d s`, `Space d u`, and `Space d o`:
   and counts. Plain activity notifications remain visible.
 
 Off retains the selected Base, the whitespace setting, the **only changed**
-Files filter, and the last active Standard/Unified mode so they return when
+File list filter, and the last active Standard/Unified mode so they return when
 diffs are enabled. Their controls are dormant while Off. Changing Target keeps
 Off active; choosing Base attempts to restore the last active mode. If that
 pair cannot be read, both endpoint choices remain selected and the viewer stays
 Off with an error. A Base-only file that was already open says **not present in
-Target** and shows no Base body. Reviews still show clearly labelled immutable
+Target** and shows no Base body. Threads still shows clearly labelled immutable
 origin excerpts and stored discussion history because those are review
 evidence, not source browsing.
 
@@ -162,9 +197,9 @@ whitespace. A pending new annotation must be submitted or cancelled first.
 Use `J` and `K` to cycle every comparison change across the workspace.
 Text hunks are individual stops; a changed path with no text hunk, such as a
 binary or mode-only change, is one stop. The cycle follows the selected
-comparison and is unavailable in Off mode. Files expands and centers a listed
-destination without taking keyboard focus; a hidden Files pane catches up when
-shown.
+comparison and is unavailable in Off mode. File list expands and centers a
+listed destination without taking keyboard focus; a hidden File list catches
+up when shown.
 
 ### Review discussions
 
@@ -181,10 +216,10 @@ review.
 Use `Tab` and `Shift-Tab` from any normal pane to cycle active and
 resolution-proposed threads across the workspace. Resolved and archived
 threads are skipped. Source opens when it can be displayed; otherwise
-Fathomable selects the expanded Reviews entry and its stored evidence.
-Files follows the destination path without taking focus from File or Reviews.
-Active Files filters still apply: an excluded destination is not fabricated,
-and its reveal waits until the listing admits it.
+Fathomable selects the expanded Threads entry and its stored evidence.
+File list follows the destination path without taking focus from File or
+Threads. Active File list filters still apply: an excluded destination is not
+fabricated, and its reveal waits until the listing admits it.
 This navigation never switches worktrees: use `]w` and `[w` explicitly.
 
 The File footer keeps the core loop visible as
@@ -232,10 +267,10 @@ layout {
     menu-bar #true // Show the menu bar at startup.
     sidebar {
         visible #true // Show the sidebar at startup.
-        files #true // Include the Files pane in the sidebar.
-        threads #true // Include the Threads pane in the sidebar.
+        files #true // Include File list in the sidebar.
+        threads #true // Include Thread list in the sidebar.
         width 32 // Sidebar columns, capped at one third of the terminal.
-        split 8 // Threads pane rows when both sidebar panes are shown.
+        split 8 // Thread list rows when both sidebar panes are shown.
     }
 }
 
@@ -257,7 +292,8 @@ user {
 
 `fathomable --config-show` prints the effective configuration and its path.
 Custom themes live in `$XDG_CONFIG_HOME/fathomable/themes/`; `--theme NAME`
-overrides the theme for one run.
+overrides the theme for one run. `ui.pane.focus` controls the focused pane
+marker and name foreground; inherit it from a built-in or set it explicitly.
 
 When upgrading from a configuration with `jump { toast ... }`, move `toast`
 into the `watch` block and remove the obsolete `jump` block. `jump` is no

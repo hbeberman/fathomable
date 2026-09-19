@@ -77,7 +77,7 @@ fn origin_evidence(thread: &Thread) -> String {
 impl ReviewView {
     pub(crate) const fn title(self) -> &'static str {
         match self {
-            Self::Board => "Reviews",
+            Self::Board => "Threads",
             Self::RecentlyResolved => "Recently resolved",
             Self::Archived => "Archived threads",
         }
@@ -450,6 +450,10 @@ impl App {
     /// The pane closes; the filter and folds are whatever they were last
     /// time, and the cursor is where the reader was (ADR 0046).
     pub(crate) fn open_review(&mut self) {
+        if self.review_list.is_open() {
+            self.focus = Focus::Review;
+            return;
+        }
         self.open_review_view(ReviewView::Board);
     }
 
@@ -707,21 +711,23 @@ impl App {
         self.close_review();
         self.focus = Focus::View;
         self.relayout();
+        self.resume_draft();
     }
 
-    /// Select `path` as the current file without leaving an open review.
-    pub(crate) fn select_file_preserving_review(&mut self, path: &Path) {
+    /// Reveal the exact cursor thread without changing filters, folds, or focus.
+    pub(super) fn reveal_review_cursor(&mut self) {
         if !self.review_list.open {
-            self.open(path);
             return;
         }
-        let review = self.review;
-        let focus = self.focus;
-        self.open(path);
-        self.review = review;
-        self.review_list.open = true;
-        self.focus = focus;
-        self.relayout();
+        let rows = self.review_rows(self.column_width());
+        let index = self
+            .thread_cursor()
+            .thread()
+            .and_then(|id| rows.entries.iter().position(|entry| entry.id() == id));
+        if let Some(index) = index {
+            self.review_list.on_file = false;
+            self.scroll_to_selection(&rows, index);
+        }
     }
 
     /// Columns the list has: the text column without the tree.

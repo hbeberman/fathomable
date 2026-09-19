@@ -44,6 +44,8 @@ styles. A hovered direct header action composes
 added. Amended 2026-09-17: bottom key-bar actions use the same composition
 over each whole action-hotkey target. Exact-current loading means the retired
 keys are unknown.
+Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md):
+`ui.pane.focus` styles only the focused pane's reserved marker and pane name.
 
 ## Context
 
@@ -121,6 +123,7 @@ home; chrome uses `ui.*` and the gutter `diff.*` from 0010.
 | `ui.statusline.info` | transient messages, pending keys, `[+]`, and muted ancestor-file context bars in review (0079) |
 | `ui.statusline.error` | failed-action text in the status line; the built-ins set only a bold red foreground so its background remains `ui.statusline` |
 | `ui.warning` | the `deleted` banner over a file that is gone ([0028](0028-live-workspace.md)) |
+| `ui.pane.focus` | foreground of the focused pane's reserved `▏` marker and pane name; the `ui.header` background remains in force and other header facts stay neutral ([0091](0091-pane-focus-navigation.md)) |
 | `diff.plus`, `diff.delta`, `diff.minus` | gutter diff bar |
 | `git.staged`, `git.unstaged` | the tree pane's git letters ([0017](0017-git-status-navigation.md)) |
 | `ui.sidebar`, `ui.sidebar.dir` | the sidebar's background and directory names ([0012](0012-workspace-mode.md)); written `ui.rail*` between [0049](0049-inline-threads-and-the-rail.md) and [0057](0057-the-sidebar.md) |
@@ -186,6 +189,10 @@ stripes remain separate under `thread.user` and `thread.agent`.
   | `ui.list.inactive` `bg` | `#202830` | `#e2e9ef` |
   | `ui.list.hover` `bg` | `#263342` | `#dce6ef` |
   | `ui.list.cursor` `fg` | `#9bc3ed` | `#1f5fbf` |
+
+- Pane focus is separate from list selection. `ui.pane.focus` sets only a
+  foreground: `#c397d8` in `default-dark` and `#7d3c98` in
+  `default-light`, using each built-in's existing purple palette value.
 
 - Both built-ins use blue for `thread.active`, bold green for
   `thread.proposed`, and bright black for `thread.resolved`. These are

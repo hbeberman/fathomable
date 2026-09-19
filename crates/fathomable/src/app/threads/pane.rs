@@ -24,8 +24,8 @@ use crate::app::{App, Focus};
 
 /// Rows the pane needs before its entries: the rule and the header.
 const CHROME_ROWS: usize = 2;
-/// The fewest rows the pane is drawn with: rule, header, one entry row.
-const MIN_ROWS: usize = 3;
+/// The fewest rows the pane is drawn with: rule, header, entry, and footer.
+const MIN_ROWS: usize = 4;
 /// Rows the tree keeps above the pane when both are shown.
 const TREE_MIN_ROWS: usize = 2;
 
@@ -220,7 +220,7 @@ impl App {
             .collect()
     }
 
-    /// The threads `j` / `k` and the wheel stop on: every listed thread,
+    /// The threads `j` / `k` stop on: every listed thread,
     /// a folded file counting once through its first thread (ADR 0066).
     fn threads_pane_stops(&self) -> Vec<ThreadId> {
         let mut last_path: Option<PathBuf> = None;
@@ -318,12 +318,11 @@ impl App {
     }
 
     /// Rows the pane's entries have: the height less the rule and the
-    /// header, and less the key bar while the pane has the keys (ADR
-    /// 0066).
+    /// header, and the key bar.
     pub(crate) fn threads_pane_body_rows(&self) -> usize {
         self.threads_pane_height()
             .saturating_sub(CHROME_ROWS)
-            .saturating_sub(usize::from(self.focus == Focus::ThreadsPane))
+            .saturating_sub(1)
     }
 
     /// Rows the files pane has, 0 when it is hidden.
@@ -374,19 +373,53 @@ impl App {
         }
     }
 
-    /// The first screen row of `lines` drawn, chosen so the highlighted
-    /// entry's rows, or its folded file's row, are on screen.
-    pub(crate) fn threads_pane_scroll(&self, rows: &[PaneRow], lines: &[PaneLine]) -> usize {
+    /// The first body row drawn from the pane's independent viewport.
+    pub(crate) fn threads_pane_scroll(&self, _rows: &[PaneRow], lines: &[PaneLine]) -> usize {
+        let body = self.threads_pane_body_rows().max(1);
+        self.threads_pane_scroll
+            .min(lines.len().saturating_sub(body))
+    }
+
+    /// Move only the Thread-list viewport, leaving its cursor and preview.
+    pub(crate) fn scroll_threads_pane(&mut self, delta: isize) {
+        let lines = pane_lines(&self.threads_pane_rows());
+        let max = lines
+            .len()
+            .saturating_sub(self.threads_pane_body_rows().max(1));
+        self.threads_pane_scroll = self
+            .threads_pane_scroll
+            .saturating_add_signed(delta)
+            .min(max);
+    }
+
+    /// Reveal the selected entry after deliberate keyboard or click selection.
+    fn reveal_threads_pane_selection(&mut self) {
+        let rows = self.threads_pane_rows();
+        let lines = pane_lines(&rows);
         let body = self.threads_pane_body_rows().max(1);
         let selected = |row: &PaneRow| match row {
             PaneRow::File { selected, .. } => *selected,
             PaneRow::Thread(entry) => entry.selected,
         };
-        let end = lines
+        let Some(end) = lines
             .iter()
             .rposition(|line| rows.get(line.row()).is_some_and(selected))
-            .map_or(0, |index| index + 1);
-        end.saturating_sub(body)
+            .map(|index| index + 1)
+        else {
+            self.threads_pane_scroll = self
+                .threads_pane_scroll
+                .min(lines.len().saturating_sub(body));
+            return;
+        };
+        let start = lines
+            .iter()
+            .position(|line| rows.get(line.row()).is_some_and(selected))
+            .unwrap_or(end - 1);
+        if start < self.threads_pane_scroll {
+            self.threads_pane_scroll = start;
+        } else if end > self.threads_pane_scroll + body {
+            self.threads_pane_scroll = end.saturating_sub(body);
+        }
     }
 
     /// `Space p t`: hide the pane, or show it again without taking the
@@ -398,7 +431,7 @@ impl App {
         }
         self.sidebar.hide_threads();
         if self.focus == Focus::ThreadsPane {
-            self.focus = Focus::View;
+            self.focus = self.displayed_main_focus();
         }
         self.relayout();
     }
@@ -414,17 +447,19 @@ impl App {
     /// Show the pane and give it the keys.
     pub(crate) fn focus_threads_pane(&mut self) {
         self.show_threads_pane();
-        self.focus = Focus::ThreadsPane;
+        if self.panes_fit() {
+            self.focus = Focus::ThreadsPane;
+        }
     }
 
     /// Esc in the pane: the keys go back to the text; the pane stays.
     pub(crate) fn leave_threads_pane(&mut self) {
         if self.focus == Focus::ThreadsPane {
-            self.focus = Focus::View;
+            self.focus = self.displayed_main_focus();
         }
     }
 
-    /// `j` / `k` and the wheel: the next or previous listed thread,
+    /// `j` / `k`: the next or previous listed thread,
     /// wrapping, a folded file counting once; the text follows, another
     /// file opening in workspace scope, and the keys stay here.
     pub(crate) fn threads_pane_move(&mut self, delta: isize) {
@@ -435,6 +470,7 @@ impl App {
         }
         if let Some(id) = self.step_in(&order, delta) {
             self.land_in_pane(id);
+            self.reveal_threads_pane_selection();
         }
     }
 
@@ -444,6 +480,7 @@ impl App {
             PaneScope::File => PaneScope::Workspace,
             PaneScope::Workspace => PaneScope::File,
         };
+        self.reveal_threads_pane_selection();
         self.notice(format!("threads: {}", self.sidebar.scope.word()));
     }
 
@@ -462,6 +499,7 @@ impl App {
             return;
         };
         self.threads_pane_toggle_fold(&path);
+        self.reveal_threads_pane_selection();
     }
 
     /// `Z` in the pane (ADR 0066): fold every listed file, or unfold them
@@ -480,6 +518,7 @@ impl App {
         } else {
             self.sidebar.folded = listed;
         }
+        self.reveal_threads_pane_selection();
     }
 
     fn threads_pane_toggle_fold(&mut self, path: &Path) {
@@ -498,12 +537,16 @@ impl App {
     /// the cursor goes to it; the keys stay with this pane. A click past
     /// the rows acts as one on the header.
     pub(crate) fn threads_pane_click(&mut self, row: usize) {
+        self.threads_pane_focus();
         match self.threads_pane_at(row) {
             Some(PaneRow::File { path, .. }) => {
                 self.threads_pane_toggle_fold(&path);
-                self.threads_pane_focus();
+                self.reveal_threads_pane_selection();
             }
-            Some(PaneRow::Thread(entry)) => self.land_in_pane(entry.id),
+            Some(PaneRow::Thread(entry)) => {
+                self.land_in_pane(entry.id);
+                self.reveal_threads_pane_selection();
+            }
             None => self.threads_pane_focus(),
         }
     }
@@ -511,7 +554,7 @@ impl App {
     /// A right-click on body row `row` (ADR 0066): on a file row the
     /// cursor goes to the file's first thread; on a thread, to it.
     pub(crate) fn threads_pane_point(&mut self, row: usize) -> Option<PanePoint> {
-        match self.threads_pane_at(row)? {
+        let point = match self.threads_pane_at(row)? {
             PaneRow::File { path, .. } => {
                 let first = self
                     .review_entries(false)
@@ -525,7 +568,9 @@ impl App {
                 self.land_in_pane(entry.id);
                 Some(PanePoint::Thread)
             }
-        }
+        };
+        self.focus = Focus::ThreadsPane;
+        point
     }
 
     /// The entry drawn on body row `row`.
@@ -554,12 +599,25 @@ impl App {
         self.sidebar.split = Some(self.pane_rows().saturating_sub(row));
     }
 
-    /// Land the cursor on `id` from the pane: the file opens if it is
-    /// elsewhere and the keys stay with the pane.
+    /// Preview `id` from the pane without changing the displayed main view.
     fn land_in_pane(&mut self, id: ThreadId) {
-        if self.land_on_thread(id) == Some(ThreadLanding::Source) && self.sidebar.threads {
-            self.focus = Focus::ThreadsPane;
+        let Some(path) = self
+            .thread(&id)
+            .map(|thread| self.thread_path(thread).to_path_buf())
+        else {
+            return;
+        };
+        let focus = self.focus;
+        self.preview_file(&path);
+        if self.thread_source_is_displayable(&id) {
+            self.goto_thread(&id);
+        } else {
+            self.notice("source unavailable; press Enter for thread evidence");
         }
+        self.set_thread_cursor(id);
+        self.reveal_review_cursor();
+        self.synchronize_tree_to(&path);
+        self.focus = focus;
     }
 
     fn empty_pane_notice(&self) -> &'static str {

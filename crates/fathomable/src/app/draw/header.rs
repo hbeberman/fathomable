@@ -28,7 +28,7 @@ use ratatui::text::{Line, Span};
 
 use crate::app::draw::counts::passive_count_hints;
 use crate::app::draw::nest::NEST;
-use crate::app::draw::{Theme, mark_style};
+use crate::app::draw::{Theme, mark_style, on_surface};
 use crate::app::input::bindings::{self, Action, Where};
 use crate::app::threads::list::{Entry, ReviewView};
 use crate::app::threads::summary::{
@@ -53,8 +53,8 @@ fn pair(place: Where, a: Action, b: Action) -> String {
 pub(crate) enum Tone {
     Key,
     Info,
-    /// The sidebar's directory colour, bold: the threads pane's title.
-    Dir,
+    /// A pane name with a reserved leading focus-marker cell.
+    Pane,
     Mark(ThreadState),
     /// The diff colours: the files pane header's `+n` and `-m`.
     Added,
@@ -64,6 +64,14 @@ pub(crate) enum Tone {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Control {
     DiffMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Hover {
+    None,
+    Title,
+    Action(Action),
+    Control(Control),
 }
 
 /// A header hint with what a click on it runs (ADR 0050): nothing for
@@ -504,7 +512,7 @@ impl Header {
     /// hints joined by the separator, padded to `width` so the surface
     /// reaches the right edge.
     pub(super) fn line(&self, theme: &Theme, width: usize) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, None, None, theme.header)
+        self.line_with_hovers(theme, width, Hover::None, false, theme.header)
     }
 
     /// Draw the header with hover behind its clickable left label.
@@ -513,8 +521,19 @@ impl Header {
         theme: &Theme,
         width: usize,
         left_hovered: bool,
+        focused: bool,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, left_hovered, None, None, theme.header)
+        self.line_with_hovers(
+            theme,
+            width,
+            if left_hovered {
+                Hover::Title
+            } else {
+                Hover::None
+            },
+            focused,
+            theme.header,
+        )
     }
 
     /// Draw the clickable title and mode control with shared hover treatment.
@@ -524,13 +543,20 @@ impl Header {
         width: usize,
         left_hovered: bool,
         control_hovered: Option<Control>,
+        focused: bool,
     ) -> Line<'static> {
         self.line_with_hovers(
             theme,
             width,
-            left_hovered,
-            None,
-            control_hovered,
+            control_hovered.map_or(
+                if left_hovered {
+                    Hover::Title
+                } else {
+                    Hover::None
+                },
+                Hover::Control,
+            ),
+            focused,
             theme.header,
         )
     }
@@ -542,24 +568,33 @@ impl Header {
         width: usize,
         hovered: Option<Action>,
     ) -> Line<'static> {
-        self.line_with_hovers(theme, width, false, hovered, None, theme.header)
+        self.line_with_hovers(
+            theme,
+            width,
+            hovered.map_or(Hover::None, Hover::Action),
+            false,
+            theme.header,
+        )
     }
 
     fn line_with_hovers(
         &self,
         theme: &Theme,
         width: usize,
-        left_hovered: bool,
-        hovered: Option<Action>,
-        control_hovered: Option<Control>,
+        hovered: Hover,
+        focused: bool,
         base: ratatui::style::Style,
     ) -> Line<'static> {
         let shown = self.shown(width);
         let left_count = shown
             .as_ref()
             .map_or(self.required_left, |(left_count, _, _, _, _)| *left_count);
-        let mut spans = self.left_spans(theme, left_count, left_hovered);
+        let mut spans =
+            self.left_spans(theme, left_count, matches!(hovered, Hover::Title), focused);
         let mut at = self.left_width_for(left_count);
+        if at > width {
+            at = clip_spans(&mut spans, width);
+        }
         if let Some((_, start, hints, tail, form)) = shown {
             spans.push(Span::raw(" ".repeat(start - at)));
             at = start;
@@ -570,10 +605,11 @@ impl Header {
                     spans.push(Span::styled(self.sep, faint));
                     at += sep;
                 }
-                let hint_hovered = hovered.is_some_and(|action| hint.actions.contains(&action))
-                    || hint
-                        .control
-                        .is_some_and(|control| Some(control) == control_hovered);
+                let hint_hovered = match hovered {
+                    Hover::Action(action) => hint.actions.contains(&action),
+                    Hover::Control(control) => hint.control == Some(control),
+                    Hover::None | Hover::Title => false,
+                };
                 let surface = if hint_hovered {
                     base.patch(theme.list_hover)
                 } else {
@@ -646,21 +682,59 @@ impl Header {
         Line::from(spans).style(base)
     }
 
-    fn left_spans(&self, theme: &Theme, count: usize, hovered: bool) -> Vec<Span<'static>> {
-        self.left
-            .iter()
-            .take(count)
-            .enumerate()
-            .map(|(index, (text, tone))| {
-                let style = if hovered && index == 0 {
-                    tone_style(theme, *tone).patch(theme.list_hover)
+    fn left_spans(
+        &self,
+        theme: &Theme,
+        count: usize,
+        hovered: bool,
+        focused: bool,
+    ) -> Vec<Span<'static>> {
+        let mut spans = Vec::with_capacity(count + 1);
+        for (index, (text, tone)) in self.left.iter().take(count).enumerate() {
+            if *tone == Tone::Pane {
+                let surface = if hovered && index == 0 {
+                    theme.header.patch(theme.list_hover)
                 } else {
-                    tone_style(theme, *tone)
+                    theme.header
                 };
-                Span::styled(text.clone(), style)
-            })
-            .collect()
+                let title = text.strip_prefix(' ').unwrap_or(text);
+                let accent = if focused {
+                    theme.pane_focus
+                } else {
+                    theme.text
+                };
+                spans.push(Span::styled(
+                    if focused { "▏" } else { " " },
+                    on_surface(surface, accent),
+                ));
+                spans.push(Span::styled(title.to_owned(), on_surface(surface, accent)));
+                continue;
+            }
+            let style = if hovered && index == 0 {
+                tone_style(theme, *tone).patch(theme.list_hover)
+            } else {
+                tone_style(theme, *tone)
+            };
+            spans.push(Span::styled(text.clone(), style));
+        }
+        spans
     }
+}
+
+fn clip_spans(spans: &mut Vec<Span<'_>>, width: usize) -> usize {
+    let mut remaining = width;
+    let mut clipped = false;
+    spans.retain_mut(|span| {
+        if clipped {
+            return false;
+        }
+        let (prefix, used) = super::fitting_prefix(&span.content, remaining);
+        clipped = prefix.len() < span.content.len();
+        span.content = prefix.to_owned().into();
+        remaining -= used;
+        !span.content.is_empty()
+    });
+    width - remaining
 }
 
 /// The shared action-first controls used by destructive confirmations.
@@ -697,8 +771,13 @@ impl ConfirmationControls {
         width: usize,
         hovered: Option<Action>,
     ) -> Line<'static> {
-        self.bar
-            .line_with_hovers(theme, width, false, hovered, None, theme.popup)
+        self.bar.line_with_hovers(
+            theme,
+            width,
+            hovered.map_or(Hover::None, Hover::Action),
+            false,
+            theme.popup,
+        )
     }
 }
 
@@ -706,7 +785,7 @@ fn tone_style(theme: &Theme, tone: Tone) -> ratatui::style::Style {
     match tone {
         Tone::Key => theme.popup_key,
         Tone::Info => theme.info,
-        Tone::Dir => theme.sidebar_dir.add_modifier(Modifier::BOLD),
+        Tone::Pane => theme.text,
         Tone::Mark(state) => mark_style(theme, state),
         Tone::Added => theme.diff_plus,
         Tone::Removed => theme.diff_minus,
@@ -809,9 +888,9 @@ pub(crate) fn summary_line<'a>(
 
 /// The review list's header (ADR 0025, ADR 0066, ADR 0075).
 ///
-/// The normal board draws a clickable `Reviews` title, then passive scope
-/// and lifecycle counts against the right edge. History views keep their
-/// specific title and passive counts.
+/// The normal board draws a clickable `Threads` title, then passive scope
+/// and lifecycle counts against the right edge. History views keep Threads
+/// as the pane name and add their specific title as neutral context.
 pub(crate) fn review_header(app: &App) -> Header {
     let review = app.review();
     let mut counts = passive_count_hints(
@@ -826,13 +905,16 @@ pub(crate) fn review_header(app: &App) -> Header {
         };
         counts.insert(0, HintOf::responsive_word(scope, compact, Tone::Info));
         Header::counted_with_tail(
-            vec![(" Reviews".to_owned(), Tone::Dir)],
+            vec![(" Threads".to_owned(), Tone::Pane)],
             counts,
             vec![HintOf::diff_mode(app.diff_mode())],
         )
     } else {
         Header::counted_with_tail(
-            vec![(format!(" {}", review.view.title()), Tone::Key)],
+            vec![
+                (" Threads".to_owned(), Tone::Pane),
+                (format!("  {}", review.view.title()), Tone::Info),
+            ],
             counts,
             vec![HintOf::diff_mode(app.diff_mode())],
         )
@@ -859,7 +941,7 @@ pub(crate) fn file_header(app: &App) -> Header {
     );
     let mut header = Header::counted_with_tail(
         vec![
-            (" File".to_owned(), Tone::Dir),
+            (" File".to_owned(), Tone::Pane),
             (format!("  {filename}"), Tone::Info),
         ],
         counts,
@@ -873,7 +955,7 @@ pub(crate) fn file_header(app: &App) -> Header {
 /// the list keys while it has focus, else how to focus it.
 pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
     let place = Where::Review;
-    let hints = if app.focus() == Focus::Review {
+    let hints = if app.pane_has_navigation(Focus::Review) {
         let view = app.review().view;
         let mut hints = Vec::new();
         if view != ReviewView::Archived {
@@ -935,19 +1017,19 @@ pub(crate) fn review_footer(app: &App, entries: &[Entry]) -> Header {
         hints.push(HintOf::keyed(place, Action::Escape, ""));
         hints
     } else {
-        vec![HintOf::new("", "click or Space w l to focus", &[])]
+        vec![HintOf::new("", "click or t to focus", &[])]
     };
     Header::bar(hints)
 }
 
-/// The threads pane's header (ADR 0066, ADR 0075): `Threads` at the left,
+/// The thread list's header (ADR 0066, ADR 0075): `Thread list` at the left,
 /// then passive scope and lifecycle counts against the right edge. Scope
 /// shortens to `f` or `w` after count words drop and before it disappears.
 pub(crate) fn threads_pane_header(app: &App) -> Header {
     let scope = app.sidebar_scope();
     let file_only = scope == crate::app::threads::pane::PaneScope::File;
     Header::counted_with_tail(
-        vec![(" Threads".to_owned(), Tone::Dir)],
+        vec![(" Thread list".to_owned(), Tone::Pane)],
         vec![HintOf::responsive_word(
             scope.word(),
             scope.short_word(),
@@ -960,7 +1042,7 @@ pub(crate) fn threads_pane_header(app: &App) -> Header {
     )
 }
 
-/// The files pane's header (ADR 0017, ADR 0068): `Files` at the left,
+/// The files pane's header (ADR 0017, ADR 0068): `File list` at the left,
 /// then the compact active-filter marker before the `+n -m` totals.
 pub(crate) fn files_pane_header(app: &App) -> Header {
     let marker = app.files_shown_marker();
@@ -979,13 +1061,14 @@ pub(crate) fn files_pane_header(app: &App) -> Header {
             counts.push(HintOf::word(format!("-{}", total.removed), Tone::Removed));
         }
     }
-    Header::counted_with_tail(vec![(" Files".to_owned(), Tone::Dir)], filters, counts)
+    Header::counted_with_tail(vec![(" File list".to_owned(), Tone::Pane)], filters, counts)
 }
 
-/// The threads pane's key bar on its bottom row while it has the keys
-/// (ADR 0066): `scope s · resolved x`, and the fold keys in workspace
-/// scope, where they work (ADR 0064).
+/// The Thread-list footer: local actions or an inactive focus hint.
 pub(crate) fn threads_pane_footer(app: &App) -> Header {
+    if !app.pane_has_navigation(Focus::ThreadsPane) {
+        return Header::bar(vec![HintOf::new("", "click or T to focus", &[])]);
+    }
     let place = Where::ThreadsPane;
     let mut hints = Vec::new();
     if let Some(thread) = app.threads_pane_cursor_thread() {
@@ -1153,12 +1236,74 @@ mod tests {
         };
 
         for (view, title) in [
-            (ReviewView::Board, "Reviews"),
+            (ReviewView::Board, "Threads"),
             (ReviewView::RecentlyResolved, "Recently resolved"),
             (ReviewView::Archived, "Archived"),
         ] {
             app.open_review_view(view);
             assert_control(review_header(&app), title);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pane_titles_fit_even_when_the_title_is_wider_than_the_pane() -> anyhow::Result<()> {
+        let core = fathomable_core::theme::Theme::resolve("default-dark", |_| Ok(None))?;
+        let theme = Theme::from_core(&core);
+        for title in [" File list", " Thread list", " 界界"] {
+            let header = Header::new(vec![(title.to_owned(), Tone::Pane)], Vec::new());
+            for width in 0..=16 {
+                for focused in [false, true] {
+                    let line = header.line_with_header_hovers(&theme, width, false, None, focused);
+                    let rendered = text(&line);
+                    assert_eq!(display_width(&rendered), width, "{title} at {width}");
+                    if width > 0 {
+                        assert!(rendered.starts_with(if focused { '▏' } else { ' ' }));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn pane_focus_marks_only_the_reserved_cell_and_name_without_moving_content()
+    -> anyhow::Result<()> {
+        for name in fathomable_core::theme::BUILTIN_NAMES {
+            let core = fathomable_core::theme::Theme::resolve(name, |_| Ok(None))?;
+            let theme = Theme::from_core(&core);
+            let header = Header::counted_with_tail(
+                vec![
+                    (" File".to_owned(), Tone::Pane),
+                    ("  README.md".to_owned(), Tone::Info),
+                ],
+                vec![HintOf::word("+3".to_owned(), Tone::Added)],
+                vec![HintOf::diff_mode(DiffMode::Standard)],
+            );
+            let inactive = header.line_with_header_hovers(&theme, 48, false, None, false);
+            let focused = header.line_with_header_hovers(&theme, 48, false, None, true);
+
+            let inactive_text = text(&inactive);
+            let focused_text = text(&focused);
+            assert_eq!(display_width(&inactive_text), display_width(&focused_text));
+            assert_eq!(
+                inactive_text.strip_prefix(' '),
+                focused_text.strip_prefix('▏')
+            );
+            assert_eq!(inactive.spans[0].content, " ");
+            assert_eq!(focused.spans[0].content, "▏");
+            assert_eq!(focused.spans[0].style.fg, theme.pane_focus.fg);
+            assert_eq!(focused.spans[1].content, "File");
+            assert_eq!(focused.spans[1].style.fg, theme.pane_focus.fg);
+            assert_ne!(focused.spans[2].style.fg, theme.pane_focus.fg);
+            assert!(
+                focused
+                    .spans
+                    .iter()
+                    .filter(|span| span.style.fg == theme.pane_focus.fg)
+                    .all(|span| span.content == "▏" || span.content == "File"),
+                "{name}: {focused:?}"
+            );
         }
         Ok(())
     }

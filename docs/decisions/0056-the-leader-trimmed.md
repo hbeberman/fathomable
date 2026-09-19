@@ -1,15 +1,9 @@
 ---
 type: Decision
 title: The leader, trimmed
-description: The Space menu groups window navigation, pane visibility, files, threads, and viewer policies under short labels; Space w w cycles panes, unmatched continuations cancel, and menus draw on ui.menu.
-resource: crates/fathomable/src/app/window.rs
-related_resources:
-  - crates/fathomable/src/app/input/bindings.rs
-  - crates/fathomable/src/app/input/menu.rs
-  - crates/fathomable/src/app/files_pane.rs
-  - crates/fathomable-core/src/theme.rs
-  - crates/fathomable-core/themes/default-dark.kdl
-  - crates/fathomable-core/themes/default-light.kdl
+description: >-
+  Historical Space-menu grouping and its ui.menu surface; pane-focus
+  navigation is superseded by ADR 0091.
 tags:
   - decision
   - input
@@ -46,6 +40,13 @@ the pre-[0060](0060-one-diff-two-sides.md) state; this amendment supersedes
 Amended later 2026-09-18 by
 [0082](0082-three-tool-review-core.md): the unimplemented `Space a w`
 wake placeholder and its otherwise empty agent submenu are removed.
+
+Superseded 2026-09-18 by
+[0091](0091-pane-focus-navigation.md) for pane focus: bare `w`/`W` now
+cycle displayed panes, direct `f`/`F`/`t`/`T` select the four named panes,
+and the `Space w` window submenu is removed. `Space d w` remains the
+whitespace action. The menu-surface and unrelated leader decisions here
+remain historical context.
 
 ## Context
 
@@ -164,9 +165,8 @@ with no `bg`, and the cleared menu area shows the terminal through.
 
 ## Consequences
 
-- `app/window.rs`, which this record backs, holds the focus moves:
-  left, right, up, down, and next, over the panes that are shown and
-  the review list when it is open.
+- Pane-focus ownership moved to [0091](0091-pane-focus-navigation.md);
+  this historical record no longer owns an implementation resource.
 - The binding table drops `TreeRefresh`, `TreeIgnored`, `TreeReveal`,
   and `ClearChanges`; `App::refresh_tree`, `toggle_ignored`,
   `reveal_in_tree`, and `clear_queue` go with them. `TreeToggleFocus`

@@ -94,3 +94,4 @@ supersede rather than edit history.
 - [0088 Bundled license notices](0088-bundled-licenses.md)
 - [0089 Store-only MCP and independent thread refresh](0089-store-only-mcp.md)
 - [0090 Direct workspace navigation](0090-direct-workspace-navigation.md)
+- [0091 Pane focus navigation](0091-pane-focus-navigation.md)

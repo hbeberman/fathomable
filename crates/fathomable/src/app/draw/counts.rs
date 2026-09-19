@@ -68,7 +68,7 @@ mod tests {
 
     fn header(counts: Counts) -> Header {
         Header::counted(
-            vec![(" Reviews".to_owned(), Tone::Key)],
+            vec![(" Threads".to_owned(), Tone::Key)],
             passive_count_hints(counts, false),
             Align::Left,
         )
@@ -96,13 +96,13 @@ mod tests {
         };
         assert_eq!(
             text(&header(counts), 80)?,
-            " Reviews ● 2 active ◐ 1 resolution proposed ○ 1 resolved"
+            " Threads ● 2 active ◐ 1 resolution proposed ○ 1 resolved"
         );
         let quiet = Counts {
             resolved: 1,
             ..Counts::default()
         };
-        assert_eq!(text(&header(quiet), 80)?, " Reviews ○ 1 resolved");
+        assert_eq!(text(&header(quiet), 80)?, " Threads ○ 1 resolved");
         Ok(())
     }
 
@@ -149,8 +149,8 @@ mod tests {
             resolved: 1,
         };
         let header = header(counts);
-        assert_eq!(text(&header, 56)?, " Reviews ● 2 ◐ 1 ○ 1");
-        assert_eq!(text(&header, 20)?, " Reviews ● 2 ◐ 1");
+        assert_eq!(text(&header, 56)?, " Threads ● 2 ◐ 1 ○ 1");
+        assert_eq!(text(&header, 20)?, " Threads ● 2 ◐ 1");
         Ok(())
     }
 

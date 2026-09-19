@@ -658,7 +658,7 @@ impl App {
 
     /// A left-click on the Files title opens display settings below the header.
     pub(super) fn open_files_menu(&mut self, row: usize) {
-        let mut menu = Menu::below_header("Files", Where::Tree, 0, row);
+        let mut menu = Menu::below_header("File list", Where::Tree, 0, row);
         for action in [
             Action::FilesChanged,
             Action::FilesReviews,
@@ -696,7 +696,7 @@ impl App {
 
     /// A left-click on the Reviews title opens view settings below the header.
     pub(super) fn open_reviews_settings_menu(&mut self, row: usize) {
-        let mut menu = Menu::below_header("Reviews", Where::Review, self.sidebar_width(), row);
+        let mut menu = Menu::below_header("Threads", Where::Review, self.sidebar_width(), row);
         menu.push(Action::FileView, Action::FileView, "open file");
         menu.separator();
         menu.push_toggle(

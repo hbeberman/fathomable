@@ -125,6 +125,70 @@ fn directory_counts_read_one_level_and_follow_tree_filters()
 }
 
 #[test]
+fn all_directory_folds_preserve_the_path_or_its_visible_ancestor()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("fold-all")?;
+    std::os::unix::fs::symlink(&dir.0, dir.0.join("src/back"))?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.reveal(&mut workspace, Path::new("src/main.rs"))?;
+    tree.toggle_all(&mut workspace)?;
+    assert_eq!(
+        tree.current().map(Row::path),
+        Some(Path::new("src/main.rs"))
+    );
+    assert!(tree.contains(Path::new("src/nested/deep.rs")));
+    assert!(tree.contains(Path::new("src/back")));
+    assert!(
+        !tree.contains(Path::new("src/back/src")),
+        "do not recurse into symlinks"
+    );
+    tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?;
+    tree.toggle_all(&mut workspace)?;
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src")));
+    assert!(tree.rows().iter().all(|row| !row.expanded()));
+    assert!(!tree.contains(Path::new("src/main.rs")));
+    tree.toggle_all(&mut workspace)?;
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src")));
+    assert!(tree.contains(Path::new("src/nested/deep.rs")));
+    Ok(())
+}
+
+#[test]
+fn unfolding_all_obeys_filters_and_reports_unreadable_directories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("fold-all-filtered")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.set_review_paths(
+        &mut workspace,
+        &Status::default(),
+        [PathBuf::from("src/main.rs")],
+    );
+    tree.set_shown(
+        &mut workspace,
+        &Status::default(),
+        Shown::all().toggled(Rule::Reviews),
+    )?;
+    fs::remove_dir(dir.0.join(".hidden"))?;
+    tree.toggle_all(&mut workspace)?;
+    assert_eq!(names(&tree), ["src", "  main.rs"]);
+    assert_eq!(tree.shown(), Shown::all().toggled(Rule::Reviews));
+
+    let mut fresh = Tree::new(&mut workspace)?;
+    fs::remove_file(dir.0.join("src/nested/deep.rs"))?;
+    fs::remove_dir(dir.0.join("src/nested"))?;
+    fs::remove_file(dir.0.join("src/main.rs"))?;
+    fs::remove_dir(dir.0.join("src"))?;
+    let Err(error) = fresh.toggle_all(&mut workspace) else {
+        return Err("vanished directory must be reported".into());
+    };
+    assert!(!error.to_string().is_empty());
+    assert!(fresh.current().is_some());
+    Ok(())
+}
+
+#[test]
 fn reveal_and_refresh_keep_position() -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("reveal")?;
     let mut workspace = Workspace::discover(&dir.0)?;

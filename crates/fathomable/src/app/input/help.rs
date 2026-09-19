@@ -686,9 +686,8 @@ mod tests {
                     })
             })
             .collect();
-        assert_eq!(
-            heading_column(&layout, "View & diff"),
-            Some(1),
+        assert!(
+            headings.iter().any(|(_, _, title)| title == "Focus"),
             "{headings:?}"
         );
         assert!(layout.more_below);

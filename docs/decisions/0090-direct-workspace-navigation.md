@@ -15,6 +15,11 @@ tags:
 
 Status: accepted (2026-09-18)
 
+Amended later 2026-09-18 by [0091](0091-pane-focus-navigation.md): the four
+normal panes are now named File, File list, Threads, and Thread list.
+References below to Files mean File list, and references to Reviews mean the
+main Threads surface. The Review menu and review workflow retain their names.
+
 Supersedes the bracket-prefixed comparison and thread traversal keys in
 [0017](0017-git-status-navigation.md) and
 [0046](0046-one-thread-cursor.md). It amends the binding, footer,

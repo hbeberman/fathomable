@@ -146,6 +146,12 @@ pub(crate) enum Focus {
     ThreadsPane,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileActivation {
+    Open,
+    Preview,
+}
+
 /// A pane border the mouse is dragging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Border {
@@ -607,6 +613,8 @@ pub(crate) struct App {
     /// What the review shows, shared by the list and the threads pane.
     review: threads::list::ReviewState,
     tree_scroll: usize,
+    /// First visible body row in the sidebar's thread list.
+    threads_pane_scroll: usize,
     /// The last workspace-navigation destination the files pane should reveal.
     tree_target: Option<PathBuf>,
     /// Tree width once dragged; the default follows the terminal.
@@ -774,6 +782,7 @@ impl App {
             expanded: HashSet::new(),
             review: threads::list::ReviewState::default(),
             tree_scroll: 0,
+            threads_pane_scroll: 0,
             tree_target: None,
             sidebar_cols: None,
             thread_cursor: ThreadCursor::default(),
@@ -1791,11 +1800,14 @@ impl App {
 
     /// A click lands in a pane: it takes the keys, when it is on screen.
     pub(crate) fn focus_pane(&mut self, focus: Focus) {
+        if !self.panes_fit() {
+            return;
+        }
         let present = match focus {
-            Focus::View => true,
-            Focus::Tree => self.tree().is_some(),
+            Focus::View => !self.review_list.is_open(),
+            Focus::Tree => self.sidebar.tree,
             Focus::Review => self.review_list.is_open(),
-            Focus::ThreadsPane => self.threads_pane_height() > 0,
+            Focus::ThreadsPane => self.sidebar.threads,
         };
         if present {
             self.focus = focus;
@@ -1941,18 +1953,14 @@ impl App {
 
     /// Bracketed paste: into the draft, else nothing to paste into.
     pub(crate) fn paste(&mut self, text: &str) {
-        if matches!(self.popup, Some(Popup::Compose(_))) {
+        if self.panes_fit() && matches!(self.popup, Some(Popup::Compose(_))) {
             self.compose_insert(&text.replace("\r\n", "\n").replace('\r', "\n"));
         }
     }
 
     /// Rows reserved for the File surface header.
     pub(crate) fn file_chrome_rows(&self) -> usize {
-        usize::from(
-            (self.has_document() || self.directory_path().is_some())
-                && !self.review_list().is_open()
-                && !self.getting_started(),
-        )
+        usize::from(!self.review_list().is_open() && !self.getting_started())
     }
 
     /// Rows left to the text once the banner and the file header are
@@ -1972,6 +1980,7 @@ impl App {
             && self.directory_path().is_none()
             && !self.review_list().is_open()
             && self.info().is_none()
+            && self.text_rows() >= 2
     }
 
     /// The screen row the text's key bar replaces: the bottom text row.
@@ -1995,6 +2004,9 @@ impl App {
     }
 
     fn relayout(&mut self) {
+        if !self.panes_fit() {
+            return;
+        }
         let previous_width = self.view().layout().width();
         let rows = self
             .text_rows()
@@ -2010,7 +2022,7 @@ impl App {
             // Message and draft rows wrap at the effective text width.
             self.place_stub_rows();
         }
-        self.scroll_tree();
+        self.scroll_tree_by(0);
     }
 
     /// The initial source width before a new document becomes `self.current`.
@@ -2024,6 +2036,9 @@ impl App {
 
     /// Scrolling uses only rows the key bar does not cover.
     fn sync_text_height(&mut self) {
+        if !self.panes_fit() {
+            return;
+        }
         let rows = self
             .text_rows()
             .saturating_sub(usize::from(self.text_bar_shown()));
@@ -2102,11 +2117,20 @@ impl App {
     }
 
     /// Open the root-relative `path`, loading it or switching to it.
+    pub(crate) fn open(&mut self, path: &Path) {
+        self.load_file(path, FileActivation::Open);
+    }
+
+    /// Load a list selection without switching views or resuming its draft.
+    pub(super) fn preview_file(&mut self, path: &Path) {
+        self.load_file(path, FileActivation::Preview);
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "opening retains the explicit endpoint and missing-path decisions together"
     )]
-    pub(crate) fn open(&mut self, path: &Path) {
+    fn load_file(&mut self, path: &Path, activation: FileActivation) {
         self.getting_started = None;
         self.tree_target = None;
         let had_directory = self.directory.take().is_some();
@@ -2258,10 +2282,10 @@ impl App {
         };
         self.recent.retain(|&recent| recent != index);
         self.recent.insert(0, index);
-        self.show(index);
+        self.show(index, activation);
     }
 
-    fn show(&mut self, index: usize) {
+    fn show(&mut self, index: usize, activation: FileActivation) {
         self.directory = None;
         if let Some(previous) = self.current
             && previous != index
@@ -2269,9 +2293,10 @@ impl App {
             self.park_draft();
         }
         self.current = Some(index);
-        // A document takes the column back from the list (ADR 0025).
-        self.close_review();
-        self.focus = Focus::View;
+        if activation == FileActivation::Open {
+            self.close_review();
+            self.focus = Focus::View;
+        }
         self.apply_comparison_projection(index);
         self.refresh_marks(index);
         if self.diff_mode == DiffMode::Unified {
@@ -2281,7 +2306,9 @@ impl App {
         self.place_stub_rows();
         self.relayout();
         self.queue_highlight(index);
-        self.resume_draft();
+        if activation == FileActivation::Open {
+            self.resume_draft();
+        }
         tracing::info!(path = %self.current_path().display(), "showing document");
     }
 
@@ -2431,9 +2458,9 @@ impl App {
     pub(crate) fn start_on(&mut self, open: Option<&Path>) {
         if let Some(path) = open {
             self.open(path);
-        } else if self.sidebar.tree {
+        } else if self.sidebar.tree && self.panes_fit() {
             self.focus = Focus::Tree;
-        } else if self.sidebar.threads {
+        } else if self.sidebar.threads && self.panes_fit() {
             self.focus = Focus::ThreadsPane;
         }
     }
@@ -2454,15 +2481,11 @@ impl App {
                 return;
             }
             self.sidebar.show_tree();
-            self.reveal_current();
             self.focus = Focus::Tree;
-            self.show_highlight();
         } else if self.focus == Focus::Tree {
-            self.focus = Focus::View;
+            self.focus = self.displayed_main_focus();
         } else {
-            self.reveal_current();
             self.focus = Focus::Tree;
-            self.show_highlight();
         }
         self.relayout();
     }
@@ -2473,14 +2496,16 @@ impl App {
         if self.sidebar.tree {
             self.sidebar.hide_tree();
             if self.focus == Focus::Tree {
-                self.focus = Focus::View;
+                self.focus = self.displayed_main_focus();
             }
         } else {
             if !self.ensure_tree() {
                 return;
             }
             self.sidebar.show_tree();
-            self.reveal_current();
+            if self.tree_target.is_some() {
+                self.refresh_tree_target();
+            }
         }
         self.relayout();
     }
@@ -2500,6 +2525,7 @@ impl App {
 
     /// Open the confirmation required by bare `q`.
     pub(crate) fn request_quit(&mut self) {
+        self.park_draft();
         self.popup = Some(Popup::ConfirmQuit);
     }
 

@@ -17,7 +17,7 @@ pub(super) enum Navigation {
 
 impl Navigation {
     pub(super) fn for_pane(app: &App, pane: Focus) -> Self {
-        if app.focus() == pane && app.popup().is_none() && app.prefix().is_empty() {
+        if app.pane_has_navigation(pane) {
             Self::Active
         } else {
             Self::Inactive

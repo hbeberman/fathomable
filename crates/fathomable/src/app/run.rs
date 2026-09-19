@@ -972,7 +972,7 @@ mod tests {
             .review_points(&points)
             .build()?;
         app.save_review_point(Some("point"));
-        app.request_review_point_delete();
+        app.request_review_point_manage();
         let picker_cell = match app.popup() {
             Some(Popup::Picker(picker)) => {
                 let layout = draw::picker_layout(&app, picker);
@@ -983,7 +983,7 @@ mod tests {
                     })
                     .context("picker row")?
             }
-            _ => anyhow::bail!("delete picker did not open"),
+            _ => anyhow::bail!("review-point manager did not open"),
         };
         let confirmation = draw::review_point_delete_confirmation_layout(&app);
         let confirm_cell = (0..app.pane_rows())
@@ -1006,10 +1006,7 @@ mod tests {
 
         handle_events(&mut app, &click(picker_cell), &mut incoming)?;
 
-        assert!(matches!(
-            app.popup(),
-            Some(Popup::ConfirmReviewPointDelete { armed: false, .. })
-        ));
+        assert!(matches!(app.popup(), Some(Popup::ReviewPointAction(_))));
         assert!(
             app.review_points
                 .as_ref()

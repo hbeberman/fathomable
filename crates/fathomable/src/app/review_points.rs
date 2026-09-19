@@ -1,12 +1,53 @@
 // @okf-doc: /decisions/0087-global-comparisons-and-board-history.md
 //! Explicit workspace review points.
 //!
-//! These actions save and delete workspace-wide
+//! These actions save, rename, and delete workspace-wide
 //! [`ReviewPointStore`](fathomable_core::review_points::ReviewPointStore)
 //! captures. Deleting the selected Base reconciles it without changing Target.
 
 use super::App;
+use fathomable_core::editor::{Buffer, Edit, Motion};
 use fathomable_core::review_points::{CaptureResult, ReviewPoint, ReviewPointError};
+
+const DISPLAY_NAME_SCALARS: usize = 64;
+
+/// A bounded, single-line rendering of a name from a legacy capture record.
+pub(crate) fn review_point_name(name: Option<&str>) -> String {
+    let mut rendered = String::new();
+    let mut truncated = false;
+    for (index, character) in name.unwrap_or("unnamed").chars().enumerate() {
+        if index == DISPLAY_NAME_SCALARS {
+            truncated = true;
+            break;
+        }
+        rendered.push(
+            if character.is_control() || matches!(character, '\u{2028}' | '\u{2029}') {
+                '�'
+            } else {
+                character
+            },
+        );
+    }
+    if truncated {
+        rendered.push('…');
+    }
+    rendered
+}
+
+/// Extract the immutable ID carried by either review-point row format.
+pub(crate) fn review_point_id_from_row(kind: super::PickerKind, row: &str) -> Option<&str> {
+    match kind {
+        super::PickerKind::ComparisonReviewPoints => row
+            .strip_prefix("review point ")
+            .and_then(|rest| rest.split_whitespace().next()),
+        super::PickerKind::ReviewPointManage => row.rsplit(' ').next(),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+#[path = "review_points/rename_tests.rs"]
+mod rename_tests;
 
 impl App {
     /// Reload point metadata before a point-dependent user action.
@@ -14,6 +55,7 @@ impl App {
         if self.annotation_draft_blocks("browsing review points") {
             return false;
         }
+
         let Some(store) = self.review_points.as_mut() else {
             self.notice("review points unavailable; see the log");
             return false;
@@ -240,12 +282,16 @@ mod tests {
             Some(OriginVersion::ReviewPoint { id, .. }) if id == point.id()
         ));
 
-        app.request_review_point_delete();
+        app.request_review_point_manage();
         assert!(matches!(
             app.popup(),
-            Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ReviewPointDelete
+            Some(Popup::Picker(picker)) if picker.kind() == PickerKind::ReviewPointManage
         ));
         app.picker_confirm();
+        keys::handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
+        );
         assert!(matches!(
             app.popup(),
             Some(Popup::ConfirmReviewPointDelete { id, .. }) if id == point.id()
@@ -336,7 +382,7 @@ mod tests {
                 .is_some_and(|store| store.get(point.id()).is_some()),
             "capture must not replace draft provenance"
         );
-        app.request_review_point_delete();
+        app.request_review_point_manage();
         assert!(matches!(app.popup(), Some(Popup::Compose(_))));
         assert!(
             app.message()
@@ -369,11 +415,11 @@ mod tests {
         let mut external = ReviewPointStore::open(&points)?;
         external.capture(&mut workspace, Some("external"))?;
 
-        app.request_review_point_delete();
+        app.request_review_point_manage();
         assert!(matches!(
             app.popup(),
             Some(Popup::Picker(picker))
-                if picker.kind() == PickerKind::ReviewPointDelete && picker.total() == 1
+                if picker.kind() == PickerKind::ReviewPointManage && picker.total() == 1
         ));
         Ok(())
     }
@@ -490,9 +536,9 @@ mod tests {
 }
 
 impl App {
-    /// Open the deletion picker after validating the shared store.
-    pub(crate) fn request_review_point_delete(&mut self) {
-        if self.annotation_draft_blocks("deleting a review point") {
+    /// Open the review-point manager after validating the shared store.
+    pub(crate) fn request_review_point_manage(&mut self) {
+        if self.annotation_draft_blocks("managing review points") {
             return;
         }
         if !self.reload_review_points() {
@@ -503,20 +549,27 @@ impl App {
             .as_ref()
             .is_none_or(fathomable_core::review_points::ReviewPointStore::is_empty)
         {
-            self.notice("no review points to delete");
+            self.notice("no review points to manage");
             return;
         }
-        self.open_picker(super::PickerKind::ReviewPointDelete);
+        self.open_review_point_picker(
+            &super::ReviewPointOrigin {
+                kind: super::PickerKind::ReviewPointManage,
+                query: String::new(),
+            },
+            None,
+            false,
+        );
     }
 
-    /// Rows for the destructive picker, with the full ID retained at the end.
-    pub(crate) fn review_point_delete_choices(&self) -> Vec<String> {
+    /// Rows for the manager, with the full stable ID retained at the end.
+    pub(crate) fn review_point_manage_choices(&self) -> Vec<String> {
         self.review_points
             .as_ref()
             .into_iter()
             .flat_map(fathomable_core::review_points::ReviewPointStore::list)
             .map(|point| {
-                let label = point.name().unwrap_or("unnamed");
+                let label = review_point_name(point.name());
                 let short = point.id().chars().take(8).collect::<String>();
                 format!(
                     "{short} · {} · {label} · {}",
@@ -527,26 +580,228 @@ impl App {
             .collect()
     }
 
-    /// Ask for a separate destructive acknowledgement of one stable ID.
-    pub(crate) fn request_review_point_delete_confirmation(&mut self, row: &str) {
-        let Some(id) = row.rsplit(' ').next() else {
-            self.notice("choose a review point");
-            return;
+    fn review_point_origin(
+        kind: super::PickerKind,
+        query: impl Into<String>,
+    ) -> super::ReviewPointOrigin {
+        super::ReviewPointOrigin {
+            kind,
+            query: query.into(),
+        }
+    }
+
+    fn open_review_point_picker(
+        &mut self,
+        origin: &super::ReviewPointOrigin,
+        selected_id: Option<&str>,
+        reload: bool,
+    ) -> bool {
+        if reload {
+            let Some(store) = self.review_points.as_mut() else {
+                self.popup = None;
+                self.notice("review points unavailable; see the log");
+                return false;
+            };
+            if let Err(error) = store.reload() {
+                self.popup = None;
+                self.notice(format!("cannot reload review points: {error}"));
+                return false;
+            }
+        }
+        let items = match origin.kind {
+            super::PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
+            super::PickerKind::ReviewPointManage => self.review_point_manage_choices(),
+            _ => return false,
         };
-        let Some(point) = self
-            .review_points
+        self.open_scoped_picker(origin.kind, items, None);
+        let Some(super::Popup::Picker(picker)) = self.popup.as_mut() else {
+            return false;
+        };
+        picker.set_query(&origin.query);
+        if let Some(id) = selected_id
+            && !picker.select_review_point(id)
+            && !origin.query.is_empty()
+        {
+            picker.set_query("");
+            picker.select_review_point(id);
+        }
+        true
+    }
+
+    fn point_from_row(&self, kind: super::PickerKind, row: &str) -> Option<ReviewPoint> {
+        let id = review_point_id_from_row(kind, row)?;
+        self.review_points
             .as_ref()
             .and_then(|store| store.get(id))
             .cloned()
-        else {
-            self.notice("review point was already deleted");
+    }
+
+    /// Open the action card for a manager row.
+    pub(crate) fn request_review_point_action(&mut self, row: &str, query: &str) {
+        let origin = Self::review_point_origin(super::PickerKind::ReviewPointManage, query);
+        let Some(point) = self.point_from_row(origin.kind, row) else {
+            self.notice("review point is unavailable; reloading");
+            self.open_review_point_picker(&origin, None, true);
             return;
         };
+        self.popup = Some(super::Popup::ReviewPointAction(
+            super::ReviewPointActionState { point, origin },
+        ));
+    }
+
+    /// Start renaming the highlighted point in either point picker.
+    pub(crate) fn rename_selected_review_point(&mut self) {
+        let selected = match self.popup.as_ref() {
+            Some(super::Popup::Picker(picker))
+                if matches!(
+                    picker.kind(),
+                    super::PickerKind::ComparisonReviewPoints
+                        | super::PickerKind::ReviewPointManage
+                ) =>
+            {
+                picker
+                    .selected_item()
+                    .map(|row| (picker.kind(), picker.input().to_owned(), row.to_owned()))
+            }
+            _ => None,
+        };
+        let Some((kind, query, row)) = selected else {
+            self.notice("choose a review point");
+            return;
+        };
+        let origin = Self::review_point_origin(kind, query);
+        let Some(point) = self.point_from_row(kind, &row) else {
+            self.notice("review point is unavailable; reloading");
+            self.open_review_point_picker(&origin, None, true);
+            return;
+        };
+        self.open_review_point_rename(point, origin, false);
+    }
+
+    /// Apply a key edit to the one-line rename buffer.
+    pub(crate) fn review_point_rename_edit(&mut self, edit: Edit) {
+        if let Some(super::Popup::ReviewPointRename(rename)) = self.popup.as_mut() {
+            rename.editor.apply(edit);
+        }
+    }
+
+    /// Insert ordinary text into the one-line rename buffer.
+    pub(crate) fn review_point_rename_insert(&mut self, character: char) {
+        if let Some(super::Popup::ReviewPointRename(rename)) = self.popup.as_mut()
+            && !character.is_control()
+            && !matches!(character, '\u{2028}' | '\u{2029}')
+        {
+            rename.editor.insert(character.encode_utf8(&mut [0; 4]));
+        }
+    }
+
+    fn open_review_point_rename(
+        &mut self,
+        expected: ReviewPoint,
+        origin: super::ReviewPointOrigin,
+        return_to_action: bool,
+    ) {
+        let initial = expected.name().unwrap_or_default().to_owned();
+        self.popup = Some(super::Popup::ReviewPointRename(
+            super::ReviewPointRenameState {
+                expected,
+                origin,
+                editor: Buffer::from_text(initial),
+                return_to_action,
+            },
+        ));
+    }
+
+    /// Start rename from the selected point's action card.
+    pub(crate) fn review_point_action_rename(&mut self) {
+        let Some(super::Popup::ReviewPointAction(action)) = self.popup.take() else {
+            return;
+        };
+        self.open_review_point_rename(action.point, action.origin, true);
+    }
+
+    /// Return from the action card to its originating picker.
+    pub(crate) fn cancel_review_point_action(&mut self) {
+        let Some(super::Popup::ReviewPointAction(action)) = self.popup.take() else {
+            return;
+        };
+        let id = action.point.id().to_owned();
+        self.open_review_point_picker(&action.origin, Some(&id), true);
+    }
+
+    /// Submit a rename using the point snapshot as the compare-and-swap token.
+    pub(crate) fn submit_review_point_rename(&mut self) {
+        let Some(super::Popup::ReviewPointRename(rename)) = self.popup.take() else {
+            return;
+        };
+        let id = rename.expected.id().to_owned();
+        let result = self
+            .review_points
+            .as_mut()
+            .ok_or_else(|| ReviewPointError::Unavailable { point: id.clone() })
+            .and_then(|store| store.rename(&rename.expected, Some(rename.editor.text())));
+        let notice = match result {
+            Ok(_) => {
+                self.push_toast(format!(
+                    "Renamed review point {}",
+                    id.chars().take(8).collect::<String>()
+                ));
+                None
+            }
+            Err(ReviewPointError::StaleRename { .. }) => {
+                Some("review point changed elsewhere; reloaded without renaming".to_owned())
+            }
+            Err(ReviewPointError::DuplicateName) => {
+                Some("review-point name is already in use; reloaded without renaming".to_owned())
+            }
+            Err(ReviewPointError::InvalidName) => Some(
+                "review-point name must be one line of at most 128 Unicode scalar values; not renamed"
+                    .to_owned(),
+            ),
+            Err(ReviewPointError::Unavailable { .. }) => {
+                Some("review point is unavailable; reloaded without renaming".to_owned())
+            }
+            Err(ReviewPointError::CommitUncertain { .. }) => Some(
+                "review-point rename outcome is uncertain; reloaded before retrying".to_owned(),
+            ),
+            Err(error) => Some(format!("cannot rename review point: {error}")),
+        };
+        let reloaded = self.open_review_point_picker(&rename.origin, Some(&id), true);
+        if reloaded && let Some(notice) = notice {
+            self.notice(notice);
+        }
+    }
+
+    /// Cancel a rename, returning to the action card or originating picker.
+    pub(crate) fn cancel_review_point_rename(&mut self) {
+        let Some(super::Popup::ReviewPointRename(rename)) = self.popup.take() else {
+            return;
+        };
+        if rename.return_to_action {
+            self.popup = Some(super::Popup::ReviewPointAction(
+                super::ReviewPointActionState {
+                    point: rename.expected,
+                    origin: rename.origin,
+                },
+            ));
+        } else {
+            let id = rename.expected.id().to_owned();
+            self.open_review_point_picker(&rename.origin, Some(&id), false);
+        }
+    }
+
+    /// Ask for a separate destructive acknowledgement from the action card.
+    pub(crate) fn request_review_point_delete_confirmation(&mut self) {
+        let Some(super::Popup::ReviewPointAction(return_to)) = self.popup.take() else {
+            return;
+        };
+        let point = return_to.point();
         self.popup = Some(super::Popup::ConfirmReviewPointDelete {
             id: point.id().to_owned(),
             name: point.name().map(str::to_owned),
             created: point.created(),
             armed: false,
+            return_to,
         });
     }
 
@@ -567,22 +822,25 @@ impl App {
 
     /// Confirm deletion and reconcile a selected Base.
     pub(crate) fn confirm_review_point_delete(&mut self) {
-        let Some(super::Popup::ConfirmReviewPointDelete { id, .. }) = self.popup.take() else {
+        let Some(super::Popup::ConfirmReviewPointDelete { id, return_to, .. }) = self.popup.take()
+        else {
             return;
         };
         let selected = self.comparison.review_point_base() == Some(id.as_str());
         let Some(store) = self.review_points.as_mut() else {
+            self.popup = Some(super::Popup::ReviewPointAction(return_to));
             self.notice("review points unavailable; see the log");
             return;
         };
         let result = store.delete(&id);
+        let origin = return_to.origin.clone();
         match result {
             Ok(result) if result.point().is_none() => {
                 if selected {
                     self.refresh_comparison();
-                } else {
-                    self.notice("review point was already deleted");
                 }
+                self.open_review_point_picker(&origin, None, true);
+                self.notice("review point was already deleted; list reloaded");
             }
             Ok(result) => {
                 let point = result.point().map_or(id.as_str(), ReviewPoint::id);
@@ -591,6 +849,7 @@ impl App {
                 if selected {
                     self.refresh_comparison();
                 }
+                self.open_review_point_picker(&origin, None, true);
                 self.push_toast(format!(
                     "review point {} deleted; reclaimed {reclaimed} blob(s)",
                     point.chars().take(8).collect::<String>()
@@ -608,18 +867,23 @@ impl App {
                     }
                 }
             }
-            Err(error) => self.notice(format!("cannot delete review point: {error}")),
+            Err(error) => {
+                self.popup = Some(super::Popup::ReviewPointAction(return_to));
+                self.notice(format!("cannot delete review point: {error}"));
+            }
         }
     }
 
     /// Cancel deletion without changing the store.
     pub(crate) fn cancel_review_point_delete(&mut self) {
-        if matches!(
-            self.popup,
-            Some(super::Popup::ConfirmReviewPointDelete { .. })
-        ) {
-            self.popup = None;
+        if let Some(super::Popup::ConfirmReviewPointDelete { return_to, .. }) = self.popup.take() {
+            self.popup = Some(super::Popup::ReviewPointAction(return_to));
             self.notice("review-point deletion cancelled");
         }
+    }
+
+    /// Handle the ordinary editing motions supported by the rename popup.
+    pub(crate) fn review_point_rename_motion(&mut self, motion: Motion) {
+        self.review_point_rename_edit(Edit::Move(motion));
     }
 }

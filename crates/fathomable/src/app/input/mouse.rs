@@ -323,6 +323,9 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                 MouseEventKind::Down(MouseButton::Left) if !layout.contains(column, row) => {
                     app.close_popup();
                 }
+                MouseEventKind::Down(MouseButton::Left) if layout.rename_at(column, row) => {
+                    app.rename_selected_review_point();
+                }
                 MouseEventKind::Down(MouseButton::Left) => {
                     if let Some(index) = entry {
                         app.picker_select(index);
@@ -330,6 +333,45 @@ fn popup_mouse(app: &mut App, kind: MouseEventKind, column: usize, row: usize) -
                     }
                 }
                 _ => {}
+            }
+            Some(Effect::None)
+        }
+        Some(Popup::ReviewPointAction(_)) => {
+            let layout = draw::review_point_action_layout(app);
+            if left {
+                match layout.action_at(column, row) {
+                    Some(draw::ReviewPointActionHit::Rename) => {
+                        app.review_point_action_rename();
+                    }
+                    Some(draw::ReviewPointActionHit::Delete) => {
+                        app.request_review_point_delete_confirmation();
+                    }
+                    Some(draw::ReviewPointActionHit::Back) => {
+                        app.cancel_review_point_action();
+                    }
+                    _ if !layout.contains(column, row) => {
+                        app.cancel_review_point_action();
+                    }
+                    _ => {}
+                }
+            }
+            Some(Effect::None)
+        }
+        Some(Popup::ReviewPointRename(_)) => {
+            let layout = draw::review_point_rename_layout(app);
+            if left {
+                match layout.action_at(column, row) {
+                    Some(draw::ReviewPointActionHit::Submit) => {
+                        app.submit_review_point_rename();
+                    }
+                    Some(draw::ReviewPointActionHit::Back) => {
+                        app.cancel_review_point_rename();
+                    }
+                    _ if !layout.contains(column, row) => {
+                        app.cancel_review_point_rename();
+                    }
+                    _ => {}
+                }
             }
             Some(Effect::None)
         }

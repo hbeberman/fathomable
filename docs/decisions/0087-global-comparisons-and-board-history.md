@@ -332,19 +332,40 @@ outcomes are reported separately: a point remains selected for the running
 viewer if only preference persistence fails, while comparison failure leaves
 the saved point available without claiming selection.
 
-Lifecycle amended 2026-09-18: `Space d x` and **Delete review point...** open
-a searchable repository-wide point picker. Selection opens a separate
-destructive confirmation; `y` confirms and Esc cancels. A pending new line or
-file annotation blocks deletion so displayed source and provenance cannot be
-silently rebound.
+Lifecycle amended 2026-09-19: `Space d r` and **Manage review points...** open
+a searchable repository-wide point manager. Enter or a row click opens a
+point card with bounded identity, capture-time, baseline, and file-count facts.
+The card's `r` action edits the name and `d` opens a separate destructive
+confirmation; `y` confirms deletion and Esc returns without crossing either
+boundary. `Ctrl-r` renames the highlighted point directly in both the manager
+and comparison Review points picker, and each picker exposes that action as a
+clickable hint. A pending new line or file annotation blocks management so
+displayed source and provenance cannot be silently rebound.
 
-Deletion appends a durable `review-point-delete` record under the same
-exclusive manifest lock as capture. Replay repairs only an interrupted final
-JSONL suffix and otherwise fails closed on malformed complete records. The
-lock remains held while blobs referenced only by the deleted point are
-validated and removed; shared blobs remain. Deletion is committed before
-cleanup, so cleanup failures are reported without resurrecting the point.
-Logical deletion and best-effort reclamation are not secure erasure:
+Names are trimmed on new writes; blank or whitespace-only input means unnamed.
+A nonblank name is one line, contains no control character, U+2028, or U+2029,
+and is at most 128 Unicode scalar values. Exact, case-sensitive names are
+unique across active points in the repository-wide store. Legacy capture
+records remain readable even when their names predate these rules, and the
+viewer bounds and sanitizes their display.
+
+Capture records remain immutable. Rename appends a durable
+`review-point-rename` metadata record under the manifest lock and increments a
+per-point name revision. The viewer supplies the snapshot it displayed as a
+compare-and-swap token; a concurrent rename is rejected as stale rather than
+overwritten. After success or a recoverable conflict the originating picker
+reloads and reselects the stable point ID when it still exists. Names are
+labels only: selection, comparison preferences, deletion, and thread origin
+evidence continue to use the immutable point ID.
+
+Deletion remains separately guarded and appends a durable
+`review-point-delete` record under the same exclusive manifest lock as capture
+and rename. Replay repairs only an interrupted final JSONL suffix and otherwise
+fails closed on malformed complete records. The lock remains held while blobs
+referenced only by the deleted point are validated and removed; shared blobs
+remain. Deletion is committed before cleanup, so cleanup failures are reported
+without resurrecting the point. Logical deletion and best-effort reclamation
+are not secure erasure:
 historical manifests, Git objects, copied excerpts, caches, backups, shared
 blobs, and failed-cleanup blobs may remain.
 

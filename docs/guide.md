@@ -156,7 +156,7 @@ the table below is a quick reference, not the full list.
 | `Space d d` | compare the current HEAD to the working tree |
 | `Space d l` `Space d c` | compare HEAD or a chosen commit with its first parent |
 | `Space d w` | ignore whitespace |
-| `Space d p` `Space d x` | save-and-select / delete a review point |
+| `Space d p` `Space d r` | save-and-select / manage review points |
 | `Space v s` | source / rendered view for configured Markdown files |
 | `Space v t` `Space v r` | toggle thread stubs / resolved stubs |
 | `w` `W` | focus the next / previous displayed pane |
@@ -242,7 +242,7 @@ tree**. That action, or `Space d d`, pins the current `HEAD` as Base and selects
 the working tree as Target. `Space d l` selects the immutable `HEAD~1` to
 `HEAD` pair. `Space d c` opens a commit-only picker and compares the chosen
 commit with its first parent; root commits are rejected explicitly. Save/Delete
-review point follow a separator, and Ignore whitespace follows another. There
+review point and Manage review points follow a separator, and Ignore whitespace follows another. There
 is no comparison-control popup, **Start comparison at current HEAD**, or
 `:diff`.
 
@@ -267,15 +267,30 @@ leave publication uncertain; reload before retrying when the notice says so.
 Choose any saved point under the base picker's **Review points...**. See
 [comparison and review-point details](decisions/0087-global-comparisons-and-board-history.md).
 
-`Space d x` or **Diff > Delete review point...** opens the repository-wide
-point list. Selecting a point opens a separate confirmation; press `y` to
-delete or `Esc` to cancel. Deletion removes the point from comparison
-selection and reclaims only content blobs no other point uses. Threads keep
-their immutable point ID, baseline, content identity, excerpt, and messages.
-This is logical deletion with best-effort reclamation, not secure erasure.
-If the deleted point is the selected Base, Fathomable replaces Base with the
-current pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
-whitespace. A pending new annotation must be submitted or cancelled first.
+`Space d r` or **Diff > Manage review points...** opens the searchable
+repository-wide point list. Enter or click a row to open its action card:
+`r` renames, `d` enters the separately guarded deletion confirmation, and
+`Esc` returns to the list. Press `Ctrl-r` on a highlighted point in either this
+manager or the comparison **Review points...** picker for direct rename; the
+visible rename hint is clickable too.
+
+The one-line rename editor starts with the current name. Enter submits and Esc
+returns without changing it; blank or whitespace-only input clears the name.
+Names are trimmed, case-sensitive, unique among active points, limited to 128
+Unicode scalar values, and cannot contain controls or Unicode line/paragraph
+separators. The point list reloads after a rename and keeps the same immutable
+point ID selected when possible. A concurrent external rename is never
+overwritten: the viewer reloads the list and reports the stale conflict.
+
+Deletion still requires the separately rendered confirmation and `y`; Esc
+returns to the point card. Deletion removes the point from comparison selection
+and reclaims only content blobs no other point uses. Threads keep their
+immutable point ID, baseline, content identity, excerpt, and messages. This is
+logical deletion with best-effort reclamation, not secure erasure. If the
+deleted point is the selected Base, Fathomable replaces Base with the current
+pinned `HEAD` (or EmptyTree) while preserving Target, diff mode, and
+whitespace. A pending new annotation must be submitted or cancelled before
+management.
 
 Use `Shift-Down` or `J` and `Shift-Up` or `K` to cycle every comparison
 change across the workspace. Text hunks are individual stops; a changed path

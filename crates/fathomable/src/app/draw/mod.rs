@@ -325,6 +325,12 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
         }) => {
             draw_board_confirmation(frame, theme, app, *counts, *changed);
         }
+        Some(Popup::ReviewPointAction(action)) => {
+            draw_review_point_action(frame, theme, app, action);
+        }
+        Some(Popup::ReviewPointRename(rename)) => {
+            draw_review_point_rename(frame, theme, app, rename);
+        }
         Some(Popup::ConfirmReviewPointDelete {
             id, name, created, ..
         }) => {
@@ -2767,6 +2773,7 @@ pub(crate) struct PickerLayout {
     body: Rect,
     first: usize,
     rows: usize,
+    rename: Option<Rect>,
 }
 
 impl PickerLayout {
@@ -2798,24 +2805,46 @@ impl PickerLayout {
             .then(|| self.first + offset)
             .filter(|index| *index < matched)
     }
+
+    pub(crate) fn rename_at(self, column: usize, row: usize) -> bool {
+        self.rename
+            .is_some_and(|area| inside_rect(area, column, row))
+    }
 }
 
 fn picker_layout_in(area: Rect, picker: &PickerState) -> PickerLayout {
     let width = area.width.saturating_sub(4).clamp(22, 90);
     let height = area.height.saturating_sub(2).clamp(3, 20);
     let popup = centred(area, width, height);
-    let body = Rect {
+    let mut body = Rect {
         x: popup.x.saturating_add(1),
         y: popup.y.saturating_add(1),
         width: popup.width.saturating_sub(2),
         height: popup.height.saturating_sub(2),
     };
-    let rows = super::picker_list_rows(usize::from(area.height));
+    let rename = matches!(
+        picker.kind(),
+        super::PickerKind::ComparisonReviewPoints | super::PickerKind::ReviewPointManage
+    )
+    .then(|| {
+        let width = body.width.min(15);
+        Rect {
+            x: body.right().saturating_sub(width),
+            y: body.bottom().saturating_sub(1),
+            width,
+            height: u16::from(body.height > 0),
+        }
+    });
+    if rename.is_some() {
+        body.height = body.height.saturating_sub(1);
+    }
+    let rows = usize::from(body.height);
     PickerLayout {
         popup,
         body,
         first: picker.first_visible(rows),
         rows,
+        rename,
     }
 }
 
@@ -2862,7 +2891,7 @@ fn draw_picker(
         super::PickerKind::ReviewPointName => {
             "capture working tree and use as Base (name optional)".to_owned()
         }
-        super::PickerKind::ReviewPointDelete => "delete review point".to_owned(),
+        super::PickerKind::ReviewPointManage => "manage review points".to_owned(),
         super::PickerKind::Worktree => "worktree".to_owned(),
     };
     let title_line = Line::from(vec![
@@ -2900,6 +2929,21 @@ fn draw_picker(
     frame.render_widget(Clear, popup);
     frame.render_widget(block, popup);
     frame.render_widget(Paragraph::new(lines).style(theme.popup), body);
+    if let Some(rename) = layout.rename
+        && rename.height > 0
+    {
+        let hovered = app
+            .and_then(App::pointer)
+            .is_some_and(|(column, row)| layout.rename_at(column, row));
+        frame.render_widget(
+            Paragraph::new(fit("Ctrl-r rename", usize::from(rename.width))).style(if hovered {
+                theme.popup_key
+            } else {
+                theme.info
+            }),
+            rename,
+        );
+    }
     let col = (2 + display_width(&title) + 3 + display_width(picker.input()))
         .min(usize::from(popup.width.saturating_sub(1)));
     frame.set_cursor_position((popup.x + u16_of(col), popup.y));
@@ -2946,6 +2990,211 @@ fn draw_quit_confirmation(frame: &mut Frame<'_>, theme: &Theme, app: &App) {
     draw_confirmation_controls(frame, theme, app, &layout);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReviewPointActionHit {
+    Rename,
+    Delete,
+    Back,
+    Submit,
+}
+
+/// Geometry shared by the review-point action card and rename editor.
+pub(crate) struct ReviewPointPopupLayout {
+    pub(crate) popup: Rect,
+    rename: Rect,
+    delete: Rect,
+    back: Rect,
+    submit: Rect,
+    input: Rect,
+}
+
+impl ReviewPointPopupLayout {
+    pub(crate) fn contains(&self, column: usize, row: usize) -> bool {
+        inside_rect(self.popup, column, row)
+    }
+
+    pub(crate) fn action_at(&self, column: usize, row: usize) -> Option<ReviewPointActionHit> {
+        [
+            (self.rename, ReviewPointActionHit::Rename),
+            (self.delete, ReviewPointActionHit::Delete),
+            (self.back, ReviewPointActionHit::Back),
+            (self.submit, ReviewPointActionHit::Submit),
+        ]
+        .into_iter()
+        .find_map(|(area, hit)| inside_rect(area, column, row).then_some(hit))
+    }
+}
+
+pub(crate) fn review_point_action_layout(app: &App) -> ReviewPointPopupLayout {
+    let popup = centred(confirmation_area(app), 72, 9);
+    let inner = Rect {
+        x: popup.x.saturating_add(1),
+        y: popup.y.saturating_add(1),
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+    let controls_y = inner.bottom().saturating_sub(1);
+    ReviewPointPopupLayout {
+        popup,
+        rename: Rect::new(
+            inner.x,
+            controls_y,
+            inner.width.min(10),
+            u16::from(inner.height > 0),
+        ),
+        delete: Rect::new(
+            inner.x.saturating_add(12),
+            controls_y,
+            inner.width.saturating_sub(12).min(10),
+            u16::from(inner.height > 0),
+        ),
+        back: Rect::new(
+            inner.x.saturating_add(24),
+            controls_y,
+            inner.width.saturating_sub(24).min(10),
+            u16::from(inner.height > 0),
+        ),
+        submit: Rect::default(),
+        input: Rect::default(),
+    }
+}
+
+pub(crate) fn review_point_rename_layout(app: &App) -> ReviewPointPopupLayout {
+    let popup = centred(confirmation_area(app), 72, 6);
+    let inner = Rect {
+        x: popup.x.saturating_add(1),
+        y: popup.y.saturating_add(1),
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+    let controls_y = inner.bottom().saturating_sub(1);
+    ReviewPointPopupLayout {
+        popup,
+        rename: Rect::default(),
+        delete: Rect::default(),
+        back: Rect::new(
+            inner.x.saturating_add(15),
+            controls_y,
+            inner.width.saturating_sub(15).min(10),
+            u16::from(inner.height > 0),
+        ),
+        submit: Rect::new(
+            inner.x,
+            controls_y,
+            inner.width.min(13),
+            u16::from(inner.height > 0),
+        ),
+        input: Rect::new(
+            inner.x,
+            inner.y.saturating_add(1),
+            inner.width,
+            u16::from(inner.height > 1),
+        ),
+    }
+}
+
+fn draw_review_point_action(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    action: &super::ReviewPointActionState,
+) {
+    let layout = review_point_action_layout(app);
+    let point = action.point();
+    let block = rounded_block(theme, " Review point ", theme.popup);
+    let inner = block.inner(layout.popup);
+    let name = super::review_points::review_point_name(point.name());
+    let id = point.id().chars().take(12).collect::<String>();
+    let head = point
+        .head()
+        .map(ToString::to_string)
+        .map_or_else(|| "none".to_owned(), |head| head.chars().take(12).collect());
+    let lines = vec![
+        Line::from(format!(
+            "Name     {}",
+            fit_ellipsis(&name, usize::from(inner.width.saturating_sub(9)))
+        )),
+        Line::from(format!("ID       {id}")),
+        Line::from(format!("Created  {}", format_time(point.created()))),
+        Line::from(format!("HEAD     {head}")),
+        Line::from(format!("Files    {}", point.entries().len())),
+    ];
+    frame.render_widget(Clear, layout.popup);
+    frame.render_widget(block, layout.popup);
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), inner);
+    draw_review_point_actions(frame, theme, app, &layout, false);
+}
+
+fn draw_review_point_rename(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    rename: &super::ReviewPointRenameState,
+) {
+    let layout = review_point_rename_layout(app);
+    let block = rounded_block(theme, " Rename review point ", theme.popup);
+    let inner = block.inner(layout.popup);
+    let short = rename.expected().id().chars().take(8).collect::<String>();
+    frame.render_widget(Clear, layout.popup);
+    frame.render_widget(block, layout.popup);
+    frame.render_widget(
+        Paragraph::new(Line::from(format!("{short} · blank clears the name"))).style(theme.info),
+        Rect {
+            height: u16::from(inner.height > 0),
+            ..inner
+        },
+    );
+    if layout.input.height > 0 {
+        let width = usize::from(layout.input.width);
+        let cursor = rename.editor().cursor_cell(width);
+        let rows = rename.editor().rows(width);
+        let visible = rows
+            .get(cursor.row)
+            .map_or("", |row| rename.editor().row_text(*row));
+        frame.render_widget(
+            Paragraph::new(fit(visible, width)).style(theme.list_active),
+            layout.input,
+        );
+        let column = cursor
+            .column
+            .min(usize::from(layout.input.width.saturating_sub(1)));
+        frame.set_cursor_position((layout.input.x + u16_of(column), layout.input.y));
+    }
+    draw_review_point_actions(frame, theme, app, &layout, true);
+}
+
+fn draw_review_point_actions(
+    frame: &mut Frame<'_>,
+    theme: &Theme,
+    app: &App,
+    layout: &ReviewPointPopupLayout,
+    rename: bool,
+) {
+    let hovered = app
+        .pointer()
+        .and_then(|(column, row)| layout.action_at(column, row));
+    let mut draw = |area: Rect, text: &str, hit| {
+        if area.height > 0 {
+            frame.render_widget(
+                Paragraph::new(fit(text, usize::from(area.width))).style(if hovered == Some(hit) {
+                    theme.popup_key
+                } else {
+                    theme.info
+                }),
+                area,
+            );
+        }
+    };
+    if rename {
+        draw(layout.submit, "Enter rename", ReviewPointActionHit::Submit);
+        draw(layout.back, "Esc back", ReviewPointActionHit::Back);
+    } else {
+        draw(layout.rename, "r rename", ReviewPointActionHit::Rename);
+        draw(layout.delete, "d delete", ReviewPointActionHit::Delete);
+        draw(layout.back, "Esc back", ReviewPointActionHit::Back);
+    }
+}
+
 fn draw_review_point_delete_confirmation(
     frame: &mut Frame<'_>,
     theme: &Theme,
@@ -2957,12 +3206,12 @@ fn draw_review_point_delete_confirmation(
     let layout = review_point_delete_confirmation_layout(app);
     let block = rounded_block(theme, " Delete review point ", theme.popup);
     let inner = block.inner(layout.popup);
-    let label = name.unwrap_or("unnamed");
+    let label = super::review_points::review_point_name(name);
     let short = id.chars().take(8).collect::<String>();
     let lines = vec![
         Line::from("Delete this repository-wide review point?"),
         Line::from(format!("{short} · {}", format_time(created))),
-        Line::from(label.to_owned()),
+        Line::from(fit_ellipsis(&label, usize::from(inner.width))),
         Line::from("Threads keep their origin evidence; the snapshot will not."),
     ];
     frame.render_widget(Clear, layout.popup);

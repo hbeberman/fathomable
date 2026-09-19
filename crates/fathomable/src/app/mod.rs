@@ -57,6 +57,7 @@ use fathomable_core::config::{
 };
 use fathomable_core::content::Policy;
 use fathomable_core::diff::Diff;
+use fathomable_core::editor::Buffer as EditBuffer;
 use fathomable_core::follow::Ignore;
 use fathomable_core::highlight::{Highlighter, language_hint};
 use fathomable_core::layout::LineIndex;
@@ -189,8 +190,8 @@ pub(crate) enum PickerKind {
     ComparisonAdvanced(ComparisonSide),
     /// Optional name for a new workspace review point.
     ReviewPointName,
-    /// Saved review points eligible for deletion.
-    ReviewPointDelete,
+    /// Saved review points available for management.
+    ReviewPointManage,
     /// The worktrees of the workspace, the active one marked (ADR 0070).
     Worktree,
 }
@@ -300,6 +301,29 @@ impl PickerState {
 
     pub(crate) fn matched(&self) -> usize {
         self.matches.len()
+    }
+
+    fn selected_item(&self) -> Option<&str> {
+        self.matches
+            .get(self.selected)
+            .map(|matched| self.item(matched))
+    }
+
+    fn set_query(&mut self, query: &str) {
+        self.input.clear();
+        self.input.push_str(query);
+        self.requery();
+    }
+
+    fn select_review_point(&mut self, id: &str) -> bool {
+        let Some(selected) = self.matches.iter().position(|matched| {
+            review_points::review_point_id_from_row(self.kind, self.item(matched)) == Some(id)
+        }) else {
+            return false;
+        };
+        self.selected = selected;
+        self.scroll = 0;
+        true
     }
 
     pub(crate) fn first_visible(&self, rows: usize) -> usize {
@@ -455,13 +479,57 @@ pub(crate) enum Popup {
         counts: threads::archive::BoardCounts,
         changed: bool,
     },
+    /// Actions for one review point selected from a point picker.
+    ReviewPointAction(ReviewPointActionState),
+    /// One-line review-point name editor.
+    ReviewPointRename(ReviewPointRenameState),
     /// Confirmation for deleting one durable review point.
     ConfirmReviewPointDelete {
         id: String,
         name: Option<String>,
         created: u64,
         armed: bool,
+        return_to: ReviewPointActionState,
     },
+}
+
+/// The picker and query to restore after a point action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReviewPointOrigin {
+    kind: PickerKind,
+    query: String,
+}
+
+/// The stable point snapshot shown by the action card.
+#[derive(Debug, Clone)]
+pub(crate) struct ReviewPointActionState {
+    point: fathomable_core::review_points::ReviewPoint,
+    origin: ReviewPointOrigin,
+}
+
+impl ReviewPointActionState {
+    pub(crate) fn point(&self) -> &fathomable_core::review_points::ReviewPoint {
+        &self.point
+    }
+}
+
+/// A rename edit and the stale snapshot used as its CAS token.
+#[derive(Debug)]
+pub(crate) struct ReviewPointRenameState {
+    expected: fathomable_core::review_points::ReviewPoint,
+    origin: ReviewPointOrigin,
+    editor: EditBuffer,
+    return_to_action: bool,
+}
+
+impl ReviewPointRenameState {
+    pub(crate) fn expected(&self) -> &fathomable_core::review_points::ReviewPoint {
+        &self.expected
+    }
+
+    pub(crate) fn editor(&self) -> &EditBuffer {
+        &self.editor
+    }
 }
 
 #[derive(Debug)]
@@ -2581,7 +2649,7 @@ impl App {
     pub(crate) fn open_picker(&mut self, kind: PickerKind) {
         if matches!(
             kind,
-            PickerKind::ComparisonReviewPoints | PickerKind::ReviewPointDelete
+            PickerKind::ComparisonReviewPoints | PickerKind::ReviewPointManage
         ) && !self.reload_review_points()
         {
             return;
@@ -2603,7 +2671,7 @@ impl App {
             PickerKind::ComparisonReviewPoints => self.comparison_review_point_choices(),
             PickerKind::ComparisonAdvanced(_) => vec!["Empty tree".to_owned()],
             PickerKind::ReviewPointName => vec!["save without a name".to_owned()],
-            PickerKind::ReviewPointDelete => self.review_point_delete_choices(),
+            PickerKind::ReviewPointManage => self.review_point_manage_choices(),
             PickerKind::Worktree => self.worktree_choices(),
         };
         self.open_scoped_picker(kind, items, None);
@@ -2879,8 +2947,8 @@ impl App {
                 let _ = item;
                 self.save_review_point(name);
             }
-            Some((PickerKind::ReviewPointDelete, item, _)) => {
-                self.request_review_point_delete_confirmation(&item);
+            Some((PickerKind::ReviewPointManage, item, input)) => {
+                self.request_review_point_action(&item, &input);
             }
             Some((PickerKind::Worktree, item, _)) => self.choose_worktree(&item),
             None => {}

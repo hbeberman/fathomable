@@ -49,6 +49,8 @@ pub(crate) fn place(app: &App) -> Option<Where> {
             | Popup::DiffMode(_)
             | Popup::ConfirmQuit
             | Popup::ConfirmBoard { .. }
+            | Popup::ReviewPointAction(_)
+            | Popup::ReviewPointRename(_)
             | Popup::ConfirmReviewPointDelete { .. },
         ) => None,
         Some(Popup::Compose(_)) => Some(Where::Draft),
@@ -99,6 +101,12 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
             return Effect::None;
         }
     }
+    if matches!(app.popup(), Some(Popup::ReviewPointAction(_))) {
+        return review_point_action_key(app, key);
+    }
+    if matches!(app.popup(), Some(Popup::ReviewPointRename(_))) {
+        return review_point_rename_key(app, key);
+    }
     if matches!(
         app.popup(),
         Some(
@@ -126,6 +134,21 @@ fn key_event(app: &mut App, key: KeyEvent) -> Effect {
     }
     if matches!(app.popup(), Some(Popup::Help(_))) {
         return help::key(app, key);
+    }
+    if key.code == crossterm::event::KeyCode::Char('r')
+        && key.modifiers == crossterm::event::KeyModifiers::CONTROL
+        && matches!(
+            app.popup(),
+            Some(Popup::Picker(picker))
+                if matches!(
+                    picker.kind(),
+                    PickerKind::ComparisonReviewPoints | PickerKind::ReviewPointManage
+                )
+        )
+    {
+        app.clear_message();
+        app.rename_selected_review_point();
+        return Effect::None;
     }
     app.clear_message();
     app.view_mut().clear_message();
@@ -405,7 +428,7 @@ impl App {
             Action::DiffUnified => self.select_diff_mode(DiffMode::Unified),
             Action::DiffOff => self.select_diff_mode(DiffMode::Off),
             Action::ComparisonSave => self.request_review_point(),
-            Action::ComparisonDelete => self.request_review_point_delete(),
+            Action::ComparisonManage => self.request_review_point_manage(),
             Action::ComparisonBase => self.pick_diff_side(false),
             Action::ComparisonTarget => self.pick_diff_side(true),
             Action::ComparisonHeadWorkingTree => self.select_head_working_tree(),
@@ -691,6 +714,7 @@ fn confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
         crossterm::event::KeyCode::Char('y') if app.review_point_delete_confirmation_armed() => {
             app.confirm_review_point_delete();
         }
+
         crossterm::event::KeyCode::Enter => match app.popup() {
             Some(Popup::ConfirmQuit) => {
                 app.close_popup();
@@ -707,6 +731,53 @@ fn confirmation_key(app: &mut App, key: KeyEvent) -> Effect {
             }
             _ => {}
         },
+        _ => {}
+    }
+    Effect::None
+}
+
+fn review_point_action_key(app: &mut App, key: KeyEvent) -> Effect {
+    if !key.modifiers.is_empty() {
+        return Effect::None;
+    }
+    match key.code {
+        crossterm::event::KeyCode::Char('r') => app.review_point_action_rename(),
+        crossterm::event::KeyCode::Char('d') => {
+            app.request_review_point_delete_confirmation();
+        }
+        crossterm::event::KeyCode::Esc => app.cancel_review_point_action(),
+        _ => {}
+    }
+    Effect::None
+}
+
+fn review_point_rename_key(app: &mut App, key: KeyEvent) -> Effect {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    match (key.code, key.modifiers) {
+        (KeyCode::Enter, KeyModifiers::NONE) => app.submit_review_point_rename(),
+        (KeyCode::Esc, KeyModifiers::NONE) => app.cancel_review_point_rename(),
+        (KeyCode::Backspace, KeyModifiers::NONE) => {
+            app.review_point_rename_edit(Edit::DeleteBack);
+        }
+        (KeyCode::Delete, KeyModifiers::NONE) => {
+            app.review_point_rename_edit(Edit::DeleteForward);
+        }
+        (KeyCode::Left, KeyModifiers::NONE) => {
+            app.review_point_rename_motion(Motion::Left);
+        }
+        (KeyCode::Right, KeyModifiers::NONE) => {
+            app.review_point_rename_motion(Motion::Right);
+        }
+        (KeyCode::Home, KeyModifiers::NONE) | (KeyCode::Char('a'), KeyModifiers::CONTROL) => {
+            app.review_point_rename_motion(Motion::LineStart);
+        }
+        (KeyCode::End, KeyModifiers::NONE) => {
+            app.review_point_rename_motion(Motion::LineEnd);
+        }
+        (KeyCode::Char(character), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            app.review_point_rename_insert(character);
+        }
         _ => {}
     }
     Effect::None

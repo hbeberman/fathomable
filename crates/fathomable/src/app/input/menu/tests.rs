@@ -949,15 +949,15 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     assert_eq!(
         card,
         [
-            "╭ Space d · diff ──────────┬──────────────────────────╮",
-            "│s  standard               │l  HEAD~1 to HEAD         │",
-            "│u  unified                │c  Commit~1 to Commit…    │",
-            "│o  off                    ├──────────────────────────┤",
-            "├──────────────────────────┤p  save review point      │",
-            "│b  pick base…             │x  delete review point…   │",
-            "│t  pick target…           ├──────────────────────────┤",
-            "│d  HEAD to Working tree   │w  whitespace             │",
-            "╰──────────────────────────┴──────────────────────────╯",
+            "╭ Space d · diff ───────────┬───────────────────────────╮",
+            "│s  standard                │l  HEAD~1 to HEAD          │",
+            "│u  unified                 │c  Commit~1 to Commit…     │",
+            "│o  off                     ├───────────────────────────┤",
+            "├───────────────────────────┤p  save review point       │",
+            "│b  pick base…              │r  manage review points…   │",
+            "│t  pick target…            ├───────────────────────────┤",
+            "│d  HEAD to Working tree    │w  whitespace              │",
+            "╰───────────────────────────┴───────────────────────────╯",
         ]
     );
 
@@ -966,13 +966,13 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     let narrow = draw::which_key_grid(&app, &sections);
     assert_eq!(narrow.columns.len(), 1);
     assert_eq!(narrow.rows, 14);
-    assert_eq!(narrow.label_width, 20);
+    assert_eq!(narrow.label_width, 21);
     assert!(!narrow.insufficient_space);
 
     let wide = super::HintGrid::bottom(&sections, 0, 0, 120, 30);
     assert_eq!(wide.columns.len(), 3);
     assert_eq!(wide.rows, 5);
-    assert_eq!(wide.label_width, 20);
+    assert_eq!(wide.label_width, 21);
 
     let narrow_tall = super::HintGrid::bottom(&sections, 0, 0, 19, 30);
     assert_eq!(narrow_tall.columns.len(), 1);

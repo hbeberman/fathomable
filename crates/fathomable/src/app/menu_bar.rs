@@ -703,8 +703,8 @@ pub(crate) fn rows(app: &App, root: Root) -> Vec<Row> {
             )),
             Row::Item(Item::action(
                 app,
-                Action::ComparisonDelete,
-                "Delete review point…",
+                Action::ComparisonManage,
+                "Manage review points…",
             )),
             Row::Separator,
             Row::Item(Item::action(
@@ -787,7 +787,7 @@ fn action_available(app: &App, action: Action) -> bool {
             }),
         Action::ComparisonSave => app.review_points.is_some(),
         Action::ComparisonHeadParent | Action::ComparisonCommitParent => app.workspace.is_git(),
-        Action::ComparisonDelete => app
+        Action::ComparisonManage => app
             .review_points
             .as_ref()
             .is_some_and(|store| !store.is_empty()),
@@ -1476,7 +1476,7 @@ mod tests {
                 "HEAD~1 to HEAD",
                 "Commit~1 to Commit…",
                 "Save review point and use as Base…",
-                "Delete review point…",
+                "Manage review points…",
                 "Ignore whitespace",
             ]
         );
@@ -1553,7 +1553,7 @@ mod tests {
                 ("HEAD~1 to HEAD", false),
                 ("Commit~1 to Commit…", false),
                 ("Save review point and use as Base…", false),
-                ("Delete review point…", false),
+                ("Manage review points…", false),
                 ("Ignore whitespace", false),
             ]
         );

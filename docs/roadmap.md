@@ -462,8 +462,9 @@ Milestones are ordered; each is usable on its own. Details live in the
     Base to Target, Off shows Target only, and removed comparison controls,
     commit batches, and `:diff` have no compatibility aliases. `Space d d`
     directly reselects current HEAD to working tree, `Space d l/c` selects
-    immutable first-parent comparisons, and `Space d p` saves a review point
-    and selects it as Base against Working tree
+    immutable first-parent comparisons, `Space d p` saves a review point and
+    selects it as Base against Working tree, and `Space d r` manages the
+    append-only rename and guarded logical-delete lifecycle by stable point ID
     ([0087](decisions/0087-global-comparisons-and-board-history.md)).
 79. **Bundled license notices.** Help > Licenses displays offline first- and
     third-party attribution embedded in the executable;

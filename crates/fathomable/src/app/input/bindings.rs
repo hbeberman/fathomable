@@ -294,7 +294,7 @@ actions! {
     DiffUnified,
     DiffOff,
     ComparisonSave,
-    ComparisonDelete,
+    ComparisonManage,
     ComparisonBase,
     ComparisonTarget,
     ComparisonHeadWorkingTree,
@@ -965,10 +965,10 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind_in(
         W::Any,
-        &[&[c(' '), c('d'), c('x')]],
-        A::ComparisonDelete,
+        &[&[c(' '), c('d'), c('r')]],
+        A::ComparisonManage,
         "Space menu",
-        "diff: delete review point…",
+        "diff: manage review points…",
         2,
     ),
     bind_in(
@@ -1865,10 +1865,11 @@ mod tests {
                 ([c(' '), c('d'), c('o')], Action::DiffOff),
                 ([c(' '), c('d'), c('b')], Action::ComparisonBase),
                 ([c(' '), c('d'), c('d')], Action::ComparisonHeadWorkingTree),
+                ([c(' '), c('d'), c('r')], Action::ComparisonManage),
             ] {
                 assert_eq!(lookup(place, &keys), Match::Exact(action));
             }
-            assert_eq!(lookup(place, &[c(' '), c('d'), c('r')]), Match::Miss);
+            assert_eq!(lookup(place, &[c(' '), c('d'), c('x')]), Match::Miss);
         }
         assert_eq!(lookup(Where::View, &[c('b')]), Match::Miss);
     }
@@ -2009,7 +2010,7 @@ mod tests {
         assert_eq!(keys(Where::Review, &[c(' '), c('v')]), ["s", "t", "r"]);
         assert_eq!(
             keys(Where::Review, &[c(' '), c('d')]),
-            ["s", "u", "o", "b", "t", "d", "l", "c", "p", "x", "w"]
+            ["s", "u", "o", "b", "t", "d", "l", "c", "p", "r", "w"]
         );
         assert_eq!(keys(Where::View, &[c(' '), c('F')]), ["c", "o", "u", "i"]);
         assert_eq!(keys(Where::View, &[c(' '), c('f')]), ["f", "i", "r"]);

@@ -983,9 +983,9 @@ impl App {
                 format!(
                     "review point {}{}",
                     point.id(),
-                    point
-                        .name()
-                        .map_or_else(String::new, |name| format!(" ({name})"))
+                    point.name().map_or_else(String::new, |name| {
+                        format!(" ({})", super::review_points::review_point_name(Some(name)))
+                    })
                 )
             })
             .collect()

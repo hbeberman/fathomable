@@ -48,12 +48,15 @@ const INDEX_FILE: &str = "review-points.jsonl";
 const BLOB_DIR: &str = "blobs";
 const EVENT_NAME: &str = "review-point";
 const DELETE_EVENT_NAME: &str = "review-point-delete";
+const RENAME_EVENT_NAME: &str = "review-point-rename";
+const MAX_NAME_SCALARS: usize = 128;
 
 /// One deliberate workspace state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPoint {
     id: String,
     name: Option<String>,
+    name_revision: u64,
     created: u64,
     checkout: PathBuf,
     workspace_key: PathBuf,
@@ -467,6 +470,46 @@ impl ReviewPointStore {
         }
     }
 
+    /// Rename one review point using its latest snapshot as a compare-and-swap token.
+    ///
+    /// Leading and trailing whitespace is removed from `replacement`; a blank
+    /// replacement clears the name. Names are case-sensitive and must be unique
+    /// among active review points.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReviewPointError::InvalidName`] for a name outside the
+    /// single-line length policy, [`ReviewPointError::DuplicateName`] when an
+    /// active point already uses the name, [`ReviewPointError::StaleRename`]
+    /// when `expected` is not the latest renamed snapshot, or
+    /// [`ReviewPointError::Unavailable`] when the point was deleted.
+    /// [`ReviewPointError::CommitUncertain`] means callers must reload before
+    /// deciding whether the rename occurred.
+    pub fn rename(
+        &mut self,
+        expected: &ReviewPoint,
+        replacement: Option<&str>,
+    ) -> Result<ReviewPoint, ReviewPointError> {
+        let replacement = normalize_name(replacement)?;
+        let mut lock = FileLock::exclusive(&mut self.log)?;
+        let result = rename_locked(&self.dir, lock.file_mut(), expected, replacement.as_deref());
+        let unlock = lock.unlock();
+        let (points, renamed) = match result {
+            Ok(result) => {
+                if let Err(error) = unlock {
+                    tracing::warn!(%error, "review-point manifest lock release failed");
+                }
+                result
+            }
+            Err(error) => {
+                let _ = unlock;
+                return Err(error);
+            }
+        };
+        self.points = points;
+        Ok(renamed)
+    }
+
     /// Capture an explicit workspace review point.
     ///
     /// The point records the observed `HEAD`, checkout identity, name, mode
@@ -489,6 +532,7 @@ impl ReviewPointStore {
         workspace: &mut Workspace,
         name: Option<&str>,
     ) -> Result<CaptureResult, ReviewPointError> {
+        let name = normalize_name(name)?;
         let head = workspace
             .head_commit()
             .map(|hex| {
@@ -638,10 +682,11 @@ impl ReviewPointStore {
         }
 
         let created = crate::clock::now();
-        let id = point_id(created, workspace, name, head.as_ref(), &entries);
+        let id = point_id(created, workspace, name.as_deref(), head.as_ref(), &entries);
         let point = ReviewPoint {
             id,
-            name: name.map(str::to_owned),
+            name,
+            name_revision: 0,
             created,
             checkout: workspace.root().to_path_buf(),
             workspace_key: workspace.key().to_path_buf(),
@@ -899,6 +944,18 @@ struct StoredDeleteEvent {
     deleted: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRenameEvent {
+    #[serde(rename = "event")]
+    kind: String,
+    id: String,
+    previous: Option<String>,
+    replacement: Option<String>,
+    revision: u64,
+    renamed: u64,
+}
+
 #[derive(Debug, Deserialize)]
 struct StoredEventKind {
     #[serde(rename = "event")]
@@ -1001,6 +1058,7 @@ impl StoredPointEvent {
         Ok(ReviewPoint {
             id: self.id,
             name: self.name,
+            name_revision: 0,
             created: self.created,
             checkout: self.checkout,
             workspace_key: self.workspace_key,
@@ -1079,6 +1137,18 @@ pub enum ReviewPointError {
     /// A review point or manifest entry is invalid.
     #[error("invalid review point: {0}")]
     Invalid(String),
+    /// A proposed name violates the single-line length policy.
+    #[error("review-point name must be a single line of at most 128 characters")]
+    InvalidName,
+    /// A proposed name is already used by an active point.
+    #[error("review-point name is already in use")]
+    DuplicateName,
+    /// A rename used a snapshot that is no longer current.
+    #[error("review point {point} was renamed since this snapshot was loaded")]
+    StaleRename {
+        /// The point whose snapshot is stale.
+        point: String,
+    },
     /// A saved point's required content is unavailable.
     #[error("review point {point} cannot reconstruct {}: {detail}", path.display())]
     MissingBacking {
@@ -1098,7 +1168,7 @@ pub enum ReviewPointError {
     /// A manifest write failed after its durable outcome became uncertain.
     #[error("review point {point} update outcome is uncertain: {detail}")]
     CommitUncertain {
-        /// The point whose capture or deletion must be reloaded before retrying.
+        /// The point whose update must be reloaded before retrying.
         point: String,
         /// The underlying append, flush, or sync failure.
         detail: String,
@@ -1217,6 +1287,44 @@ fn issue(path: Option<PathBuf>, kind: CaptureIssueKind, detail: impl Into<String
         kind,
         detail: detail.into(),
     }
+}
+
+fn normalize_name(name: Option<&str>) -> Result<Option<String>, ReviewPointError> {
+    let Some(raw_name) = name else {
+        return Ok(None);
+    };
+    let name = raw_name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let mut scalars = 0;
+    for character in name.chars() {
+        scalars += 1;
+        if scalars > MAX_NAME_SCALARS
+            || character.is_control()
+            || matches!(character, '\u{2028}' | '\u{2029}')
+        {
+            return Err(ReviewPointError::InvalidName);
+        }
+    }
+    Ok(Some(name.to_owned()))
+}
+
+fn ensure_name_available(
+    points: &BTreeMap<String, ReviewPoint>,
+    name: Option<&str>,
+    except_id: Option<&str>,
+) -> Result<(), ReviewPointError> {
+    let Some(name) = name else {
+        return Ok(());
+    };
+    if points
+        .values()
+        .any(|point| Some(point.id()) != except_id && point.name() == Some(name))
+    {
+        return Err(ReviewPointError::DuplicateName);
+    }
+    Ok(())
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -1370,6 +1478,14 @@ fn replay_log(file: &mut File) -> Result<BTreeMap<String, ReviewPoint>, ReviewPo
                 let _ = event.deleted;
                 points.remove(&event.id);
             }
+            RENAME_EVENT_NAME => {
+                let event: StoredRenameEvent =
+                    serde_json::from_str(line).map_err(|source| ReviewPointError::Format {
+                        line: line_number + 1,
+                        detail: source.to_string(),
+                    })?;
+                apply_rename_event(&mut points, &event)?;
+            }
             event => {
                 return Err(ReviewPointError::UnexpectedEvent {
                     line: line_number + 1,
@@ -1379,6 +1495,45 @@ fn replay_log(file: &mut File) -> Result<BTreeMap<String, ReviewPoint>, ReviewPo
         }
     }
     Ok(points)
+}
+
+fn apply_rename_event(
+    points: &mut BTreeMap<String, ReviewPoint>,
+    event: &StoredRenameEvent,
+) -> Result<(), ReviewPointError> {
+    if !is_digest(&event.id) {
+        return Err(ReviewPointError::Invalid(
+            "renamed review-point id must be a lowercase SHA-256 digest".to_owned(),
+        ));
+    }
+    let replacement = normalize_name(event.replacement.as_deref())?;
+    if replacement.as_ref() != event.replacement.as_ref() {
+        return Err(ReviewPointError::InvalidName);
+    }
+    let point = points.get(&event.id).ok_or_else(|| {
+        ReviewPointError::Invalid("review-point rename target is unavailable".to_owned())
+    })?;
+    if point.name.as_ref() != event.previous.as_ref() {
+        return Err(ReviewPointError::Invalid(
+            "review-point rename previous name does not match".to_owned(),
+        ));
+    }
+    let revision = point.name_revision.checked_add(1).ok_or_else(|| {
+        ReviewPointError::Invalid("review-point name revision overflowed".to_owned())
+    })?;
+    if revision != event.revision {
+        return Err(ReviewPointError::Invalid(
+            "review-point rename revision is not monotonic".to_owned(),
+        ));
+    }
+    ensure_name_available(points, replacement.as_deref(), Some(&event.id))?;
+    let current = points.get_mut(&event.id).ok_or_else(|| {
+        ReviewPointError::Invalid("review-point rename target is unavailable".to_owned())
+    })?;
+    current.name = replacement;
+    current.name_revision = revision;
+    let _ = event.renamed;
+    Ok(())
 }
 
 fn delete_locked(
@@ -1486,6 +1641,66 @@ fn delete_locked(
     ))
 }
 
+fn rename_locked(
+    dir: &Path,
+    file: &mut File,
+    expected: &ReviewPoint,
+    replacement: Option<&str>,
+) -> Result<(BTreeMap<String, ReviewPoint>, ReviewPoint), ReviewPointError> {
+    let mut points = replay_log(file)?;
+    let current = points
+        .get(expected.id())
+        .ok_or_else(|| ReviewPointError::Unavailable {
+            point: expected.id.clone(),
+        })?
+        .clone();
+    if current.name_revision != expected.name_revision {
+        return Err(ReviewPointError::StaleRename {
+            point: expected.id.clone(),
+        });
+    }
+    if current.name() == replacement {
+        return Ok((points, current));
+    }
+    ensure_name_available(&points, replacement, Some(current.id()))?;
+    let revision = current.name_revision.checked_add(1).ok_or_else(|| {
+        ReviewPointError::Invalid("review-point name revision overflowed".to_owned())
+    })?;
+    let event = StoredRenameEvent {
+        kind: RENAME_EVENT_NAME.to_owned(),
+        id: current.id.clone(),
+        previous: current.name.clone(),
+        replacement: replacement.map(str::to_owned),
+        revision,
+        renamed: crate::clock::now(),
+    };
+    let mut line = serde_json::to_vec(&event).map_err(|source| ReviewPointError::Json {
+        detail: source.to_string(),
+    })?;
+    line.push(b'\n');
+    file.seek(SeekFrom::End(0))?;
+    if let Err(error) = file
+        .write_all(&line)
+        .and_then(|()| file.flush())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| sync_directory(dir))
+    {
+        return Err(ReviewPointError::CommitUncertain {
+            point: expected.id.clone(),
+            detail: error.to_string(),
+        });
+    }
+    let renamed = points
+        .get_mut(expected.id())
+        .ok_or_else(|| ReviewPointError::Unavailable {
+            point: expected.id.clone(),
+        })?;
+    renamed.name = replacement.map(str::to_owned);
+    renamed.name_revision = revision;
+    let renamed = renamed.clone();
+    Ok((points, renamed))
+}
+
 fn publish_locked(
     dir: &Path,
     file: &mut File,
@@ -1493,10 +1708,11 @@ fn publish_locked(
     blobs: &[(String, Vec<u8>)],
     line: &[u8],
 ) -> Result<BTreeMap<String, ReviewPoint>, ReviewPointError> {
+    let mut points = replay_log(file)?;
+    ensure_name_available(&points, point.name(), None)?;
     for (blob, bytes) in blobs {
         ensure_blob(dir, blob, bytes)?;
     }
-    let mut points = replay_log(file)?;
     file.seek(SeekFrom::End(0))?;
     if let Err(error) = file
         .write_all(line)
@@ -1642,6 +1858,349 @@ mod tests {
     }
 
     #[test]
+    fn names_normalize_and_a_fresh_noop_does_not_append() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("review-point-name-normalization")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+
+        let unnamed = store
+            .capture(&mut workspace, Some(" \t "))?
+            .point()
+            .ok_or("unnamed point")?
+            .clone();
+        assert_eq!(unnamed.name(), None);
+        let named = store
+            .capture(&mut workspace, Some("  alpha  "))?
+            .point()
+            .ok_or("named point")?
+            .clone();
+        assert_eq!(named.name(), Some("alpha"));
+
+        let manifest = state.join(INDEX_FILE);
+        let before = fs::read(&manifest)?;
+        let unchanged = store.rename(&named, Some(" alpha "))?;
+        assert_eq!(unchanged, named);
+        assert_eq!(fs::read(&manifest)?, before);
+
+        let cleared = store.rename(&unchanged, Some("   "))?;
+        assert_eq!(cleared.name(), None);
+        assert_eq!(
+            ReviewPointStore::open(state)?
+                .get(cleared.id())
+                .and_then(ReviewPoint::name),
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn active_names_are_exact_case_sensitive_and_unique() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("review-point-name-uniqueness")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(dir.0.join("state"))?;
+
+        let lower = store
+            .capture(&mut workspace, Some("alpha"))?
+            .point()
+            .ok_or("lowercase point")?
+            .clone();
+        let upper = store
+            .capture(&mut workspace, Some("Alpha"))?
+            .point()
+            .ok_or("uppercase point")?
+            .clone();
+        assert!(matches!(
+            store.capture(&mut workspace, Some(" alpha ")),
+            Err(ReviewPointError::DuplicateName)
+        ));
+        assert!(matches!(
+            store.rename(&upper, Some("alpha")),
+            Err(ReviewPointError::DuplicateName)
+        ));
+        let renamed = store.rename(&upper, Some("ALPHA"))?;
+        assert_eq!(renamed.name(), Some("ALPHA"));
+        assert_eq!(
+            store.get(lower.id()).and_then(ReviewPoint::name),
+            Some("alpha")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn new_names_enforce_scalar_and_single_line_limits() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-name-limits")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(dir.0.join("state"))?;
+        let accepted_capture = "é".repeat(128);
+        let point = store
+            .capture(&mut workspace, Some(&accepted_capture))?
+            .point()
+            .ok_or("128-scalar capture")?
+            .clone();
+        assert_eq!(point.name(), Some(accepted_capture.as_str()));
+
+        let accepted_rename = "界".repeat(128);
+        let current = store.rename(&point, Some(&accepted_rename))?;
+        assert_eq!(current.name(), Some(accepted_rename.as_str()));
+        let rejected = [
+            "x".repeat(129),
+            "control\u{7f}name".to_owned(),
+            "line\u{2028}separator".to_owned(),
+            "paragraph\u{2029}separator".to_owned(),
+        ];
+        for name in &rejected {
+            assert!(matches!(
+                store.capture(&mut workspace, Some(name)),
+                Err(ReviewPointError::InvalidName)
+            ));
+            assert!(matches!(
+                store.rename(&current, Some(name)),
+                Err(ReviewPointError::InvalidName)
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rename_replays_without_changing_captured_state_then_deletes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-rename-replay")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let original = store
+            .capture(&mut workspace, Some("before"))?
+            .point()
+            .ok_or("point")?
+            .clone();
+
+        let renamed = store.rename(&original, Some("after"))?;
+        assert_eq!(renamed.name(), Some("after"));
+        assert_eq!(renamed.id(), original.id());
+        assert_eq!(renamed.created(), original.created());
+        assert_eq!(renamed.checkout(), original.checkout());
+        assert_eq!(renamed.workspace_key(), original.workspace_key());
+        assert_eq!(renamed.head(), original.head());
+        assert_eq!(renamed.entries(), original.entries());
+        assert_eq!(renamed.issues(), original.issues());
+        assert_eq!(
+            store.load_bytes(&renamed, &workspace, Path::new("a.md"))?,
+            Some(b"point\n".to_vec())
+        );
+
+        let reopened = ReviewPointStore::open(&state)?;
+        assert_eq!(
+            reopened.get(original.id()).and_then(ReviewPoint::name),
+            Some("after")
+        );
+        assert!(store.delete(original.id())?.point().is_some());
+        assert!(matches!(
+            store.rename(&renamed, Some("later")),
+            Err(ReviewPointError::Unavailable { .. })
+        ));
+        assert!(ReviewPointStore::open(state)?.get(original.id()).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn rename_compare_and_swap_detects_stale_and_aba_snapshots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-rename-cas")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut first = ReviewPointStore::open(&state)?;
+        let named = first
+            .capture(&mut workspace, Some("A"))?
+            .point()
+            .ok_or("named point")?
+            .clone();
+        let mut second = ReviewPointStore::open(&state)?;
+        let stale_named = second.get(named.id()).ok_or("second snapshot")?.clone();
+
+        let named_b = first.rename(&named, Some("B"))?;
+        assert!(matches!(
+            second.rename(&stale_named, Some("C")),
+            Err(ReviewPointError::StaleRename { .. })
+        ));
+        let named_a = first.rename(&named_b, Some("A"))?;
+        assert_eq!(named_a.name(), Some("A"));
+        assert!(matches!(
+            second.rename(&stale_named, Some("A")),
+            Err(ReviewPointError::StaleRename { .. })
+        ));
+
+        let unnamed = first
+            .capture(&mut workspace, None)?
+            .point()
+            .ok_or("unnamed point")?
+            .clone();
+        second.reload()?;
+        let stale_unnamed = second.get(unnamed.id()).ok_or("unnamed snapshot")?.clone();
+        let temporarily_named = first.rename(&unnamed, Some("temporary"))?;
+        let unnamed_again = first.rename(&temporarily_named, None)?;
+        assert_eq!(unnamed_again.name(), None);
+        assert!(matches!(
+            second.rename(&stale_unnamed, None),
+            Err(ReviewPointError::StaleRename { .. })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn historical_duplicate_names_replay_and_allow_fresh_noop()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-historical-names")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        store.capture(&mut workspace, Some("one"))?;
+        store.capture(&mut workspace, Some("two"))?;
+        drop(store);
+
+        let manifest = state.join(INDEX_FILE);
+        let text = fs::read_to_string(&manifest)?;
+        fs::write(
+            &manifest,
+            text.replace(r#""name":"two""#, r#""name":"one""#),
+        )?;
+        let mut reopened = ReviewPointStore::open(&state)?;
+        let duplicates: Vec<_> = reopened
+            .list()
+            .into_iter()
+            .filter(|point| point.name() == Some("one"))
+            .collect();
+        assert_eq!(duplicates.len(), 2);
+        let before = fs::read(&manifest)?;
+        reopened.rename(&duplicates[0], Some(" one "))?;
+        assert_eq!(fs::read(manifest)?, before);
+        Ok(())
+    }
+
+    #[test]
+    fn historical_invalid_capture_names_remain_readable() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = TempDir::new("review-point-historical-invalid-name")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let id = store
+            .capture(&mut workspace, Some("legacy"))?
+            .point()
+            .ok_or("legacy point")?
+            .id()
+            .to_owned();
+        drop(store);
+
+        let manifest = state.join(INDEX_FILE);
+        let text = fs::read_to_string(&manifest)?;
+        let historical = "x".repeat(129);
+        fs::write(
+            &manifest,
+            text.replace(r#""name":"legacy""#, &format!(r#""name":"{historical}""#)),
+        )?;
+        assert_eq!(
+            ReviewPointStore::open(state)?
+                .get(&id)
+                .and_then(ReviewPoint::name),
+            Some(historical.as_str())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_unknown_and_interrupted_rename_records_fail_closed_or_repair()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-rename-records")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let point = store
+            .capture(&mut workspace, Some("before"))?
+            .point()
+            .ok_or("point")?
+            .clone();
+        drop(store);
+        let manifest = state.join(INDEX_FILE);
+        let original = fs::read(&manifest)?;
+
+        let malformed = format!(
+            "{{\"event\":\"{RENAME_EVENT_NAME}\",\"id\":\"{}\",\
+             \"previous\":\"before\",\"replacement\":\"after\",\"renamed\":1}}\n",
+            point.id()
+        );
+        let mut bytes = original.clone();
+        bytes.extend_from_slice(malformed.as_bytes());
+        fs::write(&manifest, bytes)?;
+        assert!(matches!(
+            ReviewPointStore::open(&state),
+            Err(ReviewPointError::Format { .. })
+        ));
+
+        let mut bytes = original.clone();
+        bytes.extend_from_slice(b"{\"event\":\"review-point-renamed\"}\n");
+        fs::write(&manifest, bytes)?;
+        assert!(matches!(
+            ReviewPointStore::open(&state),
+            Err(ReviewPointError::UnexpectedEvent { .. })
+        ));
+
+        for (previous, revision) in [("wrong", 1), ("before", 2)] {
+            let semantically_invalid = format!(
+                "{{\"event\":\"{RENAME_EVENT_NAME}\",\"id\":\"{}\",\
+                 \"previous\":\"{previous}\",\"replacement\":\"after\",\
+                 \"revision\":{revision},\"renamed\":1}}\n",
+                point.id()
+            );
+            let mut bytes = original.clone();
+            bytes.extend_from_slice(semantically_invalid.as_bytes());
+            fs::write(&manifest, bytes)?;
+            assert!(matches!(
+                ReviewPointStore::open(&state),
+                Err(ReviewPointError::Invalid(_))
+            ));
+        }
+
+        let mut interrupted = original.clone();
+        interrupted
+            .extend_from_slice(format!("{{\"event\":\"{RENAME_EVENT_NAME}\",\"id\":\"").as_bytes());
+        fs::write(&manifest, interrupted)?;
+        let repaired = ReviewPointStore::open(&state)?;
+        assert_eq!(
+            repaired.get(point.id()).and_then(ReviewPoint::name),
+            Some("before")
+        );
+        assert_eq!(fs::read(manifest)?, original);
+        Ok(())
+    }
+
+    #[test]
     fn manifest_append_failure_reports_an_uncertain_capture()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = TempDir::new("review-point-capture-uncertain")?;
@@ -1653,6 +2212,7 @@ mod tests {
         let point = ReviewPoint {
             id: "uncertain-point".to_owned(),
             name: None,
+            name_revision: 0,
             created: 0,
             checkout: dir.0.clone(),
             workspace_key: dir.0.clone(),
@@ -1668,6 +2228,34 @@ mod tests {
         assert!(matches!(
             error,
             ReviewPointError::CommitUncertain { point, .. } if point == "uncertain-point"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn manifest_append_failure_reports_an_uncertain_rename()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = TempDir::new("review-point-rename-uncertain")?;
+        let repo = dir.0.join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("a.md"), "point\n")?;
+        let state = dir.0.join("state");
+        let mut workspace = Workspace::discover(&repo)?;
+        let mut store = ReviewPointStore::open(&state)?;
+        let point = store
+            .capture(&mut workspace, Some("before"))?
+            .point()
+            .ok_or("point")?
+            .clone();
+        drop(store);
+
+        let mut read_only = File::open(state.join(INDEX_FILE))?;
+        let error = rename_locked(&state, &mut read_only, &point, Some("after"))
+            .err()
+            .ok_or("a read-only manifest accepted the rename")?;
+        assert!(matches!(
+            error,
+            ReviewPointError::CommitUncertain { point: id, .. } if id == point.id()
         ));
         Ok(())
     }

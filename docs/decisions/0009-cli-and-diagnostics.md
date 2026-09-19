@@ -6,7 +6,7 @@ resource: crates/fathomable/src/main.rs
 related_resources:
   - crates/fathomable/src/doctor.rs
   - crates/fathomable/src/logging.rs
-  - crates/fathomable/src/seed.rs
+  - crates/fathomable/examples/seed.rs
   - crates/fathomable-core/src/xdg.rs
   - crates/fathomable-core/src/private_state.rs
 tags:
@@ -154,6 +154,11 @@ shape). It replaces the Python in `scripts/demo-repo.sh` that wrote
 `threads.jsonl` and `agents.jsonl` by hand from a copy of the serde
 shapes, so the formats have one writer. It exists for the demo and for
 tests, not for users; the viewer and the tools are how threads are made.
+
+Amended 2026-09-18: seed is no longer a hidden product subcommand. The same
+Store-backed implementation lives at `crates/fathomable/examples/seed.rs`,
+and `scripts/demo-repo.sh` invokes it through Cargo. Normal builds and
+`cargo install --path crates/fathomable` therefore ship no seeding command.
 
 ## Consequences
 

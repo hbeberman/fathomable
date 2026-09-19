@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create an isolated throwaway git workspace and seed review discussions so
 # the three MCP tools can be tried safely (ADR 0082). Needs bash, git, and
-# an installed `fathomable` (or FATHOMABLE=path/to/binary).
+# Cargo, and an installed `fathomable` (or FATHOMABLE=path/to/binary).
 #
 #   scripts/demo-repo.sh [--isolated] [DIR]
 #
@@ -106,8 +106,9 @@ git -c user.name=demo -c user.email=demo@example.invalid add -A
 git -c user.name=demo -c user.email=demo@example.invalid commit -q -m "chore: demo workspace"
 HEAD=$(git rev-parse HEAD)
 
-# 2. Seed discussions through the binary, so the store has one writer.
-# Neither seed nor a repository-bound MCP server needs a workspace marker.
+# 2. Seed discussions through the repository-only Cargo example, so the store
+# has one writer without putting demo tooling in the installed product binary.
+# Neither seeding nor a repository-bound MCP server needs a workspace marker.
 SEED="$DIR/.xdg/seed.json"
 cat > "$SEED" <<EOF
 {
@@ -129,7 +130,8 @@ cat > "$SEED" <<EOF
   ]
 }
 EOF
-"$FATHOMABLE" seed --workspace "$DIR" "$SEED"
+cargo run --quiet --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    -p fathomable --example seed -- --workspace "$DIR" "$SEED"
 rm -f "$SEED"
 
 # 3. Where everything is and what to run.

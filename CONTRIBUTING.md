@@ -256,7 +256,9 @@ end users can run that Cargo command directly without installing `just`.
   tracked repository file locates it with `fathomable_testing::repo_file`,
   never `env!("CARGO_MANIFEST_DIR")`.
 - `scripts/demo-repo.sh` builds a throwaway workspace with seeded
-  discussions for smoke-testing the MCP server and its tools.
+  discussions for smoke-testing the MCP server and its tools. It runs the
+  repository-only `seed` Cargo example; seeding is not part of the installed
+  Fathomable binary.
 
 ## 4. Documentation
 

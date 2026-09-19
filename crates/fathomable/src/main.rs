@@ -8,14 +8,13 @@ mod crash;
 mod doctor;
 mod logging;
 mod mcp;
-mod seed;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::Store;
 use fathomable_core::config::Config;
@@ -26,12 +25,7 @@ use fathomable_core::workspace::Workspace;
 
 /// Read-only terminal workspace viewer and annotation side-car.
 #[derive(Debug, Parser)]
-#[command(
-    name = "fathomable",
-    version,
-    about,
-    args_conflicts_with_subcommands = true
-)]
+#[command(name = "fathomable", version, about)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each admin flag is a distinct switch mandated by ADR 0009"
@@ -39,9 +33,6 @@ use fathomable_core::workspace::Workspace;
 struct Cli {
     /// File to view, or workspace directory (default: current directory).
     path: Option<PathBuf>,
-
-    #[command(subcommand)]
-    command: Option<Command>,
 
     /// Run the stdio MCP server bound to an optional repository directory.
     #[arg(long)]
@@ -68,31 +59,10 @@ struct Cli {
     config_show: bool,
 }
 
-/// Hidden maintenance commands used by repository tooling.
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Write the threads FILE declares into a workspace's annotation store.
-    #[command(hide = true)]
-    Seed {
-        /// The JSON seed file; its shape is documented in `seed.rs`.
-        file: PathBuf,
-        /// The workspace to seed (default: the one around the current directory).
-        #[arg(long, value_name = "DIR")]
-        workspace: Option<PathBuf>,
-    },
-}
-
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let dirs = XdgDirs::from_env();
 
-    match cli.command {
-        Some(Command::Seed { file, workspace }) => {
-            let workspace = workspace.unwrap_or_else(|| PathBuf::from("."));
-            return seed::run(&dirs, &workspace, &file);
-        }
-        None => {}
-    }
     if cli.doctor {
         return doctor::run(&dirs);
     }

@@ -1,8 +1,11 @@
-//! `fathomable seed FILE`: write declared threads into a workspace's
-//! annotation store through the same code the viewer and MCP use.
+// @okf-doc: /decisions/0009-cli-and-diagnostics.md
+#![forbid(unsafe_code)]
+//! Repository-only thread seeding for the demo workspace.
 //!
-//! The command is hidden from `--help`: it exists for
-//! `scripts/demo-repo.sh` and for tests. The file is one object:
+//! `cargo run -p fathomable --example seed -- FILE` writes declared threads
+//! through the same store code the viewer and MCP use. This example exists
+//! for `scripts/demo-repo.sh` and tests; it is not installed with the
+//! Fathomable product binary. The file is one object:
 //!
 //! ```json
 //! {
@@ -38,11 +41,29 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
+use clap::Parser;
 use fathomable_core::XdgDirs;
 use fathomable_core::annotations::{Author, Draft, LineRange, Reply, Store, ThreadId};
 use fathomable_core::clock::now;
 use fathomable_core::workspace::Workspace;
 use serde::Deserialize;
+
+/// Repository-only seed tool arguments.
+#[derive(Debug, Parser)]
+#[command(name = "fathomable-seed")]
+struct Cli {
+    /// The JSON seed file; its shape is documented in this source file.
+    file: PathBuf,
+    /// The workspace to seed (default: the one around the current directory).
+    #[arg(long, value_name = "DIR")]
+    workspace: Option<PathBuf>,
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let workspace = cli.workspace.unwrap_or_else(|| PathBuf::from("."));
+    run(&XdgDirs::from_env(), &workspace, &cli.file)
+}
 
 /// The declared contents of an annotation store.
 #[derive(Debug, Default, Deserialize)]
@@ -92,9 +113,8 @@ struct AuthorSeed {
     id: Option<String>,
 }
 
-/// `fathomable seed`: seed the workspace around `workspace` from `file`
-/// and print the `threads:` table.
-pub(crate) fn run(dirs: &XdgDirs, workspace: &Path, file: &Path) -> ExitCode {
+/// Seed the workspace around `workspace` from `file` and print the IDs.
+fn run(dirs: &XdgDirs, workspace: &Path, file: &Path) -> ExitCode {
     match seed(dirs, workspace, file) {
         Ok(made) => {
             println!("threads:");

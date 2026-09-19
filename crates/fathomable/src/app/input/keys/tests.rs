@@ -82,6 +82,77 @@ fn screen(app: &App) -> anyhow::Result<String> {
     Ok(text)
 }
 
+#[test]
+fn command_line_lists_fuzzy_matches_and_cycles_the_original_query() -> anyhow::Result<()> {
+    let dir = fixture("command-completion")?;
+    let mut app = source_app(&dir)?;
+
+    handle_key(&mut app, testing::key(':'));
+    let completion = app
+        .view()
+        .command_completion()
+        .ok_or_else(|| anyhow::anyhow!("command completion"))?;
+    assert_eq!(completion.selected_index(), None);
+    assert_eq!(
+        completion
+            .candidates()
+            .iter()
+            .map(|command| command.form())
+            .collect::<Vec<_>>(),
+        [
+            "about",
+            "doctor",
+            "help",
+            "licenses",
+            "nohlsearch",
+            "quit",
+            "source",
+            "status"
+        ]
+    );
+    let blank = screen(&app)?;
+    assert!(blank.contains("about"));
+    assert!(!blank.contains("Args: none."));
+
+    handle_key(&mut app, testing::key('s'));
+    assert_eq!(
+        app.view()
+            .command_completion()
+            .into_iter()
+            .flat_map(super::super::super::commands::CommandCompletion::candidates)
+            .map(|command| command.form())
+            .collect::<Vec<_>>(),
+        ["source", "status", "nohlsearch", "licenses"]
+    );
+
+    handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(app.view().input(), "source");
+    let selected = screen(&app)?;
+    assert!(selected.contains("Toggle rendered and source view"));
+    assert!(selected.contains("Args: none."));
+
+    handle_key(&mut app, KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    assert_eq!(
+        app.view().input(),
+        "status",
+        "completion keeps cycling the matches from :s"
+    );
+    handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+    );
+    assert_eq!(app.view().input(), "source");
+
+    handle_key(&mut app, testing::key('x'));
+    let completion = app
+        .view()
+        .command_completion()
+        .ok_or_else(|| anyhow::anyhow!("command completion after typing"))?;
+    assert_eq!(completion.selected_index(), None);
+    assert!(completion.candidates().is_empty());
+    Ok(())
+}
+
 /// Thread actions follow the Phase C key grammar.
 #[test]
 fn space_c_acts_on_the_thread_here_from_any_pane() -> anyhow::Result<()> {

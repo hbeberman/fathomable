@@ -15,6 +15,7 @@ use fathomable_core::highlight::{Highlighter, Highlights};
 use fathomable_core::layout::{Face, Layout, LineIndex, RowAnchor, display_width};
 use regex::Regex;
 
+use super::commands::{Command, CommandCompletion, CompletionDirection, find_command};
 use super::diff::{DiffBody, DiffView, Text};
 
 mod navigation;
@@ -175,6 +176,7 @@ pub(crate) struct View {
     scroll: usize,
     mode: Mode,
     input: String,
+    command_completion: Option<CommandCompletion>,
     selection: Option<Selection>,
     pattern: Option<Regex>,
     backward: bool,
@@ -297,6 +299,7 @@ impl View {
             scroll: 0,
             mode: Mode::Normal,
             input: String::new(),
+            command_completion: None,
             selection: None,
             pattern: None,
             backward: false,
@@ -1508,6 +1511,7 @@ impl View {
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             self.mode = Mode::Normal;
             self.input.clear();
+            self.command_completion = None;
         } else if self.selection.is_some() {
             self.selection = None;
             self.mode = Mode::Normal;
@@ -1531,6 +1535,7 @@ impl View {
     pub(crate) fn start_command(&mut self) {
         self.mode = Mode::Command;
         self.input.clear();
+        self.command_completion = Some(CommandCompletion::new(""));
         self.message = None;
     }
 
@@ -1538,6 +1543,7 @@ impl View {
         self.mode = Mode::Search { backward };
         self.backward = backward;
         self.input.clear();
+        self.command_completion = None;
         self.message = None;
     }
 
@@ -1553,8 +1559,11 @@ impl View {
     }
 
     fn incremental(&mut self) {
-        if let Mode::Search { .. } = self.mode {
-            match compile(&self.input) {
+        match self.mode {
+            Mode::Command => {
+                self.command_completion = Some(CommandCompletion::new(&self.input));
+            }
+            Mode::Search { .. } => match compile(&self.input) {
                 Ok(pattern) => {
                     self.pattern = Some(pattern);
                     self.rescan();
@@ -1565,7 +1574,26 @@ impl View {
                     self.matches.clear();
                     self.message = Some(error);
                 }
-            }
+            },
+            Mode::Normal | Mode::Select => {}
+        }
+    }
+
+    pub(crate) fn command_completion(&self) -> Option<&CommandCompletion> {
+        self.command_completion.as_ref()
+    }
+
+    pub(crate) fn complete_command(&mut self, direction: CompletionDirection) {
+        if self.mode != Mode::Command {
+            return;
+        }
+        let selected = self
+            .command_completion
+            .get_or_insert_with(|| CommandCompletion::new(&self.input))
+            .select(direction);
+        if let Some(command) = selected {
+            self.input.clear();
+            self.input.push_str(command.form());
         }
     }
 
@@ -1574,6 +1602,7 @@ impl View {
         match self.mode {
             Mode::Command => {
                 let command = std::mem::take(&mut self.input);
+                self.command_completion = None;
                 self.mode = Mode::Normal;
                 self.execute(command.trim())
             }
@@ -1592,22 +1621,30 @@ impl View {
     }
 
     fn execute(&mut self, command: &str) -> Effect {
-        match command {
-            "q" | "q!" | "quit" | "quit!" => Effect::Quit,
-            "noh" | "nohlsearch" => {
+        if command.is_empty() {
+            return Effect::None;
+        }
+        if command.chars().all(|ch| ch.is_ascii_digit()) {
+            if let Ok(line) = command.parse::<usize>() {
+                self.goto_source_line(line);
+            }
+            return Effect::None;
+        }
+        let Some(spec) = find_command(command) else {
+            return Effect::Command(command.to_owned());
+        };
+        match spec.command() {
+            Command::Quit => Effect::Quit,
+            Command::ClearHighlight => {
                 self.clear_highlight();
                 Effect::None
             }
-            "source" => Effect::Command("source".to_owned()),
-            "" => Effect::None,
-            number if number.chars().all(|c| c.is_ascii_digit()) => {
-                if let Ok(line) = number.parse::<usize>() {
-                    self.goto_source_line(line);
-                }
-                Effect::None
-            }
-            // Anything else is the app's to run or refuse.
-            other => Effect::Command(other.to_owned()),
+            Command::About
+            | Command::Doctor
+            | Command::Help
+            | Command::Licenses
+            | Command::Source
+            | Command::Status => Effect::Command(spec.form().to_owned()),
         }
     }
 

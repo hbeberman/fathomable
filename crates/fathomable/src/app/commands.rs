@@ -1,25 +1,247 @@
 // @okf-doc: /decisions/0021-polish-pass.md
-//! The `:` commands the view hands up to the app, and the `:status` overlay.
+//! The `:` command registry, app-level command handling, and `:status` overlay.
 //!
-//! `View::execute` keeps the commands that only touch the pane (`:q`,
-//! `:noh`, `:N`); everything else arrives here as
+//! The registry is the source of truth for parsing, fuzzy completion, aliases,
+//! and user-visible descriptions. `View::execute` keeps commands that only
+//! touch the pane (`:quit`, `:nohlsearch`, `:N`); everything else arrives as
 //! [`Effect::Command`](crate::app::view::Effect::Command).
 
 use super::App;
 use fathomable_core::config::DiffMode;
 
+/// Behavior attached to one registered command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Command {
+    About,
+    ClearHighlight,
+    Doctor,
+    Help,
+    Licenses,
+    Quit,
+    Source,
+    Status,
+}
+
+/// Canonical command metadata used by execution and completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct CommandSpec {
+    form: &'static str,
+    aliases: &'static [&'static str],
+    description: &'static str,
+    command: Command,
+}
+
+impl CommandSpec {
+    const fn new(
+        form: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        command: Command,
+    ) -> Self {
+        Self {
+            form,
+            aliases,
+            description,
+            command,
+        }
+    }
+
+    pub(crate) const fn form(self) -> &'static str {
+        self.form
+    }
+
+    pub(crate) const fn aliases(self) -> &'static [&'static str] {
+        self.aliases
+    }
+
+    pub(crate) const fn description(self) -> &'static str {
+        self.description
+    }
+
+    pub(crate) const fn command(self) -> Command {
+        self.command
+    }
+}
+
+/// Direction in which command completion moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompletionDirection {
+    Next,
+    Previous,
+}
+
+/// The matches frozen when command completion starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CommandCompletion {
+    matches: Vec<CommandSpec>,
+    selected: Option<usize>,
+}
+
+impl CommandCompletion {
+    pub(crate) fn new(query: &str) -> Self {
+        Self {
+            matches: matching_commands(query),
+            selected: None,
+        }
+    }
+
+    pub(crate) fn candidates(&self) -> &[CommandSpec] {
+        &self.matches
+    }
+
+    pub(crate) const fn selected_index(&self) -> Option<usize> {
+        self.selected
+    }
+
+    pub(crate) fn selected(&self) -> Option<CommandSpec> {
+        self.selected
+            .and_then(|index| self.matches.get(index).copied())
+    }
+
+    pub(crate) fn select(&mut self, direction: CompletionDirection) -> Option<CommandSpec> {
+        if self.matches.is_empty() {
+            return None;
+        }
+        let last = self.matches.len() - 1;
+        self.selected = Some(match (self.selected, direction) {
+            (None, CompletionDirection::Next) => 0,
+            (None | Some(0), CompletionDirection::Previous) => last,
+            (Some(index), CompletionDirection::Next) => (index + 1) % self.matches.len(),
+            (Some(index), CompletionDirection::Previous) => index - 1,
+        });
+        self.selected()
+    }
+}
+
+const COMMANDS: [CommandSpec; 8] = [
+    CommandSpec::new(
+        "about",
+        &[],
+        "Show Fathomable version, license, and repository information. Args: none.",
+        Command::About,
+    ),
+    CommandSpec::new(
+        "doctor",
+        &[],
+        "Inspect configuration, storage, workspace, and terminal diagnostics. Args: none.",
+        Command::Doctor,
+    ),
+    CommandSpec::new(
+        "help",
+        &[],
+        "Open or close the getting-started guide. Args: none.",
+        Command::Help,
+    ),
+    CommandSpec::new(
+        "licenses",
+        &[],
+        "Read bundled first- and third-party license notices. Args: none.",
+        Command::Licenses,
+    ),
+    CommandSpec::new(
+        "nohlsearch",
+        &["noh"],
+        "Clear search highlights. Aliases: noh. Args: none.",
+        Command::ClearHighlight,
+    ),
+    CommandSpec::new(
+        "quit",
+        &["q", "q!", "quit!"],
+        "Quit immediately without confirmation. Aliases: q, q!, quit!. Args: none.",
+        Command::Quit,
+    ),
+    CommandSpec::new(
+        "source",
+        &[],
+        "Toggle rendered and source view for configured Markdown files. Args: none.",
+        Command::Source,
+    ),
+    CommandSpec::new(
+        "status",
+        &[],
+        "Show live viewer, workspace, and storage status. Args: none.",
+        Command::Status,
+    ),
+];
+
+pub(crate) fn find_command(input: &str) -> Option<CommandSpec> {
+    COMMANDS
+        .iter()
+        .copied()
+        .find(|spec| spec.form() == input || spec.aliases().contains(&input))
+}
+
+fn matching_commands(query: &str) -> Vec<CommandSpec> {
+    if query.chars().any(char::is_whitespace) {
+        return Vec::new();
+    }
+    if query.is_empty() {
+        return COMMANDS.to_vec();
+    }
+
+    let query = query.to_ascii_lowercase();
+    let mut matches: Vec<_> = COMMANDS
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, command)| {
+            best_rank(command, &query).map(|rank| (rank, index, command))
+        })
+        .collect();
+    matches.sort_by_key(|(rank, index, _)| (*rank, *index));
+    matches.into_iter().map(|(_, _, command)| command).collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct MatchRank {
+    prefix_penalty: u8,
+    span: usize,
+    start: usize,
+    candidate_len: usize,
+}
+
+fn best_rank(command: CommandSpec, query: &str) -> Option<MatchRank> {
+    std::iter::once(command.form())
+        .chain(command.aliases().iter().copied())
+        .filter_map(|candidate| match_rank(candidate, query))
+        .min()
+}
+
+fn match_rank(candidate: &str, query: &str) -> Option<MatchRank> {
+    let candidate = candidate.to_ascii_lowercase();
+    let bytes = candidate.as_bytes();
+    let mut from = 0;
+    let mut first = None;
+    let mut last = 0;
+    for wanted in query.bytes() {
+        let offset = bytes.get(from..)?.iter().position(|byte| *byte == wanted)?;
+        let position = from + offset;
+        first.get_or_insert(position);
+        last = position;
+        from = position + 1;
+    }
+    let start = first?;
+    Some(MatchRank {
+        prefix_penalty: u8::from(!candidate.starts_with(query)),
+        span: last - start + 1,
+        start,
+        candidate_len: candidate.len(),
+    })
+}
+
 impl App {
     /// Run a `:` command the view did not handle itself.
-    pub(crate) fn command(&mut self, command: &str) {
-        let mut words = command.split_whitespace();
-        match (words.next(), words.next(), words.next()) {
-            (Some("status"), None, _) => self.open_status(),
-            (Some("help"), None, _) => self.open_getting_started(),
-            (Some("doctor"), None, _) => self.open_doctor(),
-            (Some("licenses"), None, _) => self.open_licenses(),
-            (Some("about"), None, _) => self.open_about(),
-            (Some("source"), None, _) => self.toggle_source_view(),
-            _ => self.notice(format!("not a command: {command}")),
+    pub(crate) fn command(&mut self, input: &str) {
+        match find_command(input).map(CommandSpec::command) {
+            Some(Command::Status) => self.open_status(),
+            Some(Command::Help) => self.open_getting_started(),
+            Some(Command::Doctor) => self.open_doctor(),
+            Some(Command::Licenses) => self.open_licenses(),
+            Some(Command::About) => self.open_about(),
+            Some(Command::Source) => self.toggle_source_view(),
+            Some(Command::ClearHighlight | Command::Quit) | None => {
+                self.notice(format!("not a command: {input}"));
+            }
         }
     }
 
@@ -161,6 +383,84 @@ mod tests {
     use fathomable_core::config::DiffMode;
 
     use crate::app::testing;
+
+    use super::{Command, CommandCompletion, CompletionDirection, find_command, matching_commands};
+
+    #[test]
+    fn registry_lists_every_canonical_command_and_alias() {
+        let commands = matching_commands("");
+        assert_eq!(
+            commands
+                .iter()
+                .map(|command| command.form())
+                .collect::<Vec<_>>(),
+            [
+                "about",
+                "doctor",
+                "help",
+                "licenses",
+                "nohlsearch",
+                "quit",
+                "source",
+                "status"
+            ]
+        );
+        assert_eq!(
+            find_command("noh").map(super::CommandSpec::command),
+            Some(Command::ClearHighlight)
+        );
+        for alias in ["q", "q!", "quit", "quit!"] {
+            assert_eq!(
+                find_command(alias).map(super::CommandSpec::command),
+                Some(Command::Quit),
+                "{alias}"
+            );
+        }
+        assert!(
+            commands
+                .iter()
+                .all(|command| command.description().contains("Args: none."))
+        );
+    }
+
+    #[test]
+    fn matching_is_case_insensitive_subsequence_with_prefixes_first() {
+        let forms = |query| {
+            matching_commands(query)
+                .iter()
+                .map(|command| command.form())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(forms("ST"), ["status"]);
+        assert_eq!(forms("lc"), ["licenses", "nohlsearch"]);
+        assert_eq!(forms("q"), ["quit"]);
+        assert_eq!(forms("s"), ["source", "status", "nohlsearch", "licenses"]);
+        assert!(forms("status now").is_empty());
+    }
+
+    #[test]
+    fn completion_cycles_the_frozen_match_set() {
+        let mut completion = CommandCompletion::new("s");
+        assert_eq!(completion.selected_index(), None);
+        assert_eq!(
+            completion
+                .select(CompletionDirection::Next)
+                .map(super::CommandSpec::form),
+            Some("source")
+        );
+        assert_eq!(
+            completion
+                .select(CompletionDirection::Next)
+                .map(super::CommandSpec::form),
+            Some("status")
+        );
+        assert_eq!(
+            completion
+                .select(CompletionDirection::Previous)
+                .map(super::CommandSpec::form),
+            Some("source")
+        );
+    }
 
     #[test]
     fn off_status_is_explicitly_target_only() -> anyhow::Result<()> {

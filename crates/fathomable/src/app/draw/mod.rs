@@ -382,6 +382,7 @@ pub(crate) fn draw(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
                     hover,
                 );
             }
+            draw_command_completion(frame, app, theme, area, status_area);
             place_cursor(frame, app, view, text_area, status_area, gutter);
         }
     }
@@ -1005,6 +1006,106 @@ fn place_cursor(
             text_area.y + u16_of(screen_row),
         ));
     }
+}
+
+const COMMAND_COLUMN_WIDTH: usize = 18;
+const COMMAND_MAX_ROWS: usize = 10;
+
+fn draw_command_completion(
+    frame: &mut Frame<'_>,
+    app: &App,
+    theme: &Theme,
+    area: Rect,
+    status_area: Rect,
+) {
+    let Some(completion) = app.view().command_completion() else {
+        return;
+    };
+    let candidates = completion.candidates();
+    let available_rows = usize::from(status_area.y.saturating_sub(u16_of(app.pane_top())));
+    if candidates.is_empty() || available_rows == 0 || area.width == 0 {
+        return;
+    }
+
+    let columns = (usize::from(area.width) / COMMAND_COLUMN_WIDTH)
+        .max(1)
+        .min(candidates.len());
+    let wanted_rows = candidates.len().div_ceil(columns).min(COMMAND_MAX_ROWS);
+    let grid_rows = wanted_rows.min(available_rows);
+    let description_rows = usize::from(
+        completion.selected().is_some() && available_rows.saturating_sub(grid_rows) >= 3,
+    ) * 3;
+    let total_rows = grid_rows + description_rows;
+    let start_y = status_area.y.saturating_sub(u16_of(total_rows));
+    let overlay = Rect {
+        y: start_y,
+        height: u16_of(total_rows),
+        ..area
+    };
+    frame.render_widget(Clear, overlay);
+
+    if let Some(command) = completion.selected().filter(|_| description_rows == 3) {
+        let description = Rect {
+            height: 3,
+            ..overlay
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(theme.info);
+        let text = fit_ellipsis(
+            command.description(),
+            usize::from(description.width.saturating_sub(4)),
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(format!(" {text} ")))
+                .style(theme.popup)
+                .block(block),
+            description,
+        );
+    }
+
+    let grid = Rect {
+        y: start_y.saturating_add(u16_of(description_rows)),
+        height: u16_of(grid_rows),
+        ..overlay
+    };
+    let capacity = columns.saturating_mul(grid_rows).min(candidates.len());
+    let first = completion.selected_index().map_or(0, |selected| {
+        if selected < capacity {
+            0
+        } else {
+            selected
+                .saturating_add(1)
+                .saturating_sub(capacity)
+                .min(candidates.len().saturating_sub(capacity))
+        }
+    });
+    let mut lines = vec![Line::default(); grid_rows];
+    for (offset, index) in (first..first.saturating_add(capacity)).enumerate() {
+        let row = offset % grid_rows;
+        let column = offset / grid_rows;
+        let used: usize = lines[row]
+            .spans
+            .iter()
+            .map(|span| display_width(&span.content))
+            .sum();
+        let target = column.saturating_mul(COMMAND_COLUMN_WIDTH);
+        lines[row]
+            .spans
+            .push(Span::raw(" ".repeat(target.saturating_sub(used))));
+        let command = candidates[index].form();
+        let style = if completion.selected_index() == Some(index) {
+            theme.list_cursor
+        } else {
+            theme.popup
+        };
+        lines[row].spans.push(Span::styled(
+            fit_ellipsis(command, COMMAND_COLUMN_WIDTH),
+            style,
+        ));
+    }
+    frame.render_widget(Paragraph::new(lines).style(theme.popup), grid);
 }
 
 /// Change toasts, bottom-right above the status line, newest at the

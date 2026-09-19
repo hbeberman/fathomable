@@ -22,6 +22,15 @@ toggles and their `:diff` commands are removed without aliases. Explicit
 Standard, Unified, and Off modes replace them; the diff-toggle and command
 routing sections below remain historical rationale.
 
+Amended 2026-09-18: the command line now lists every canonical command while
+open and narrows the list with case-insensitive fuzzy subsequence matching.
+Exact and prefix matches rank first. The first `Tab` selects a result and shows
+its description and argument contract; later `Tab` or `Shift-Tab` presses cycle
+the match set frozen from the original query. Typing or erasing starts a new
+query. Aliases participate in matching but do not duplicate canonical list
+entries. Numeric `:N` jumps remain valid but are not finite completion
+candidates.
+
 Terms renamed 2026-09-03 by [0047](0047-one-vocabulary.md): *session* is
 *viewer* or *workspace* (the harness session keeps the word), *follow
 mode* is *auto-jump*, *annotation* is *thread*, *panel* is *pane*,

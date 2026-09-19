@@ -119,6 +119,26 @@ the table below is a quick reference, not the full list.
 | `q` | quit after confirmation |
 | `:q` `:quit` `:q!` `:quit!` | quit immediately |
 
+Typing `:` opens command discovery above the status line. The list is filtered
+by a case-insensitive fuzzy subsequence match, with exact and prefix matches
+first. `Tab` selects the first match and cycles the matches from the original
+query; `Shift-Tab` cycles backward. Typing or erasing starts a new query. The
+selected command shows a brief description and its accepted arguments.
+
+| Command | Description |
+| --- | --- |
+| `:about` | show version, license, and repository information |
+| `:doctor` | inspect configuration, storage, workspace, and terminal diagnostics |
+| `:help` | open or close the getting-started guide |
+| `:licenses` | read bundled first- and third-party license notices |
+| `:nohlsearch` (`:noh`) | clear search highlights |
+| `:quit` (`:q`, `:q!`, `:quit!`) | quit immediately without confirmation |
+| `:source` | toggle rendered/source view for configured Markdown files |
+| `:status` | show live viewer, workspace, and storage status |
+| `:<line>` | jump to a source line; numeric jumps are not completion candidates |
+
+All current named commands take no arguments.
+
 `Ctrl-e` uses a fresh owner-only temporary directory containing an owner-only
 draft file. Editor replacements and backups placed beside the draft stay
 private, and Fathomable removes this scratch directory on return, including

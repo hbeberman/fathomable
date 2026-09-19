@@ -18,7 +18,7 @@ use super::bindings::{Action, Chord, Key, Match, Where, lookup};
 use super::help;
 use crate::app::threads::list::ReviewView;
 use crate::app::view::{Effect, Mode};
-use crate::app::{doctor_view, licenses, menu_bar};
+use crate::app::{commands::CompletionDirection, doctor_view, licenses, menu_bar};
 
 /// Rows a scroll key or wheel notch moves.
 pub(crate) const WHEEL_LINES: isize = 3;
@@ -667,6 +667,8 @@ impl App {
                 view.escape();
             }
             Action::Confirm => return view.confirm(),
+            Action::CompleteNext => view.complete_command(CompletionDirection::Next),
+            Action::CompletePrevious => view.complete_command(CompletionDirection::Previous),
             Action::Backspace => view.input_backspace(),
             _ => {}
         }

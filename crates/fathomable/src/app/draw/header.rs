@@ -748,7 +748,7 @@ impl Header {
                     theme.popup_key
                 };
                 spans.push(Span::styled(
-                    if focused { "▏" } else { " " },
+                    if focused { "▎" } else { " " },
                     on_surface(surface, marker),
                 ));
                 spans.push(Span::styled(
@@ -1307,7 +1307,7 @@ mod tests {
                     let rendered = text(&line);
                     assert_eq!(display_width(&rendered), width, "{title} at {width}");
                     if width > 0 {
-                        assert!(rendered.starts_with(if focused { '▏' } else { ' ' }));
+                        assert!(rendered.starts_with(if focused { '▎' } else { ' ' }));
                     }
                 }
             }
@@ -1336,10 +1336,10 @@ mod tests {
             assert_eq!(display_width(&inactive_text), display_width(&focused_text));
             assert_eq!(
                 inactive_text.strip_prefix(' '),
-                focused_text.strip_prefix('▏')
+                focused_text.strip_prefix('▎')
             );
             assert_eq!(inactive.spans[0].content, " ");
-            assert_eq!(focused.spans[0].content, "▏");
+            assert_eq!(focused.spans[0].content, "▎");
             assert_eq!(focused.spans[0].style.fg, theme.pane_focus.fg);
             assert_eq!(focused.spans[1].content, "File ");
             assert_eq!(inactive.spans[1].style.fg, theme.popup_key.fg);

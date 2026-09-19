@@ -20,7 +20,7 @@ parent directory and moves the cursor there when folding, so the next `z`
 unfolds that same directory. A root-level file remains unchanged.
 
 Amended again 2026-09-18: all four pane names are muted-blue
-`ui.popup.key` buttons with one trailing clickable cell. The leading `▏`
+`ui.popup.key` buttons with one trailing clickable cell. The leading `▎`
 alone keeps `ui.pane.focus` while focused. File and Threads show their
 bottom action bars only while focused (or File has an active draft), returning
 the row to content instead of showing an inactive focus tip. Temporary
@@ -94,7 +94,7 @@ focus the pane without replacing the title-menu target.
 
 ### One visible navigation owner
 
-Every pane header reserves its first cell for a `▏` marker. Each pane name
+Every pane header reserves its first cell for a `▎` marker. Each pane name
 uses the muted-blue `ui.popup.key` foreground and includes one trailing cell
 in its click and hover region, matching the menu bar's button spacing. When
 `App::pane_has_navigation` says that pane is the current normal keyboard

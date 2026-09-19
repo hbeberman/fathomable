@@ -66,7 +66,7 @@ an active draft). Focus moving to another pane gives that row back to content
 instead of drawing a focus tip; a temporary overlay suppresses actions
 without relaying out the pane behind it. All four pane-title buttons use the
 muted-blue `ui.popup.key` foreground and include one trailing clickable cell;
-the focused pane's leading `▏` alone retains `ui.pane.focus`.
+the focused pane's leading `▎` alone retains `ui.pane.focus`.
 
 ## Context
 

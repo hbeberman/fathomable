@@ -66,16 +66,16 @@ fn assert_selection(buffer: &Buffer, x: u16, y: u16, width: u16, theme: &Theme, 
     }
 }
 
-fn marker_count(buffer: &Buffer) -> usize {
+fn focus_marker_count(buffer: &Buffer, theme: &Theme) -> usize {
     buffer
         .content
         .iter()
-        .filter(|cell| cell.symbol() == "▏")
+        .filter(|cell| cell.symbol() == "▎" && Some(cell.fg) == theme.pane_focus.fg)
         .count()
 }
 
 fn assert_pane_title(buffer: &Buffer, x: u16, y: u16, name: &str, theme: &Theme, focused: bool) {
-    assert_eq!(buffer[(x, y)].symbol(), if focused { "▏" } else { " " });
+    assert_eq!(buffer[(x, y)].symbol(), if focused { "▎" } else { " " });
     if focused {
         assert_eq!(Some(buffer[(x, y)].fg), theme.pane_focus.fg);
     }
@@ -103,26 +103,26 @@ fn pane_titles_show_exactly_one_focus_marker_and_suspend_it_for_overlays() -> an
         let pane_top = u16::try_from(app.pane_top())?;
         let thread_top = u16::try_from(app.pane_top() + app.tree_rows() + 1)?;
         let buffer = render(&app, &theme)?;
-        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_eq!(focus_marker_count(&buffer, &theme), 1, "{name}");
         assert_pane_title(&buffer, 0, pane_top, "File list", &theme, true);
         assert_pane_title(&buffer, sidebar, pane_top, "File", &theme, false);
         assert_pane_title(&buffer, 0, thread_top, "Thread list", &theme, false);
 
         app.focus_pane(Focus::View);
         let buffer = render(&app, &theme)?;
-        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_eq!(focus_marker_count(&buffer, &theme), 1, "{name}");
         assert_pane_title(&buffer, sidebar, pane_top, "File", &theme, true);
         let filename_x = sidebar + u16::try_from(" File  ".len())?;
         assert_ne!(Some(buffer[(filename_x, pane_top)].fg), theme.pane_focus.fg);
 
         app.open_review();
         let buffer = render(&app, &theme)?;
-        assert_eq!(marker_count(&buffer), 1, "{name}");
+        assert_eq!(focus_marker_count(&buffer, &theme), 1, "{name}");
         assert_pane_title(&buffer, sidebar, pane_top, "Threads", &theme, true);
 
         app.open_status();
         let buffer = render(&app, &theme)?;
-        assert_eq!(marker_count(&buffer), 0, "{name}");
+        assert_eq!(focus_marker_count(&buffer, &theme), 0, "{name}");
         app.close_popup();
         app.close_review();
     }

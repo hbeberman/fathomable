@@ -1844,12 +1844,7 @@ fn status_line<'a>(app: &'a App, theme: &Theme, width: usize) -> Paragraph<'a> {
     let badges: Vec<&String> = parts
         .badges
         .iter()
-        .filter(|badge| {
-            !endpoints_rendered
-                || badge.as_str() == "SRC"
-                || badge.contains("stale")
-                || badge.contains("error")
-        })
+        .filter(|badge| !endpoints_rendered || badge.contains("stale") || badge.contains("error"))
         .collect();
     // Keep the right-hand block visible by trimming identity from the left.
     let badges_width: usize = badges.iter().map(|badge| display_width(badge) + 2).sum();
@@ -1913,8 +1908,7 @@ fn status_message_style(app: &App, theme: &Theme) -> Style {
 
 /// The status line's words (ADR 0010, amended by 0046's session): the
 /// pill says one thing, the mode or the focused pane; the badges after
-/// the path say how the text is shown (`SRC`, or `DIFF` and the base,
-/// ADR 0060); the right block is
+/// the path describe an active diff and its base (ADR 0060); the right block is
 /// `line:col`, the percentage, and `N word` counts, in segments so the
 /// thread total remains clickable.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1997,8 +1991,6 @@ pub(super) fn status_parts(app: &App) -> StatusParts {
     if directory.is_none() {
         if let Some(diff) = view.diff() {
             badges.push(diff.badge.clone());
-        } else if view.source_view() {
-            badges.push("SRC".to_owned());
         }
         badges.push(app.comparison_badge());
     }
@@ -3604,7 +3596,7 @@ mod tests {
         assert!(!screen.last().unwrap_or(&String::new()).contains("CMP"));
         app.view_mut().toggle_source_view();
         let screen = testing::screen(&app)?;
-        assert!(screen.last().is_some_and(|row| row.contains("SRC")));
+        assert!(!screen.last().unwrap_or(&String::new()).contains("SRC"));
         assert!(!screen.last().unwrap_or(&String::new()).contains("CMP"));
         app.view_mut().toggle_source_view();
 

@@ -1059,7 +1059,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     app.view_mut().toggle_source_view();
     let parts = crate::app::draw::status_parts(&app);
     assert_eq!(parts.pill, "FILE");
-    assert_eq!(parts.badges, ["SRC", "CMP empty tree → working tree"]);
+    assert_eq!(parts.badges, ["CMP empty tree → working tree"]);
     assert!(
         parts.right_text().contains("1 threads"),
         "{}",
@@ -1076,7 +1076,7 @@ fn the_status_line_badges_do_not_depend_on_focus() -> anyhow::Result<()> {
     assert_eq!(parts.pill, "THREAD LIST");
     assert_eq!(
         parts.badges,
-        ["SRC", "CMP empty tree → working tree"],
+        ["CMP empty tree → working tree"],
         "the badges outlive the focus change"
     );
     Ok(())
@@ -1276,7 +1276,10 @@ fn the_cursor_bar_marks_the_thread_and_its_message_on_both_surfaces() -> anyhow:
     assert_eq!(app.thread_cursor().thread(), Some(&id));
     assert_eq!(app.thread_cursor().message(), 2, "the newest message");
     let rows = testing::screen(&app)?;
-    let marked: Vec<&String> = rows.iter().filter(|row| row.starts_with('▎')).collect();
+    let marked: Vec<&String> = rows
+        .iter()
+        .filter(|row| row.starts_with('▎') && !row.starts_with("▎Threads"))
+        .collect();
     // The file row the cursor is within, not bold on its own (ADR
     // 0077), the entry header, then the newest message's author row
     // and body row, each in the nest.

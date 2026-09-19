@@ -131,7 +131,8 @@ would have to bring that back or cut rows, either its own decision.
   `HEAD -> INDEX` is staged, `INDEX -> WORKTREE` is unstaged, and
   `HEAD -> WORKTREE` is net. The header names
   the target, which is the working file nearly always. `CHECK` goes;
-  `SRC` and `AUTO` stay. `:status` says `diff HEAD · now`.
+  `AUTO` stays. `:status` says `diff HEAD · now`. The redundant `SRC`
+  source-view badge was retired on 2026-09-19.
 
 ### The diff menu
 
@@ -194,7 +195,7 @@ diff {
 - 0056's map: `Space v` is `s` / `t` / `r`, `Space d` is new, `Space c`
   loses `x`; `SUBMENUS` gains `d` diff.
 - 0017's `gd` bullet: the badge reads `DIFF net`, and `DIFF seen` is
-  the same family; 0010's badge list reads `SRC`, `DIFF <base>`, `AUTO`.
+  the same family; 0010's badge list reads `DIFF <base>`, `AUTO`.
 - 0050's former checkpoint-header click was generalized to every diff, then
   retired by the presentation amendment above. The global base and target
   buttons now open those pickers from every file presentation.

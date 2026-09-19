@@ -15,7 +15,7 @@ tags:
 Status: accepted (2026-09-14)
 
 Amended 2026-09-18 by [0091](0091-pane-focus-navigation.md): selection
-styling remains unchanged, while every pane header now reserves a `▏` cell
+styling remains unchanged, while every pane header now reserves a `▎` cell
 and uses `ui.pane.focus` on that marker and the pane name only when the pane
 owns normal navigation. Overlays, prefixes, Compose, and command/search input
 suspend both the header treatment and underlying active-list treatment.

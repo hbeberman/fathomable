@@ -50,7 +50,7 @@ reviews means files with an active or resolution-proposed, non-archived thread
 in the current workspace. Filters combine, and the File list header names active
 filters compactly as `c`, `r`, `u`, and `i`.
 
-The focused pane marks its name with a purple `▏`; filenames, counts, filters,
+The focused pane marks its name with a purple `▎`; filenames, counts, filters,
 and controls remain neutral. The selected list row keeps its blue active or
 remembered treatment independently. Menus, popups, prefixes, drafts, and
 command/search input suspend the pane marker.

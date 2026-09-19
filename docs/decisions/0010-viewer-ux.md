@@ -142,7 +142,7 @@ viewer, the layout engine, and later themes agree.
 - Amended 2026-09-03: **the pill says one thing** — the mode (`NOR`,
   `SEL`, `CMD`, `SRCH`) while the text has focus, else the focused pane
   (`TREE`, `THREAD`, `LIST`, `FILE THREADS`). How the text is shown is a
-  badge after the path (`SRC`, `DIFF`, `DIFF seen`) and so is auto-jump
+  badge after the path (`DIFF`, `DIFF seen`) and so is auto-jump
   (`AUTO`), so neither disappears when focus moves. `DELETED` is the
   banner only. The right block reads `line:col`, the percentage, `+a -r`,
   then every count as `N word`: `2 waiting  3 threads  1 followed`.
@@ -150,6 +150,8 @@ viewer, the layout engine, and later themes agree.
   navigation and selection instead of exposing `NOR` and `SEL`. Selection
   remains visible in the document itself. Command and search input continue
   to replace the whole status line with their prompt.
+- Amended 2026-09-19: source view is the normal File presentation and no
+  longer adds a redundant `SRC` badge. Diff and comparison badges remain.
 - `:` and `/` input replace the status line while active, as in Vim. Pending
   key sequences and transient messages ("search hit BOTTOM, continuing at
   TOP", "copied 3 lines") use the same line and clear on the next key.

@@ -11,10 +11,10 @@ tags:
 
 # Setup guide
 
-Fathomable is a read-only terminal viewer for reviewing agent-driven work.
-It never edits your checkout or Git data. Install it on Linux using the
-[README](../README.md#install); contributor tooling is separate in
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+Fathomable is a read-only workspace viewer for reviewing diffs and interactive
+comment threads with agents via MCP. It never edits your checkout or Git data.
+Install it on Linux using the [README](../README.md#install); contributor
+tooling is separate in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Source builds support Rust 1.95 or newer and default to stable Rust. The
 minimum supported compiler and the compiler used for attributed release

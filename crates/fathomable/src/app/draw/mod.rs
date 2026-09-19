@@ -642,9 +642,9 @@ fn draw_about(frame: &mut Frame<'_>, app: &App, theme: &Theme) {
             format!("Fathomable {}", env!("CARGO_PKG_VERSION")),
             theme.popup_key.add_modifier(Modifier::BOLD),
         )),
-        Line::raw(""),
-        Line::raw("Read-only terminal workspace viewer and"),
-        Line::raw("annotation side-car for agent-driven work."),
+        Line::raw("A read-only workspace viewer for reviewing"),
+        Line::raw("diffs and interactive comment threads with agents"),
+        Line::raw("via MCP."),
         Line::raw(""),
         Line::from(vec![
             Span::styled("License  ", theme.info),
@@ -960,8 +960,8 @@ fn welcome_lines<'a>(app: &App, theme: &Theme, area: Rect) -> Vec<Line<'a>> {
         ("Space d", "diff options"),
     ];
     let intro = [
-        "A read-only workspace viewer for following files, changes,",
-        "and review threads while agents work.",
+        "A read-only workspace viewer for reviewing diffs and",
+        "interactive comment threads with agents via MCP.",
         "",
         "Usable with both mouse (right/left click) and keyboard.",
         "Space opens a hotkey list. Alt-Space moves keyboard focus",
@@ -4113,9 +4113,9 @@ mod tests {
         let expected = [
             "╭ About ──────────────────────────────────────────────────)────╮",
             "│Fathomable 0.1.0                                        (     │",
-            "│                                                         )    │",
-            "│Read-only terminal workspace viewer and                 (     │",
-            "│annotation side-car for agent-driven work.             _|_    │",
+            "│A read-only workspace viewer for reviewing               )    │",
+            "│diffs and interactive comment threads with agents       (     │",
+            "│via MCP.                                               _|_    │",
             "│                                                      (   )   │",
             "│License  MIT (Fathomable)                          ====`|'====│",
             "│Source   https://github.com/hbeberman/fathomable        |     │",
@@ -4428,9 +4428,9 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = [
             "Fathomable 0.1.0",
-            "",
-            "Read-only terminal workspace viewer and",
-            "annotation side-car for agent-driven work.",
+            "A read-only workspace viewer for reviewing",
+            "diffs and interactive comment threads with agents",
+            "via MCP.",
             "",
             "License  MIT (Fathomable)",
             "Source   https://github.com/hbeberman/fathomable",
@@ -4488,7 +4488,8 @@ mod tests {
 
         assert_eq!(&rows[start..start + expected.len()], expected);
         let screen = rows.join("\n");
-        assert!(screen.contains("A read-only workspace viewer"));
+        assert!(screen.contains("A read-only workspace viewer for reviewing diffs and"));
+        assert!(screen.contains("interactive comment threads with agents via MCP."));
         assert!(screen.contains("Usable with both mouse (right/left click) and keyboard."));
         assert!(screen.contains("Space opens a hotkey list."));
         assert!(screen.contains("Alt-Space moves keyboard focus"));

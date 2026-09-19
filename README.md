@@ -1,8 +1,7 @@
 # fathomable
 
-Read-only terminal workspace viewer and annotation side-car for
-agent-driven work. You read files as they change, leave threads on the
-lines an agent wrote, and the agent answers over MCP. Currently Linux only.
+A read-only workspace viewer for reviewing diffs and interactive comment
+threads with agents via MCP. Currently Linux only.
 
 **Enthusiast alpha:** expect features to appear, change, or disappear at
 any time. Fathomable stores are not guaranteed to survive upgrades or

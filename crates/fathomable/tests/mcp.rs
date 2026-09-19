@@ -1047,7 +1047,7 @@ fn replies_use_the_bound_checkout_stored_path_across_renames() -> Result<()> {
         fresh["content"][0]["text"]
             .as_str()
             .context("missing stored path error")?
-            .contains("cannot place in a.md")
+            .contains("cannot relocate a.md")
     );
     assert_eq!(
         fs::read(fixture.threads_path()?)?,
@@ -2201,6 +2201,10 @@ fn replying_at_the_current_multiline_range_preserves_the_anchor() -> Result<()> 
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linked-worktree fixture covers reads, batch refusal, reply, replay, and resolution"
+)]
 fn review_reads_stay_bound_to_the_startup_checkout() -> Result<()> {
     let fixture = Fixture::new("mcp-other-worktree")?;
     fathomable_testing::git::init(&fixture.root)?;
@@ -2219,7 +2223,8 @@ fn review_reads_stay_bound_to_the_startup_checkout() -> Result<()> {
         ],
     )?;
     let workspace = Workspace::discover(&linked)?;
-    let id = Store::open(fixture.dirs.threads_file(workspace.key()))?.annotate(
+    let mut store = Store::open(fixture.dirs.threads_file(workspace.key()))?;
+    let id = store.annotate(
         Draft::new(
             Author::User,
             Path::new("feature.md"),
@@ -2230,6 +2235,19 @@ fn review_reads_stay_bound_to_the_startup_checkout() -> Result<()> {
         "branch-only finding\n",
         now(),
     )?;
+    let authorized = store.annotate(
+        Draft::new(
+            Author::User,
+            Path::new("feature.md"),
+            LineRange::new(1, 1),
+            "finish this branch",
+        )
+        .at_commit(workspace.head_commit()),
+        "branch-only finding\n",
+        now(),
+    )?;
+    store.set_auto_resolve(&authorized, AutoResolve::Enabled, now())?;
+    drop(store);
     let result = client.ok("threads", json!({}))?;
     let shown = result["structuredContent"]["threads"]
         .as_array()
@@ -2254,28 +2272,119 @@ fn review_reads_stay_bound_to_the_startup_checkout() -> Result<()> {
         linked.join("feature.md"),
         "new branch-only preface\nbranch-only finding\n",
     )?;
+    let reply = json!({"replies": [
+        {
+            "thread": id,
+            "body": "updated on the feature branch",
+            "idempotency_key": "feature-reply"
+        },
+        {
+            "thread": authorized,
+            "body": "relocate before resolving",
+            "resolve": true,
+            "line": 2
+        }
+    ]});
+    let rejected = client.call("thread_reply", reply)?;
+    assert_eq!(rejected["isError"], true);
+    assert_eq!(rejected["structuredContent"]["error_code"], "INVALID_BATCH");
+    assert_eq!(rejected["structuredContent"]["issues"][0]["item_index"], 1);
+    let error = rejected["structuredContent"]["issues"][0]["message"]
+        .as_str()
+        .context("bound checkout reply error")?;
+    assert!(
+        error.contains("cannot relocate")
+            && error.contains("omit `line`")
+            && error.contains("run MCP bound to a worktree"),
+        "{error}"
+    );
+    let store = Store::open(fixture.dirs.threads_file(workspace.key()))?;
+    assert!(
+        store
+            .thread(&id)
+            .context("historical branch thread")?
+            .replies()
+            .is_empty()
+    );
+    let authorized_thread = store
+        .thread(&authorized)
+        .context("authorized branch thread")?;
+    assert!(authorized_thread.replies().is_empty());
+    assert_eq!(authorized_thread.auto_resolve(), AutoResolve::Enabled);
+    drop(store);
+
     let reply = json!({"replies": [{
         "thread": id,
         "body": "updated on the feature branch",
-        "line": 2,
         "idempotency_key": "feature-reply"
     }]});
-    let reply_result = client.call("thread_reply", reply)?;
-    assert_eq!(reply_result["isError"], true);
-    assert!(
-        reply_result["content"][0]["text"]
-            .as_str()
-            .context("bound checkout reply error")?
-            .contains("cannot place")
+    let replied = client.ok("thread_reply", reply.clone())?;
+    let replied_result = &replied["structuredContent"]["results"][0];
+    assert_eq!(replied_result["replayed"], false);
+    assert_eq!(replied_result["resolution"]["outcome"], "not_requested");
+    let replied_thread = &replied_result["thread"];
+    for field in [
+        "path",
+        "range",
+        "placement",
+        "location",
+        "anchor_range",
+        "origin",
+        "placement_evidence",
+        "reanchored_at",
+    ] {
+        assert_eq!(replied_thread[field], shown[field], "reply changed {field}");
+    }
+    assert_eq!(
+        replied["content"][0]["text"],
+        replied["structuredContent"].to_string()
     );
+
+    let replayed = client.ok("thread_reply", reply)?;
+    assert_eq!(
+        replayed["structuredContent"]["results"][0]["replayed"],
+        true
+    );
+    assert_eq!(
+        replayed["structuredContent"]["results"][0]["thread"]["messages"]
+            .as_array()
+            .map(Vec::len),
+        Some(2)
+    );
+
+    let bound_head = Workspace::discover(&fixture.root)?
+        .head_commit()
+        .context("bound HEAD")?;
+    let resolved = client.ok(
+        "thread_reply",
+        json!({"replies": [{
+            "thread": authorized,
+            "body": "finished on the feature branch",
+            "resolve": true
+        }]}),
+    )?;
+    let resolved = &resolved["structuredContent"]["results"][0];
+    assert_eq!(resolved["resolution"]["outcome"], "resolved");
+    assert_eq!(resolved["thread"]["status"], "resolved");
+    assert_eq!(resolved["thread"]["placement"], "detached");
+    assert_eq!(resolved["thread"]["commit"], bound_head);
+
     let store = Store::open(fixture.dirs.threads_file(workspace.key()))?;
     let thread = store.thread(&id).context("replied branch thread")?;
     assert_eq!(thread.author(), &Author::User);
-    assert!(thread.replies().is_empty());
+    assert_eq!(thread.replies().len(), 1);
     assert_eq!(thread.range(), Some(LineRange::new(1, 1)));
+    assert_eq!(
+        store
+            .thread(&authorized)
+            .context("resolved branch thread")?
+            .replies()
+            .len(),
+        1
+    );
     assert!(
         !fixture.root.join("feature.md").exists(),
-        "reply created the sibling-only file in the bound checkout"
+        "replies created the sibling-only file in the bound checkout"
     );
     Ok(())
 }

@@ -230,9 +230,10 @@ Milestones are ordered; each is usable on its own. Details live in the
     paths; `threads` lists open threads by default, delivers the ones
     waiting on the caller, and widens to resolved ones; every thread an
     agent sees carries its placement and no anchor hashes;
-    `thread_reply` answers with the updated thread and refuses a
-    detached thread without a line; failures name the call that fixes
-    them ([0055](decisions/0055-six-tools.md)).
+    `thread_reply` answers with the updated thread and at this milestone
+    refused a detached thread without a line; [0082](decisions/0082-three-tool-review-core.md)
+    later allowed ID-only replies without relocation; failures name the call
+    that fixes them ([0055](decisions/0055-six-tools.md)).
 47. **The leader, trimmed.** The `Space` menu drops the tree actions,
     the change-queue clear, and `Space c n`; `Space w` is Helix's
     window submenu (`h j k l w`) and `Space w w` cycles the panes;

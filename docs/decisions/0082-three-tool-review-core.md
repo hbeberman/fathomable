@@ -14,6 +14,13 @@ tags:
 
 Status: accepted (2026-09-15)
 
+Detached replies amended 2026-09-19: thread ID identifies the discussion,
+while optional coordinates request relocation. A coordinate-free reply keeps
+the stored placement and normal lifecycle even when the bound checkout
+projects the source as detached. Supplied coordinates retain checkout-confined
+read and range validation; failures explain how to reply without relocating or
+launch MCP against a worktree containing readable source.
+
 Remaining socket transport superseded 2026-09-18 by
 [0089](0089-store-only-mcp.md): all three tools access the shared store
 directly, regardless of viewer registrations. Thread observation bypasses
@@ -173,10 +180,11 @@ top-level single-item arguments are removed rather than accepted as aliases.
 Unknown fields are rejected. Starting validates repository-relative existing
 text files, non-empty bodies, and 1-based in-bounds ranges (`end_line`
 requires `line`). Replying rejects duplicate or missing ids, resolved
-threads, empty bodies, invalid ranges, and detached threads without a new
-line. Prevalidation is not an I/O transaction: if a later write fails after
-earlier items succeeded, the error names the completed items so a caller can
-retry only what remains.
+threads, empty bodies, and invalid requested relocations. Omitted coordinates
+leave stored placement unchanged, including for a thread detached in the
+bound checkout. Prevalidation is not an I/O transaction: if a later write
+fails after earlier items succeeded, the error names the completed items so a
+caller can retry only what remains.
 
 The server instructions and write schemas frame these messages as pull-request
 review threads, not chat or document delivery. One thread carries one local,

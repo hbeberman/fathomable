@@ -1102,11 +1102,13 @@ impl Server {
                        and where, or why no change was made. Include only a small focused snippet \
                        when essential; never paste the complete replacement. Each fresh body is at \
                        most 1024 UTF-8 bytes, with optional current line placement, `resolve` \
-                       completion intent, and retry `idempotency_key`. Resolution succeeds only \
-                       with one-shot permission; otherwise the successful result directs review to \
-                       Fathomable. Fresh replies to archived discussions fail; matching keyed \
-                       retries, including historical larger bodies, replay their original outcome. \
-                       The whole batch is validated before any reply is written.",
+                       completion intent, and retry `idempotency_key`. Omit `line` and `end_line` \
+                       to reply without relocating the discussion, including when its source is \
+                       detached in this checkout. Resolution succeeds only with one-shot permission; \
+                       otherwise the successful result directs review to Fathomable. Fresh replies \
+                       to archived discussions fail; matching keyed retries, including historical \
+                       larger bodies, replay their original outcome. The whole batch is validated \
+                       before any reply is written.",
         annotations(
             destructive_hint = false,
             idempotent_hint = false,
@@ -1437,7 +1439,7 @@ fn validate_reply(
         ));
     };
     let location = trees.locate(bound, thread)?;
-    refusal(item, thread, location.placement, &location.root)?;
+    refusal(item, thread, &location.root)?;
     Ok(location.root)
 }
 
@@ -1498,12 +1500,7 @@ fn reply_lines(item: &ReplyItem) -> Result<Option<LineRange>, String> {
 }
 
 /// Why an item cannot be replied to, if it cannot.
-fn refusal(
-    item: &ReplyItem,
-    thread: &Thread,
-    placement: Placement,
-    root: &Path,
-) -> Result<(), String> {
+fn refusal(item: &ReplyItem, thread: &Thread, root: &Path) -> Result<(), String> {
     if item.body.len() > MAX_MESSAGE_BYTES {
         return Err(format!(
             "{}: `body` has {} UTF-8 bytes; maximum is {MAX_MESSAGE_BYTES}",
@@ -1523,7 +1520,9 @@ fn refusal(
             Ok(text) => text,
             Err(error) => {
                 return Err(format!(
-                    "{}: cannot place in {}: {error}",
+                    "{}: cannot relocate {} in the bound checkout: {error}; omit `line` and \
+                     `end_line` to reply without relocating, or run MCP bound to a worktree where \
+                     the path is readable",
                     item.thread,
                     thread.path().display()
                 ));
@@ -1538,12 +1537,6 @@ fn refusal(
                 if count == 1 { "" } else { "s" }
             ));
         }
-    } else if matches!(placement, Placement::Detached(_)) {
-        return Err(format!(
-            "{} is detached from {}; pass `line` and optional `end_line` to place it",
-            item.thread,
-            thread.path().display()
-        ));
     }
     Ok(())
 }
@@ -2105,7 +2098,6 @@ mod tests {
             now(),
         )?;
         let all = store.threads();
-        let mut tree = Tree::new(&dir.0);
         for (item, needle) in [
             (
                 ReplyItem {
@@ -2163,10 +2155,7 @@ mod tests {
                 "maximum is 1024",
             ),
         ] {
-            let placement = tree.place(&all[0]);
-            let error = refusal(&item, &all[0], placement, &dir.0)
-                .err()
-                .unwrap_or_default();
+            let error = refusal(&item, &all[0], &dir.0).err().unwrap_or_default();
             assert!(error.contains(needle), "{error}");
         }
         assert_eq!(all[0].status(), Status::Open);

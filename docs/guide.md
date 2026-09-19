@@ -399,6 +399,11 @@ for host-specific options.
 | `thread_start` | Start a batch of focused review comments. |
 | `thread_reply` | Reply to discussions, optionally requesting resolution. |
 
+`thread_reply` identifies its target by thread ID. Omit `line` and `end_line`
+to reply without relocating it, including when the source is detached in the
+bound checkout; supplying coordinates explicitly requests relocation and
+therefore requires readable source in that checkout.
+
 Writes need native chat identity: Copilot CLI's `COPILOT_AGENT_SESSION_ID`,
 Claude Code's `CLAUDE_CODE_SESSION_ID`, VS Code's
 `params._meta["vscode.conversationId"]`, or Codex's `params._meta.sessionId`

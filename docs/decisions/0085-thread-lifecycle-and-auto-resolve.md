@@ -126,6 +126,11 @@ completes the work":
   successful outcome `resolution_proposed` with reason
   `pending_fathomable_user_review`.
 
+The thread ID, not current source placement, selects the discussion. A
+coordinate-free reply follows this same lifecycle when placement is detached;
+an authorized resolution pins the acting bound checkout's `HEAD` and does not
+claim that checkout contains or validates a fix.
+
 The last result tells an agent not to ask for permission in chat or retry:
 the Fathomable user reviews the proposal in Fathomable.
 

@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Six tools
-description: The agent-facing surface shrinks from ten tools to six, each pair with a natural undo becoming one tool with a flag; a subscription always covers the whole workspace and follow takes no paths; one threads tool lists open threads by default, flags and delivers the ones waiting on the caller, and widens to resolved threads on request; every thread an agent sees carries its placement in the working tree and no anchor hashes; thread_reply answers with the updated thread and refuses to reply into a detached thread without a line; and every failure names the call that fixes it.
+description: The agent-facing surface shrinks from ten tools to six, each pair with a natural undo becoming one tool with a flag; a subscription always covers the whole workspace and follow takes no paths; one threads tool lists open threads by default, flags and delivers the ones waiting on the caller, and widens to resolved threads on request; every thread an agent sees carries its placement in the working tree and no anchor hashes; thread_reply answers with the updated thread; and every failure names the call that fixes it.
 related_resources:
   - crates/fathomable/src/mcp/mod.rs
   - crates/fathomable-core/src/vocabulary.rs
@@ -14,6 +14,12 @@ tags:
 # 0055 Six tools
 
 Status: accepted (2026-09-04)
+
+Detached replies amended 2026-09-19 by
+[0082](0082-three-tool-review-core.md): thread ID identifies the discussion.
+Omitted coordinates preserve its stored placement, while supplied coordinates
+request checkout-confined relocation. The older detached-reply refusal below
+is superseded.
 
 Superseded 2026-09-15 by
 [0082](0082-three-tool-review-core.md). The complete MCP surface is now
@@ -149,12 +155,12 @@ were one question asked two ways.
   `Response::Done`; the headless path reads the thread back from the
   store the same way.
 - A batch is **checked before anything is written**: an unknown id, a
-  resolved thread, or a detached thread given no `line` fails the whole
-  call, naming every offending item, so a retry with the fixed list is
-  a whole retry. A reply to a detached thread with `line` and
-  `end_line` places it there first, as 0033 does for any rewrite. The
-  proposed-resolution rule of [0053](0053-resolution-is-the-users.md)
-  is unchanged.
+  resolved thread, or an invalid requested relocation fails the whole call,
+  naming every offending item, so a retry with the fixed list is a whole
+  retry. Omitted coordinates preserve stored placement, including when
+  detached; supplied `line` and `end_line` place it there first, as 0033 does
+  for any rewrite. The proposed-resolution rule of
+  [0053](0053-resolution-is-the-users.md) is unchanged.
 
 ### Failures say what to do
 
@@ -165,7 +171,7 @@ Every failure names the call that fixes it, in the vocabulary:
 | no workspace contains the cwd | `call workspaces, then workspaces with switch` |
 | unknown thread id | `no thread <id>; call threads to see the ids` |
 | reply to a resolved thread | `<id> is resolved; the user reopens it; call threads with status: all to read it` |
-| reply to a detached thread without a line | `<id> is detached: its lines are gone from <path>, last seen at <range>; pass line and end_line to place it` |
+| requested relocation cannot read the source | omit `line` and `end_line` to reply without relocating, or run MCP bound to a worktree where the path is readable |
 | `id` without `type`, or an unknown type | names the configured types, as today |
 | `type` with no way to learn the session | asks for the `id` from the hello hook, as today |
 | `follow` with `end` and no session | `nothing to end: pass id, or follow with type first` |

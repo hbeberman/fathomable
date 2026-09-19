@@ -39,6 +39,12 @@ threads use one uniform `messages` array with `author`, `body`, `created`,
 `modified`, and `resolution_proposed`. Idempotency, location, author
 objects, output-schema, and text/structured parity below remain.
 
+Detached replies amended 2026-09-19 by
+[0082](0082-three-tool-review-core.md): thread ID selects the discussion.
+Omitting reply coordinates preserves stored placement even when current
+placement is detached; supplying coordinates requests checkout-confined
+relocation. This adds no routing selector or sibling-worktree source read.
+
 Amends [0082](0082-three-tool-review-core.md) without changing the
 three-tool surface, automatic authorship, or repository binding. Its
 human-only resolution boundary was later replaced by [0085](0085-thread-lifecycle-and-auto-resolve.md).
@@ -129,6 +135,8 @@ When a reply supplies the unchanged stored range and the discussion still
 anchors there, the reply does not persist a redundant re-anchor or change
 `placement` to `edited`. A range that differs from the stored reference still
 updates that reference, even when the old anchor projects onto those lines.
+When a reply supplies no range, it does not relocate or recapture placement;
+this remains true when the bound checkout projects the thread as detached.
 
 ### Retry identity is explicit
 

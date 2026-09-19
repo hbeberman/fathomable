@@ -125,22 +125,10 @@ impl Record {
         &self.id
     }
 
-    /// Process id of the TUI.
-    #[must_use]
-    pub fn pid(&self) -> u32 {
-        self.pid
-    }
-
     /// Workspace root the session views.
     #[must_use]
     pub fn root(&self) -> &Path {
         &self.root
-    }
-
-    /// Start time in seconds since the Unix epoch.
-    #[must_use]
-    pub fn started(&self) -> u64 {
-        self.started
     }
 
     /// Whether the recorded process still exists (Linux `/proc`).
@@ -233,15 +221,6 @@ impl Record {
         records
     }
 
-    /// Live records, oldest first.
-    #[must_use]
-    pub fn live(dirs: &XdgDirs) -> Vec<Self> {
-        Self::list(dirs)
-            .into_iter()
-            .filter(Self::is_alive)
-            .collect()
-    }
-
     /// Remove records whose process is gone from the viewers directory.
     /// Returns how many were removed.
     pub fn sweep_dead(dirs: &XdgDirs) -> usize {
@@ -298,12 +277,6 @@ impl Marker {
     #[must_use]
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
-    }
-
-    /// When a viewer last started here, in Unix seconds.
-    #[must_use]
-    pub fn last_seen(&self) -> u64 {
-        self.last_seen
     }
 
     /// Write the marker into the workspace state directory.

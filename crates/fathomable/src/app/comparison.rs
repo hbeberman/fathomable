@@ -48,7 +48,8 @@ pub(crate) struct State {
     compare: Compare,
     preference: PathBuf,
     persisted: bool,
-    generation: u64,
+    #[cfg(test)]
+    refresh_count: u64,
     observed_head: Option<String>,
     current: Option<Comparison>,
     error: Option<String>,
@@ -84,7 +85,8 @@ impl State {
             compare,
             preference,
             persisted: false,
-            generation: 0,
+            #[cfg(test)]
+            refresh_count: 0,
             observed_head: workspace.head_commit(),
             current: None,
             error: None,
@@ -169,26 +171,39 @@ impl State {
         self.error.is_some() && self.current.is_some()
     }
 
-    /// A monotonically increasing refresh generation.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the generation guards future asynchronous refresh delivery"
-        )
-    )]
-    pub(crate) const fn generation(&self) -> u64 {
-        self.generation
+    /// Number of refresh attempts observed by regression tests.
+    #[cfg(test)]
+    pub(crate) const fn refresh_count(&self) -> u64 {
+        self.refresh_count
     }
 
     /// Refresh mutable endpoints without discarding the last good result.
+    #[cfg(not(test))]
     pub(crate) fn refresh(
         &mut self,
         workspace: &mut Workspace,
         review_points: Option<&ReviewPointStore>,
     ) {
+        self.refresh_inner(workspace, review_points);
+    }
+
+    /// Refresh mutable endpoints and count the test-observed attempt.
+    #[cfg(test)]
+    pub(crate) fn refresh(
+        &mut self,
+        workspace: &mut Workspace,
+        review_points: Option<&ReviewPointStore>,
+    ) {
+        self.refresh_count = self.refresh_count.wrapping_add(1);
+        self.refresh_inner(workspace, review_points);
+    }
+
+    fn refresh_inner(
+        &mut self,
+        workspace: &mut Workspace,
+        review_points: Option<&ReviewPointStore>,
+    ) {
         let aliases_changed = self.validate_aliases(workspace);
-        self.generation = self.generation.wrapping_add(1);
         let result = match (&self.base, &self.target) {
             (ComparisonEndpoint::ReviewPoint(id), ComparisonEndpoint::WorkingTree) => review_points
                 .ok_or_else(|| format!("review point {id} is unavailable"))

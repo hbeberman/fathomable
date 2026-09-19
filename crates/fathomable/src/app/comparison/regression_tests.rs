@@ -131,11 +131,11 @@ fn selecting_an_endpoint_refreshes_the_comparison_once() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("no HEAD"))?;
     fs::write(root.join("a.txt"), "two\n")?;
     let mut app = menu_app(&root, &dir.0.join("points"))?;
-    let generation = app.comparison.generation();
+    let refreshes = app.comparison.refresh_count();
 
     app.set_comparison_base(ComparisonEndpoint::Commit(CommitId::parse(&head)?));
 
-    assert_eq!(app.comparison.generation(), generation.wrapping_add(1));
+    assert_eq!(app.comparison.refresh_count(), refreshes.wrapping_add(1));
     Ok(())
 }
 

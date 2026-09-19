@@ -146,6 +146,7 @@ const DELETE_PREFIX: Chord = Chord {
     key: Key::Char('d'),
     ctrl: false,
     alt: false,
+    shift: false,
 };
 
 /// A single unbound key: text entry takes characters, everything else

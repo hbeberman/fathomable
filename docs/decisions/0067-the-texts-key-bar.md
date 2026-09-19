@@ -107,7 +107,7 @@ resolve. This record undoes both, the same day, for one rule.
 - **What it says** while the text has the keys, under 0064's rule that
   every hint drawn works now:
   - With a draft open, the draft's keys: `submit Enter` (`save Enter` for an
-    edit), `newline Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
+    edit), `newline Shift-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
     `Esc`; or `Esc again to discard · any key keeps the draft` after an
     Esc on a changed draft.
   - Else the thread cursor's keys when the cursor line has a thread:

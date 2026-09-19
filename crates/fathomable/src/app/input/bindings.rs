@@ -53,13 +53,15 @@ impl fmt::Display for Key {
     }
 }
 
-/// One key press: a [`Key`] with its modifiers. Shift is not a modifier
-/// here; a shifted letter arrives as its uppercase character.
+/// One key press: a [`Key`] with its modifiers. Shift is retained only
+/// for Enter; shifted letters arrive as uppercase characters, and
+/// Shift-Tab is normalized to [`Key::BackTab`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Chord {
     pub(crate) key: Key,
     pub(crate) ctrl: bool,
     pub(crate) alt: bool,
+    pub(crate) shift: bool,
 }
 
 impl Chord {
@@ -88,13 +90,14 @@ impl Chord {
             key,
             ctrl: event.modifiers.contains(KeyModifiers::CONTROL),
             alt: event.modifiers.contains(KeyModifiers::ALT),
+            shift: event.modifiers.contains(KeyModifiers::SHIFT) && key == Key::Enter,
         })
     }
 
     /// Whether this is a bare character: no modifier, not the space bar.
     #[must_use]
     pub(crate) fn is_plain_char(self) -> bool {
-        !self.ctrl && !self.alt && matches!(self.key, Key::Char(ch) if ch != ' ')
+        !self.ctrl && !self.alt && !self.shift && matches!(self.key, Key::Char(ch) if ch != ' ')
     }
 }
 
@@ -106,6 +109,9 @@ impl fmt::Display for Chord {
         if self.alt {
             f.write_str("Alt-")?;
         }
+        if self.shift {
+            f.write_str("Shift-")?;
+        }
         write!(f, "{}", self.key)
     }
 }
@@ -116,6 +122,7 @@ const fn c(ch: char) -> Chord {
         key: Key::Char(ch),
         ctrl: false,
         alt: false,
+        shift: false,
     }
 }
 
@@ -125,6 +132,7 @@ const fn ctrl(ch: char) -> Chord {
         key: Key::Char(ch),
         ctrl: true,
         alt: false,
+        shift: false,
     }
 }
 
@@ -134,6 +142,17 @@ const fn alt(key: Key) -> Chord {
         key,
         ctrl: false,
         alt: true,
+        shift: false,
+    }
+}
+
+/// A named key with Shift held.
+const fn shift(key: Key) -> Chord {
+    Chord {
+        key,
+        ctrl: false,
+        alt: false,
+        shift: true,
     }
 }
 
@@ -143,6 +162,7 @@ const fn k(key: Key) -> Chord {
         key,
         ctrl: false,
         alt: false,
+        shift: false,
     }
 }
 
@@ -176,9 +196,10 @@ fn spell_with_space(keys: &[Chord], space: &str) -> String {
                 chord.key.to_string()
             };
             format!(
-                "{}{}{key}",
+                "{}{}{}{key}",
                 if chord.ctrl { "Ctrl-" } else { "" },
-                if chord.alt { "Alt-" } else { "" }
+                if chord.alt { "Alt-" } else { "" },
+                if chord.shift { "Shift-" } else { "" }
             )
         })
         .collect::<Vec<_>>()
@@ -1249,7 +1270,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
     ),
     bind(
         W::Draft,
-        &[&[alt(K::Enter)]],
+        &[&[shift(K::Enter)], &[alt(K::Enter)]],
         A::Newline,
         "Draft",
         "newline",
@@ -1260,6 +1281,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
             key: K::Enter,
             ctrl: true,
             alt: false,
+            shift: false,
         }]],
         A::SubmitAutoResolve,
         "Draft",
@@ -1569,15 +1591,23 @@ mod tests {
 
     use super::{
         Action, BINDINGS, Chord, Key, Match, Where, ZELLIJ_LOCKS, c, hint, k, lookup, menu,
-        menu_spell, spell,
+        menu_spell, shift, spell,
     };
 
     #[test]
-    fn both_shift_tab_terminal_encodings_use_backtab() {
+    fn shift_is_retained_only_for_enter() {
         let shifted = KeyEvent::new(KeyCode::Tab, KeyModifiers::SHIFT);
         let backtab = KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT);
         assert_eq!(Chord::from_event(shifted), Some(k(Key::BackTab)));
         assert_eq!(Chord::from_event(backtab), Some(k(Key::BackTab)));
+        assert_eq!(
+            Chord::from_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)),
+            Some(c('A'))
+        );
+        assert_eq!(
+            Chord::from_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            Some(shift(Key::Enter))
+        );
     }
 
     const PANES: [Where; 4] = [Where::View, Where::Tree, Where::ThreadsPane, Where::Review];
@@ -1899,6 +1929,7 @@ mod tests {
         assert_eq!(menu_spell(&[c(' '), c('j'), c('j')]), "Sp j j");
         assert_eq!(lookup(Where::Any, &[c(' '), c('j'), c('a')]), Match::Miss);
         assert_eq!(spell(&[super::ctrl('d')]), "Ctrl-d");
+        assert_eq!(spell(&[shift(Key::Enter)]), "Shift-Enter");
         assert_eq!(spell(&[super::alt(Key::Enter)]), "Alt-Enter");
         assert_eq!(hint(Where::Review, Action::Reply).as_deref(), Some("c"));
         assert_eq!(hint(Where::Tree, Action::CopyPath).as_deref(), Some("y"));
@@ -1956,9 +1987,22 @@ mod tests {
                     key: Key::Enter,
                     ctrl: true,
                     alt: false,
+                    shift: false,
                 }]
             ),
             Match::Exact(Action::SubmitAutoResolve)
+        );
+        assert_eq!(
+            lookup(Where::Draft, &[shift(Key::Enter)]),
+            Match::Exact(Action::Newline)
+        );
+        assert_eq!(
+            lookup(Where::Draft, &[super::alt(Key::Enter)]),
+            Match::Exact(Action::Newline)
+        );
+        assert_eq!(
+            lookup(Where::Draft, &[k(Key::Enter)]),
+            Match::Exact(Action::Confirm)
         );
         assert_eq!(
             hint(Where::Review, Action::CommandLine).as_deref(),

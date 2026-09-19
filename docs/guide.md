@@ -77,7 +77,8 @@ the table below is a quick reference, not the full list.
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
 | `z` `Z` | fold one thread / all threads |
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
-| `Alt-Enter` `Ctrl-e` | draft newline / edit with `$VISUAL` or `$EDITOR` |
+| `Shift-Enter` `Alt-Enter` | draft newline / draft newline fallback |
+| `Ctrl-e` | edit with `$VISUAL` or `$EDITOR` |
 | `Esc` | cancel transient input or return to File |
 | `Space ?` | keymap |
 | `q` | quit after confirmation |

@@ -762,6 +762,53 @@ fn ctrl_enter_submits_with_auto_resolve_and_alt_enter_is_newline() -> anyhow::Re
 }
 
 #[test]
+fn shift_enter_adds_newlines_to_comment_reply_and_edit_drafts() -> anyhow::Result<()> {
+    let dir = testing::workspace("draft-shift-enter", testing::README)?;
+    let mut app = testing::source_app(&dir)?;
+    app.view_mut().goto_source_line(3);
+    app.start_new_comment();
+    press(&mut app, "comment first");
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    press(&mut app, "comment second");
+    assert_eq!(
+        app.compose_draft(),
+        Some("comment first\ncomment second"),
+        "Shift-Enter must not submit a new comment"
+    );
+    press_key(&mut app, KeyCode::Enter);
+
+    let id = app.marks()[0].id().clone();
+    app.open_compose(ComposeTarget::Reply(id.clone()));
+    press(&mut app, "reply first");
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    press(&mut app, "reply second");
+    assert_eq!(
+        app.compose_draft(),
+        Some("reply first\nreply second"),
+        "Shift-Enter must not submit a reply"
+    );
+    press_key(&mut app, KeyCode::Enter);
+
+    app.open_compose(ComposeTarget::Edit {
+        thread: id,
+        message: MessageTarget::Comment,
+    });
+    keys::handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+    press(&mut app, "edited tail");
+    assert_eq!(
+        app.compose_draft(),
+        Some("comment first\ncomment second\nedited tail"),
+        "Shift-Enter must not save an edit"
+    );
+    press_key(&mut app, KeyCode::Enter);
+    assert!(
+        app.draft().is_none(),
+        "plain Enter must still save the edit"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_persistence_error_keeps_the_draft_intact() -> anyhow::Result<()> {
     let dir = testing::workspace("draft-write-error", testing::README)?;
     let mut app = testing::source_app(&dir)?;

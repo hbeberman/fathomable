@@ -30,7 +30,8 @@ alone; the draft keys are on the text's key bar.
 Amended 2026-09-16 by
 [0085](0085-thread-lifecycle-and-auto-resolve.md): `Enter` submits or saves
 normally, `Ctrl-Enter` submits or saves and enables one-shot auto-resolve,
-and `Alt-Enter` alone inserts a newline. If another writer resolves the
+and `Shift-Enter` inserts a newline, with `Alt-Enter` retained as a fallback.
+If another writer resolves the
 thread during a reply or edit draft, the first submit writes nothing and
 keeps the draft intact; the bar offers `Enter` to atomically reopen and
 submit with the original Ctrl-Enter intent, or `Esc` to keep editing while
@@ -40,7 +41,7 @@ Amended 2026-09-17 by
 [0086](0086-one-thread-summary-and-its-actions.md): every key bar reads
 action then hotkey and highlights each whole action-hotkey target on hover.
 Draft hints therefore read `submit Enter`, `submit + auto-resolve
-Ctrl-Enter`, `newline Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
+Ctrl-Enter`, `newline Shift-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`,
 and `Esc`.
 
 ## Context
@@ -109,7 +110,8 @@ the request left open; each took the recommended answer.
 - The **author row** reads ` user  draft` as a message's author row
   reads ` user  2m ago`; the draft keys live on the bottom bar in the
   header style: `submit Enter` (`save Enter` for an edit), `newline
-  Alt-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`, `Esc`. After an Esc
+  Shift-Enter`, `scroll Alt-k/Alt-j`, `$EDITOR Ctrl-e`, `Esc`. `Alt-Enter`
+  remains an accepted newline fallback. After an Esc
   on a changed draft the bar asks `again to discard Esc · any key keeps
   the draft` instead, as the box header did. A click on a hint runs it
   ([0050](0050-mouse-menus-and-gestures.md)).

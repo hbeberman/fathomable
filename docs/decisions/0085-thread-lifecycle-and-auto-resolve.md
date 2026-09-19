@@ -103,8 +103,8 @@ or not that reply asks to resolve. Direct user resolution remains
 unrestricted. Resolution and reopening leave auto-resolve disabled.
 
 `Enter` submits or saves a user draft normally. `Ctrl-Enter` submits or
-saves and enables auto-resolve in the same durable operation. `Alt-Enter`
-inserts a newline.
+saves and enables auto-resolve in the same durable operation. `Shift-Enter`
+inserts a newline; `Alt-Enter` remains an accepted fallback.
 
 If another writer resolves the thread while a draft is open, the first
 submit preserves the draft and shows a confirmation that submission will

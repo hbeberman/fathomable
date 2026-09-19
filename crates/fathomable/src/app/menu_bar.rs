@@ -858,11 +858,13 @@ const REVIEW_RESOLVED_KEY: [Chord; 1] = [Chord {
     key: Key::Char('x'),
     ctrl: false,
     alt: false,
+    shift: false,
 }];
 const REVIEW_FILE_KEY: [Chord; 1] = [Chord {
     key: Key::Char('s'),
     ctrl: false,
     alt: false,
+    shift: false,
 }];
 const STATUS_KEYS: [Chord; 7] = colon("status");
 const HELP_KEYS: [Chord; 5] = colon("help");
@@ -877,6 +879,7 @@ const fn colon<const N: usize>(word: &str) -> [Chord; N] {
         key: Key::Char(':'),
         ctrl: false,
         alt: false,
+        shift: false,
     }; N];
     let mut index = 1;
     while index < N {
@@ -884,6 +887,7 @@ const fn colon<const N: usize>(word: &str) -> [Chord; N] {
             key: Key::Char(bytes[index - 1] as char),
             ctrl: false,
             alt: false,
+            shift: false,
         };
         index += 1;
     }

@@ -201,7 +201,9 @@ same day; the choices are below.
   (Amended 2026-09-19: the shared layout reflows semantic sections
   column-major for the available terminal area. Vertical column dividers and
   column-local section rules are part of that geometry, and their cells are
-  inert.)
+  inert. Each rendered column fits its own widest key and label instead of
+  inheriting the widest label in the card; when space permits, the first
+  column also keeps the breadcrumb title whole.)
 - `Space ?` takes a click on a row: the binding runs when it applies
   on the focused surface (its place, or `Any` on a pane), else the
   popup closes as any key closes it. A click closes `:status` too.

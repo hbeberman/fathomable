@@ -933,8 +933,15 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     let place = super::super::keys::place(&app).context("view receives keys")?;
     let sections = app.which_key_sections(place);
     let grid = draw::which_key_grid(&app, &sections);
-    assert_eq!(grid.columns.len(), 2);
-    assert_eq!(grid.rows, 7);
+    assert_eq!(grid.columns.len(), 3);
+    assert_eq!(grid.rows, 5);
+    assert_eq!(
+        grid.columns
+            .iter()
+            .map(|column| column.label_width)
+            .collect::<Vec<_>>(),
+        [8, 20, 21]
+    );
 
     let screen = testing::screen(&app)?;
     let card = screen[grid.y..grid.y + grid.height]
@@ -949,15 +956,13 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     assert_eq!(
         card,
         [
-            "╭ Space d · diff ───────────┬───────────────────────────╮",
-            "│s  standard                │l  HEAD~1 to HEAD          │",
-            "│u  unified                 │c  Commit~1 to Commit…     │",
-            "│o  off                     ├───────────────────────────┤",
-            "├───────────────────────────┤p  save review point       │",
-            "│b  pick base…              │r  manage review points…   │",
-            "│t  pick target…            ├───────────────────────────┤",
-            "│d  HEAD to Working tree    │w  whitespace              │",
-            "╰───────────────────────────┴───────────────────────────╯",
+            "╭ Space d · diff ┬──────────────────────────┬───────────────────────────╮",
+            "│s  standard     │b  pick base…             │p  save review point       │",
+            "│u  unified      │t  pick target…           │r  manage review points…   │",
+            "│o  off          │d  HEAD to Working tree   ├───────────────────────────┤",
+            "│                │l  HEAD~1 to HEAD         │w  whitespace              │",
+            "│                │c  Commit~1 to Commit…    │                           │",
+            "╰────────────────┴──────────────────────────┴───────────────────────────╯",
         ]
     );
 
@@ -966,28 +971,34 @@ fn diff_hint_card_reflows_sections_with_connected_rules() -> anyhow::Result<()> 
     let narrow = draw::which_key_grid(&app, &sections);
     assert_eq!(narrow.columns.len(), 1);
     assert_eq!(narrow.rows, 14);
-    assert_eq!(narrow.label_width, 21);
+    assert_eq!(narrow.columns[0].label_width, 21);
     assert!(!narrow.insufficient_space);
 
-    let wide = super::HintGrid::bottom(&sections, 0, 0, 120, 30);
+    let wide = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 120, 30);
     assert_eq!(wide.columns.len(), 3);
     assert_eq!(wide.rows, 5);
-    assert_eq!(wide.label_width, 21);
+    assert_eq!(
+        wide.columns
+            .iter()
+            .map(|column| column.label_width)
+            .collect::<Vec<_>>(),
+        [8, 20, 21]
+    );
 
-    let narrow_tall = super::HintGrid::bottom(&sections, 0, 0, 19, 30);
+    let narrow_tall = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 19, 30);
     assert_eq!(narrow_tall.columns.len(), 1);
     assert_eq!(narrow_tall.rows, 14);
-    assert_eq!(narrow_tall.label_width, 11);
+    assert_eq!(narrow_tall.columns[0].label_width, 11);
 
-    let narrower_tall = super::HintGrid::bottom(&sections, 0, 0, 16, 30);
+    let narrower_tall = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 16, 30);
     assert_eq!(narrower_tall.columns.len(), 1);
-    assert_eq!(narrower_tall.label_width, 8);
+    assert_eq!(narrower_tall.columns[0].label_width, 8);
 
-    let keys_only = super::HintGrid::bottom(&sections, 0, 0, 3, 30);
+    let keys_only = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 3, 30);
     assert!(!keys_only.insufficient_space);
-    assert_eq!(keys_only.label_width, 0);
+    assert_eq!(keys_only.columns[0].label_width, 0);
 
-    let impossible = super::HintGrid::bottom(&sections, 0, 0, 2, 1);
+    let impossible = super::HintGrid::bottom(&sections, "Space d · diff", 0, 0, 2, 1);
     assert!(impossible.insufficient_space);
     assert_eq!(impossible.entry_at(0, 0), None);
     Ok(())

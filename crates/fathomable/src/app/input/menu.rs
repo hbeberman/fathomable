@@ -394,6 +394,8 @@ pub(crate) enum HintCell {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HintColumn {
     pub(crate) width: usize,
+    pub(crate) key_width: usize,
+    pub(crate) label_width: usize,
     pub(crate) cells: Vec<HintCell>,
 }
 
@@ -409,8 +411,6 @@ pub(crate) struct HintGrid {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) rows: usize,
-    pub(crate) key_width: usize,
-    pub(crate) label_width: usize,
     pub(crate) columns: Vec<HintColumn>,
     pub(crate) insufficient_space: bool,
 }
@@ -419,6 +419,7 @@ impl HintGrid {
     #[must_use]
     pub(crate) fn bottom(
         sections: &[MenuSection],
+        title: &str,
         x: usize,
         y: usize,
         pane_width: usize,
@@ -433,20 +434,19 @@ impl HintGrid {
             .enumerate()
             .flat_map(|(section, group)| std::iter::repeat_n(section, group.entries().len()))
             .collect::<Vec<_>>();
-        let key_width = entries
+        let entry_widths = entries
             .iter()
-            .map(|entry| display_width(&entry.key()))
-            .max()
-            .unwrap_or(1);
-        let full_label_width = entries
+            .map(|entry| (display_width(&entry.key()), display_width(entry.label())))
+            .collect::<Vec<_>>();
+        let full_label_width = entry_widths
             .iter()
-            .map(|entry| display_width(entry.label()))
+            .map(|(_, label_width)| *label_width)
             .max()
             .unwrap_or(1);
         let available_rows = pane_height.saturating_sub(2);
         let plan = responsive_hint_plan(
             &section_ids,
-            key_width,
+            &entry_widths,
             full_label_width,
             pane_width,
             available_rows,
@@ -459,17 +459,16 @@ impl HintGrid {
                 width: pane_width,
                 height,
                 rows: height.saturating_sub(2),
-                key_width,
-                label_width: 0,
                 columns: Vec::new(),
                 insufficient_space: true,
             };
         };
 
-        let column_width = hint_column_width(key_width, plan.label_width);
         let mut columns = Vec::with_capacity(plan.ends.len());
         let mut start = 0;
         for end in plan.ends {
+            let (key_width, label_width) =
+                hint_column_dimensions(&entry_widths, start, end, plan.label_width);
             let mut cells = Vec::with_capacity(plan.rows);
             for index in start..end {
                 if index > start && section_ids[index] != section_ids[index - 1] {
@@ -479,12 +478,22 @@ impl HintGrid {
             }
             cells.resize(plan.rows, HintCell::Empty);
             columns.push(HintColumn {
-                width: column_width,
+                width: hint_column_width(key_width, label_width),
+                key_width,
+                label_width,
                 cells,
             });
             start = end;
         }
-        let width = hint_box_width(columns.len(), key_width, plan.label_width);
+        let natural_width = hint_box_width(&columns);
+        if let Some(first) = columns.first_mut() {
+            let title_width = display_width(title).saturating_add(2);
+            let title_padding = title_width
+                .saturating_sub(first.width)
+                .min(pane_width.saturating_sub(natural_width));
+            first.width = first.width.saturating_add(title_padding);
+        }
+        let width = hint_box_width(&columns);
         let height = plan.rows + 2;
         Self {
             x: x + pane_width.saturating_sub(width),
@@ -492,8 +501,6 @@ impl HintGrid {
             width,
             height,
             rows: plan.rows,
-            key_width,
-            label_width: plan.label_width,
             columns,
             insufficient_space: false,
         }
@@ -546,7 +553,7 @@ struct HintPlan {
 
 fn responsive_hint_plan(
     section_ids: &[usize],
-    key_width: usize,
+    entry_widths: &[(usize, usize)],
     full_label_width: usize,
     pane_width: usize,
     available_rows: usize,
@@ -555,7 +562,7 @@ fn responsive_hint_plan(
     let comfortable_label_width = full_label_width.min(MIN_HINT_LABEL_WIDTH);
     hint_plan(
         section_ids,
-        key_width,
+        entry_widths,
         full_label_width,
         comfortable_label_width,
         pane_width,
@@ -564,7 +571,7 @@ fn responsive_hint_plan(
     .or_else(|| {
         hint_plan(
             section_ids,
-            key_width,
+            entry_widths,
             full_label_width,
             comfortable_label_width,
             pane_width,
@@ -575,7 +582,7 @@ fn responsive_hint_plan(
         (0..comfortable_label_width).rev().find_map(|label_width| {
             hint_plan_at_label_width(
                 section_ids,
-                key_width,
+                entry_widths,
                 label_width,
                 pane_width,
                 preferred_rows,
@@ -583,7 +590,7 @@ fn responsive_hint_plan(
             .or_else(|| {
                 hint_plan_at_label_width(
                     section_ids,
-                    key_width,
+                    entry_widths,
                     label_width,
                     pane_width,
                     available_rows,
@@ -595,7 +602,7 @@ fn responsive_hint_plan(
 
 fn hint_plan(
     section_ids: &[usize],
-    key_width: usize,
+    entry_widths: &[(usize, usize)],
     full_label_width: usize,
     minimum_label_width: usize,
     pane_width: usize,
@@ -605,9 +612,13 @@ fn hint_plan(
         return None;
     }
     for label_width in (minimum_label_width..=full_label_width).rev() {
-        if let Some(plan) =
-            hint_plan_at_label_width(section_ids, key_width, label_width, pane_width, row_limit)
-        {
+        if let Some(plan) = hint_plan_at_label_width(
+            section_ids,
+            entry_widths,
+            label_width,
+            pane_width,
+            row_limit,
+        ) {
             return Some(plan);
         }
     }
@@ -616,17 +627,21 @@ fn hint_plan(
 
 fn hint_plan_at_label_width(
     section_ids: &[usize],
-    key_width: usize,
+    entry_widths: &[(usize, usize)],
     label_width: usize,
     pane_width: usize,
     row_limit: usize,
 ) -> Option<HintPlan> {
     let mut best = None;
     for columns in 1..=section_ids.len() {
-        if hint_box_width(columns, key_width, label_width) > pane_width {
-            break;
-        }
-        let Some(partition) = best_partition(section_ids, columns, row_limit) else {
+        let Some(partition) = best_partition(
+            section_ids,
+            entry_widths,
+            label_width,
+            columns,
+            row_limit,
+            pane_width,
+        ) else {
             continue;
         };
         let candidate = HintPlan {
@@ -656,10 +671,12 @@ fn better_hint_plan(candidate: &HintPlan, current: &HintPlan) -> bool {
                             && candidate.ends > current.ends)))))
 }
 
-fn hint_box_width(columns: usize, key_width: usize, label_width: usize) -> usize {
+fn hint_box_width(columns: &[HintColumn]) -> usize {
     columns
-        .saturating_mul(hint_column_width(key_width, label_width))
-        .saturating_add(columns.saturating_sub(1))
+        .iter()
+        .map(|column| column.width)
+        .sum::<usize>()
+        .saturating_add(columns.len().saturating_sub(1))
         .saturating_add(2)
 }
 
@@ -667,7 +684,30 @@ fn hint_column_width(key_width: usize, label_width: usize) -> usize {
     key_width + usize::from(label_width > 0) * (2 + label_width + 3)
 }
 
-fn best_partition(section_ids: &[usize], columns: usize, row_limit: usize) -> Option<Partition> {
+fn hint_column_dimensions(
+    entry_widths: &[(usize, usize)],
+    start: usize,
+    end: usize,
+    label_width: usize,
+) -> (usize, usize) {
+    entry_widths[start..end]
+        .iter()
+        .fold((1, 0), |(key, label), (entry_key, entry_label)| {
+            (
+                key.max(*entry_key),
+                label.max((*entry_label).min(label_width)),
+            )
+        })
+}
+
+fn best_partition(
+    section_ids: &[usize],
+    entry_widths: &[(usize, usize)],
+    label_width: usize,
+    columns: usize,
+    row_limit: usize,
+    pane_width: usize,
+) -> Option<Partition> {
     #[derive(Debug, Clone)]
     struct Candidate(Partition);
 
@@ -679,48 +719,82 @@ fn best_partition(section_ids: &[usize], columns: usize, row_limit: usize) -> Op
                         && candidate.0.ends > current.0.ends)))
     }
 
-    if columns == 0 || columns > section_ids.len() {
+    fn same_layout(candidate: &Candidate, current: &Candidate) -> bool {
+        candidate.0.cuts == current.0.cuts
+            && candidate.0.squared_heights == current.0.squared_heights
+            && candidate.0.ends == current.0.ends
+    }
+
+    fn insert_candidate(candidates: &mut Vec<Candidate>, candidate: Candidate) {
+        if candidates.iter().any(|current| {
+            current.0.body_width <= candidate.0.body_width
+                && (better(current, &candidate) || same_layout(current, &candidate))
+        }) {
+            return;
+        }
+        candidates.retain(|current| {
+            candidate.0.body_width > current.0.body_width
+                || (!better(&candidate, current) && !same_layout(&candidate, current))
+        });
+        candidates.push(candidate);
+    }
+
+    if columns == 0 || columns > section_ids.len() || section_ids.len() != entry_widths.len() {
         return None;
     }
+    let reserved = columns.saturating_sub(1).saturating_add(2);
+    let max_body_width = pane_width.checked_sub(reserved)?;
     let entries = section_ids.len();
-    let mut plans = vec![vec![None; entries + 1]; columns + 1];
-    plans[0][0] = Some(Candidate(Partition {
+    let mut plans = vec![vec![Vec::new(); entries + 1]; columns + 1];
+    plans[0][0].push(Candidate(Partition {
         ends: Vec::new(),
         cuts: 0,
         squared_heights: 0,
         tallest: 0,
+        body_width: 0,
     }));
     for used in 1..=columns {
         for end in used..=entries {
-            let mut best = None;
             for start in used - 1..end {
-                let Some(previous) = plans[used - 1][start].clone() else {
-                    continue;
-                };
                 let height = segment_height(section_ids, start, end);
                 if height > row_limit {
                     continue;
                 }
-                let mut candidate = previous;
-                candidate.0.cuts +=
-                    usize::from(start > 0 && section_ids[start - 1] == section_ids[start]);
-                candidate.0.squared_heights = candidate
-                    .0
-                    .squared_heights
-                    .saturating_add(height.saturating_mul(height));
-                candidate.0.tallest = candidate.0.tallest.max(height);
-                candidate.0.ends.push(end);
-                if best
-                    .as_ref()
-                    .is_none_or(|current| better(&candidate, current))
-                {
-                    best = Some(candidate);
+                let (key_width, segment_label_width) =
+                    hint_column_dimensions(entry_widths, start, end, label_width);
+                let segment_width = hint_column_width(key_width, segment_label_width);
+                for previous in plans[used - 1][start].clone() {
+                    let mut candidate = previous;
+                    candidate.0.body_width = candidate.0.body_width.saturating_add(segment_width);
+                    if candidate.0.body_width > max_body_width {
+                        continue;
+                    }
+                    candidate.0.cuts +=
+                        usize::from(start > 0 && section_ids[start - 1] == section_ids[start]);
+                    candidate.0.squared_heights = candidate
+                        .0
+                        .squared_heights
+                        .saturating_add(height.saturating_mul(height));
+                    candidate.0.tallest = candidate.0.tallest.max(height);
+                    candidate.0.ends.push(end);
+                    insert_candidate(&mut plans[used][end], candidate);
                 }
             }
-            plans[used][end] = best;
         }
     }
-    plans[columns][entries].take().map(|candidate| candidate.0)
+    plans[columns][entries]
+        .iter()
+        .min_by(|left, right| {
+            if better(left, right) {
+                std::cmp::Ordering::Less
+            } else if better(right, left) {
+                std::cmp::Ordering::Greater
+            } else {
+                left.0.body_width.cmp(&right.0.body_width)
+            }
+        })
+        .cloned()
+        .map(|candidate| candidate.0)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -729,6 +803,7 @@ struct Partition {
     cuts: usize,
     squared_heights: usize,
     tallest: usize,
+    body_width: usize,
 }
 
 fn segment_height(section_ids: &[usize], start: usize, end: usize) -> usize {

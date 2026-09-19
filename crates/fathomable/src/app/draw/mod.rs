@@ -2049,7 +2049,14 @@ fn truncate_left(text: &str, max: usize) -> String {
 /// The which-key grid at the viewer's bottom right, above the status
 /// line, shared with mouse hit testing (ADR 0050).
 pub(crate) fn which_key_grid(app: &App, sections: &[bindings::MenuSection]) -> HintGrid {
-    HintGrid::bottom(sections, 0, app.pane_top(), app.size().0, app.pane_rows())
+    HintGrid::bottom(
+        sections,
+        &bindings::menu_title(app.prefix()),
+        0,
+        app.pane_top(),
+        app.size().0,
+        app.pane_rows(),
+    )
 }
 
 const STATUS_TITLE: &str = " Status · any key closes ";
@@ -2121,8 +2128,7 @@ fn draw_menu(
         for (column_index, (column, cell)) in grid.columns.iter().zip(&cells).enumerate() {
             spans.extend(hint_cell_spans(
                 theme,
-                grid,
-                column.width,
+                column,
                 *cell,
                 &entries,
                 enabled,
@@ -2161,14 +2167,9 @@ fn draw_menu(
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the helper receives the complete immutable rendering context for one cell"
-)]
 fn hint_cell_spans(
     theme: &Theme,
-    grid: &HintGrid,
-    column_width: usize,
+    column: &crate::app::input::menu::HintColumn,
     cell: HintCell,
     entries: &[&bindings::MenuEntry],
     enabled: &[bool],
@@ -2176,8 +2177,8 @@ fn hint_cell_spans(
     border_style: Style,
 ) -> Vec<Span<'static>> {
     match cell {
-        HintCell::Rule => vec![Span::styled("─".repeat(column_width), border_style)],
-        HintCell::Empty => vec![Span::styled(" ".repeat(column_width), theme.menu)],
+        HintCell::Rule => vec![Span::styled("─".repeat(column.width), border_style)],
+        HintCell::Empty => vec![Span::styled(" ".repeat(column.width), theme.menu)],
         HintCell::Entry(index) => {
             let entry = entries[index];
             let row_style = if hover == Some(index) {
@@ -2195,7 +2196,7 @@ fn hint_cell_spans(
             let mut spans = vec![Span::styled(
                 format!(
                     "{}{}",
-                    " ".repeat(grid.key_width.saturating_sub(display_width(&key))),
+                    " ".repeat(column.key_width.saturating_sub(display_width(&key))),
                     key
                 ),
                 theme
@@ -2204,16 +2205,17 @@ fn hint_cell_spans(
                     .patch(row_style)
                     .add_modifier(dim),
             )];
-            if grid.label_width > 0 {
+            if column.label_width > 0 {
                 spans.push(Span::styled("  ", surface));
                 spans.push(Span::styled(
-                    fit_ellipsis(entry.label(), grid.label_width),
+                    fit_ellipsis(entry.label(), column.label_width),
                     surface,
                 ));
             }
-            let used = grid.key_width + usize::from(grid.label_width > 0) * (2 + grid.label_width);
+            let used =
+                column.key_width + usize::from(column.label_width > 0) * (2 + column.label_width);
             spans.push(Span::styled(
-                " ".repeat(column_width.saturating_sub(used)),
+                " ".repeat(column.width.saturating_sub(used)),
                 surface,
             ));
             spans

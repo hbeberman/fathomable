@@ -933,7 +933,7 @@ pub(crate) const BINDINGS: &[Binding] = &[
         &[&[c('z')]],
         A::Fold,
         "File list",
-        "fold or unfold directory",
+        "fold or unfold nearest directory",
     ),
     bind(
         W::Tree,

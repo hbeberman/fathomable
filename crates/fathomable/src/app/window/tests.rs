@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use fathomable_core::tree::Row;
 
 use crate::app::input::{keys, mouse};
 use crate::app::testing::{self, press, press_key, source_app};
@@ -47,6 +48,26 @@ fn file_list_fold_keys_toggle_directories_without_opening_files() -> anyhow::Res
         !app.tree()
             .context("tree")?
             .contains(Path::new("docs/nested"))
+    );
+    press(&mut app, "Zjjz");
+    assert_eq!(
+        app.tree().context("tree")?.current().map(Row::path),
+        Some(Path::new("docs/nested"))
+    );
+    assert!(
+        !app.tree()
+            .context("tree")?
+            .contains(Path::new("docs/nested/note.md"))
+    );
+    press(&mut app, "z");
+    assert_eq!(
+        app.tree().context("tree")?.current().map(Row::path),
+        Some(Path::new("docs/nested"))
+    );
+    assert!(
+        app.tree()
+            .context("tree")?
+            .contains(Path::new("docs/nested/note.md"))
     );
     press(&mut app, "Gz");
     assert_eq!(app.focus(), Focus::Tree, "z on a file never opens it");

@@ -64,10 +64,13 @@ Threads evidence fallback. The mouse wheel scrolls only the pointed viewport:
 it never changes selection, preview, focus, or the main surface. Dragging the
 sidebar divider resizes it.
 
-In File list, `z` folds or unfolds the selected directory without opening a
-file. `Z` unfolds every directory admitted by the current filters, or folds
-them all when already expanded. Recursive unfolding skips directory symlinks.
-Previewing a file keeps its draft parked; explicitly opening File resumes it.
+In File list, `z` folds or unfolds the selected directory, or the immediate
+parent when a file is selected. Folding a file's parent leaves the cursor on
+that directory, so another `z` unfolds it. A root-level file has no foldable
+parent row. `Z` unfolds every directory admitted by the current filters, or
+folds them all when already expanded. Recursive unfolding skips directory
+symlinks. Previewing a file keeps its draft parked; explicitly opening File
+resumes it.
 
 The configured split remains intact on a narrow terminal. When it cannot fit,
 Fathomable replaces pane content with a size warning showing the required and
@@ -112,7 +115,7 @@ the table below is a quick reference, not the full list.
 | `]w` `[w` | next / previous worktree |
 | `c` `Space c f` | line comment or reply / file comment |
 | `r` `R` | resolve or reopen / toggle one-shot auto-resolve |
-| `z` `Z` | fold/unfold a directory / all directories in File list; threads elsewhere |
+| `z` `Z` | fold/unfold the nearest directory / all directories in File list; threads elsewhere |
 | `Enter` `Ctrl-Enter` | submit draft / submit with auto-resolve enabled |
 | `Shift-Enter` `Alt-Enter` | draft newline / draft newline fallback |
 | `Ctrl-e` | edit with `$VISUAL` or `$EDITOR` |

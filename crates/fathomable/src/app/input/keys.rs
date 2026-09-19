@@ -526,16 +526,7 @@ impl App {
                 self.with_tree_result(Tree::expand);
             }
             Action::Confirm => self.with_tree_result(Tree::activate),
-            Action::Fold => self.with_tree_result(|tree, workspace| {
-                if tree
-                    .current()
-                    .is_some_and(fathomable_core::tree::Row::is_dir)
-                {
-                    tree.activate(workspace)
-                } else {
-                    Ok(None)
-                }
-            }),
+            Action::Fold => self.with_tree_result(Tree::toggle_nearest_directory),
             Action::FoldAll => {
                 self.with_tree_result(|tree, workspace| tree.toggle_all(workspace).map(|()| None));
             }

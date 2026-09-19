@@ -15,6 +15,10 @@ tags:
 
 Status: accepted (2026-09-18)
 
+Amended later 2026-09-18: in File list, `z` on a file toggles its immediate
+parent directory and moves the cursor there when folding, so the next `z`
+unfolds that same directory. A root-level file remains unchanged.
+
 Supersedes the window-focus contract in
 [0056](0056-the-leader-trimmed.md), amends the pane names in
 [0057](0057-the-sidebar.md) and [0081](0081-the-menu-bar.md), extends the
@@ -54,11 +58,13 @@ does that explicitly. Bare arrows and `h`/`j`/`k`/`l` remain local,
 `Tab`/`Shift-Tab` retain open-thread traversal, `J`/`K` retain comparison
 traversal, and `Alt-Left`/`Alt-Right` retain history traversal.
 
-In File list, `z` toggles the selected directory and does nothing on a file.
-`Z` recursively unfolds directories admitted by the current filters, or folds
-them all when already expanded. Recursive unfolding skips symlink directories.
-Folding keeps the selected path when visible, otherwise its nearest visible
-ancestor; it never opens a file or transfers focus.
+In File list, `z` toggles the selected directory or the immediate parent of a
+selected file. Folding a file's parent moves the cursor to that directory, so
+the next `z` unfolds it; a root-level file has no visible parent row and stays
+unchanged. `Z` recursively unfolds directories admitted by the current
+filters, or folds them all when already expanded. Recursive unfolding skips
+symlink directories. Folding keeps the selected path when visible, otherwise
+its nearest visible ancestor; it never opens a file or transfers focus.
 
 ### Lists preview without stealing focus
 

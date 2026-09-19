@@ -27,10 +27,11 @@ directory launches. The default shows both sidebar panes; an explicitly
 named file keeps text focus.
 
 Amended by [0091](0091-pane-focus-navigation.md): File list uses `z` to
-fold/unfold its selected directory and `Z` to unfold all admitted directories,
-or fold them all when already expanded. Recursive unfolding respects filters
-and does not follow directory symlinks. A failed read is reported while
-retaining successful expansions and a valid visible cursor.
+fold/unfold its selected directory, or a selected file's immediate parent, and
+`Z` to unfold all admitted directories, or fold them all when already
+expanded. Recursive unfolding respects filters and does not follow directory
+symlinks. A failed read is reported while retaining successful expansions and
+a valid visible cursor.
 
 Selection amended 2026-09-14 by [0079](0079-list-focus-language.md):
 files and all picker results use shared active and remembered list

@@ -97,6 +97,34 @@ fn tree_expands_lazily_and_navigates() -> Result<(), Box<dyn std::error::Error>>
 }
 
 #[test]
+fn nearest_directory_toggle_uses_a_files_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = fixture("nearest-directory")?;
+    let mut workspace = Workspace::discover(&dir.0)?;
+    let mut tree = Tree::new(&mut workspace)?;
+    tree.reveal(&mut workspace, Path::new("src/nested/deep.rs"))?;
+
+    assert_eq!(
+        tree.toggle_nearest_directory(&mut workspace)?,
+        Some(Activation::Toggled)
+    );
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src/nested")));
+    assert!(!tree.contains(Path::new("src/nested/deep.rs")));
+
+    assert_eq!(
+        tree.toggle_nearest_directory(&mut workspace)?,
+        Some(Activation::Toggled)
+    );
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("src/nested")));
+    assert!(tree.contains(Path::new("src/nested/deep.rs")));
+
+    tree.goto_bottom();
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("README.md")));
+    assert_eq!(tree.toggle_nearest_directory(&mut workspace)?, None);
+    assert_eq!(tree.current().map(Row::path), Some(Path::new("README.md")));
+    Ok(())
+}
+
+#[test]
 fn directory_counts_read_one_level_and_follow_tree_filters()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = fixture("directory-counts")?;

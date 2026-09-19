@@ -760,6 +760,37 @@ impl Tree {
         Ok(Some(Activation::Toggled))
     }
 
+    /// Toggle the directory at the cursor, or a selected file's parent.
+    ///
+    /// A root-level file has no visible parent row and is left selected.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`WorkspaceError`] when a directory cannot be read.
+    pub fn toggle_nearest_directory(
+        &mut self,
+        workspace: &mut Workspace,
+    ) -> Result<Option<Activation>, WorkspaceError> {
+        let Some(row) = self.current() else {
+            return Ok(None);
+        };
+        if row.is_dir {
+            return self.activate(workspace);
+        }
+        let Some(parent) = row
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        else {
+            return Ok(None);
+        };
+        let parent = parent.to_path_buf();
+        if !self.select_path(&parent) {
+            return Ok(None);
+        }
+        self.activate(workspace)
+    }
+
     /// `l` / Right: expand a directory or descend into an expanded one;
     /// on a file this leaves the cursor in place without opening it.
     ///
